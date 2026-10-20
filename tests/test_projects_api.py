@@ -71,6 +71,8 @@ class _Actions:
 def test_empty_roster_and_no_runs_is_an_empty_list(wired):
     server, _store = wired
     with TestClient(server.app, headers=BROWSER) as c:
+        # Startup runs the real watcher, which sees this machine's sessions.
+        server.session_watcher = _Watcher([])
         r = c.get("/api/projects/view")
     assert r.status_code == 200
     assert r.json()["projects"] == []
@@ -109,6 +111,8 @@ def test_a_project_known_only_from_a_run_still_appears(wired):
     server, store = wired
     store.create_run("build it", "hammer", "/tmp/hammer", "voice")
     with TestClient(server.app, headers=BROWSER) as c:
+        # Startup runs the real watcher, which sees this machine's sessions.
+        server.session_watcher = _Watcher([])
         r = c.get("/api/projects/view")
     projects = r.json()["projects"]
     assert [p["name"] for p in projects] == ["hammer"]

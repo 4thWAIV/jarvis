@@ -259,31 +259,32 @@ async def test_rotating_a_brain_that_is_not_serving_is_refused(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rotation_is_forced_after_too_many_waiting_turns(tmp_path):
-    """A conversation that never pauses must still rotate eventually."""
-    b = brain.Brain(_config(tmp_path, context_budget=10,
-                            max_turns_before_forced_rotation=3))
+async def test_a_pending_rotation_is_never_forced_however_long_it_waits(tmp_path):
+    """Rotation is the user's call. The brain counts how long the rotation
+    has waited, so the server knows when to ask again, and that is all."""
+    b = brain.Brain(_config(tmp_path, context_budget=10))
     try:
         await b.start()
-        for _ in range(4):
+        for _ in range(25):
             await b.turn("hello")
 
-        assert b.rotation_overdue is True
+        assert b.rotation_pending is True
+        assert b.turns_since_rotation == 24
+        assert b.generation == 1, "nothing rotated on its own"
+        assert not hasattr(b, "rotation_overdue")
     finally:
         await b.stop()
 
 
 @pytest.mark.asyncio
-async def test_rotation_is_not_overdue_before_the_budget_is_crossed(tmp_path):
-    """The forced-rotation counter only starts once a rotation is owed."""
-    b = brain.Brain(_config(tmp_path, context_budget=10_000_000,
-                            max_turns_before_forced_rotation=1))
+async def test_the_wait_is_not_counted_before_the_budget_is_crossed(tmp_path):
+    b = brain.Brain(_config(tmp_path, context_budget=10_000_000))
     try:
         await b.start()
         for _ in range(3):
             await b.turn("hello")
 
-        assert b.rotation_overdue is False and b.turns_since_rotation == 0
+        assert b.rotation_pending is False and b.turns_since_rotation == 0
     finally:
         await b.stop()
 
@@ -295,7 +296,7 @@ async def test_a_brain_under_budget_never_schedules_a_rotation(tmp_path):
         await b.start()
         await b.turn("hello")
 
-        assert b.rotation_pending is False and b.rotation_overdue is False
+        assert b.rotation_pending is False
     finally:
         await b.stop()
 
@@ -318,9 +319,8 @@ async def test_the_warmup_alone_never_schedules_a_rotation(tmp_path):
 
 
 def test_the_budget_defaults_and_reads_the_environment(tmp_path, monkeypatch):
-    assert brain.BrainConfig(home=tmp_path).context_budget == 120000
-    assert brain.BrainConfig(home=tmp_path).max_turns_before_forced_rotation == 10
-    assert brain.BrainConfig.from_env(tmp_path).context_budget == 120000
+    assert brain.BrainConfig(home=tmp_path).context_budget == 900000
+    assert brain.BrainConfig.from_env(tmp_path).context_budget == 900000
     monkeypatch.setenv("JARVIS_BRAIN_CONTEXT_BUDGET", "25000")
     assert brain.BrainConfig.from_env(tmp_path).context_budget == 25000
 

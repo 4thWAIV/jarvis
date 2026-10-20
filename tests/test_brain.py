@@ -67,12 +67,13 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__usage_status,mcp__jarvis__connections,"
         "mcp__jarvis__enable_session_inbox,"
         "mcp__jarvis__repo_overview,mcp__jarvis__search_repo,"
-        "mcp__jarvis__read_file,mcp__jarvis__open_in_editor,"
+        "mcp__jarvis__read_file,mcp__jarvis__search_history,"
+        "mcp__jarvis__read_history,mcp__jarvis__open_in_editor,"
         "mcp__jarvis__remember,mcp__jarvis__recall,"
         "mcp__jarvis__project_note,mcp__jarvis__write_journal,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
-        "WebSearch,WebFetch")
+        "WebSearch,WebFetch,Skill")
     assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS), (
         "the pin above IS ALLOWED_TOOLS — a name that appears in one and not "
         "the other means the list this test guards is no longer the list the "

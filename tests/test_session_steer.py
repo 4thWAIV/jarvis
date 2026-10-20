@@ -208,7 +208,8 @@ async def test_performing_a_staged_steer_reads_it_back_before_sending(
     assert "use Postgres" in speech.said[0]
     assert speech.said[-1] == "Passed to chitauri, sir."
     _wait_for_receipt(received)
-    assert json.loads(received[0].strip())["message"]["content"] == "use Postgres"
+    assert json.loads(received[0].strip())["message"]["content"] == \
+        server.STEER_SIGNATURE + "use Postgres"
     assert server._staged_steers == [], "a performed steer must be off the list"
 
 
@@ -565,7 +566,6 @@ class ScriptedBrain:
     failed = False
     current_origin = "user"
     rotation_pending = False        # the real Brain's; nothing to rotate here
-    rotation_overdue = False
 
     def __init__(self, server, calls, reply="Right away, sir.",
                  stop_reason="result", boom=False):
@@ -679,7 +679,8 @@ async def test_the_readback_plays_after_the_turn_and_before_delivery(
     heard_at = rig.client.acked_at("Telling chitauri")
     assert heard_at is not None
     assert received[0][0] > heard_at, "delivery must follow the read-back"
-    assert json.loads(received[0][1].strip())["message"]["content"] == "use Postgres"
+    assert json.loads(received[0][1].strip())["message"]["content"] == \
+        server.STEER_SIGNATURE + "use Postgres"
     assert "Passed to chitauri, sir." in rig.spoken()
 
     import run_store

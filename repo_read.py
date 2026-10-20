@@ -153,6 +153,7 @@ SAFE_DOT_NAMES = frozenset({
     ".eslintignore", ".flake8", ".isort.cfg", ".coveragerc", ".babelrc",
     ".claude", ".agents", ".superpowers", ".husky", ".changeset", ".circleci",
     ".well-known", ".storybook", ".devcontainer", ".readthedocs.yaml",
+    ".private", ".tmt",
 })
 
 SAFE_DOT_PREFIXES = (".eslintrc", ".prettierrc", ".stylelintrc", ".babelrc",
@@ -242,7 +243,13 @@ def sensitive_reason(relative: Path) -> str | None:
 # than keeping this file import-free: a hook the caller has to install is a
 # hook somebody forgets.
 
-_PRIVATE_ROOTS_CACHE: tuple = (object(), (), ())
+_PRIVATE_ROOTS_CACHE: tuple = (object(), (), (), (), ())
+
+# Folders inside JARVIS's data that `read_file` may read. The needs board is
+# written by other sessions for the user to hear, so it is not JARVIS's
+# private data. Everything else under the data dir stays closed, the tool
+# token and `mcp.json` among it.
+OPEN_DATA_DIRS = ("needs",)
 
 
 def _identity(path) -> tuple | None:
@@ -275,19 +282,37 @@ def _private_roots() -> tuple[tuple[Path, ...], tuple]:
     An identity may be None if the directory has since gone; the string
     comparisons below still stand in that case.
     """
+    roots, ids, _opens, _open_ids = _roots_and_openings()
+    return roots, ids
+
+
+def _roots_and_openings() -> tuple[tuple, tuple, tuple, tuple]:
+    """The private roots and the `OPEN_DATA_DIRS` inside them, each with
+    its identities, computed together and cached against JARVIS_DATA_DIR."""
     global _PRIVATE_ROOTS_CACHE
     key = os.getenv("JARVIS_DATA_DIR")
-    cached_key, cached, ids = _PRIVATE_ROOTS_CACHE
+    cached_key, cached, ids, opens, open_ids = _PRIVATE_ROOTS_CACHE
     if cached and cached_key == key:
-        return cached, ids
+        return cached, ids, opens, open_ids
     try:
         import data_paths
         cached = (Path(os.path.realpath(str(data_paths.data_dir()))),)
     except Exception:                                # pragma: no cover
         cached = ()
     ids = tuple(_identity(str(r)) for r in cached)
-    _PRIVATE_ROOTS_CACHE = (key, cached, ids)
-    return cached, ids
+    opens = tuple(r / name for r in cached for name in OPEN_DATA_DIRS)
+    open_ids = tuple(_identity(str(o)) for o in opens)
+    _PRIVATE_ROOTS_CACHE = (key, cached, ids, opens, open_ids)
+    return cached, ids, opens, open_ids
+
+
+def _is_private(absolute: Path) -> bool:
+    """Inside a private root, and not inside one of its open folders. The
+    one rule `private_reason` and `walk` both apply."""
+    roots, ids, opens, open_ids = _roots_and_openings()
+    if not any(_under(absolute, r, i) for r, i in zip(roots, ids)):
+        return False
+    return not any(_under(absolute, o, i) for o, i in zip(opens, open_ids))
 
 
 # `os.stat` on the ancestor is the last of the three tests and by far the
@@ -361,10 +386,8 @@ def private_reason(absolute) -> str | None:
     is why `_under` does not trust the spelling.
     """
     absolute = Path(absolute)
-    roots, ids = _private_roots()
-    for root, root_id in zip(roots, ids):
-        if _under(absolute, root, root_id):
-            return f"{absolute.name} is JARVIS's own data"
+    if _is_private(absolute):
+        return f"{absolute.name} is JARVIS's own data"
     return None
 
 
@@ -446,14 +469,11 @@ def walk(root: Path, deadline: float | None = None) -> Walk:
     # not enough on its own: a grep would read the user's MCP token out of
     # `mcp.json` line by line without ever naming the file, exactly as the
     # `Library/` case in `_skip_dir` showed.
-    private, private_ids = _private_roots()
-
-    def _is_private(path: str) -> bool:
+    def _is_private_entry(path: str) -> bool:
         # Identity, not spelling — the same rule `private_reason` applies,
         # and it has to be the same rule, because a grep never names the
         # file it reads and so never reaches `private_reason` at all.
-        p = Path(os.path.abspath(path))
-        return any(_under(p, r, i) for r, i in zip(private, private_ids))
+        return _is_private(Path(os.path.abspath(path)))
 
     while queue:
         directory, prefix, depth = queue.pop(0)
@@ -472,12 +492,12 @@ def walk(root: Path, deadline: float | None = None) -> Walk:
                             if depth + 1 > MAX_DEPTH:
                                 out.complete = False
                                 continue
-                            if _skip_dir(entry.name) or _is_private(entry.path):
+                            if _skip_dir(entry.name) or _is_private_entry(entry.path):
                                 continue
                             queue.append((Path(entry.path),
                                           f"{prefix}{entry.name}/", depth + 1))
                         elif entry.is_file(follow_symlinks=False):
-                            if _skip_file(entry.name) or _is_private(entry.path):
+                            if _skip_file(entry.name) or _is_private_entry(entry.path):
                                 continue
                             # Checked HERE as well as at the top of the loop:
                             # one directory holding a million files would
@@ -828,8 +848,13 @@ def read_window(path: Path, around=None) -> Window:
     data = path.read_bytes()
     if b"\x00" in data[:4096]:
         raise Refused("binary")
-    lines = data.decode("utf-8", "replace").splitlines()
+    return window_of_lines(data.decode("utf-8", "replace").splitlines(), around)
 
+
+def window_of_lines(lines: list[str], around=None) -> Window:
+    """`read_window`'s windowing over lines already in hand — so a reader that
+    renders its text first (`history_read`'s transcripts) shares the one rule
+    for the lead, the caps and the "which lines of how many" account."""
     out = Window()
     out.total = len(lines)
     if not lines:

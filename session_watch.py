@@ -262,6 +262,60 @@ def recap_from(objs: list[dict]) -> Recap:
     return r
 
 
+# A whole reply can be far longer than the recap's 64 KB tail is meant for,
+# so the reply reader looks further back. Still a tail: transcripts reach
+# tens of megabytes, and only the last turn is wanted.
+REPLY_TAIL_BYTES = 2 * 1024 * 1024
+
+
+def _is_prompt(obj: dict) -> bool:
+    """A user line that starts a new turn: typed text, not a tool result."""
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return bool(content.strip())
+    return isinstance(content, list) and any(
+        isinstance(b, dict) and b.get("type") == "text" for b in content)
+
+
+def last_reply_from(objs: list[dict]) -> str | None:
+    """Everything the session wrote since its last prompt, unclipped.
+
+    `recap_from` keeps only the LAST text block, cut at MAX_TEXT. A reply
+    that asks three questions across several blocks lost the rest that way,
+    which is what this exists to stop.
+    """
+    parts: list[str] = []
+    for o in objs:
+        if o.get("isSidechain"):
+            continue
+        kind = o.get("type")
+        if kind == "user" and _is_prompt(o):
+            parts = []
+        elif kind == "assistant":
+            message = o.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if (isinstance(block, dict) and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                        and block["text"].strip()):
+                    parts.append(block["text"].strip())
+    return "\n\n".join(parts) or None
+
+
+def read_last_reply(cwd: str, session_id: str,
+                    roots: list[Path] | None = None) -> str | None:
+    """A session's whole last reply, from the first root that has its
+    transcript, or None if it has said nothing."""
+    for root in (roots if roots is not None else config_roots()):
+        path = transcript_path(root, cwd, session_id)
+        if path.exists():
+            return last_reply_from(tail_objects(path, REPLY_TAIL_BYTES))
+    return None
+
+
 def _roots_of(group: list, primary) -> list[Path]:
     """Every root this conversation registered in, the primary's first.
 
@@ -1092,6 +1146,8 @@ class SessionWatcher:
         self._gone_at: dict[str, float] = {}
         self._gone_cache: dict[str, SessionState] = {}
         self._subscribers: list = []
+        # Sessions JARVIS has sent a message to and is waiting to hear from.
+        self._awaiting_reply: set[str] = set()
         self._started = False
         self._task = None
         # Captured by start() so _publish() can tell whether it is running on
@@ -1103,6 +1159,14 @@ class SessionWatcher:
 
     def on_event(self, callback) -> None:
         self._subscribers.append(callback)
+
+    def expect_reply(self, session_id: str) -> None:
+        """Publish `replied`, once, the next time this session stops working.
+
+        Not `finished`: that needs MIN_WORK_SEC of work, and a short answer to
+        a question JARVIS relayed is exactly what must not go unannounced.
+        """
+        self._awaiting_reply.add(session_id)
 
     def _publish(self, kind: str, session: SessionState, at: float) -> None:
         """Notify every subscriber, always on the event-loop thread.
@@ -1193,7 +1257,13 @@ class SessionWatcher:
             if s.state == WORKING and was != WORKING:
                 self._working_since[s.session_id] = now
 
-            if not first_poll and s.announceable:
+            if (was == WORKING and s.state != WORKING
+                    and s.session_id in self._awaiting_reply):
+                # One announcement for the answer, in place of the
+                # `needs_you` or `finished` it would otherwise have earned.
+                self._awaiting_reply.discard(s.session_id)
+                self._publish("replied", s, now)
+            elif not first_poll and s.announceable:
                 if s.state == NEEDS_YOU and was != NEEDS_YOU:
                     self._publish("needs_you", s, now)
                 elif was == WORKING and s.state in (IDLE, GONE, UNKNOWN):

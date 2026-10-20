@@ -208,7 +208,10 @@ async def test_a_live_session_makes_its_project_startable(ready, monkeypatch):
 
     monkeypatch.setattr(server, "session_watcher", _Watcher())
 
-    await server.tool_spawn_run({"project": "zeltar", "prompt": "check the logs"})
+    # The session is live, so only the user's override starts a separate run
+    # there (test_one_writer_per_project.py); resolution is what is under test.
+    await server.tool_spawn_run({"project": "zeltar", "prompt": "check the logs",
+                                 "override": True})
 
     assert ex.spawned[0]["project_path"] == "/opt/zeltar"
 

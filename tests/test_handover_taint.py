@@ -396,7 +396,6 @@ async def test_the_server_hands_the_generations_taint_to_the_journal(
     class _Brain:
         ready = True
         rotation_pending = True
-        rotation_overdue = True
         current_origin = None
         generation_untrusted_source = "another session's transcript"
 
@@ -411,6 +410,7 @@ async def test_the_server_hands_the_generations_taint_to_the_journal(
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
     monkeypatch.setattr(server, "speech", None)
+    monkeypatch.setattr(server, "_rotation_agreed", True)    # the user said yes
     await server._maybe_rotate()
 
     assert written, "no journal was written"

@@ -47,10 +47,17 @@ def _parse_env_lines(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def _env_file_path() -> Path:
+    # JARVIS_ENV_FILE exists so the test suite can neither read nor write the
+    # developer's live .env — the same reasoning as JARVIS_DATA_DIR. The boot
+    # loader below and the settings endpoints both go through here.
+    override = os.getenv("JARVIS_ENV_FILE", "").strip()
+    return Path(override) if override else Path(__file__).parent / ".env"
+
+
 # Load .env file if present
-_env_path = Path(__file__).parent / ".env"
-if _env_path.exists():
-    for _k, _v in _parse_env_lines(_env_path.read_text()):
+if _env_file_path().exists():
+    for _k, _v in _parse_env_lines(_env_file_path().read_text()):
         os.environ.setdefault(_k, _v)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -70,7 +77,9 @@ from work_mode import is_casual_question
 import preflight
 import project_maker
 import projects_view
+import history_read
 import repo_read
+import session_needs
 import run_store
 import session_steer
 import session_watch
@@ -677,18 +686,28 @@ ROTATION_BUSY_LINE = "Gathering my thoughts — one moment, sir."
 # This is that fresh conversation. It discards the tainted generation rather
 # than carrying anything across, which is the whole point — he restates the
 # fact in his own words to a brain that has read nothing.
-FRESH_START_PHRASES = (
-    "start fresh", "start a fresh conversation", "fresh conversation",
-    "start over", "clear your head", "clear your mind", "clear your context",
-    "new conversation", "forget this conversation", "wipe your memory of this",
-)
+FRESH_START_COMMAND = "start fresh"
 FRESH_START_LINE = "Cleared, sir — nothing of that conversation left. Go ahead."
+# Clearing takes TWO turns. The command alone only asks; the very next
+# utterance must be an unambiguous yes (`_rotation_answer`) or nothing is
+# cleared. A timeout is a no.
+FRESH_START_CONFIRM_LINE = "Clear the whole conversation, sir? Say yes to confirm."
+FRESH_START_CANCELLED_LINE = "Very good, sir — nothing was cleared."
+FRESH_START_CONFIRM_TIMEOUT = 20.0      # seconds he has to say yes
 
 
 def _is_fresh_start(text: str) -> bool:
-    """Whether the user just asked for a clean generation."""
-    t = " ".join(_action_words(text))
-    return any(p in t for p in FRESH_START_PHRASES)
+    """Whether the ENTIRE utterance is the one command that clears the context.
+
+    Lowercased, punctuation stripped, one optional leading "jarvis" dropped,
+    and what is left must equal "start fresh" exactly. A longer sentence that
+    merely contains the words never counts: a misheard "start over" once
+    wiped a live conversation, and nothing may do that again.
+    """
+    words = _action_words(text)
+    if words and words[0] == "jarvis":
+        words = words[1:]
+    return " ".join(words) == FRESH_START_COMMAND
 
 
 def _action_words(text: str) -> list[str]:
@@ -938,6 +957,41 @@ def _active_project_names() -> list[str]:
     return sorted(names)[:MAX_BOOT_PROJECTS]
 
 
+def _live_session_redirect(name: str, path, args: dict, tool: str) -> Optional[str]:
+    """Why `tool` must not start a separate run in `path`, or None if it may.
+
+    One writer per project, approved by the user: a project with a live
+    Claude Code session gets its work through that session, because a second
+    run editing the same files left the other's build broken until it ended.
+    He may override it for any one task, and the brain then passes
+    `override`; that is his call and is carried out without argument.
+
+    Only `name` is printed — the project as `_resolve_project_or_explain`
+    resolved it from the user's own list — never a field off the roster.
+    """
+    if _truthy(args.get("override")):
+        return None
+    try:
+        target = Path(path).resolve()
+    except (OSError, TypeError):
+        return None
+    dormant = {session_watch.GONE, session_watch.FRESH}
+    for s in _snapshot_or_empty().sessions:
+        if s.state in dormant or not s.cwd:
+            continue
+        try:
+            if Path(s.cwd).resolve() == target:
+                break
+        except OSError:
+            continue
+    else:
+        return None
+    return (f"{name} already has a live session, so I have not started a "
+            f"separate run there. Send the work to that session with "
+            f"steer_session, naming {name}. Only if the user has said to start "
+            f"a separate run anyway, call {tool} again with override true.")
+
+
 async def start_brain_and_speech() -> None:
     global brain_instance, speech, _tts_client
     _tts_client = httpx.AsyncClient(timeout=15.0)
@@ -948,6 +1002,7 @@ async def start_brain_and_speech() -> None:
     # `@MEMORY.md` import needs the index to exist, and the memory tools
     # need their folders, from the very first boot.
     home = jarvis_memory.ensure_layout()
+    data_paths.sync_skills()
     data_paths.ensure_tool_token()
     mcp_path = _write_mcp_config(home)
     config = BrainConfig.from_env(home)
@@ -1051,7 +1106,71 @@ async def _ask_for_journal(timeout: Optional[float] = None) -> Optional[str]:
     return text or None
 
 
-async def _start_fresh() -> None:
+# The clear command has been heard and JARVIS has asked; the next utterance
+# decides. `_clear_asked_text` is the command as heard, for the log.
+_clear_question_open = False
+_clear_asked_text = ""
+_clear_timeout_task: Optional[asyncio.Task] = None
+
+
+def _close_clear_question() -> None:
+    global _clear_question_open, _clear_timeout_task
+    _clear_question_open = False
+    task, _clear_timeout_task = _clear_timeout_task, None
+    if task is None:
+        return
+    try:
+        current = asyncio.current_task()
+    except RuntimeError:                    # no loop running (a sync caller)
+        current = None
+    if task is not current:
+        task.cancel()
+
+
+async def _clear_question_expired() -> None:
+    await asyncio.sleep(FRESH_START_CONFIRM_TIMEOUT)
+    if not _clear_question_open:
+        return
+    log.info(f"conversation clear: cancelled, no answer in "
+             f"{FRESH_START_CONFIRM_TIMEOUT:.0f}s (command={_clear_asked_text!r})")
+    _close_clear_question()
+    if speech is not None:
+        await speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL)
+
+
+async def _ask_to_clear(utterance: str) -> None:
+    """Turn one: ask. Nothing is cleared here, whatever else happens."""
+    global _clear_question_open, _clear_asked_text, _clear_timeout_task
+    _close_clear_question()
+    _clear_question_open, _clear_asked_text = True, utterance
+    log.info(f"conversation clear: asked to confirm "
+             f"(trigger=start-fresh-command, utterance={utterance!r})")
+    _clear_timeout_task = _spawn(_clear_question_expired())
+    if speech is not None:
+        await speech.say(FRESH_START_CONFIRM_LINE, Priority.NORMAL)
+
+
+def _take_clear_answer(text: str) -> Optional[bool]:
+    """Turn two. None: no clear question was open, handle the utterance
+    normally. True: confirmed, clearing. False: cancelled; the caller still
+    routes the utterance unless `_rotation_answer` called it a plain no."""
+    if not _clear_question_open:
+        return None
+    command = _clear_asked_text
+    _close_clear_question()
+    if _rotation_answer(text) is True:
+        log.info(f"conversation clear: confirmed (command={command!r}, "
+                 f"utterance={text!r})")
+        _spawn(_start_fresh(text))
+        return True
+    log.info(f"conversation clear: cancelled (command={command!r}, "
+             f"utterance={text!r})")
+    if speech is not None:
+        _spawn(speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL))
+    return False
+
+
+async def _start_fresh(utterance: str = "") -> None:
     """Throw the current generation away at the user's word.
 
     Not `_maybe_rotate`: that waits for the brain to decide it is full. This
@@ -1061,10 +1180,13 @@ async def _start_fresh() -> None:
     global _pending_handover, _handover_collected
     if brain_instance is None:
         return
+    log.info(f"conversation clear: trigger=start-fresh-command-confirmed "
+             f"utterance={utterance!r}")
     async with _rotation_lock:
         # No handover. Carrying a summary across would carry the tainted text
         # with it, which is exactly what the memory-writer gate exists to stop.
         _pending_handover, _handover_collected = None, False
+        _reset_rotation_consent()
         try:
             await brain_instance.rotate(handover=None)
         except Exception as e:
@@ -1072,13 +1194,120 @@ async def _start_fresh() -> None:
             if speech is not None:
                 await speech.say("I couldn't clear it, sir.", Priority.NORMAL)
             return
-    log.info("fresh start: generation discarded at the user's request")
+    log.info(f"conversation cleared: trigger=start-fresh-command-confirmed "
+             f"utterance={utterance!r}")
     if speech is not None:
         await speech.say(FRESH_START_LINE, Priority.NORMAL)
 
 
+# Rotation is the user's call. The brain only reports that its conversation
+# has outgrown the budget; at the next pause JARVIS asks, and nothing rotates
+# until he says yes. He was angry to find his context replaced without his
+# say-so. If he says no, or talks about something else, he is asked again
+# after this many more turns. If he never agrees, the Claude CLI's own
+# auto-compact is the backstop when the window is genuinely full.
+ROTATION_ASK_AGAIN_AFTER_TURNS = 10
+ROTATION_DECLINED_LINE = "Very good, sir. I'll carry on as I am."
+
+ROTATION_YES_WORDS = frozenset({
+    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "certainly",
+    "absolutely", "affirmative", "proceed", "compact", "rotate",
+})
+ROTATION_YES_MAX_WORDS = 4
+ROTATION_YES_PHRASES = ("go ahead", "do it", "go for it", "sounds good")
+ROTATION_NO_WORDS = frozenset({
+    # `_action_words` splits "don't" into "don" and "t".
+    "no", "nope", "nah", "not", "don", "dont", "wait", "later", "hold", "stop",
+    "never", "negative",
+})
+
+# Whether the question is waiting on his answer, the brain's
+# `turns_since_rotation` when it was last asked (None: never asked), and
+# whether he said yes.
+_rotation_question_open = False
+_rotation_asked_at: Optional[int] = None
+_rotation_agreed = False
+_rotation_agreed_text = ""             # his exact words, for the log
+
+
+def _rotation_question_line(budget: int) -> str:
+    return (f"My context is past {budget // 1000:,} thousand tokens, sir. "
+            "Shall I compact it?")
+
+
+def _rotation_answer(text: str) -> Optional[bool]:
+    """True for a plain yes, False for a plain no, None for anything else.
+
+    A yes must be unhedged: any word of refusal or delay in the same breath
+    ("yes, but not now") makes it a no, because rotating on a misheard
+    yes is the exact thing he objected to.
+    """
+    words = _action_words(text)
+    if not words:
+        return None
+    if any(w in ROTATION_NO_WORDS for w in words):
+        return False
+    joined = " ".join(words)
+    # A short reply only: a long sentence that happens to open with "okay" is
+    # not a yes to a question about wiping his context.
+    if len(words) > ROTATION_YES_MAX_WORDS:
+        return None
+    if words[0] in ROTATION_YES_WORDS or any(joined.startswith(p)
+                                            for p in ROTATION_YES_PHRASES):
+        return True
+    return None
+
+
+def _reset_rotation_consent() -> None:
+    global _rotation_question_open, _rotation_asked_at, _rotation_agreed
+    _rotation_question_open, _rotation_asked_at, _rotation_agreed = False, None, False
+
+
+async def _ask_to_rotate() -> None:
+    """Ask once, at a pause, and again only after enough turns have passed."""
+    global _rotation_question_open, _rotation_asked_at
+    waited = brain_instance.turns_since_rotation
+    if _rotation_question_open:
+        return
+    if (_rotation_asked_at is not None
+            and waited - _rotation_asked_at < ROTATION_ASK_AGAIN_AFTER_TURNS):
+        return
+    _rotation_question_open, _rotation_asked_at = True, waited
+    if speech is not None:
+        await speech.say(_rotation_question_line(brain_instance.config.context_budget),
+                         Priority.NORMAL)
+
+
+def _take_rotation_answer(text: str) -> bool:
+    """Consume the user's reply to the rotation question, if one is open.
+
+    Returns True when the utterance WAS the answer and must not reach the
+    brain. Anything that is neither yes nor no closes the question as a
+    decline and is served as an ordinary utterance.
+    """
+    global _rotation_question_open, _rotation_agreed, _rotation_agreed_text
+    if not _rotation_question_open:
+        return False
+    _rotation_question_open = False
+    if brain_instance is None or not brain_instance.rotation_pending:
+        return False                        # rotated or restarted since he was asked
+    answer = _rotation_answer(text)
+    if answer is True:
+        _rotation_agreed, _rotation_agreed_text = True, text
+        log.info(f"rotation: the user agreed (utterance={text!r})")
+        _spawn(_maybe_rotate())
+        return True
+    if answer is False:
+        log.info(f"rotation: the user declined (utterance={text!r})")
+        if speech is not None:
+            _spawn(speech.say(ROTATION_DECLINED_LINE, Priority.NORMAL))
+        return True
+    log.info("rotation: the question went unanswered; asking again later")
+    return False
+
+
 async def _maybe_rotate() -> None:
-    """Rotate at a pause, never mid-conversation.
+    """At a pause, ask to rotate, or rotate if the user has already said yes.
 
     Called once an utterance has been spoken and any staged steer performed —
     rotation is the lowest-priority thing that can happen at a pause and must
@@ -1087,15 +1316,18 @@ async def _maybe_rotate() -> None:
     The outgoing brain is asked for a handover first. If it will not or cannot
     answer, the server writes a minimal entry itself, so a generation never
     vanishes without a trace, and the rotation proceeds regardless: a silent
-    brain must not be able to pin the context window open forever.
+    brain must not be able to block a rotation the user asked for.
     """
     global _pending_handover, _handover_collected
     if brain_instance is None or not brain_instance.rotation_pending:
+        _reset_rotation_consent()
         return
     # Not actually a pause: another utterance is being served right now, so
-    # this rotation waits for the pause at the end of THAT one. `overdue` is
-    # the escape hatch for a conversation that never pauses.
-    if brain_instance.current_origin is not None and not brain_instance.rotation_overdue:
+    # this waits for the pause at the end of THAT one.
+    if brain_instance.current_origin is not None:
+        return
+    if not _rotation_agreed:
+        await _ask_to_rotate()
         return
     if _rotation_lock.locked():
         return                              # another pause got there first
@@ -1120,6 +1352,8 @@ async def _maybe_rotate() -> None:
                 _write_journal(
                     "No handover was written — the outgoing brain did not answer.",
                     reason="rotation-silent")
+        log.info(f"conversation rotate: trigger=user-agreed-to-rotation "
+                 f"utterance={_rotation_agreed_text!r}")
         try:
             rotated = await brain_instance.rotate(handover=_pending_handover)
         except Exception as e:
@@ -1127,15 +1361,16 @@ async def _maybe_rotate() -> None:
             rotated = False
         if rotated:
             _pending_handover, _handover_collected = None, False
+            _reset_rotation_consent()
+        else:
+            # The old brain is still serving; keep the handover we already paid
+            # a turn for and try again at the next pause.
+            log.warning("rotation did not happen; retrying at the next pause")
         try:
             await _voice_emit({"type": "notice", "text": ""})   # clear the banner
             await _voice_emit({"type": "status", "state": "idle"})   # orb back to normal
         except Exception:
             pass
-        else:
-            # The old brain is still serving; keep the handover we already paid
-            # a turn for and try again at the next pause.
-            log.warning("rotation did not happen; retrying at the next pause")
 
 
 async def stop_brain_and_speech() -> None:
@@ -1221,7 +1456,9 @@ def _on_session_event(event: dict) -> None:
         # Sessions tab even when the snapshot it arrived beside was clean.
         return
     _spawn(_broadcast_session_event(event))
-    if kind == "needs_you":
+    if kind == "replied":
+        _spawn(_announce_reply(event))
+    elif kind == "needs_you":
         _spawn(_announce_needs_you(event))
     elif kind == "finished":
         # Walled where it ENTERS the queue, exactly as `_on_run_event` does
@@ -1233,6 +1470,78 @@ def _on_session_event(event: dict) -> None:
         if name and name not in _pending_completions:
             _pending_completions.append(name)
         _spawn(_announce_batch())
+
+
+# What JARVIS said out loud that the brain did not see. A server-spoken line
+# is not in the brain's context, so without this a "yes" to "shall I read
+# it?" reached a brain that had never asked anything.
+_notes_for_brain: list[str] = []
+
+
+def _with_notes_for_brain(text: str) -> str:
+    """The user's words, after anything JARVIS said since the last turn."""
+    if not _notes_for_brain:
+        return text
+    notes = " ".join(_notes_for_brain)
+    _notes_for_brain.clear()
+    return f"(JARVIS, not the user: {notes})\n{text}"
+
+
+async def _announce_reply(event: dict) -> None:
+    """A session JARVIS sent a message to has answered."""
+    s = event.get("session") or {}
+    name = _said_name(s, "A session")
+    line = f"{name} has answered, sir — shall I read it?"
+    _notes_for_brain.append(
+        f"Since your last turn you told him {name} has answered and asked "
+        f"whether to read it. If he says yes, call read_session_reply for "
+        f"{name} and read him every page.")
+    if speech is None:
+        return
+    try:
+        await speech.say(line, Priority.NORMAL)
+    except Exception as e:
+        log.warning(f"reply announcement failed: {e}")
+
+
+# How often the needs board is looked at. A file is rewritten by hand-paced
+# sessions, so seconds are plenty and the read is a handful of small files.
+NEEDS_POLL_SEC = 5.0
+_needs_task: Optional[asyncio.Task] = None
+
+
+async def _announce_board(board: session_needs.Board) -> None:
+    """A session has written down something it needs from the user."""
+    name = _said_name({"voice_name": board.project}, "A session")
+    n = board.items
+    things = f"{_say_number(n)} thing{'s' if n != 1 else ''}"
+    line = f"{name} has {things} for you, sir."
+    _notes_for_brain.append(
+        f"Since your last turn you told him {name} has {things} for him. If he "
+        f"wants them, call session_needs and read him each one with its "
+        f"recommendation.")
+    if speech is None:
+        return
+    try:
+        await speech.say(line, Priority.NORMAL)
+    except Exception as e:
+        log.warning(f"needs-board announcement failed: {e}")
+
+
+async def _watch_needs_board() -> None:
+    """Announce each board that appears or changes. Never raises out."""
+    tracker = session_needs.ChangeTracker()
+    while True:
+        try:
+            boards = await asyncio.to_thread(
+                session_needs.read_boards, data_paths.needs_dir())
+            for board in tracker.changed(boards):
+                await _announce_board(board)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"needs board: {e}")
+        await asyncio.sleep(NEEDS_POLL_SEC)
 
 
 async def _announce_needs_you(event: dict) -> None:
@@ -1534,10 +1843,15 @@ async def start_session_watcher() -> None:
     session_watcher.on_event(_on_session_event)
     await session_watcher.start()
     log.info("session watcher started")
+    global _needs_task
+    _needs_task = _spawn(_watch_needs_board())
 
 
 async def stop_session_watcher() -> None:
-    global session_watcher
+    global session_watcher, _needs_task
+    if _needs_task is not None:
+        _needs_task.cancel()
+        _needs_task = None
     if session_watcher is not None:
         try:
             await session_watcher.stop()
@@ -1642,7 +1956,8 @@ async def _handle_utterance(text: str) -> None:
         try:
             try:
                 hold = _OneLinePerTurn(lambda d: speech.feed(utt, d))
-                result = await brain_instance.turn(text, origin="user",
+                result = await brain_instance.turn(_with_notes_for_brain(text),
+                                                   origin="user",
                                                    on_delta=hold.delta,
                                                    on_tool=hold.tool_started)
                 hold.finish()    # the one line this turn is allowed
@@ -1812,6 +2127,13 @@ async def lifespan(application: FastAPI):
     # is kept in _background so it is not garbage-collected mid-flight.
     _background.add(task := asyncio.create_task(_run_preflight()))
     task.add_done_callback(_background.discard)
+    if _untrusted_actions_refused():
+        log.info(
+            "JARVIS_REFUSE_UNTRUSTED_ACTIONS is ON: JARVIS will refuse to act "
+            "in a turn that has read text it did not write.")
+    if os.getenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "").strip():
+        log.info("JARVIS_ALLOW_UNTRUSTED_ACTIONS is obsolete and ignored; "
+                 "the refusal is now opt-in via JARVIS_REFUSE_UNTRUSTED_ACTIONS.")
     log.info("JARVIS server starting")
 
     yield
@@ -2342,6 +2664,10 @@ TAINTING_TOOLS = {
     # Other people's conversations, and what they told their sessions.
     "list_sessions": "another session's transcript",
     "session_detail": "another session's transcript",
+    "read_session_reply": "another session's transcript",
+    "search_history": "an earlier conversation",
+    "read_history": "an earlier conversation",
+    "session_needs": "a note another session wrote",
     # A run's own output: the words of an unattended Claude Code process that
     # has itself been reading files all over a repository.
     "run_status": "the output of a run",
@@ -2478,6 +2804,17 @@ def _writer_untrusted_source(tool: str) -> str | None:
     return source
 
 
+def _untrusted_actions_refused() -> bool:
+    """True when the operator opted in to the untrusted-content refusal.
+
+    Read at call time, not import time, so the setting is the environment's
+    current value. Default off: JARVIS keeps acting after reading foreign
+    text unless JARVIS_REFUSE_UNTRUSTED_ACTIONS is 1/true/yes/on.
+    """
+    return os.getenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def _untrusted_content_refusal(tool: str, read_untrusted: bool,
                                source: str = "something I read") -> str | None:
     """The sentence refusing an unsupervised action in a turn that has read
@@ -2506,7 +2843,12 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     in his own words, on a turn with no foreign text in it — his voice is the
     only evidence available, and requiring it is the strongest rule this
     design can actually keep.
+
+    Off by default; `JARVIS_REFUSE_UNTRUSTED_ACTIONS` switches the whole
+    refusal on, memory writers included.
     """
+    if not _untrusted_actions_refused():
+        return None
     if not read_untrusted:
         return None
     if tool not in ACTING_TOOLS:
@@ -2699,6 +3041,7 @@ _FILE_WRAP_NAME = "file"
 _DOCUMENT_WRAP_NAME = "document"
 _MEMORY_WRAP_NAME = "memory"
 _RUNS_WRAP_NAME = "runs"
+_HISTORY_WRAP_NAME = "history"
 
 
 def _wrap_untrusted(name: str, text: str) -> str:
@@ -3243,6 +3586,10 @@ def tool_session_detail(args: dict) -> str:
                     f"{_join_natural(_collapse_consecutive(tools))}.")
     if not session.steerable:
         head.append("I cannot send messages to this one — it has no inbox socket.")
+    reply = _session_reply(session)
+    if reply and len(reply) > session_watch.MAX_TEXT:
+        head.append(f"Its last reply is {len(reply):,} characters and only the "
+                    f"start is below; read_session_reply has all of it.")
 
     # The TOPIC belongs in the block with the rest of what that session said.
     # It is its own summary of its own work — text JARVIS did not write — and
@@ -3265,6 +3612,84 @@ def tool_session_detail(args: dict) -> str:
     if body:
         detail += "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(body))
     return detail
+
+
+# One page of a session's reply. Leaves room under TOOL_RESULT_CAP for the
+# header and the wrapper, so a page is never cut by the cap.
+REPLY_PAGE_CHARS = _WRAP_CONTENT_CAP - 200
+
+
+def _session_reply(session) -> Optional[str]:
+    """The session's whole last reply, read from its transcript."""
+    roots = session_watcher.roots if session_watcher is not None else None
+    return session_watch.read_last_reply(session.cwd, session.session_id, roots)
+
+
+def _pages(text: str, size: int) -> list[str]:
+    """Split into pages of at most `size`, breaking at a newline or a space
+    where one falls in the second half of the page."""
+    pages = []
+    while len(text) > size:
+        cut = max(text.rfind("\n", size // 2, size), text.rfind(" ", size // 2, size))
+        cut = cut if cut > 0 else size
+        pages.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    if text:
+        pages.append(text)
+    return pages
+
+
+def _page_arg(args: dict) -> int:
+    """The `page` a paged tool was asked for, as a number: 1 if absent or
+    not a number. Never echoed raw, so a page name cannot become a sentence."""
+    try:
+        return int(args.get("page") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _one_page(text: str, page: int, what: str, tool: str) -> str:
+    """One page of `text` with a header saying where it sits and how to get
+    the next, the page itself wrapped as untrusted. `what` is a header
+    phrase JARVIS wrote ("guard's last reply"); `tool` is the tool to call
+    for the next page."""
+    pages = _pages(text, REPLY_PAGE_CHARS)
+    if not 1 <= page <= len(pages):
+        return (f"{what} has {len(pages)} page{'s' if len(pages) != 1 else ''}; "
+                f"there is no page {page}.")
+    head = (f"{what}, page {page} of {len(pages)} "
+            f"({len(text):,} characters in all).")
+    if page < len(pages):
+        head += f" Call {tool} again with page {page + 1} for the rest."
+    return head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, pages[page - 1])
+
+
+def tool_read_session_reply(args: dict) -> str:
+    """A session's whole last reply, one page at a time."""
+    global last_mentioned_session
+    session, problem, _reason = _resolve_or_explain(str(args.get("name") or ""))
+    if problem:
+        return problem
+    last_mentioned_session = session.session_id
+    name = _said_name(session, "That session")
+    reply = _session_reply(session)
+    if not reply:
+        return f"{name} hasn't said anything yet."
+    return _one_page(reply, _page_arg(args), f"{name}'s last reply",
+                     "read_session_reply")
+
+
+def tool_session_needs(args: dict) -> str:
+    """Everything every session has written down as needing the user."""
+    boards = [b for b in session_needs.read_boards(data_paths.needs_dir()) if b.items]
+    if not boards:
+        return "No session has anything waiting for you, sir."
+    text = "\n\n".join(b.text for b in boards)
+    count = sum(b.items for b in boards)
+    return _one_page(text, _page_arg(args),
+                     f"{_say_number(count).capitalize()} item"
+                     f"{'s' if count != 1 else ''} from {_say_number(len(boards))} "
+                     f"project{'s' if len(boards) != 1 else ''}", "session_needs")
 
 
 def tool_list_projects(args: dict) -> str:
@@ -3381,6 +3806,17 @@ async def _perform_staged_steers() -> None:
             log.error(f"staged action for {what} failed: {e}", exc_info=True)
 
 
+# The first line of every message JARVIS sends into a session. Without it the
+# session saw only "another Claude session", answered by messaging whichever
+# session it guessed, and once recorded an approval as coming from a session
+# that had never written to it. The answer belongs in its own transcript,
+# where `read_session_reply` reads it in full.
+STEER_SIGNATURE = (
+    "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your "
+    "turn with your full reply; JARVIS reads it from your transcript and "
+    "tells Tim. Do not send your answer to another session.]\n\n")
+
+
 async def _perform_steer(item: _StagedSteer) -> None:
     """One staged steer, start to finish. Records EXACTLY one audit row.
 
@@ -3436,8 +3872,11 @@ async def _perform_steer(item: _StagedSteer) -> None:
             return
 
         outcome = await asyncio.to_thread(
-            session_steer.post_to_session, item.socket_path, item.prompt)
+            session_steer.post_to_session, item.socket_path,
+            STEER_SIGNATURE + item.prompt)
         record(outcome)
+        if outcome == session_steer.SENT and session_watcher is not None:
+            session_watcher.expect_reply(item.session_id)
         if outcome == session_steer.SENT:
             # SENT means the bytes left over the socket, nothing more: no
             # reply is ever read back, so this must not claim the target
@@ -4115,6 +4554,9 @@ async def tool_spawn_run(args: dict) -> str:
     name, path, problem = _resolve_project_or_explain(reference)
     if problem:
         return problem
+    redirect = _live_session_redirect(name, path, args, "spawn_run")
+    if redirect:
+        return redirect
     if run_executor_instance is None:
         return "I can't start anything just now, sir."
 
@@ -4159,6 +4601,8 @@ async def tool_spawn_run(args: dict) -> str:
 TOOL_HANDLERS.update({
     "list_sessions": tool_list_sessions,
     "session_detail": tool_session_detail,
+    "read_session_reply": tool_read_session_reply,
+    "session_needs": tool_session_needs,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -4202,6 +4646,9 @@ _RUN_LOOKBACK = 20
 # somebody else's process. It gets the same untrusted wrapping as a session
 # transcript, and only a short head of it.
 _RUN_ERROR_CHARS = 200
+# How much of a finished run's final message run_status hands the brain, so it
+# can say what the run produced rather than only that it finished.
+_RUN_RESULT_CHARS = 1500
 
 
 def _recent_runs() -> list[dict]:
@@ -4410,9 +4857,15 @@ def _describe_run(run: dict, with_reason: bool = False) -> str:
                                                question[:_RUN_ERROR_CHARS])
             return line
         if outcome == stream_parser.NO_CHANGES:
-            return (f"The work in {project} finished {when}, sir, but I can't "
+            line = (f"The work in {project} finished {when}, sir, but I can't "
                     f"see that it changed anything.")
-        return f"The work in {project} finished {when}, sir, and it worked."
+        else:
+            line = f"The work in {project} finished {when}, sir, and it worked."
+        result = (run.get("result_text") or "").strip()
+        if with_reason and result:
+            line += "\nIts final message:\n" + _wrap_untrusted(
+                _RUN_WRAP_NAME, result[:_RUN_RESULT_CHARS])
+        return line
     if status == S.CANCELLED:
         return f"The work in {project} was stopped {when}, sir."
     if status == S.TIMED_OUT:
@@ -4434,7 +4887,7 @@ def _running_now_summary() -> str:
         recent = run_store.list_runs(limit=1)
         if recent:
             return (f"Nothing is running just now, sir. "
-                    f"{_describe_run(recent[0])}")
+                    f"{_describe_run(recent[0], with_reason=True)}")
         return "Nothing is running just now, sir."
     if len(active) == 1:
         return _describe_run(active[0])
@@ -4940,9 +5393,8 @@ async def tool_start_build(args: dict) -> str:
     * the spec is WRITTEN INTO THE PROJECT before anything spawns, so the
       design survives a compaction, a replaced session, and JARVIS's own
       context rotation — the artifact is the point;
-    * the model is never guessed. The user asked for this directly ("when
-      we're building you should ask what model we want to run in"), so an
-      absent model comes back as the question rather than as a default.
+    * the model is never asked for. The user has ordered JARVIS to stop asking,
+      so an absent model is Sonnet; Opus only when the caller passes it.
 
     Not time-boxed: `timeout_sec` stays 0. Runtime was never the constraint.
     """
@@ -4953,16 +5405,15 @@ async def tool_start_build(args: dict) -> str:
     if not reference:
         return "Which project should I build that in, sir?"
 
-    model = _normalise_model(str(args.get("model") or ""))
-    if not model:
-        # Deliberately a question, not a default. Said as JARVIS would say it,
-        # because the brain will pass it straight on.
-        return ("Which model should it run in, sir — Opus for a real build, "
-                "or Sonnet? Ask him, then call this again with his answer.")
+    # No model, or one that is nothing like a model, is Sonnet — never a question.
+    model = _normalise_model(str(args.get("model") or "")) or "sonnet"
 
     name, path, problem = _resolve_project_or_explain(reference)
     if problem:
         return problem
+    redirect = _live_session_redirect(name, path, args, "start_build")
+    if redirect:
+        return redirect
     if run_executor_instance is None:
         return "I can't start anything just now, sir."
 
@@ -5520,15 +5971,29 @@ async def tool_read_file(args: dict) -> str:
     # `_safe_label`, and the full path is repeated inside the body where a
     # payload in it is plainly somebody else's text.
     relative = _repo_relative(root, resolved)
-    label = _plain_name(relative, "That file")
+    header, named = _window_parts(relative, "That file", window)
+    if named is None:
+        return header
+    return f"{header}\n{_wrap_untrusted(_FILE_WRAP_NAME, window.text if named else f'{relative}\n\n{window.text}')}"
+
+
+def _window_parts(relative: str, fallback: str, window) -> tuple[str, bool | None]:
+    """(header, named) for a `repo_read.Window`: a header that says which lines
+    of how many, and whether it named the file (None when the window is empty
+    and there is nothing to wrap). `relative` is the name AS IT IS, so it only
+    goes in the header if it is a plain name; otherwise the caller repeats it
+    at the top of the untrusted block. The caller builds that body inside its
+    own `_wrap_untrusted` call, so the wrapper's name stays a literal at its
+    call site (see `_WRAP_NAME_SHAPE`) and the raw name is never text outside
+    a block."""
+    label = _plain_name(relative, fallback)
     if not window.total:
-        return f"{label} is empty, sir."
+        return f"{label} is empty, sir.", None
     header = f"{label}, lines {window.first} to {window.last} of {window.total}"
     header += " — truncated, there is more." if window.truncated else "."
     if window.note:
         header += f" There is {window.note}, so this is the top of it."
-    body = window.text if label == relative else f"{relative}\n\n{window.text}"
-    return f"{header}\n{_wrap_untrusted(_FILE_WRAP_NAME, body)}"
+    return header, label == relative
 
 
 async def tool_open_in_editor(args: dict) -> str:
@@ -5576,7 +6041,63 @@ async def tool_open_in_editor(args: dict) -> str:
     return f"Opened {what} in {result.get('editor', 'your editor')}, sir."
 
 
+# --- JARVIS's own earlier conversations -----------------------------------
+#
+# Tim lost a conversation to a context clear and the brain had no way to look
+# it up. `history_read` holds the wall (only the brain's own transcripts and
+# the journal, memory and projects folders; no credential, no escape) and
+# these two put the result in front of the brain. What was said earlier was
+# said by the user, a session, or a page the brain once read, so both are in
+# TAINTING_TOOLS and everything comes back inside an untrusted block.
+
+HISTORY_REFUSAL_NAME = "my own history"
+
+
+async def tool_search_history(args: dict) -> str:
+    """Where something was said before, as `source:line: when: text`."""
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "What should I look for, sir?"
+    try:
+        hits = await asyncio.to_thread(history_read.search, query)
+    except OSError as e:
+        log.warning("search_history failed: %s", e)
+        return "I couldn't search my history, sir."
+    if not hits.lines:
+        return "Nothing matching that in my earlier conversations or notes, sir."
+    count = len(hits.lines)
+    what = (f"{'At least ' if hits.capped else ''}{count} "
+            f"match{'es' if count != 1 else ''} in earlier conversations and "
+            f"notes, newest first")
+    return _one_page("\n".join(hits.lines), _page_arg(args), what,
+                     "search_history")
+
+
+async def tool_read_history(args: dict) -> str:
+    """A BOUNDED window on one earlier conversation or note."""
+    source = str(args.get("source") or "").strip()
+    if not source:
+        return "Which entry, sir?"
+    try:
+        sid, resolved = await asyncio.to_thread(history_read.resolve, source)
+        window = await asyncio.to_thread(history_read.read_window, resolved,
+                                         args.get("around"))
+    except repo_read.Refused as refused:
+        if str(refused) == "missing":
+            return "I have no such entry in my history, sir."
+        return _repo_refusal(refused, HISTORY_REFUSAL_NAME)
+    except OSError as e:
+        log.warning("read_history failed: %s", e)
+        return "I couldn't read that one, sir."
+    header, named = _window_parts(sid, "That entry", window)
+    if named is None:
+        return header
+    return f"{header}\n{_wrap_untrusted(_HISTORY_WRAP_NAME, window.text if named else f'{sid}\n\n{window.text}')}"
+
+
 TOOL_HANDLERS.update({
+    "search_history": tool_search_history,
+    "read_history": tool_read_history,
     "repo_overview": tool_repo_overview,
     "search_repo": tool_search_repo,
     "read_file": tool_read_file,
@@ -6676,8 +7197,15 @@ async def voice_handler(ws: WebSocket):
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
                 log.info(f"User: {text}")
-                if _is_fresh_start(text):
-                    _spawn(_start_fresh())
+                cleared = _take_clear_answer(text)
+                if cleared:
+                    continue
+                if cleared is None and _is_fresh_start(text):
+                    _spawn(_ask_to_clear(text))
+                    continue
+                if cleared is False and _rotation_answer(text) is False:
+                    continue                # a plain no: consumed, not a request
+                if _take_rotation_answer(text):
                     continue
                 _spawn(_handle_utterance(text))
     except WebSocketDisconnect:
@@ -6763,12 +7291,6 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot begin or end with a space or a quote"
     return None
 
-
-def _env_file_path() -> Path:
-    # JARVIS_ENV_FILE exists so the test suite cannot write into the
-    # developer's live .env — the same reasoning as JARVIS_DATA_DIR.
-    override = os.getenv("JARVIS_ENV_FILE", "").strip()
-    return Path(override) if override else Path(__file__).parent / ".env"
 
 def _env_example_path() -> Path:
     return Path(__file__).parent / ".env.example"

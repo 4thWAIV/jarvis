@@ -74,6 +74,40 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "read_session_reply",
+        "description": (
+            "A session's whole last reply, one page at a time. session_detail shows "
+            "only the start of it. Each page says how many pages there are; read "
+            "every page before you tell the user what the session said or asked, "
+            "and never report a session's questions from the first page alone."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The session as the user refers to it."},
+                "page": {"type": "integer",
+                         "description": "Which page, starting at 1. Omit for the first."},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "session_needs",
+        "description": (
+            "What every Claude Code session has written down as needing the user: "
+            "its open decisions, questions and blockers, each with the session's "
+            "recommendation, grouped by project. Use it whenever the user asks what "
+            "is waiting on him or what the sessions need. Read every page, then give "
+            "him each item in a sentence with its recommendation, so he can decide."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "page": {"type": "integer",
+                         "description": "Which page, starting at 1. Omit for the first."},
+            },
+        },
+    },
+    {
         "name": "steer_session",
         "description": (
             "Send a message into a running Claude Code session, as if the user had "
@@ -135,13 +169,20 @@ TOOL_SPECS = [
             "Name the project as the user named it — if that is ambiguous, or the "
             "project is unknown, this comes back with a question to ask rather than "
             "starting anything. Write the prompt as a complete instruction: the run "
-            "is unattended and cannot ask a follow-up. ASK THE USER WHICH MODEL "
-            "before you start anything, unless he has already said — he asked for "
-            "that explicitly. Returns as soon as the run has started; the user is "
+            "is unattended and cannot ask a follow-up. NEVER ASK WHICH MODEL: "
+            "omit `model` and it runs on Sonnet; pass one only if the user named "
+            "it, or Opus with a short reason stated up front. Returns as soon as the run has started; the user is "
             "told when it finishes."),
         "inputSchema": {
             "type": "object",
             "properties": {
+                "override": {"type": "boolean",
+                             "description": ("True only when the user has said, "
+                                             "for this task, to start a separate "
+                                             "run in a project that already has a "
+                                             "live session. Otherwise omit it: "
+                                             "work for a project with a live "
+                                             "session goes to that session.")},
                 "project": {"type": "string",
                             "description": "The project as the user refers to it."},
                 "prompt": {"type": "string",
@@ -152,8 +193,8 @@ TOOL_SPECS = [
                                           "WHENEVER the user names one ('opus', "
                                           "'opus 5', 'sonnet'); say it back as "
                                           "you heard it and it is normalised "
-                                          "for you. Omit only if he named "
-                                          "none.")},
+                                          "for you. Omit it for Sonnet, "
+                                          "never ask.")},
                 "resume": {"type": "boolean",
                            "description": ("True when this continues work a "
                                            "previous run did in that project — "
@@ -177,10 +218,9 @@ TOOL_SPECS = [
             "it is for, what it must do, what he feels strongly about, what is "
             "explicitly out of scope, and which of two or three approaches he "
             "wants. THEN confirm, and only then call this. "
-            "ASK WHICH MODEL BEFORE YOU START — he asked for that in as many "
-            "words. Opus for a real build, Sonnet for something lighter. If you "
-            "call this without a model it comes back with the question rather "
-            "than choosing for him. "
+            "NEVER ASK WHICH MODEL: omit `model` and the build runs on Sonnet. "
+            "Pass Opus only with a short reason stated up front, or the model "
+            "the user named. "
             "`spec` is everything the two of you settled, written out properly — "
             "it is saved into the project as a design document and is the only "
             "thing that survives if that session is replaced or compacted, so put "
@@ -190,6 +230,13 @@ TOOL_SPECS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "override": {"type": "boolean",
+                             "description": ("True only when the user has said, "
+                                             "for this task, to start a separate "
+                                             "run in a project that already has a "
+                                             "live session. Otherwise omit it: "
+                                             "work for a project with a live "
+                                             "session goes to that session.")},
                 "project": {"type": "string",
                             "description": "The project as the user refers to it."},
                 "spec": {
@@ -212,10 +259,10 @@ TOOL_SPECS = [
                 },
                 "model": {
                     "type": "string",
-                    "description": ("The model this build runs on. ASK THE USER "
-                                    "FIRST; pass what he says ('opus', 'opus 5', "
-                                    "'sonnet'). Omitting it returns the question "
-                                    "to ask, and starts nothing."),
+                    "description": ("The model this build runs on. Never ask: "
+                                    "omit for Sonnet, pass what the user named "
+                                    "('opus', 'opus 5', 'sonnet'), or Opus with "
+                                    "a reason stated up front."),
                 },
             },
             "required": ["project", "spec"],
@@ -612,6 +659,51 @@ TOOL_SPECS = [
                                            "to centre the window on.")},
             },
             "required": ["project", "path"],
+        },
+    },
+    {
+        "name": "search_history",
+        "description": (
+            "Search YOUR OWN earlier conversations with the user — every "
+            "generation, including ones since cleared or rotated — and your "
+            "journal, memory and project notes. Case-insensitive and literal, "
+            "so search for the plain word or phrase. Returns matches newest "
+            "first as 'source:line: when: text'; pass a hit's source (and "
+            "line as 'around') to read_history for more. Use it BEFORE you "
+            "tell the user you cannot find, or do not remember, something "
+            "from an earlier conversation. Read-only. Each page says how many "
+            "pages there are."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "The literal text to look for."},
+                "page": {"type": "integer",
+                         "description": "Which page, starting at 1. Omit for the first."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_history",
+        "description": (
+            "Read a bounded window of one earlier conversation or note — the "
+            "follow-up to a search_history hit. 'source' is exactly what the "
+            "hit printed before its first colon (e.g. journal/2026-09-03.md "
+            "or transcript/<id>); 'around' is the hit's line number or a "
+            "phrase to centre on. Never returns the whole thing: the answer "
+            "says which lines came back out of how many. Only your own "
+            "transcripts, journal, memory and project notes can be read."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string",
+                           "description": "The source, as search_history printed it."},
+                "around": {"type": "string",
+                           "description": ("Optional: a line number, or a phrase "
+                                           "to centre the window on.")},
+            },
+            "required": ["source"],
         },
     },
     {

@@ -534,17 +534,16 @@ async def test_the_model_is_passed_through_and_read_back_from_the_store(ready):
 
 
 @pytest.mark.asyncio
-async def test_no_model_asks_the_question_and_starts_nothing(ready, project):
-    """'when we're building you should ask what model we want to run in'."""
+async def test_no_model_defaults_to_sonnet_and_never_asks(ready, project):
+    """The user has repeatedly ordered: never ask which model."""
     server, _store, ex = ready
 
     out = await server.tool_start_build({"project": "chitauri", "spec": SPEC})
 
-    assert ex.spawned == [], "nothing may start before he has chosen"
-    assert not list((project / builds.SPEC_DIR).glob("*.md")) \
-        if (project / builds.SPEC_DIR).exists() else True
-    assert "which model" in out.lower()
-    assert "opus" in out.lower() and "sonnet" in out.lower()
+    assert len(ex.spawned) == 1, "a missing model must not stop the build"
+    assert ex.spawned[0]["model"] == "sonnet"
+    assert "which model" not in out.lower()
+    assert "sonnet" in out.lower()
 
 
 @pytest.mark.asyncio

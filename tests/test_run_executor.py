@@ -687,12 +687,17 @@ async def test_events_are_batched_not_written_per_event(env, monkeypatch):
         return original(run_id, rows)
 
     monkeypatch.setattr(store, "append_events", counting)
+    # The half-second flush is wall-clock: on a loaded machine the fixture's
+    # lines can arrive more than 0.5 s apart and add a write, which is the
+    # flush working, not batching failing. Taken out, what is left is only
+    # the batching under test, and the count is the same on every machine.
+    monkeypatch.setattr(mod, "_EVENT_FLUSH_SEC", 3600.0)
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id)
 
     assert len(store.get_events(run_id, limit=100)) == 14
-    assert len(calls) <= 3, f"expected batching, got {len(calls)} writes"
+    assert len(calls) <= 3, f"expected batching, got {len(calls)} writes: {calls}"
 
 
 @pytest.mark.asyncio

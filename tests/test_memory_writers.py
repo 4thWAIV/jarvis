@@ -340,6 +340,8 @@ class _Brain:
 
 @pytest.fixture
 def wired_server(monkeypatch, tmp_path):
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     import data_paths

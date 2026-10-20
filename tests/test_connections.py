@@ -162,6 +162,8 @@ def test_the_persona_and_the_connections_file_share_one_mechanism():
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
     """A reloaded server module with its own data dir."""
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import data_paths
     importlib.reload(data_paths)
@@ -333,7 +335,7 @@ def test_the_static_allowlist_still_names_only_jarvis_and_the_two_web_tools():
     here, where a coding tool could drift in beside them."""
     import brain
     assert {t for t in brain.ALLOWED_TOOLS if not t.startswith("mcp__")} == \
-        {"WebSearch", "WebFetch"}
+        {"WebSearch", "WebFetch", "Skill"}
     assert all(t.startswith("mcp__jarvis__") for t in brain.ALLOWED_TOOLS
                if t.startswith("mcp__"))
 

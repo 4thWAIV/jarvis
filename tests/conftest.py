@@ -1,7 +1,66 @@
 import asyncio
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
+
+from tests.fixtures.local_config import read_local_skips
+
+# server.py loads its .env the moment it is imported, and test modules import
+# it at collection, before any fixture runs. Pointing JARVIS_ENV_FILE at a file
+# that does not exist, here, means even that first import never reads the
+# developer's real settings. Each test then gets its own file below.
+NO_DOTENV_UNDER_TEST = Path(tempfile.gettempdir()) / "jarvis-tests" / "no-dotenv" / ".env"
+os.environ["JARVIS_ENV_FILE"] = str(NO_DOTENV_UNDER_TEST)
+
+
+def pytest_report_header(config):
+    """Say up front when this machine's own file is skipping tests."""
+    skips = read_local_skips()
+    if skips:
+        return (f"tests/local-config.toml skips: tests={skips.tests} "
+                f"markers={skips.markers}")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip what tests/local-config.toml lists. No file, no skips."""
+    try:
+        skips = read_local_skips()
+    except ValueError as e:
+        raise pytest.UsageError(str(e)) from e
+    if not skips:
+        return
+    mark = pytest.mark.skip(reason=skips.reason)
+    for item in items:
+        if skips.skips(item.nodeid, {m.name for m in item.iter_markers()}):
+            item.add_marker(mark)
+
+
+@pytest.fixture(autouse=True)
+def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
+    """Every test starts from the shipped default: the refusal OFF.
+
+    `server.py` copies the repository's `.env` into the environment at import,
+    so a developer who set JARVIS_REFUSE_UNTRUSTED_ACTIONS there would flip
+    every test's default. A test that wants the refusal on sets it itself
+    (`refusal_on` below); the obsolete JARVIS_ALLOW_UNTRUSTED_ACTIONS is
+    cleared too.
+
+    Set to empty rather than deleted: the `.env` loader only fills in keys
+    that are missing (`os.environ.setdefault`), and the many tests that
+    `importlib.reload(server)` would put a deleted key straight back. Empty
+    reads as off.
+    """
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "")
+    monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "")
+
+
+@pytest.fixture
+def refusal_on(monkeypatch):
+    """Opt in to the untrusted-content refusal for one test or module."""
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
 
 
 @pytest.fixture(autouse=True)

@@ -40,6 +40,8 @@ def _config(tmp_path, **kw):
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     import data_paths
@@ -68,7 +70,7 @@ def test_those_two_are_the_only_built_ins_on_the_allowlist():
     tools, and no coding tool (Bash, Write, Edit) is ever reachable."""
     import brain
     built_ins = {t for t in brain.ALLOWED_TOOLS if not t.startswith("mcp__")}
-    assert built_ins == {"WebSearch", "WebFetch"}
+    assert built_ins == {"WebSearch", "WebFetch", "Skill"}
 
 
 # --- knowing that the web has been read -----------------------------------

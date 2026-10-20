@@ -384,6 +384,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._live_session_redirect": (
+        "it reads a session's `cwd` only to compare it with the project's "
+        "path; the string it returns names the project by `name`, which "
+        "`_resolve_project_or_explain` resolved from the user's own list, and "
+        "carries no roster field. Driven in test_one_writer_per_project.py"),
     "server._session_line": (
         "it prints `summary()` — another session's own words — with no "
         "escaping at all, and that is correct only because every caller puts "
@@ -911,6 +916,55 @@ def _drive_announce_needs_you(server, session, monkeypatch):
 
 
 DRIVERS["server._announce_needs_you"] = _drive_announce_needs_you
+
+
+def _drive_read_session_reply(server, session, monkeypatch):
+    """Every page, the last-page header, a page out of range, and silence."""
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (session, None, None))
+    reply = " ".join([str(session.last_text or "")] * 40)
+    monkeypatch.setattr(server, "_session_reply", lambda s: reply)
+    out = [server.tool_read_session_reply({"name": "hammer"})]
+    pages = len(server._pages(reply, server.REPLY_PAGE_CHARS))
+    out.append(server.tool_read_session_reply({"name": "hammer", "page": pages}))
+    out.append(server.tool_read_session_reply({"name": "hammer", "page": pages + 1}))
+    monkeypatch.setattr(server, "_session_reply", lambda s: None)
+    out.append(server.tool_read_session_reply({"name": "hammer"}))
+    return out
+
+
+def _drive_announce_reply(server, session, monkeypatch):
+    """The spoken line AND the note the brain reads with the next turn: the
+    note is a header line too, in the user's own turn."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    payload = {"voice_name": session.voice_name, "project": session.project,
+               "state": session.state}
+    asyncio.run(server._announce_reply({"session": payload}))
+    return list(speech.said) + [server._with_notes_for_brain("")]
+
+
+def _drive_announce_board(server, session, monkeypatch):
+    """A board's project is a FILE NAME a session chose, and it reaches both
+    the spoken line and the note the brain reads with the next turn."""
+    import asyncio
+    import session_needs
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    board = session_needs.Board(project=str(session.voice_name or ""),
+                                text="- " + str(session.title or ""), mtime=1.0)
+    asyncio.run(server._announce_board(board))
+    return list(speech.said) + [server._with_notes_for_brain("")]
+
+
+DRIVERS["server._announce_board"] = _drive_announce_board
+DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
+DRIVERS["server._announce_reply"] = _drive_announce_reply
 
 
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------

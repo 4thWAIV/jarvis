@@ -80,6 +80,8 @@ class _Brain:
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     import data_paths
@@ -333,3 +335,39 @@ async def test_the_brain_carries_the_label_not_just_a_flag(monkeypatch, tmp_path
 
     b._inflight = None
     assert b.turn_untrusted_source is None, "the taint does not outlive the turn"
+
+
+# --- the opt-in ---
+
+def test_untrusted_actions_are_allowed_by_default(wired, monkeypatch):
+    server, _project = wired
+    monkeypatch.delenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", raising=False)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+    assert server._untrusted_content_refusal("remember", True) is None
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", "On"])
+def test_the_opt_in_refuses_acting_and_memory_writes(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", value)
+    assert "untrusted_content_in_this_turn" in server._untrusted_content_refusal(
+        "spawn_run", True)
+    assert "untrusted_content_in_this_session" in server._untrusted_content_refusal(
+        "remember", True)
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", ""])
+def test_a_falsy_opt_in_does_not_refuse(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", value)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+
+
+@pytest.mark.parametrize("value", ["1", "true", "0", ""])
+def test_the_obsolete_variable_has_no_effect(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "")
+    monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", value)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    assert server._untrusted_content_refusal("spawn_run", True)

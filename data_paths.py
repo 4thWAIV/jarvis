@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -121,6 +122,8 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "8b038b5497293a55d1aa18e9ce759d3270228c98ae8b3ceb3bb053eb84509310",  # anything read off this machine is information
     "dfec0e28f7fc734987a1bcffd4feda103bde961f4a4721ce7957a7dccae96487",  # send it, do not ask twice
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
+    "823173e3afd5acac3061a5e09db34cf88719e482dec950b794dbdcd973990910",  # start fresh takes two turns: command, then yes
+    "a7fce109e7496e8afbb74e3dbe80aaf3a17eb7975ef180981c541ee142a6cff5",  # untrusted refusal off by default; search_history
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -300,6 +303,42 @@ def sync_connections() -> str:
     return _sync_template(connections_template_path(), connections_path(),
                           connections_seed_path(), KNOWN_CONNECTIONS_HASHES,
                           "connections file")
+
+
+def needs_dir() -> Path:
+    """Where sessions write what they need from the user, one file per
+    project (see session_needs.py). Created so a session can always write."""
+    path = data_dir() / "needs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+_SKILLS_SOURCE = Path(__file__).parent / "skills"
+
+
+def brain_skills_dir() -> Path:
+    """Where the brain (cwd = brain home, `--setting-sources project`) loads skills."""
+    return brain_home() / ".claude" / "skills"
+
+
+def sync_skills(source: Optional[Path] = None) -> list[str]:
+    """Copy every `skills/<name>/` from the repo into the brain's skills folder.
+
+    The tracked repo folder is the source; the git-ignored data folder is the
+    output. A real copy (not a symlink), existing files overwritten, nothing
+    else deleted. A missing source folder is a no-op. Returns the names copied.
+    """
+    src = _SKILLS_SOURCE if source is None else source
+    if not src.is_dir():
+        return []
+    copied = []
+    for skill in sorted(p for p in src.iterdir() if p.is_dir()):
+        try:
+            shutil.copytree(skill, brain_skills_dir() / skill.name, dirs_exist_ok=True)
+            copied.append(skill.name)
+        except OSError as e:
+            log.warning(f"data_paths: skill {skill.name} not synced ({e})")
+    return copied
 
 
 def ensure_brain_home() -> Path:

@@ -69,6 +69,8 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__repo_overview",
     "mcp__jarvis__search_repo",
     "mcp__jarvis__read_file",
+    "mcp__jarvis__search_history",
+    "mcp__jarvis__read_history",
     "mcp__jarvis__open_in_editor",
     "mcp__jarvis__remember",
     "mcp__jarvis__recall",
@@ -86,6 +88,8 @@ ALLOWED_TOOLS = [
     # WEB_CONTENT_TOOLS below and server.py's `_untrusted_content_refusal`.
     "WebSearch",
     "WebFetch",
+    # Loads the repo's `skills/<name>/SKILL.md`, synced into the brain home.
+    "Skill",
 ]
 
 # JARVIS ships connected to nothing, and the user brings their own MCP servers
@@ -295,8 +299,7 @@ class BrainConfig:
     max_restarts: int = 3
     restart_window: float = 300.0
     rate_limit_default_sec: float = 300.0   # when a rate-limit event has no usable resetsAt
-    context_budget: int = 120000            # rotate once the CONVERSATION outgrows this
-    max_turns_before_forced_rotation: int = 10
+    context_budget: int = 900000            # ask to rotate once the CONVERSATION outgrows this
     user_name: str = ""
     mcp_config: Optional[Path] = None
     # Names of the MCP servers the user declared for themselves, as accepted
@@ -312,7 +315,7 @@ class BrainConfig:
             effort=os.getenv("JARVIS_BRAIN_EFFORT", "low"),
             claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
             turn_timeout=float(os.getenv("JARVIS_BRAIN_TURN_TIMEOUT", "90")),
-            context_budget=int(os.getenv("JARVIS_BRAIN_CONTEXT_BUDGET", "120000")),
+            context_budget=int(os.getenv("JARVIS_BRAIN_CONTEXT_BUDGET", "900000")),
             user_name=os.getenv("USER_NAME", ""),
         )
 
@@ -618,19 +621,14 @@ class Brain:
 
     @property
     def rotation_pending(self) -> bool:
-        """The window has outgrown its budget; rotate at the next pause."""
+        """The window has outgrown its budget; the user is asked at the next
+        pause, and it rotates only once he says yes."""
         return self._rotation_pending
 
     @property
     def turns_since_rotation(self) -> int:
         """Turns served since a rotation was scheduled — how long it has waited."""
         return self._turns_since_pending
-
-    @property
-    def rotation_overdue(self) -> bool:
-        """A conversation that never pauses still has to rotate eventually."""
-        return (self._rotation_pending
-                and self._turns_since_pending >= self.config.max_turns_before_forced_rotation)
 
     # ── command construction ───────────────────────────────────────────
     def _boot_handover(self) -> Optional[str]:
@@ -907,7 +905,8 @@ class Brain:
     # ── context budget and rotation ────────────────────────────────────
     async def _note_context(self) -> None:
         """Called after each served turn. Scheduling is all this does —
-        performing a rotation mid-conversation would cut the user off.
+        performing a rotation mid-conversation would cut the user off, and
+        performing one at all is the user's call (server.py asks him).
 
         The budget is spent on CONVERSATION, not on the fixed cost of being
         connected. Every tool schema is resident in every single turn — a
@@ -941,6 +940,7 @@ class Brain:
         # The spawn lock first and the turn lock second, because _spawn() takes
         # them in that order (its warm-up is a turn); the other order would
         # deadlock a rotation against a restart.
+        log.info("brain: rotate requested (handover=%s)", bool(handover))
         async with self._spawn_lock, self._turn_lock:
             if self._stopping or self._failed or not self.ready:
                 log.info("rotation skipped: the brain is not serving")
@@ -1259,6 +1259,8 @@ class Brain:
                     await self._emit("failed", reason=reason)
                     return
                 self._restart_times.append(now)
+                log.warning("brain: restarting after a crash/stall (%s); the "
+                            "conversation is replaced by the last handover", reason)
                 backoff = 2 ** (len(self._restart_times) - 1) * 0.5
                 await self._emit("restarting", reason=reason, backoff=backoff)
                 await asyncio.sleep(backoff)

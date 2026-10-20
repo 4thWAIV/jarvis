@@ -63,6 +63,18 @@ this presents as "the UI is up but nothing works" rather than as an error.
   CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
   and then needs `JARVIS_ALLOWED_ORIGINS`.
 
+## Clearing the conversation
+JARVIS never clears, rotates or replaces its conversation without the user's
+yes. Clearing takes two turns: the whole utterance must be exactly
+`start fresh` (lowercased, punctuation stripped, optional leading "jarvis";
+no substring matching), which only makes JARVIS ask "Clear the whole
+conversation, sir? Say yes to confirm."; only an unambiguous yes in the very
+next utterance (`_rotation_answer`) clears. Anything else, or a timeout,
+cancels and says nothing was cleared. Context rotation likewise waits for a
+yes to its own question. Every clear or rotation is logged with its trigger
+and the exact utterance. The one involuntary replacement is the crash/stall
+restart in `brain.py`, which is recovery, not a decision, and is logged.
+
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 
@@ -103,6 +115,11 @@ arbitrary LLM and file content, so everything goes through
   build produced
 - `projects_view.py` — The Projects tab: a read-only JOIN over runs,
   sessions, plans and the repo, by project
+- `history_read.py` — The brain's read-only memory of its OWN earlier
+  conversations: `search_history` / `read_history` over its Claude Code
+  transcripts (user and assistant text only) and the `journal/`, `memory/` and
+  `projects/` Markdown. Allowed roots only, credentials and symlink escapes
+  refused; results are untrusted
 - `session_watch.py` — Watches every Claude Code session on the machine
   (process / conversation / project)
 - `session_steer.py` — Sends a message into a running session's inbox socket
@@ -158,6 +175,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   always passed explicitly as `--model`
 - `JARVIS_BRAIN_AUTOSTART` (optional, default `1`) — `0` builds the brain but
   never spawns it (every test sets this)
+- `JARVIS_BRAIN_CONTEXT_BUDGET` (optional, default `900000`) — tokens of
+  conversation before JARVIS asks to compact its context. It never rotates
+  without the user's yes; he is asked again every ten turns, and the Claude
+  CLI's own auto-compact is the backstop if he never agrees
 - `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
   rejection is not enough with a given microphone
 - `FISH_API_KEY` (required) — Fish Audio TTS
@@ -180,9 +201,15 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   tailscale name has to be listed here to work at all
 - `JARVIS_DEBUG_DOCS` (optional, default off) — serve `/docs`, `/redoc` and
   `/openapi.json`. That console has a "Try it out" button on every route
-- `JARVIS_ENV_FILE` (optional) — where the settings endpoints read and write
-  `.env`. Defaults to the repo's own; the test suite redirects it so no test
-  can rewrite the developer's real configuration
+- `JARVIS_REFUSE_UNTRUSTED_ACTIONS` (optional, default off) — `1`/`true`/`yes`/`on`
+  turns ON the untrusted-content action refusal: a turn that has read foreign
+  text may not act, and memory writers are refused for the rest of that
+  generation. Off by default, so JARVIS keeps acting after reading foreign
+  content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
+- `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
+  settings endpoints read and write. Defaults to the repo's own; the test
+  suite redirects it so no test reads or rewrites the developer's real
+  configuration
 
 ## Testing
 Run the suite as:
@@ -198,6 +225,12 @@ bare run is the whole suite and touches neither the network nor the screen.
 the file) because it drives `browser.py`, which launches Chromium with
 `headless=False` on purpose and runs live searches. Run those with
 `pytest -m browser`; they skip themselves if there is no network.
+
+`tests/local-config.toml` skips tests on one machine only. Git ignores it,
+and with no file nothing is skipped; `tests/local-config.example.toml` shows
+the format (test node ids or markers under `[skip]`). The two tests marked
+`sips` call macOS's real `sips`, so a Mac where `sips` crashes lists that
+marker there.
 
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that

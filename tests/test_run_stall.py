@@ -201,6 +201,19 @@ def test_run_status_reports_the_stall(wired):
     assert "stopped to ask a question" in out
 
 
+def test_run_status_returns_the_final_result_text(wired):
+    """run_status must tell the brain what a finished run produced, capped."""
+    server, store = wired
+    answer = "Built the page. " + "x" * 3000
+    _finished_run(store, [_assistant(tools=["Write"]), _assistant(answer)],
+                  result_text=answer)
+    out = server.tool_run_status({"run": "tony-starks-website"})
+    assert "and it worked" in out
+    assert "<session-output" in out and "Built the page." in out
+    assert "x" * server._RUN_RESULT_CHARS not in out   # header text eats some
+    assert out.count("x") <= server._RUN_RESULT_CHARS
+
+
 def test_a_huge_run_is_never_downgraded(wired, monkeypatch):
     """Reading a partial stream could miss the Write that proves work
     happened, so past the cap the answer is the one that cannot be wrong."""

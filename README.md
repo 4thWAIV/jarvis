@@ -295,8 +295,8 @@ over a stdio channel that forwards to `POST /internal/tool`. The exact set
 is the allowlist at the top of `brain.py`, which is the list to read rather
 than a number to quote here.
 
-What it does *not* get is a way to act on something it has just read off the
-web. A turn that used `WebSearch`, `WebFetch`, `read_page` or `look_at_page`
+With `JARVIS_REFUSE_UNTRUSTED_ACTIONS` on (off by default), it does not get a
+way to act on something it has just read off the web. A turn that used `WebSearch`, `WebFetch`, `read_page` or `look_at_page`
 is refused every acting tool for the rest of that turn, and no acting tool
 runs at all unless the turn began with you speaking. Text that arrives from a
 web page, a screenshot or another session's transcript is untrusted, and is
@@ -326,7 +326,7 @@ invariants hold throughout it:
 | File | Purpose |
 |------|---------|
 | `server.py` | The server: WebSocket handler, HTTP API, every `/internal/tool` handler |
-| `brain.py` | The voice brain — spawning, turns, restarts, context rotation |
+| `brain.py` | The voice brain — spawning, turns, restarts, context rotation (only on your yes) |
 | `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
 | `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
 | `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
@@ -364,7 +364,8 @@ those words into a sentence JARVIS speaks aloud. There is no separator, no
 close a wrapper — only words, never a fake instruction with structure. The
 alternative is an assistant that cannot name what it is looking at.
 
-**The taint gate stops action, not persuasion.** Anything JARVIS reads from
+**The taint gate stops action, not persuasion.** It is opt-in
+(`JARVIS_REFUSE_UNTRUSTED_ACTIONS`, off by default); when on, anything JARVIS reads from
 a web page, a file, another session, a run, the screen or a connected MCP
 server is marked untrusted, and every acting tool is refused for the rest
 of that turn — for the two tools that write memory, the rest of that
@@ -385,6 +386,13 @@ it at, scrubbed only of `ANTHROPIC_*`/`CLAUDE_CODE_*` environment variables
 (`claude_env.py`), not of filesystem access. It can write anything you could
 write by hand, including the Claude Code session roster and transcripts that
 JARVIS himself later reads back as another session's words.
+
+**Opting in.** The refusal above is OFF by default, so JARVIS keeps acting
+and talking to sessions after reading foreign text. Set
+`JARVIS_REFUSE_UNTRUSTED_ACTIONS` to `1`, `true`, `yes` or `on` to turn it on:
+a turn that has read foreign text may then not act, and memory writers are
+refused for the rest of that generation. The old
+`JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored.
 
 **Loopback is trusted.** Anything on this machine that can present an
 `Origin` of `http://localhost:5173` through `5180`, or the API port itself

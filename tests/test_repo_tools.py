@@ -531,6 +531,33 @@ async def test_the_home_directory_as_a_project_still_refuses_its_dotfiles(
     assert out == server.REPO_SENSITIVE_REFUSAL
 
 
+@pytest.mark.parametrize("name", [".private", ".tmt"])
+@pytest.mark.asyncio
+async def test_private_and_tmt_are_readable_and_listable(ready, name):
+    server, _fake, project = ready
+    (project / name).mkdir()
+    (project / name / "notes.md").write_text("marker-in-" + name.strip("."))
+
+    out = await server.tool_read_file({"project": "chitauri",
+                                       "path": f"{name}/notes.md"})
+    assert "marker-in-" + name.strip(".") in out
+    assert repo_read.sensitive_reason(Path(name) / "notes.md") is None
+    assert not repo_read._skip_dir(name)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_dotfile_is_still_refused(ready):
+    server, _fake, project = ready
+    (project / ".secrets-unknown").mkdir()
+    (project / ".secrets-unknown" / "notes.md").write_text("hidden-marker")
+
+    out = await server.tool_read_file({"project": "chitauri",
+                                       "path": ".secrets-unknown/notes.md"})
+    assert out == server.REPO_SENSITIVE_REFUSAL
+    assert repo_read.sensitive_reason(Path(".secrets-unknown")) is not None
+    assert repo_read._skip_dir(".secrets-unknown")
+
+
 @pytest.mark.asyncio
 async def test_an_example_env_is_not_a_secret(ready):
     """`.env.example` is documentation, and often the single most useful file
