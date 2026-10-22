@@ -127,14 +127,14 @@ async def test_a_failed_standby_leaves_the_current_brain_serving(tmp_path, monke
         await b.start()
         await b.turn("hello")
         gen = b.generation
-        pid = b._proc.pid
+        pid = b._session.proc.pid
         marker.write_text("x")                    # the replacement exits 1 at startup
 
         assert await b.rotate(handover="x") is False
 
         assert not marker.exists(), "the replacement really was spawned"
         assert b.ready is True and b.generation == gen
-        assert b._proc.pid == pid, "still the process that works"
+        assert b._session.proc.pid == pid, "still the process that works"
         assert (await b.turn("still there?")).stop_reason == "result"
         assert b.rotation_pending is True, "the rotation is still owed"
     finally:
@@ -152,7 +152,7 @@ async def test_a_failed_rotation_never_announces_a_dead_brain(tmp_path, monkeypa
         b.on_state(lambda s, info: states.append(s))
         await b.start()
         await b.turn("hello")
-        b._claude = "/definitely/not/here/claude"          # the CLI vanished mid-session
+        b.config.claude_path = "/definitely/not/here/claude"          # the CLI vanished mid-session
 
         assert await b.rotate(handover="x") is False
 
@@ -198,7 +198,7 @@ async def test_a_rotation_that_loses_both_processes_is_handed_back_to_the_restar
     try:
         await b.start()
         await b.turn("hello")
-        old = b._proc
+        old = b._session.proc
         real = asyncio.create_subprocess_exec
 
         async def kill_the_predecessor(*argv, **kw):
@@ -226,11 +226,11 @@ async def test_the_superseded_process_is_not_orphaned(tmp_path):
     try:
         await b.start()
         await b.turn("hello")
-        old_pid = b._proc.pid
+        old_pid = b._session.proc.pid
 
         assert await b.rotate(handover="x") is True
 
-        new_pid = b._proc.pid
+        new_pid = b._session.proc.pid
         assert new_pid != old_pid
         assert await _wait_until(lambda: not _alive(old_pid), 3.0), "superseded child still alive"
     finally:
@@ -335,17 +335,17 @@ def test_a_cache_rebuild_is_not_counted_as_the_conversation_growing():
     and again next turn under cache_read. Summing all three counted every
     cache miss as the conversation doubling. The window is the prompt as
     sent: input plus cache_read, and nothing else."""
-    t = brain._Turn("user", None)
+    import claude_provider
     # A cache-miss turn: everything was re-created, nothing was read.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
-               "cache_creation_input_tokens": 29_000, "output_tokens": 40}
-    assert t.context_tokens() == 500, (
+    usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
+             "cache_creation_input_tokens": 29_000, "output_tokens": 40}
+    assert claude_provider.context_tokens(usage) == 500, (
         "29k of cache creation is the floor being rebuilt, not 29k of new "
         "conversation")
     # The next turn reads that cache back: THIS is the real window size.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
-               "cache_creation_input_tokens": 0, "output_tokens": 40}
-    assert t.context_tokens() == 29_500
+    usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
+             "cache_creation_input_tokens": 0, "output_tokens": 40}
+    assert claude_provider.context_tokens(usage) == 29_500
 
 
 @pytest.mark.asyncio

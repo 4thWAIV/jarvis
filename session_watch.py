@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 # Both roots must be read: the CLI's default and the one Orcha sets via
@@ -24,6 +24,11 @@ from pathlib import Path
 # every session lived under `~/.claude-orcha` — a plain-Terminal user is the
 # mirror image, so neither root may be dropped.
 DEFAULT_ROOTS = ("~/.claude", "~/.claude-orcha")
+
+# Who runs every session this module finds: they are all Claude Code
+# sessions, so Anthropic. The page shows this provider's logo on each
+# agent; a watcher for another tool gives its sessions its own.
+PROVIDER = "anthropic"
 
 
 def config_roots() -> list[Path]:
@@ -435,6 +440,7 @@ class SessionState:
     # Do not "simplify" these back into one.
     since: float | None = None
     origin: str = "terminal"
+    provider: str = PROVIDER
     steerable: bool = False
     socket_path: str | None = None
     # Is this the conversation the user is actually sitting at, in this
@@ -973,6 +979,21 @@ class Snapshot:
         kept.sort(key=lambda s: (s.project, s.voice_name))
         return Snapshot(sessions=kept, taken_at=self.taken_at)
 
+    def named(self, official: dict[str, str]) -> "Snapshot":
+        """This snapshot with each session in `official` (session id -> name)
+        going by that name instead of the one `_assign_voice_names` derived.
+
+        The names the user has set are the official ones: the voice name is
+        what JARVIS says, what `resolve` matches and what the agents list
+        shows, so replacing it here makes all of them use the official name.
+        Sessions are copied, never changed in place: the watcher's own
+        snapshot is shared."""
+        if not official or not any(s.session_id in official for s in self.sessions):
+            return self
+        sessions = [replace(s, voice_name=official[s.session_id])
+                    if s.session_id in official else s for s in self.sessions]
+        return Snapshot(sessions=sessions, taken_at=self.taken_at)
+
     def by_project(self) -> dict[str, list[SessionState]]:
         out: dict[str, list[SessionState]] = {}
         for s in self.sessions:
@@ -1318,6 +1339,13 @@ class SessionWatcher:
             import logging
             logging.getLogger(__name__).warning(
                 "session watcher did not stop cleanly", exc_info=True)
+
+
+def agent_name(s: SessionState) -> str:
+    """The one place an agent's name comes from (the agents list, its page
+    control and JARVIS's agent tools all read it from here). Today it is the
+    voice name `_assign_voice_names` gives the session."""
+    return s.voice_name
 
 
 def session_to_dict(s: SessionState) -> dict:

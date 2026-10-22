@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
+import claude_provider
 
 
 @pytest.fixture
@@ -93,9 +94,9 @@ def test_the_three_tool_sets_still_agree(ready):
     import jarvis_mcp
     server, _usage = ready
     assert "usage_status" in server.TOOL_HANDLERS
-    assert "mcp__jarvis__usage_status" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__usage_status" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 
@@ -205,7 +206,7 @@ def test_a_threshold_warning_is_never_reported_as_cut_off(ready):
     already shipped once, in brain.py."""
     import brain
     server, usage_store = ready
-    assert "allowed_warning" not in brain.BLOCKING_RATE_LIMIT_STATUSES
+    assert "allowed_warning" not in claude_provider.BLOCKING_RATE_LIMIT_STATUSES
     usage_store.record({"status": "allowed_warning",
                         "unifiedWindows": {
                             "five_hour": {"utilization": 0.81,
@@ -230,7 +231,7 @@ def test_the_blocking_statuses_come_from_one_place(ready):
     import brain
     server, _usage = ready
     assert server.BLOCKING_RATE_LIMIT_STATUSES is \
-        brain.BLOCKING_RATE_LIMIT_STATUSES
+        claude_provider.BLOCKING_RATE_LIMIT_STATUSES
 
 
 # --- through the real funnel ----------------------------------------------

@@ -23,6 +23,8 @@ import json
 import pytest
 
 import preflight
+from tests.fixtures.captures import captured
+import claude_provider
 
 
 @pytest.fixture
@@ -157,7 +159,7 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
 
     import asyncio
     out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        server.tool_steer_session({"name": "chitauri", "prompt": "use Postgres"}))
+        server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "use Postgres"})))
 
     assert "staged" in out
     assert "approve" in out
@@ -227,7 +229,7 @@ def test_it_is_an_acting_tool(wired):
     server, _settings = wired
     assert "enable_session_inbox" in server.TOOL_HANDLERS
     assert "enable_session_inbox" in server.ACTING_TOOLS
-    assert "mcp__jarvis__enable_session_inbox" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__enable_session_inbox" in claude_provider.ALLOWED_TOOLS
     assert "enable_session_inbox" in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
 
 

@@ -13,6 +13,7 @@ discarded the rest, which is how work lands in the wrong repository.
 import importlib
 
 import pytest
+import claude_provider
 
 
 @pytest.fixture
@@ -75,8 +76,8 @@ def test_the_three_tool_sets_still_agree(ready):
     import brain
     import jarvis_mcp
     server, _store, _ex = ready
-    assert "mcp__jarvis__spawn_run" in brain.ALLOWED_TOOLS
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert "mcp__jarvis__spawn_run" in claude_provider.ALLOWED_TOOLS
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 

@@ -44,6 +44,21 @@ def brain_home() -> Path:
     return data_dir() / "jarvis"
 
 
+def brains_path() -> Path:
+    """Which brains JARVIS has and which it starts with (brains_config.py)."""
+    path = brain_home()
+    path.mkdir(parents=True, exist_ok=True)
+    return path / "brains.json"
+
+
+def codex_home() -> Path:
+    """The OpenAI brain's own Codex home (`CODEX_HOME`): its login, its
+    generated config.toml and its transcripts. Never the user's ~/.codex."""
+    path = data_dir() / "codex"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def persona_template_path() -> Path:
     """The CLAUDE.md this release ships."""
     return _TEMPLATE_DIR / _PERSONA_NAME
@@ -124,6 +139,9 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
     "823173e3afd5acac3061a5e09db34cf88719e482dec950b794dbdcd973990910",  # start fresh takes two turns: command, then yes
     "a7fce109e7496e8afbb74e3dbe80aaf3a17eb7975ef180981c541ee142a6cff5",  # untrusted refusal off by default; search_history
+    "dea4c901e908aa59d7175cd65d238353d4142d7cac6cfef080439644df2cd783",  # sources and links go on the screen, never in speech
+    "30a27af7e4c6ddc85b9c6bb800f73b6dc5f1533274eea36434e54ee271e36327",  # everything sent to a session is a capture
+    "32991d0b38ee01232891dc5270104dc46ecd7886c32bc57f4352a2f0161300db",  # read back, merge to one, see and clear the boxes
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -377,9 +395,12 @@ def ensure_memory_layout() -> Path:
     return home
 
 
-def usage_path() -> Path:
-    """The last rate-limit observation from the CLI (see usage_store.py)."""
-    return data_dir() / "usage.json"
+def usage_path(service: str = "anthropic") -> Path:
+    """The last rate-limit observation for one brain provider (see
+    usage_store.py). Anthropic's keeps the name it always had."""
+    if service == "anthropic":
+        return data_dir() / "usage.json"
+    return data_dir() / f"usage-{service}.json"
 
 
 def tool_token_path() -> Path:

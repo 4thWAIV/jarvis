@@ -97,6 +97,23 @@ def init_db() -> None:
                 created_at REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_steers_created ON steers(created_at DESC);
+
+            -- Every running Claude Code session, by name, its state as the
+            -- session watcher derives it, and whether the user has activated
+            -- it. `active` is his choice alone: a session seen for the first
+            -- time is inactive. See sync_agents.
+            CREATE TABLE IF NOT EXISTS agents (
+                session_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT '',
+                -- The name the user set, if any: the agent's official name.
+                -- Never written by sync_agents. NULL means "use the derived
+                -- one". `name` holds whichever applies.
+                custom_name TEXT,
+                -- When JARVIS last sent it a message (0: never). Orders the list.
+                last_message_at REAL NOT NULL DEFAULT 0
+            );
         """)
         conn.commit()
 
@@ -112,6 +129,18 @@ def init_db() -> None:
         if "is_error" not in cols:
             conn.execute(
                 "ALTER TABLE runs ADD COLUMN is_error INTEGER DEFAULT 0")
+            conn.commit()
+        agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
+        if "state" not in agent_cols:
+            conn.execute(
+                "ALTER TABLE agents ADD COLUMN state TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        if "custom_name" not in agent_cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN custom_name TEXT")
+            conn.commit()
+        if "last_message_at" not in agent_cols:
+            conn.execute(
+                "ALTER TABLE agents ADD COLUMN last_message_at REAL NOT NULL DEFAULT 0")
             conn.commit()
 
 
@@ -292,3 +321,113 @@ def list_steers(limit: int = 50) -> list[dict]:
             "SELECT * FROM steers ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- Agents ----------------------------------------------------------------
+
+def _agent_row(row) -> dict:
+    return {"session_id": row["session_id"], "name": row["name"],
+            "active": bool(row["active"]), "state": row["state"]}
+
+
+def sync_agents(running: dict[str, tuple[str, str]]) -> bool:
+    """Make the agents list match what is running now: `running` maps each
+    running session's id to its (name, state).
+
+    A session seen for the first time is added INACTIVE; only the user
+    activates one (set_agent_active). A known one keeps its `active` and has
+    its state refreshed, and its name too unless the user has set one
+    (rename_agent), which always wins. One that is no longer running is removed.
+    Returns whether anything changed, so the caller only tells the pages
+    when it did.
+    """
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT session_id, name, state, custom_name FROM agents").fetchall()
+        known = {r["session_id"]: (r["name"], r["state"]) for r in rows}
+        # A name the user set is the official one, whatever was derived.
+        custom = {r["session_id"]: r["custom_name"] for r in rows if r["custom_name"]}
+        running = {sid: (custom.get(sid, name), state)
+                   for sid, (name, state) in running.items()}
+        added = [(sid, name, state) for sid, (name, state) in running.items()
+                 if sid not in known]
+        changed = [(name, state, sid) for sid, (name, state) in running.items()
+                   if sid in known and known[sid] != (name, state)]
+        ended = [(sid,) for sid in known if sid not in running]
+        conn.executemany(
+            "INSERT INTO agents (session_id, name, state, active) VALUES (?, ?, ?, 0)",
+            added)
+        conn.executemany("UPDATE agents SET name=?, state=? WHERE session_id=?", changed)
+        conn.executemany("DELETE FROM agents WHERE session_id=?", ended)
+        conn.commit()
+    return bool(added or changed or ended)
+
+
+# The states that count as busy: doing something, or waiting on the user.
+# Everything else (idle, not yet started, a shell) counts as idle.
+BUSY_AGENT_STATES = ("working", "needs_you")
+
+
+def list_agents() -> list[dict]:
+    """In order of activity: busy agents above idle ones, and within each,
+    the one most recently sent a message first, then by name."""
+    busy = ", ".join("?" * len(BUSY_AGENT_STATES))
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM agents ORDER BY (state IN ({busy})) DESC, "
+            "last_message_at DESC, name COLLATE NOCASE", BUSY_AGENT_STATES).fetchall()
+    return [_agent_row(r) for r in rows]
+
+
+def mark_agent_messaged(session_id: str) -> None:
+    """JARVIS has just sent this agent a message: it moves up its group."""
+    with closing(_connect()) as conn:
+        conn.execute("UPDATE agents SET last_message_at=? WHERE session_id=?",
+                     (time.time(), session_id))
+        conn.commit()
+
+
+def set_agent_active(session_id: str, active: bool) -> dict | None:
+    """The user activating or deactivating one agent. None if it is not in
+    the list (it has ended, or was never seen)."""
+    with closing(_connect()) as conn:
+        conn.execute("UPDATE agents SET active=? WHERE session_id=?",
+                     (int(bool(active)), session_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM agents WHERE session_id=?",
+                           (session_id,)).fetchone()
+    return _agent_row(row) if row else None
+
+
+class DuplicateAgentName(ValueError):
+    """Another running agent already goes by that name."""
+
+
+def official_names() -> dict[str, str]:
+    """session id -> the name the user set, for every agent that has one."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT session_id, custom_name FROM agents WHERE custom_name IS NOT NULL"
+        ).fetchall()
+    return {r["session_id"]: r["custom_name"] for r in rows}
+
+
+def rename_agent(session_id: str, new_name: str) -> dict | None:
+    """Set an agent's official name. None if there is no such agent;
+    DuplicateAgentName if another agent already has that name (compared
+    without regard to case, since names are spoken)."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM agents WHERE session_id=?",
+                           (session_id,)).fetchone()
+        if row is None:
+            return None
+        clash = conn.execute(
+            "SELECT 1 FROM agents WHERE session_id != ? AND lower(name) = lower(?)",
+            (session_id, new_name)).fetchone()
+        if clash:
+            raise DuplicateAgentName(new_name)
+        conn.execute("UPDATE agents SET custom_name=?, name=? WHERE session_id=?",
+                     (new_name, new_name, session_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM agents WHERE session_id=?",
+                           (session_id,)).fetchone()
+    return _agent_row(row)

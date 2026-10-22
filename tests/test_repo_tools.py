@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 
 import repo_read
+import claude_provider
 
 
 class _Actions:
@@ -109,9 +110,9 @@ def test_the_tool_sets_still_agree(ready):
     server, _fake, _project = ready
     for name in ("repo_overview", "search_repo", "read_file", "open_in_editor"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

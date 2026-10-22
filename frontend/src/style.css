@@ -4,6 +4,33 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
+     mirrored on the right. */
+  --ray-lane: 4vw;
+  /* The two side panels: the left column (orb, status, mic, agents) and the
+     right-hand display. Exactly this wide. */
+  --panel-width: 230px;
+  /* Where a side panel's inner edge is, from its own side of the page. */
+  --panel-edge: calc(var(--ray-lane) + var(--panel-width));
+  /* The space between the caption box and each side panel; the same both
+     sides, so the box sits centred between them. */
+  --caption-gap: 12px;
+  /* The centre area's header row of view tabs: where it sits, how tall it is. */
+  --centre-header-top: 16px;
+  --centre-header-height: 36px;
+  /* The footer's height. Everything else on the page stops above it, so it
+     always runs the full width of the page beneath them. */
+  --footer-height: 40px;
+  /* The gap kept above the footer by everything that stands on it: the two
+     side panels and the caption box all end this far above it. */
+  --above-footer: 8px;
+  /* An agent row and the gap between rows (the agents list, AgentsControl.tsx
+     measures rendered rows). On :root because the orb's height uses them. */
+  --agent-row: 60px;
+  --agent-gap: 8px;
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -12,19 +39,107 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-#orb-canvas {
+/* The upper left column: the orb, a fifth of the page wide and between a
+   third and a half of it high, with the status and mic controls below it.
+   The rest of the page is black. */
+/* It runs the full height of the page, so the agents list below the other
+   controls can take exactly the space that is left (8px kept clear at the
+   bottom) and never run past it. */
+/* Ending exactly where the right-hand panel does, --above-footer above the
+   footer. No
+   visible box; the border is kept but transparent so every size inside is
+   unchanged. */
+#left-column {
   position: fixed;
   top: 0;
+  left: var(--ray-lane);
+  width: var(--panel-width);
+  height: calc(100vh - var(--footer-height) - var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid transparent;
+  z-index: 20;
+}
+
+#left-column > * {
+  flex: none;
+}
+
+/* The right-hand display mirrors the left column: the same width, the same
+   lane kept clear at the page edge, the full height. */
+#right-column {
+  position: fixed;
+  top: 0;
+  right: var(--ray-lane);
+  width: var(--panel-width);
+  height: calc(100vh - var(--footer-height));
+  /* No side padding: its panel is exactly as wide as the left column's orb. */
+  padding: 16px 0 var(--above-footer);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+}
+
+/* The icons run from the right edge leftward: the first tab is furthest right. */
+.right-tabs {
+  flex: none;
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 6px;
+}
+
+.right-tab.selected {
+  color: rgba(14, 165, 233, 0.95);
+  background: rgba(14, 165, 233, 0.15);
+  border-color: rgba(14, 165, 233, 0.45);
+}
+
+/* No visible box (the border is transparent, so sizes inside are unchanged). */
+.right-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid transparent;
+}
+
+/* One agent row shorter than it was (36vh), so the agents list below holds
+   one more row at any window height while the column still stops above the
+   footer; plus whatever is left under the last whole row (--orb-spare, set
+   by AgentsControl.tsx), so the column is filled to its bottom. */
+#orb-control {
+  position: relative;
+  width: 100%;
+  height: calc(36vh - var(--agent-row) - var(--agent-gap) + var(--orb-spare, 0px));
+}
+
+/* The active brain's logo, tight in the orb's lower left corner, lined up
+   with the logos in Diagnostics. */
+#brain-logo {
+  position: absolute;
   left: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  opacity: 0.85;
+  pointer-events: auto;
+}
+
+/* Exactly the Stop button's height in every state, so nothing below moves. */
+#status-control {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#orb-canvas {
+  display: block;
   width: 100%;
   height: 100%;
 }
 
 #status-text {
-  position: fixed;
-  bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
   color: rgba(14, 165, 233, 0.5);
   font-size: 13px;
   letter-spacing: 2px;
@@ -35,8 +150,314 @@ html, body {
   z-index: 10;
 }
 
-#jarvis-label {
+/* The footer spans the bottom of the page; what is in it keeps its place. */
+/* Captions: directly above the footer, centred between the two side panels
+   with the same gap (--caption-gap) to each. Always four
+   lines tall; the conversation scrolls inside it (CaptionBox.tsx keeps the
+   newest words in view), with no scroll bar. */
+#centre-bottom {
   position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+}
+
+/* The capture boxes, above the captions (Main) or under the history
+   (Conversation): what Tim said to send, as wide as the captions and as tall
+   as its text needs. White until it is known to be a message for an agent,
+   amber from then on, through transmitting. Its state sits over the top
+   right of the border. */
+/* However many are open, the list stays within its share of the screen and
+   scrolls; the padding keeps the top box's label clear of the edge. */
+.capture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: none;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-top: 8px;
+  scrollbar-width: thin;
+}
+
+.capture-box {
+  position: relative;
+  padding: 10px 14px 8px;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.capture-box .capture-state {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.8);
+  background: #050508;
+}
+
+.capture-box.message,
+.capture-box.transmitting {
+  color: rgba(251, 191, 36, 0.9);
+  border-color: rgba(251, 191, 36, 0.6);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.capture-box.message .capture-state,
+.capture-box.transmitting .capture-state { color: rgba(251, 191, 36, 0.9); }
+
+/* The texts cross: the old fades out over the new, and the box eases to the
+   new height (CaptureBox.tsx sets it only while they cross). */
+.capture-body {
+  position: relative;
+  transition: height 0.25s ease;
+}
+.capture-text.arriving { animation: capture-in 0.25s ease both; }
+.capture-text.leaving {
+  position: absolute;
+  inset: 0 0 auto 0;
+  animation: capture-out 0.25s ease both;
+}
+@keyframes capture-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes capture-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Where a capture's words were in the conversation: a collapsed item that
+   opens to the words as heard. */
+.capture-chip-head {
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  padding: 0 8px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.capture-chip-head::before { content: "▸ "; }
+.capture-chip.open .capture-chip-head::before { content: "▾ "; }
+/* Opened: what he said, quiet grey, then the capture itself. */
+.capture-chip-body { display: block; margin-top: 2px; }
+.capture-chip-said,
+.capture-chip-captured { display: block; }
+.capture-chip-said { color: rgba(210, 214, 222, 0.6); }
+.capture-chip-captured { color: rgba(255, 255, 255, 0.9); }
+
+/* Each capture kind's look. A transmission (a capture for an agent): amber,
+   the transmission's colour, and on the right of the history. */
+.capture-chip.kind-transmission .capture-chip-head {
+  color: rgba(251, 191, 36, 0.95);
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.55);
+}
+.capture-chip.kind-transmission .capture-chip-captured { color: rgba(251, 191, 36, 0.9); }
+.history-turn.kind-transmission { text-align: right; }
+
+/* The centre area's header: the view tabs along its top, named in words. */
+.centre-tabs {
+  position: fixed;
+  top: var(--centre-header-top);
+  height: var(--centre-header-height);
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+}
+/* A tab named in words: as wide as its word, in capitals like the page's
+   other headers. Two classes, so it outranks .control-button's icon size. */
+.control-button.word-tab {
+  width: auto;
+  height: var(--centre-header-height);
+  padding: 0 16px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The Conversation view, anchored to the bottom: the white box at the very
+   bottom, the blue box above it, the captures above that, and the history
+   taking every bit of height left, up to the header. */
+#conversation {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+  --conversation-line: 20px;
+  font-size: 14px;
+  line-height: var(--conversation-line);
+  text-align: left;
+}
+
+#conversation > div { flex: none; scrollbar-width: none; }
+#conversation > div::-webkit-scrollbar { display: none; }
+
+/* Everything said, in all the height the boxes below leave; it scrolls,
+   with a thin bar so it reads as a scroll box. */
+#conversation > .conversation-history {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+.history-turn { letter-spacing: 0.3px; }
+.history-turn.user { color: rgba(255, 255, 255, 0.85); }
+.history-turn.jarvis { color: rgba(14, 165, 233, 0.85); }
+.history-turn.long { cursor: pointer; }
+.history-turn.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* What JARVIS is saying now: four lines, blue. */
+.conversation-speaking {
+  position: relative;
+  box-sizing: content-box;
+  height: calc(4 * var(--conversation-line));
+  overflow-y: auto;
+  padding: 8px 14px;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.06);
+}
+
+/* What Tim is saying now, at the very bottom: white, one line growing to
+   four. */
+.conversation-hearing {
+  box-sizing: content-box;
+  min-height: var(--conversation-line);
+  max-height: calc(4 * var(--conversation-line));
+  overflow-y: auto;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.conversation-hearing .caption-turn.user { color: rgba(255, 255, 255, 0.9); }
+
+#caption-box {
+  padding: 8px 14px;
+  border: 1px solid rgba(14, 165, 233, 0.15);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.04);
+  z-index: 10;
+}
+
+/* Exactly four lines: a whole-pixel line height, so the lines sit on whole
+   pixels and scrolling to the end lines the top one up with the edge. */
+.caption-scroll {
+  --caption-line: 20px;
+  height: calc(4 * var(--caption-line));
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-size: 14px;
+  line-height: var(--caption-line);
+  text-align: left;
+}
+
+.caption-scroll::-webkit-scrollbar { display: none; }
+
+.caption-turn { letter-spacing: 0.3px; }
+.caption-turn.user { color: rgba(255, 255, 255, 0.6); }
+.caption-turn.jarvis { color: rgba(14, 165, 233, 0.6); }
+
+/* The word JARVIS is speaking glows: brighter text with a soft halo, no
+   box. The word before it is still fading out. One look wherever he speaks:
+   the captions, the blue box, and a capture read back (SpokenWords.tsx). */
+.spoken-word {
+  transition: color 0.25s ease, text-shadow 0.25s ease;
+}
+
+.spoken-word.now {
+  color: #e6f7ff;
+  text-shadow: 0 0 6px rgba(120, 210, 255, 0.95), 0 0 14px rgba(14, 165, 233, 0.7);
+}
+
+.spoken-word.fading {
+  color: rgba(150, 215, 250, 0.85);
+  text-shadow: 0 0 4px rgba(14, 165, 233, 0.4);
+}
+
+/* The rays: a fibre-optic line from the orb to the agent JARVIS messaged, in
+   the transmission's colour (--ray-colour, set per ray): a soft glow under a
+   thin bright core, pulses running along it, and the whole thing fading out
+   after six seconds (RAY_MS in RayLane.tsx). */
+#ray-lane {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 15;                       /* behind the left column and its orbs */
+}
+
+.ray {
+  fill: none;
+  stroke-linejoin: round;
+  animation: ray-fade 6s ease-out forwards;
+}
+
+.ray-glow { stroke: var(--ray-colour); stroke-opacity: 0.55; stroke-width: 6; }
+.ray-core { stroke: var(--ray-colour); stroke-width: 1.5; }
+
+.ray-pulse {
+  stroke: #ffffff;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 6 44;            /* two pulses on the line at a time */
+  animation: ray-pulse 1.4s linear infinite;
+}
+
+@keyframes ray-pulse {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes ray-fade {
+  0% { opacity: 0; }
+  5% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* The footer: the full width of the page, below everything else. */
+#footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--footer-height);
+  pointer-events: none;
+  z-index: 10;
+}
+
+#jarvis-label {
+  position: absolute;
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
@@ -58,7 +479,7 @@ html, body {
   z-index: 20;
 }
 
-#controls button {
+.control-button {
   width: 36px;
   height: 36px;
   border: 1px solid rgba(14, 165, 233, 0.15);
@@ -72,13 +493,13 @@ html, body {
   transition: all 0.2s;
 }
 
-#controls button:hover {
+.control-button:hover {
   background: rgba(14, 165, 233, 0.12);
   color: rgba(14, 165, 233, 0.7);
   border-color: rgba(14, 165, 233, 0.3);
 }
 
-#controls button.muted {
+.control-button.muted {
   color: rgba(239, 68, 68, 0.6);
   border-color: rgba(239, 68, 68, 0.2);
 }
@@ -180,6 +601,95 @@ html, body {
 #settings-container.open .settings-panel {
   transform: translateX(0);
 }
+
+/* The Settings view (Settings.tsx): mounted only while open, as a large view
+   over the centre, with its sections listed on the left and stacked in one
+   scrolling body. */
+#settings-container.open { display: block; }
+#settings-container.open .settings-backdrop { opacity: 1; }
+.settings-panel.settings-view {
+  top: 6vh;
+  bottom: 6vh;
+  left: max(16px, 8vw);
+  right: max(16px, 8vw);
+  width: auto;
+  height: auto;
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 12px;
+  transform: none;
+  overflow: hidden;
+}
+.settings-columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.settings-nav {
+  flex: none;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 8px;
+  border-right: 1px solid rgba(0, 212, 255, 0.08);
+}
+.settings-nav button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: rgba(0, 212, 255, 0.55);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav button:hover { background: rgba(0, 212, 255, 0.08); color: rgba(0, 212, 255, 0.85); }
+.settings-view .settings-body { overflow-y: auto; }
+
+/* The Brains section: a card per brain. */
+.brain-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.brain-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+}
+.brain-card.active { border-color: rgba(14, 165, 233, 0.6); }
+.brain-card-state {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.95);
+  background: rgb(8, 10, 18);
+}
+.brain-card-head { display: flex; align-items: center; gap: 10px; }
+.brain-card-logo { width: 22px; height: 22px; object-fit: contain; }
+.brain-card-title { font-size: 14px; color: rgba(255, 255, 255, 0.9); }
+.brain-card-plan { margin-left: auto; font-size: 11px; color: rgba(255, 255, 255, 0.5);
+                   text-transform: capitalize; }
+.brain-card .settings-field { margin: 0; }
+.brain-checks { display: flex; flex-direction: column; gap: 6px; }
+.check-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px;
+             color: rgba(255, 255, 255, 0.75); }
+.check-row .settings-hint { flex-basis: 100%; margin: 0 0 0 16px; }
+.brain-default { display: flex; align-items: center; gap: 8px; font-size: 12px;
+                 color: rgba(255, 255, 255, 0.75); cursor: pointer; }
+.brain-remove { align-self: flex-start; }
+.brain-add { margin-top: 14px; }
 
 .settings-header {
   display: flex;
@@ -435,37 +945,238 @@ html, body {
 /* Microphone input meter — the answer to "is it even hearing me?", visible
    without opening a console. Deliberately small and out of the way: it is
    reassurance while things work and evidence when they do not. */
-#mic-level {
-  position: fixed;
-  left: 18px;
-  bottom: 18px;
-  width: 90px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.10);
+/* The microphone control, centred under the status control. */
+#mic-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  z-index: 20;
+}
+
+.control-button.small {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+/* Muted is unmistakable: solid bright red, a white crossed-out microphone. */
+.control-button.small.muted,
+.control-button.small.muted:hover {
+  color: #ffffff;
+  background: #ef4444;
+  border-color: #ff6b6b;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+}
+
+/* Every running agent. Inactive entries are grayed; active ones are bright.
+   The Active/All switch sits at the top; each entry has its own switch. */
+#left-column > #agents-control {
+  background: transparent;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Inside the column's box; the box is the left edge the eye takes, so the
+     gaps either side of the captions still look the same. */
+  padding: 6px 6px 0;
+}
+
+/* The space the rows get: whatever is left below the switch and the up
+   chevron. It clips, so a wrong count can never draw past the page. */
+.agents-space {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  pointer-events: none;
-  z-index: 50;
 }
-#mic-level::after {
-  content: "";
-  display: block;
+
+.agents-show {
+  display: flex;
+  margin-bottom: 4px;
+}
+
+.agents-show button {
+  flex: 1;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: rgba(14, 165, 233, 0.45);
+  background: transparent;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  cursor: pointer;
+}
+
+.agents-show button:first-child { border-radius: 4px 0 0 4px; }
+.agents-show button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+
+.agents-show button.selected {
+  color: rgba(14, 165, 233, 0.9);
+  background: rgba(14, 165, 233, 0.12);
+}
+
+/* Exactly the rows AgentsControl.tsx decided fit; never a scroll bar, the
+   chevrons page through the rest. The row height is set here and nowhere
+   else; the control measures rendered rows. */
+.agents-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--agent-gap);
+  overflow: hidden;
+}
+
+.agents-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--agent-row);
+  flex: none;
+}
+
+/* Up and down chevrons. Their space is always kept; they are only made
+   visible when there are more agents than rows. */
+.agents-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(14, 165, 233, 0.45);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.agents-chevron:hover {
+  color: rgba(14, 165, 233, 0.95);
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.agent-entry {
+  flex: 1;
+  min-width: 0;
   height: 100%;
-  width: var(--level, 0%);
-  background: #4fd1ff;
-  opacity: 0.55;
-  transition: width 0.08s linear;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 0;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  cursor: default;
 }
-#mic-level.is-hot::after { opacity: 1; }
+
+/* The small orb at the left inside each agent's box, as tall as the box. */
+.agent-orb {
+  flex: none;
+  height: 100%;
+  aspect-ratio: 1;
+  display: block;
+}
+
+.agent-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The needs-board count, in the box's upper right corner. */
+.agent-entry { position: relative; padding-right: 20px; }  /* the name stops short of both */
+.agent-needs {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-size: 10px;
+  line-height: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #fbbf24;
+}
+.agent-needs.none { color: rgba(255, 255, 255, 0.35); }
+
+/* Who runs the agent, in the lower left, lined up with the logos in
+   Diagnostics: the brain's logo (18px) a little smaller. */
+.agent-provider {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  width: 14px;
+  height: 14px;
+  opacity: 0.85;
+}
+
+.agents-list li.active .agent-entry {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+/* An on/off switch: a track with a knob that slides right when on. */
+.agent-switch {
+  flex: none;
+  position: relative;
+  width: 26px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.agent-switch::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  transition: left 0.15s ease;
+}
+
+.agent-switch[aria-checked="true"] {
+  background: rgba(52, 208, 88, 0.35);
+  border-color: rgba(52, 208, 88, 0.6);
+}
+
+.agent-switch[aria-checked="true"]::after {
+  left: 13px;
+  background: #34d058;
+}
+
+#mic-meter {
+  display: flex;
+  gap: 2px;
+}
+
+.mic-segment {
+  width: 4px;
+  height: 12px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.10);
+  transition: background-color 0.08s linear;
+}
+
+.mic-segment.faint.on { background: #c6f6d5; }
+.mic-segment.low.on { background: #34d058; }
+.mic-segment.mid.on { background: #f5c518; }
+.mic-segment.high.on { background: #ff4d4f; }
 
 /* Stop — shown only while he is speaking, because that is the only moment it
    means anything. Escape does the same thing without reaching for the mouse. */
 #hush {
-  position: fixed;
-  left: 50%;
-  bottom: 7vh;
-  transform: translateX(-50%);
-  padding: 9px 22px;
+  height: 26px;
+  padding: 0 22px;
   font: inherit;
   font-size: 13px;
   letter-spacing: 0.16em;
@@ -480,4 +1191,238 @@ html, body {
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 #hush:hover { color: #eaf8ff; border-color: rgba(79, 209, 255, 0.75); }
-#hush[hidden] { display: none; }
+
+/* The account (WeeklyUsage.tsx), in the Diagnostics panel: two rows of the
+   same height, the avatar and what is left of the week's limit, then the
+   provider's logo and the number; to their right, centred across both rows
+   and filling the rest of the panel, the burn-down. */
+.right-view {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The brain's subscription, outlined like the page's other boxes, whiter
+   and rounder: the corners curve about a quarter of the box's height. No
+   fill, so the figures sit on the page's own background. */
+.weekly-usage {
+  --weekly-height: 26px;
+  --weekly-row-gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 16px;
+  position: relative;
+}
+
+/* With more than one brain: which one is the brain, on the border. */
+.weekly-usage.role-brain { border-color: rgba(14, 165, 233, 0.6); }
+.weekly-usage.role-standby { opacity: 0.7; }
+.weekly-role {
+  position: absolute;
+  top: -8px;
+  right: 14px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  line-height: 14px;
+  background: #050508;
+}
+.weekly-role.brain { color: rgba(14, 165, 233, 0.95); }
+.weekly-role.standby { color: rgba(255, 255, 255, 0.55); }
+
+.account-rows {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--weekly-row-gap);
+}
+
+/* The gap is wider than the panel's usual 8px by --weekly-sign-room, and
+   the figures narrower by the same, so the over/under figure's sign has room
+   to its left while the digits and the chart stay where they were. */
+.account-row {
+  --weekly-sign-room: 10px;   /* "88.8%" needs 50px of the 52 this leaves */
+  display: flex;
+  align-items: center;
+  gap: calc(8px + var(--weekly-sign-room));
+  height: var(--weekly-height);
+}
+
+.weekly-avatar,
+.weekly-provider {
+  flex: none;
+  width: var(--weekly-height);
+  height: var(--weekly-height);
+}
+
+.weekly-avatar {
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.weekly-provider img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Both figures the same width, so they line up: room for two digits, a
+   decimal and the half-size superscript ("88.8" and its sign). */
+.weekly-left,
+.weekly-ahead {
+  flex: none;
+  width: calc(5ch - var(--weekly-sign-room));
+  height: var(--weekly-height);
+  font-size: 20px;
+  line-height: var(--weekly-height);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* What is left takes the number's colour: green ahead, red behind. */
+/* The % at half the figure's size, flush against its right, its top level
+   with the top of the digits. The boxes are trimmed to the digits' height
+   (cap top to baseline), so the column is exactly as tall as the digits. */
+.weekly-left,
+.weekly-ahead { display: flex; align-items: center; }
+.weekly-figure,
+.weekly-pct,
+.weekly-sign { text-box: trim-both cap alphabetic; }
+.weekly-group { position: relative; display: inline-flex; align-items: stretch; }
+
+/* The over/under figure's sign, left of the first digit, in the gap so the
+   digits keep their place under the first figure's. It is drawn, not set in
+   type: a square measured against the digits' height (the group is trimmed
+   to them), so its top is level with theirs; a font's "+" floats below the
+   digits' top by an amount no style can reach. It is two thirds of the
+   digits' height (Tim's size), its top kept level with theirs. The bars are
+   the digits' stroke weight. The character stays in the page for reading
+   aloud and copying, at no size. */
+.weekly-sign {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  height: calc(100% * 2 / 3);
+  aspect-ratio: 1;
+  margin-right: 1px;
+  font-size: 0;
+}
+.weekly-sign::before,
+.weekly-sign.plus::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+.weekly-sign::before { left: 0; right: 0; top: calc(50% - 0.8px); height: 1.6px; }
+.weekly-sign.plus::after { top: 0; bottom: 0; left: calc(50% - 0.8px); width: 1.6px; }
+.weekly-marks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 0.5em;
+  line-height: 1;
+}
+
+.weekly-left.ahead, .weekly-ahead.ahead { color: #4ade80; }
+.weekly-left.behind, .weekly-ahead.behind { color: #f87171; }
+.weekly-left.none, .weekly-ahead.none { color: rgba(255, 255, 255, 0.3); }
+
+/* A little shorter than both rows and the gap between them, centred
+   between the two. */
+.weekly-chart {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  height: calc(2 * var(--weekly-height) + var(--weekly-row-gap) - 12px);
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.weekly-ideal {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.weekly-actual {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.weekly-actual.ahead { stroke: #4ade80; }
+.weekly-actual.behind { stroke: #f87171; }
+
+/* The gap between the path and the straight line: solid, vivid. */
+.weekly-gap { stroke: none; }
+.weekly-gap.ahead { fill: #22c55e; }
+.weekly-gap.behind { fill: #ef4444; }
+
+.weekly-now {
+  stroke: rgba(14, 165, 233, 0.5);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The Screen tab lights up when something new is shown there. */
+.right-tab.lit {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.6);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
+}
+
+/* The Screen view: what the brain showed instead of saying it. */
+.screen-view {
+  overflow-y: auto;
+  height: 100%;
+  scrollbar-width: none;
+}
+
+.screen-item + .screen-item { margin-top: 12px; }
+
+.screen-item h3 {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.7);
+  margin-bottom: 4px;
+}
+
+.screen-item ul { list-style: none; }
+
+.screen-item li {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  overflow-wrap: anywhere;
+}
+
+.screen-item a { color: #e6f7ff; text-decoration: none; }
+.screen-item a:hover { text-decoration: underline; }
+
+.screen-host,
+.screen-note {
+  display: block;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* A read of the server's state that failed and is being tried again
+   (liveRead.ts): said, never hidden. */
+.read-failure {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: rgba(248, 113, 113, 0.85);
+}
+.settings-btn:disabled { opacity: 0.4; cursor: not-allowed; }

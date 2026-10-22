@@ -102,7 +102,7 @@ async def test_he_can_find_where_something_lives_in_himself(ready):
     server = ready
     answer = await server.tool_search_repo({"project": "yourself",
                                             "query": "BLOCKING_RATE_LIMIT_STATUSES"})
-    assert "brain.py" in answer
+    assert "claude_provider.py" in answer
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import builds  # noqa: E402
 import specs  # noqa: E402
+import claude_provider
 
 SPEC_BODY = """\
 A local web UI to browse and edit CLAUDE.md files
@@ -294,7 +295,7 @@ def test_both_tools_are_wired_and_declared(wired):
     import brain
     for name in ("review_document", "approve_document"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
 

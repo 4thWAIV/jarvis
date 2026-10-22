@@ -1,4 +1,5 @@
 import pytest
+import claude_provider
 
 
 @pytest.fixture
@@ -106,7 +107,7 @@ def test_every_acting_tool_is_registered(wired):
 def test_the_brain_allowlist_matches_the_registered_tools(wired):
     import brain
     registered = {f"mcp__jarvis__{name}" for name in wired.TOOL_HANDLERS}
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= registered, \
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= registered, \
         "allowlist names a JARVIS tool that does not exist"
 
 

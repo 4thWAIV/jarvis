@@ -10,9 +10,13 @@ That number arrives in exactly one place: a `rate_limit_event` on the brain's
 stdout, which the CLI sends only while a turn is in flight. The brain used it
 for a backoff and threw it away. This module is where it is kept.
 
-  record(rate_limit_info)   persist one observation (called by brain.py)
+  record(rate_limit_info)   persist one observation (called by a brain provider)
   latest()                  the raw stored record, or None
   snapshot()                what /api/usage returns
+
+Each brain provider's observations are kept apart, by its service name
+("anthropic", "openai"): every function takes `service`, Anthropic's by
+default.
 
 THE ONE RULE
 ------------
@@ -114,14 +118,14 @@ def _text(raw: Any) -> str:
 
 # ── reading and writing the file ────────────────────────────────────────────
 
-def latest() -> Optional[dict]:
+def latest(service: Optional[str] = None) -> Optional[dict]:
     """The stored observation, or None if there has never been one.
 
     A missing, unreadable or corrupt file is "no observation" — the dashboard
     must degrade to "not measured", never to an error or to zeroes.
     """
     try:
-        body = json.loads(data_paths.usage_path().read_text())
+        body = json.loads(data_paths.usage_path(service or PROVIDER).read_text())
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as e:
@@ -133,10 +137,10 @@ def latest() -> Optional[dict]:
     return body
 
 
-def _write(record: dict) -> None:
+def _write(record: dict, service: str) -> None:
     """Replace the file atomically. A half-written file would read as corrupt
     on the very next request, which is the one moment it matters."""
-    path = data_paths.usage_path()
+    path = data_paths.usage_path(service)
     try:
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".usage-", suffix=".json")
         try:
@@ -154,7 +158,8 @@ def _write(record: dict) -> None:
         log.warning(f"usage_store: could not persist the observation ({e})")
 
 
-def record(info: Any, *, now: Optional[float] = None) -> Optional[dict]:
+def record(info: Any, *, now: Optional[float] = None,
+           provider: Optional[dict] = None) -> Optional[dict]:
     """Persist one `rate_limit_info` payload. Returns the stored record.
 
     Windows are merged, newest reading per window wins, and each keeps the
@@ -164,8 +169,9 @@ def record(info: Any, *, now: Optional[float] = None) -> Optional[dict]:
     if not isinstance(info, dict):
         return None
     when = time.time() if now is None else float(now)
+    service = (_provider(provider) or {}).get("service") or PROVIDER
 
-    stored = latest() or {}
+    stored = latest(service) or {}
     windows: dict[str, dict] = {
         k: dict(v) for k, v in (stored.get("windows") or {}).items()
         if isinstance(v, dict)
@@ -205,9 +211,87 @@ def record(info: Any, *, now: Optional[float] = None) -> Optional[dict]:
         "status": status,
         "rate_limit_type": named,
         "windows": windows,
+        # Who the figures come from (service and subscription). A report that
+        # does not say keeps the last one known.
+        "provider": _provider(provider) or _provider(stored.get("provider")) or {"service": service},
+        **_week_history(stored, incoming.get("seven_day"), when),
     }
-    _write(stored_record)
+    _write(stored_record, service)
     return stored_record
+
+
+# ── the week, on a straight line ──────────────────────────────────────────────
+#
+# The seven-day window resets at `resets_at`, so it began a week before. On a
+# straight line across the week, the share used by any moment equals the
+# share of the week gone by then. The voice page's Diagnostics panel shows
+# how far the actual reading is from that line, and a burn-down of the week.
+
+WEEK_SEC = 7 * 24 * 3600
+# Whose limits these are when a report does not say: only Anthropic's today
+# (the Claude Code CLI's rate-limit events). Each report carries a provider
+# ({"service", "subscription"}); the page picks the logo from its service.
+PROVIDER = "anthropic"
+
+
+def _provider(raw: Any) -> Optional[dict]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("service"), str) or not raw["service"]:
+        return None
+    return {"service": raw["service"], "subscription": _text(raw.get("subscription"))}
+# Readings kept for the burn-down: one per change in utilisation, this week.
+WEEK_HISTORY_MAX = 2000
+
+
+def _week_history(stored: dict, seven_day: Optional[dict], when: float) -> dict:
+    """The `week_resets_at` / `week_history` fields of the next record: the
+    stored ones, plus this reading of the seven-day window if it changed.
+    A new reset time is a new week and starts the history afresh."""
+    history = stored.get("week_history") if isinstance(stored.get("week_history"), list) else []
+    resets_at = _epoch(stored.get("week_resets_at"))
+    if seven_day and seven_day.get("utilization") is not None and seven_day.get("resets_at"):
+        if seven_day["resets_at"] != resets_at:
+            resets_at, history = seven_day["resets_at"], []
+        used = seven_day["utilization"]
+        if not history or history[-1][1] != used:
+            history = (history + [[when, used]])[-WEEK_HISTORY_MAX:]
+    return {"week_resets_at": resets_at, "week_history": history}
+
+
+def week(*, now: Optional[float] = None, service: Optional[str] = None) -> dict:
+    """The seven-day window against a straight line across the week.
+
+    Everything is worked out at the moment of the READING, not now: the used
+    percentage is only true as of then, so the expected one must be too, or
+    an hours-old reading would look better than it was. `ahead` is expected
+    minus used, in percentage points: positive means more left than expected.
+    """
+    at = time.time() if now is None else float(now)
+    stored = latest(service) or {}
+    view = _window_view("seven_day", (stored.get("windows") or {}).get("seven_day"), at)
+    used, resets_at, observed_at = view["utilization"], view["resets_at"], view["observed_at"]
+    provider = (_provider(stored.get("provider"))
+                or {"service": service or PROVIDER, "subscription": ""})
+    if used is None or resets_at is None or observed_at is None or view["expired"]:
+        return {"measured": False, "provider": provider, "resets_at": resets_at,
+                "expired": view["expired"]}
+    start = resets_at - WEEK_SEC
+    elapsed = min(max(observed_at - start, 0.0), WEEK_SEC)
+    expected = round(100.0 * elapsed / WEEK_SEC, 1)
+    history = stored.get("week_history") if _epoch(stored.get("week_resets_at")) == resets_at else []
+    return {
+        "measured": True,
+        "provider": provider,
+        "week_start": start,
+        "resets_at": resets_at,
+        "observed_at": observed_at,
+        "age_sec": view["age_sec"],
+        "stale": view["stale"],
+        "elapsed_sec": elapsed,
+        "expected_used": expected,
+        "used": used,
+        "ahead": round(expected - used, 1),
+        "points": [{"at": t, "used": u} for t, u in (history or [])],
+    }
 
 
 # ── the shape the dashboard reads ───────────────────────────────────────────
@@ -232,10 +316,10 @@ def _window_view(key: str, raw: Optional[dict], now: float) -> dict:
     }
 
 
-def snapshot(*, now: Optional[float] = None) -> dict:
+def snapshot(*, now: Optional[float] = None, service: Optional[str] = None) -> dict:
     """The usage picture, honest about everything it does not know."""
     at = time.time() if now is None else float(now)
-    stored = latest() or {}
+    stored = latest(service) or {}
     windows = stored.get("windows") if isinstance(stored.get("windows"), dict) else {}
 
     keys = list(KNOWN_WINDOWS) + [k for k in windows if k not in KNOWN_WINDOWS]

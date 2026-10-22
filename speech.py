@@ -281,6 +281,7 @@ class Chunk:
     ready: bool = False
     notice: bool = False        # this chunk's failure was the third in a row: warn after it
     earliest_ack: float = 0.0   # no honest ack can arrive before this (see ACK_FLOOR_FACTOR)
+    capture: Optional[int] = None   # the capture this chunk reads back, if it does
 
 
 @dataclass
@@ -289,6 +290,10 @@ class Utterance:
     priority: Priority
     kind: str                                   # "turn" | "say" | "batched"
     created: float
+    # What it is, for the voice page, which routes by it: "reply" (the
+    # brain's answer), "readback" / "readback-outcome", "announcement",
+    # "question" or "system". Sent with every audio message as `kind`.
+    label: str = "system"
     immediate: bool = True                      # may start while the user is talking
     chunks: list[Chunk] = field(default_factory=list)
     sent: int = -1                              # highest chunk index sent to the client
@@ -457,9 +462,10 @@ class SpeechScheduler:
         return self._speaking
 
     # ── inputs ─────────────────────────────────────────────────────────
-    def _new(self, priority: Priority, kind: str, immediate: bool) -> Utterance:
+    def _new(self, priority: Priority, kind: str, immediate: bool,
+             label: str = "system") -> Utterance:
         u = Utterance(id=self._next_id, priority=priority, kind=kind,
-                      created=self._clock(), immediate=immediate)
+                      created=self._clock(), immediate=immediate, label=label)
         self._next_id += 1
         self.utterances[u.id] = u
         self._evict_history()
@@ -484,7 +490,7 @@ class SpeechScheduler:
 
     def begin_turn(self, priority: Priority = Priority.NORMAL) -> Utterance:
         """A streaming reply to the user's own words: starts immediately."""
-        u = self._new(priority, "turn", immediate=True)
+        u = self._new(priority, "turn", immediate=True, label="reply")
         self._pending.append(u)
         self._kick()
         return u
@@ -494,6 +500,36 @@ class SpeechScheduler:
             return
         for text in utt.splitter.feed(delta):
             self._add_chunk(utt, text)
+
+    def read_into(self, utt: Utterance, text: str, capture: int) -> int:
+        """Speak `text` inside `utt`, after what has been fed so far, with every
+        chunk marked as reading capture `capture` (the page lights the capture
+        box instead of the captions for them). Whatever the turn had half
+        fed is flushed first, so the order holds. Returns the index of the
+        last chunk added, or -1 when nothing could be added."""
+        if utt.cancelled or utt.closed:
+            return -1
+        tail = utt.splitter.flush()
+        if tail:
+            self._add_chunk(utt, tail)
+        reading = SentenceSplitter()
+        for piece in [*reading.feed(text), reading.flush()]:
+            if piece:
+                self._add_chunk(utt, piece, capture=capture)
+        self._kick()
+        return len(utt.chunks) - 1
+
+    async def wait_played(self, utt: Utterance, idx: int, timeout: float = 60.0) -> bool:
+        """True once chunk `idx` of `utt` has been played; False on cancel or
+        timeout."""
+        deadline = self._clock() + timeout
+        while self._clock() < deadline:
+            if utt.was_cancelled:
+                return False
+            if utt.played >= idx:
+                return True
+            await asyncio.sleep(0.02)
+        return False
 
     async def end_turn(self, utt: Utterance) -> None:
         if not utt.cancelled:
@@ -512,12 +548,12 @@ class SpeechScheduler:
         u.closed = True
 
     async def say(self, text: str, priority: Priority = Priority.NORMAL,
-                  immediate: Optional[bool] = None) -> Utterance:
+                  immediate: Optional[bool] = None, label: str = "system") -> Utterance:
         """A complete utterance. NORMAL starts at once; LOW/URGENT wait for a pause
         unless `immediate` says otherwise. LOW is batched: the returned utterance
         becomes done when the merged announcement it joined has been spoken."""
         if priority == Priority.LOW and immediate is not True:
-            u = self._new(priority, "batched", immediate=False)
+            u = self._new(priority, "batched", immediate=False, label=label)
             u.chunks.append(Chunk(text.strip()))
             u.closed = True
             self._batch.append(u)
@@ -526,7 +562,7 @@ class SpeechScheduler:
             return u
         if immediate is None:
             immediate = priority == Priority.NORMAL
-        u = self._new(priority, "say", immediate=immediate)
+        u = self._new(priority, "say", immediate=immediate, label=label)
         self._fill(u, text)
         self._pending.append(u)
         self._kick()
@@ -779,14 +815,15 @@ class SpeechScheduler:
             return False
         texts = [c.text for c in u.chunks]
         if all(c.audio is not None for c in u.chunks):
-            replay = self._new(Priority.NORMAL, "say", immediate=True)
+            replay = self._new(Priority.NORMAL, "say", immediate=True, label=u.label)
             for c in u.chunks:
-                replay.chunks.append(Chunk(c.text, audio=c.audio, ready=True))
+                replay.chunks.append(Chunk(c.text, audio=c.audio, ready=True,
+                                           capture=c.capture))
             replay.closed = True
             self._pending.append(replay)
             self._kick()
         else:
-            await self.say(" ".join(texts), priority=Priority.NORMAL, immediate=True)
+            await self.say(" ".join(texts), priority=Priority.NORMAL, immediate=True, label=u.label)
         return True
 
     async def played(self, utt_id: int, idx: int) -> None:
@@ -884,8 +921,8 @@ class SpeechScheduler:
         self._kick()
 
     # ── internals ──────────────────────────────────────────────────────
-    def _add_chunk(self, utt: Utterance, text: str) -> None:
-        chunk = Chunk(text)
+    def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None) -> None:
+        chunk = Chunk(text, capture=capture)
         utt.chunks.append(chunk)
         self._spawn(self._synthesize(utt, chunk))
 
@@ -997,7 +1034,7 @@ class SpeechScheduler:
         if self._unread:
             text = f"{UNREAD_PREFIX} " + " ".join(self._unread)
             self._unread.clear()
-            u = self._new(Priority.URGENT, "say", immediate=True)
+            u = self._new(Priority.URGENT, "say", immediate=True, label="announcement")
             self._fill(u, text)
             self._pending.append(u)
         if (self._batch and self._current is None
@@ -1007,7 +1044,7 @@ class SpeechScheduler:
             self._batch = []
             self._batch_since = None
             self._last_batch_flush = now
-            u = self._new(Priority.LOW, "say", immediate=True)
+            u = self._new(Priority.LOW, "say", immediate=True, label="announcement")
             self._fill(u, " ".join(c.text for m in members for c in m.chunks))
             for m in members:
                 m.alias = u
@@ -1175,9 +1212,12 @@ class SpeechScheduler:
                     u.first_sent_at = now
                 u.last_progress_at = now
                 try:
-                    await self._emit_raw({"type": "audio", "utt": u.id, "idx": idx,
-                                          "data": base64.b64encode(chunk.audio).decode(),
-                                          "text": chunk.text})
+                    msg = {"type": "audio", "utt": u.id, "idx": idx,
+                           "data": base64.b64encode(chunk.audio).decode(),
+                           "text": chunk.text, "kind": u.label}
+                    if chunk.capture is not None:
+                        msg["capture"] = chunk.capture
+                    await self._emit_raw(msg)
                     u.high_sent = max(u.high_sent, idx)   # it really did go out
                 except Exception as e:
                     # The transport is broken: nothing we send will play. Drop

@@ -38,6 +38,9 @@ PROTOCOL_VERSION = "2024-11-05"
 # _perform_staged_steers). 20s is ample for handlers that obey that rule, and
 # raising it would only buy patience for handlers that do not.
 TIMEOUT_SEC = 20.0
+# read_capture returns only once the capture has been read aloud, and the
+# server waits up to a minute for that (server.READBACK_TIMEOUT).
+TIMEOUT_FOR = {"read_capture": 75.0}
 
 TOOL_SPECS = [
     {
@@ -108,25 +111,101 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "capture",
+        "description": (
+            "Capture what the user just said that is meant to be sent to a session: "
+            "his own words, restated and cleaned up (no filler, speech-recognition "
+            "slips fixed), never summarised and never added to. Every point he made "
+            "stays, in his order. It shows in a capture box on his screen. Returns "
+            "the capture's number, which read_capture and steer_session take. Several "
+            "can be open at once. To restate one he is still adding to, pass its "
+            "number as `capture`; without it a new capture opens."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "maxLength": 4000},
+                "to": {"type": "string",
+                       "description": "The session it is for, as he named it, once known."},
+                "capture": {"type": "integer",
+                            "description": "The open capture being restated. Omit to open a new one."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "read_capture",
+        "description": (
+            "Read a capture back to the user aloud, inside your reply, lighting each "
+            "line in its capture box as it is read. Call it when he says yes to "
+            "hearing it. Returns once the reading ends: read in full, or interrupted. "
+            "Say nothing before calling it; after it, ask whether to send."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"capture": {"type": "integer"}},
+            "required": ["capture"],
+        },
+    },
+    {
+        "name": "list_captures",
+        "description": (
+            "What the capture boxes on the user's screen hold: each open capture's "
+            "number, state, whether it has been read back in full, who it is for, "
+            "and its text. Check it before anything to do with a message, and "
+            "whenever he mentions the boxes."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "clear_capture",
+        "description": (
+            "Close capture boxes he no longer wants: the numbers given, or every "
+            "one with `all`. A cleared capture is never sent, even one staged to "
+            "send."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "captures": {"type": "array", "items": {"type": "integer"}},
+                "all": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "merge_captures",
+        "description": (
+            "Merge open captures that are parts of one message into one. Give the "
+            "merged restatement: every point from each, in his order, never "
+            "summarised. The first capture listed keeps its number; the others "
+            "close. The merged capture must be read back again before sending."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "captures": {"type": "array", "items": {"type": "integer"}, "minItems": 2},
+                "text": {"type": "string", "maxLength": 4000},
+            },
+            "required": ["captures", "text"],
+        },
+    },
+    {
         "name": "steer_session",
         "description": (
             "Send a message into a running Claude Code session, as if the user had "
-            "typed it. Rewrite what the user said into a clear instruction addressed "
-            "to that session: include the decision they made, and never add anything "
-            "they did not say. Returns as soon as the message is staged: JARVIS "
-            "reads it back aloud and sends it when your turn ends, unless the user "
-            "stops him. Say briefly that it is going out, then end your turn — do "
-            "not call this twice for the same message. Cannot answer a permission "
+            "typed it. The message is ALWAYS a capture: call `capture` first with "
+            "the user's words, read it back with `read_capture`, then pass that "
+            "capture's number here once he says to send it; there is no other way "
+            "to give the text, and a capture not read back in full since it last "
+            "changed is refused. Returns as soon as the message is staged: it is "
+            "sent when your turn ends, after a moment in which he can stop it. Say "
+            "briefly that it is going out, then end your turn — do not call this "
+            "twice for the same message. Cannot answer a permission "
             "prompt or a dialog — use answer_dialog for those."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string",
                          "description": "The session as the user refers to it."},
-                "prompt": {"type": "string",
-                           "description": "The message to send, already rewritten."},
+                "capture": {"type": "integer",
+                            "description": "The number `capture` returned for this message."},
             },
-            "required": ["name", "prompt"],
+            "required": ["name", "capture"],
         },
     },
     {
@@ -155,6 +234,76 @@ TOOL_SPECS = [
                                         "cancel, or a single digit 1-9.")},
             },
             "required": ["name", "key"],
+        },
+    },
+    {
+        "name": "show_on_screen",
+        "description": (
+            "Show something on Tim's screen WITHOUT saying it: the sources of an "
+            "answer you looked up, links, a short list. Everything you write in "
+            "your reply is spoken, so sources, links and web addresses never go in "
+            "your reply; put them here, and say the answer itself in plain words. "
+            "Call it once per answer, before you reply."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["sources", "links", "list"]},
+                "title": {"type": "string", "maxLength": 80},
+                "items": {
+                    "type": "array", "minItems": 1, "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "maxLength": 120},
+                            "url": {"type": "string", "maxLength": 2000},
+                            "note": {"type": "string", "maxLength": 200},
+                        },
+                        "required": ["label"],
+                    },
+                },
+            },
+            "required": ["kind", "title", "items"],
+        },
+    },
+    {
+        "name": "list_agents",
+        "description": (
+            "The agents list: every Claude Code session running now, by name, "
+            "and whether the user has activated it. A session starts inactive; "
+            "only the user activates one."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "rename_agent",
+        "description": (
+            "Set an agent's official name: the name it is listed by and the name "
+            "messages to it are addressed by. Refused if another agent already has "
+            "that name. Only when the user asks for it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The agent as the user refers to it now."},
+                "new_name": {"type": "string",
+                             "description": "Its new official name."},
+            },
+            "required": ["name", "new_name"],
+        },
+    },
+    {
+        "name": "set_agent_active",
+        "description": (
+            "Activate or deactivate one agent on the agents list, by its name. "
+            "Only when the user asks for it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The agent as the user refers to it."},
+                "active": {"type": "boolean",
+                           "description": "True to activate, false to deactivate."},
+            },
+            "required": ["name", "active"],
         },
     },
     {
@@ -885,7 +1034,8 @@ def _forward(tool: str, arguments: dict) -> tuple[bool, str, dict | None]:
                  "Authorization": f"Bearer {_token()}"})
     try:
         with urllib.request.urlopen(
-                req, timeout=TIMEOUT_SEC, context=_ssl_context_for(endpoint)) as resp:
+                req, timeout=TIMEOUT_FOR.get(tool, TIMEOUT_SEC),
+                context=_ssl_context_for(endpoint)) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as e:
         return False, f"JARVIS refused the call ({e.code}).", None

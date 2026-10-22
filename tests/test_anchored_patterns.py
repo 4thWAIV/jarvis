@@ -260,6 +260,7 @@ def test_there_are_gates_to_check():
 # neither the search nor this table can satisfy is a gate the separator test
 # below would SKIP, and a skipped check is a check that is not being made.
 SAMPLES = {
+    "_SOURCES_HEADER": "**Sources:**",
     "FULL_NAME_RE": "owner/name",
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_URL_RE": "https://github.com/owner/name",

@@ -17,6 +17,12 @@ import sys
 from pathlib import Path
 
 import pytest
+import claude_provider
+
+
+def _command(b):
+    """The `claude` command line the brain's session would run."""
+    return claude_provider.ClaudeSession(b.config, None, None).command(b.launch_prompt())
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -311,11 +317,11 @@ def test_the_allowlist_grants_exactly_the_servers_the_user_declared(tmp_path):
     from tests.test_brain import _config
     import brain
     b = brain.Brain(_config(tmp_path, connections=["notion", "linear"]))
-    granted = b.command()[b.command().index("--tools") + 1].split(",")
+    granted = _command(b)[_command(b).index("--tools") + 1].split(",")
 
-    assert granted[:len(brain.ALLOWED_TOOLS)] == brain.ALLOWED_TOOLS, \
+    assert granted[:len(claude_provider.ALLOWED_TOOLS)] == claude_provider.ALLOWED_TOOLS, \
         "the baseline is untouched — this adds, it never subtracts"
-    assert granted[len(brain.ALLOWED_TOOLS):] == ["mcp__notion", "mcp__linear"]
+    assert granted[len(claude_provider.ALLOWED_TOOLS):] == ["mcp__notion", "mcp__linear"]
     assert "mcp__github" not in granted, "not declared, not granted"
 
 
@@ -325,8 +331,8 @@ def test_no_declared_servers_leaves_the_flag_byte_identical(tmp_path):
     from tests.test_brain import _config
     import brain
     b = brain.Brain(_config(tmp_path))
-    cmd = b.command()
-    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS)
+    cmd = _command(b)
+    assert cmd[cmd.index("--tools") + 1] == ",".join(claude_provider.ALLOWED_TOOLS)
 
 
 def test_the_static_allowlist_still_names_only_jarvis_and_the_two_web_tools():
@@ -334,9 +340,9 @@ def test_the_static_allowlist_still_names_only_jarvis_and_the_two_web_tools():
     grants are computed per-launch from their file — they are never added
     here, where a coding tool could drift in beside them."""
     import brain
-    assert {t for t in brain.ALLOWED_TOOLS if not t.startswith("mcp__")} == \
+    assert {t for t in claude_provider.ALLOWED_TOOLS if not t.startswith("mcp__")} == \
         {"WebSearch", "WebFetch", "Skill"}
-    assert all(t.startswith("mcp__jarvis__") for t in brain.ALLOWED_TOOLS
+    assert all(t.startswith("mcp__jarvis__") for t in claude_provider.ALLOWED_TOOLS
                if t.startswith("mcp__"))
 
 
@@ -348,7 +354,7 @@ def test_the_grant_is_a_whole_server_not_a_guess_at_its_tools(tmp_path):
     from tests.test_brain import _config
     import brain
     b = brain.Brain(_config(tmp_path, connections=["weather"]))
-    granted = b.command()[b.command().index("--tools") + 1].split(",")
+    granted = _command(b)[_command(b).index("--tools") + 1].split(",")
     assert "mcp__weather" in granted
     assert not any(g.startswith("mcp__weather__") for g in granted)
 
@@ -631,7 +637,7 @@ def test_the_answer_fits_in_a_tool_result(srv):
 def test_the_three_tool_sets_agree_about_connections(srv):
     import brain
     import jarvis_mcp
-    assert "mcp__jarvis__connections" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__connections" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(srv.TOOL_HANDLERS)
 
 
@@ -645,17 +651,17 @@ def test_the_three_tool_sets_agree_about_connections(srv):
 
 def test_a_connected_services_result_taints_the_turn(tmp_path):
     import brain
-    assert brain.untrusted_tool_source("mcp__notion__fetch_page") == "notion"
-    assert brain.untrusted_tool_source("WebFetch") == "a web page"
-    assert brain.untrusted_tool_source("WebSearch") == "a web page"
+    assert claude_provider.untrusted_tool_source("mcp__notion__fetch_page") == "notion"
+    assert claude_provider.untrusted_tool_source("WebFetch") == "a web page"
+    assert claude_provider.untrusted_tool_source("WebSearch") == "a web page"
 
 
 def test_jarvis_own_tools_do_not_taint_a_turn():
     """His own results are already wrapped in `<session-output>` where they
     carry someone else's words, and gating them would shut the assistant."""
     import brain
-    assert brain.untrusted_tool_source("mcp__jarvis__list_sessions") is None
-    assert brain.untrusted_tool_source("mcp__jarvis__spawn_run") is None
+    assert claude_provider.untrusted_tool_source("mcp__jarvis__list_sessions") is None
+    assert claude_provider.untrusted_tool_source("mcp__jarvis__spawn_run") is None
 
 
 @pytest.mark.asyncio

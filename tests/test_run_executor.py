@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -828,12 +829,11 @@ def test_the_scrub_is_shared_with_the_brain_not_copied():
     """One copy of the rule. The first copy of it was fixed for the brain and
     left broken here for a whole milestone; a second copy invites the same
     thing again."""
-    import brain
     import claude_env
     import run_executor as mod
 
-    assert brain.SCRUBBED_ENV_PREFIXES is claude_env.SCRUBBED_ENV_PREFIXES
-    assert brain.Brain.child_env() == claude_env.child_env()
+    assert claude_provider.SCRUBBED_ENV_PREFIXES is claude_env.SCRUBBED_ENV_PREFIXES
+    assert claude_provider.ClaudeSession.child_env() == claude_env.child_env()
     assert mod.claude_env is claude_env
 
 

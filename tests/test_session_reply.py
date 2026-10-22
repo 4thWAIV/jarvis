@@ -205,7 +205,7 @@ class _Speech:
     def __init__(self):
         self.said = []
 
-    async def say(self, text, priority=None, immediate=None):
+    async def say(self, text, priority=None, immediate=None, label=None):
         self.said.append(text)
 
 

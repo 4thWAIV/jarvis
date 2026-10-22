@@ -11,6 +11,7 @@ Handles:
 import asyncio
 import base64
 import inspect
+import itertools
 import json
 import logging
 import os
@@ -86,6 +87,8 @@ import session_watch
 import specs
 import stream_parser
 import usage_scan
+import brain_provider
+import brains_config
 import usage_store
 import web_auth
 from run_executor import RunExecutor
@@ -375,6 +378,9 @@ def strip_markdown_for_tts(text: str) -> str:
     result = _md_re.sub(r"^#{1,6}\s*", "", result, flags=_md_re.MULTILINE)
     # Convert [text](url) to just text
     result = _md_re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", result)
+    # Never read a web address aloud (it goes on the screen instead: see
+    # _ScreenOnly and show_on_screen).
+    result = _md_re.sub(r"\bhttps?://\S+", "", result)
     # Remove bullet points
     result = _md_re.sub(r"^\s*[-*+]\s+", "", result, flags=_md_re.MULTILINE)
     # Remove numbered lists
@@ -652,7 +658,7 @@ def _fmt_reset(ts) -> str:
 
 
 # True but useless: "down" names neither cause nor remedy. When the brain's
-# failure is classified "auth" (brain.py's _classify_fatal_failure), speak
+# failure is classified "auth" (the provider's `failure_kind`), speak
 # something the user can actually act on instead. Shared by _on_brain_state
 # (the "failed" event) and _handle_utterance (a turn attempted while already
 # failed) so the two auth lines never drift apart -- each keeps its own
@@ -715,7 +721,15 @@ def _action_words(text: str) -> list[str]:
     return _re.findall(r"[a-z]+", text.lower())
 
 
+# The brain states the page shows (which brain runs, on the orb and in
+# Diagnostics): told as they happen, so the page reads the brains again
+# instead of keeping what it saw at load.
+BRAIN_STATES_TOLD_TO_THE_PAGE = ("ready", "failed", "rotated")
+
+
 async def _on_brain_state(state: str, info: dict) -> None:
+    if state in BRAIN_STATES_TOLD_TO_THE_PAGE:
+        await _voice_emit({"type": "brain_state", "state": state})
     if state == "failed" and info.get("failure_reason") == "auth":
         # At ERROR level, visible in the terminal the user is already
         # looking at, regardless of whether speech itself is available.
@@ -726,14 +740,14 @@ async def _on_brain_state(state: str, info: dict) -> None:
         now = time.time()
         if now - _brain_notice_at["restarting"] > 60:
             _brain_notice_at["restarting"] = now
-            await speech.say("Rebooting my language systems, one moment.", Priority.NORMAL)
+            await speech.say("Rebooting my language systems, one moment.", Priority.NORMAL, label="system")
     elif state == "failed":
         line = (_AUTH_BRAIN_DOWN_LINE if info.get("failure_reason") == "auth"
                else "My language systems are down, sir. Check the server log.")
-        await speech.say(line, Priority.URGENT, immediate=True)
+        await speech.say(line, Priority.URGENT, immediate=True, label="system")
     elif state == "rate_limited":
         await speech.say(f"I've hit the usage limit until {_fmt_reset(info.get('resets_at'))}, sir.",
-                         Priority.NORMAL)
+                         Priority.NORMAL, label="system")
 
 
 def _greeting() -> str:
@@ -1135,7 +1149,7 @@ async def _clear_question_expired() -> None:
              f"{FRESH_START_CONFIRM_TIMEOUT:.0f}s (command={_clear_asked_text!r})")
     _close_clear_question()
     if speech is not None:
-        await speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL)
+        await speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL, label="question")
 
 
 async def _ask_to_clear(utterance: str) -> None:
@@ -1147,7 +1161,7 @@ async def _ask_to_clear(utterance: str) -> None:
              f"(trigger=start-fresh-command, utterance={utterance!r})")
     _clear_timeout_task = _spawn(_clear_question_expired())
     if speech is not None:
-        await speech.say(FRESH_START_CONFIRM_LINE, Priority.NORMAL)
+        await speech.say(FRESH_START_CONFIRM_LINE, Priority.NORMAL, label="question")
 
 
 def _take_clear_answer(text: str) -> Optional[bool]:
@@ -1166,7 +1180,7 @@ def _take_clear_answer(text: str) -> Optional[bool]:
     log.info(f"conversation clear: cancelled (command={command!r}, "
              f"utterance={text!r})")
     if speech is not None:
-        _spawn(speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL))
+        _spawn(speech.say(FRESH_START_CANCELLED_LINE, Priority.NORMAL, label="question"))
     return False
 
 
@@ -1192,12 +1206,12 @@ async def _start_fresh(utterance: str = "") -> None:
         except Exception as e:
             log.error(f"fresh start failed: {e}", exc_info=True)
             if speech is not None:
-                await speech.say("I couldn't clear it, sir.", Priority.NORMAL)
+                await speech.say("I couldn't clear it, sir.", Priority.NORMAL, label="question")
             return
     log.info(f"conversation cleared: trigger=start-fresh-command-confirmed "
              f"utterance={utterance!r}")
     if speech is not None:
-        await speech.say(FRESH_START_LINE, Priority.NORMAL)
+        await speech.say(FRESH_START_LINE, Priority.NORMAL, label="question")
 
 
 # Rotation is the user's call. The brain only reports that its conversation
@@ -1275,7 +1289,7 @@ async def _ask_to_rotate() -> None:
     _rotation_question_open, _rotation_asked_at = True, waited
     if speech is not None:
         await speech.say(_rotation_question_line(brain_instance.config.context_budget),
-                         Priority.NORMAL)
+                         Priority.NORMAL, label="question")
 
 
 def _take_rotation_answer(text: str) -> bool:
@@ -1300,7 +1314,7 @@ def _take_rotation_answer(text: str) -> bool:
     if answer is False:
         log.info(f"rotation: the user declined (utterance={text!r})")
         if speech is not None:
-            _spawn(speech.say(ROTATION_DECLINED_LINE, Priority.NORMAL))
+            _spawn(speech.say(ROTATION_DECLINED_LINE, Priority.NORMAL, label="question"))
         return True
     log.info("rotation: the question went unanswered; asking again later")
     return False
@@ -1439,10 +1453,26 @@ def _list_join(items: list[str]) -> str:
     return ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
+def _with_official_name(event: dict) -> dict:
+    """The event with its session going by its official name, if it has one.
+
+    The watcher builds an event from its own copy of the session, which has
+    the derived voice name; official names are applied only to the snapshot
+    the server reads (`_snapshot_or_empty`). So every announcement, the note
+    to the brain and the broadcast all said the old name. Applied here, once,
+    before anything reads the event. A copy: the watcher's dict is not ours."""
+    session = event.get("session") or {}
+    official = _official_agent_names().get(session.get("session_id"))
+    if not official or session.get("voice_name") == official:
+        return event
+    return {**event, "session": {**session, "voice_name": official}}
+
+
 def _on_session_event(event: dict) -> None:
     """Watcher callback. The watcher marshals this onto the event loop thread
     via call_soon_threadsafe before calling it, so scheduling work here with
     _spawn directly (no further thread-hop) is safe."""
+    event = _with_official_name(event)
     kind = event.get("kind")
     session = event.get("session") or {}
     if session.get("session_id") in _jarvis_run_session_ids():
@@ -1499,7 +1529,7 @@ async def _announce_reply(event: dict) -> None:
     if speech is None:
         return
     try:
-        await speech.say(line, Priority.NORMAL)
+        await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
         log.warning(f"reply announcement failed: {e}")
 
@@ -1523,7 +1553,7 @@ async def _announce_board(board: session_needs.Board) -> None:
     if speech is None:
         return
     try:
-        await speech.say(line, Priority.NORMAL)
+        await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
         log.warning(f"needs-board announcement failed: {e}")
 
@@ -1531,10 +1561,17 @@ async def _announce_board(board: session_needs.Board) -> None:
 async def _watch_needs_board() -> None:
     """Announce each board that appears or changes. Never raises out."""
     tracker = session_needs.ChangeTracker()
+    counts: dict[str, int] | None = None
     while True:
         try:
             boards = await asyncio.to_thread(
                 session_needs.read_boards, data_paths.needs_dir())
+            # The agents list shows each board's count: a changed count,
+            # down as well as up, tells the pages to fetch it again.
+            now = {b.project.lower(): b.items for b in boards}
+            if counts is not None and now != counts:
+                _hint_agents_changed()
+            counts = now
             for board in tracker.changed(boards):
                 await _announce_board(board)
         except asyncio.CancelledError:
@@ -1572,7 +1609,7 @@ async def _announce_needs_you(event: dict) -> None:
     else:
         line = f"{name} has stopped and wants you, sir."
     try:
-        await speech.say(line, Priority.URGENT)
+        await speech.say(line, Priority.URGENT, label="announcement")
     except Exception as e:
         log.warning(f"needs-you announcement failed: {e}")
     # The RAW name to the notifier, deliberately. That path renders to a
@@ -1661,7 +1698,7 @@ async def _announce_batch() -> None:
         parts.append(_run_batch_line(projects))
     line = " ".join(parts)
     try:
-        await speech.say(line, Priority.LOW)
+        await speech.say(line, Priority.LOW, label="announcement")
     except Exception as e:
         log.warning(f"completion announcement failed: {e}")
         # Do not lose them — either queue.
@@ -1740,7 +1777,7 @@ async def _announce_run_stalled(run: dict, outcome: str) -> None:
         line = (f"The work in {project} finished, sir, but I can't see that "
                 f"it changed anything.")
     try:
-        await speech.say(line, Priority.URGENT)
+        await speech.say(line, Priority.URGENT, label="announcement")
     except Exception as e:
         log.warning(f"run stall announcement failed: {e}")
 
@@ -1755,7 +1792,7 @@ async def _announce_run_failure(run: dict) -> None:
     else:
         line = f"The work in {project} failed, sir."
     try:
-        await speech.say(line, Priority.URGENT)
+        await speech.say(line, Priority.URGENT, label="announcement")
     except Exception as e:
         log.warning(f"run failure announcement failed: {e}")
 
@@ -1788,12 +1825,111 @@ async def _broadcast_session_event(event: dict) -> None:
     announcements JARVIS speaks — so a dashboard tab on a sleeping laptop
     used to be able to hold up the watcher itself.
     """
+    _send_to_session_clients({"type": "event", **event})
+
+
+def _send_to_session_clients(message: dict) -> None:
     for ws in list(session_clients):
         queue = _session_queues.get(ws)
         if queue is None:
             _drop_session_client(ws)
             continue
-        _enqueue(queue, {"type": "event", **event})
+        _enqueue(queue, message)
+
+
+def _hint_agents_changed() -> None:
+    """Tell every open page the agents list changed. Content-free, like the
+    other hints: the page refetches /api/agents. The dashboard's sessions
+    client ignores a message type it does not know."""
+    _send_to_session_clients({"type": "agents"})
+
+
+# --- The subscription's limits, every minute -------------------------------
+#
+# The CLI reports the limits only on a reply, so between JARVIS's turns the
+# reading went stale. This asks each added brain provider's usage source
+# directly once a minute (for Claude Code, anthropic_usage.py: the login held
+# in memory, never refreshed here) and stores the answer exactly as a reply's
+# report would be stored, one store per provider.
+_usage_task: Optional[asyncio.Task] = None
+USAGE_POLL_SEC = 60.0
+_usage_sources: dict[str, brain_provider.UsageSource] = {}
+
+
+def _brain_provider() -> brain_provider.BrainProvider:
+    """The provider of the brain that is running, or of the one configured."""
+    if brain_instance is not None:
+        return brain_instance.provider
+    return brain_provider.provider(
+        os.getenv("JARVIS_BRAIN_PROVIDER", brain_provider.DEFAULT_PROVIDER))
+
+
+def _usage_poll_enabled() -> bool:
+    """On by default; JARVIS_USAGE_POLL=0 turns it off (the test suite does,
+    so no test reads the keychain or calls Anthropic)."""
+    return os.getenv("JARVIS_USAGE_POLL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+async def _poll_usage() -> None:
+    """Never raises: a missed reading keeps the last one."""
+    reported: dict[str, str] = {}
+    while True:
+        for name in list(brains_config.load()["brains"]):
+            try:
+                # Made once and kept: a source may hold its login in memory.
+                source = _usage_sources.get(name) or brain_provider.provider(name).usage()
+                _usage_sources[name] = source
+                reading = await asyncio.to_thread(source.read)
+                await asyncio.to_thread(usage_store.record, reading.report,
+                                        provider={"service": reading.service,
+                                                  "subscription": reading.subscription})
+                reported.pop(name, None)
+            except asyncio.CancelledError:
+                raise
+            except brain_provider.UsageUnavailable as e:
+                # Said once per kind of failure, not once a minute.
+                if str(e) != reported.get(name):
+                    reported[name] = str(e)
+                    log.warning(f"usage ({name}): {e}; keeping the last reading")
+            except Exception as e:
+                log.warning(f"usage poll ({name}) failed: {e}")
+        await asyncio.sleep(USAGE_POLL_SEC)
+
+
+# --- The agents list --------------------------------------------------------
+#
+# Every running Claude Code session, by name, and whether the user has
+# activated it. Kept in jarvis.db (run_store.sync_agents) so his choices
+# survive a restart; a session that ends is removed.
+AGENTS_POLL_SEC = 1.0
+_agents_task: Optional[asyncio.Task] = None
+
+
+def _running_agents() -> dict[str, tuple[str, str]]:
+    """session id -> (agent name, state), for every session running now (the
+    same set /api/sessions lists, without the ones that have already ended).
+    The state is the one the session watcher derives from the roster file."""
+    return {s.session_id: (session_watch.agent_name(s), s.state)
+            for s in _snapshot_or_empty().sessions
+            if s.state != session_watch.GONE}
+
+
+async def _watch_agents() -> None:
+    """Keep the agents list in step with what is running, and tell the pages
+    when it changes. Never raises: a bad poll must not end the loop.
+
+    Waits one interval before the first look: the session watcher has not
+    polled yet at startup, and reading the roster that early also fills
+    `_jarvis_run_session_ids`' short cache before any run exists."""
+    while True:
+        await asyncio.sleep(AGENTS_POLL_SEC)
+        try:
+            if await asyncio.to_thread(run_store.sync_agents, _running_agents()):
+                _hint_agents_changed()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"agents list sync failed: {e}")
 
 
 # Strong references to fire-and-forget tasks. asyncio only holds a weak one,
@@ -1819,7 +1955,7 @@ async def _run_preflight() -> None:
     a bug here must not cost the user their server.
     """
     try:
-        checks = await preflight.run_checks()
+        checks = await preflight.run_checks(provider_checks=_brain_provider().preflight())
     except Exception:
         log.warning("preflight checks could not run", exc_info=True)
         return
@@ -1833,7 +1969,7 @@ async def _run_preflight() -> None:
     if speech is not None and any(c.status == preflight.STATUS_FAIL for c in checks):
         summary = preflight.spoken_summary(checks)
         if summary:
-            await speech.say(summary)
+            await speech.say(summary, label="system")
 
 
 async def start_session_watcher() -> None:
@@ -1843,15 +1979,19 @@ async def start_session_watcher() -> None:
     session_watcher.on_event(_on_session_event)
     await session_watcher.start()
     log.info("session watcher started")
-    global _needs_task
+    global _needs_task, _agents_task, _usage_task
     _needs_task = _spawn(_watch_needs_board())
+    _agents_task = _spawn(_watch_agents())
+    if _usage_poll_enabled():
+        _usage_task = _spawn(_poll_usage())
 
 
 async def stop_session_watcher() -> None:
-    global session_watcher, _needs_task
-    if _needs_task is not None:
-        _needs_task.cancel()
-        _needs_task = None
+    global session_watcher, _needs_task, _agents_task, _usage_task
+    for task in (_needs_task, _agents_task, _usage_task):
+        if task is not None:
+            task.cancel()
+    _needs_task = _agents_task = _usage_task = None
     if session_watcher is not None:
         try:
             await session_watcher.stop()
@@ -1864,6 +2004,143 @@ async def stop_session_watcher() -> None:
 # playing before it speaks. It is not a read-back budget: it exists only so a
 # client that has gone silent cannot pin the mouth forever.
 TURN_SETTLE_TIMEOUT = 120.0
+
+
+# --- What is shown and never said ---------------------------------------------
+#
+# The brain's spoken text is plain and every word of it is spoken. Anything
+# for the eyes only (the sources of a web answer, links, a short list) goes
+# through the `show_on_screen` tool instead: checked here, sent to the voice
+# page as a `display` message, and never voiced. The last few are kept in
+# memory so a page that reconnects can show them again.
+
+DISPLAY_KINDS = ("sources", "links", "list")
+DISPLAY_KEEP = 20
+DISPLAY_MAX_ITEMS = 12
+_displays: list[dict] = []
+_display_ids = itertools.count(1)
+
+
+def _display_from(args: dict) -> tuple[Optional[dict], Optional[str]]:
+    """(the display to show, None) or (None, what is wrong with it)."""
+    kind = args.get("kind")
+    if kind not in DISPLAY_KINDS:
+        return None, f"kind must be one of {', '.join(DISPLAY_KINDS)}"
+    title = " ".join(str(args.get("title") or "").split())[:80]
+    if not title:
+        return None, "it needs a title"
+    raw = args.get("items")
+    if not isinstance(raw, list) or not raw:
+        return None, "it needs at least one item"
+    items = []
+    for item in raw[:DISPLAY_MAX_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        label = " ".join(str(item.get("label") or "").split())[:120]
+        url = str(item.get("url") or "").strip()[:2000]
+        host = ""
+        if url:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                url = ""                         # only web addresses are kept
+            else:
+                host = parsed.hostname or ""
+        note = " ".join(str(item.get("note") or "").split())[:200]
+        if label or url:
+            items.append({"label": label or host, "url": url, "host": host, "note": note})
+    if not items:
+        return None, "none of its items has a label or a web address"
+    return {"kind": kind, "title": title, "items": items}, None
+
+
+def _show_on_screen(display: dict) -> dict:
+    """Keep it and send it to every voice page. Never spoken."""
+    shown = {"type": "display", "id": next(_display_ids), "at": time.time(), **display}
+    _displays.append(shown)
+    del _displays[:-DISPLAY_KEEP]
+    _spawn(_voice_emit(shown))
+    return shown
+
+
+def tool_show_on_screen(args: dict) -> str:
+    """Show something on Tim's screen without saying it."""
+    display, problem = _display_from(args)
+    if problem:
+        return f"Not shown: {problem}."
+    _show_on_screen(display)
+    return "Shown on screen."
+
+
+_SOURCES_HEADER = re.compile(
+    r"[ \t>#*_-]*(sources?|references)[ \t]*[*_]*[ \t]*:?[ \t]*[*_]*[ \t]*", re.IGNORECASE)
+_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|(https?://[^\s)>\]]+)")
+
+
+class _ScreenOnly:
+    """Between the brain's text and the mouth: a "Sources:" block is never
+    spoken. The CLI's own WebSearch tool tells the model to end with one, so
+    the brain will write it however often it is asked not to.
+
+    Text streams straight through, except a line that could still turn out
+    to be the header ("Sou…"), which waits until it is decided. From the
+    header on, nothing is spoken; at the end of the turn its links go on the
+    screen as a `sources` display.
+    """
+
+    def __init__(self, sink, show):
+        self._sink = sink
+        self._show = show
+        self._line = ""             # the current line, while it might be the header
+        self._block: Optional[list[str]] = None
+
+    @staticmethod
+    def _could_be_header(line: str) -> bool:
+        bare = line.lstrip(" \t>#*_-").lower()
+        return any(word.startswith(bare) or bare.startswith(word)
+                   for word in ("sources", "source", "references")) and len(bare) < 20
+
+    def feed(self, d: str) -> None:
+        if self._block is not None:
+            self._block.append(d)
+            return
+        text = self._line + d
+        self._line = ""
+        out = []
+        for part in text.splitlines(keepends=True):
+            if self._block is not None:
+                self._block.append(part)
+            elif part.endswith(("\n", "\r")):
+                if _SOURCES_HEADER.fullmatch(part.strip()):
+                    self._block = []
+                else:
+                    out.append(part)
+            elif self._could_be_header(part):
+                self._line = part        # undecided: wait for the rest of the line
+            else:
+                out.append(part)
+        if out:
+            self._sink("".join(out))
+
+    def finish(self) -> None:
+        if self._block is None:
+            if self._line:
+                if not _SOURCES_HEADER.fullmatch(self._line.strip()):
+                    self._sink(self._line)
+                self._line = ""
+            return
+        items = []
+        for line in "".join(self._block).splitlines():
+            for m in _LINK.finditer(line):
+                label, url = (m.group(1), m.group(2)) if m.group(2) else ("", m.group(3))
+                if not label:
+                    label = _LINK.sub("", line).strip(" \t-*•:–—") or url
+                items.append({"label": label, "url": url})
+        self._block = None
+        if items:
+            display, _problem = _display_from({"kind": "sources", "title": "Sources", "items": items})
+            if display:
+                self._show(display)
 
 
 class _OneLinePerTurn:
@@ -1935,9 +2212,12 @@ class _OneLinePerTurn:
             self._sink(text)
 
 
-async def _handle_utterance(text: str) -> None:
+async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     """One user utterance → one brain turn → streamed speech. Runs as a task so
-    the socket loop keeps receiving `played` acks and interim text meanwhile."""
+    the socket loop keeps receiving `played` acks and interim text meanwhile.
+    `heard` is the id the page gave this transcript; a capture made on this
+    turn records it, so the page can move those words to the capture."""
+    global _turn_utt, _turn_heard
     if brain_instance is None or speech is None:
         return
     t0 = time.monotonic()
@@ -1949,33 +2229,37 @@ async def _handle_utterance(text: str) -> None:
                     else "My language systems are down, sir.")
         else:
             line = "One moment, sir — my language systems are still starting."
-        await speech.say(line, Priority.NORMAL)
+        await speech.say(line, Priority.NORMAL, label="system")
         return
     utt = speech.begin_turn()
+    _turn_utt, _turn_heard = utt, heard
     try:
         try:
             try:
-                hold = _OneLinePerTurn(lambda d: speech.feed(utt, d))
+                screen = _ScreenOnly(lambda d: speech.feed(utt, d), _show_on_screen)
+                hold = _OneLinePerTurn(screen.feed)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
                                                    on_delta=hold.delta,
                                                    on_tool=hold.tool_started)
                 hold.finish()    # the one line this turn is allowed
+                screen.finish()  # a "Sources:" block it held goes on the screen
             finally:
+                _turn_utt, _turn_heard = None, None
                 await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
         except Exception as e:
             log.error(f"brain turn failed: {e}", exc_info=True)
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL)
+            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
             return
         if result.stop_reason == "rate_limited":
             resets = (result.rate_limit or {}).get("resetsAt")
-            await speech.say(f"I've hit the usage limit until {_fmt_reset(resets)}, sir.", Priority.NORMAL)
+            await speech.say(f"I've hit the usage limit until {_fmt_reset(resets)}, sir.", Priority.NORMAL, label="system")
         elif result.stop_reason == "error":
             log.error(f"brain error: {result.error}")
             await speech.say("My language systems returned an error, sir. Check the server log.",
-                             Priority.NORMAL)
+                             Priority.NORMAL, label="system")
         elif result.stop_reason in ("timeout", "died", "not_running"):
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL)
+            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
         elif not result.text.strip():
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
@@ -2174,6 +2458,15 @@ async def health():
     return {"status": "online", "name": "JARVIS", "version": "0.1.0"}
 
 
+@app.get("/api/brain")
+async def api_brain():
+    """Which brain is running, for the voice page: its provider (whose logo
+    sits on the orb) and model. Null provider when there is no brain."""
+    if brain_instance is None:
+        return {"provider": None, "model": None}
+    return {"provider": brain_instance.config.provider, "model": brain_instance.config.model}
+
+
 @app.post("/api/tts-test")
 async def tts_test():
     """Generate a test audio clip for debugging.
@@ -2215,6 +2508,122 @@ async def api_usage_limits():
     `utilization: null` are normal answers, not errors. See usage_store.py.
     """
     return usage_store.snapshot()
+
+
+@app.get("/api/usage/week")
+async def api_usage_week(provider: Optional[str] = None):
+    """The seven-day window against a straight line across the week, for the
+    Diagnostics panel: expected and actual use at the last reading, how far
+    ahead or behind that is, and the readings so far this week. One brain
+    provider's (`provider`), the running brain's when it is not named. See
+    usage_store.week."""
+    if provider is not None and provider not in brains_config.KNOWN:
+        raise HTTPException(status_code=404, detail="no such brain")
+    return usage_store.week(service=provider or _brain_provider().name)
+
+
+# --- The brains, for the Settings view's Brains section ----------------------
+#
+# Every brain provider JARVIS knows: whether it has been added (brains.json),
+# its model and the models it offers, whether it is the one JARVIS starts
+# with and the one running now, its account, and its own setup checks.
+# Choosing the brain to start with takes effect at the next start; switching
+# the running brain (with a handover) is not built yet.
+
+SIGN_IN_WAIT_SEC = 600.0
+
+
+async def _brain_card(name: str, cfg: dict, brief: bool = False) -> dict:
+    provider = brain_provider.provider(name)
+    added = name in cfg["brains"]
+    card = {"name": name, "title": provider.title, "added": added,
+            "default": cfg["default"] == name,
+            "active": brain_instance is not None and brain_instance.provider.name == name,
+            "model": cfg["brains"].get(name, {}).get("model") or provider.default_model}
+    if not added or brief:
+        return card
+    async_checks, sync_checks = provider.preflight()
+    checks = await asyncio.gather(
+        *[preflight._run_one(fn, is_async=True, timeout=preflight.DEFAULT_CHECK_TIMEOUT)
+          for fn in async_checks],
+        *[preflight._run_one(fn, is_async=False, timeout=preflight.DEFAULT_CHECK_TIMEOUT)
+          for fn in sync_checks])
+    account = await provider.account()
+    card.update(
+        models=await asyncio.to_thread(provider.models),
+        account={"signed_in": account.signed_in, "plan": account.plan, "detail": account.detail},
+        checks=[{"name": c.name, "status": c.status, "message": c.message, "remedy": c.remedy}
+                for c in checks],
+        signs_in_here=name != brains_config.ALWAYS)
+    return card
+
+
+@app.get("/api/brains")
+async def api_brains(brief: bool = False):
+    """Every brain's card. `brief` leaves out the account, the models and the
+    setup checks, which start processes; the Diagnostics view only needs
+    which brains are added and which is running."""
+    cfg = brains_config.load()
+    return {"brains": [await _brain_card(n, cfg, brief) for n in brains_config.KNOWN]}
+
+
+def _brains_change(change) -> dict:
+    try:
+        change()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/brains/default")
+async def api_brains_default(request: Request):
+    body = await request.json()
+    return _brains_change(lambda: brains_config.set_default(str(body.get("name") or "")))
+
+
+@app.post("/api/brains/{name}")
+async def api_brains_add_remove(name: str, request: Request):
+    body = await request.json()
+    action = body.get("action")
+    if action == "add":
+        return _brains_change(lambda: brains_config.add(name))
+    if action == "remove":
+        return _brains_change(lambda: brains_config.remove(name))
+    raise HTTPException(status_code=400, detail="action is add or remove")
+
+
+@app.put("/api/brains/{name}")
+async def api_brains_model(name: str, request: Request):
+    body = await request.json()
+    model = str(body.get("model") or "").strip()
+    if name not in brains_config.KNOWN or not model:
+        raise HTTPException(status_code=400, detail="a known brain and a model")
+    if model not in await asyncio.to_thread(brain_provider.provider(name).models):
+        raise HTTPException(status_code=400, detail="that brain does not offer that model")
+    return _brains_change(lambda: brains_config.set_model(name, model))
+
+
+@app.post("/api/brains/{name}/sign-in")
+async def api_brains_sign_in(name: str):
+    """Start the provider's own sign-in. The page opens `url`; when the
+    sign-in finishes the voice socket gets `{"type": "brain_sign_in", "name",
+    "ok"}`."""
+    if name not in brains_config.KNOWN:
+        raise HTTPException(status_code=404, detail="no such brain")
+    provider = brain_provider.provider(name)
+    try:
+        started = await provider.start_sign_in()
+    except brain_provider.UsageUnavailable as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if started is None:
+        raise HTTPException(status_code=400, detail=f"{provider.title} signs in on its own")
+
+    async def finish():
+        ok = await provider.sign_in_finished(started.sign_in_id, SIGN_IN_WAIT_SEC)
+        log.info("brains: %s sign-in %s", name, "finished" if ok else "did not finish")
+        await _voice_emit({"type": "brain_sign_in", "name": name, "ok": ok})
+    _spawn(finish())
+    return {"url": started.url, "sign_in_id": started.sign_in_id}
 
 
 # --- Per-session usage -----------------------------------------------------
@@ -2575,6 +2984,87 @@ async def api_list_sessions(state: str = ""):
     return {"sessions": rows, "projects": projects, "taken_at": snap.taken_at}
 
 
+def _needs_by_project() -> dict[str, int]:
+    """Each project's needs-board item count, by lowercased project name."""
+    return {b.project.lower(): b.items
+            for b in session_needs.read_boards(data_paths.needs_dir())}
+
+
+def _agents_for_page() -> list[dict]:
+    """The agents list, each with `needs`: how many items its project's needs
+    board holds (the board is kept per project, so every agent in a project
+    shows that project's count), and `provider`: who runs it, from the
+    session it is (None when that session is not in the snapshot)."""
+    needs = _needs_by_project()
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    out = []
+    for a in run_store.list_agents():
+        s = sessions.get(a["session_id"])
+        out.append({**a, "needs": needs.get(s.project.lower() if s else "", 0),
+                    "provider": s.provider if s else None})
+    return out
+
+
+@app.get("/api/agents")
+async def api_list_agents():
+    """The agents list: every running session's name, its state, whether the
+    user has activated it, and its needs-board count. /ws/sessions sends an
+    `agents` hint when any of it changes."""
+    return {"agents": await asyncio.to_thread(_agents_for_page)}
+
+
+class AgentActiveRequest(BaseModel):
+    active: bool
+
+
+class AgentNameRequest(BaseModel):
+    name: str
+
+
+def _rename_agent(session_id: str, name: str) -> tuple[dict | None, str | None]:
+    """(the renamed agent, None) or (None, why not): "invalid", "missing" or
+    "duplicate". Shared by the route and the brain's tool."""
+    name = " ".join(str(name or "").split())
+    # It is spoken and matched as a voice name, so it must be one.
+    if not _VOICE_NAME_RE.fullmatch(name):
+        return None, "invalid"
+    try:
+        row = run_store.rename_agent(session_id, name)
+    except run_store.DuplicateAgentName:
+        return None, "duplicate"
+    if row is None:
+        return None, "missing"
+    _forget_official_names()
+    _hint_agents_changed()
+    return row, None
+
+
+@app.post("/api/agents/{session_id}/name")
+async def api_rename_agent(session_id: str, req: AgentNameRequest):
+    """Set an agent's official name: the name messages to it are addressed
+    by. Refused if another agent already has it."""
+    row, problem = await asyncio.to_thread(_rename_agent, session_id, req.name)
+    if problem == "missing":
+        return JSONResponse(status_code=404, content={"error": "No such agent"})
+    if problem == "duplicate":
+        return JSONResponse(status_code=409,
+                            content={"error": "Another agent already has that name"})
+    if problem == "invalid":
+        return JSONResponse(status_code=422, content={
+            "error": "A name is letters, digits, spaces and . , - / + ' up to 64 characters"})
+    return row
+
+
+@app.post("/api/agents/{session_id}/active")
+async def api_set_agent_active(session_id: str, req: AgentActiveRequest):
+    """The user activating or deactivating one agent, from the page."""
+    row = await asyncio.to_thread(run_store.set_agent_active, session_id, req.active)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "No such agent"})
+    _hint_agents_changed()
+    return row
+
+
 # The tool result cap is what keeps the brain's context under budget.
 TOOL_RESULT_CAP = 1500
 
@@ -2618,8 +3108,17 @@ def _tool_reply(ok: bool, text: str, image: dict | None = None) -> dict:
 
 # Populated by Task 6 and Task 7. name -> callable(arguments: dict) -> str
 TOOL_HANDLERS: dict = {}
+TOOL_HANDLERS["show_on_screen"] = tool_show_on_screen
+
+
+@app.get("/api/displays")
+async def api_displays():
+    """The last screen-only items, oldest first, for a page that reconnects
+    (see _show_on_screen)."""
+    return {"displays": list(_displays)}
+
 # Tools that may only run while the user is the one talking.
-ACTING_TOOLS = {"steer_session"}
+ACTING_TOOLS = {"steer_session", "capture", "read_capture", "merge_captures", "clear_capture"}
 
 # The acting tools JARVIS says out loud BEFORE they happen: each one stages
 # its work, `_perform_staged_steers`/`_perform_staged_dialogs` reads it back
@@ -2721,6 +3220,19 @@ TAINT_EXEMPT_TOOLS = {
     "remember": "it writes a memory, it does not read",
     "project_note": "it writes a note, it does not read",
     "write_journal": "it writes the journal, it does not read",
+    "set_agent_active": "it switches a flag on the agents list, it does not read",
+    "capture": "it records Tim's own words to be sent, it does not read",
+    "read_capture": "it speaks a capture of Tim's own words back to him, it does not read",
+    "merge_captures": "it joins captures of Tim's own words, it does not read",
+    "clear_capture": "it closes capture boxes, it does not read",
+    "list_captures": "it shows the brain its own captures of Tim's words, nothing foreign",
+    "show_on_screen": (
+        "it puts the brain's own words on the screen and reads nothing; the "
+        "page draws them as plain text and only web addresses are kept as links"),
+    "rename_agent": "it sets a name on the agents list, it does not read",
+    "list_agents": (
+        "it prints only agent names, each through the same `_said_name` wall "
+        "as every spoken session name, and whether the user activated it"),
 }
 
 # Acting tools that only ever bring back MORE content to read. They are gated
@@ -3268,7 +3780,37 @@ def _snapshot_or_empty():
     """
     snap = session_watcher.snapshot if session_watcher is not None else \
         session_watch.Snapshot()
-    return snap.excluding(_jarvis_run_session_ids())
+    return snap.excluding(_jarvis_run_session_ids()).named(_official_agent_names())
+
+
+# The names the user has set for agents (run_store.rename_agent), read on
+# every snapshot access, so cached for a moment; a rename clears the cache.
+_OFFICIAL_NAMES_TTL_SEC = 1.0
+_official_names_cache: tuple[float, dict] = (0.0, {})
+
+
+def _official_agent_names() -> dict:
+    """session id -> official name. Fails open (no renames) if the store
+    cannot be read, so the roster is never lost over it."""
+    global _official_names_cache
+    now = time.time()
+    stamped, names = _official_names_cache
+    if now - stamped < _OFFICIAL_NAMES_TTL_SEC:
+        return names
+    try:
+        names = run_store.official_names()
+    except sqlite3.OperationalError:
+        names = {}                          # before init_db, as for run ids
+    except Exception:
+        log.warning("could not read official agent names", exc_info=True)
+        names = {}
+    _official_names_cache = (now, names)
+    return names
+
+
+def _forget_official_names() -> None:
+    global _official_names_cache
+    _official_names_cache = (0.0, {})
 
 
 _STATE_WORDS = {
@@ -3725,6 +4267,236 @@ STEER_CANCEL_WINDOW = float(os.getenv("JARVIS_STEER_CANCEL_WINDOW", "2.0"))
 READBACK_TIMEOUT = 60.0
 
 
+# --- The capture box ------------------------------------------------------------
+#
+# Anything sent to an agent comes from a capture: Tim's own words, restated and
+# cleaned up by the brain (never summarised or added to) through the `capture`
+# tool, on a turn he drove. Several can be open at once, each with its number;
+# the brain folds ones that are parts of one message together
+# (`merge_captures`). `read_capture` reads one back to him inside the brain's
+# own turn, lighting the capture box line by line, and `steer_session` sends
+# only a capture read back in full and unchanged since. Sending closes it;
+# memory only. The voice page draws each one: white until it is known to be a
+# message for an agent (`to` is set), amber from then on, through sending.
+
+CAPTURE_MAX_CHARS = 4000
+CAPTURE_TO_MAX_CHARS = 80
+# Each: {"id", "text", "to", "heard": [transcript ids], "read": the text as it
+# was last read back in full, or None, "state"}. In the order they opened.
+_captures: dict[int, dict] = {}
+_capture_ids = itertools.count(1)
+
+# The turn being answered: its speech (what `read_capture` reads into) and the
+# id the page gave the transcript it answers (`heard`). Turns run one at a
+# time, so one of each.
+_turn_utt = None
+_turn_heard: Optional[int] = None
+
+
+def _transcript_id(msg: dict) -> Optional[int]:
+    """The id the page gave a final transcript (its caption turn), or None."""
+    value = msg.get("id")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _capture_message(capture: dict, state: Optional[str]) -> dict:
+    msg = {"type": "capture", "id": capture["id"], "state": state}
+    if state:
+        msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]))
+    return msg
+
+
+def _capture_show(capture: dict, state: Optional[str]) -> None:
+    if state:
+        capture["state"] = state
+    _spawn(_voice_emit(_capture_message(capture, state)))
+
+
+def _capture_number(value) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _one_line(value, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def tool_capture(args: dict) -> str:
+    """Capture what Tim just said, to be sent, or restate an open capture."""
+    text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
+    if not text:
+        return "There was nothing to capture."
+    to = _one_line(args.get("to"), CAPTURE_TO_MAX_CHARS)
+    number = _capture_number(args.get("capture"))
+    if args.get("capture") is not None and number not in _captures:
+        return ("There is no open capture by that number: it was sent, merged "
+                "or never made. Omit `capture` to open a new one.")
+    if number is None:
+        number = next(_capture_ids)
+        _captures[number] = {"id": number, "text": "", "to": "", "heard": [],
+                             "read": None, "state": "capturing"}
+    capture = _captures[number]
+    if capture["text"] != text:
+        capture["read"] = None          # changed: it has to be heard again
+    capture["text"] = text
+    capture["to"] = to or capture["to"]
+    if _turn_heard is not None and _turn_heard not in capture["heard"]:
+        capture["heard"].append(_turn_heard)
+    _capture_show(capture, "capturing")
+    if len(_unsent_captures()) > 1:
+        return (f"Capture {number} holds it. {_open_captures_note()} Before "
+                f"anything else, merge them into one with merge_captures.")
+    return (f"Capture {number} holds it. Ask him whether he wants it read back; "
+            f"read_capture reads it. steer_session sends only a capture read "
+            f"back in full since it last changed.")
+
+
+def _unsent_captures() -> list[int]:
+    """The captures still being dealt with: open and not yet staged to send.
+    One staged by `steer_session` is going out when the turn ends, so a second
+    message in the same turn is not held up by it."""
+    return [n for n, c in _captures.items() if not c.get("staged")]
+
+
+def _open_captures_note() -> str:
+    """Which captures are open, by number, for the brain."""
+    return "Open captures: " + ", ".join(str(n) for n in _unsent_captures()) + "."
+
+
+async def tool_read_capture(args: dict) -> str:
+    """Read a capture back to Tim inside this turn, lighting it line by line."""
+    number = _capture_number(args.get("capture"))
+    capture = _captures.get(number) if number is not None else None
+    if capture is None:
+        return "There is no open capture by that number."
+    utt = _turn_utt
+    if speech is None or utt is None or utt.closed or utt.cancelled:
+        return "I can only read it back while I am answering him aloud."
+    text = capture["text"]
+    _capture_show(capture, "reading")
+    last = speech.read_into(utt, text, number)
+    heard = last >= 0 and await speech.wait_played(utt, last, timeout=READBACK_TIMEOUT)
+    if number in _captures:
+        if heard and capture["text"] == text:
+            capture["read"] = text
+        _capture_show(capture, "capturing")
+    if heard:
+        return (f"Read back in full. Ask him whether to send capture {number}; "
+                f"on his yes, call steer_session with it.")
+    return (f"Interrupted before the end, so capture {number} has not been heard "
+            f"in full and cannot be sent until it is read back again.")
+
+
+def tool_merge_captures(args: dict) -> str:
+    """Fold open captures that are parts of one message into one."""
+    raw = args.get("captures")
+    numbers = [_capture_number(n) for n in raw] if isinstance(raw, list) else []
+    numbers = list(dict.fromkeys(n for n in numbers if n is not None))
+    missing = [n for n in numbers if n not in _captures]
+    if len(numbers) < 2 or missing:
+        return ("Give at least two open captures to merge"
+                + (f"; these are not open: {missing}." if missing else "."))
+    text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
+    if not text:
+        return "Give the merged restatement."
+    keep, *gone = [_captures[n] for n in numbers]
+    keep["text"] = text
+    keep["read"] = None
+    for other in gone:
+        keep["to"] = keep["to"] or other["to"]
+        keep["heard"] += [h for h in other["heard"] if h not in keep["heard"]]
+        del _captures[other["id"]]
+        _capture_show(other, None)
+    _capture_show(keep, "capturing")
+    return (f"Merged into capture {keep['id']}. It has changed, so it needs "
+            f"reading back before it can be sent.")
+
+
+def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
+    """(the capture, None), or (None, why it cannot be sent)."""
+    wanted = _capture_number(number)
+    if wanted is None:
+        return None, ("There is nothing to send without a capture: capture his "
+                      "words first, then send that capture's number.")
+    capture = _captures.get(wanted)
+    if capture is None:
+        return None, (f"There is no open capture {wanted}: it was sent, merged "
+                      f"or never made. Capture his words again.")
+    if len(_unsent_captures()) > 1:
+        return None, (f"{_open_captures_note()} Nothing is sent while more than "
+                      f"one is open: merge them first, then read the merged one "
+                      f"back.")
+    if capture["read"] != capture["text"]:
+        return None, (f"Capture {wanted} has not been read back to him in full "
+                      f"since it last changed. Call read_capture first; nothing "
+                      f"is sent unheard.")
+    return capture, None
+
+
+def _capture_transmitting(capture_id: Optional[int]) -> None:
+    if capture_id in _captures:
+        _capture_show(_captures[capture_id], "transmitting")
+
+
+def _capture_sent(capture_id: Optional[int]) -> None:
+    """Sending closes the capture and clears its box, whatever the result."""
+    capture = _captures.pop(capture_id, None) if capture_id is not None else None
+    if capture:
+        _capture_show(capture, None)
+
+
+def tool_list_captures(args: dict) -> str:
+    """What the capture boxes on his screen hold, so the brain sees them."""
+    if not _captures:
+        return "No capture boxes are open."
+    lines = []
+    for c in _captures.values():
+        heard = "read back in full" if c["read"] == c["text"] else "not read back since it changed"
+        going = ", staged to send" if c.get("staged") else ""
+        lines.append(f"Capture {c['id']} ({c['state']}, {heard}{going})"
+                     f"{' for ' + c['to'] if c['to'] else ''}: {c['text']}")
+    return "\n".join(lines)
+
+
+def tool_clear_capture(args: dict) -> str:
+    """Close capture boxes: the numbers given, or every one with `all`. A
+    cleared capture that was staged to send is not sent."""
+    if args.get("all") is True:
+        numbers = list(_captures)
+    else:
+        raw = args.get("captures")
+        numbers = [n for n in (_capture_number(v) for v in raw) if n is not None] \
+            if isinstance(raw, list) else []
+    gone = [n for n in numbers if n in _captures]
+    if not gone:
+        return "There was no open capture to clear."
+    global _staged_steers
+    _staged_steers = [s for s in _staged_steers
+                      if getattr(s, "capture_id", None) not in gone]
+    for n in gone:
+        _capture_show(_captures.pop(n), None)
+    left = len(_captures)
+    return (f"Cleared capture{'s' if len(gone) > 1 else ''} "
+            f"{', '.join(str(n) for n in gone)}. "
+            + (f"{left} still open." if left else "No capture boxes are open."))
+
+
+TOOL_HANDLERS["capture"] = tool_capture
+TOOL_HANDLERS["read_capture"] = tool_read_capture
+TOOL_HANDLERS["merge_captures"] = tool_merge_captures
+TOOL_HANDLERS["list_captures"] = tool_list_captures
+TOOL_HANDLERS["clear_capture"] = tool_clear_capture
+
+
+@app.get("/api/capture")
+async def api_capture():
+    """The open captures, for a page that (re)connects, in the order they
+    opened."""
+    return {"captures": [_capture_message(c, c["state"]) for c in _captures.values()]}
+
+
 @dataclass
 class _StagedSteer:
     """A validated steer waiting for the current turn to finish speaking."""
@@ -3733,6 +4505,7 @@ class _StagedSteer:
     project: str
     prompt: str
     socket_path: Optional[str]
+    capture_id: Optional[int] = None    # the capture its text came from
 
 
 @dataclass
@@ -3820,15 +4593,11 @@ STEER_SIGNATURE = (
 async def _perform_steer(item: _StagedSteer) -> None:
     """One staged steer, start to finish. Records EXACTLY one audit row.
 
-    The safety properties here are the whole point of the feature; none of
-    them may be collapsed into one another:
-      * the cancel window opens only AFTER the read-back has finished playing;
-      * `was_cancelled` is checked explicitly and separately from `heard`,
-        because barge_in() sets the cancel event only when a window is
-        already open (it is not, during the read-back), and `wait_for`
-        returns False for both a cancel and a timeout;
-      * a read-back that never completes sends NOTHING;
-      * nothing is ever sent unheard.
+    Nothing is ever sent unheard, and that is decided before this runs:
+    `steer_session` stages only a capture the brain read back to him in full
+    with `read_capture` and that has not changed since, and what is sent is
+    that text exactly. So this says nothing first; it opens the cancel window
+    (the turn's speech is done by now), then sends.
     """
     recorded = False
 
@@ -3844,39 +4613,31 @@ async def _perform_steer(item: _StagedSteer) -> None:
         if speech is None:
             record("no_voice")             # the mouth went away between turns
             return
-        utt = await speech.say(f"Telling {_said_name(item)}: {item.prompt}",
-                               Priority.NORMAL)
-        # Wait for the read-back to actually finish PLAYING (not merely be
-        # queued — see READBACK_TIMEOUT) before opening the cancel window.
-        heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
-        if utt.was_cancelled:
-            if getattr(utt, "was_abandoned", False):
-                # `_abandon()` also sets `cancelled` on any transport failure
-                # (the client vanished, its socket died) — not just a real
-                # cancel word or barge-in. Telling the user "you cancelled
-                # it" when their browser simply dropped would be a lie the
-                # audit trail can't take back; nothing was sent either way.
-                record("readback_failed")
-                return
-            record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
-            return
-        if not heard:
-            # TTS wedged or the transport was abandoned mid-utterance: never
-            # send something the user cannot be shown to have heard.
-            record("readback_failed")
-            return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
-        outcome = await asyncio.to_thread(
-            session_steer.post_to_session, item.socket_path,
-            STEER_SIGNATURE + item.prompt)
+        _capture_transmitting(item.capture_id)
+        try:
+            outcome = await asyncio.to_thread(
+                session_steer.post_to_session, item.socket_path,
+                STEER_SIGNATURE + item.prompt)
+        finally:
+            _capture_sent(item.capture_id)
         record(outcome)
         if outcome == session_steer.SENT and session_watcher is not None:
             session_watcher.expect_reply(item.session_id)
+        if outcome == session_steer.SENT:
+            # It moves up the agents list, and the voice page draws the
+            # message going to it.
+            try:
+                await asyncio.to_thread(run_store.mark_agent_messaged, item.session_id)
+                _hint_agents_changed()
+            except Exception as e:
+                log.warning(f"could not move {item.session_id} up the agents list: {e}")
+            _send_to_session_clients({"type": "agent_message",
+                                      "session_id": item.session_id})
         if outcome == session_steer.SENT:
             # SENT means the bytes left over the socket, nothing more: no
             # reply is ever read back, so this must not claim the target
@@ -3891,17 +4652,22 @@ async def _perform_steer(item: _StagedSteer) -> None:
             # the message WILL need approving, that is said in the same
             # breath rather than left for the user to discover.
             await speech.say(f"Passed to {_said_name(item)}, sir."
-                             + _inbound_caveat(), Priority.NORMAL)
+                             + _inbound_caveat(), Priority.NORMAL, label="readback-outcome")
         elif outcome == session_steer.NOT_LIVE:
             await speech.say(
                 f"{_said_name(item)} didn't answer its socket, sir — it may "
-                f"have just exited.", Priority.NORMAL)
+                f"have just exited.", Priority.NORMAL, label="readback-outcome")
         else:
             await speech.say(f"I couldn't deliver that to {_said_name(item)}, "
-                             f"sir.", Priority.NORMAL)
+                             f"sir.", Priority.NORMAL, label="readback-outcome")
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
+    finally:
+        # Not sent (cancelled, no voice, failed): the capture is his to deal
+        # with again, so it counts as open once more.
+        if item.capture_id in _captures:
+            _captures[item.capture_id]["staged"] = False
 
 
 # The audit trail's name for "this did not go to a session, it went to a
@@ -3950,21 +4716,21 @@ async def _perform_command(item: _StagedCommand) -> None:
             " That isn't a command the project documents, mind."
         utt = await speech.say(
             f"Running {item.command} in {item.project}, sir.{caveat}",
-            Priority.NORMAL)
+            Priority.NORMAL, label="readback")
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
         # `cd` into the project first: a start command means nothing in the
@@ -3976,10 +4742,10 @@ async def _perform_command(item: _StagedCommand) -> None:
         if result.get("success"):
             record("ran")
             await speech.say(
-                f"Running in a Terminal window, sir.", Priority.NORMAL)
+                f"Running in a Terminal window, sir.", Priority.NORMAL, label="readback-outcome")
         else:
             record("failed")
-            await speech.say("Terminal wouldn't open, sir.", Priority.NORMAL)
+            await speech.say("Terminal wouldn't open, sir.", Priority.NORMAL, label="readback-outcome")
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -4059,44 +4825,44 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         # the window coming forward is the part that interrupts the user.
         utt = await speech.say(
             f"Pressing {said} on {_said_name(item)} — this will bring that "
-            f"window forward.", Priority.NORMAL)
+            f"window forward.", Priority.NORMAL, label="readback")
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
         outcome = await dialog.answer(item.pid, item.key)
         record(outcome)
         if outcome == dialog.SENT:
             await speech.say(f"Pressed {said} on {_said_name(item)}.",
-                             Priority.NORMAL)
+                             Priority.NORMAL, label="readback-outcome")
         elif outcome == dialog.NOT_FOUND:
             await speech.say(
                 f"{_said_name(item)} isn't in a Terminal window I can reach, "
                 f"sir — another application is hosting it, so that one needs "
-                f"your own hand.", Priority.NORMAL)
+                f"your own hand.", Priority.NORMAL, label="readback-outcome")
         elif outcome == dialog.NOT_PERMITTED:
             await speech.say(
                 "macOS won't let me send keystrokes, sir — I'd need accessibility "
-                "permission in System Settings.", Priority.NORMAL)
+                "permission in System Settings.", Priority.NORMAL, label="readback-outcome")
         elif outcome == dialog.NO_TTY:
             await speech.say(
                 f"{_said_name(item)} has no terminal of its own any more, "
-                f"sir — I pressed nothing.", Priority.NORMAL)
+                f"sir — I pressed nothing.", Priority.NORMAL, label="readback-outcome")
         else:
             await speech.say(f"I couldn't press that for {_said_name(item)}, "
-                             f"sir.", Priority.NORMAL)
+                             f"sir.", Priority.NORMAL, label="readback-outcome")
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -4201,14 +4967,17 @@ async def tool_answer_dialog(args: dict) -> str:
 async def tool_steer_session(args: dict) -> str:
     """Validate the user's decision and STAGE it; the server sends it later.
 
-    The policy the user chose: JARVIS says what he is about to send, waits a
-    moment, and sends unless told to stop. Silence is consent; 'wait' is not.
+    The policy the user chose: the message is a capture the brain has read
+    back to him in full (`read_capture`), and once he says to send it JARVIS
+    waits a moment and sends unless told to stop. Silence is consent; 'wait'
+    is not.
 
-    None of that can happen here. This handler runs mid-turn, called by the
-    brain through the MCP child, while `speech.begin_turn()`'s utterance is
-    still open — and the scheduler will not advance past an open utterance.
-    A read-back queued from inside the tool call is therefore queued BEHIND
-    the very turn that is waiting on it: deadlock, resolved only by the MCP
+    The waiting and sending cannot happen here. This handler runs mid-turn,
+    called by the brain through the MCP child, while `speech.begin_turn()`'s
+    utterance is still open — and the scheduler will not advance past an open
+    utterance. Anything said from inside the tool call as its own utterance
+    (the outcome, "Cancelled") is therefore queued BEHIND the very turn that
+    is waiting on it: deadlock, resolved only by the MCP
     child's timeout, after which the brain says it failed and the server
     sends anyway. That is exactly the bug this shape exists to prevent.
 
@@ -4229,11 +4998,14 @@ async def tool_steer_session(args: dict) -> str:
         run_store.record_steer("", name, "", str(args.get("prompt") or ""),
                                reason or "unresolved")
         return problem
-    prompt = str(args.get("prompt") or "").strip()
-    if not prompt:
+    # The text is never the brain's to write here: it is a capture of Tim's
+    # own words, made on his turn (`capture`), named by its number.
+    capture, problem = _capture_to_send(args.get("capture"))
+    if problem:
         run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, "", "empty_prompt")
-        return "There was nothing to send."
+                               session.project, "", "no_capture")
+        return problem
+    prompt = capture["text"]
 
     global last_mentioned_session
     last_mentioned_session = session.session_id
@@ -4269,11 +5041,14 @@ async def tool_steer_session(args: dict) -> str:
                               voice_name=session.voice_name,
                               project=session.project,
                               prompt=prompt,
-                              socket_path=session.socket_path))
-    staged_note = (f"staged — I'll read it back to the user and send it to "
-                   f"{_said_name(session)} the moment this turn ends, unless "
-                   f"he stops me. Say briefly that it is going out and end "
-                   f"your turn; do not call this tool again for it.")
+                              socket_path=session.socket_path,
+                              capture_id=capture["id"]))
+    capture["staged"] = True
+    staged_note = (f"staged — it goes to {_said_name(session)} the moment this "
+                   f"turn ends, after a short moment in which he can stop it. "
+                   f"He has heard it already, so do not repeat it: say briefly "
+                   f"that it is going out and end your turn; do not call this "
+                   f"tool again for it.")
     if not _inbound_accepted():
         # The brain must not say "sent" when the message will sit unapproved
         # in the other window — which is exactly what happened live.
@@ -4615,6 +5390,85 @@ ACTING_TOOLS.add("spawn_run")
 # Nothing in somebody else's transcript may reach it: the origin gate is the
 # only thing standing between a line of hostile text and a synthetic keystroke.
 ACTING_TOOLS.add("answer_dialog")
+
+
+# --- The agents list, for the brain ----------------------------------------
+
+def _agent_said(agent: dict) -> str:
+    # An agent's name can carry words from another session's title, so it
+    # goes through the same wall as every spoken session name.
+    return _said_name({"voice_name": agent["name"]}, "an agent with an unsayable name")
+
+
+def tool_list_agents(args: dict) -> str:
+    """Every running agent and whether the user has activated it."""
+    agents = run_store.list_agents()
+    if not agents:
+        return "No agents are running, sir."
+    active = [_agent_said(a) for a in agents if a["active"]]
+    inactive = [_agent_said(a) for a in agents if not a["active"]]
+    n = len(agents)
+    parts = [f"{_say_number(n).capitalize()} agent{'s' if n != 1 else ''} running."]
+    if active:
+        parts.append("Active: " + _list_join(active) + ".")
+    if inactive:
+        parts.append("Inactive: " + _list_join(inactive) + ".")
+    return " ".join(parts)
+
+
+def _find_agent(args: dict) -> tuple[dict | None, str | None]:
+    """(the agent, None), or (None, what to say). By its official name as the
+    user said it: an exact match first, else the one name that contains it."""
+    wanted = " ".join(str(args.get("name") or "").split()).lower()
+    if not wanted:
+        return None, "Which agent, sir?"
+    agents = run_store.list_agents()
+    matches = [a for a in agents if a["name"].lower() == wanted] or \
+              [a for a in agents if wanted in a["name"].lower()]
+    if not matches:
+        return None, "I don't see a running agent by that name, sir."
+    if len(matches) > 1:
+        return None, ("That could be " + ", or ".join(_agent_said(a) for a in matches)
+                      + ", sir. Which one?")
+    return matches[0], None
+
+
+def tool_set_agent_active(args: dict) -> str:
+    """Activate or deactivate one agent, by its name as the user said it."""
+    agent, problem = _find_agent(args)
+    if problem:
+        return problem
+    active = _truthy(args.get("active"))
+    row = run_store.set_agent_active(agent["session_id"], active)
+    if row is None:
+        return "That agent has just ended, sir."
+    _hint_agents_changed()
+    return f"{_agent_said(row)} is now {'active' if active else 'inactive'}, sir."
+
+
+def tool_rename_agent(args: dict) -> str:
+    """Give an agent its official name, the one messages are addressed by."""
+    agent, problem = _find_agent(args)
+    if problem:
+        return problem
+    row, problem = _rename_agent(agent["session_id"], str(args.get("new_name") or ""))
+    if problem == "duplicate":
+        return "Another agent already goes by that name, sir, so I've left it."
+    if problem == "invalid":
+        return ("That won't do as a name, sir: letters, numbers and spaces, "
+                "up to sixty-four characters.")
+    if problem == "missing":
+        return "That agent has just ended, sir."
+    return f"{_agent_said(agent)} is now {_agent_said(row)}, sir."
+
+
+TOOL_HANDLERS.update({
+    "list_agents": tool_list_agents,
+    "set_agent_active": tool_set_agent_active,
+    "rename_agent": tool_rename_agent,
+})
+# They change the user's own list; only he may ask for that.
+ACTING_TOOLS.update({"set_agent_active", "rename_agent"})
 
 
 # ---------------------------------------------------------------------------
@@ -6569,11 +7423,11 @@ ACTING_TOOLS.add("github_repo")
 # 2. A threshold warning is not a limit. The CLI sends `allowed_warning` to
 #    mean "you have passed a utilisation threshold"; treating that as being
 #    cut off is a bug this project has already been bitten by once, in
-#    brain.py, where it muted JARVIS completely. Only the statuses in
+#    the brain, where it muted JARVIS completely. Only the statuses in
 #    `BLOCKING_RATE_LIMIT_STATUSES` are a limit, and they are named from that
 #    same set so the two cannot drift apart.
 
-from brain import BLOCKING_RATE_LIMIT_STATUSES            # noqa: E402
+from claude_provider import BLOCKING_RATE_LIMIT_STATUSES  # noqa: E402
 
 
 def _say_reset(ts) -> str:
@@ -7121,7 +7975,7 @@ async def voice_handler(ws: WebSocket):
         global _last_greeting_time
         if speech is not None and time.time() - _last_greeting_time > 60:
             _last_greeting_time = time.time()
-            await speech.say(_greeting(), Priority.NORMAL)
+            await speech.say(_greeting(), Priority.NORMAL, label="system")
 
         while True:
             raw = await ws.receive_text()
@@ -7183,7 +8037,7 @@ async def voice_handler(ws: WebSocket):
                     # with different words. Never routed to _handle_utterance.
                     log.info(f"User (replay): {text}")
                     if not await speech.replay_last():
-                        await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL)
+                        await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL, label="system")
                     continue
                 if verdict != "speech":
                     # Say WHY, so a dropped sentence can be diagnosed from the
@@ -7207,7 +8061,7 @@ async def voice_handler(ws: WebSocket):
                     continue                # a plain no: consumed, not a request
                 if _take_rotation_answer(text):
                     continue
-                _spawn(_handle_utterance(text))
+                _spawn(_handle_utterance(text, _transcript_id(msg)))
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:

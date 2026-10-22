@@ -38,19 +38,21 @@ def test_hush_is_not_reachable_as_a_spoken_word():
 
 def test_the_client_sends_a_key_press_not_a_word():
     """A spoken interrupt is exactly what we are avoiding here."""
-    main = (Path(__file__).parent.parent / "frontend/src/main.ts").read_text()
+    main = (Path(__file__).parent.parent / "frontend/src/jarvis.ts").read_text()
     assert '"hush"' in main
     assert 'e.key === "Escape"' in main
 
 
 def test_the_button_only_exists_while_he_is_speaking():
-    main = (Path(__file__).parent.parent / "frontend/src/main.ts").read_text()
-    assert 'hidden = newState !== "speaking"' in main
+    control = (Path(__file__).parent.parent / "frontend/src/StatusControl.tsx").read_text()
+    assert 'state === "speaking" && (' in control
+    main = (Path(__file__).parent.parent / "frontend/src/jarvis.ts").read_text()
+    assert "voiceState.set(newState)" in main and "stopSpeaking.current = hush" in main
 
 
 def test_the_client_silences_itself_without_waiting_for_the_server():
     """The round trip is real; silence has to be immediate or the button
     feels broken."""
-    main = (Path(__file__).parent.parent / "frontend/src/main.ts").read_text()
+    main = (Path(__file__).parent.parent / "frontend/src/jarvis.ts").read_text()
     hush = main[main.index("function hush()"):]
     assert hush.index("audioPlayer.stop()") < hush.index('socket.send({ type: "hush" })')

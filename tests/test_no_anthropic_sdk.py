@@ -1,3 +1,4 @@
+import re
 """JARVIS makes no Anthropic API calls, and no longer depends on the SDK.
 
 The README's headline promise is that JARVIS runs entirely on the user's
@@ -65,9 +66,18 @@ def test_requirements_does_not_install_the_anthropic_sdk():
         assert name.lower() != "anthropic", f"anthropic is back in requirements: {line!r}"
 
 
+# The SDK itself, as a whole name: `import anthropic_usage` (JARVIS's own
+# module that asks Anthropic for the plan's limits over HTTP) is not it.
+_SDK_IMPORT = re.compile(r"^\s*(import|from)\s+anthropic\b(?!_)", re.MULTILINE)
+
+
+def _imports_the_sdk(text: str) -> bool:
+    return bool(_SDK_IMPORT.search(text))
+
+
 def test_server_does_not_import_the_anthropic_sdk():
     text = (ROOT / "server.py").read_text()
-    assert "import anthropic" not in text
+    assert not _imports_the_sdk(text)
 
 
 def test_no_module_imports_the_anthropic_sdk():
@@ -75,7 +85,7 @@ def test_no_module_imports_the_anthropic_sdk():
     offenders = []
     for path in sorted(ROOT.glob("*.py")):
         text = path.read_text()
-        if "import anthropic" in text or "from anthropic" in text:
+        if _imports_the_sdk(text):
             offenders.append(path.name)
     assert offenders == []
 
@@ -179,9 +189,15 @@ def test_preflight_still_warns_about_a_stray_anthropic_variable(monkeypatch):
     and it must not need the package to do its job."""
     import preflight
     text = (ROOT / "preflight.py").read_text()
-    assert "import anthropic" not in text and "from anthropic" not in text
+    assert not _imports_the_sdk(text)
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-abc123")
     check = preflight._check_anthropic_key_leftover_sync()
     assert check.status == preflight.STATUS_WARN
     assert "ANTHROPIC_API_KEY" in check.message
+
+
+def test_the_check_catches_the_sdk_and_not_a_module_named_after_the_company():
+    assert _imports_the_sdk("import anthropic\n")
+    assert _imports_the_sdk("from anthropic import Anthropic\n")
+    assert not _imports_the_sdk("import anthropic_usage\n")

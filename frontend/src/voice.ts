@@ -15,6 +15,7 @@ export interface VoiceInput {
   stop(): void;
   pause(): void;
   resume(): void;
+  mute(): void;
   /** Tear the recogniser down and build a new one, now. For when it is
    *  provably deaf: capturing audio and returning nothing. */
   restart(reason: string): void;
@@ -87,58 +88,94 @@ declare const webkitSpeechRecognition: any;
  * from the user simply not talking — so "he could not hear me" left no trace
  * anywhere and could not be told apart from silence.
  *
- * This holds its own getUserMedia stream open for the life of the page and
- * measures the actual signal. It never stops, it is not a session, and it has
- * no timeout. If the level is up and no transcript follows, the microphone is
- * live and the recogniser is the problem — which is exactly the case that
- * used to be invisible.
+ * This holds its own getUserMedia stream open while the microphone is on
+ * and measures the actual signal. It is not a session and has no timeout.
+ * If the level is up and no transcript follows, the microphone is live and
+ * the recogniser is the problem — which is exactly the case that used to be
+ * invisible.
+ *
+ * `close()` is the mute button's half: it releases the stream, so nothing on
+ * the page is capturing and the browser's microphone indicator can go out,
+ * and reports a level of zero. `open()` takes the microphone again.
  */
 export function createMicMonitor(
   onLevel: (level: number) => void,
   onEvent: (event: string) => void
-): { sawSpeech(): void } {
+): { sawSpeech(): void; open(): void; close(): void } {
   let lastLoudAt = 0;
   let lastResultAt = Date.now();
   let complainedAt = 0;
+  // What the current open() holds, so close() can let all of it go. The
+  // generation stops an open() whose microphone arrives after a close().
+  let generation = 0;
+  let release: (() => void) | null = null;
 
-  navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    source.connect(analyser);
-    const buf = new Uint8Array(analyser.fftSize);
-    onEvent("mic monitor attached");
-
-    setInterval(() => {
-      analyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const v = (buf[i] - 128) / 128;
-        sum += v * v;
+  function open() {
+    if (release) return;
+    const mine = ++generation;
+    release = () => {};                  // opening: a second open() waits for this one
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      if (mine !== generation) {         // closed while the browser was asking
+        stream.getTracks().forEach((t) => t.stop());
+        return;
       }
-      const rms = Math.sqrt(sum / buf.length);
-      onLevel(rms);
+      const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      onEvent("mic monitor attached");
 
-      const now = Date.now();
-      if (rms > SPEECH_LEVEL) lastLoudAt = now;
+      const timer = setInterval(() => {
+        analyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+        onLevel(rms);
 
-      // Sound went into the microphone and nothing came back out of the
-      // recogniser. This is the report that could not be made before.
-      if (lastLoudAt && now - lastLoudAt < 500 &&
-          now - lastResultAt > DEAF_AFTER_MS &&
-          now - complainedAt > 15000) {
-        complainedAt = now;
-        onEvent(`DEAF: mic is hearing sound (level ${rms.toFixed(3)}) but the ` +
-                `recogniser has returned nothing for ${Math.round((now - lastResultAt) / 1000)}s`);
-      }
-    }, 200);
-  }).catch((e) => {
-    onEvent(`mic monitor could not open the microphone: ${e && e.name}`);
-  });
+        const now = Date.now();
+        if (rms > SPEECH_LEVEL) lastLoudAt = now;
 
+        // Sound went into the microphone and nothing came back out of the
+        // recogniser. This is the report that could not be made before.
+        if (lastLoudAt && now - lastLoudAt < 500 &&
+            now - lastResultAt > DEAF_AFTER_MS &&
+            now - complainedAt > 15000) {
+          complainedAt = now;
+          onEvent(`DEAF: mic is hearing sound (level ${rms.toFixed(3)}) but the ` +
+                  `recogniser has returned nothing for ${Math.round((now - lastResultAt) / 1000)}s`);
+        }
+      }, 200);
+
+      release = () => {
+        clearInterval(timer);
+        stream.getTracks().forEach((t) => t.stop());
+        ctx.close().catch(() => {});
+      };
+    }).catch((e) => {
+      if (mine === generation) release = null;
+      onEvent(`mic monitor could not open the microphone: ${e && e.name}`);
+    });
+  }
+
+  function close() {
+    generation++;
+    release?.();
+    release = null;
+    lastLoudAt = 0;
+    onLevel(0);
+    onEvent("mic monitor released (muted)");
+  }
+
+  open();
   return {
     sawSpeech() { lastResultAt = Date.now(); },
+    open,
+    close,
   };
 }
 
@@ -153,7 +190,7 @@ export function createVoiceInput(
   if (!SR) {
     onError("Speech recognition not supported in this browser");
     onMicEvent("no SpeechRecognition in this browser");
-    return { start() {}, stop() {}, pause() {}, resume() {}, restart() {} };
+    return { start() {}, stop() {}, pause() {}, resume() {}, mute() {}, restart() {} };
   }
 
   let shouldListen = false;
@@ -447,6 +484,22 @@ export function createVoiceInput(
       dropPendingInterim();
       stopAll(false);
     },
+    // The mute button: the microphone stops taking anything new, and that is
+    // all. Unlike pause(), the engines are stopped without being retired and
+    // the pending interim is kept, so words already spoken still arrive and
+    // still go to JARVIS. resume() turns the microphone back on.
+    mute() {
+      paused = true;
+      if (rotateTimer) { clearTimeout(rotateTimer); rotateTimer = null; }
+      for (const e of engines) {
+        if (!e.running || e.retired) continue;
+        try {
+          e.sr.stop();                    // stop, not abort: its last result lands
+        } catch {
+          // already stopping
+        }
+      }
+    },
     resume() {
       paused = false;
       // Do not cancel a pending retry: the server's status frames call resume()
@@ -481,6 +534,8 @@ export interface AudioPlayer {
   dropQueued(): void;
   getAnalyser(): AnalyserNode;
   onPlayed(cb: (utt: number, idx: number) => void): void;
+  /** A chunk has just started playing, and how many seconds it lasts. */
+  onStarted(cb: (utt: number, idx: number, seconds: number) => void): void;
   onFinished(cb: () => void): void;
 }
 
@@ -502,6 +557,7 @@ export function createAudioPlayer(): AudioPlayer {
   let isPlaying = false;
   let currentSource: AudioBufferSourceNode | null = null;
   let playedCallback: ((utt: number, idx: number) => void) | null = null;
+  let startedCallback: ((utt: number, idx: number, seconds: number) => void) | null = null;
   let finishedCallback: (() => void) | null = null;
   let needsGestureCallback: (() => void) | null = null;
   let gestureNoticeShown = false;
@@ -558,6 +614,7 @@ export function createAudioPlayer(): AudioPlayer {
       }
     };
     source.start();
+    startedCallback?.(head.utt, head.idx, head.buffer.duration);
   }
 
   return {
@@ -605,6 +662,10 @@ export function createAudioPlayer(): AudioPlayer {
 
     onPlayed(cb) {
       playedCallback = cb;
+    },
+
+    onStarted(cb) {
+      startedCallback = cb;
     },
 
     onFinished(cb) {

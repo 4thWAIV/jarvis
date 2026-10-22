@@ -1,190 +1,33 @@
 """
-brain.py — JARVIS's brain: one long-lived `claude -p` process on the user's
-Claude subscription, fed over stdin as stream-json.
+brain.py — JARVIS's brain, whoever runs the model.
 
-No Anthropic API. Lean flags (no user hooks, no user MCP servers, coding tools
-disallowed) keep a turn at ~13k context tokens with sub-second first tokens
-once warm. Every state transition is observable through on_state().
+One conversation at a time, served by a provider's session
+(`brain_provider.py`; Claude Code is `claude_provider.py`). What is here is
+the same for every provider: turns run one at a time and every turn reaches a
+result; what the turn and the generation have read from outside JARVIS; the
+context budget, and rotation only with the user's yes; the warm-up, crash
+restarts and their budget. Every state transition is observable through
+on_state().
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
-import shlex
-import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-import claude_env
-import usage_store
+import brain_provider
+from brain_provider import (BrainProvider, ProviderEvent, ProviderSession, SessionInfo,
+                            TextDelta, ToolStarted, TurnEnded, UsageSeen)
 
 log = logging.getLogger("jarvis.brain")
 
-# The brain runs on the user's Claude subscription — never on an API key. Any of
-# these in the server's environment (they come from .env for Fish/other features)
-# would make the CLI authenticate with the key instead of the login.
-#
-# Re-exported from claude_env, which is where the scrub now lives: the run
-# pipeline needs exactly the same one, and the first copy of this rule was
-# fixed here and nowhere else for a whole milestone.
-SCRUBBED_ENV_PREFIXES = claude_env.SCRUBBED_ENV_PREFIXES
-SCRUBBED_ENV_KEYS = claude_env.SCRUBBED_ENV_KEYS
-
-# ALLOWLIST (`--tools`), not a denylist: anything a future CLI adds is off by
-# default. The MCP tools are namespaced `mcp__<server>__<tool>`.
-# `ListAgents` is deliberately absent: it cannot see sessions that bound no
-# inbox socket (4 of 17 on the dev machine), and `list_sessions` reads the
-# roster directly.
-ALLOWED_TOOLS = [
-    "mcp__jarvis__list_sessions",
-    "mcp__jarvis__session_detail",
-    "mcp__jarvis__steer_session",
-    "mcp__jarvis__answer_dialog",
-    "mcp__jarvis__spawn_run",
-    "mcp__jarvis__start_build",
-    "mcp__jarvis__build_status",
-    "mcp__jarvis__review_document",
-    "mcp__jarvis__approve_document",
-    "mcp__jarvis__run_command",
-    "mcp__jarvis__create_project",
-    "mcp__jarvis__run_status",
-    "mcp__jarvis__cancel_run",
-    "mcp__jarvis__list_projects",
-    "mcp__jarvis__open_in_browser",
-    "mcp__jarvis__open_in_terminal",
-    "mcp__jarvis__read_page",
-    "mcp__jarvis__look_at_page",
-    "mcp__jarvis__what_is_on_screen",
-    "mcp__jarvis__look_at_screen",
-    "mcp__jarvis__github_repo",
-    "mcp__jarvis__usage_status",
-    "mcp__jarvis__connections",
-    "mcp__jarvis__enable_session_inbox",
-    "mcp__jarvis__repo_overview",
-    "mcp__jarvis__search_repo",
-    "mcp__jarvis__read_file",
-    "mcp__jarvis__search_history",
-    "mcp__jarvis__read_history",
-    "mcp__jarvis__open_in_editor",
-    "mcp__jarvis__remember",
-    "mcp__jarvis__recall",
-    "mcp__jarvis__project_note",
-    "mcp__jarvis__write_journal",
-    # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
-    # a page he was handed the address of and nothing else — "look it up" had
-    # no answer at all. Both were verified inside this exact flag set
-    # (`--tools`, `--strict-mcp-config`, subscription login): WebFetch answers
-    # in ~9s, WebSearch in ~16s. Scraping a search engine instead returns an
-    # anti-bot page in 0.3s, which is why there is no scraper.
-    #
-    # Their results are attacker-written text that lands in the context with
-    # no `_wrap_untrusted` around it — the CLI puts it there, not JARVIS. See
-    # WEB_CONTENT_TOOLS below and server.py's `_untrusted_content_refusal`.
-    "WebSearch",
-    "WebFetch",
-    # Loads the repo's `skills/<name>/SKILL.md`, synced into the brain home.
-    "Skill",
-]
-
-# JARVIS ships connected to nothing, and the user brings their own MCP servers
-# by naming them in `<data>/jarvis/connections.json`. Their tools arrive as
-# `mcp__<their-server>__<tool>`, which is on no list above — so the grant is
-# computed per launch, from their file, and added to (never merged into)
-# ALLOWED_TOOLS.
-#
-# It stays an ALLOWLIST. What is granted is exactly one `mcp__<server>` per
-# server the user wrote down themselves; a server they did not declare is
-# still refused, and so is every built-in a future CLI invents. Nothing here
-# is ever expressed as "everything except".
-#
-# The grant names the SERVER, not its tools, and that is not laziness: JARVIS
-# cannot know a server's tool names before it starts one, so enumerating them
-# would mean either starting every server twice or guessing. Verified against
-# `claude` 2.1.259: `--tools mcp__weather` admits `mcp__weather__forecast` and
-# `mcp__weather__tide`.
-#
-# Also measured, and worth stating plainly because it decides how much this
-# flag is actually load-bearing: that CLI does NOT filter MCP tools by
-# `--tools` at all — with `--tools WebSearch` and a weather server in
-# `--mcp-config`, both weather tools were still offered to the model. What
-# really gates an MCP tool is whether its server is in `--mcp-config`
-# (see server.py's `_write_mcp_config`) and, for JARVIS's own, the origin gate
-# on `/internal/tool`. The grant is kept anyway: it costs nothing, it states
-# the intent in the one place a reader will look, and if the CLI ever enforces
-# `--tools` over MCP names again, a user's declared server keeps working
-# instead of going silently dead.
-def granted_tools(connections: list[str]) -> list[str]:
-    """ALLOWED_TOOLS plus one whole-server grant per declared connection."""
-    return ALLOWED_TOOLS + [f"mcp__{name}" for name in connections]
-
-# Tools whose results put text from the open web into the brain's context. A
-# turn that has used one may not also act unsupervised (server.py gates it);
-# `_handle` sees them in the CLI's own tool_use events.
-WEB_CONTENT_TOOLS = {"WebSearch", "WebFetch"}
-
-
-def untrusted_tool_source(name: str) -> Optional[str]:
-    """What a tool result came FROM, if it came from outside JARVIS — a short
-    label to say out loud — or None if the turn stays clean.
-
-    The user's own MCP servers are treated exactly like the open web, and the
-    distinction that decides it is between the CODE and the CONTENT. They
-    vouched for the code: they chose the server and gave it their token. They
-    did not write what it returns — a Notion page somebody shared with them, a
-    GitHub issue a stranger opened, a Slack message, a calendar invitation
-    with a title anyone could set. That text lands in a brain holding
-    `spawn_run`, `run_command`, `steer_session` and `start_build`, with no
-    `_wrap_untrusted` around it, because the CLI puts it there and JARVIS
-    never handles it — the same hole `WebFetch` has and for the same reason.
-    So it goes through the same gate rather than a second one; see server.py's
-    `_untrusted_content_refusal`.
-
-    JARVIS's own `mcp__jarvis__*` results are exempt: where they carry
-    somebody else's words they are already inside `<session-output>`, and
-    gating them would shut the assistant down entirely.
-    """
-    if name in WEB_CONTENT_TOOLS:
-        return "a web page"
-    if name.startswith("mcp__") and not name.startswith("mcp__jarvis__"):
-        parts = name.split("__")
-        if len(parts) > 2 and parts[1]:
-            return parts[1]
-    return None
-
-# Only an explicit rejection blocks turns. The CLI also sends courtesy statuses
-# — "allowed_warning" means "you have passed a utilisation threshold", NOT that
-# you are cut off. Treating one of those as a limit mutes JARVIS completely,
-# so an unrecognised status fails OPEN: we try, and a real limit comes back as
-# an error result we can speak.
-BLOCKING_RATE_LIMIT_STATUSES = {"rejected", "blocked", "exceeded", "throttled"}
-
 WARMUP_TEXT = "(system) Warm-up. Reply with exactly: OK"
-
-# A warm-up failure whose text matches this is PERMANENT: no restart heals an
-# expired login, so retrying just burns the whole restart budget in seconds
-# (as happened live: 3 restarts in 5s on an expired OAuth session). Matched
-# case-insensitively on the stable fragments ("failed to authenticate",
-# "oauth"), not the CLI's full sentence ("Failed to authenticate: OAuth
-# session expired and could not be refreshed") -- so any future auth-shaped
-# wording from the CLI is still caught. When the text doesn't match, the
-# failure is treated as transient (the safe default): a wrongly-fatal call
-# mutes a brain that would have recovered, which is worse than one extra
-# restart on something that really was permanent.
-_FATAL_AUTH_PATTERN = re.compile(r"failed to authenticate|oauth", re.IGNORECASE)
-
-
-def _classify_fatal_failure(error_text: Optional[str]) -> Optional[str]:
-    """A short machine-readable cause (e.g. "auth") for a warm-up failure's
-    raw error text, or None if it should be treated as transient."""
-    if error_text and _FATAL_AUTH_PATTERN.search(error_text):
-        return "auth"
-    return None
 
 # The spec's bound on what one generation may hand the next. It is prepended
 # to EVERY generation's system prompt, so an unbounded note would eat the very
@@ -291,9 +134,13 @@ StateCallback = Callable[[str, dict], "Awaitable[None] | None"]
 @dataclass
 class BrainConfig:
     home: Path
+    # Who runs the brain (brain_provider.provider): also the provider whose
+    # logo the voice page shows on the orb.
+    provider: str = brain_provider.DEFAULT_PROVIDER
     model: str = "sonnet"
     effort: str = "low"
-    claude_path: Optional[str] = None
+    claude_path: Optional[str] = None       # the anthropic provider's `claude`
+    codex_path: Optional[str] = None        # the openai provider's `codex`
     turn_timeout: float = 90.0
     warmup_timeout: float = 45.0
     max_restarts: int = 3
@@ -309,11 +156,17 @@ class BrainConfig:
 
     @classmethod
     def from_env(cls, home: Path) -> "BrainConfig":
+        # The page's choice (brains.json), unless .env names one.
+        import brains_config
+        provider = os.getenv("JARVIS_BRAIN_PROVIDER") or brains_config.load()["default"]
         return cls(
             home=home,
-            model=os.getenv("JARVIS_BRAIN_MODEL", "sonnet"),
+            provider=provider,
+            model=(os.getenv("JARVIS_BRAIN_MODEL") or brains_config.model_for(provider)
+                   or brain_provider.provider(provider).default_model),
             effort=os.getenv("JARVIS_BRAIN_EFFORT", "low"),
             claude_path=os.getenv("JARVIS_CLAUDE_PATH") or None,
+            codex_path=os.getenv("JARVIS_CODEX_PATH") or None,
             turn_timeout=float(os.getenv("JARVIS_BRAIN_TURN_TIMEOUT", "90")),
             context_budget=int(os.getenv("JARVIS_BRAIN_CONTEXT_BUDGET", "900000")),
             user_name=os.getenv("USER_NAME", ""),
@@ -331,7 +184,7 @@ class TurnResult:
     first_delta_sec: Optional[float] = None
     tools: list[str] = field(default_factory=list)
     rate_limit: Optional[dict] = None
-    error: Optional[str] = None      # the CLI's error text when stop_reason == "error"
+    error: Optional[str] = None      # the provider's error text when stop_reason == "error"
 
 
 class _Turn:
@@ -340,21 +193,21 @@ class _Turn:
     on_tool: Optional[Callable[[], None]] = None
 
     def __init__(self, origin: str, on_delta: Optional[DeltaCallback],
-                 proc: Optional[asyncio.subprocess.Process] = None):
+                 session: Optional[ProviderSession] = None):
         self.origin = origin
         self.on_delta = on_delta
-        self.proc = proc
+        self.session = session
         self.started = time.monotonic()
         self.first_delta: Optional[float] = None
         self.parts: list[str] = []
         self.tools: list[str] = []
-        self.usage: dict = {}
-        self.assistant_text: list[str] = []   # text blocks from assistant events (errors arrive here)
+        self.context_tokens = 0          # how big the window was, as the turn ended
+        self.output_tokens = 0
         # Set the moment anything JARVIS did not write enters this turn's
-        # context, either by a WEB_CONTENT_TOOLS tool_use or by one of his own
-        # READING tools saying so. Not only the web: a repository file, a
-        # transcript, a run's output and the user's own screen all carry
-        # somebody else's words.
+        # context, either by one of the provider's own tools that reads
+        # foreign text or by one of JARVIS's READING tools saying so. Not only
+        # the web: a repository file, a transcript, a run's output and the
+        # user's own screen all carry somebody else's words.
         self.web_content = False
         # What put it there, in words the user can hear — "a file in one of
         # your projects", "another session's transcript". The FIRST thing read
@@ -370,38 +223,21 @@ class _Turn:
             self.stop_reason = reason
             self.done.set()
 
-    def context_tokens(self) -> int:
-        """How big the window IS: the prompt as sent, which is the uncached
-        part plus the part served from cache.
-
-        Deliberately NOT `+ cache_creation_input_tokens`. Those are the cache
-        being rebuilt out of the same prompt, not extra tokens in the window
-        -- a turn that re-creates the cache reports the whole floor under
-        both `cache_creation` and (next turn) `cache_read`. Summing all three
-        counted a cache miss as the conversation doubling: live, a 60k
-        budget rotated at ~30k of actual talk, and the user asked why his
-        assistant compacted so often. The window is the same size either
-        way; only the billing column changed.
-        """
-        u = self.usage
-        return u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
-
     def result(self, rate_limit: Optional[dict]) -> TurnResult:
-        u = self.usage
         return TurnResult(
             origin=self.origin, text="".join(self.parts), stop_reason=self.stop_reason,
-            context_tokens=self.context_tokens(), output_tokens=u.get("output_tokens", 0),
+            context_tokens=self.context_tokens, output_tokens=self.output_tokens,
             duration_sec=time.monotonic() - self.started, first_delta_sec=self.first_delta,
             tools=list(self.tools), rate_limit=rate_limit, error=self.error,
         )
 
 
 class Brain:
-    def __init__(self, config: BrainConfig):
+    def __init__(self, config: BrainConfig, provider: Optional[BrainProvider] = None):
         self.config = config
-        self._claude = config.claude_path or shutil.which("claude") or "claude"
-        self._proc: Optional[asyncio.subprocess.Process] = None
-        self._reader: Optional[asyncio.Task] = None
+        # Who runs the model; the brain knows it only through this.
+        self.provider: BrainProvider = provider or brain_provider.provider(config.provider)
+        self._session: Optional[ProviderSession] = None
         self._turn_lock = asyncio.Lock()
         self._inflight: Optional[_Turn] = None
         self._ready = False
@@ -411,20 +247,20 @@ class Brain:
         self._restart_times: list[float] = []
         self._restart_task: Optional[asyncio.Task] = None
         self._spawn_lock = asyncio.Lock()
-        self._stderr_task: Optional[asyncio.Task] = None
         self._bg_tasks: set[asyncio.Task] = set()
         self._state_cbs: list[StateCallback] = []
         self.session_id: Optional[str] = None
         self.model_in_use: Optional[str] = None
         self.context_tokens = 0
-        # What the CLI actually started, straight out of its init event, and
+        # What the session actually started, as it reports it (SessionInfo),
         # rebuilt for every generation. Measured against `claude` 2.1.259: a
         # server whose command does not exist comes back with
         # `"status": "failed"` and contributes no tools. JARVIS used to throw
-        # this event's inventory away, which is how a user's server that never
+        # this inventory away, which is how a user's server that never
         # started became silence with nothing anywhere to read.
         self.mcp_servers: list[dict] = []
         self.live_tools: list[str] = []
+        self._server_tools: dict[str, list[str]] = {}
         # The resident floor: system prompt, CLAUDE.md and every tool schema,
         # measured off the warm-up turn — the only turn with no conversation
         # in it. See `_note_context` for why it is subtracted.
@@ -468,7 +304,7 @@ class Brain:
 
     @property
     def running(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        return self._session is not None and self._session.alive
 
     @property
     def ready(self) -> bool:
@@ -496,10 +332,11 @@ class Brain:
         transcript", or the name of one of the user's own connected
         services — or None if nothing has.
 
-        Two sources, because neither is enough on its own. The CLI's own
-        `WebSearch`/`WebFetch` and every `mcp__<their-server>__*` are visible
-        only as tool_use events we do not control the shape of, so JARVIS's
-        own reading tools set the label directly
+        Two sources, because neither is enough on its own. The provider's own
+        tools that read foreign text (for Claude Code, its web tools and the
+        user's own MCP servers) are visible only as tool names we do not
+        control the shape of, and the provider says which they are
+        (`reads_foreign`); JARVIS's own reading tools set the label directly
         (`mark_untrusted_content`) rather than relying on that. None between
         turns: there is nothing to taint.
 
@@ -519,7 +356,7 @@ class Brain:
         if t.untrusted_label:
             return t.untrusted_label
         for name in t.tools:
-            source = untrusted_tool_source(name)
+            source = self.provider.reads_foreign(name)
             if source:
                 return source
         return "a web page" if t.web_content else None
@@ -549,8 +386,8 @@ class Brain:
         """Fold the turn in flight's taint into the generation's.
 
         Called as a turn ends. `mark_untrusted_content` covers JARVIS's own
-        reading tools directly; this covers the CLI's `WebSearch`/`WebFetch`
-        and the user's own `mcp__<server>__*`, which are visible only as
+        reading tools directly; this covers the provider's own tools that read
+        foreign text (`reads_foreign`), which are visible only as
         tool_use names on the turn and never call it.
         """
         if self._generation_untrusted:
@@ -592,7 +429,7 @@ class Brain:
 
     @property
     def connected_servers(self) -> list[str]:
-        """MCP servers the CLI has running right now, including `jarvis`."""
+        """MCP servers the session has running right now, including `jarvis`."""
         return self._servers_with_status("connected")
 
     @property
@@ -604,8 +441,7 @@ class Brain:
 
     def tools_from(self, server: str) -> list[str]:
         """The bare tool names one server is actually offering."""
-        prefix = f"mcp__{server}__"
-        return [t[len(prefix):] for t in self.live_tools if t.startswith(prefix)]
+        return list(self._server_tools.get(server, []))
 
     @property
     def conversation_tokens(self) -> int:
@@ -738,27 +574,6 @@ class Brain:
                      + ", ".join(sorted(set(projects))) + ".")
         return base
 
-    def command(self) -> list[str]:
-        c = self.config
-        cmd = shlex.split(self._claude) + [
-            "-p", "--input-format", "stream-json", "--output-format", "stream-json",
-            "--verbose", "--include-partial-messages",
-            "--model", c.model, "--effort", c.effort, "--name", "jarvis",
-            "--setting-sources", "project", "--strict-mcp-config",
-            "--tools", ",".join(granted_tools(c.connections)),
-            "--settings", json.dumps({"crossSessionInbound": "accept"}),
-            "--dangerously-skip-permissions",
-            "--append-system-prompt", self.launch_prompt(),
-        ]
-        if c.mcp_config:
-            cmd += ["--mcp-config", str(c.mcp_config)]
-        cmd += list(c.extra_args)
-        return cmd
-
-    @staticmethod
-    def child_env() -> dict[str, str]:
-        return claude_env.child_env()
-
     # ── lifecycle ──────────────────────────────────────────────────────
     async def start(self) -> bool:
         """A fresh boot: spawn the process and run the warm-up turn. True when ready.
@@ -800,35 +615,25 @@ class Brain:
         self._ready = False
         # Never orphan a predecessor: detach it first so its exit schedules
         # nothing. A rotation has already detached its own, and kept it.
-        self._detach_and_kill(self._proc)
+        self._detach_and_kill(self._session)
         self.generation += 1
+        session = self.provider.session(self.config, self._on_event, self._on_exit)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *self.command(), cwd=str(self.config.home), env=self.child_env(),
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Without this the brain's readers keep asyncio's 64 KiB line
-                # limit, and the recovery below turns an oversized reply into a
-                # SKIPPED one: JARVIS goes silent instead of answering. The
-                # ceiling has to be raised here too, not only in run_executor.
-                limit=claude_env.STREAM_LINE_LIMIT,
-            )
+            await session.open(self.launch_prompt())
         except OSError as e:  # includes FileNotFoundError / PermissionError
             self.generation -= 1
-            log.error(f"brain: cannot start {self._claude!r}: {e}")
-            self._proc = None
+            log.error(f"brain: cannot start the {self.provider.name} brain: {e}")
+            self._session = None
             if rotating:
                 return False      # the caller still has a brain that works
             self._failed = True
             await self._emit("failed", reason=str(e))
             return False
-        self._proc = proc
-        self._reader = asyncio.create_task(self._read_stdout(proc))
-        self._stderr_task = asyncio.create_task(self._drain_stderr(proc))
+        self._session = session
         run_warmup = self._turn_locked if rotating else self._turn
         warm = await run_warmup(WARMUP_TEXT, "system", None,
                                 timeout=self.config.warmup_timeout, warmup=True)
-        if warm.stop_reason != "result" or proc is not self._proc or self._stopping:
+        if warm.stop_reason != "result" or session is not self._session or self._stopping:
             # A stop() that landed while we were still inside the spawn syscall
             # found nothing to kill; treat it like a failed warm-up here.
             why = "stopping" if self._stopping else warm.stop_reason
@@ -842,11 +647,11 @@ class Brain:
             # burned on a condition retrying cannot fix. Never fatal mid-
             # rotation: the caller there still has a working predecessor to
             # fall back to, which is a different, non-budget-burning path.
-            fatal_reason = None if rotating else _classify_fatal_failure(warm.error)
-            if proc.returncode is None:
-                self._kill(proc)          # never leave a half-started child behind
-            if self._stopping and proc is self._proc:
-                self._proc = None
+            fatal_reason = None if rotating else self.provider.failure_kind(warm.error)
+            if session.alive:
+                session.kill()            # never leave a half-started child behind
+            if self._stopping and session is self._session:
+                self._session = None
             if fatal_reason and not self._stopping:
                 self._failed = True
                 self._failure_reason = fatal_reason
@@ -862,45 +667,21 @@ class Brain:
         self._stopping = True
         self._ready = False
         await self._cancel_pending_restart()
-        proc = self._proc
-        if proc and proc.returncode is None:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-                await asyncio.wait_for(proc.wait(), 5.0)
-            except asyncio.TimeoutError:
-                log.warning("brain: did not exit after stdin close; killing")
-                self._kill(proc)
-            except Exception as e:
-                log.warning(f"brain: error while stopping: {e}")
-                self._kill(proc)
+        session = self._session
+        if session is not None:
+            await session.close(5.0)
         if self._inflight:
             self._inflight.finish("died")
-        for task in (self._reader, self._stderr_task):
-            if task and not task.done():
-                try:
-                    await asyncio.wait_for(task, 2.0)
-                except asyncio.TimeoutError:
-                    task.cancel()
-                except Exception as e:
-                    log.warning(f"brain: reader task ended with {e}")
 
-    @staticmethod
-    def _kill(proc: asyncio.subprocess.Process) -> None:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-
-    def _detach_and_kill(self, proc: Optional[asyncio.subprocess.Process]) -> None:
-        """Retire a superseded process: unbind it first, so its exit schedules
-        nothing and its remaining output is ignored, then make sure it dies."""
-        if proc is None:
+    def _detach_and_kill(self, session: Optional[ProviderSession]) -> None:
+        """Retire a superseded session: unbind it first, so its exit schedules
+        nothing and its remaining events are ignored, then make sure it ends."""
+        if session is None:
             return
-        if self._proc is proc:
-            self._proc = None
-        if proc.returncode is None:
-            self._kill(proc)
+        if self._session is session:
+            self._session = None
+        if session.alive:
+            session.kill()
 
     # ── context budget and rotation ────────────────────────────────────
     async def _note_context(self) -> None:
@@ -945,7 +726,7 @@ class Brain:
             if self._stopping or self._failed or not self.ready:
                 log.info("rotation skipped: the brain is not serving")
                 return False
-            old, old_reader, old_stderr = self._proc, self._reader, self._stderr_task
+            old = self._session
             old_gen, old_handover = self.generation, self._handover
             old_gen_taint = self._generation_untrusted
             old_handover_taint = self._handover_untrusted
@@ -960,15 +741,15 @@ class Brain:
             # its warm-up turn against the new process, so this must be
             # cleared before it, not after.
             self._generation_untrusted = None
-            self._proc = None       # detached, not killed: it is the fallback
+            self._session = None    # detached, not killed: it is the fallback
             self._rotating = True
             try:
                 ok = await self._spawn_locked(rotating=True)
             finally:
                 self._rotating = False
             if not ok:
-                self._detach_and_kill(self._proc)      # the stillborn replacement
-                if self._stopping or old.returncode is not None:
+                self._detach_and_kill(self._session)   # the stillborn replacement
+                if self._stopping or old is None or not old.alive:
                     # Nothing left to fall back to: the predecessor died inside
                     # the rotation window, where its exit scheduled nothing.
                     # Hand back to the restart machinery rather than go mute.
@@ -976,7 +757,7 @@ class Brain:
                     if not self._stopping:
                         self._schedule_restart("rotation left no process")
                     return False
-                self._proc, self._reader, self._stderr_task = old, old_reader, old_stderr
+                self._session = old
                 self.generation, self._handover = old_gen, old_handover
                 # The old generation is still serving, so its taint is still
                 # its own.
@@ -1012,36 +793,35 @@ class Brain:
     async def _turn_locked(self, text, origin, on_delta, timeout,
                            warmup: bool = False, on_tool=None) -> TurnResult:
         """The body of a turn. The caller holds the turn lock."""
-        proc = self._proc
+        session = self._session
         # Only the warm-up runs before `ready`; everything else must wait for
-        # it, and must never bind to a process being torn down.
-        if (self._failed or proc is None or proc.returncode is not None
-                or proc.stdin is None or (not warmup and not self._ready)):
+        # it, and must never bind to a session being torn down.
+        if (self._failed or session is None or not session.alive
+                or (not warmup and not self._ready)):
             return TurnResult(origin, "", "not_running")
         # The warm-up must run even while rate-limited: it only proves the
         # process is alive, and gating it would burn the restart budget on
         # a condition that heals by itself.
         if not warmup and self._rate_limited():
             return TurnResult(origin, "", "rate_limited", rate_limit=self.rate_limit)
-        t = _Turn(origin, on_delta, proc)
+        t = _Turn(origin, on_delta, session)
         t.on_tool = on_tool
         self._inflight = t
         try:
-            line = json.dumps({"type": "user", "message": {"role": "user", "content": text}})
-            await asyncio.wait_for(self._send_and_wait(proc, line, t), timeout)
+            await asyncio.wait_for(self._send_and_wait(session, text, t), timeout)
         except asyncio.TimeoutError:
             t.finish("timeout")
             log.error(f"brain: turn stuck for {timeout}s; restarting")
             self._ready = False
-            self._kill(proc)
+            session.kill()
             self._schedule_restart("stuck")
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
-            log.error(f"brain: stdin write failed: {e}")
+            log.error(f"brain: sending the turn failed: {e}")
             t.finish("died")
-            # Do not depend on the child exiting on its own: a child that
+            # Do not depend on the session ending on its own: a child that
             # closed stdin but kept stdout open would otherwise stay "ready".
             self._ready = False
-            self._kill(proc)
+            session.kill()
             self._schedule_restart("write failed")
         finally:
             # Before the turn is let go: `turn_untrusted_source` reads off
@@ -1050,7 +830,7 @@ class Brain:
                 self._note_generation_taint()
                 self._inflight = None
         if t.stop_reason == "result":
-            self.context_tokens = t.context_tokens()
+            self.context_tokens = t.context_tokens
             if warmup:
                 # The one turn that carries no conversation: whatever it cost
                 # is the resident floor — the system prompt, CLAUDE.md, and
@@ -1059,136 +839,57 @@ class Brain:
         return t.result(self.rate_limit)
 
     @staticmethod
-    async def _send_and_wait(proc: asyncio.subprocess.Process, line: str, t: "_Turn") -> None:
-        assert proc.stdin is not None
-        proc.stdin.write((line + "\n").encode())
-        await proc.stdin.drain()
+    async def _send_and_wait(session: ProviderSession, text: str, t: "_Turn") -> None:
+        await session.send(text)
         await t.done.wait()
 
-    # ── stdout protocol ────────────────────────────────────────────────
-    async def _read_stdout(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stdout is not None
-        try:
-            while True:
-                # A line bigger than even the raised claude_env.STREAM_LINE_
-                # LIMIT makes readline() raise ValueError. Uncaught, that
-                # used to kill this whole reader task — which is how the
-                # brain went silent mid-conversation ("my language systems
-                # are down"). Its bytes are already discarded by readline()
-                # itself (that is what keeps the stream aligned on the next
-                # '\n'), so the fix is to log and keep reading.
-                try:
-                    raw = await proc.stdout.readline()
-                except ValueError as e:
-                    log.warning(f"brain: skipping oversized stdout line ({e})")
-                    continue
-                if not raw:
-                    break
-                try:
-                    # decode() FIRST, and with errors="replace".
-                    #
-                    # json.loads() accepts bytes, but it decodes them itself
-                    # and a bad byte there raises UnicodeDecodeError — a
-                    # ValueError, but NOT a JSONDecodeError, so it escaped
-                    # this loop entirely, ran _on_exit, and left the brain
-                    # with no reader while its process was still alive and
-                    # still writing. The oversized-line recovery above can
-                    # produce exactly that: readline()'s overrun path clears
-                    # the buffer at an arbitrary byte offset, so the next
-                    # line can begin mid-codepoint. run_executor.py has
-                    # always decoded this way; this is the same treatment.
-                    ev = json.loads(raw.decode(errors="replace"))
-                except ValueError:
-                    continue
-                try:
-                    self._handle(ev, proc)
-                except Exception as e:  # one malformed event must not kill the reader
-                    log.warning(f"brain: bad event ignored: {e}")
-        finally:
-            await self._on_exit(proc)
-
-    def _handle(self, ev: dict, proc: asyncio.subprocess.Process) -> None:
-        if proc is not self._proc:
+    # ── what the session reports ─────────────────────────────────────────
+    def _on_event(self, session: ProviderSession, ev: ProviderEvent) -> None:
+        if session is not self._session:
             return  # a stale generation draining its buffer
-        t = self._inflight if (self._inflight and self._inflight.proc is proc) else None
-        kind = ev.get("type")
-        if kind == "system" and ev.get("subtype") == "init":
-            self.session_id = ev.get("session_id") or self.session_id
-            self.model_in_use = ev.get("model") or self.model_in_use
-            servers = ev.get("mcp_servers")
-            self.mcp_servers = [s for s in servers if isinstance(s, dict)] \
-                if isinstance(servers, list) else []
-            tools = ev.get("tools")
-            self.live_tools = [str(t) for t in tools] if isinstance(tools, list) else []
-        elif kind == "stream_event" and t is not None:
-            e = ev.get("event") or {}
-            d = e.get("delta") or {}
-            if e.get("type") == "content_block_delta" and d.get("type") == "text_delta":
-                text = d.get("text", "")
-                if text:
-                    if t.first_delta is None:
-                        t.first_delta = time.monotonic() - t.started
-                    t.parts.append(text)
-                    if t.on_delta:
-                        try:
-                            t.on_delta(text)
-                        except Exception as e:
-                            log.warning(f"delta listener failed: {e}")
-        elif kind == "assistant" and t is not None:
-            for block in (ev.get("message") or {}).get("content") or []:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "tool_use":
-                    t.tools.append(str(block.get("name")))
-                    # Anything he wrote before reaching for a tool was
-                    # narration of an intention, not a report of a result.
-                    # The listener uses this to throw it away before it is
-                    # spoken; see server.py's `_HoldFirstLine`.
-                    if t.on_tool:
-                        try:
-                            t.on_tool()
-                        except Exception as e:
-                            log.warning(f"tool listener failed: {e}")
-                elif block.get("type") == "text" and block.get("text"):
-                    t.assistant_text.append(str(block["text"]))
-        elif kind == "rate_limit_event":
-            info = dict(ev.get("rate_limit_info") or {})
-            status = str(info.get("status") or "")
-            self.usage = {"status": status,
-                          "utilization": info.get("utilization"),
-                          "windows": info.get("unifiedWindows") or {}}
-            # This event is the only place JARVIS ever learns how much of the
-            # subscription's windows is gone, and it arrives only while a turn
-            # is in flight. Write it down before anything else happens to it —
-            # but never let bookkeeping kill a turn.
-            try:
-                usage_store.record(info)
-            except Exception as e:
-                log.warning(f"brain: could not record usage ({e})")
-            if status in BLOCKING_RATE_LIMIT_STATUSES:
-                resets = info.get("resetsAt")
-                if not isinstance(resets, (int, float)):
-                    # Never fail closed forever on a malformed event.
+        t = self._inflight if (self._inflight and self._inflight.session is session) else None
+        if isinstance(ev, SessionInfo):
+            self.session_id = ev.conversation_id or self.session_id
+            self.model_in_use = ev.model or self.model_in_use
+            self.mcp_servers = list(ev.servers)
+            self.live_tools = list(ev.tools)
+            self._server_tools = {k: list(v) for k, v in ev.server_tools.items()}
+        elif isinstance(ev, TextDelta) and t is not None:
+            if t.first_delta is None:
+                t.first_delta = time.monotonic() - t.started
+            t.parts.append(ev.text)
+            if t.on_delta:
+                try:
+                    t.on_delta(ev.text)
+                except Exception as e:
+                    log.warning(f"delta listener failed: {e}")
+        elif isinstance(ev, ToolStarted) and t is not None:
+            t.tools.append(ev.name)
+            # Anything he wrote before reaching for a tool was narration of
+            # an intention, not a report of a result. The listener uses this
+            # to throw it away before it is spoken; see server.py's
+            # `_OneLinePerTurn`.
+            if t.on_tool:
+                try:
+                    t.on_tool()
+                except Exception as e:
+                    log.warning(f"tool listener failed: {e}")
+        elif isinstance(ev, UsageSeen):
+            self.usage = dict(ev.summary)
+            if ev.blocked:
+                info = dict(ev.detail)
+                if ev.resets_at is None:
+                    # Never fail closed forever on a report with no reset time.
                     info["resetsAt"] = time.time() + self.config.rate_limit_default_sec
                 self.rate_limit = info
                 self._background(self._emit("rate_limited", resets_at=info.get("resetsAt"),
-                                            window=info.get("rateLimitType")))
+                                            window=ev.window))
             else:
-                if status and not status.startswith("allowed"):
-                    log.warning(f"brain: unrecognised rate-limit status {status!r}; treating as usable")
-                elif status == "allowed_warning":
-                    pct = info.get("utilization")
-                    log.info(f"brain: usage warning — {info.get('rateLimitType')} window at "
-                             f"{pct:.0%}" if isinstance(pct, float) else f"brain: usage warning ({status})")
                 self.rate_limit = None
-        elif kind == "result" and t is not None:
-            t.usage = ev.get("usage") or {}
-            if ev.get("is_error") or (ev.get("subtype") and ev.get("subtype") != "success"):
-                # e.g. an API auth error: the CLI reports subtype "success" with
-                # is_error true and puts the message in an assistant text block.
-                t.error = (ev.get("result") if isinstance(ev.get("result"), str) and ev.get("result")
-                           else " ".join(t.assistant_text) or f"claude reported {ev.get('subtype')}")
-                log.error(f"brain: turn failed: {t.error[:300]}")
+        elif isinstance(ev, TurnEnded) and t is not None:
+            t.context_tokens, t.output_tokens = ev.context_tokens, ev.output_tokens
+            if ev.error:
+                t.error = ev.error
                 t.finish("error")
             else:
                 t.finish("result")
@@ -1199,36 +900,16 @@ class Brain:
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
 
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stderr is not None
-        try:
-            while True:
-                # Same overrun as stdout: an oversized line must not stop
-                # this loop, because once nobody drains stderr the child's
-                # next write to it blocks on a full, unread pipe forever —
-                # the process goes silent without even exiting.
-                try:
-                    raw = await proc.stderr.readline()
-                except ValueError as e:
-                    log.warning(f"brain: skipping oversized stderr line ({e})")
-                    continue
-                if not raw:
-                    return
-                log.debug(f"brain stderr: {raw.decode(errors='replace').rstrip()}")
-        except Exception as e:
-            log.warning(f"brain: stderr reader stopped: {e}")
-
-    async def _on_exit(self, proc: asyncio.subprocess.Process) -> None:
-        code = await proc.wait()
+    async def _on_exit(self, session: ProviderSession, code: Optional[int]) -> None:
         t = self._inflight
-        if t is not None and t.proc is proc and not t.done.is_set():
+        if t is not None and t.session is session and not t.done.is_set():
             t.finish("died")
-        if proc is not self._proc:
+        if session is not self._session:
             return
         self._ready = False
         if self._stopping:
             return
-        log.error(f"brain: process exited with {code}")
+        log.error(f"brain: the {self.provider.name} session ended with {code}")
         self._schedule_restart(f"exit {code}")
 
     # ── restarts ───────────────────────────────────────────────────────

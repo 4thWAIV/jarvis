@@ -80,7 +80,7 @@ SITES = _system_prompt_sites()
 # decision: the text this function builds is trusted prose in every
 # generation, so every non-literal in it is driven below.
 DRIVEN_SITES = {
-    "brain.command": "brain.Brain.launch_prompt",
+    "claude_provider.command": "brain.Brain.launch_prompt",
 }
 
 

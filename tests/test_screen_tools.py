@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import screen as real_screen
+import claude_provider
 
 
 class _Screen:
@@ -91,7 +92,7 @@ def test_both_screen_tools_are_registered_in_all_three_places(ready):
     server, _fake = ready
     for name in ("look_at_screen", "what_is_on_screen"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
         assert name in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
 
 

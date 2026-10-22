@@ -15,6 +15,7 @@ import importlib
 import time
 
 import pytest
+import claude_provider
 
 
 @pytest.fixture
@@ -376,9 +377,9 @@ def test_the_three_tool_sets_still_agree(wired):
     import jarvis_mcp
     server, _store = wired
     for name in ("run_status", "cancel_run"):
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

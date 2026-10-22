@@ -3,7 +3,8 @@
 Tim lost a conversation to a context clear and the brain had no way to look
 it up. Two places hold what was said:
 
-* the Claude Code transcripts (`*.jsonl`) of the brain's working directory,
+* the brain provider's own transcripts (`brain_provider.HistorySource`): for
+  Claude Code, the `*.jsonl` of the brain's working directory,
   `<claude config>/projects/<encoded brain home>/` — one file per generation,
   so a cleared or rotated conversation is still on disk, and
 * the Markdown under `JARVIS_DATA_DIR`: `journal/`, `memory/`, `projects/`.
@@ -28,6 +29,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+import brain_provider
 import data_paths
 import repo_read
 from repo_read import Refused
@@ -45,8 +47,14 @@ LINE_CHARS = 500               # a long message is shown as lines this long
 
 NOTE_DIRS = ("journal", "memory", "projects")
 NOTE_SUFFIX = ".md"
-TRANSCRIPT_SUFFIX = ".jsonl"
 TRANSCRIPT_LABEL = "transcript"
+
+
+def _history() -> brain_provider.HistorySource:
+    """Where the running brain provider keeps its transcripts, and how to
+    read them."""
+    return brain_provider.provider(
+        os.getenv("JARVIS_BRAIN_PROVIDER", brain_provider.DEFAULT_PROVIDER)).history()
 
 
 def claude_roots() -> list[Path]:
@@ -103,7 +111,8 @@ def _contained(root: Path, candidate: Path, suffix: str) -> Path:
 
 def _roots() -> list[tuple[str, Path, str]]:
     """(label, directory, suffix) for everything readable."""
-    out = [(TRANSCRIPT_LABEL, d, TRANSCRIPT_SUFFIX) for d in transcript_dirs()]
+    history = _history()
+    out = [(TRANSCRIPT_LABEL, d, history.suffix) for d in history.folders()]
     out += [(name, d, NOTE_SUFFIX) for name, d in note_roots().items()]
     return out
 
@@ -135,8 +144,9 @@ def resolve(source: str) -> tuple[str, Path]:
             name = rest if first == TRANSCRIPT_LABEL else raw
             if "/" in name or name in ("", ".", ".."):
                 raise Refused("outside")
-            if not name.endswith(TRANSCRIPT_SUFFIX):
-                name += TRANSCRIPT_SUFFIX
+            suffix = _history().suffix
+            if not name.endswith(suffix):
+                name += suffix
             candidates = [(l, r, s, r / name) for l, r, s in roots
                           if l == TRANSCRIPT_LABEL]
         if first in NOTE_DIRS and not rest.endswith(NOTE_SUFFIX):
@@ -189,9 +199,10 @@ def _listing() -> list[tuple[str, Path, str]]:
 
 # --- transcripts: user and assistant text only --------------------------------
 
-def _message_text(obj) -> tuple[str, str] | None:
-    """(role, text) of a transcript line that is something SAID, else None.
-    Tool calls, tool results, thinking, sidechains and meta lines are noise."""
+def claude_message_text(obj) -> tuple[str, str] | None:
+    """(role, text) of a Claude Code transcript line that is something SAID,
+    else None. Tool calls, tool results, thinking, sidechains and meta lines
+    are noise. Read through `claude_provider.ClaudeTranscripts`."""
     if not isinstance(obj, dict) or obj.get("type") not in ("user", "assistant"):
         return None
     if obj.get("isSidechain") or obj.get("isMeta"):
@@ -235,6 +246,7 @@ def _render(when: str, role: str, text: str) -> list[str]:
 def _messages(path: Path):
     """(first display line, when, role, text) per message, streamed."""
     fallback = _day(path)
+    history = _history()
     number = 1
     with open(path, encoding="utf-8", errors="replace") as handle:
         for raw in handle:
@@ -242,7 +254,7 @@ def _messages(path: Path):
                 obj = json.loads(raw)
             except ValueError:
                 continue
-            said = _message_text(obj)
+            said = history.message(obj)
             if not said:
                 continue
             role, text = said
@@ -334,6 +346,6 @@ def read_window(path: Path, around=None) -> repo_read.Window:
     """A bounded window on one resolved source. A transcript is read as its
     spoken lines (see `_render`), not as raw JSON, so line numbers match the
     ones `search` printed."""
-    if path.suffix.lower() == TRANSCRIPT_SUFFIX:
+    if path.suffix.lower() == _history().suffix:
         return repo_read.window_of_lines(_transcript_lines(path), around)
     return repo_read.read_window(path, around)

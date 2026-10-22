@@ -15,6 +15,7 @@ import time
 import pytest
 
 import dialog
+import claude_provider
 
 
 # --- the closed vocabulary --------------------------------------------------
@@ -712,9 +713,9 @@ def test_the_three_registries_agree(wired):
     import brain
     import jarvis_mcp
     server = wired
-    assert "mcp__jarvis__answer_dialog" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__answer_dialog" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

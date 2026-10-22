@@ -195,7 +195,7 @@ def test_a_corrupt_file_reads_as_no_data(store):
 def test_an_unwritable_location_does_not_raise(store, monkeypatch, tmp_path):
     import data_paths
     monkeypatch.setattr(data_paths, "usage_path",
-                        lambda: tmp_path / "no" / "such" / "dir" / "usage.json")
+                        lambda *a: tmp_path / "no" / "such" / "dir" / "usage.json")
     store.record(LIVE_EVENT, now=1000.0)           # must not raise into the brain
     assert store.snapshot()["measured"] is False
 

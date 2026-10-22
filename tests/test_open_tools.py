@@ -17,6 +17,7 @@ at the module boundary, and the recorder asserts what it was handed.
 import importlib
 
 import pytest
+import claude_provider
 
 
 class _Actions:
@@ -79,7 +80,7 @@ def test_the_three_tool_sets_still_agree(ready):
     for name in ("open_in_browser", "open_in_terminal"):
         assert name in server.TOOL_HANDLERS
         assert name in server.ACTING_TOOLS, "it acts; the origin gate applies"
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
 

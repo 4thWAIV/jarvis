@@ -626,9 +626,11 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
 
 # ── running them all ─────────────────────────────────────────────────────
 
-_ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility)
-_SYNC_CHECKS = (_check_fish_api_key_sync, _check_anthropic_key_leftover_sync,
-                _check_cross_session_inbound_sync, _check_screen_recording_sync)
+# JARVIS's own checks. The brain provider's (for Claude Code: the CLI, its
+# login, a leftover API key) come from the provider and are passed in.
+_ASYNC_CHECKS = (_check_accessibility,)
+_SYNC_CHECKS = (_check_fish_api_key_sync, _check_cross_session_inbound_sync,
+                _check_screen_recording_sync)
 
 
 async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:
@@ -656,14 +658,20 @@ async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:
         return Check(name=name, status=STATUS_WARN, message=f"Check '{name}' raised: {e}")
 
 
-async def run_checks(*, timeout: float = DEFAULT_CHECK_TIMEOUT) -> list[Check]:
-    """Run every environment check concurrently, each individually time-boxed.
+async def run_checks(*, timeout: float = DEFAULT_CHECK_TIMEOUT,
+                     provider_checks: tuple[tuple, tuple] = ((), ())) -> list[Check]:
+    """Run every environment check concurrently, each individually time-boxed:
+    JARVIS's own, and the brain provider's (`BrainProvider.preflight()`:
+    async checks, then sync ones).
 
     Never raises. Safe to call at startup: the worst case is a handful of
     `warn` results after `timeout` seconds, not a hung or crashed server.
     """
-    tasks = [_run_one(fn, is_async=True, timeout=timeout) for fn in _ASYNC_CHECKS]
-    tasks += [_run_one(fn, is_async=False, timeout=timeout) for fn in _SYNC_CHECKS]
+    async_checks, sync_checks = provider_checks
+    tasks = [_run_one(fn, is_async=True, timeout=timeout)
+             for fn in (*async_checks, *_ASYNC_CHECKS)]
+    tasks += [_run_one(fn, is_async=False, timeout=timeout)
+              for fn in (*_SYNC_CHECKS, *sync_checks)]
     return await asyncio.gather(*tasks)
 
 

@@ -24,6 +24,7 @@ import importlib
 import pytest
 
 import browser as real_browser
+import claude_provider
 
 
 class _Browser:
@@ -99,9 +100,9 @@ def test_the_three_tool_sets_still_agree(ready):
     server, _fake = ready
     for name in ("read_page", "look_at_page"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

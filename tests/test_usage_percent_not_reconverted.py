@@ -21,7 +21,7 @@ import usage_store
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
     import data_paths
-    monkeypatch.setattr(data_paths, "usage_path", lambda: tmp_path / "usage.json")
+    monkeypatch.setattr(data_paths, "usage_path", lambda *a: tmp_path / "usage.json")
     yield
 
 

@@ -7,6 +7,8 @@ export type MessageHandler = (msg: Record<string, unknown>) => void;
 export interface JarvisSocket {
   send(data: Record<string, unknown>): void;
   onMessage(handler: MessageHandler): void;
+  /** Each time the socket (re)connects. */
+  onOpen(handler: () => void): void;
   close(): void;
   isConnected(): boolean;
 }
@@ -14,6 +16,7 @@ export interface JarvisSocket {
 export function createSocket(url: string): JarvisSocket {
   let ws: WebSocket | null = null;
   let handlers: MessageHandler[] = [];
+  const openHandlers: (() => void)[] = [];
   let reconnectDelay = 1000;
   let closed = false;
   let connected = false;
@@ -27,6 +30,7 @@ export function createSocket(url: string): JarvisSocket {
       connected = true;
       reconnectDelay = 1000;
       console.log("[ws] connected");
+      for (const h of openHandlers) h();
     };
 
     ws.onmessage = (event) => {
@@ -63,6 +67,9 @@ export function createSocket(url: string): JarvisSocket {
     },
     onMessage(handler) {
       handlers.push(handler);
+    },
+    onOpen(handler) {
+      openHandlers.push(handler);
     },
     close() {
       closed = true;

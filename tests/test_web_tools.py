@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -61,15 +62,15 @@ def test_the_brain_may_search_and_fetch_the_web():
     16s, both inside the brain's exact flag set. Scraping a search engine
     returns an anti-bot page in 0.3s, which is why there is no scraper."""
     import brain
-    assert "WebSearch" in brain.ALLOWED_TOOLS
-    assert "WebFetch" in brain.ALLOWED_TOOLS
+    assert "WebSearch" in claude_provider.ALLOWED_TOOLS
+    assert "WebFetch" in claude_provider.ALLOWED_TOOLS
 
 
 def test_those_two_are_the_only_built_ins_on_the_allowlist():
     """It stays an allowlist. Every other name is one of JARVIS's own MCP
     tools, and no coding tool (Bash, Write, Edit) is ever reachable."""
     import brain
-    built_ins = {t for t in brain.ALLOWED_TOOLS if not t.startswith("mcp__")}
+    built_ins = {t for t in claude_provider.ALLOWED_TOOLS if not t.startswith("mcp__")}
     assert built_ins == {"WebSearch", "WebFetch", "Skill"}
 
 

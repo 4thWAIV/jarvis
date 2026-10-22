@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -406,7 +407,7 @@ def test_the_three_tool_sets_still_agree(wired):
     import jarvis_mcp
     server, _fake = wired
     assert "github_repo" in server.TOOL_HANDLERS
-    assert "mcp__jarvis__github_repo" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__github_repo" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
 

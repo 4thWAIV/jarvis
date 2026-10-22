@@ -8,6 +8,7 @@ import time
 import pytest
 
 import session_steer
+from tests.fixtures.captures import captured
 
 
 def _wait_for_receipt(received, timeout=2.0):
@@ -179,8 +180,8 @@ async def test_the_tool_stages_and_speaks_nothing_at_all(wired, fake_session,
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
 
-    result = await server.tool_steer_session({"name": "chitauri",
-                                              "prompt": "use Postgres"})
+    result = await server.tool_steer_session(captured(server, {"name": "chitauri",
+                                              "prompt": "use Postgres"}))
 
     assert speech.said == [], "the read-back may not happen inside the tool call"
     assert received == [], "nothing may be sent from inside the tool call"
@@ -192,8 +193,10 @@ async def test_the_tool_stages_and_speaks_nothing_at_all(wired, fake_session,
 
 
 @pytest.mark.asyncio
-async def test_performing_a_staged_steer_reads_it_back_before_sending(
+async def test_a_staged_steer_sends_the_heard_capture_without_reading_it_again(
         wired, fake_session, monkeypatch):
+    """The brain read the capture back with read_capture before staging it;
+    the server says only the outcome, never the message a second time."""
     server, (path, received, _) = wired, fake_session
     speech = FakeSpeech()
     monkeypatch.setattr(server, "speech", speech)
@@ -201,12 +204,10 @@ async def test_performing_a_staged_steer_reads_it_back_before_sending(
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
 
-    await server.tool_steer_session({"name": "chitauri", "prompt": "use Postgres"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "use Postgres"}))
     await server._perform_staged_steers()
 
-    assert speech.said, "he must read it back first"
-    assert "use Postgres" in speech.said[0]
-    assert speech.said[-1] == "Passed to chitauri, sir."
+    assert speech.said == ["Passed to chitauri, sir."]
     _wait_for_receipt(received)
     assert json.loads(received[0].strip())["message"]["content"] == \
         server.STEER_SIGNATURE + "use Postgres"
@@ -223,7 +224,7 @@ async def test_saying_stop_during_the_window_cancels_the_send(wired, fake_sessio
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
 
-    await server.tool_steer_session({"name": "chitauri", "prompt": "drop it"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "drop it"}))
     await server._perform_staged_steers()
 
     import run_store
@@ -245,7 +246,7 @@ async def test_a_session_waiting_on_a_permission_prompt_is_refused_honestly(
     state.state = "needs_you"
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (state, None, None))
 
-    result = await server.tool_steer_session({"name": "x", "prompt": "yes"})
+    result = await server.tool_steer_session(captured(server, {"name": "x", "prompt": "yes"}))
 
     assert "keystroke" in result.lower() or "yourself" in result.lower()
     assert "permission" in result.lower()
@@ -261,7 +262,7 @@ async def test_an_unsteerable_session_says_so_rather_than_failing_silently(
     state.steerable = False
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (state, None, None))
 
-    result = await server.tool_steer_session({"name": "x", "prompt": "hi"})
+    result = await server.tool_steer_session(captured(server, {"name": "x", "prompt": "hi"}))
 
     assert "cannot" in result.lower() or "can't" in result.lower()
 
@@ -275,7 +276,7 @@ async def test_every_steer_is_recorded_whatever_the_outcome(wired, fake_session,
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
 
-    await server.tool_steer_session({"name": "chitauri", "prompt": "go on"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go on"}))
     await server._perform_staged_steers()
 
     import run_store
@@ -302,7 +303,7 @@ async def test_no_voice_refuses_to_steer_rather_than_sending_unheard(
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
 
-    result = await server.tool_steer_session({"name": "chitauri", "prompt": "go on"})
+    result = await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go on"}))
 
     assert received == [], "nothing may be sent when there is no voice to read it back"
     import run_store
@@ -324,7 +325,7 @@ async def test_no_socket_is_recorded_as_not_steerable_not_not_live(wired, monkey
     state.steerable = False
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (state, None, None))
 
-    await server.tool_steer_session({"name": "x", "prompt": "hi"})
+    await server.tool_steer_session(captured(server, {"name": "x", "prompt": "hi"}))
 
     import run_store
     rows = run_store.list_steers(limit=5)
@@ -343,12 +344,12 @@ async def test_empty_prompt_is_recorded_exactly_once(wired, fake_session, monkey
     import run_store
     before = len(run_store.list_steers(limit=50))
 
-    result = await server.tool_steer_session({"name": "chitauri", "prompt": "   "})
+    result = await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "   "}))
 
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1
-    assert rows[0]["outcome"] == "empty_prompt"
-    assert "nothing" in result.lower()
+    assert rows[0]["outcome"] == "no_capture"
+    assert "capture" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -362,7 +363,7 @@ async def test_unresolved_name_is_recorded_exactly_once(wired, monkeypatch):
     import run_store
     before = len(run_store.list_steers(limit=50))
 
-    result = await server.tool_steer_session({"name": "bogus", "prompt": "go"})
+    result = await server.tool_steer_session(captured(server, {"name": "bogus", "prompt": "go"}))
 
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1
@@ -383,7 +384,7 @@ async def test_ambiguous_name_is_recorded_exactly_once(wired, monkeypatch):
     import run_store
     before = len(run_store.list_steers(limit=50))
 
-    result = await server.tool_steer_session({"name": "co", "prompt": "go"})
+    result = await server.tool_steer_session(captured(server, {"name": "co", "prompt": "go"}))
 
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1
@@ -438,7 +439,7 @@ async def test_needs_a_human_hand_and_not_steerable_and_sent_are_each_recorded_o
     hand_state.state = "needs_you"
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (hand_state, None, None))
     before = len(run_store.list_steers(limit=50))
-    await server.tool_steer_session({"name": "chitauri", "prompt": "go"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1 and rows[0]["outcome"] == "needs_a_human_hand"
 
@@ -447,7 +448,7 @@ async def test_needs_a_human_hand_and_not_steerable_and_sent_are_each_recorded_o
     unsteerable.steerable = False
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (unsteerable, None, None))
     before = len(run_store.list_steers(limit=50))
-    await server.tool_steer_session({"name": "chitauri", "prompt": "go"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1 and rows[0]["outcome"] == "not_steerable"
 
@@ -455,7 +456,7 @@ async def test_needs_a_human_hand_and_not_steerable_and_sent_are_each_recorded_o
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
     before = len(run_store.list_steers(limit=50))
-    await server.tool_steer_session({"name": "chitauri", "prompt": "go"})
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
     await server._perform_staged_steers()
     rows = run_store.list_steers(limit=50)
     assert len(rows) == before + 1 and rows[0]["outcome"] == "sent"
@@ -584,7 +585,7 @@ class ScriptedBrain:
             # server uses it to bin narration written before the tool ran.
             if on_tool:
                 on_tool()
-            self.tool_results.append(await self._server.tool_steer_session(args))
+            self.tool_results.append(await self._server.tool_steer_session(captured(self._server, args)))
             self.tool_seconds.append(time.monotonic() - t0)
         if on_delta:
             on_delta(self._reply)
@@ -643,11 +644,11 @@ def _steer_args(name="chitauri", prompt="use Postgres"):
 
 
 @pytest.mark.asyncio
-async def test_the_readback_plays_after_the_turn_and_before_delivery(
+async def test_the_send_happens_after_the_turn_has_been_heard(
         wired, socket_factory, monkeypatch):
-    """(a) and (b). The whole bug in one test: with the read-back inside the
-    tool call this deadlocks — the turn never finishes speaking, so the
-    read-back never plays, so the tool never returns."""
+    """(a) and (b). The tool call only stages; the cancel window and the send
+    come once the turn has finished speaking, and the message is not read
+    out again (read_capture already did that, inside the turn)."""
     server = wired
     path, received = socket_factory("a.sock")
     monkeypatch.setattr(server, "_resolve_or_explain",
@@ -662,23 +663,16 @@ async def test_the_readback_plays_after_the_turn_and_before_delivery(
     assert rig.brain.tool_seconds[0] < 0.5, rig.brain.tool_seconds
     assert "staged" in rig.brain.tool_results[0].lower()
 
-    # (a) the read-back is a LATER utterance than the turn, and every frame
-    # of the turn was spoken before it.
-    audio = rig.audio()
-    readback = [m for m in audio if m["text"].startswith("Telling chitauri")]
-    assert readback, f"the read-back never played: {rig.spoken()}"
-    turn_utt = audio[0]["utt"]
-    first_readback = audio.index(readback[0])
-    assert all(m["utt"] == turn_utt for m in audio[:first_readback])
-    assert readback[0]["utt"] != turn_utt
+    # (a) the message is not read out by the server
+    assert not any("use Postgres" in t for t in rig.spoken()), rig.spoken()
     assert "Right away, sir." in rig.spoken()
 
-    # nothing reached the socket until the read-back had been heard
+    # nothing reached the socket until the turn had been heard
     _wait_for_receipt(received)
     assert received, "the steer must actually be delivered"
-    heard_at = rig.client.acked_at("Telling chitauri")
+    heard_at = rig.client.acked_at("Right away")
     assert heard_at is not None
-    assert received[0][0] > heard_at, "delivery must follow the read-back"
+    assert received[0][0] > heard_at, "delivery must follow the turn"
     assert json.loads(received[0][1].strip())["message"]["content"] == \
         server.STEER_SIGNATURE + "use Postgres"
     assert "Passed to chitauri, sir." in rig.spoken()
@@ -717,102 +711,6 @@ async def test_a_cancel_word_in_the_window_after_the_readback_blocks_the_send(
 
 
 @pytest.mark.asyncio
-async def test_a_barge_in_during_the_readback_blocks_the_send(
-        wired, socket_factory, monkeypatch):
-    """(d). barge_in() sets the cancel event only when a window is already
-    open — and during the read-back none is. This path is caught by
-    `Utterance.was_cancelled`, checked separately from `heard`."""
-    server = wired
-    path, received = socket_factory("c.sock")
-    monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (_fake_session_state(path), None, None))
-
-    async with TurnRig(server, monkeypatch, [_steer_args(prompt="drop it")],
-                       skip_ack=lambda t: t.startswith("Telling"),
-                       cancel_window=2.0) as rig:
-        task = rig.start()
-        await rig.wait_until_speaking("Telling chitauri")
-        assert await rig.h.sched.user_final("no actually hold off there") == "speech"
-        await asyncio.wait_for(task, timeout=15)
-
-    assert received == [], "a barge-in during the read-back must block delivery"
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "cancelled_by_user"
-
-
-@pytest.mark.asyncio
-async def test_a_wedged_readback_sends_nothing_and_records_readback_failed(
-        wired, socket_factory, monkeypatch):
-    """(e). The read-back is sent but never finishes playing."""
-    server = wired
-    path, received = socket_factory("d.sock")
-    monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (_fake_session_state(path), None, None))
-    monkeypatch.setattr(server, "READBACK_TIMEOUT", 0.3)
-
-    async with TurnRig(server, monkeypatch, [_steer_args(prompt="drop it")],
-                       skip_ack=lambda t: t.startswith("Telling")) as rig:
-        await asyncio.wait_for(rig.start(), timeout=15)
-
-    assert received == [], "nothing may be sent unheard"
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "readback_failed"
-
-
-class _DyingHarness(Harness):
-    """Models the read-back going out to a client that then vanishes mid-
-    utterance -- e.g. the user's browser tab dying between the turn reply and
-    the read-back. `emit` raises for any chunk whose text starts with
-    `die_on_prefix`, exactly like a broken websocket send in production:
-    `_send_ready`/`_send` catch that and call `speech._abandon()`, which sets
-    `cancelled` (and, per this fix, `abandoned`) on the utterance."""
-
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.die_on_prefix = None
-
-    async def emit(self, msg):
-        if (self.die_on_prefix is not None and msg.get("type") == "audio"
-                and msg.get("text", "").startswith(self.die_on_prefix)):
-            raise ConnectionResetError("client gone")
-        await super().emit(msg)
-
-
-@pytest.mark.asyncio
-async def test_a_dead_transport_during_the_readback_is_readback_failed_not_cancelled(
-        wired, fake_session, monkeypatch):
-    """The user's tab dies after the turn reply but before the read-back is
-    heard. `speech._abandon()` sets `was_cancelled` on ANY transport
-    failure -- not just a genuine cancel word or barge-in -- so recording
-    that as `cancelled_by_user` would tell the user they cancelled something
-    they never even heard. Nothing may be sent either way; the fix is only
-    about which honest reason gets written down."""
-    server, (path, received, _) = wired, fake_session
-    harness = _DyingHarness()
-    await harness.sched.start()
-    try:
-        harness.die_on_prefix = "Telling"
-        monkeypatch.setattr(server, "speech", harness.sched)
-        monkeypatch.setattr(server, "brain_instance", FakeBrain())
-        monkeypatch.setattr(server, "_resolve_or_explain",
-                            lambda n: (_fake_session_state(path), None, None))
-
-        await server.tool_steer_session(_steer_args(prompt="drop it"))
-        await server._perform_staged_steers()
-    finally:
-        await harness.sched.stop()
-
-    assert received == [], "nothing may be sent when the read-back was never heard"
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1, "exactly one audit row"
-    assert rows[0]["outcome"] == "readback_failed", \
-        "a dead transport is not the user's own cancel"
-
-
-@pytest.mark.asyncio
 async def test_two_steers_staged_in_one_turn_are_both_performed_in_order(
         wired, socket_factory, monkeypatch):
     """(g)"""
@@ -836,9 +734,6 @@ async def test_two_steers_staged_in_one_turn_are_both_performed_in_order(
     _wait_for_receipt(second_rx)
     assert first_rx and second_rx, "both steers must be delivered"
     assert first_rx[0][0] < second_rx[0][0], "staged order must be preserved"
-    spoken = rig.spoken()
-    assert (spoken.index("Telling chitauri: use Postgres")
-            < spoken.index("Telling hammer: revert the schema"))
 
     import run_store
     rows = run_store.list_steers(limit=50)          # (f), one row each
@@ -882,14 +777,14 @@ async def test_a_staged_steer_is_never_performed_twice(wired, socket_factory,
                         lambda n: (_fake_session_state(path), None, None))
     import run_store
 
-    await server.tool_steer_session(_steer_args(prompt="use Postgres"))
+    await server.tool_steer_session(captured(server, _steer_args(prompt="use Postgres")))
     boom = asyncio.Event()
 
     async def explode(*a, **k):
         boom.set()
         raise RuntimeError("the mouth fell off")
 
-    monkeypatch.setattr(server.speech, "say", explode)
+    monkeypatch.setattr(server.speech, "open_cancel_window", explode)
     await server._perform_staged_steers()          # must not raise out
 
     assert boom.is_set()
@@ -901,3 +796,41 @@ async def test_a_staged_steer_is_never_performed_twice(wired, socket_factory,
     await server._perform_staged_steers()          # nothing left to do
     assert received == []
     assert len(run_store.list_steers(limit=50)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_sent_message_tells_the_voice_page_which_agent_got_it(
+        wired, fake_session, monkeypatch):
+    """The page draws the message going from the orb to that agent."""
+    server, (path, received, _) = wired, fake_session
+    hints = []
+    monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
+    monkeypatch.setattr(server, "speech", FakeSpeech())
+    monkeypatch.setattr(server, "brain_instance", FakeBrain())
+    session = _fake_session_state(path)
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (session, None, None))
+
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "use Postgres"}))
+    await server._perform_staged_steers()
+
+    assert {"type": "agent_message", "session_id": session.session_id} in hints
+    # It moved up the agents list first, so the page has the new order to
+    # draw the ray to.
+    assert hints.index({"type": "agents"}) < hints.index(
+        {"type": "agent_message", "session_id": session.session_id})
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_message_draws_nothing(wired, fake_session, monkeypatch):
+    server, (path, received, _) = wired, fake_session
+    hints = []
+    monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
+    monkeypatch.setattr(server, "speech", FakeSpeech(cancelled=True))
+    monkeypatch.setattr(server, "brain_instance", FakeBrain())
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda n: (_fake_session_state(path), None, None))
+
+    await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "drop it"}))
+    await server._perform_staged_steers()
+
+    assert not [h for h in hints if h.get("type") == "agent_message"]

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 import history_read
 import repo_read
 from tests.test_untrusted_turn import _Brain
+import claude_provider
 
 
 def _line(kind, content, ts, sidechain=False):
@@ -239,6 +240,6 @@ def test_the_tools_are_registered_everywhere(hist):
     for name in ("search_history", "read_history"):
         assert name in server.TOOL_HANDLERS
         assert name in server.TAINTING_TOOLS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
         assert name not in server.ACTING_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)

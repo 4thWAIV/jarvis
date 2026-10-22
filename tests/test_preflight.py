@@ -519,7 +519,9 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     monkeypatch.delenv("FISH_API_KEY", raising=False)
     monkeypatch.setattr(preflight, "_settings_path", lambda: preflight.Path("/nonexistent/settings.json"))
 
-    results = await preflight.run_checks(timeout=1.0)
+    import claude_provider
+    results = await preflight.run_checks(
+        timeout=1.0, provider_checks=claude_provider.ClaudeProvider().preflight())
     names = {c.name for c in results}
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",

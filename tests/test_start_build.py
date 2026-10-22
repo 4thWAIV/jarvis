@@ -32,6 +32,7 @@ import importlib
 import pytest
 
 import builds
+import claude_provider
 
 
 # ---------------------------------------------------------------------------
@@ -393,9 +394,9 @@ def test_the_three_tool_sets_still_agree(ready):
     import jarvis_mcp
     server, _store, _ex = ready
     for name in ("start_build", "build_status", "run_command"):
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

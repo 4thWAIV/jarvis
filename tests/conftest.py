@@ -65,8 +65,10 @@ def refusal_on(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _never_spawn_a_real_brain(monkeypatch):
-    """server.lifespan builds the brain but must not start `claude` under test."""
+    """server.lifespan builds the brain but must not start `claude` under test,
+    nor read the keychain and call Anthropic for the usage limits."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
 
 
 @pytest.fixture(autouse=True)

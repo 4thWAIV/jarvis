@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests.fixtures.captures import captured
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -184,7 +185,7 @@ def test_the_spoken_announcement_says_nothing_a_session_wrote(server,
     said: list[str] = []
 
     class _Speech:
-        async def say(self, line, priority, immediate=True):
+        async def say(self, line, priority, immediate=True, label=None):
             said.append(line)
 
     monkeypatch.setattr(server, "speech", _Speech())
@@ -384,6 +385,28 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server.tool_list_captures": (
+        "everything it prints the brain wrote itself: each capture's text is the "
+        "brain's own restatement of Tim's words and `to` is the name it gave, "
+        "both made through `capture` on a turn Tim drove; nothing in it was "
+        "read from another session or the web"),
+    "server.tool_merge_captures": (
+        "it prints only capture numbers, each parsed to an int before it is "
+        "printed; the captures' text and `to` go to the voice page "
+        "(drawn with textContent), never into what it returns"),
+    "server._watch_needs_board": (
+        "it reads each board's project name only as a key to compare item "
+        "counts and to hint the pages to refetch; it prints nothing itself, "
+        "and the announcement it calls (_announce_board) is decided on its own"),
+    "server._display_from": (
+        "it builds a screen-only `display` from the brain's own tool arguments "
+        "(text the brain may have taken from a web page). None of it reaches a "
+        "header line or the brain: it goes only to the voice page, which draws "
+        "it with textContent, and the brain gets back 'Shown on screen.' or a "
+        "reason naming the allowed kinds, never its own words"),
+    "session_watch.agent_name": (
+        "it returns the session's voice name and prints nothing; every "
+        "function that prints an agent name is driven below"),
     "server._live_session_redirect": (
         "it reads a session's `cwd` only to compare it with the project's "
         "path; the string it returns names the project by `name`, which "
@@ -446,12 +469,44 @@ EXEMPT = {
         "below already do against the source"),
 
     # --- the brain's own process, not somebody else's ---------------------
-    "brain._handle": (
+    "claude_provider._handle": (
         "`session_id`, `model` and `status` here are the CLI's own "
         "stream-json fields for JARVIS's OWN brain process, not another "
-        "conversation's roster entry. They reach a log line and the state "
-        "callback the frontend reads; the only text this composes for the "
-        "model is the assistant delta, which is the model's own output"),
+        "conversation's roster entry. They reach a log line and the brain "
+        "provider's events; the only text this composes for the model is the "
+        "assistant delta, which is the model's own output"),
+    "codex_provider._handle": (
+        "the app-server's own JSON-RPC fields for JARVIS's OWN brain thread "
+        "(a turn's status and error, token counts, the plan's limits, a tool's "
+        "server and name). They reach a log line, usage_store and the brain "
+        "provider's events; the only text it composes for the model is the "
+        "assistant delta, which is the model's own output"),
+    "codex_provider.open": (
+        "it logs the id Codex gave JARVIS's own thread, the Codex home path "
+        "JARVIS chose, and a count; the server and tool names it reads are "
+        "the brain's own MCP inventory, reported as SessionInfo"),
+    "codex_provider.call": (
+        "a JSON-RPC call inside CodexUsage.read: the only value it prints is "
+        "the method name, one of this module's own literals"),
+    "brains_config.load": (
+        "it logs why JARVIS's own brains.json could not be read; the names "
+        "it keeps are filtered to brains_config.KNOWN, this repository's own"),
+    "server._poll_usage": (
+        "it logs a brain's name, one of brains_config.KNOWN, and a "
+        "UsageUnavailable message composed by JARVIS's own provider code. "
+        "A log is not the brain's context and is not spoken"),
+    "server.api_brains_sign_in": (
+        "it logs a brain's name, checked against brains_config.KNOWN, and "
+        "hands the sign-in address Codex returned to the page, which opens it "
+        "in a new tab; nothing of it reaches the brain or is spoken"),
+    "brain._on_event": (
+        "the same fields, already turned into brain_provider events by the "
+        "provider: the brain's own session's id, model and limit status. They "
+        "are kept on the brain and reach the state callback; the only text it "
+        "passes on is the model's own delta"),
+    "brain._on_exit": (
+        "it logs the exit code of JARVIS's OWN brain session and the "
+        "provider's name, one of this repository's own literals"),
     "brain._spawn_locked": (
         "the same: the `session_id` is the one the CLI just gave this "
         "process for itself, and it goes to `log.info`. A log is not the "
@@ -629,7 +684,7 @@ class _Speech:
     def __init__(self):
         self.said = []
 
-    async def say(self, line, priority=None, immediate=None):
+    async def say(self, line, priority=None, immediate=None, label=None):
         self.said.append(line)
 
         class _U:
@@ -750,7 +805,7 @@ def _drive_steer_session(server, session, monkeypatch):
         monkeypatch.setattr(server, "_resolve_or_explain",
                             lambda name: (s, None, None))
         server._staged_steers.clear()
-        return asyncio.run(server.tool_steer_session(args))
+        return asyncio.run(server.tool_steer_session(captured(server, args)))
 
     args = {"name": "hammer", "prompt": "carry on"}
 
@@ -963,6 +1018,53 @@ def _drive_announce_board(server, session, monkeypatch):
 
 
 DRIVERS["server._announce_board"] = _drive_announce_board
+
+
+# --- The agents list --------------------------------------------------------
+# An agent's name is a session's voice name, which can carry words from that
+# session's title. It is stored in jarvis.db and printed by the agent tools.
+
+def _agent_rows(session):
+    return [{"session_id": "s1", "name": str(session.voice_name or ""), "active": False},
+            {"session_id": "s2", "name": str(session.title or ""), "active": True}]
+
+
+def _drive_agent_said(server, session, monkeypatch):
+    return [server._agent_said(row) for row in _agent_rows(session)]
+
+
+def _drive_list_agents(server, session, monkeypatch):
+    import run_store
+    monkeypatch.setattr(run_store, "list_agents", lambda: _agent_rows(session))
+    return [server.tool_list_agents({})]
+
+
+def _drive_set_agent_active(server, session, monkeypatch):
+    import run_store
+    rows = _agent_rows(session)
+    monkeypatch.setattr(run_store, "list_agents", lambda: rows)
+    monkeypatch.setattr(run_store, "set_agent_active",
+                        lambda sid, active: {**next(r for r in rows if r["session_id"] == sid),
+                                             "active": active})
+    return [server.tool_set_agent_active({"name": rows[0]["name"], "active": True}),
+            server.tool_set_agent_active({"name": rows[1]["name"], "active": False}),
+            server.tool_set_agent_active({"name": "", "active": True})]
+
+
+def _drive_rename_agent(server, session, monkeypatch):
+    import run_store
+    rows = _agent_rows(session)
+    monkeypatch.setattr(run_store, "list_agents", lambda: rows)
+    monkeypatch.setattr(server, "_rename_agent", lambda sid, name: (
+        {**next(r for r in rows if r["session_id"] == sid), "name": rows[1]["name"]}, None))
+    return [server.tool_rename_agent({"name": rows[0]["name"], "new_name": rows[1]["name"]}),
+            server.tool_rename_agent({"name": "", "new_name": "x"})]
+
+
+DRIVERS["server._agent_said"] = _drive_agent_said
+DRIVERS["server.tool_rename_agent"] = _drive_rename_agent
+DRIVERS["server.tool_list_agents"] = _drive_list_agents
+DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
 DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
 DRIVERS["server._announce_reply"] = _drive_announce_reply
 
@@ -1570,6 +1672,9 @@ ALT = {
     "last_text": "finished",
     "needs": "dialog open",
     "origin": "vscode",
+    # Set from session_watch.PROVIDER, never read off the roster; nothing
+    # prints it, and the page only uses it to pick a logo file.
+    "provider": "openai",
     # `pids` is `list[int]` off the roster, so it is in FOREIGN_FIELDS by
     # type. Nothing prints it; `_tty_for_session_or_explain` iterates it.
     "pids": [99],

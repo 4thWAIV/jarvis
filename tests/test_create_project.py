@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 import project_maker
+import claude_provider
 
 
 @pytest.fixture
@@ -295,9 +296,9 @@ def test_the_three_tool_sets_still_agree(wired):
     import brain
     import jarvis_mcp
     server, _root = wired
-    assert "mcp__jarvis__create_project" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__create_project" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 

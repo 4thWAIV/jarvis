@@ -38,7 +38,9 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python (server.py, ~5800 lines)
-- **Frontend**: Vite + TypeScript + Three.js (audio-reactive orb)
+- **Frontend**: Vite + TypeScript. The voice page is React, with the
+  Three.js audio-reactive orb as one control in its upper left; the
+  dashboard is vanilla TS
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
@@ -103,7 +105,10 @@ arbitrary LLM and file content, so everything goes through
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Web Speech API + audio playback
-- `frontend/src/main.ts` — Frontend state machine
+- `frontend/src/main.tsx` — Renders the voice page with React (`App.tsx`;
+  the orb is `OrbControl.tsx`)
+- `frontend/src/jarvis.ts` — The voice page's state machine, started once
+  the orb is on the page
 - `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
@@ -218,8 +223,8 @@ Run the suite as:
 pytest
 ```
 
-No flags. `pytest.ini` sets `testpaths` and deselects `-m "not browser"`, so a
-bare run is the whole suite and touches neither the network nor the screen.
+No flags. `pytest.ini` sets `testpaths` and deselects `-m "not browser and
+not page"`, so a bare run touches neither the network nor the screen.
 
 `tests/test_browser_integration.py` is marked `browser` (one `pytestmark` for
 the file) because it drives `browser.py`, which launches Chromium with
@@ -231,6 +236,14 @@ and with no file nothing is skipped; `tests/local-config.example.toml` shows
 the format (test node ids or markers under `[skip]`). The two tests marked
 `sips` call macOS's real `sips`, so a Mac where `sips` crashes lists that
 marker there.
+
+The voice page's browser tests (`tests/test_agents_list_fits.py`,
+`test_voice_page_captions.py`, `test_voice_page_mute.py`,
+`test_voice_page_rays.py`) are marked `page` and deselected too: they build
+the page with `npx vite build` into a temporary folder and check it in
+headless Chromium on loopback, and their timing depends on how busy the
+machine is. Run them with `pytest -m page`; they skip themselves without
+node, the frontend's `node_modules`, or Playwright's Chromium.
 
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that

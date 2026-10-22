@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import claude_provider
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_brain.py"
@@ -38,8 +40,9 @@ def _config(tmp_path, **kw):
 
 def test_command_has_exact_flags(tmp_path):
     import brain
+    import claude_provider
     b = brain.Brain(_config(tmp_path, model="opus"))
-    cmd = b.command()
+    cmd = claude_provider.ClaudeSession(b.config, None, None).command(b.launch_prompt())
     joined = " ".join(cmd)
     assert cmd[2:] [:6] == ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
     assert "--include-partial-messages" in cmd
@@ -74,7 +77,7 @@ def test_command_has_exact_flags(tmp_path):
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch,Skill")
-    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS), (
+    assert cmd[cmd.index("--tools") + 1] == ",".join(claude_provider.ALLOWED_TOOLS), (
         "the pin above IS ALLOWED_TOOLS — a name that appears in one and not "
         "the other means the list this test guards is no longer the list the "
         "brain is launched with")
@@ -91,11 +94,11 @@ def test_model_defaults_to_sonnet_and_env_overrides(tmp_path, monkeypatch):
 
 
 def test_child_env_scrubs_claude_code_vars(monkeypatch):
-    import brain
+    import claude_provider
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "x")
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/keep/me")
-    env = brain.Brain.child_env()
+    env = claude_provider.ClaudeSession.child_env()
     assert "CLAUDE_CODE_SESSION_ID" not in env and "CLAUDECODE" not in env
     assert env["CLAUDE_CONFIG_DIR"] == "/keep/me"
 
@@ -361,7 +364,7 @@ async def test_rate_limit_spanning_a_restart_neither_fails_the_brain_nor_leaks(t
         gen = b.generation
         assert (await b.turn("RATELIMIT")).stop_reason == "result"
         assert (await b.turn("still limited?")).stop_reason == "rate_limited"
-        b._kill(b._proc)                                   # a crash while rate-limited
+        b._session.kill()                                   # a crash while rate-limited
         assert await _wait_until(lambda: b.ready and b.generation == gen + 1)
         assert not b.failed and len(b._restart_times) == 1
         assert (await b.turn("after restart")).stop_reason == "rate_limited"   # limited, but alive
@@ -375,7 +378,7 @@ async def test_start_after_failed_is_a_fresh_boot(tmp_path):
     b = brain.Brain(_config(tmp_path, max_restarts=0))
     try:
         await b.start()
-        b._kill(b._proc)                                   # any crash exceeds max_restarts=0
+        b._session.kill()                                   # any crash exceeds max_restarts=0
         assert await _wait_until(lambda: b.failed)
         assert await b.start() is True
         assert b.ready and not b.failed
@@ -419,9 +422,9 @@ async def test_start_on_a_running_brain_replaces_it_without_orphans(tmp_path):
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
-        first = b._proc.pid
+        first = b._session.proc.pid
         assert await b.start() is True
-        second = b._proc.pid
+        second = b._session.proc.pid
         assert second != first and b.ready
         assert await _wait_until(lambda: not _alive(first), 3.0)
     finally:
@@ -435,13 +438,13 @@ async def test_start_during_a_pending_restart_yields_exactly_one_process(tmp_pat
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
-        b._kill(b._proc)                                   # restart pending (0.5 s backoff)
+        b._session.kill()                                   # restart pending (0.5 s backoff)
         await asyncio.sleep(0.1)
         assert await b.start() is True                     # operator retry during the gap
-        pid = b._proc.pid
+        pid = b._session.proc.pid
         gen = b.generation
         await asyncio.sleep(0.9)                           # past where the old backoff would fire
-        assert b._proc.pid == pid and b.generation == gen and b.ready
+        assert b._session.proc.pid == pid and b.generation == gen and b.ready
         assert b._restart_task is None or b._restart_task.done()
     finally:
         await b.stop()
@@ -457,14 +460,15 @@ async def test_warmup_timeout_kills_the_hung_child(tmp_path, monkeypatch):
     await b.start()
     marker.write_text("x")                             # the replacement will hang in warm-up
     hung = []
-    orig = b._kill
+    import claude_provider
+    orig = claude_provider.ClaudeSession.kill
 
-    def spy(proc):
-        hung.append(proc.pid)
-        orig(proc)
+    def spy(session):
+        hung.append(session.proc.pid)
+        orig(session)
 
-    b._kill = spy
-    b._proc.kill()                                     # crash the current one
+    monkeypatch.setattr(claude_provider.ClaudeSession, "kill", spy)
+    b._session.proc.kill()                             # crash the current one
     try:
         assert await _wait_until(lambda: b.ready and not marker.exists() and len(hung) >= 1, 8.0)
         for pid in hung:
@@ -487,7 +491,7 @@ def test_child_env_never_carries_api_credentials(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example")   # would move the brain off the login
     monkeypatch.setenv("ANTHROPIC_MODEL", "something")
     monkeypatch.setenv("FISH_API_KEY", "keep")
-    env = brain.Brain.child_env()
+    env = claude_provider.ClaudeSession.child_env()
     assert not any(k.startswith("ANTHROPIC_") for k in env)
     assert env["FISH_API_KEY"] == "keep"
 
@@ -586,7 +590,7 @@ async def test_auth_fatal_failure_kills_the_process_and_leaks_nothing(tmp_path, 
     try:
         assert await b.start() is False
         assert b.failed and b.failure_reason == "auth"
-        pid = b._proc.pid if b._proc else None
+        pid = b._session.proc.pid if b._session else None
         assert await _wait_until(lambda: not b.running, 3.0)   # kill() is async; give it a moment to be reaped
         if pid is not None:
             assert await _wait_until(lambda: not _alive(pid), 3.0), f"child {pid} still alive"
@@ -619,12 +623,13 @@ async def test_an_unrecognised_status_fails_open(tmp_path):
     """An unknown status must not mute JARVIS: we try, and a real limit comes
     back as an error result we can speak."""
     import brain
-    assert "allowed_warning" not in brain.BLOCKING_RATE_LIMIT_STATUSES
+    import claude_provider
+    assert "allowed_warning" not in claude_provider.BLOCKING_RATE_LIMIT_STATUSES
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
-        b._handle({"type": "rate_limit_event",
-                   "rate_limit_info": {"status": "some_future_status"}}, b._proc)
+        b._session._handle({"type": "rate_limit_event",
+                            "rate_limit_info": {"status": "some_future_status"}})
         assert b.rate_limit is None
         assert (await b.turn("hello")).stop_reason == "result"
     finally:
@@ -820,7 +825,7 @@ async def _bounded(coro, timeout, b, what):
     try:
         return await asyncio.wait_for(coro, timeout)
     except asyncio.TimeoutError:
-        proc = b._proc
+        proc = b._session.proc if b._session else None
         if proc is not None:
             try:
                 proc.kill()
@@ -854,7 +859,7 @@ async def test_oversized_stdout_line_is_skipped_and_brain_survives(tmp_path, mon
     """A line bigger than even the raised limit must be skipped — not left
     to kill the reader task — and the next real line must still parse."""
     import brain
-    monkeypatch.setattr(brain.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
+    monkeypatch.setattr(claude_provider.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
     b = brain.Brain(_config(tmp_path))
     await _bounded(b.start(), 20, b, "brain.start()")
     try:
@@ -881,7 +886,7 @@ async def test_oversized_stderr_line_is_skipped_and_brain_survives(tmp_path, mon
     drain loop outright (which would eventually deadlock the child once its
     stderr pipe fills) — draining must continue past it."""
     import brain
-    monkeypatch.setattr(brain.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
+    monkeypatch.setattr(claude_provider.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
     b = brain.Brain(_config(tmp_path))
     await _bounded(b.start(), 20, b, "brain.start()")
     try:
