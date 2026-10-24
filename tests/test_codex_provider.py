@@ -96,6 +96,10 @@ async def test_the_config_holds_jarvis_s_servers_approved_and_the_persona_file(t
     cfg = tomllib.loads(path.read_text())
     assert cfg["include_apply_patch_tool"] is False
     assert cfg["project_doc_fallback_filenames"] == ["CLAUDE.md"]
+    # Only the persona: the brain home is its own project root, so the
+    # repository's developer CLAUDE.md above it is never read as instructions.
+    assert cfg["project_root_markers"] == []
+    assert cfg["project_doc_max_bytes"] >= 2 * 32768
     assert cfg["mcp_servers"]["jarvis"]["default_tools_approval_mode"] == "approve"
     assert cfg["mcp_servers"]["notion"]["env"]["NOTION_TOKEN"] == 'secret "quoted"'
     assert stat.S_IMODE(path.stat().st_mode) == 0o600, "it holds the user's tokens"

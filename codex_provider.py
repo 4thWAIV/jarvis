@@ -141,6 +141,14 @@ def config_toml(mcp_servers: dict) -> str:
         # The persona is the brain home's CLAUDE.md; Codex reads it as its
         # project instructions under that name, so there is one persona file.
         'project_doc_fallback_filenames = ["CLAUDE.md"]',
+        # And ONLY that file. Codex reads every project doc from the project
+        # root down to its folder, the root found by `.git`, and the brain
+        # home sits inside JARVIS's own repository by default: measured, the
+        # brain got the repo's developer CLAUDE.md first and then its persona
+        # cut off at the 32 KiB cap, model rules and all. No markers makes
+        # the brain home its own root; the cap is raised for the persona.
+        "project_root_markers = []",
+        "project_doc_max_bytes = 131072",
         'web_search = "live"',
     ]
     for name, spec in sorted(mcp_servers.items()):
