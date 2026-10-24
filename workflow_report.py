@@ -22,23 +22,69 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import ssl
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
-
-import httpx
 
 DEFAULT_URL = "https://localhost:8340"
 NOT_ANSWERED = 3
 
 
-def _client() -> httpx.Client:
+class _Response:
+    def __init__(self, status_code: int, body: bytes, content_type: str):
+        self.status_code, self.text = status_code, body.decode("utf-8", "replace")
+        self.headers = {"content-type": content_type}
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise SystemExit(f"JARVIS answered {self.status_code}: {self.text}")
+
+
+class _Client:
+    """Just enough HTTP for this command, with the standard library only, so
+    it runs under whichever Python the reporting session has."""
+
+    def __init__(self, base_url: str, key: str, cert: Path):
+        self.base_url, self.key = base_url, key
+        self.context = ssl.create_default_context(cafile=str(cert) if cert.exists() else None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def _send(self, method: str, path: str, body: dict | None = None,
+              params: dict | None = None) -> _Response:
+        url = self.base_url + path + (("?" + urllib.parse.urlencode(params)) if params else "")
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(url, data=data, method=method, headers={
+            "Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, context=self.context, timeout=10) as r:
+                return _Response(r.status, r.read(), r.headers.get("content-type", ""))
+        except urllib.error.HTTPError as e:
+            return _Response(e.code, e.read(), e.headers.get("content-type", ""))
+
+    def post(self, path: str, json: dict) -> _Response:
+        return self._send("POST", path, body=json)
+
+    def get(self, path: str, params: dict | None = None) -> _Response:
+        return self._send("GET", path, params=params)
+
+
+def _client() -> _Client:
     key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
     if not key:
         raise SystemExit("Set JARVIS_ACCESS_KEY to an access key in the workflows category.")
-    cert = Path(__file__).with_name("cert.pem")
-    return httpx.Client(base_url=os.environ.get("JARVIS_URL", DEFAULT_URL).rstrip("/"),
-                        headers={"Authorization": f"Bearer {key}"},
-                        verify=str(cert) if cert.exists() else True, timeout=10.0)
+    return _Client(os.environ.get("JARVIS_URL", DEFAULT_URL).rstrip("/"), key,
+                   Path(__file__).with_name("cert.pem"))
 
 
 def _detail(args) -> dict:
@@ -55,7 +101,7 @@ def _detail(args) -> dict:
     return detail
 
 
-def _post(client: httpx.Client, path: str, body: dict) -> dict:
+def _post(client, path: str, body: dict) -> dict:
     r = client.post(path, json=body)
     data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     if r.status_code != 200:

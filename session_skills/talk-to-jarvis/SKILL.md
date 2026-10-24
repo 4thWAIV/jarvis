@@ -32,13 +32,13 @@ Write the file once and do not edit it afterwards. JARVIS picks it up within sec
 When you run a long piece of work in phases, such as a multi-step build or a workflow of several agents, report each step to JARVIS's workflow monitor so the user can see it and JARVIS can always tell them where it stands. This needs an access key in the `workflows` category in `JARVIS_ACCESS_KEY`; the user makes one with `python access_keys.py create <label> workflows`.
 
 ```
-python {{workflow_report}} start "<name>" --project <project> --phase <phase> --phase <phase>
-python {{workflow_report}} event <id> agent_attached "<who is running it>" --session <your session id>
-python {{workflow_report}} event <id> phase_started "<one sentence>" --item <phase>
-python {{workflow_report}} event <id> task_added "<one sentence>" --item <task> --title "<title>"
-python {{workflow_report}} event <id> task_progress "<one sentence>" --item <task> --done 3 --total 8
-python {{workflow_report}} event <id> decision_needed "<the question>" --key <slug> --option "<a>" --option "<b>" --recommendation "<your pick>"
-python {{workflow_report}} answer <id> <slug>
+python3 {{workflow_report}} start "<name>" --project <project> --phase <phase> --phase <phase>
+python3 {{workflow_report}} event <id> agent_attached "<who is running it>" --session <your session id>
+python3 {{workflow_report}} event <id> phase_started "<one sentence>" --item <phase>
+python3 {{workflow_report}} event <id> task_added "<one sentence>" --item <task> --title "<title>"
+python3 {{workflow_report}} event <id> task_progress "<one sentence>" --item <task> --done 3 --total 8
+python3 {{workflow_report}} event <id> decision_needed "<the question>" --key <slug> --option "<a>" --option "<b>" --recommendation "<your pick>"
+python3 {{workflow_report}} answer <id> <slug>
 ```
 
 `start` prints the workflow's id. The kinds are `phase_started`, `phase_finished`, `task_added`, `task_started`, `task_progress`, `task_finished`, `wait_started`, `wait_ended`, `decision_needed`, `decision_made`, `blocker_raised`, `blocker_cleared`, `agent_attached`, `note` and `workflow_finished` (with `--outcome succeeded`, `failed` or `cancelled`). Every event's summary is one plain sentence. Report at least every few minutes: a workflow that reports nothing for ten minutes shows as gone quiet. `answer` prints the user's answer to a decision once they have given it and exits 3 until then.
