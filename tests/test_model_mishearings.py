@@ -82,4 +82,5 @@ def test_the_brain_is_told_that_recognition_mangles_model_names():
     guidance = pathlib.Path(__file__).resolve().parents[1] / "jarvis_home" / "CLAUDE.md"
     text = guidance.read_text()
     assert "Sonic" in text, "the brain must know model names come through mangled"
-    assert "Never ask the same" in text
+    assert "Never ask which model to use." in text
+    assert "Never ask him to" in text and "use Sonnet" in text

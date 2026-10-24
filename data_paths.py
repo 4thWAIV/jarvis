@@ -147,6 +147,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "07c999f50ab37df1d0060bec02bdf2846f8b39827437049b4c3ab71df0347a73",  # messages have numbers: list_messages, read_message_reply
     "cf26e7eb0401139200f963fd7edfad10e2bcfa0058fb74e160156b395ef72cdb",  # sessions send him messages: session_messages, read_session_message
     "c00b76bf5df7dbc8bcaffabee1ba12a0230c64bca69836f0f51cc19d011cf7b9",  # one list of agents; workflow_status for workflows
+    "82bb990af7e6227939611fddc8095ab87223cac827f2465782c33f3a29d1da82",  # never ask which model, Sonnet by default; needs board in full
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
