@@ -7,13 +7,18 @@
  *   - Main: the centre as it was before views (the capture boxes above the
  *     four-line captions), unchanged. Hidden from the header for now; the
  *     page opens on it at `?view=main`, so it keeps working and stays tested.
+ *   - Workflow (WorkflowDetail.tsx): one workflow in full. Offered only while
+ *     one is open, which clicking its row in the Workflows view does; it is
+ *     selected then, and closing it goes back to Conversation.
  */
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { CaptionBox } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
 import { TabRow, type Tab } from "./Tabs";
+import { WorkflowDetail } from "./WorkflowDetail";
+import { openWorkflow } from "./workflows";
 
 function MainView() {
   return (
@@ -54,6 +59,13 @@ const VIEWS: Tab[] = [
   },
 ];
 
+const WORKFLOW_VIEW: Tab = {
+  id: "workflow",
+  title: "Workflow",
+  icon: null,
+  view: () => null,
+};
+
 /** The view the page opens on: `?view=<id>` names any view, hidden or not. */
 function firstView(): string {
   const asked = new URLSearchParams(window.location.search).get("view");
@@ -62,10 +74,18 @@ function firstView(): string {
 
 export function CentreArea() {
   const [selected, setSelected] = useState(firstView);
-  const view = VIEWS.find((v) => v.id === selected) ?? VIEWS[0];
+  const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
+  // Opening a workflow shows it; closing it goes back to the first view.
+  useEffect(() => {
+    setSelected((now) => (workflow ? "workflow" : now === "workflow" ? VIEWS[0].id : now));
+  }, [workflow]);
+  const views: Tab[] = workflow
+    ? [...VIEWS, { ...WORKFLOW_VIEW, view: () => <WorkflowDetail key={workflow} id={workflow} /> }]
+    : VIEWS;
+  const view = views.find((v) => v.id === selected) ?? views[0];
   return (
     <>
-      <TabRow tabs={VIEWS} selected={selected} onSelect={setSelected} className="centre-tabs" words />
+      <TabRow tabs={views} selected={view.id} onSelect={setSelected} className="centre-tabs" words />
       {view.view()}
     </>
   );

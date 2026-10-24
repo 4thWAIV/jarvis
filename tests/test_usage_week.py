@@ -70,6 +70,21 @@ def test_the_glide_path_keeps_each_change_this_week_and_starts_again_next(store)
     assert [p["used"] for p in store.week(now=resets + 200)["points"]] == [2.0]
 
 
+def test_a_reset_time_that_wobbles_by_seconds_is_the_same_week(store):
+    """Codex reports one week's reset a few seconds differently from reading
+    to reading; that must not throw the burn-down's history away."""
+    resets = 10_000_000.0
+    start = resets - WEEK
+    _reading(store, start + 100, 0.01, resets - 3)
+    _reading(store, start + 200, 0.02, resets + 1)
+    _reading(store, start + 300, 0.03, resets)
+
+    assert [p["used"] for p in store.week(now=start + 400)["points"]] == [1.0, 2.0, 3.0]
+
+    _reading(store, start + 500, 0.00, resets + 3600)          # an hour out: a new week
+    assert [p["used"] for p in store.week(now=start + 600)["points"]] == [0.0]
+
+
 def test_no_reading_or_an_expired_week_is_not_measured(store):
     assert store.week()["measured"] is False
     resets = 10_000_000.0

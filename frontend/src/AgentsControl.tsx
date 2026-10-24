@@ -23,7 +23,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
 import { PROVIDERS } from "./providers";
-import { agentMessage, listAgents, setAgentActive, type AgentRow } from "./agents";
+import { agentMessage, agentsLaidOut, listAgents, RAY_MS, setAgentActive, type AgentRow } from "./agents";
+import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
 
 type Show = "active" | "all";
@@ -74,6 +75,8 @@ export function AgentsControl() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [show, setShow] = useState<Show>(readShow);
   const [first, setFirst] = useState(0);
+  // The agent JARVIS last sent a message to, kept in view while its ray
+  // shows.
   const [messaged, setMessaged] = useState<string | null>(null);
   const [visible, setVisible] = useState(1);
   const spaceRef = useRef<HTMLDivElement>(null);
@@ -115,10 +118,17 @@ export function AgentsControl() {
     const socket = createSocket(`${proto}://${location.host}/ws/sessions`);
     socket.onMessage((msg) => {
       if (msg.type === "agents" || msg.type === "snapshot") reconcile();
+      // The same socket says "workflows" when a workflow's record changes
+      // (workflows.ts); a (re)connect may have missed one, so it too.
+      if (msg.type === "workflows" || msg.type === "snapshot") {
+        workflowsChanged.set(workflowsChanged.get() + 1);
+      }
       // JARVIS has sent a message to an agent: bring it into view, and the
       // ray (RayLane.tsx) is drawn to its row.
       if (msg.type === "agent_message" && typeof msg.session_id === "string") {
-        setMessaged(msg.session_id);
+        const sessionId = msg.session_id;
+        setMessaged(sessionId);
+        setTimeout(() => setMessaged((now) => (now === sessionId ? null : now)), RAY_MS);
         agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
       }
     });
@@ -159,15 +169,25 @@ export function AgentsControl() {
 
   const shown = overflows ? listed.slice(start, start + visible) : listed;
   // The agent JARVIS just messaged is brought into view (to the top row) if
-  // it is in this view but not among the rows showing.
-  useEffect(() => {
+  // it is in this view but not among the rows showing, and again whenever
+  // the list changes while its ray shows: the message itself moves the agent
+  // up the list, which can take it out of the rows showing. Not on the
+  // user's own up and down, so he can still move the list. Before the page
+  // paints, so the agent is never seen out of view.
+  useLayoutEffect(() => {
     if (!messaged) return;
     const at = listed.findIndex((a) => a.session_id === messaged);
     if (at >= 0 && overflows && !shown.some((a) => a.session_id === messaged)) {
       setFirst(Math.min(at, last));
     }
-    setMessaged(null);
-  }, [messaged, listed, overflows, shown, last]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messaged, agents, show, visible]);
+
+  // Before the page paints this commit, so the ray is never seen ending at
+  // a row that now shows another agent.
+  useLayoutEffect(() => {
+    agentsLaidOut.set(agentsLaidOut.get() + 1);
+  });
 
   // From the latest position, so two quick presses move two places; it stops
   // at either end.

@@ -69,7 +69,22 @@ async def _shown(page_url, body, status=200, logo=True):
                   rows, left: left.textContent, leftColour, numberLeft: nr.left,
                   rowsTop: rowsBox.top, rowsBottom: rowsBox.bottom, rowsRight: rowsBox.right,
                   chartTop: cr ? cr.top : null, chartBottom: cr ? cr.bottom : null,
-                  textNodes: [...view.querySelectorAll('*')].filter(e =>
+                  burn: (() => { const b = document.querySelector('.weekly-burn');
+                    if (!b) return null;
+                    const r = s => b.querySelector(s).getBoundingClientRect();
+                    const d = b.querySelector('.weekly-days'), w = b.querySelector('.weekly-reset');
+                    return {days: d.textContent, daysColour: getComputedStyle(d).color,
+                            daysBottom: r('.weekly-days').bottom, daysTop: r('.weekly-days').top,
+                            date: w.textContent, dateTop: r('.weekly-reset').top,
+                            dateColour: getComputedStyle(w).color,
+                            fonts: [d, w].map(e => getComputedStyle(e).fontFamily),
+                            aligns: [d, w].map(e => getComputedStyle(e).textAlign),
+                            centres: [d, w, b.querySelector('.weekly-chart')].map(e => {
+                              const q = e.getBoundingClientRect(); return (q.left + q.right) / 2; }),
+                            widths: [d, w].map(e => [e.scrollWidth, e.clientWidth]),
+                            dateBottom: r('.weekly-reset').bottom,
+                            dateSize: parseFloat(getComputedStyle(w).fontSize)}; })(),
+                  textNodes: [...view.querySelectorAll('.account-rows *')].filter(e =>
                     [...e.childNodes].some(c => c.nodeType === 3 && c.textContent.trim()))
                     .map(e => e.textContent.trim()),
                   hover: view.title || n.title,
@@ -131,14 +146,38 @@ async def test_the_figures_sit_on_a_transparent_background(page_url):
 
 
 @pytest.mark.asyncio
-async def test_the_chart_is_centred_between_both_rows_to_their_right(page_url):
-    shown = await _shown(page_url, _week(-88.8, 98.8))
+async def test_the_days_left_sit_above_the_chart_and_the_reset_day_below(page_url):
+    """Within the height of the two rows: the days left until the reset on
+    top in the figures' colour, the chart, the day it resets underneath."""
+    import re
+    import time
+    body = _week(-15.0, 65.0)
+    body["resets_at"] = time.time() + 3.5 * 86400
+    body["week_start"] = body["resets_at"] - WEEK
+    shown = await _shown(page_url, body)
     assert shown["numberFits"], "-88.8 does not fit"
     assert shown["chartLeft"] >= shown["rowsRight"], shown
-    # Shorter than the two rows, and centred between them.
-    assert shown["chartBottom"] - shown["chartTop"] < shown["rowsBottom"] - shown["rowsTop"], shown
-    above, below = shown["chartTop"] - shown["rowsTop"], shown["rowsBottom"] - shown["chartBottom"]
-    assert above > 0 and abs(above - below) < 0.5, shown
+    burn = shown["burn"]
+    assert burn["days"] in ("3.5 days", "3.4 days"), burn
+    assert burn["daysColour"] == burn["dateColour"] == shown["colour"] == "rgb(248, 113, 113)", burn
+    assert all("monospace" in f for f in burn["fonts"]), burn
+    assert burn["aligns"] == ["center", "center"], burn
+    days, date, chart = burn["centres"]
+    assert abs(days - chart) < 1 and abs(date - chart) < 1, "centred over the chart"
+    assert re.fullmatch(r"(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2} "
+                        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", burn["date"]), burn
+    assert burn["dateSize"] >= 12, "large enough to read"
+    assert burn["daysBottom"] <= shown["chartTop"] < shown["chartBottom"] <= burn["dateTop"], shown
+    assert burn["daysTop"] >= shown["rowsTop"] - 0.5 and burn["dateBottom"] <= shown["rowsBottom"] + 0.5, \
+        "it fits in the box as it is"
+    assert shown["chartBottom"] - shown["chartTop"] >= 20, "the chart is still readable"
+
+
+@pytest.mark.asyncio
+async def test_a_reset_already_past_is_no_days_left(page_url):
+    shown = await _shown(page_url, _week(10.0, 40.0))
+    assert shown["burn"]["days"] == "0.0 days"
+    assert shown["burn"]["daysColour"] == shown["burn"]["dateColour"] == "rgb(74, 222, 128)"
 
 
 @pytest.mark.asyncio

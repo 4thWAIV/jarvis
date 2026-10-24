@@ -11,3 +11,6 @@ export const voiceState = createStore<OrbState>("idle");
 export const statusText = createStore("");
 // Stopping him mid-sentence; jarvis.ts puts its handler here.
 export const stopSpeaking = { current: () => {} };
+// Sending what Tim typed into the white box instead of saying it; jarvis.ts
+// puts its handler here.
+export const sendTyped = { current: (_text: string) => {} };

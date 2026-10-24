@@ -47,10 +47,11 @@ SCRUBBED_ENV_KEYS = claude_env.SCRUBBED_ENV_KEYS
 # ALLOWLIST (`--tools`), not a denylist: anything a future CLI adds is off by
 # default. The MCP tools are namespaced `mcp__<server>__<tool>`.
 # `ListAgents` is deliberately absent: it cannot see sessions that bound no
-# inbox socket (4 of 17 on the dev machine), and `list_sessions` reads the
+# inbox socket (4 of 17 on the dev machine), and `list_agents` reads the
 # roster directly.
 ALLOWED_TOOLS = [
-    "mcp__jarvis__list_sessions",
+    "mcp__jarvis__list_agents",
+    "mcp__jarvis__workflow_status",
     "mcp__jarvis__session_detail",
     "mcp__jarvis__steer_session",
     "mcp__jarvis__answer_dialog",

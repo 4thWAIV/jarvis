@@ -9,7 +9,11 @@ import sqlite3
 import time
 import uuid
 from contextlib import closing
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Optional
 
+import session_steer
 from data_paths import db_path
 
 log = logging.getLogger("jarvis.run_store")
@@ -97,6 +101,47 @@ def init_db() -> None:
                 created_at REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_steers_created ON steers(created_at DESC);
+
+            -- One row per message JARVIS sends a session, written BEFORE it
+            -- is sent and updated at every step after: sent, seen in the
+            -- session's transcript, the turn on it begun, that turn ended
+            -- and its answer kept. See MessageStatus and the session
+            -- providers' `track`. Keystrokes and Terminal commands are not
+            -- messages; they stay in `steers`.
+            CREATE TABLE IF NOT EXISTS messages (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id    TEXT NOT NULL,
+                provider      TEXT NOT NULL,          -- "anthropic", "openai"
+                agent_name    TEXT NOT NULL,          -- the name it was sent under
+                project       TEXT NOT NULL,
+                capture_id    INTEGER,                -- the capture it came from
+                text          TEXT NOT NULL,          -- exactly what was sent
+                status        TEXT NOT NULL,          -- see MessageStatus
+                staged_at     REAL NOT NULL,
+                sent_at       REAL,
+                delivered_at  REAL,                   -- seen in the session's transcript
+                started_at    REAL,                   -- the session's turn on it began
+                answered_at   REAL,                   -- that turn ended
+                reply         TEXT,                   -- the turn's final answer, as said
+                failure       TEXT                    -- why, when status is failed
+            );
+            CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
+            CREATE INDEX IF NOT EXISTS idx_messages_staged ON messages(staged_at DESC);
+
+            -- One row per message a session sent Tim (session_messages.py):
+            -- written when its file is picked up, before the file is deleted
+            -- and before anything is said about it.
+            CREATE TABLE IF NOT EXISTS session_messages (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                project      TEXT NOT NULL,     -- the folder it was dropped in
+                agent_name   TEXT NOT NULL,     -- who sent it, as the agents list names them
+                subject      TEXT NOT NULL,
+                body         TEXT NOT NULL,
+                received_at  REAL NOT NULL,
+                read_at      REAL               -- when it was first read to the brain
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_messages_received
+                ON session_messages(received_at DESC);
 
             -- Every running Claude Code session, by name, its state as the
             -- session watcher derives it, and whether the user has activated
@@ -305,8 +350,9 @@ def stats(period: str = "day") -> dict:
 
 def record_steer(session_id: str, voice_name: str, project: str,
                  prompt: str, outcome: str) -> None:
-    """Every steer is recorded, including the refused ones — 'did you send
-    that?' must have an answer."""
+    """Every keystroke, Terminal command and refused send attempt is
+    recorded, including the refused ones — 'did you send that?' must have an
+    answer. A message itself is a `messages` row instead (create_message)."""
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO steers (session_id, voice_name, project, prompt, outcome, "
@@ -321,6 +367,218 @@ def list_steers(limit: int = 50) -> list[dict]:
             "SELECT * FROM steers ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- Messages ----------------------------------------------------------------
+
+class MessageStatus(StrEnum):
+    STAGED = "staged"          # waiting out the cancel window
+    CANCELLED = "cancelled"    # Tim stopped it
+    SENT = "sent"              # the provider accepted it
+    UNDELIVERED = "undelivered"  # not seen within a minute (he was told); still looked for
+    DELIVERED = "delivered"    # it is in the session's transcript
+    WORKING = "working"        # the session's turn on it has begun
+    ANSWERED = "answered"      # that turn ended; reply stored
+    FAILED = "failed"          # refused, not live, or unresolved after a day
+
+
+# Sent and not yet answered: what the session watcher looks for in the
+# session's transcript on every poll, after a restart as much as before it.
+# The rest are settled and never read again by the watcher, so what it looks
+# for each poll is only what is still unresolved, and nothing stays
+# unresolved for more than a day (session_watch.MESSAGE_WATCH_SEC).
+OPEN_MESSAGE_STATUSES = (MessageStatus.SENT, MessageStatus.UNDELIVERED,
+                         MessageStatus.DELIVERED, MessageStatus.WORKING)
+
+_MESSAGE_UPDATABLE = frozenset({
+    "status", "sent_at", "delivered_at", "started_at", "answered_at", "reply",
+    "failure",
+})
+
+
+@dataclass(frozen=True)
+class Message:
+    """One row of `messages`."""
+    id: int
+    session_id: str
+    provider: str
+    agent_name: str
+    project: str
+    capture_id: Optional[int]
+    text: str
+    status: str
+    staged_at: float
+    sent_at: Optional[float] = None
+    delivered_at: Optional[float] = None
+    started_at: Optional[float] = None
+    answered_at: Optional[float] = None
+    reply: Optional[str] = None
+    failure: Optional[str] = None
+
+    @property
+    def body(self) -> str:
+        """The text after JARVIS's signature: Tim's words, and what finds the
+        message in the session's transcript."""
+        return session_steer.message_body(self.text)
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in OPEN_MESSAGE_STATUSES
+
+
+def _message(row) -> Message:
+    return Message(**{k: row[k] for k in row.keys()})
+
+
+def create_message(session_id: str, provider: str, agent_name: str,
+                   project: str, text: str, capture_id: Optional[int] = None,
+                   status: str = MessageStatus.STAGED,
+                   failure: Optional[str] = None) -> int:
+    """Record a message before anything is done with it. Its id."""
+    with closing(_connect()) as conn:
+        cur = conn.execute(
+            "INSERT INTO messages (session_id, provider, agent_name, project, "
+            "capture_id, text, status, staged_at, failure) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, provider, agent_name, project, capture_id, text,
+             str(status), time.time(), failure))
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def update_message(message_id: int, **fields) -> None:
+    if not fields:
+        return
+    unknown = set(fields) - _MESSAGE_UPDATABLE
+    if unknown:
+        raise ValueError(f"not updatable: {sorted(unknown)}")
+    if "status" in fields:
+        fields["status"] = str(MessageStatus(fields["status"]))
+    assignments = ", ".join(f"{k}=?" for k in fields)
+    with closing(_connect()) as conn:
+        conn.execute(f"UPDATE messages SET {assignments} WHERE id=?",
+                     (*fields.values(), message_id))
+        conn.commit()
+
+
+def get_message(message_id: int) -> Optional[Message]:
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM messages WHERE id=?",
+                           (message_id,)).fetchone()
+    return _message(row) if row else None
+
+
+def list_messages(session_id: Optional[str] = None,
+                  agent_name: Optional[str] = None,
+                  open_only: bool = False, limit: int = 20) -> list[Message]:
+    """Most recent first. `agent_name` is matched without regard to case,
+    since names are spoken."""
+    sql = "SELECT * FROM messages WHERE 1=1"
+    params: list = []
+    if session_id is not None:
+        sql += " AND session_id = ?"
+        params.append(session_id)
+    if agent_name is not None:
+        sql += " AND lower(agent_name) = lower(?)"
+        params.append(agent_name)
+    if open_only:
+        sql += f" AND status IN ({','.join('?' * len(OPEN_MESSAGE_STATUSES))})"
+        params.extend(str(s) for s in OPEN_MESSAGE_STATUSES)
+    sql += " ORDER BY staged_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    with closing(_connect()) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_message(r) for r in rows]
+
+
+def open_messages() -> list[Message]:
+    """Every message sent and not yet answered, oldest first."""
+    marks = ",".join("?" * len(OPEN_MESSAGE_STATUSES))
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM messages WHERE status IN ({marks}) "
+            "ORDER BY staged_at, id", [str(s) for s in OPEN_MESSAGE_STATUSES]
+        ).fetchall()
+    return [_message(r) for r in rows]
+
+
+def sweep_staged_messages() -> int:
+    """A message still staged when the server starts was never sent: the
+    server stopped inside its cancel window. Failed, and said why."""
+    with closing(_connect()) as conn:
+        cur = conn.execute(
+            "UPDATE messages SET status=?, failure=? WHERE status=?",
+            (str(MessageStatus.FAILED), "the server restarted before it was sent",
+             str(MessageStatus.STAGED)))
+        conn.commit()
+        count = cur.rowcount
+    if count:
+        log.warning("swept %d staged message(s) after restart", count)
+    return count
+
+
+# --- Messages from sessions --------------------------------------------------
+
+@dataclass(frozen=True)
+class SessionMessage:
+    """One row of `session_messages`."""
+    id: int
+    project: str
+    agent_name: str
+    subject: str
+    body: str
+    received_at: float
+    read_at: Optional[float] = None
+
+
+def create_session_message(project: str, agent_name: str, subject: str,
+                           body: str) -> int:
+    """Record a message a session sent. Its id."""
+    with closing(_connect()) as conn:
+        cur = conn.execute(
+            "INSERT INTO session_messages (project, agent_name, subject, body, "
+            "received_at) VALUES (?, ?, ?, ?, ?)",
+            (project, agent_name, subject, body, time.time()))
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def get_session_message(message_id: int) -> Optional[SessionMessage]:
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM session_messages WHERE id=?",
+                           (message_id,)).fetchone()
+    return SessionMessage(**dict(row)) if row else None
+
+
+def list_session_messages(agent_name: Optional[str] = None,
+                          project: Optional[str] = None,
+                          unread_only: bool = False,
+                          limit: int = 20) -> list[SessionMessage]:
+    """Most recent first. `agent_name` and `project` are matched without
+    regard to case, since names are spoken."""
+    sql = "SELECT * FROM session_messages WHERE 1=1"
+    params: list = []
+    if agent_name is not None:
+        sql += " AND lower(agent_name) = lower(?)"
+        params.append(agent_name)
+    if project is not None:
+        sql += " AND lower(project) = lower(?)"
+        params.append(project)
+    if unread_only:
+        sql += " AND read_at IS NULL"
+    sql += " ORDER BY received_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    with closing(_connect()) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [SessionMessage(**dict(r)) for r in rows]
+
+
+def mark_session_message_read(message_id: int) -> None:
+    """The first read only: `read_at` keeps when he was first read it."""
+    with closing(_connect()) as conn:
+        conn.execute("UPDATE session_messages SET read_at=? "
+                     "WHERE id=? AND read_at IS NULL", (time.time(), message_id))
+        conn.commit()
 
 
 # --- Agents ----------------------------------------------------------------

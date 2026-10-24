@@ -179,6 +179,47 @@ async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_url):
         await browser.close()
 
 
+
+@pytest.mark.asyncio
+async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
+    """Clicked, the white box takes typing. Shift+Enter starts a new line;
+    Enter sends it, marked typed, and the words wait in the box as spoken
+    ones do until JARVIS answers."""
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.evaluate("window.__hear('something half heard', false)")
+        await page.click(".conversation-hearing")
+        assert await page.evaluate("document.activeElement.className") == "hearing-input"
+        await page.keyboard.type("check the build")
+        await page.keyboard.press("Shift+Enter")
+        await page.keyboard.type("and the tests")
+        assert not [m for m in voice.got if m.get("type") == "transcript"]
+        lines = await page.evaluate("document.querySelector('.hearing-input').clientHeight / 20")
+        assert lines == 2, lines
+
+        await page.keyboard.press("Enter")
+        await asyncio.sleep(0.2)
+        (sent,) = [m for m in voice.got if m.get("type") == "transcript"]
+        assert sent["text"] == "check the build\nand the tests" and sent["typed"] is True, sent
+        assert sent["isFinal"] is True and isinstance(sent["id"], int), sent
+        assert await page.evaluate("document.activeElement.tagName") == "BODY"
+        got = await page.evaluate(BOXES)
+        assert got["hearing"] == "check the build\nand the tests", got
+        assert got["history"] == ["something half heard"], got
+
+        # Heard words start a new turn after the typed one.
+        await page.evaluate("window.__hear('and deploy', false)")
+        got = await page.evaluate(BOXES)
+        assert got["hearing"] == "and deploy", got
+        assert got["history"] == ["something half heard", "check the build\nand the tests"], got
+        # In the history it is his turn like any other: same place, same look.
+        assert got["historyWho"] == ["user", "user"], got
+        classes = await page.evaluate(
+            "() => [...document.querySelectorAll('.history-turn')].map(e => e.className)")
+        assert classes[0] == classes[1] == "history-turn user", classes
+        await browser.close()
+
 @pytest.mark.asyncio
 async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_url):
     voice = _Voice()
@@ -210,8 +251,8 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         assert said[1].startswith("rgba(210, 214, 222"), said        # quiet grey
         assert sent[1].startswith("rgba(251, 191, 36"), sent          # the transmission's amber
         await page.wait_for_timeout(400)           # the crossfade from his words
-        text = await page.evaluate("document.querySelector('.capture-box').textContent")
-        assert text == "capturingShip it.", text
+        text = await page.evaluate("document.querySelector('.capture-box .capture-body').textContent")
+        assert text == "Ship it.", text
         # Before it is for an agent, it is not yet a transmission: plain and on the left.
         voice.send({"type": "capture", "id": 4, "state": "capturing", "text": "Note this.",
                     "heard": [heard]})
@@ -219,6 +260,78 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
             "document.querySelector('.history-turn .capture-chip-head').textContent === 'Capture 4'")
         align = await page.evaluate("getComputedStyle(document.querySelector('.history-turn')).textAlign")
         assert align in ("left", "start"), align
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page_url):
+    """"Send to:" over the top left once it is a message, its state over the
+    top right; Read, Accept, Delete and Send in the bottom right, each a POST to its
+    route; a refusal shown under the text."""
+    voice = _Voice()
+    posted = []
+
+    async def answer(route):
+        posted.append(route.request.url.split("/api/capture/")[1])
+        if posted[-1].endswith("/send"):
+            await route.fulfill(status=409, content_type="application/json",
+                                body=json.dumps({"detail": "There are two hammers: which one?"}))
+        else:
+            await route.fulfill(status=200, content_type="application/json", body="{}")
+
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.route("**/api/capture/*/*", answer)
+        voice.send({"type": "capture", "id": 5, "state": "capturing", "text": "Note this.",
+                    "heard": [], "accepted": False})
+        await page.wait_for_selector(".capture-box[data-capture='5']")
+        assert await page.evaluate("document.querySelector('.capture-to')") is None
+        assert await page.evaluate(
+            "document.querySelector('.capture-send').disabled"), "no one to send it to yet"
+
+        voice.send({"type": "capture", "id": 5, "state": "capturing", "text": "Note this.",
+                    "to": "hammer", "heard": [], "accepted": False})
+        await page.wait_for_selector(".capture-box.message .capture-to")
+        where = await page.evaluate("""() => {
+          const r = s => document.querySelector(s).getBoundingClientRect();
+          const box = r('.capture-box'), to = r('.capture-to'), state = r('.capture-state');
+          const buttons = [...document.querySelectorAll('.capture-buttons button')];
+          return {to: document.querySelector('.capture-to').textContent,
+                  toLeft: to.left - box.left, toTop: to.top - box.top,
+                  stateRight: box.right - state.right,
+                  labels: buttons.map(b => b.textContent),
+                  buttonsRight: box.right - buttons[3].getBoundingClientRect().right,
+                  buttonsBottom: box.bottom - buttons[3].getBoundingClientRect().bottom,
+                  textBottom: r('.capture-body').bottom,
+                  buttonsTop: buttons[0].getBoundingClientRect().top};
+        }""")
+        assert where["to"] == "Send to: hammer", where
+        assert where["toLeft"] < 30 and where["toTop"] < 5, where
+        assert where["stateRight"] < 30, where
+        assert where["labels"] == ["Read", "✓ Accept", "Delete", "Send"], where
+        assert where["buttonsRight"] < 20 and where["buttonsBottom"] < 20, where
+        assert where["buttonsTop"] >= where["textBottom"], where
+
+        await page.click(".capture-read")
+        await page.click(".capture-accept")
+        await page.click(".capture-send")
+        await page.wait_for_selector(".capture-refused")
+        assert await page.text_content(".capture-refused") == "There are two hammers: which one?"
+        await page.click(".capture-delete")
+        await page.wait_for_function("document.querySelector('.capture-refused') === null")
+        assert posted == ["5/read", "5/accept", "5/send", "5/delete"], posted
+
+        voice.send({"type": "capture", "id": 5, "state": "capturing", "text": "Note this.",
+                    "to": "hammer", "heard": [], "accepted": True})
+        await page.wait_for_function(
+            "document.querySelector('.capture-accept').textContent === '✓ Accepted'")
+        assert await page.evaluate("document.querySelector('.capture-accept').disabled")
+
+        voice.send({"type": "capture", "id": 5, "state": "reading", "text": "Note this.",
+                    "to": "hammer", "heard": [], "accepted": True})
+        await page.wait_for_function(
+            "document.querySelector('.capture-read').textContent === 'Reading'")
+        assert await page.evaluate("document.querySelector('.capture-read').disabled")
         await browser.close()
 
 

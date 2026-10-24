@@ -189,7 +189,11 @@ async def test_the_tool_stages_and_speaks_nothing_at_all(wired, fake_session,
     assert len(server._staged_steers) == 1
     assert server._staged_steers[0].prompt == "use Postgres"
     import run_store
-    assert run_store.list_steers(limit=50) == [], "staging is not an outcome"
+    assert run_store.list_steers(limit=50) == [], "a message is not a steers row"
+    (m,) = _messages()
+    assert (m.status, m.body) == ("staged", "use Postgres"), \
+        "the record is written when it is staged, before anything is sent"
+    assert server._staged_steers[0].message_id == m.id
 
 
 @pytest.mark.asyncio
@@ -207,11 +211,14 @@ async def test_a_staged_steer_sends_the_heard_capture_without_reading_it_again(
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "use Postgres"}))
     await server._perform_staged_steers()
 
-    assert speech.said == ["Passed to chitauri, sir."]
+    assert speech.said == [], "sent is not delivered: the watcher says that"
     _wait_for_receipt(received)
     assert json.loads(received[0].strip())["message"]["content"] == \
         server.STEER_SIGNATURE + "use Postgres"
     assert server._staged_steers == [], "a performed steer must be off the list"
+    (m,) = _messages()
+    assert m.status == "sent" and m.sent_at is not None
+    assert m.text == server.STEER_SIGNATURE + "use Postgres", "exactly what was sent"
 
 
 @pytest.mark.asyncio
@@ -227,8 +234,8 @@ async def test_saying_stop_during_the_window_cancels_the_send(wired, fake_sessio
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "drop it"}))
     await server._perform_staged_steers()
 
-    import run_store
-    assert run_store.list_steers(limit=5)[0]["outcome"] == "cancelled_by_user"
+    (m,) = _messages()
+    assert m.status == "cancelled" and m.sent_at is None
     assert received == [], "nothing may reach the session after a cancel"
 
 
@@ -279,9 +286,14 @@ async def test_every_steer_is_recorded_whatever_the_outcome(wired, fake_session,
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go on"}))
     await server._perform_staged_steers()
 
+    (m,) = _messages()
+    assert (m.body, m.status, m.agent_name, m.session_id) == ("go on", "sent", "chitauri", "sid")
+
+
+def _messages():
+    """Every message on record, newest first."""
     import run_store
-    rows = run_store.list_steers(limit=5)
-    assert rows and rows[0]["prompt"] == "go on" and rows[0]["outcome"] == "sent"
+    return run_store.list_messages(limit=50)
 
 
 def _fake_session_state(socket_path):
@@ -306,9 +318,8 @@ async def test_no_voice_refuses_to_steer_rather_than_sending_unheard(
     result = await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go on"}))
 
     assert received == [], "nothing may be sent when there is no voice to read it back"
-    import run_store
-    rows = run_store.list_steers(limit=5)
-    assert rows and rows[0]["outcome"] == "no_voice"
+    (m,) = _messages()
+    assert (m.status, m.failure, m.body) == ("failed", "no_voice", "go on")
 
 
 # --- Finding 5: the no-socket case must not share not_live's label ---------
@@ -327,9 +338,8 @@ async def test_no_socket_is_recorded_as_not_steerable_not_not_live(wired, monkey
 
     await server.tool_steer_session(captured(server, {"name": "x", "prompt": "hi"}))
 
-    import run_store
-    rows = run_store.list_steers(limit=5)
-    assert rows[0]["outcome"] == "not_steerable"
+    (m,) = _messages()
+    assert (m.status, m.failure) == ("failed", "not_steerable")
 
 
 # --- Finding 3: every terminal outcome gets exactly one audit row ----------
@@ -438,28 +448,29 @@ async def test_needs_a_human_hand_and_not_steerable_and_sent_are_each_recorded_o
     hand_state.needs = "permission prompt"
     hand_state.state = "needs_you"
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (hand_state, None, None))
-    before = len(run_store.list_steers(limit=50))
+    before = len(_messages())
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == before + 1 and rows[0]["outcome"] == "needs_a_human_hand"
+    rows = _messages()
+    assert len(rows) == before + 1 and rows[0].failure == "needs_a_human_hand"
 
     # not_steerable
     unsteerable = _fake_session_state(None)
     unsteerable.steerable = False
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (unsteerable, None, None))
-    before = len(run_store.list_steers(limit=50))
+    before = len(_messages())
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == before + 1 and rows[0]["outcome"] == "not_steerable"
+    rows = _messages()
+    assert len(rows) == before + 1 and rows[0].failure == "not_steerable"
 
     # sent
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
-    before = len(run_store.list_steers(limit=50))
+    before = len(_messages())
     await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "go"}))
     await server._perform_staged_steers()
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == before + 1 and rows[0]["outcome"] == "sent"
+    rows = _messages()
+    assert len(rows) == before + 1 and rows[0].status == "sent"
+    assert run_store.list_steers(limit=50) == [], "no message is a steers row"
 
 
 
@@ -656,8 +667,6 @@ async def test_the_send_happens_after_the_turn_has_been_heard(
 
     async with TurnRig(server, monkeypatch, [_steer_args()]) as rig:
         await asyncio.wait_for(rig.start(), timeout=15)
-        # `say` returns once QUEUED; let the outcome line actually be spoken.
-        await rig.wait_until_speaking("Passed to chitauri, sir.")
 
     # (b) the tool call itself is fast: it validates and stages, nothing more.
     assert rig.brain.tool_seconds[0] < 0.5, rig.brain.tool_seconds
@@ -675,11 +684,11 @@ async def test_the_send_happens_after_the_turn_has_been_heard(
     assert received[0][0] > heard_at, "delivery must follow the turn"
     assert json.loads(received[0][1].strip())["message"]["content"] == \
         server.STEER_SIGNATURE + "use Postgres"
-    assert "Passed to chitauri, sir." in rig.spoken()
+    assert not any(t.startswith("Passed to") for t in rig.spoken()), \
+        "sent is not delivered: the watcher says that once it is seen"
 
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "sent"      # (f)
+    rows = _messages()
+    assert len(rows) == 1 and rows[0].status == "sent"      # (f)
 
 
 @pytest.mark.asyncio
@@ -705,9 +714,8 @@ async def test_a_cancel_word_in_the_window_after_the_readback_blocks_the_send(
         await asyncio.wait_for(task, timeout=15)
 
     assert received == [], "the cancel word must block delivery"
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "cancelled_by_user"
+    rows = _messages()
+    assert len(rows) == 1 and rows[0].status == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -735,11 +743,10 @@ async def test_two_steers_staged_in_one_turn_are_both_performed_in_order(
     assert first_rx and second_rx, "both steers must be delivered"
     assert first_rx[0][0] < second_rx[0][0], "staged order must be preserved"
 
-    import run_store
-    rows = run_store.list_steers(limit=50)          # (f), one row each
+    rows = _messages()                              # (f), one record each
     assert len(rows) == 2
-    assert {r["outcome"] for r in rows} == {"sent"}
-    assert [r["voice_name"] for r in rows] == ["hammer", "chitauri"]   # newest first
+    assert {r.status for r in rows} == {"sent"}
+    assert [r.agent_name for r in rows] == ["hammer", "chitauri"]   # newest first
 
 
 @pytest.mark.asyncio
@@ -759,9 +766,8 @@ async def test_a_staged_steer_still_happens_when_the_turn_ends_badly(
     assert "I lost my train of thought, sir." in rig.spoken()
     _wait_for_receipt(received)
     assert received, "a staged steer survives a failed turn"
-    import run_store
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "sent"
+    rows = _messages()
+    assert len(rows) == 1 and rows[0].status == "sent"
 
 
 @pytest.mark.asyncio
@@ -790,12 +796,13 @@ async def test_a_staged_steer_is_never_performed_twice(wired, socket_factory,
     assert boom.is_set()
     assert server._staged_steers == []
     assert received == []
-    rows = run_store.list_steers(limit=50)
-    assert len(rows) == 1 and rows[0]["outcome"] == "failed"
+    rows = _messages()
+    assert len(rows) == 1 and (rows[0].status, rows[0].failure) == ("failed", "failed"), \
+        "the record is never left staged"
 
     await server._perform_staged_steers()          # nothing left to do
     assert received == []
-    assert len(run_store.list_steers(limit=50)) == 1
+    assert len(_messages()) == 1
 
 
 @pytest.mark.asyncio

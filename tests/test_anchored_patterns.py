@@ -270,6 +270,7 @@ SAMPLES = {
     "_HEADING": "# Title",
     "_TASK_HEADING": "## Task 1: wire the executor",
     "_CHECKBOX": "- [x] done",
+    "_UUID": "01a0ca40-0ae3-7452-893a-87da26c01453",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

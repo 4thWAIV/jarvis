@@ -252,6 +252,24 @@ async def test_the_switch_shows_only_in_all_and_active_entries_fill_the_row(page
         await browser.close()
 
 
+@pytest.mark.asyncio
+async def test_the_switch_stands_upright_with_on_at_the_top(page_url):
+    look = """() => [...document.querySelectorAll('.agents-list li')].map(li => {
+        const sw = li.querySelector('.agent-switch');
+        const r = sw.getBoundingClientRect();
+        const knob = parseFloat(getComputedStyle(sw, '::after').top);
+        return [sw.getAttribute('aria-checked'), r.height > r.width, knob < r.height / 2];
+    })"""
+    async with async_api.async_playwright() as p:
+        browser = await _browser(p)
+        page = await _open_with(browser, page_url, LOOKS)          # opens on All
+        await page.wait_for_timeout(300)                            # the knob's slide
+        rows = await page.evaluate(look)
+        assert rows and all(upright for _on, upright, _top in rows), rows
+        assert all((on == "true") == at_top for on, _upright, at_top in rows), rows
+        await browser.close()
+
+
 # --- The needs-board count ----------------------------------------------------
 
 NEEDS = {"agents": [

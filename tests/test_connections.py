@@ -660,7 +660,7 @@ def test_jarvis_own_tools_do_not_taint_a_turn():
     """His own results are already wrapped in `<session-output>` where they
     carry someone else's words, and gating them would shut the assistant."""
     import brain
-    assert claude_provider.untrusted_tool_source("mcp__jarvis__list_sessions") is None
+    assert claude_provider.untrusted_tool_source("mcp__jarvis__list_agents") is None
     assert claude_provider.untrusted_tool_source("mcp__jarvis__spawn_run") is None
 
 

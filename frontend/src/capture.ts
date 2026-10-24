@@ -26,6 +26,8 @@ export interface Capture {
   to: string;
   /** The ids of the user turns it was made from. */
   heard: number[];
+  /** Read back to him in full, or accepted on screen, since it last changed. */
+  accepted: boolean;
 }
 
 export interface CaptureMessage {
@@ -35,6 +37,7 @@ export interface CaptureMessage {
   text?: string;
   to?: string;
   heard?: number[];
+  accepted?: boolean;
 }
 
 /** In the order they opened. */
@@ -67,6 +70,7 @@ export function captureChanged(msg: CaptureMessage): void {
     text: msg.text ?? old?.text ?? "",
     to: msg.to ?? old?.to ?? "",
     heard: msg.heard ?? old?.heard ?? [],
+    accepted: msg.accepted ?? old?.accepted ?? false,
   };
   captures.set(old ? list.map((c) => (c.id === msg.id ? next : c)) : [...list, next]);
   if (next.heard.length) claimTurns(next.heard, next.id, next.to, next.text);
@@ -85,6 +89,23 @@ export function captureKind(capture: { to: string }): CaptureKind | null {
 export const KIND_LABEL: Record<CaptureKind, (capture: { to: string }) => string> = {
   transmission: (c) => `Transmission to ${c.to}`,
 };
+
+/** The capture box's buttons. Read reads it aloud, which, heard to the end,
+ *  counts as read back; Accept counts as his having read it; Send accepts it
+ *  and sends it to the agent it is addressed to. Resolves to null, or to why
+ *  it was refused, for the box to show. The server's `capture` messages
+ *  change the box itself. */
+export type CaptureAction = "read" | "accept" | "delete" | "send";
+
+export function captureAction(id: number, action: CaptureAction): Promise<string | null> {
+  return fetch(`/api/capture/${id}/${action}`, { method: "POST" })
+    .then(async (r) => {
+      if (r.ok) return null;
+      const body = await r.json().catch(() => null);
+      return typeof body?.detail === "string" ? body.detail : `It could not ${action} (${r.status}).`;
+    })
+    .catch(() => `It could not ${action}: JARVIS is not answering.`);
+}
 
 /** A chunk reading capture `id` has started playing and lasts `seconds`. */
 export function captureSpeaking(id: number, text: string, seconds: number): void {

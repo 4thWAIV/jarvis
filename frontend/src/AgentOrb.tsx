@@ -5,10 +5,13 @@
  * What it shows is decided in one place, `agentOrbLook`: an agent the user
  * has not activated is entirely gray; an active one is idle when its session
  * is idle and thinking in every other state.
+ *
+ * When a message's ray reaches the agent (RayLane.tsx), its orb goes into the
+ * receiving state in the ray's colour for as long as the ray still shows.
  */
 
 import { useEffect, useRef } from "react";
-import type { AgentRow } from "./agents";
+import { agentReceipt, type AgentRow } from "./agents";
 import { createOrb, type Orb, type OrbState } from "./orb";
 
 // Enough to read as the same orb at this size, few enough that a column of
@@ -32,6 +35,19 @@ export function AgentOrb({ agent }: { agent: AgentRow }) {
       orbRef.current = null;
     };
   }, []);
+
+  // Rows are reused as the list cycles, so the orb follows its agent: a
+  // receipt for the agent this row shows now, and none carried over from the
+  // agent it showed before.
+  useEffect(() => {
+    orbRef.current?.endTransmission();
+    return agentReceipt.subscribe(() => {
+      const receipt = agentReceipt.get();
+      if (receipt?.sessionId === agent.session_id) {
+        orbRef.current?.receive(receipt.colour, receipt);
+      }
+    });
+  }, [agent.session_id]);
 
   useEffect(() => {
     orbRef.current?.setGray(look.gray);

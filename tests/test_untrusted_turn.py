@@ -2,7 +2,7 @@
 
 The gate was built for `WebFetch` and stayed there. `read_page`,
 `look_at_page`, `github_repo` and the CLI's own two set it; `read_file`,
-`search_repo`, `repo_overview`, `session_detail`, `list_sessions`,
+`search_repo`, `repo_overview`, `session_detail`,
 `run_status`, `build_status`, `review_document` and `look_at_screen` did not.
 Those are every reader of repository files, of other sessions' transcripts, of
 run output and of the user's screen — and a README is written by a stranger
@@ -157,7 +157,7 @@ def test_every_reader_the_reviewer_named_is_in_the_set(wired):
     here rather than in the field."""
     server, _ = wired
     for reader in ("read_file", "search_repo", "repo_overview",
-                   "session_detail", "list_sessions", "run_status",
+                   "session_detail", "run_status",
                    "build_status", "review_document", "look_at_screen",
                    "what_is_on_screen", "read_page", "look_at_page",
                    "github_repo"):

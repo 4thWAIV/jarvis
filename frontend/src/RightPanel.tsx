@@ -6,10 +6,9 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { brains } from "./brains";
-import { unseenDisplay } from "./screen";
-import { ScreenView } from "./ScreenView";
 import { TabRow, type Tab } from "./Tabs";
 import { WeeklyUsage } from "./WeeklyUsage";
+import { WorkflowsView } from "./WorkflowsView";
 
 /** Every brain JARVIS has, each with its own account box; when there is more
  *  than one, the one in use is marked BRAIN and the other STANDBY. Until the
@@ -45,29 +44,27 @@ const TABS: Tab[] = [
     view: () => <DiagnosticsView />,
   },
   {
-    id: "screen",
-    title: "Screen",
+    id: "workflows",
+    title: "Workflows",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="4" width="18" height="13" rx="2" />
-        <line x1="8" y1="21" x2="16" y2="21" />
-        <line x1="12" y1="17" x2="12" y2="21" />
+        <rect x="3" y="4" width="6" height="5" rx="1" />
+        <rect x="15" y="10" width="6" height="5" rx="1" />
+        <rect x="3" y="16" width="6" height="5" rx="1" />
+        <path d="M9 6.5h3v12H9M12 12.5h3" />
       </svg>
     ),
-    view: () => <ScreenView />,
+    view: () => <WorkflowsView />,
   },
 ];
 
 export function RightPanel() {
   const [selected, setSelected] = useState(TABS[0].id);
   const tab = TABS.find((t) => t.id === selected) ?? TABS[0];
-  // The Screen tab lights up, without switching, when something new is shown.
-  const unseen = useSyncExternalStore(unseenDisplay.subscribe, unseenDisplay.get);
   return (
     <div id="right-column">
-      <TabRow tabs={TABS} selected={selected} onSelect={setSelected} className="right-tabs"
-              lit={(t) => t.id === "screen" && unseen && selected !== "screen"} />
+      <TabRow tabs={TABS} selected={selected} onSelect={setSelected} className="right-tabs" />
       <div className="right-panel" role="tabpanel" aria-label={tab.title}>
         {tab.view()}
       </div>

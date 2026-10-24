@@ -58,7 +58,7 @@ MARKER = "he approves"
 
 # The outermost call that makes a tainted value safe to print. NOT
 # `_cap_tool_result`: it truncates, which makes nothing safe.
-SANITISERS = {"_safe_label", "_plain_name", "_plain_phrase", "_said_name",
+SANITISERS = {"_safe_label", "_plain_name", "_plain_phrase", "_said_name", "_no_such_agent",
               "_state_word", "_wrap_untrusted"}
 # Calls that carry taint through: the value is still the same text, or a
 # path that is still the path that went in.
@@ -765,7 +765,7 @@ def test_every_echo_site_is_walled_when_driven(server, payload):
          lambda: server._resolve_project_or_explain(payload)[2]),
         ("_browser_for", lambda: server._browser_for({"browser": payload})[1]),
         ("tool_connections", lambda: server.tool_connections({"service": payload})),
-        ("tool_list_sessions", lambda: server.tool_list_sessions({"filter": payload})),
+        ("tool_list_agents", lambda: server.tool_list_agents({"filter": payload})),
         ("tool_open_in_editor", lambda: server.tool_open_in_editor(
             {"project": "chitauri", "path": payload})),
         ("tool_project_note", lambda: server.tool_project_note(

@@ -61,6 +61,7 @@ if _env_file_path().exists():
     for _k, _v in _parse_env_lines(_env_file_path().read_text()):
         os.environ.setdefault(_k, _v)
 from contextlib import asynccontextmanager
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -80,7 +81,10 @@ import project_maker
 import projects_view
 import history_read
 import repo_read
+import session_messages
 import session_needs
+import agent_directory
+import workflow_store
 import run_store
 import session_steer
 import session_watch
@@ -89,6 +93,7 @@ import stream_parser
 import usage_scan
 import brain_provider
 import brains_config
+import codex_sessions
 import usage_store
 import web_auth
 from run_executor import RunExecutor
@@ -1485,10 +1490,13 @@ def _on_session_event(event: dict) -> None:
         # names without reconciling, so a run event puts a run ROW on the
         # Sessions tab even when the snapshot it arrived beside was clean.
         return
+    if kind in _MESSAGE_ANNOUNCERS:
+        # About a message, not a change in the session: the pages' session
+        # rows have nothing to update from it, so it is not broadcast.
+        _spawn(_MESSAGE_ANNOUNCERS[kind](event))
+        return
     _spawn(_broadcast_session_event(event))
-    if kind == "replied":
-        _spawn(_announce_reply(event))
-    elif kind == "needs_you":
+    if kind == "needs_you":
         _spawn(_announce_needs_you(event))
     elif kind == "finished":
         # Walled where it ENTERS the queue, exactly as `_on_run_event` does
@@ -1517,21 +1525,90 @@ def _with_notes_for_brain(text: str) -> str:
     return f"(JARVIS, not the user: {notes})\n{text}"
 
 
-async def _announce_reply(event: dict) -> None:
-    """A session JARVIS sent a message to has answered."""
-    s = event.get("session") or {}
-    name = _said_name(s, "A session")
-    line = f"{name} has answered, sir — shall I read it?"
-    _notes_for_brain.append(
-        f"Since your last turn you told him {name} has answered and asked "
-        f"whether to read it. If he says yes, call read_session_reply for "
-        f"{name} and read him every page.")
+# How much of his own message an announcement quotes to say which one it
+# means: enough words to recognise it, never the whole of it again.
+MESSAGE_GIST_WORDS = 8
+
+
+def _message_gist(message: dict) -> str:
+    """The first words of a message JARVIS sent: Tim's own words, as he
+    said them and heard them read back (a capture), not anything a session
+    wrote. Cut to one line so nothing in it can start a line of its own."""
+    words = str(message.get("body") or "").split()
+    gist = " ".join(words[:MESSAGE_GIST_WORDS])
+    return gist + ("…" if len(words) > MESSAGE_GIST_WORDS else "")
+
+
+def _message_number(message: dict) -> int:
+    """A message's id, as a number: it is put in a sentence for the brain."""
+    try:
+        return int(message.get("id"))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _say_about_message(line: str, note: str, what: str) -> None:
+    """Say `line`, and tell the brain at its next turn that it was said."""
+    _notes_for_brain.append(note)
     if speech is None:
         return
     try:
         await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
-        log.warning(f"reply announcement failed: {e}")
+        log.warning(f"{what} announcement failed: {e}")
+
+
+async def _announce_delivered(event: dict) -> None:
+    """A message JARVIS sent is in the session's transcript."""
+    name = _said_name(event.get("session") or {}, "The session")
+    number = _message_number(event.get("message") or {})
+    await _say_about_message(
+        f"Delivered to {name}, sir.",
+        f"Since your last turn you told him message {number} was delivered "
+        f"to {name}.", "delivery")
+
+
+async def _announce_undelivered(event: dict) -> None:
+    """A message JARVIS sent never reached the session's conversation."""
+    name = _said_name(event.get("session") or {}, "The session")
+    number = _message_number(event.get("message") or {})
+    await _say_about_message(
+        f"{name} hasn't picked it up, sir.",
+        f"Since your last turn you told him {name} hasn't picked up message "
+        f"{number}: it was sent but has not reached that session's "
+        f"conversation. It is still looked for, for a day; if it arrives he "
+        f"is told it was delivered. Nothing has been resent.",
+        "undelivered")
+
+
+async def _announce_reply(event: dict) -> None:
+    """A session JARVIS sent a message to has answered it."""
+    s = event.get("session") or {}
+    message = event.get("message") or {}
+    name = _said_name(s, "A session")
+    number = _message_number(message)
+    gist = _message_gist(message)
+    about = f" about {gist}" if gist else ""
+    if not message.get("reply"):
+        await _say_about_message(
+            f"{name} finished its turn on your message{about} without a "
+            f"word, sir.",
+            f"Since your last turn you told him {name} ended its turn on "
+            f"message {number} without saying anything.", "reply")
+        return
+    await _say_about_message(
+        f"{name} has answered your message{about}, sir — shall I read it?",
+        f"Since your last turn you told him {name} has answered message "
+        f"{number} and asked whether to read it. If he says yes, call "
+        f"read_message_reply with message {number} and read him every page.",
+        "reply")
+
+
+_MESSAGE_ANNOUNCERS = {
+    "delivered": _announce_delivered,
+    "undelivered": _announce_undelivered,
+    "answered": _announce_reply,
+}
 
 
 # How often the needs board is looked at. A file is rewritten by hand-paced
@@ -1540,9 +1617,33 @@ NEEDS_POLL_SEC = 5.0
 _needs_task: Optional[asyncio.Task] = None
 
 
+def _project_owner(project: str) -> str:
+    """Who a project's needs board or message belongs to, as the agents list
+    names them: every agent working in the project, by its listed name. Both
+    are kept per project (the sessions name them after their folder), but he
+    knows the agents by name, not by folder. The project name only when no
+    agent is working in it."""
+    names = sorted({s.voice_name for s in _snapshot_or_empty().sessions
+                    if s.project.lower() == project.lower() and s.voice_name})
+    return _join_natural(names) if names else project
+
+
+def _board_owner(board: session_needs.Board) -> str:
+    """Who a needs board belongs to: its project's owner."""
+    return _project_owner(board.project)
+
+
+def _board_under_owner(board: session_needs.Board) -> str:
+    """The board's text with its `# <project>` title replaced by its owner."""
+    first, _, rest = board.text.partition("\n")
+    if first.lstrip("# ").strip().lower() == board.project.lower():
+        return f"# {_board_owner(board)}\n{rest}"
+    return f"# {_board_owner(board)}\n{board.text}"
+
+
 async def _announce_board(board: session_needs.Board) -> None:
     """A session has written down something it needs from the user."""
-    name = _said_name({"voice_name": board.project}, "A session")
+    name = _said_name({"voice_name": _board_owner(board)}, "A session")
     n = board.items
     things = f"{_say_number(n)} thing{'s' if n != 1 else ''}"
     line = f"{name} has {things} for you, sir."
@@ -1558,27 +1659,103 @@ async def _announce_board(board: session_needs.Board) -> None:
         log.warning(f"needs-board announcement failed: {e}")
 
 
+async def _every(seconds: float, what: str, look) -> None:
+    """Await `look()` every `seconds`, forever. A failed look is logged and
+    the next one still happens. Never raises out but for cancellation."""
+    while True:
+        try:
+            await look()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"{what}: {e}")
+        await asyncio.sleep(seconds)
+
+
 async def _watch_needs_board() -> None:
     """Announce each board that appears or changes. Never raises out."""
     tracker = session_needs.ChangeTracker()
     counts: dict[str, int] | None = None
-    while True:
+
+    async def look() -> None:
+        nonlocal counts
+        boards = await asyncio.to_thread(
+            session_needs.read_boards, data_paths.needs_dir())
+        # The agents list shows each board's count: a changed count,
+        # down as well as up, tells the pages to fetch it again.
+        now = {b.project.lower(): b.items for b in boards}
+        if counts is not None and now != counts:
+            _hint_agents_changed()
+        counts = now
+        for board in tracker.changed(boards):
+            await _announce_board(board)
+
+    await _every(NEEDS_POLL_SEC, "needs board", look)
+
+
+# How often the session messages folder is looked at: a session waits for
+# its file to disappear as its sign the message was picked up.
+SESSION_MESSAGES_POLL_SEC = 5.0
+_session_messages_task: Optional[asyncio.Task] = None
+
+
+def _take_session_messages() -> list[run_store.SessionMessage]:
+    """Record every settled message file, then delete it. The record is
+    written first: a file whose record failed stays and is taken next time,
+    and a file that will not delete after its record was written is moved
+    aside as `.taken` so it is never recorded twice."""
+    taken = []
+    for dropped in session_messages.collect(data_paths.session_messages_dir(),
+                                            time.time()):
+        message_id = run_store.create_session_message(
+            dropped.project, _project_owner(dropped.project),
+            dropped.subject, dropped.body)
         try:
-            boards = await asyncio.to_thread(
-                session_needs.read_boards, data_paths.needs_dir())
-            # The agents list shows each board's count: a changed count,
-            # down as well as up, tells the pages to fetch it again.
-            now = {b.project.lower(): b.items for b in boards}
-            if counts is not None and now != counts:
-                _hint_agents_changed()
-            counts = now
-            for board in tracker.changed(boards):
-                await _announce_board(board)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log.warning(f"needs board: {e}")
-        await asyncio.sleep(NEEDS_POLL_SEC)
+            dropped.path.unlink()
+        except OSError as e:
+            log.warning(f"session messages: {dropped.path.name} not deleted ({e})")
+            try:
+                dropped.path.rename(dropped.path.with_suffix(".taken"))
+            except OSError:
+                log.error(f"session messages: {dropped.path} could not be moved "
+                          f"aside and will be recorded again")
+        taken.append(run_store.get_session_message(message_id))
+    return [m for m in taken if m is not None]
+
+
+async def _announce_session_messages(messages: list) -> None:
+    """Sessions have sent him messages. Only names and counts are said: the
+    subject is the session's own text, and he hears it when it is read."""
+    if not messages:
+        return
+    numbers = _join_natural([str(m.id) for m in messages])
+    if len(messages) == 1:
+        name = _said_name({"voice_name": messages[0].agent_name}, "A session")
+        await _say_about_message(
+            f"{name} has sent you a message, sir — shall I read it?",
+            f"Since your last turn you told him {name} has sent him message "
+            f"{numbers} and asked whether to read it. If he says yes, call "
+            f"read_session_message with message {numbers} and read him every page.",
+            "session message")
+        return
+    names = sorted({_said_name({"voice_name": m.agent_name}, "a session")
+                    for m in messages})
+    count = _say_number(len(messages))
+    await _say_about_message(
+        f"{count.capitalize()} messages have come in, from {_join_natural(names)}, sir.",
+        f"Since your last turn you told him {count} messages came in from "
+        f"sessions: numbers {numbers}. If he wants them, call "
+        f"read_session_message for each and read him every page.",
+        "session messages")
+
+
+async def _watch_session_messages() -> None:
+    """Take each message a session drops and tell him. Never raises out."""
+    async def look() -> None:
+        messages = await asyncio.to_thread(_take_session_messages)
+        await _announce_session_messages(messages)
+
+    await _every(SESSION_MESSAGES_POLL_SEC, "session messages", look)
 
 
 async def _announce_needs_you(event: dict) -> None:
@@ -1914,17 +2091,27 @@ def _running_agents() -> dict[str, tuple[str, str]]:
             if s.state != session_watch.GONE}
 
 
+def _sync_agents() -> bool:
+    """Bring the agents list in line with what is running; whether it changed.
+
+    Nothing is synced until the session watcher has finished its first poll.
+    Before that its snapshot is empty, and syncing to it would delete every
+    agent, and with it every name the user set and every activation."""
+    if session_watcher is None or not session_watcher.polled:
+        return False
+    return run_store.sync_agents(_running_agents())
+
+
 async def _watch_agents() -> None:
     """Keep the agents list in step with what is running, and tell the pages
     when it changes. Never raises: a bad poll must not end the loop.
 
-    Waits one interval before the first look: the session watcher has not
-    polled yet at startup, and reading the roster that early also fills
-    `_jarvis_run_session_ids`' short cache before any run exists."""
+    Waits one interval before the first look: reading the roster that early
+    also fills `_jarvis_run_session_ids`' short cache before any run exists."""
     while True:
         await asyncio.sleep(AGENTS_POLL_SEC)
         try:
-            if await asyncio.to_thread(run_store.sync_agents, _running_agents()):
+            if await asyncio.to_thread(_sync_agents):
                 _hint_agents_changed()
         except asyncio.CancelledError:
             raise
@@ -1972,15 +2159,31 @@ async def _run_preflight() -> None:
             await speech.say(summary, label="system")
 
 
+def _session_providers() -> list:
+    """Who runs the sessions JARVIS watches (session_provider.py): Claude Code
+    and OpenAI's Codex."""
+    return [session_watch.ClaudeSessions(), codex_sessions.CodexSessions()]
+
+
+def _session_provider_named(name: str):
+    """The provider a session or a staged message belongs to: the watcher's
+    own, or a fresh one when nothing is watching."""
+    providers = session_watcher.providers if session_watcher is not None else _session_providers()
+    return next((p for p in providers if p.name == name), None)
+
+
 async def start_session_watcher() -> None:
     global session_watcher
     session_watcher = session_watch.SessionWatcher(
-        interval=float(os.getenv("JARVIS_WATCH_INTERVAL", "1.0")))
+        interval=float(os.getenv("JARVIS_WATCH_INTERVAL", "1.0")),
+        providers=_session_providers(), messages=run_store)
     session_watcher.on_event(_on_session_event)
     await session_watcher.start()
     log.info("session watcher started")
-    global _needs_task, _agents_task, _usage_task
+    global _needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task
     _needs_task = _spawn(_watch_needs_board())
+    _session_messages_task = _spawn(_watch_session_messages())
+    _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
     if _usage_poll_enabled():
         _usage_task = _spawn(_poll_usage())
@@ -1988,10 +2191,11 @@ async def start_session_watcher() -> None:
 
 async def stop_session_watcher() -> None:
     global session_watcher, _needs_task, _agents_task, _usage_task
-    for task in (_needs_task, _agents_task, _usage_task):
+    global _session_messages_task, _workflow_task
+    for task in (_needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task):
         if task is not None:
             task.cancel()
-    _needs_task = _agents_task = _usage_task = None
+    _needs_task = _agents_task = _usage_task = _session_messages_task = _workflow_task = None
     if session_watcher is not None:
         try:
             await session_watcher.stop()
@@ -2011,13 +2215,11 @@ TURN_SETTLE_TIMEOUT = 120.0
 # The brain's spoken text is plain and every word of it is spoken. Anything
 # for the eyes only (the sources of a web answer, links, a short list) goes
 # through the `show_on_screen` tool instead: checked here, sent to the voice
-# page as a `display` message, and never voiced. The last few are kept in
-# memory so a page that reconnects can show them again.
+# page as a `display` message, and never voiced. The page puts it in the
+# conversation as a Sources item where it was said; nothing is kept here.
 
 DISPLAY_KINDS = ("sources", "links", "list")
-DISPLAY_KEEP = 20
 DISPLAY_MAX_ITEMS = 12
-_displays: list[dict] = []
 _display_ids = itertools.count(1)
 
 
@@ -2055,10 +2257,11 @@ def _display_from(args: dict) -> tuple[Optional[dict], Optional[str]]:
 
 
 def _show_on_screen(display: dict) -> dict:
-    """Keep it and send it to every voice page. Never spoken."""
-    shown = {"type": "display", "id": next(_display_ids), "at": time.time(), **display}
-    _displays.append(shown)
-    del _displays[:-DISPLAY_KEEP]
+    """Send it to every voice page. Never spoken. `utt` is the reply it goes
+    with (None outside a turn), so the page puts it after that reply's words,
+    which may play after it arrives."""
+    shown = {"type": "display", "id": next(_display_ids), "at": time.time(),
+             "utt": _turn_utt.id if _turn_utt is not None else None, **display}
     _spawn(_voice_emit(shown))
     return shown
 
@@ -2077,15 +2280,24 @@ _SOURCES_HEADER = re.compile(
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|(https?://[^\s)>\]]+)")
 
 
+# A held fragment that could still become a link stops waiting at this length.
+_LINK_HOLD_MAX = 400
+
+
 class _ScreenOnly:
-    """Between the brain's text and the mouth: a "Sources:" block is never
-    spoken. The CLI's own WebSearch tool tells the model to end with one, so
-    the brain will write it however often it is asked not to.
+    """Between the brain's text and the mouth: sources are never spoken.
+
+    Two shapes. A "Sources:" block: the CLI's own WebSearch tool tells the
+    model to end with one, so the brain will write it however often it is
+    asked not to. And links in the text itself, `[label](https://…)` or a bare
+    address: the OpenAI brain ends a web answer with them and no header, and
+    strip_markdown_for_tts turned each into its label, so "Whisper.cpp Coqui
+    TTS" was read out and captioned. Neither is spoken; at the end of the
+    turn every link goes on the screen as one `sources` display.
 
     Text streams straight through, except a line that could still turn out
-    to be the header ("Sou…"), which waits until it is decided. From the
-    header on, nothing is spoken; at the end of the turn its links go on the
-    screen as a `sources` display.
+    to be the header ("Sou…"), or a fragment that could still turn out to be
+    a link ("[Whisper", "https://gi"), which waits until it is decided.
     """
 
     def __init__(self, sink, show):
@@ -2093,6 +2305,47 @@ class _ScreenOnly:
         self._show = show
         self._line = ""             # the current line, while it might be the header
         self._block: Optional[list[str]] = None
+        self._held = ""             # a fragment that might still be a link
+        self._links: list[dict] = []
+
+    @staticmethod
+    def _unfinished(text: str) -> int:
+        """Where a link that is not yet complete might start, or len(text)."""
+        cut = len(text)
+        i = text.rfind("[")
+        if i >= 0 and re.fullmatch(r"\[[^\]\n]*(\](\([^)\s]*)?)?", text[i:]):
+            cut = i
+        tail = re.search(r"\S+\Z", text)
+        if tail and (tail.group().startswith("http") or "http".startswith(tail.group())
+                     or tail.group().startswith("(http")):
+            cut = min(cut, tail.start())
+        return cut
+
+    def _speakable(self, text: str, final: bool = False) -> str:
+        """The text with its links taken out (and kept for the screen); the
+        end that might still become a link is held back unless `final`."""
+        text = self._held + text
+        self._held = ""
+        if not final:
+            cut = self._unfinished(text)
+            if len(text) - cut <= _LINK_HOLD_MAX:
+                text, self._held = text[:cut], text[cut:]
+
+        def take(m):
+            label, url = (m.group(1), m.group(2)) if m.group(2) else ("", m.group(3))
+            self._links.append({"label": label or url, "url": url})
+            return ""
+        out = re.sub(r"[ \t]*\(\s*\)", "", _LINK.sub(take, text))   # "(…)" that held only links
+        opening = re.search(r"[ \t]*\(\s*\Z", out)
+        if opening and not final:           # it may close round links still to come
+            self._held = out[opening.start():] + self._held
+            out = out[:opening.start()]
+        return out
+
+    def _emit(self, text: str, final: bool = False) -> None:
+        out = self._speakable(text, final)
+        if out:
+            self._sink(out)
 
     @staticmethod
     def _could_be_header(line: str) -> bool:
@@ -2120,17 +2373,17 @@ class _ScreenOnly:
             else:
                 out.append(part)
         if out:
-            self._sink("".join(out))
+            self._emit("".join(out))
 
     def finish(self) -> None:
-        if self._block is None:
-            if self._line:
-                if not _SOURCES_HEADER.fullmatch(self._line.strip()):
-                    self._sink(self._line)
-                self._line = ""
-            return
-        items = []
-        for line in "".join(self._block).splitlines():
+        if self._block is None and self._line:
+            if not _SOURCES_HEADER.fullmatch(self._line.strip()):
+                self._held += self._line
+            self._line = ""
+        self._emit("", final=True)
+        items = list(self._links)
+        self._links = []
+        for line in "".join(self._block or []).splitlines():
             for m in _LINK.finditer(line):
                 label, url = (m.group(1), m.group(2)) if m.group(2) else ("", m.group(3))
                 if not label:
@@ -2231,6 +2484,7 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
             line = "One moment, sir — my language systems are still starting."
         await speech.say(line, Priority.NORMAL, label="system")
         return
+    await _turn_lock.acquire()
     utt = speech.begin_turn()
     _turn_utt, _turn_heard = utt, heard
     try:
@@ -2246,7 +2500,10 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                 screen.finish()  # a "Sources:" block it held goes on the screen
             finally:
                 _turn_utt, _turn_heard = None, None
-                await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
+                try:
+                    await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
+                finally:
+                    _turn_lock.release()
         except Exception as e:
             log.error(f"brain turn failed: {e}", exc_info=True)
             await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
@@ -2402,6 +2659,7 @@ async def lifespan(application: FastAPI):
     except Exception:
         log.warning("dispatch migration skipped", exc_info=True)
     run_store.sweep_stale_runs()
+    run_store.sweep_staged_messages()
 
     await start_brain_and_speech()
     await start_session_watcher()
@@ -2984,25 +3242,12 @@ async def api_list_sessions(state: str = ""):
     return {"sessions": rows, "projects": projects, "taken_at": snap.taken_at}
 
 
-def _needs_by_project() -> dict[str, int]:
-    """Each project's needs-board item count, by lowercased project name."""
-    return {b.project.lower(): b.items
-            for b in session_needs.read_boards(data_paths.needs_dir())}
-
-
 def _agents_for_page() -> list[dict]:
-    """The agents list, each with `needs`: how many items its project's needs
-    board holds (the board is kept per project, so every agent in a project
-    shows that project's count), and `provider`: who runs it, from the
-    session it is (None when that session is not in the snapshot)."""
-    needs = _needs_by_project()
-    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
-    out = []
-    for a in run_store.list_agents():
-        s = sessions.get(a["session_id"])
-        out.append({**a, "needs": needs.get(s.project.lower() if s else "", 0),
-                    "provider": s.provider if s else None})
-    return out
+    """The agents list, as the agent directory gives it: each with `needs`,
+    how many items its project's needs board holds (the board is kept per
+    project, so every agent in a project shows that project's count), and
+    `provider`, who runs it."""
+    return [dataclasses.asdict(a) for a in agent_directory.agents()]
 
 
 @app.get("/api/agents")
@@ -3028,6 +3273,9 @@ def _rename_agent(session_id: str, name: str) -> tuple[dict | None, str | None]:
     # It is spoken and matched as a voice name, so it must be one.
     if not _VOICE_NAME_RE.fullmatch(name):
         return None, "invalid"
+    if any(a.session_id != session_id and agent_directory.same_name(a.name, name)
+           for a in agent_directory.agents()):
+        return None, "duplicate"
     try:
         row = run_store.rename_agent(session_id, name)
     except run_store.DuplicateAgentName:
@@ -3111,12 +3359,6 @@ TOOL_HANDLERS: dict = {}
 TOOL_HANDLERS["show_on_screen"] = tool_show_on_screen
 
 
-@app.get("/api/displays")
-async def api_displays():
-    """The last screen-only items, oldest first, for a page that reconnects
-    (see _show_on_screen)."""
-    return {"displays": list(_displays)}
-
 # Tools that may only run while the user is the one talking.
 ACTING_TOOLS = {"steer_session", "capture", "read_capture", "merge_captures", "clear_capture"}
 
@@ -3161,12 +3403,15 @@ TAINTING_TOOLS = {
     "repo_overview": "a file in one of your projects",
     "review_document": "a document in one of your projects",
     # Other people's conversations, and what they told their sessions.
-    "list_sessions": "another session's transcript",
     "session_detail": "another session's transcript",
     "read_session_reply": "another session's transcript",
+    "read_message_reply": "another session's transcript",
     "search_history": "an earlier conversation",
     "read_history": "an earlier conversation",
     "session_needs": "a note another session wrote",
+    "session_messages": "a message another session wrote",
+    "workflow_status": "a workflow's reports, written by the session running it",
+    "read_session_message": "a message another session wrote",
     # A run's own output: the words of an unattended Claude Code process that
     # has itself been reading files all over a repository.
     "run_status": "the output of a run",
@@ -3199,6 +3444,11 @@ TAINT_EXEMPT_TOOLS = {
     "connections": (
         "it reports the servers the USER declared in his own "
         "connections.json, which is his file and not a stranger's"),
+    "list_messages": (
+        "it reads JARVIS's own record of the messages he sent: each one's "
+        "text is a capture of Tim's own words, its status and times are "
+        "JARVIS's, and no session's answer is in it — that is "
+        "read_message_reply, which taints"),
     "recall": (
         "it reads JARVIS's own memory, which is already `@`-imported into "
         "every turn as trusted system text — tainting on read would be "
@@ -3231,8 +3481,9 @@ TAINT_EXEMPT_TOOLS = {
         "page draws them as plain text and only web addresses are kept as links"),
     "rename_agent": "it sets a name on the agents list, it does not read",
     "list_agents": (
-        "it prints only agent names, each through the same `_said_name` wall "
-        "as every spoken session name, and whether the user activated it"),
+        "it prints only agent and project names, each through the same "
+        "`_said_name` wall as every spoken session name, and JARVIS's own "
+        "words for state and activation"),
 }
 
 # Acting tools that only ever bring back MORE content to read. They are gated
@@ -3545,7 +3796,6 @@ _WRAP_CONTENT_CAP = TOOL_RESULT_CAP - 300
 _WRAP_NAME_SHAPE = _action_re.compile(r"[a-z][a-z ]{0,23}")
 _WRAP_NAME_FALLBACK = "untrusted content"
 
-_SESSIONS_WRAP_NAME = "sessions"
 _SESSION_WRAP_NAME = "session"
 _RUN_WRAP_NAME = "run output"
 _PROJECT_WRAP_NAME = "project"
@@ -3783,6 +4033,10 @@ def _snapshot_or_empty():
     return snap.excluding(_jarvis_run_session_ids()).named(_official_agent_names())
 
 
+# Every agent JARVIS lists or finds comes out of this same snapshot.
+agent_directory.connect(lambda: _snapshot_or_empty())
+
+
 # The names the user has set for agents (run_store.rename_agent), read on
 # every snapshot access, so cached for a moment; a rename clears the cache.
 _OFFICIAL_NAMES_TTL_SEC = 1.0
@@ -3873,179 +4127,6 @@ def _phrase_needs(reason: str) -> str:
     return f"waiting on {_plain_phrase(reason, 'something I cannot name')}"
 
 
-def _session_line(s, now) -> str:
-    """One conversation, in full: state, why it's waiting (if it is), age,
-    what it's on, and whether JARVIS can reach it."""
-    age = _say_age(now - s.since) if s.since else "at some point"
-    bits = [f"  {_said_name(s, 'one of them')}: "
-            f"{_state_word(s.state)}"]
-    if s.needs:
-        bits.append(_phrase_needs(s.needs)
-                    + (" — that one needs your own keystroke"
-                       if s.needs_a_human_hand else ""))
-    if s.state in (session_watch.NEEDS_YOU, session_watch.IDLE):
-        bits.append(f"since {age}")
-    if s.summary():
-        bits.append(f"on “{s.summary()}”")
-    if not s.steerable and s.state != session_watch.GONE:
-        bits.append("(I cannot send to this one)")
-    return ", ".join(bits)
-
-
-def _detailed_session_listing(sessions, now, header: bool = True) -> str:
-    """Full per-conversation detail, grouped by project — today's format,
-    used for a `filter=` call and for a small enough remainder."""
-    groups: dict[str, list] = {}
-    for s in sessions:
-        groups.setdefault(s.project, []).append(s)
-    lines = []
-    if header:
-        n_conv = len(sessions)
-        n_proj = len(groups)
-        lines.append(f"{n_conv} conversation{'s' if n_conv != 1 else ''} "
-                     f"in {n_proj} project{'s' if n_proj != 1 else ''}:")
-    for project in sorted(groups):
-        group = groups[project]
-        if len(group) > 1:
-            lines.append(f"{project} — {len(group)} conversations:")
-        for s in group:
-            lines.append(_session_line(s, now))
-    return "\n".join(lines)
-
-
-def _needs_you_clause(s, now) -> str:
-    """Voice name, the reason, whether it needs a human keystroke, and its
-    age — the four things a `needs_you` conversation must never lose.
-
-    `_needs_you_summary`, which is the only caller, is deliberately NOT
-    wrapped (see `tool_list_sessions`), so every value here sits in a line
-    the brain reads as JARVIS's own. A voice name is derived from a
-    DIRECTORY name, and a directory name may hold anything.
-    """
-    age = _say_age(now - s.since) if s.since else "at some point"
-    bits = [_said_name(s, "one of them")]
-    if s.needs:
-        bits.append(_phrase_needs(s.needs)
-                    + (" that needs your own keystroke" if s.needs_a_human_hand else ""))
-    bits.append(age)
-    return ", ".join(bits)
-
-
-def _needs_you_summary(needs_you: list, now) -> str:
-    n = len(needs_you)
-    lead = "One needs you: " if n == 1 else f"{n} need you: "
-    clauses = [_needs_you_clause(s, now) for s in needs_you]
-    body = clauses[0] if len(clauses) == 1 else \
-        ", ".join(clauses[:-1]) + f", and {clauses[-1]}"
-    return lead + body + "."
-
-
-def _rest_summary(rest: list) -> str:
-    """The remainder, summarised rather than itemised: project, counts and
-    states, with no per-session summary() quote — those quotes are what
-    blow the character budget once there are more than a handful.
-
-    Not wrapped, like `_needs_you_summary`, so the project names go through
-    `_plain_name` too: a project name IS a directory name.
-    """
-    groups: dict[str, list] = {}
-    for s in rest:
-        groups.setdefault(_plain_name(s.project, "an unnamed project"),
-                          []).append(s)
-    projects = sorted(groups)
-    n = len(rest)
-
-    counts: dict[str, int] = {}
-    for s in rest:
-        counts[s.state] = counts.get(s.state, 0) + 1
-    dominant_state, dominant_n = max(counts.items(), key=lambda kv: kv[1])
-    mostly = (f" — mostly {_state_word(dominant_state)}"
-              if dominant_n * 2 > n else "")
-
-    named = 3
-    if len(projects) <= named:
-        listed = ", ".join(projects)
-    else:
-        remaining = len(projects) - named
-        listed = (", ".join(projects[:named])
-                  + f" and {remaining} other project{'s' if remaining != 1 else ''}")
-
-    return f"Otherwise {n} more across {listed}{mostly}."
-
-
-# Above this many non-`needs_you` conversations, per-session detail (with its
-# summary() quote) is dropped in favour of a project-grouped count — the raw
-# per-conversation text was measured at ~130 chars each, so listing them all
-# is both wrong for a spoken assistant and, past a dozen or so, past the
-# 1,500-char tool-result cap. See Task 6 review finding 1.
-REST_DETAIL_THRESHOLD = 6
-
-
-def tool_list_sessions(args: dict) -> str:
-    """Every conversation — urgency first, everything else adaptive.
-
-    A `needs_you` conversation is never dropped or truncated: it always gets
-    its own full clause up top, however many conversations there are. The
-    remainder is itemised in detail while it's small, and summarised by
-    project once it isn't, so the result stays well under the tool-result
-    cap without depending on `_cap_tool_result` to enforce that.
-    """
-    import time as _time
-    snap = _snapshot_or_empty()
-    wanted = str(args.get("filter") or "").strip()
-    sessions = [s for s in snap.sessions if s.announceable]
-    if wanted:
-        sessions = [s for s in sessions if s.state == wanted]
-    if not sessions:
-        return ("Nothing is running." if not wanted
-                else f"Nothing is {_state_word(wanted)}.")
-
-    now = _time.time()
-
-    if wanted:
-        # A filtered call is already narrow — keep the detailed listing. Each
-        # per-session line embeds another session's title/prompt (`summary()`
-        # in `_session_line`) with no delimiter escaping of its own, so the
-        # whole listing is wrapped once here rather than per-session — that
-        # both escapes any embedded `</session-output>` and labels the block
-        # untrusted, matching `tool_session_detail`, without paying a wrap's
-        # ~70-char overhead once per conversation.
-        return _wrap_untrusted(_SESSIONS_WRAP_NAME,
-                               _detailed_session_listing(sessions, now))
-
-    # Most-recently-waiting first (by `since`, not `started` — see
-    # Snapshot.needing_you). `sessions` here is already narrowed by
-    # `announceable`, so filter snap.needing_you()'s recency order down to
-    # that set rather than re-deriving the order here.
-    scoped_ids = {s.session_id for s in sessions}
-    needs_you = [s for s in snap.needing_you() if s.session_id in scoped_ids]
-    rest = [s for s in sessions if s.state != session_watch.NEEDS_YOU]
-
-    n_conv = len(sessions)
-    n_proj = len({s.project for s in sessions})
-    lines = [f"{n_conv} conversation{'s' if n_conv != 1 else ''} "
-             f"in {n_proj} project{'s' if n_proj != 1 else ''}:"]
-
-    if needs_you:
-        lines.append(_needs_you_summary(needs_you, now))
-
-    if rest:
-        if len(rest) <= REST_DETAIL_THRESHOLD:
-            # Same reasoning as the `wanted` branch above: this is the only
-            # other place a per-session summary() reaches the tool result.
-            # `_needs_you_summary` above never quotes summary(), so it needs
-            # no wrap; `_rest_summary` (the else branch) drops the quote
-            # entirely once there are too many to itemise, so it needs none
-            # either.
-            lines.append(_wrap_untrusted(
-                _SESSIONS_WRAP_NAME,
-                _detailed_session_listing(rest, now, header=False)))
-        else:
-            lines.append(_rest_summary(rest))
-
-    return "\n".join(lines)
-
-
 def _resolve_or_explain(name: str):
     """Returns (session, None, None) or (None, the sentence JARVIS should say,
     a short machine-readable reason: "unresolved" or "ambiguous").
@@ -4054,20 +4135,14 @@ def _resolve_or_explain(name: str):
     steer tool) can record *why* resolution failed without re-deriving it
     from the sentence text."""
     global last_mentioned_session
-    snap = _snapshot_or_empty()
-    matches = snap.resolve(name, last_mentioned=last_mentioned_session)
+    matches = agent_directory.find_sessions(name, last_mentioned=last_mentioned_session)
     if not matches:
         # `name` is the brain's own argument, and the brain composes it out of
         # whatever it has been reading — a README's "session" is still a
         # string somebody else wrote, echoed back into a sentence with no
         # block around it. A reference that is not shaped like a name is
-        # DROPPED rather than replaced: "I don't see a session by that name"
-        # is the whole answer, and there is no filler worth inventing.
-        said = _plain_name(name, "")
-        return None, (f"I don't see a session"
-                      + (f" called {said}" if said else " by that name")
-                      + ". Ask me what's running and I'll list them."), \
-            "unresolved"
+        # DROPPED rather than replaced.
+        return None, _no_such_agent(name), "unresolved"
     if len(matches) > 1:
         # Every candidate's name, in a sentence with no wrapper: the ambiguity
         # list was the one site in this function nobody had looked at.
@@ -4075,6 +4150,17 @@ def _resolve_or_explain(name: str):
         listed = ", ".join(names[:-1]) + f" and {names[-1]}"
         return None, (f"There are {len(matches)}: {listed}. Which one?"), "ambiguous"
     return matches[0], None, None
+
+
+def _no_such_agent(name: str) -> str:
+    """No agent goes by that name: say so, and give every agent's name, one
+    per line, so the brain never needs a second call to find the right one."""
+    said = _plain_name(name, "")
+    opening = (f"No agent is called {said}." if said else "No agent goes by that name.")
+    names = [_agent_said(a) for a in agent_directory.agents()]
+    if not names:
+        return opening + " No agents are running."
+    return opening + " The agents running are:\n" + "\n".join(names)
 
 
 def _collapse_consecutive(items: list[str]) -> list[str]:
@@ -4162,9 +4248,9 @@ REPLY_PAGE_CHARS = _WRAP_CONTENT_CAP - 200
 
 
 def _session_reply(session) -> Optional[str]:
-    """The session's whole last reply, read from its transcript."""
-    roots = session_watcher.roots if session_watcher is not None else None
-    return session_watch.read_last_reply(session.cwd, session.session_id, roots)
+    """The session's whole last reply, read by its own provider."""
+    provider = _session_provider_named(session.provider)
+    return provider.last_reply(session) if provider is not None else None
 
 
 def _pages(text: str, size: int) -> list[str]:
@@ -4221,17 +4307,176 @@ def tool_read_session_reply(args: dict) -> str:
                      "read_session_reply")
 
 
+# A message's state, as a sentence part. Each takes the message and `now`.
+def _message_state(m, now: float) -> str:
+    status = str(m.status)
+    if status == run_store.MessageStatus.STAGED:
+        return "waiting out the moment in which he can stop it"
+    if status == run_store.MessageStatus.CANCELLED:
+        return "cancelled before it was sent"
+    if status == run_store.MessageStatus.SENT:
+        return (f"sent {_say_age(now - m.sent_at if m.sent_at else None)}, "
+                f"not yet seen in that session's conversation")
+    if status == run_store.MessageStatus.UNDELIVERED:
+        return (f"sent {_say_age(now - m.sent_at if m.sent_at else None)} and not "
+                f"yet seen in that session's conversation (he was told it hasn't "
+                f"picked it up); still looked for until a day after it was sent")
+    if status == run_store.MessageStatus.DELIVERED:
+        return (f"delivered {_say_age(now - m.delivered_at)}; the session has "
+                f"not started on it yet")
+    if status == run_store.MessageStatus.WORKING:
+        return (f"delivered, and the session has been working on it since "
+                f"{_say_age(now - m.started_at)}")
+    if status == run_store.MessageStatus.ANSWERED:
+        return (f"answered {_say_age(now - m.answered_at)}"
+                + ("; read_message_reply has the answer" if m.reply
+                   else ", without a word"))
+    return f"failed: {_MESSAGE_FAILURES.get(m.failure or '', m.failure or 'no reason recorded')}"
+
+
+# Why a message failed, for the failures recorded as a code.
+_MESSAGE_FAILURES = {
+    session_steer.NOT_LIVE: "the session didn't answer its socket",
+    session_steer.REFUSED: "there was nothing in it to send",
+    session_steer.FAILED: "it could not be sent",
+    "needs_a_human_hand": "the session was waiting on a prompt only he can answer",
+    "not_steerable": "the session has no inbox to send it to",
+    "no_voice": "there was no voice to read it back first, so it was not sent",
+}
+
+
+# How many messages list_messages gives at most, and how much of each.
+LIST_MESSAGES_LIMIT = 10
+LIST_MESSAGE_CHARS = 300
+
+
+def tool_list_messages(args: dict) -> str:
+    """The messages JARVIS has sent, most recent first: to whom, what, and
+    where each stands — from the record (run_store `messages`), so it holds
+    across restarts."""
+    global last_mentioned_session
+    name = str(args.get("name") or "").strip()
+    open_only = args.get("open_only") is True
+    if name:
+        session, problem, reason = _resolve_or_explain(name)
+        if reason == "ambiguous":
+            return problem
+        if session is not None:
+            last_mentioned_session = session.session_id
+            messages = run_store.list_messages(session_id=session.session_id,
+                                               open_only=open_only,
+                                               limit=LIST_MESSAGES_LIMIT)
+        else:
+            # Not running now: the name it was sent under still finds it.
+            messages = run_store.list_messages(agent_name=name, open_only=open_only,
+                                               limit=LIST_MESSAGES_LIMIT)
+    else:
+        messages = run_store.list_messages(open_only=open_only,
+                                           limit=LIST_MESSAGES_LIMIT)
+    if not messages:
+        to = f" to {_plain_name(name, 'that session')}" if name else ""
+        return (f"No {'open ' if open_only else ''}messages{to} are on record.")
+    now = time.time()
+    lines = []
+    for m in messages:
+        to = _said_name({"voice_name": m.agent_name}, "a session")
+        body = m.body
+        if len(body) > LIST_MESSAGE_CHARS:
+            body = body[:LIST_MESSAGE_CHARS - 1] + "…"
+        lines.append(f"Message {m.id} to {to}, written {_say_age(now - m.staged_at)}: "
+                     f"{_message_state(m, now)}. It said: {body}")
+    return "\n".join(lines)
+
+
+def tool_read_message_reply(args: dict) -> str:
+    """The stored answer to one message, one page at a time: what the turn
+    that took the message said at its end, kept when that turn ended — not
+    whatever the session has said since."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; list_messages has them."
+    m = run_store.get_message(number)
+    if m is None:
+        return f"There is no message {number}; list_messages has them."
+    name = _said_name({"voice_name": m.agent_name}, "That session")
+    if str(m.status) != run_store.MessageStatus.ANSWERED:
+        return f"Message {number} to {name} has no answer yet: {_message_state(m, time.time())}."
+    if not m.reply:
+        return f"{name} ended its turn on message {number} without saying anything."
+    return _one_page(m.reply, _page_arg(args), f"{name}'s answer to message {number}",
+                     "read_message_reply")
+
+
 def tool_session_needs(args: dict) -> str:
     """Everything every session has written down as needing the user."""
-    boards = [b for b in session_needs.read_boards(data_paths.needs_dir()) if b.items]
+    boards = [b for b in workflow_store.with_decisions(
+        session_needs.read_boards(data_paths.needs_dir())) if b.items]
     if not boards:
         return "No session has anything waiting for you, sir."
-    text = "\n\n".join(b.text for b in boards)
+    text = "\n\n".join(_board_under_owner(b) for b in boards)
     count = sum(b.items for b in boards)
     return _one_page(text, _page_arg(args),
                      f"{_say_number(count).capitalize()} item"
                      f"{'s' if count != 1 else ''} from {_say_number(len(boards))} "
-                     f"project{'s' if len(boards) != 1 else ''}", "session_needs")
+                     f"agent{'s' if len(boards) != 1 else ''}", "session_needs")
+
+
+# How many messages from sessions session_messages lists at most.
+LIST_SESSION_MESSAGES_LIMIT = 10
+
+
+def tool_session_messages(args: dict) -> str:
+    """The messages sessions have sent him, most recent first, from the
+    record (run_store `session_messages`). Everything about each one is
+    inside the untrusted block: the subject is the session's own text, and
+    the name it came under is a listed name, itself made from session text."""
+    name = str(args.get("name") or "").strip()
+    unread_only = args.get("unread_only") is True
+    project = None
+    if name:
+        session, problem, reason = _resolve_or_explain(name)
+        if reason == "ambiguous":
+            return problem
+        if session is not None:
+            project = session.project
+    if name and project is not None:
+        messages = run_store.list_session_messages(
+            project=project, unread_only=unread_only,
+            limit=LIST_SESSION_MESSAGES_LIMIT)
+    elif name:
+        messages = run_store.list_session_messages(
+            agent_name=name, unread_only=unread_only,
+            limit=LIST_SESSION_MESSAGES_LIMIT)
+    else:
+        messages = run_store.list_session_messages(
+            unread_only=unread_only, limit=LIST_SESSION_MESSAGES_LIMIT)
+    if not messages:
+        return f"No {'unread ' if unread_only else ''}messages from sessions are on record."
+    now = time.time()
+    lines = [f"Message {m.id} from {m.agent_name}, {_say_age(now - m.received_at)}, "
+             f"{'read' if m.read_at else 'unread'}: {m.subject or '(no subject)'}"
+             for m in messages]
+    count = len(messages)
+    return (f"{_say_number(count).capitalize()} message{'s' if count != 1 else ''} "
+            f"from sessions, most recent first; read_session_message has each "
+            f"in full.\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(lines)))
+
+
+def tool_read_session_message(args: dict) -> str:
+    """One message a session sent, one page at a time. Marks it read."""
+    try:
+        number = int(args.get("message"))
+    except (TypeError, ValueError):
+        return "Give the message's number; session_messages has them."
+    m = run_store.get_session_message(number)
+    if m is None:
+        return f"There is no message {number} from a session; session_messages has them."
+    run_store.mark_session_message_read(number)
+    name = _said_name({"voice_name": m.agent_name}, "A session")
+    text = (f"Subject: {m.subject or '(none)'}\n\n{m.body or '(no text)'}")
+    return _one_page(text, _page_arg(args), f"{name}'s message {number}",
+                     "read_session_message")
 
 
 def tool_list_projects(args: dict) -> str:
@@ -4271,9 +4516,9 @@ READBACK_TIMEOUT = 60.0
 #
 # Anything sent to an agent comes from a capture: Tim's own words, restated and
 # cleaned up by the brain (never summarised or added to) through the `capture`
-# tool, on a turn he drove. Several can be open at once, each with its number;
-# the brain folds ones that are parts of one message together
-# (`merge_captures`). `read_capture` reads one back to him inside the brain's
+# tool, on a turn he drove. Several can be open at once, each with its number,
+# and each is read back and sent on its own by that number; the brain folds
+# only ones that are parts of one message together (`merge_captures`). `read_capture` reads one back to him inside the brain's
 # own turn, lighting the capture box line by line, and `steer_session` sends
 # only a capture read back in full and unchanged since. Sending closes it;
 # memory only. The voice page draws each one: white until it is known to be a
@@ -4287,10 +4532,13 @@ _captures: dict[int, dict] = {}
 _capture_ids = itertools.count(1)
 
 # The turn being answered: its speech (what `read_capture` reads into) and the
-# id the page gave the transcript it answers (`heard`). Turns run one at a
-# time, so one of each.
+# id the page gave the transcript it answers (`heard`). One turn at a time
+# holds them, under `_turn_lock`: an utterance heard while a turn is running
+# waits for it there, so it cannot overwrite them, and the turn before cannot
+# clear them out from under it.
 _turn_utt = None
 _turn_heard: Optional[int] = None
+_turn_lock = asyncio.Lock()
 
 
 def _transcript_id(msg: dict) -> Optional[int]:
@@ -4302,7 +4550,8 @@ def _transcript_id(msg: dict) -> Optional[int]:
 def _capture_message(capture: dict, state: Optional[str]) -> dict:
     msg = {"type": "capture", "id": capture["id"], "state": state}
     if state:
-        msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]))
+        msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]),
+                   accepted=capture["read"] == capture["text"])
     return msg
 
 
@@ -4329,6 +4578,16 @@ def tool_capture(args: dict) -> str:
     if not text:
         return "There was nothing to capture."
     to = _one_line(args.get("to"), CAPTURE_TO_MAX_CHARS)
+    if to:
+        # Who it is for is settled now, not at send time: an agent that is
+        # not running is said so while he is still here to say who he meant.
+        found = agent_directory.find(to, last_mentioned=last_mentioned_session)
+        if not found:
+            return _no_such_agent(to) + "\nNothing was captured; capture it again with one of these."
+        if len(found) > 1:
+            return ("That could be " + ", or ".join(_agent_said(a) for a in found)
+                    + ". Nothing was captured; ask him which, then capture it again.")
+        to = found[0].name
     number = _capture_number(args.get("capture"))
     if args.get("capture") is not None and number not in _captures:
         return ("There is no open capture by that number: it was sent, merged "
@@ -4346,8 +4605,9 @@ def tool_capture(args: dict) -> str:
         capture["heard"].append(_turn_heard)
     _capture_show(capture, "capturing")
     if len(_unsent_captures()) > 1:
-        return (f"Capture {number} holds it. {_open_captures_note()} Before "
-                f"anything else, merge them into one with merge_captures.")
+        return (f"Capture {number} holds it. {_open_captures_note()} Each is "
+                f"read back and sent on its own, by its number; merge_captures "
+                f"only those that are parts of one message.")
     return (f"Capture {number} holds it. Ask him whether he wants it read back; "
             f"read_capture reads it. steer_session sends only a capture read "
             f"back in full since it last changed.")
@@ -4366,18 +4626,25 @@ def _open_captures_note() -> str:
 
 
 async def tool_read_capture(args: dict) -> str:
-    """Read a capture back to Tim inside this turn, lighting it line by line."""
+    """Read a capture back to Tim, lighting it line by line: inside the
+    turn's own speech when this turn is answering him aloud, and otherwise on
+    its own, as the Read button on its box does."""
     number = _capture_number(args.get("capture"))
     capture = _captures.get(number) if number is not None else None
     if capture is None:
         return "There is no open capture by that number."
-    utt = _turn_utt
-    if speech is None or utt is None or utt.closed or utt.cancelled:
-        return "I can only read it back while I am answering him aloud."
+    if speech is None:
+        return "I have no voice to read it with."
+    if capture.get("staged") or capture.get("state") == "reading":
+        return f"Capture {number} is being read or sent already."
     text = capture["text"]
     _capture_show(capture, "reading")
-    last = speech.read_into(utt, text, number)
-    heard = last >= 0 and await speech.wait_played(utt, last, timeout=READBACK_TIMEOUT)
+    utt = _turn_utt
+    last = speech.read_into(utt, text, number) if utt is not None else -1
+    if last >= 0:
+        heard = await speech.wait_played(utt, last, timeout=READBACK_TIMEOUT)
+    else:
+        heard = await speech.wait_for(speech.read_aloud(text, number), timeout=READBACK_TIMEOUT)
     if number in _captures:
         if heard and capture["text"] == text:
             capture["read"] = text
@@ -4424,10 +4691,6 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if capture is None:
         return None, (f"There is no open capture {wanted}: it was sent, merged "
                       f"or never made. Capture his words again.")
-    if len(_unsent_captures()) > 1:
-        return None, (f"{_open_captures_note()} Nothing is sent while more than "
-                      f"one is open: merge them first, then read the merged one "
-                      f"back.")
     if capture["read"] != capture["text"]:
         return None, (f"Capture {wanted} has not been read back to him in full "
                       f"since it last changed. Call read_capture first; nothing "
@@ -4460,6 +4723,21 @@ def tool_list_captures(args: dict) -> str:
     return "\n".join(lines)
 
 
+def _clear_captures(numbers: list[int]) -> list[int]:
+    """Close the open captures among `numbers`; a staged send of one is
+    cancelled and not sent. The numbers closed."""
+    global _staged_steers
+    gone = [n for n in numbers if n in _captures]
+    for s in _staged_steers:
+        if getattr(s, "capture_id", None) in gone and getattr(s, "message_id", None):
+            run_store.update_message(s.message_id, status=run_store.MessageStatus.CANCELLED)
+    _staged_steers = [s for s in _staged_steers
+                      if getattr(s, "capture_id", None) not in gone]
+    for n in gone:
+        _capture_show(_captures.pop(n), None)
+    return gone
+
+
 def tool_clear_capture(args: dict) -> str:
     """Close capture boxes: the numbers given, or every one with `all`. A
     cleared capture that was staged to send is not sent."""
@@ -4469,14 +4747,9 @@ def tool_clear_capture(args: dict) -> str:
         raw = args.get("captures")
         numbers = [n for n in (_capture_number(v) for v in raw) if n is not None] \
             if isinstance(raw, list) else []
-    gone = [n for n in numbers if n in _captures]
+    gone = _clear_captures(numbers)
     if not gone:
         return "There was no open capture to clear."
-    global _staged_steers
-    _staged_steers = [s for s in _staged_steers
-                      if getattr(s, "capture_id", None) not in gone]
-    for n in gone:
-        _capture_show(_captures.pop(n), None)
     left = len(_captures)
     return (f"Cleared capture{'s' if len(gone) > 1 else ''} "
             f"{', '.join(str(n) for n in gone)}. "
@@ -4497,6 +4770,108 @@ async def api_capture():
     return {"captures": [_capture_message(c, c["state"]) for c in _captures.values()]}
 
 
+# --- The capture box's buttons ----------------------------------------------
+#
+# Accept, Delete and Send in the corner of each box: Tim acting on a capture
+# with his own hand instead of his voice. Accept is his having read it, so it
+# counts as read back in full. Send is Accept and then exactly what
+# steer_session does with it, to the agent the box says "Send to", with the
+# same cancel window. The brain is told at its next turn what he did.
+
+def _open_capture_or_404(number: int) -> dict:
+    capture = _captures.get(number)
+    if capture is None:
+        raise HTTPException(status_code=404, detail=f"There is no open capture {number}.")
+    return capture
+
+
+def _capture_accepted(capture: dict) -> None:
+    capture["read"] = capture["text"]
+    _capture_show(capture, capture["state"])
+
+
+@app.post("/api/capture/{number}/accept")
+async def api_capture_accept(number: int):
+    """He has read it on the screen: it counts as read back in full."""
+    capture = _open_capture_or_404(number)
+    _capture_accepted(capture)
+    _notes_for_brain.append(
+        f"He accepted capture {number} on screen: it counts as read back to him "
+        f"in full, so do not read it back. Send it with steer_session when he "
+        f"says to.")
+    return {"capture": number, "accepted": True}
+
+
+@app.post("/api/capture/{number}/read")
+async def api_capture_read(number: int):
+    """Read it aloud, lighting its box line by line. Heard to the end and
+    unchanged meanwhile, it counts as read back in full, as read_capture's
+    reading does. Returns at once; the reading goes on."""
+    capture = _open_capture_or_404(number)
+    if capture.get("staged"):
+        raise HTTPException(status_code=409, detail="It is already being sent.")
+    if capture.get("state") == "reading":
+        raise HTTPException(status_code=409, detail="It is being read now.")
+    if speech is None:
+        raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    text = capture["text"]
+    _capture_show(capture, "reading")
+    utt = speech.read_aloud(text, number)
+    _spawn(_finish_reading_aloud(capture, text, utt))
+    return {"capture": number, "reading": True}
+
+
+async def _finish_reading_aloud(capture: dict, text: str, utt) -> None:
+    heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
+    number = capture["id"]
+    if _captures.get(number) is not capture:
+        return                                  # sent, merged or deleted meanwhile
+    if heard and capture["text"] == text:
+        capture["read"] = text
+        _notes_for_brain.append(
+            f"He had capture {number} read aloud from its box and heard it to the "
+            f"end: it counts as read back in full. Send it with steer_session when "
+            f"he says to.")
+    _capture_show(capture, "capturing")
+
+
+@app.post("/api/capture/{number}/delete")
+async def api_capture_delete(number: int):
+    """He has thrown it away. A send of it still in its cancel window is
+    cancelled."""
+    _open_capture_or_404(number)
+    _clear_captures([number])
+    _notes_for_brain.append(f"He deleted capture {number} on screen; it will not be sent.")
+    return {"capture": number, "deleted": True}
+
+
+@app.post("/api/capture/{number}/send")
+async def api_capture_send(number: int):
+    """Accept it, then send it to the agent it is addressed to, as
+    steer_session would. A refusal is 409 with the reason, for the page to
+    show under the box."""
+    capture = _open_capture_or_404(number)
+    if capture.get("staged"):
+        raise HTTPException(status_code=409, detail="It is already being sent.")
+    if not capture["to"]:
+        raise HTTPException(status_code=409,
+                            detail="It isn't addressed to anyone yet: tell me who it is for.")
+    session, problem, _reason = _resolve_or_explain(capture["to"])
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
+    _capture_accepted(capture)
+    message_id, problem = _stage_capture(session, capture)
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
+    _notes_for_brain.append(
+        f"He sent capture {number} to {_said_name(session)} from the screen, as "
+        f"message {message_id}; do not send it again.")
+    if _turn_utt is None:
+        # No turn is under way to send it when it ends, so it goes now.
+        _spawn(_perform_staged_steers())
+    return {"capture": number, "message": message_id}
+
+
 @dataclass
 class _StagedSteer:
     """A validated steer waiting for the current turn to finish speaking."""
@@ -4506,6 +4881,8 @@ class _StagedSteer:
     prompt: str
     socket_path: Optional[str]
     capture_id: Optional[int] = None    # the capture its text came from
+    provider: str = session_watch.PROVIDER   # who runs the session it goes to
+    message_id: Optional[int] = None    # its `messages` row, written when staged
 
 
 @dataclass
@@ -4579,55 +4956,79 @@ async def _perform_staged_steers() -> None:
             log.error(f"staged action for {what} failed: {e}", exc_info=True)
 
 
-# The first line of every message JARVIS sends into a session. Without it the
-# session saw only "another Claude session", answered by messaging whichever
-# session it guessed, and once recorded an approval as coming from a session
-# that had never written to it. The answer belongs in its own transcript,
-# where `read_session_reply` reads it in full.
-STEER_SIGNATURE = (
-    "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your "
-    "turn with your full reply; JARVIS reads it from your transcript and "
-    "tells Tim. Do not send your answer to another session.]\n\n")
+def _deliver(item: _StagedSteer, text: str) -> str:
+    """Send through the session's own provider: Claude Code's inbox socket,
+    or Codex's queue. One of session_steer's outcomes."""
+    provider = _session_provider_named(item.provider)
+    if provider is None:
+        return session_steer.FAILED
+    session = session_watch.SessionState(
+        session_id=item.session_id, cwd="", project=item.project, state="",
+        socket_path=item.socket_path, provider=item.provider)
+    return provider.send(session, text)
+
+
+# The first line of every message JARVIS sends into a session; see
+# session_steer.py, where each provider's `track` also strips it to find the
+# message in a transcript.
+STEER_SIGNATURE = session_steer.STEER_SIGNATURE
+
+
+def _message_for(item: _StagedSteer) -> int:
+    """The `messages` row a staged steer goes out under. Written when it was
+    staged (`tool_steer_session`); written here, before anything is done
+    with it, for one staged any other way."""
+    if item.message_id is None:
+        item.message_id = run_store.create_message(
+            item.session_id, item.provider, item.voice_name, item.project,
+            STEER_SIGNATURE + item.prompt, capture_id=item.capture_id)
+    return item.message_id
 
 
 async def _perform_steer(item: _StagedSteer) -> None:
-    """One staged steer, start to finish. Records EXACTLY one audit row.
+    """One staged steer, start to finish. Its message ends this as exactly
+    one of cancelled, sent or failed.
 
     Nothing is ever sent unheard, and that is decided before this runs:
     `steer_session` stages only a capture the brain read back to him in full
     with `read_capture` and that has not changed since, and what is sent is
     that text exactly. So this says nothing first; it opens the cancel window
     (the turn's speech is done by now), then sends.
-    """
-    recorded = False
 
-    def record(outcome: str) -> None:
-        nonlocal recorded
-        if recorded:
+    Sent is all it says, and only the session's transcript can say more:
+    the session watcher follows the message from there (its provider's
+    `track`) and he is told "Delivered to X" once it is seen there, or that
+    X hasn't picked it up.
+    """
+    message_id = _message_for(item)
+    settled = False
+
+    def settle(status: str, **fields) -> None:
+        nonlocal settled
+        if settled:
             return
-        recorded = True
-        run_store.record_steer(item.session_id, item.voice_name, item.project,
-                               item.prompt, outcome)
+        settled = True
+        run_store.update_message(message_id, status=status, **fields)
 
     try:
         if speech is None:
-            record("no_voice")             # the mouth went away between turns
+            # The mouth went away between turns.
+            settle(run_store.MessageStatus.FAILED, failure="no_voice")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            record("cancelled_by_user")
+            settle(run_store.MessageStatus.CANCELLED)
             await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
         _capture_transmitting(item.capture_id)
         try:
-            outcome = await asyncio.to_thread(
-                session_steer.post_to_session, item.socket_path,
-                STEER_SIGNATURE + item.prompt)
+            outcome = await asyncio.to_thread(_deliver, item, STEER_SIGNATURE + item.prompt)
         finally:
             _capture_sent(item.capture_id)
-        record(outcome)
-        if outcome == session_steer.SENT and session_watcher is not None:
-            session_watcher.expect_reply(item.session_id)
+        if outcome == session_steer.SENT:
+            settle(run_store.MessageStatus.SENT, sent_at=time.time())
+        else:
+            settle(run_store.MessageStatus.FAILED, failure=outcome)
         if outcome == session_steer.SENT:
             # It moves up the agents list, and the voice page draws the
             # message going to it.
@@ -4639,20 +5040,18 @@ async def _perform_steer(item: _StagedSteer) -> None:
             _send_to_session_clients({"type": "agent_message",
                                       "session_id": item.session_id})
         if outcome == session_steer.SENT:
-            # SENT means the bytes left over the socket, nothing more: no
-            # reply is ever read back, so this must not claim the target
-            # accepted or even received them — see session_steer.py's note
-            # at the auth line on why that can't be known.
+            # SENT means the bytes left over the socket, or `codex queue`
+            # exited 0, nothing more. Whether it arrived is said when the
+            # watcher sees it in the transcript ("Delivered to X") or gives
+            # up on it ("X hasn't picked it up"), so nothing is claimed here.
             #
-            # It said "Sent to X" for months, and live that was false: with
-            # `crossSessionInbound` unset the message sat in the other window
-            # waiting for the user to approve it, and JARVIS confirmed twice
-            # over that it had gone out. Delivery is not observable from
-            # here, so it is no longer asserted — and when the setting says
-            # the message WILL need approving, that is said in the same
-            # breath rather than left for the user to discover.
-            await speech.say(f"Passed to {_said_name(item)}, sir."
-                             + _inbound_caveat(), Priority.NORMAL, label="readback-outcome")
+            # Except that it will need approving: when the setting says so,
+            # that is said now, in the same breath as the send, rather than
+            # left for him to discover in the other window.
+            caveat = _inbound_caveat()
+            if caveat:
+                await speech.say(f"Passed to {_said_name(item)}, sir." + caveat,
+                                 Priority.NORMAL, label="readback-outcome")
         elif outcome == session_steer.NOT_LIVE:
             await speech.say(
                 f"{_said_name(item)} didn't answer its socket, sir — it may "
@@ -4661,7 +5060,8 @@ async def _perform_steer(item: _StagedSteer) -> None:
             await speech.say(f"I couldn't deliver that to {_said_name(item)}, "
                              f"sir.", Priority.NORMAL, label="readback-outcome")
     except Exception:
-        record("failed")                   # the audit trail must never have a gap
+        # The record must never be left staged.
+        settle(run_store.MessageStatus.FAILED, failure="failed")
         raise
     finally:
         # Not sent (cancelled, no voice, failed): the capture is his to deal
@@ -4939,6 +5339,14 @@ async def tool_answer_dialog(args: dict) -> str:
     global last_mentioned_session
     last_mentioned_session = session.session_id
 
+    provider = _session_provider_named(session.provider)
+    if provider is not None and not provider.can_answer_dialogs:
+        run_store.record_steer(session.session_id, session.voice_name,
+                               session.project, key, "dialog:not_supported")
+        return (f"I can't press keys in {_said_name(session)}: it is a Codex "
+                f"session, and Codex's prompts can only be answered in its own "
+                f"window. Ask the user to answer it there.")
+
     pid, _tty, problem = await _tty_for_session_or_explain(session)
     if problem:
         run_store.record_steer(session.session_id, session.voice_name,
@@ -5002,53 +5410,24 @@ async def tool_steer_session(args: dict) -> str:
     # own words, made on his turn (`capture`), named by its number.
     capture, problem = _capture_to_send(args.get("capture"))
     if problem:
+        # No capture, no message: nothing was formed to record as one.
         run_store.record_steer(session.session_id, session.voice_name,
                                session.project, "", "no_capture")
         return problem
-    prompt = capture["text"]
 
     global last_mentioned_session
     last_mentioned_session = session.session_id
 
-    if session.needs_a_human_hand:
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, prompt, "needs_a_human_hand")
-        # The reason goes through `_phrase_needs` for the same reason it does
-        # in `session_detail`'s header: `waitingFor` is a field in a JSON file
-        # some other process writes, and this sentence has no block around it.
-        return (f"{_said_name(session)} is {_phrase_needs(session.needs)}, "
-                f"which the socket cannot answer. Ask me to answer it instead "
-                f"and I'll send the keystroke, if that permission prompt is in "
-                f"a Terminal window — use answer_dialog, not this tool.")
-    if not session.steerable:
-        # Distinct from session_steer.NOT_LIVE (a dead/missing socket at send
-        # time): this session never had a socket to begin with.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, prompt, "not_steerable")
-        return (f"I can't send anything to {_said_name(session)} — it has no "
-                f"inbox socket, so it was started before cross-session "
-                f"messaging or declined to bind one.")
-
-    if speech is None:
-        # Sending unheard is never acceptable: with no voice there is no
-        # read-back, and no read-back means no safety gate at all.
-        run_store.record_steer(session.session_id, session.voice_name,
-                               session.project, prompt, "no_voice")
-        return (f"I can't read that back to you right now, sir, so I won't send "
-                f"it to {_said_name(session)} unheard.")
-
-    _stage_steer(_StagedSteer(session_id=session.session_id,
-                              voice_name=session.voice_name,
-                              project=session.project,
-                              prompt=prompt,
-                              socket_path=session.socket_path,
-                              capture_id=capture["id"]))
-    capture["staged"] = True
-    staged_note = (f"staged — it goes to {_said_name(session)} the moment this "
-                   f"turn ends, after a short moment in which he can stop it. "
-                   f"He has heard it already, so do not repeat it: say briefly "
-                   f"that it is going out and end your turn; do not call this "
-                   f"tool again for it.")
+    message_id, problem = _stage_capture(session, capture)
+    if problem:
+        return problem
+    staged_note = (f"staged as message {message_id} — it goes to "
+                   f"{_said_name(session)} the moment this turn ends, after a "
+                   f"short moment in which he can stop it. He has heard it "
+                   f"already, so do not repeat it: say briefly that it is going "
+                   f"out and end your turn; do not call this tool again for it. "
+                   f"He will be told when it is delivered and when it is "
+                   f"answered; list_messages says where it stands.")
     if not _inbound_accepted():
         # The brain must not say "sent" when the message will sit unapproved
         # in the other window — which is exactly what happened live.
@@ -5057,6 +5436,60 @@ async def tool_steer_session(args: dict) -> str:
                         "that too, and that you can turn it on if he wants "
                         "(enable_session_inbox) — never do that unasked.")
     return staged_note
+
+
+def _stage_capture(session, capture: dict) -> tuple[Optional[int], Optional[str]]:
+    """Record a capture as a message to `session` and stage it to send:
+    (its message id, None), or (None, why it cannot go), recorded as failed.
+    steer_session and the capture box's Send button both come through here."""
+    prompt = capture["text"]
+
+    def refused(reason: str) -> None:
+        """A message that is never sent, recorded as one: failed, and why."""
+        run_store.create_message(session.session_id, session.provider,
+                                 session.voice_name, session.project,
+                                 STEER_SIGNATURE + prompt, capture_id=capture["id"],
+                                 status=run_store.MessageStatus.FAILED, failure=reason)
+
+    if session.needs_a_human_hand:
+        refused("needs_a_human_hand")
+        # The reason goes through `_phrase_needs` for the same reason it does
+        # in `session_detail`'s header: `waitingFor` is a field in a JSON file
+        # some other process writes, and this sentence has no block around it.
+        return None, (f"{_said_name(session)} is {_phrase_needs(session.needs)}, "
+                f"which the socket cannot answer. Ask me to answer it instead "
+                f"and I'll send the keystroke, if that permission prompt is in "
+                f"a Terminal window — use answer_dialog, not this tool.")
+    if not session.steerable:
+        # Distinct from session_steer.NOT_LIVE (a dead/missing socket at send
+        # time): this session never had a socket to begin with.
+        refused("not_steerable")
+        return None, (f"I can't send anything to {_said_name(session)} — it has no "
+                f"inbox socket, so it was started before cross-session "
+                f"messaging or declined to bind one.")
+
+    if speech is None:
+        # Sending unheard is never acceptable: with no voice there is no
+        # read-back, and no read-back means no safety gate at all.
+        refused("no_voice")
+        return None, (f"I can't read that back to you right now, sir, so I won't send "
+                f"it to {_said_name(session)} unheard.")
+
+    # The record is written now, before anything is sent, and the send
+    # (`_perform_steer`) updates it.
+    message_id = run_store.create_message(
+        session.session_id, session.provider, session.voice_name, session.project,
+        STEER_SIGNATURE + prompt, capture_id=capture["id"])
+    _stage_steer(_StagedSteer(session_id=session.session_id,
+                              voice_name=session.voice_name,
+                              project=session.project,
+                              prompt=prompt,
+                              socket_path=session.socket_path,
+                              capture_id=capture["id"],
+                              provider=session.provider,
+                              message_id=message_id))
+    capture["staged"] = True
+    return message_id, None
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
@@ -5374,10 +5807,13 @@ async def tool_spawn_run(args: dict) -> str:
 
 
 TOOL_HANDLERS.update({
-    "list_sessions": tool_list_sessions,
     "session_detail": tool_session_detail,
     "read_session_reply": tool_read_session_reply,
+    "list_messages": tool_list_messages,
+    "read_message_reply": tool_read_message_reply,
     "session_needs": tool_session_needs,
+    "session_messages": tool_session_messages,
+    "read_session_message": tool_read_session_message,
     "list_projects": tool_list_projects,
     "steer_session": tool_steer_session,
     "answer_dialog": tool_answer_dialog,
@@ -5392,45 +5828,325 @@ ACTING_TOOLS.add("spawn_run")
 ACTING_TOOLS.add("answer_dialog")
 
 
+# --- Workflows (workflow_store.py) -----------------------------------------
+#
+# A long workflow reports every step to one durable record, and everything
+# here reads that record: the Workflows view, `workflow_status`, and what
+# JARVIS says when a workflow moves on, needs a decision, is blocked,
+# finishes or goes quiet. Everything in the record was written by the
+# session running the workflow, so names go through `_said_name` and the
+# rest is read only inside an untrusted block.
+
+_WORKFLOW_WRAP_NAME = "workflow"
+WORKFLOW_SILENCE_POLL_SEC = 30.0
+WORKFLOW_EVENTS_SHOWN = 12
+_workflow_task: Optional[asyncio.Task] = None
+# Workflows JARVIS has said have gone quiet; one that reports again leaves.
+_workflows_said_silent: set[str] = set()
+
+_WORKFLOW_STATE_WORDS = {
+    "running": "running", "waiting": "waiting", "blocked": "blocked",
+    "needs_you": "waiting on your decision", "succeeded": "finished",
+    "failed": "failed", "cancelled": "cancelled", workflow_store.SILENT: "gone quiet",
+}
+
+
+def _workflow_said(w) -> str:
+    return _said_name({"voice_name": w.name}, "A workflow")
+
+
+def _workflow_line(w, now: float) -> str:
+    """One workflow in JARVIS's own words: name (walled), state, phase and
+    task counts, what is open, and when it was last heard from."""
+    bits = [f"{_workflow_said(w)}: {_WORKFLOW_STATE_WORDS.get(w.state, 'running')}"]
+    if w.phases_total:
+        bits.append(f"phase {min(w.phases_done + 1, w.phases_total)} of {w.phases_total}")
+    if w.tasks_total:
+        bits.append(f"{w.tasks_done} of {w.tasks_total} tasks done")
+    for count, word in ((len(w.open_decisions), "decision"), (len(w.open_blockers), "blocker"),
+                        (len(w.open_waits), "wait")):
+        if count:
+            bits.append(f"{count} open {word}{'s' if count != 1 else ''}")
+    bits.append(f"last heard from {_say_age(now - w.last_event_at)}")
+    return ", ".join(bits) + "."
+
+
+def _workflow_detail(w) -> str:
+    """What the session running it wrote: phase and task titles, the open
+    waits, decisions and blockers, and the latest events. Untrusted."""
+    lines = [f"Last report: {w.last_summary}"]
+    for item in w.items:
+        progress = (f" ({item.done}/{item.total})" if item.total else "")
+        lines.append(f"{item.kind} {item.slug}: {item.title}, {item.state.value}{progress}")
+    for o in w.open:
+        options = o.detail.get("options")
+        lines.append(f"open {o.kind} {o.key}: {o.summary}"
+                     + (f" Options: {options}." if options else "")
+                     + (f" Recommended: {o.detail['recommendation']}."
+                        if o.detail.get("recommendation") else ""))
+    for e in workflow_store.events(w.id)[-WORKFLOW_EVENTS_SHOWN:]:
+        lines.append(f"event {e.seq} {e.kind}{' ' + e.item if e.item else ''}: {e.summary}")
+    return "\n".join(lines)
+
+
+def tool_workflow_status(args: dict) -> str:
+    """The latest state of every workflow running, or of one, from the
+    workflow record. The only source for anything about a workflow."""
+    now = time.time()
+    name = str(args.get("workflow") or "").strip()
+    if not name:
+        running = workflow_store.active()
+        if not running:
+            return "No workflow is running, sir."
+        n = len(running)
+        return "\n".join([f"{_say_number(n).capitalize()} workflow{'s' if n != 1 else ''} running:"]
+                         + [_workflow_line(w, now) for w in running])
+    found = workflow_store.find(name)
+    if not found:
+        listed = [_workflow_said(w) for w in workflow_store.recent()]
+        said = _plain_name(name, "")
+        return ((f"No workflow is called {said}." if said else "No workflow goes by that name.")
+                + (" The workflows on record are:\n" + "\n".join(listed) if listed
+                   else " None is on record."))
+    if len(found) > 1:
+        return ("That could be " + ", or ".join(_workflow_said(w) for w in found)
+                + ". Which one?")
+    w = found[0]
+    return (_workflow_line(w, now) + "\n"
+            + _wrap_untrusted(_WORKFLOW_WRAP_NAME, _workflow_detail(w)))
+
+
+TOOL_HANDLERS["workflow_status"] = tool_workflow_status
+
+
+def _workflow_spoken(w, event) -> tuple[str, str] | None:
+    """What JARVIS says for this event, and the note the brain gets, or
+    None for the events he does not speak about."""
+    name = _workflow_said(w)
+    look = f"workflow_status with workflow {w.id} has the detail."
+    if event.kind == "phase_started":
+        phase = _said_name({"voice_name": (event.item or "").replace("-", " ")}, "its next phase")
+        return (f"{name} has started {phase}, sir.",
+                f"You told him {name} started phase {event.item}. {look}")
+    if event.kind == "decision_needed":
+        return (f"{name} needs your decision, sir.",
+                f"You told him {name} needs his decision. Read it to him from "
+                f"workflow_status with workflow {w.id}; it can be answered on the "
+                f"Workflows view.")
+    if event.kind == "blocker_raised":
+        return (f"{name} is blocked, sir.", f"You told him {name} is blocked. {look}")
+    if event.kind == "workflow_finished":
+        word = {"succeeded": "has finished", "failed": "has failed",
+                "cancelled": "has been cancelled"}.get(w.state, "has finished")
+        return (f"{name} {word}, sir.", f"You told him {name} {word}. {look}")
+    return None
+
+
+def _workflow_recorded(w, event) -> None:
+    """After every event: the pages read the record again, and JARVIS says
+    the ones worth saying."""
+    _workflows_said_silent.discard(w.id)
+    _send_to_session_clients({"type": "workflows"})
+    spoken = _workflow_spoken(w, event)
+    if spoken:
+        _spawn(_say_about_message(spoken[0], "Since your last turn " + spoken[1], "workflow"))
+
+
+async def _watch_workflow_silence() -> None:
+    """Say once when a running workflow stops reporting. Never raises out."""
+    async def look_for_quiet() -> None:
+        for w in await asyncio.to_thread(workflow_store.active):
+            if w.state == workflow_store.SILENT and w.id not in _workflows_said_silent:
+                _workflows_said_silent.add(w.id)
+                _send_to_session_clients({"type": "workflows"})
+                name = _workflow_said(w)
+                await _say_about_message(
+                    f"{name} has gone quiet, sir.",
+                    f"Since your last turn you told him {name} has reported nothing "
+                    f"for {_say_age(time.time() - w.last_event_at)}. workflow_status "
+                    f"with workflow {w.id} has its last report.", "workflow silence")
+
+    await _every(WORKFLOW_SILENCE_POLL_SEC, "workflow silence", look_for_quiet)
+
+
+class WorkflowStartRequest(BaseModel):
+    name: str
+    project: str
+    phases: list[str] = []
+
+
+class WorkflowEventRequest(BaseModel):
+    kind: str
+    item: Optional[str] = None
+    summary: str
+    detail: dict = {}
+
+
+class WorkflowAnswerRequest(BaseModel):
+    answer: str
+
+
+def _workflow_json(w) -> dict:
+    return dataclasses.asdict(w)
+
+
+def _workflow_refused(e: Exception) -> JSONResponse:
+    return JSONResponse({"error": str(e)}, status_code=409)
+
+
+@app.post("/api/workflows")
+async def api_start_workflow(req: WorkflowStartRequest):
+    """Begin recording a workflow. Its reporter (an access key in the
+    `workflows` category) then sends each step to /events."""
+    try:
+        wid = await asyncio.to_thread(workflow_store.start, req.name, req.project, req.phases)
+    except workflow_store.WorkflowRefused as e:
+        return _workflow_refused(e)
+    _send_to_session_clients({"type": "workflows"})
+    return {"id": wid}
+
+
+@app.post("/api/workflows/{workflow_id}/events")
+async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest):
+    """Record one step. Written before anything is said or shown."""
+    event = workflow_store.WorkflowEvent(workflow_id, req.kind, req.item, req.summary, req.detail)
+    try:
+        w = await asyncio.to_thread(workflow_store.record, event)
+    except workflow_store.WorkflowRefused as e:
+        return _workflow_refused(e)
+    _workflow_recorded(w, event)
+    return {"workflow": _workflow_json(w)}
+
+
+@app.get("/api/workflows")
+async def api_list_workflows():
+    """Every workflow, running ones and the most recently finished."""
+    return {"workflows": [_workflow_json(w)
+                          for w in await asyncio.to_thread(workflow_store.recent)]}
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def api_workflow(workflow_id: str):
+    w = await asyncio.to_thread(workflow_store.snapshot, workflow_id)
+    if w is None:
+        raise HTTPException(status_code=404, detail="No such workflow")
+    return {"workflow": _workflow_json(w)}
+
+
+@app.get("/api/workflows/{workflow_id}/events")
+async def api_workflow_events(workflow_id: str, after: int = 0, kinds: str = ""):
+    wanted = {k for k in kinds.split(",") if k} or None
+    found = await asyncio.to_thread(workflow_store.events, workflow_id, after, wanted)
+    return {"events": [dataclasses.asdict(e) for e in found]}
+
+
+@app.get("/api/workflows/{workflow_id}/transcript")
+async def api_workflow_transcript(workflow_id: str):
+    """Each attached agent's latest turn, as the session watcher last saw
+    it: its prompt, recent tools, last text and last reply."""
+    w = await asyncio.to_thread(workflow_store.snapshot, workflow_id)
+    if w is None:
+        raise HTTPException(status_code=404, detail="No such workflow")
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    out = []
+    for sid in w.agents:
+        s = sessions.get(sid)
+        if s is None:
+            out.append({"session_id": sid, "name": None, "state": "gone"})
+            continue
+        out.append({"session_id": sid, "name": session_watch.agent_name(s), "state": s.state,
+                    "last_prompt": s.last_prompt, "recent_tools": list(s.recent_tools),
+                    "last_text": s.last_text,
+                    "last_reply": await asyncio.to_thread(_session_reply, s)})
+    return {"agents": out}
+
+
+@app.post("/api/workflows/{workflow_id}/decisions/{key}")
+async def api_answer_workflow_decision(workflow_id: str, key: str, req: WorkflowAnswerRequest):
+    """He answered a workflow's decision on the page. Recorded as the
+    workflow's own decision_made, so its reporter reads the answer back."""
+    answer = " ".join(req.answer.split())[:workflow_store.SUMMARY_MAX]
+    if not answer:
+        return _workflow_refused(ValueError("Give an answer."))
+    event = workflow_store.WorkflowEvent(workflow_id, "decision_made", None,
+                                         f"Answered on the page: {key}.",
+                                         {"key": key, "answer": answer, "by": "user"})
+    try:
+        w = await asyncio.to_thread(workflow_store.record, event)
+    except workflow_store.WorkflowRefused as e:
+        return _workflow_refused(e)
+    _workflow_recorded(w, event)
+    _notes_for_brain.append(f"He answered decision {key} of workflow {w.id} on the page.")
+    return {"workflow": _workflow_json(w)}
+
+
 # --- The agents list, for the brain ----------------------------------------
 
-def _agent_said(agent: dict) -> str:
+def _agent_said(agent) -> str:
     # An agent's name can carry words from another session's title, so it
     # goes through the same wall as every spoken session name.
-    return _said_name({"voice_name": agent["name"]}, "an agent with an unsayable name")
+    name = agent["name"] if isinstance(agent, dict) else agent.name
+    return _said_name({"voice_name": name}, "an agent with an unsayable name")
+
+
+def _agent_line(a: agent_directory.Agent, s, now: float) -> str:
+    """One agent: name, active or not, state (why it waits, and since when),
+    project, needs-board count, and whether JARVIS can reach it. Never the
+    session's own title or prompt: those are another session's words, and
+    `session_detail` is where they are read."""
+    bits = [f"{_agent_said(a)}: {'active' if a.active else 'inactive'}",
+            _state_word(a.state)]
+    if s is not None and s.needs:
+        bits.append(_phrase_needs(s.needs)
+                    + (" that needs your own keystroke" if s.needs_a_human_hand else ""))
+    if s is not None and s.since and a.state in (session_watch.NEEDS_YOU, session_watch.IDLE):
+        bits.append(f"since {_say_age(now - s.since)}")
+    if a.project:
+        bits.append("in " + _said_name({"voice_name": a.project}, "a project with an unsayable name"))
+    if a.needs:
+        bits.append(f"{a.needs} on its needs board")
+    if s is not None and not s.steerable:
+        bits.append("I cannot send to this one")
+    if a.provider == codex_sessions.NAME:
+        # Who runs it changes what JARVIS can do there: no keystrokes, and no
+        # "needs you" for an approval it is waiting on.
+        bits.append("a Codex session")
+    return ", ".join(bits) + "."
 
 
 def tool_list_agents(args: dict) -> str:
-    """Every running agent and whether the user has activated it."""
-    agents = run_store.list_agents()
+    """Every running agent, one line each: its name, whether the user has
+    activated it, its state, its project and its needs-board count. The one
+    listing of agents; `filter` keeps one state, or "active"/"inactive"."""
+    agents = agent_directory.agents()
+    wanted = str(args.get("filter") or "").strip().lower()
+    if wanted in ("active", "inactive"):
+        agents = [a for a in agents if a.active == (wanted == "active")]
+    elif wanted:
+        agents = [a for a in agents if a.state == wanted]
     if not agents:
-        return "No agents are running, sir."
-    active = [_agent_said(a) for a in agents if a["active"]]
-    inactive = [_agent_said(a) for a in agents if not a["active"]]
+        return ("No agents are running, sir." if not wanted
+                else f"No agent is {_plain_name(wanted, 'like that')}, sir.")
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    now = time.time()
     n = len(agents)
-    parts = [f"{_say_number(n).capitalize()} agent{'s' if n != 1 else ''} running."]
-    if active:
-        parts.append("Active: " + _list_join(active) + ".")
-    if inactive:
-        parts.append("Inactive: " + _list_join(inactive) + ".")
-    return " ".join(parts)
+    return "\n".join([f"{_say_number(n).capitalize()} agent{'s' if n != 1 else ''}:"]
+                     + [_agent_line(a, sessions.get(a.session_id), now) for a in agents])
 
 
 def _find_agent(args: dict) -> tuple[dict | None, str | None]:
-    """(the agent, None), or (None, what to say). By its official name as the
-    user said it: an exact match first, else the one name that contains it."""
-    wanted = " ".join(str(args.get("name") or "").split()).lower()
+    """(the agent, None), or (None, what to say). By its name as the user
+    said it, through the agent directory."""
+    wanted = str(args.get("name") or "").strip()
     if not wanted:
         return None, "Which agent, sir?"
-    agents = run_store.list_agents()
-    matches = [a for a in agents if a["name"].lower() == wanted] or \
-              [a for a in agents if wanted in a["name"].lower()]
+    matches = agent_directory.find(wanted, last_mentioned=last_mentioned_session)
     if not matches:
-        return None, "I don't see a running agent by that name, sir."
+        return None, _no_such_agent(wanted)
     if len(matches) > 1:
         return None, ("That could be " + ", or ".join(_agent_said(a) for a in matches)
                       + ", sir. Which one?")
-    return matches[0], None
+    return {"session_id": matches[0].session_id, "name": matches[0].name}, None
 
 
 def tool_set_agent_active(args: dict) -> str:
@@ -7635,7 +8351,7 @@ def tool_recall(args: dict) -> str:
     ("tony-prefers-postgres-over-sqlite") and a journal's name is a
     timestamp ("2026-09-03-133912-123456-manual") — both read as noise, and
     this project already treats reading a raw identifier aloud as a defect
-    (see `tool_list_sessions`/CLAUDE.md: "never say a roster name like
+    (see `tool_list_agents`/CLAUDE.md: "never say a roster name like
     hammer-4b out loud"). A project's own name (e.g. "chitauri") is an
     ordinary word, so that one alone is still spoken. `h["excerpt"]` is
     already built by `jarvis_memory._excerpt` to stand alone as a full,
@@ -7949,6 +8665,8 @@ async def voice_handler(ws: WebSocket):
 
     Client -> Server:
         {"type": "transcript", "text": "...", "isFinal": true}
+        {"type": "transcript", "text": "...", "isFinal": true, "typed": true}
+                                                     typed into the white box
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
 
@@ -8027,10 +8745,14 @@ async def voice_handler(ws: WebSocket):
                 except (KeyError, TypeError, ValueError, OverflowError):
                     pass
             elif kind == "transcript" and msg.get("isFinal"):
-                text = apply_speech_corrections(str(msg.get("text", "")).strip())
+                # Typed words are what he wrote: no mis-hearings to correct.
+                typed = msg.get("typed") is True
+                text = str(msg.get("text", "")).strip()
+                if not typed:
+                    text = apply_speech_corrections(text)
                 if not text:
                     continue
-                verdict = await speech.user_final(text)
+                verdict = await speech.user_final(text, typed=typed)
                 if verdict == "replay":
                     # "Say that again": resend what was already synthesized —
                     # no brain turn, so no cost and no risk of coming back
@@ -8050,7 +8772,7 @@ async def voice_handler(ws: WebSocket):
                         else "with nothing of his played yet"
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
-                log.info(f"User: {text}")
+                log.info(f"User{' (typed)' if typed else ''}: {text}")
                 cleared = _take_clear_answer(text)
                 if cleared:
                     continue

@@ -19,10 +19,10 @@ def client(monkeypatch, tmp_path):
 
 def test_internal_tool_requires_the_bearer_token(client):
     c, server = client
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}})
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}})
     assert r.status_code == 401
 
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
 
@@ -30,8 +30,8 @@ def test_internal_tool_requires_the_bearer_token(client):
 def test_internal_tool_answers_with_the_token(client, monkeypatch):
     c, server = client
     token = server.data_paths.ensure_tool_token()
-    monkeypatch.setitem(server.TOOL_HANDLERS, "list_sessions", lambda args: "ok")
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    monkeypatch.setitem(server.TOOL_HANDLERS, "list_agents", lambda args: "ok")
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200 and r.json()["ok"] is True
 
@@ -48,9 +48,9 @@ def test_an_unknown_tool_is_refused_cleanly(client):
 def test_every_tool_result_is_capped_at_1500_characters(client, monkeypatch):
     c, server = client
     token = server.data_paths.ensure_tool_token()
-    monkeypatch.setitem(server.TOOL_HANDLERS, "list_sessions",
+    monkeypatch.setitem(server.TOOL_HANDLERS, "list_agents",
                         lambda args: "x" * 5000)
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": f"Bearer {token}"})
     text = r.json()["text"]
     assert len(text) <= 1500
@@ -64,8 +64,8 @@ def test_a_tool_that_raises_becomes_a_refusal_not_a_500(client, monkeypatch):
     def boom(args):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setitem(server.TOOL_HANDLERS, "list_sessions", boom)
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    monkeypatch.setitem(server.TOOL_HANDLERS, "list_agents", boom)
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200 and r.json()["ok"] is False
 
@@ -80,8 +80,8 @@ def test_a_long_exception_message_is_still_capped_at_1500_characters(client, mon
     def boom(args):
         raise RuntimeError("x" * 5000)
 
-    monkeypatch.setitem(server.TOOL_HANDLERS, "list_sessions", boom)
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    monkeypatch.setitem(server.TOOL_HANDLERS, "list_agents", boom)
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     body = r.json()
@@ -96,7 +96,7 @@ def test_a_non_ascii_authorization_header_is_a_clean_401_not_a_500(client):
     # httpx/starlette headers are ASCII-only for str values; a raw, non-ASCII
     # header (as curl would send verbatim) has to go in as bytes, the same
     # as it would arrive over the wire.
-    r = c.post("/internal/tool", json={"tool": "list_sessions", "arguments": {}},
+    r = c.post("/internal/tool", json={"tool": "list_agents", "arguments": {}},
                headers={"Authorization": "Bearer é".encode("utf-8")})
     assert r.status_code == 401
 

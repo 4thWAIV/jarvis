@@ -67,7 +67,7 @@ async def test_it_starts_in_jarvis_s_own_codex_home_with_no_api_key(tmp_path, co
         assert thread["thread"]["model"] == "gpt-5.6-terra"
         assert "brain generation 1" in thread["thread"]["developerInstructions"]
         assert b.connected_servers == ["jarvis"] and b.failed_servers == ["broken"]
-        assert b.tools_from("jarvis") == ["capture", "list_sessions"]
+        assert b.tools_from("jarvis") == ["capture", "list_agents"]
     finally:
         await b.stop()
 

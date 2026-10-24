@@ -72,6 +72,13 @@ def _never_spawn_a_real_brain(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
+    """The session watcher reads the user's Codex sessions out of ~/.codex
+    (codex_sessions.py). Under test it reads an empty Codex home instead."""
+    monkeypatch.setenv("JARVIS_CODEX_SESSIONS_HOME", str(tmp_path / "codex-sessions-home"))
+
+
+@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 

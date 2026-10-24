@@ -1,5 +1,5 @@
 """The page never stays wrong about the server's state (liveRead.ts): the
-brain list, the running brain on the orb, Diagnostics and the Screen tab are
+brain list, the running brain on the orb and Diagnostics are
 read again on every reconnect and whenever a brain becomes ready; a read that
 fails is retried and said, not hidden; Settings changes reach Diagnostics at
 once; and Save Preferences waits until the preferences have been read.

@@ -10,14 +10,14 @@
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
 import { createSocket } from "./ws";
-import { jarvisQuiet, jarvisSpeaking, userHeard } from "./captions";
-import { addDisplay, type Display } from "./screen";
+import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped } from "./captions";
+import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { micLevel, micMuted } from "./mic";
-import { statusText, stopSpeaking, voiceState } from "./voiceStatus";
+import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -145,6 +145,14 @@ export function startJarvis(orb: Orb): void {
     if (e.key === "Escape") { e.preventDefault(); hush(); }
   });
 
+  // ── typing ─────────────────────────────────────────────────────────────
+  // What Tim types into the white box goes the way a final transcript does,
+  // marked typed: the server neither corrects it nor takes it for echo.
+  sendTyped.current = (text: string) => {
+    const id = userTyped(text);
+    socket.send({ type: "transcript", text, isFinal: true, typed: true, id });
+  };
+
   // ── captions ─────────────────────────────────────────────────────────
   // What the recogniser hears, while he talks. Not while JARVIS is speaking:
   // the microphone hears JARVIS too, and the box shows JARVIS's own words then.
@@ -221,8 +229,8 @@ export function startJarvis(orb: Orb): void {
       // What Tim said to send: the capture box (CaptureBox.tsx).
       captureChanged(msg as unknown as CaptureMessage);
     } else if (type === "display") {
-      // Shown, never spoken: the Screen tab (ScreenView.tsx).
-      addDisplay(msg as unknown as Display);
+      // Shown, never spoken: a Sources item in the conversation (SourcesChip.tsx).
+      shown(msg as unknown as Display);
     } else if (type === "stop") {
       audioPlayer.stop();
       jarvisQuiet();

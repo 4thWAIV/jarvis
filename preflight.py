@@ -624,13 +624,43 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
     return True, str(path)
 
 
+def _check_session_skill_sync() -> Check:
+    """Report -- never install -- whether the user's sessions have the
+    talk-to-jarvis skill. Without it no session knows the needs board or
+    session messages exist, so nothing it has for the user reaches JARVIS."""
+    import session_skill
+    found = session_skill.status()
+    if not found:
+        return Check(
+            name="session_skill",
+            status=STATUS_WARN,
+            message="No Claude Code or Codex home found to hold the talk-to-jarvis skill.",
+        )
+    behind = sorted(str(p) for p, state in found.items()
+                    if state != session_skill.INSTALLED)
+    if not behind:
+        return Check(
+            name="session_skill",
+            status=STATUS_OK,
+            message="The talk-to-jarvis skill is installed and current.",
+        )
+    missing = any(state == session_skill.MISSING for state in found.values())
+    return Check(
+        name="session_skill",
+        status=STATUS_WARN,
+        message=(f"The talk-to-jarvis skill is {'missing' if missing else 'out of date'} "
+                 f"at {', '.join(behind)}; sessions cannot reach JARVIS."),
+        remedy="Run: python session_skill.py install",
+    )
+
+
 # ── running them all ─────────────────────────────────────────────────────
 
 # JARVIS's own checks. The brain provider's (for Claude Code: the CLI, its
 # login, a leftover API key) come from the provider and are passed in.
 _ASYNC_CHECKS = (_check_accessibility,)
 _SYNC_CHECKS = (_check_fish_api_key_sync, _check_cross_session_inbound_sync,
-                _check_screen_recording_sync)
+                _check_screen_recording_sync, _check_session_skill_sync)
 
 
 async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:
@@ -707,6 +737,10 @@ def _phrase_for(check: Check) -> str:
         return "there's a leftover Anthropic API key in the environment"
     if name == "cross_session_inbound":
         return "cross-session steering isn't enabled"
+    if name == "session_skill":
+        if "out of date" in msg:
+            return "the talk-to-jarvis skill your sessions use is out of date"
+        return "your sessions don't have the talk-to-jarvis skill"
     return check.message
 
 

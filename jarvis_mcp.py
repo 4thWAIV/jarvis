@@ -44,24 +44,6 @@ TIMEOUT_FOR = {"read_capture": 75.0}
 
 TOOL_SPECS = [
     {
-        "name": "list_sessions",
-        "description": (
-            "Every Claude Code session running on this machine, grouped by project. "
-            "This is the ONLY correct way to answer what is running, which sessions "
-            "exist, what needs the user, or what a session is doing. Never use a "
-            "screenshot for that."),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "filter": {
-                    "type": "string",
-                    "description": ("Optional state filter: needs_you, working, idle, "
-                                    "shell, gone, or fresh."),
-                },
-            },
-        },
-    },
-    {
         "name": "session_detail",
         "description": (
             "What one session is working on and where it left off: its topic, the "
@@ -92,6 +74,80 @@ TOOL_SPECS = [
                          "description": "Which page, starting at 1. Omit for the first."},
             },
             "required": ["name"],
+        },
+    },
+    {
+        "name": "list_messages",
+        "description": (
+            "The messages you have sent to sessions, most recent first, from "
+            "JARVIS's own record: each one's number, the agent it went to, what it "
+            "said, and where it stands — waiting to send, cancelled, sent, delivered "
+            "(seen in that session's conversation), being worked on, answered, or "
+            "failed and why. Use it whenever he asks what you sent, to whom, when, "
+            "or whether it arrived or was answered; never answer that from memory."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "Only messages to this agent, as he refers to it. Omit for all."},
+                "open_only": {"type": "boolean",
+                              "description": "Only messages sent and not yet answered."},
+            },
+        },
+    },
+    {
+        "name": "read_message_reply",
+        "description": (
+            "A session's answer to one message you sent, by the message's number, "
+            "one page at a time: what the turn that took that message said when it "
+            "ended, kept then — not whatever the session has said since. Each page "
+            "says how many there are; read every page before you tell him what it "
+            "said or asked. For what a session said last, whatever prompted it, use "
+            "read_session_reply."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "integer",
+                            "description": "The message's number, from list_messages or the announcement."},
+                "page": {"type": "integer",
+                         "description": "Which page, starting at 1. Omit for the first."},
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "session_messages",
+        "description": (
+            "The messages sessions have sent him of their own accord, most recent "
+            "first: each one's number, the agent it came from, when, whether it has "
+            "been read to him, and its subject. Use it whenever he asks what the "
+            "sessions have sent him or whether anything came in. For the messages "
+            "you sent, use list_messages."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "Only messages from this agent, as he refers to it. Omit for all."},
+                "unread_only": {"type": "boolean",
+                                "description": "Only messages not yet read to him."},
+            },
+        },
+    },
+    {
+        "name": "read_session_message",
+        "description": (
+            "One message a session sent him, by its number, one page at a time: "
+            "its subject and everything it says. Each page says how many there "
+            "are; read every page before you tell him what it said or asked."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "integer",
+                            "description": "The message's number, from session_messages or the announcement."},
+                "page": {"type": "integer",
+                         "description": "Which page, starting at 1. Omit for the first."},
+            },
+            "required": ["message"],
         },
     },
     {
@@ -135,8 +191,9 @@ TOOL_SPECS = [
     {
         "name": "read_capture",
         "description": (
-            "Read a capture back to the user aloud, inside your reply, lighting each "
-            "line in its capture box as it is read. Call it when he says yes to "
+            "Read a capture back to the user aloud, lighting each line in its capture "
+            "box as it is read: inside your reply when you are answering him, and on "
+            "its own otherwise. Call it when he says yes to "
             "hearing it. Returns once the reading ends: read in full, or interrupted. "
             "Say nothing before calling it; after it, ask whether to send."),
         "inputSchema": {
@@ -268,10 +325,36 @@ TOOL_SPECS = [
     {
         "name": "list_agents",
         "description": (
-            "The agents list: every Claude Code session running now, by name, "
-            "and whether the user has activated it. A session starts inactive; "
-            "only the user activates one."),
-        "inputSchema": {"type": "object", "properties": {}},
+            "Every agent running on this machine (Claude Code and Codex), active "
+            "and inactive, one line each: its full name, whether the user has "
+            "activated it, its state (and what it waits on), its project and its "
+            "needs-board count. This is the ONLY correct way to answer what is "
+            "running, which agents exist, what needs the user, or what an agent "
+            "is called. Never use a screenshot for that."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "string",
+                    "description": ("Optional: active, inactive, or a state: "
+                                    "needs_you, working, idle, shell or fresh."),
+                },
+            },
+        },
+    },
+    {
+        "name": "workflow_status",
+        "description": (
+            "The latest state of long workflows, from their one durable record: with "
+            "no workflow, every one running (state, phase, tasks done, open "
+            "decisions, blockers and waits, when last heard from); with one, its "
+            "phases, tasks, open items and latest events. The ONLY correct way to "
+            "answer anything about a workflow."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"workflow": {"type": "string",
+                                        "description": "Its name as he said it, or its id."}},
+        },
     },
     {
         "name": "rename_agent",

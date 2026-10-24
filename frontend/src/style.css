@@ -218,6 +218,55 @@ html, body {
 .capture-box.message .capture-state,
 .capture-box.transmitting .capture-state { color: rgba(251, 191, 36, 0.9); }
 
+/* A message: who it goes to over the top left; its state stays top right. */
+.capture-box .capture-to {
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  max-width: 60%;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.06em;
+  color: rgba(251, 191, 36, 0.9);
+  background: #050508;
+}
+
+/* Accept, Delete, Send in the bottom right; a refusal above them. */
+.capture-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+.capture-buttons button {
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.capture-buttons button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.capture-buttons button:disabled { cursor: default; opacity: 0.45; }
+.capture-buttons .capture-accept.done { opacity: 0.8; color: rgba(134, 239, 172, 0.95); border-color: rgba(134, 239, 172, 0.5); }
+.capture-box.message .capture-send:not(:disabled) {
+  color: rgba(251, 191, 36, 0.95);
+  border-color: rgba(251, 191, 36, 0.6);
+}
+.capture-refused {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(252, 165, 165, 0.95);
+}
+
 /* The texts cross: the old fades out over the new, and the box eases to the
    new height (CaptureBox.tsx sets it only while they cross). */
 .capture-body {
@@ -264,6 +313,39 @@ html, body {
 }
 .capture-chip.kind-transmission .capture-chip-captured { color: rgba(251, 191, 36, 0.9); }
 .history-turn.kind-transmission { text-align: right; }
+
+/* What the brain showed instead of saying it (SourcesChip.tsx): collapsed
+   like a transmission, but yellow, a clearer yellow than the transmission's
+   amber, and on the left with JARVIS's words. */
+.sources-chip-head {
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  padding: 0 8px;
+  color: rgba(253, 224, 71, 0.95);
+  background: rgba(253, 224, 71, 0.08);
+  border: 1px solid rgba(253, 224, 71, 0.55);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.sources-chip-head::before { content: "▸ "; }
+.sources-chip.open .sources-chip-head::before { content: "▾ "; }
+.sources-chip-body { list-style: none; margin: 2px 0 0; padding: 0; }
+.sources-chip-body li {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(253, 224, 71, 0.12);
+  overflow-wrap: anywhere;
+}
+.sources-chip-body a { color: rgba(253, 224, 71, 0.95); text-decoration: none; }
+.sources-chip-body a:hover { text-decoration: underline; }
+.sources-host,
+.sources-note {
+  display: block;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
 
 /* The centre area's header: the view tabs along its top, named in words. */
 .centre-tabs {
@@ -359,6 +441,28 @@ html, body {
   background: rgba(255, 255, 255, 0.04);
 }
 .conversation-hearing .caption-turn.user { color: rgba(255, 255, 255, 0.9); }
+.conversation-hearing { cursor: text; }
+/* Typing in the white box: exactly the heard words' lines, growing with
+   what is typed, and the box scrolls past four. */
+.hearing-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
+  min-height: var(--conversation-line);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  line-height: var(--conversation-line);
+  letter-spacing: 0.3px;
+}
+.hearing-input[hidden] { display: none; }
+.hearing-input::placeholder { color: rgba(255, 255, 255, 0.3); }
 
 #caption-box {
   padding: 8px 14px;
@@ -436,6 +540,22 @@ html, body {
 @keyframes ray-pulse {
   from { stroke-dashoffset: 100; }
   to { stroke-dashoffset: 0; }
+}
+
+/* The message arriving: two rings ripple out from the agent's orb when the
+   first pulse reaches it (RAY_TRAVEL_MS in agents.ts sets their delay). */
+.ray-receipt {
+  stroke: var(--ray-colour);
+  stroke-width: 1.5;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ray-receipt 1.1s ease-out forwards;
+}
+
+@keyframes ray-receipt {
+  from { opacity: 0.95; transform: scale(0.8); }
+  to { opacity: 0; transform: scale(3); }
 }
 
 @keyframes ray-fade {
@@ -1029,7 +1149,7 @@ html, body {
 .agents-list li {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   height: var(--agent-row);
   flex: none;
 }
@@ -1119,12 +1239,13 @@ html, body {
   border-color: rgba(14, 165, 233, 0.35);
 }
 
-/* An on/off switch: a track with a knob that slides right when on. */
+/* An on/off switch, standing upright to leave the agent's box the width:
+   a track with a knob at the bottom when off that slides to the top when on. */
 .agent-switch {
   flex: none;
   position: relative;
-  width: 26px;
-  height: 14px;
+  width: 14px;
+  height: 26px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 7px;
@@ -1135,13 +1256,13 @@ html, body {
 .agent-switch::after {
   content: "";
   position: absolute;
-  top: 1px;
+  top: 13px;
   left: 1px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.45);
-  transition: left 0.15s ease;
+  transition: top 0.15s ease;
 }
 
 .agent-switch[aria-checked="true"] {
@@ -1150,7 +1271,7 @@ html, body {
 }
 
 .agent-switch[aria-checked="true"]::after {
-  left: 13px;
+  top: 1px;
   background: #34d058;
 }
 
@@ -1334,13 +1455,34 @@ html, body {
 .weekly-left.behind, .weekly-ahead.behind { color: #f87171; }
 .weekly-left.none, .weekly-ahead.none { color: rgba(255, 255, 255, 0.3); }
 
-/* A little shorter than both rows and the gap between them, centred
-   between the two. */
-.weekly-chart {
+/* As tall as both rows and the gap between them: the days left on top, the
+   chart, the day it resets underneath. Only the chart gives up height. */
+.weekly-burn {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: calc(2 * var(--weekly-height) + var(--weekly-row-gap));
+}
+/* Centred, in the figures' green or red, and monospaced so the spacing of
+   their characters does not change with the digits. */
+.weekly-days,
+.weekly-reset {
+  flex: none;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 13px;
+  text-align: center;
+  white-space: nowrap;
+}
+.weekly-days.ahead, .weekly-reset.ahead { color: #4ade80; }
+.weekly-days.behind, .weekly-reset.behind { color: #f87171; }
+.weekly-chart {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   display: block;
-  height: calc(2 * var(--weekly-height) + var(--weekly-row-gap) - 12px);
   border-left: 1px solid rgba(255, 255, 255, 0.25);
   border-bottom: 1px solid rgba(255, 255, 255, 0.25);
 }
@@ -1372,51 +1514,6 @@ html, body {
   vector-effect: non-scaling-stroke;
 }
 
-/* The Screen tab lights up when something new is shown there. */
-.right-tab.lit {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.6);
-  box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
-}
-
-/* The Screen view: what the brain showed instead of saying it. */
-.screen-view {
-  overflow-y: auto;
-  height: 100%;
-  scrollbar-width: none;
-}
-
-.screen-item + .screen-item { margin-top: 12px; }
-
-.screen-item h3 {
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: rgba(14, 165, 233, 0.7);
-  margin-bottom: 4px;
-}
-
-.screen-item ul { list-style: none; }
-
-.screen-item li {
-  font-size: 12px;
-  line-height: 1.4;
-  padding: 3px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  overflow-wrap: anywhere;
-}
-
-.screen-item a { color: #e6f7ff; text-decoration: none; }
-.screen-item a:hover { text-decoration: underline; }
-
-.screen-host,
-.screen-note {
-  display: block;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
-}
-
 /* A read of the server's state that failed and is being tried again
    (liveRead.ts): said, never hidden. */
 .read-failure {
@@ -1426,3 +1523,200 @@ html, body {
   color: rgba(248, 113, 113, 0.85);
 }
 .settings-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* The Workflows view of the right panel (WorkflowsView.tsx): one compact row
+   per workflow, boxed like an agent's row. */
+.workflows-view { gap: 8px; height: 100%; overflow-y: auto; }
+.workflows-empty, .workflow-empty {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+}
+.workflows-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--agent-gap, 6px);
+}
+.workflow-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  grid-template-areas: "dot name age" ". phase phase" ". tasks tasks" ". open open";
+  column-gap: 6px;
+  row-gap: 3px;
+  align-items: center;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.workflow-row:hover { background: rgba(14, 165, 233, 0.08); }
+.workflow-row.selected { border-color: rgba(14, 165, 233, 0.8); }
+.workflow-row.finished { opacity: 0.5; border-color: rgba(255, 255, 255, 0.08); }
+.workflow-dot {
+  grid-area: dot;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: rgba(14, 165, 233, 0.9);
+}
+.workflow-dot.state-waiting { background: rgba(255, 255, 255, 0.6); }
+.workflow-dot.state-blocked { background: #f87171; }
+.workflow-dot.state-needs_you { background: #fbbf24; }
+.workflow-dot.state-succeeded { background: #34d399; }
+.workflow-dot.state-failed { background: #ef4444; }
+.workflow-dot.state-cancelled { background: rgba(255, 255, 255, 0.3); }
+/* Gone quiet: hollow, so it reads as nothing coming in. */
+.workflow-dot.state-silent { background: transparent; box-shadow: inset 0 0 0 1.5px #a78bfa; }
+.workflow-name {
+  grid-area: name;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workflow-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.45); }
+.workflow-phase {
+  grid-area: phase;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workflow-tasks { grid-area: tasks; display: flex; align-items: center; gap: 6px; }
+.workflow-task-count { flex: none; font-size: 10px; color: rgba(255, 255, 255, 0.55); }
+.workflow-bar {
+  flex: 1;
+  display: block;
+  min-width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.workflow-bar-fill { display: block; height: 100%; background: rgba(14, 165, 233, 0.8); }
+.workflow-open { grid-area: open; display: flex; gap: 8px; font-size: 10px; font-weight: 600; }
+.workflow-decisions { color: #fbbf24; }
+.workflow-blockers { color: #f87171; }
+
+/* The Workflow view of the centre area (WorkflowDetail.tsx), where the
+   Conversation view sits: a head with its name, its own tabs, and the tab
+   below, scrolling. */
+#workflow-detail {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+}
+.workflow-detail-head { flex: none; display: flex; align-items: center; gap: 8px; }
+.workflow-detail-name { font-size: 15px; font-weight: 600; }
+.workflow-detail-state { font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.workflow-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(14, 165, 233, 0.8);
+  font-size: 16px;
+  cursor: pointer;
+}
+.workflow-tabs { flex: none; display: flex; flex-wrap: wrap; gap: 4px; }
+.workflow-tabs .control-button.word-tab { height: 26px; padding: 0 10px; font-size: 10px; }
+.workflow-tab-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  border-radius: 8px;
+}
+.workflow-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+.workflow-facts dt { color: rgba(255, 255, 255, 0.45); }
+.workflow-items, .workflow-decisions-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.workflow-items li {
+  display: grid;
+  grid-template-columns: 70px 1fr 90px auto;
+  align-items: center;
+  gap: 8px;
+}
+.workflow-item-state { font-size: 10px; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }
+.workflow-item-state.item-running { color: rgba(14, 165, 233, 0.95); }
+.workflow-item-state.item-done { color: #34d399; }
+.workflow-item-state.item-failed, .workflow-item-state.item-blocked { color: #f87171; }
+.workflow-item-slug { font-size: 10px; color: rgba(255, 255, 255, 0.4); }
+.workflow-item-count { font-size: 10px; font-variant-numeric: tabular-nums; }
+.workflow-progress { display: flex; flex-direction: column; gap: 6px; }
+.workflow-progress > .workflow-bar { flex: none; height: 6px; }
+.workflow-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 6px;
+}
+.workflow-recommended { font-size: 11px; color: #fbbf24; }
+.workflow-options, .workflow-answer { display: flex; flex-wrap: wrap; gap: 6px; }
+.workflow-option, .workflow-answer button {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.workflow-option.recommended { border-color: #fbbf24; }
+.workflow-answer input {
+  flex: 1;
+  min-width: 120px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.workflow-transcript { display: flex; flex-direction: column; gap: 12px; }
+.workflow-agent h4 { font-size: 13px; margin-bottom: 4px; }
+.workflow-agent h5 { font-size: 10px; color: rgba(255, 255, 255, 0.45); margin-top: 6px; }
+.workflow-agent pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 16px;
+  color: rgba(255, 255, 255, 0.8);
+}
+.workflow-events select {
+  margin-bottom: 6px;
+  font: inherit;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  background: #050508;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.workflow-events table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.workflow-events td { padding: 2px 6px; vertical-align: top; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.workflow-events td:nth-child(-n+4) { white-space: nowrap; color: rgba(255, 255, 255, 0.5); }

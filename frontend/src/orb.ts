@@ -24,6 +24,12 @@ export interface Orb {
    *  lean toward `direction` (screen x, y; the way the ray leaves), for
    *  `seconds`, easing back to the state it was in over the last of them. */
   transmit(colour: string, options?: { direction?: [number, number]; seconds?: number }): void;
+  /** The "receiving" state, the other end of a transmission: the same as
+   *  transmitting, except the colour comes in from the edge to the centre,
+   *  and `direction` is the way the ray arrives from. */
+  receive(colour: string, options?: { direction?: [number, number]; seconds?: number }): void;
+  /** Ends a transmitting or receiving state at once. */
+  endTransmission(): void;
   setAnalyser(a: AnalyserNode | null): void;
   destroy(): void;
 }
@@ -173,13 +179,15 @@ export function createOrb(canvas: HTMLCanvasElement,
   // ── State ──
   let state: OrbState = "idle";
   let gray = false;
-  // The transmitting state under way, if any (see transmit()). It never
-  // touches `state`, so when it ends the orb is in exactly the state it was.
+  // The transmitting or receiving state under way, if any (see transmit()
+  // and receive()). It never touches `state`, so when it ends the orb is in
+  // exactly the state it was.
   let tx: { colour: THREE.Color; start: number; seconds: number;
-            dir: THREE.Vector3 } | null = null;
+            dir: THREE.Vector3; inward: boolean } | null = null;
   const TX_RISE_SEC = 0.6;        // eases in this fast
   const TX_FADE_SEC = 1.5;        // and back out over the last this long
-  const TX_WAVE_SEC = 0.8;        // the colour reaches the edge in this long
+  const TX_WAVE_SEC = 0.8;        // the colour crosses the orb in this long
+  const TX_WAVE_REACH = R_MAX * 1.2;   // as far as the wave goes
   const TX_COLOUR = 0.95;         // how much of the colour the orb takes
   const TX_SHIFT = 5;             // how far the cloud leans toward the ray, at full strength
   const TX_SPIN = 0.03;           // extra turn a frame at full strength
@@ -265,7 +273,7 @@ export function createOrb(canvas: HTMLCanvasElement,
       if (since >= tx.seconds) {
         tx = null;
       } else {
-        txWave = (since / TX_WAVE_SEC) * R_MAX * 1.2;
+        txWave = (since / TX_WAVE_SEC) * TX_WAVE_REACH;
         txStrength = Math.min(1, since / TX_RISE_SEC,
                               (tx.seconds - since) / TX_FADE_SEC);
         spinY += TX_SPIN * txStrength;
@@ -367,14 +375,16 @@ export function createOrb(canvas: HTMLCanvasElement,
     p.needsUpdate = true;
 
     // ── Particle colours: the state's colour, and the transmission's colour
-    // inside its wave (a soft edge a few units wide) ──
+    // inside its wave (a soft edge a few units wide): out from the centre
+    // when transmitting, in from the edge when receiving ──
     const ca = (geo.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
     for (let i = 0; i < N; i++) {
       const i3 = i * 3;
       let w = 0;
       if (tx && txWave >= 0) {
         const d = Math.sqrt(a[i3] * a[i3] + a[i3 + 1] * a[i3 + 1] + a[i3 + 2] * a[i3 + 2]);
-        w = Math.min(1, Math.max(0, (txWave - d) / 4)) * txStrength * TX_COLOUR;
+        const reached = tx.inward ? d - (TX_WAVE_REACH - txWave) : txWave - d;
+        w = Math.min(1, Math.max(0, reached / 4)) * txStrength * TX_COLOUR;
       }
       if (w > 0) mixed.copy(base).lerp(tx!.colour, w);
       else mixed.copy(base);
@@ -494,6 +504,16 @@ export function createOrb(canvas: HTMLCanvasElement,
     renderer.setSize(width(), height(), false);
   }
 
+  function startTransmission(colour: string,
+                             options: { direction?: [number, number]; seconds?: number },
+                             inward: boolean) {
+    const [dx, dy] = options.direction ?? [0, 0];
+    tx = { colour: new THREE.Color(colour), start: clock.getElapsedTime(),
+           seconds: options.seconds ?? TX_DEFAULT_SEC,
+           // Screen y runs down; the scene's y runs up.
+           dir: new THREE.Vector3(dx, -dy, 0).normalize(), inward };
+  }
+
   const resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(canvas);
   animate();
@@ -501,13 +521,9 @@ export function createOrb(canvas: HTMLCanvasElement,
   return {
     setState(s: OrbState) { state = s; },
     setGray(g: boolean) { gray = g; },
-    transmit(colour: string, options = {}) {
-      const [dx, dy] = options.direction ?? [0, 0];
-      tx = { colour: new THREE.Color(colour), start: clock.getElapsedTime(),
-             seconds: options.seconds ?? TX_DEFAULT_SEC,
-             // Screen y runs down; the scene's y runs up.
-             dir: new THREE.Vector3(dx, -dy, 0).normalize() };
-    },
+    transmit(colour: string, options = {}) { startTransmission(colour, options, false); },
+    receive(colour: string, options = {}) { startTransmission(colour, options, true); },
+    endTransmission() { tx = null; },
     setAnalyser(a: AnalyserNode | null) {
       analyser = a;
       if (a) freqData = new Uint8Array(a.frequencyBinCount);

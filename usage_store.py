@@ -241,6 +241,17 @@ def _provider(raw: Any) -> Optional[dict]:
 # Readings kept for the burn-down: one per change in utilisation, this week.
 WEEK_HISTORY_MAX = 2000
 
+# How far apart two reset times may be and still be the same week. Codex
+# reports one week's reset a few seconds differently from reading to reading
+# (1793382182, …185, …186 within the hour, measured 2026-10-23), and every
+# such wobble was taken for a new week, which threw the burn-down's history
+# away. A real new week moves the reset by hours or days.
+SAME_WEEK_SEC = 60.0
+
+
+def _same_week(a: Optional[float], b: Optional[float]) -> bool:
+    return a is not None and b is not None and abs(a - b) <= SAME_WEEK_SEC
+
 
 def _week_history(stored: dict, seven_day: Optional[dict], when: float) -> dict:
     """The `week_resets_at` / `week_history` fields of the next record: the
@@ -249,7 +260,7 @@ def _week_history(stored: dict, seven_day: Optional[dict], when: float) -> dict:
     history = stored.get("week_history") if isinstance(stored.get("week_history"), list) else []
     resets_at = _epoch(stored.get("week_resets_at"))
     if seven_day and seven_day.get("utilization") is not None and seven_day.get("resets_at"):
-        if seven_day["resets_at"] != resets_at:
+        if not _same_week(seven_day["resets_at"], resets_at):
             resets_at, history = seven_day["resets_at"], []
         used = seven_day["utilization"]
         if not history or history[-1][1] != used:
@@ -277,7 +288,8 @@ def week(*, now: Optional[float] = None, service: Optional[str] = None) -> dict:
     start = resets_at - WEEK_SEC
     elapsed = min(max(observed_at - start, 0.0), WEEK_SEC)
     expected = round(100.0 * elapsed / WEEK_SEC, 1)
-    history = stored.get("week_history") if _epoch(stored.get("week_resets_at")) == resets_at else []
+    history = (stored.get("week_history")
+               if _same_week(_epoch(stored.get("week_resets_at")), resets_at) else [])
     return {
         "measured": True,
         "provider": provider,

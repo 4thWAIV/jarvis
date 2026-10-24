@@ -168,25 +168,6 @@ def _set_status(root, status):
                  name="guard", status=status)
 
 
-def test_a_session_jarvis_wrote_to_announces_its_answer_once(wired):
-    server, root, watcher = wired
-    events = []
-    watcher.on_event(events.append)
-    _guard(root, watcher, ["ok"], status="idle")
-    watcher.expect_reply("g")
-
-    _set_status(root, "busy")
-    watcher.poll_once()
-    _set_status(root, "idle")
-    watcher.poll_once()                 # seconds of work, not MIN_WORK_SEC
-    _set_status(root, "busy")
-    watcher.poll_once()
-    _set_status(root, "idle")
-    watcher.poll_once()
-
-    assert [e["kind"] for e in events] == ["replied"]
-
-
 def test_a_session_nobody_wrote_to_does_not_announce_a_reply(wired):
     server, root, watcher = wired
     events = []
@@ -198,7 +179,7 @@ def test_a_session_nobody_wrote_to_does_not_announce_a_reply(wired):
     _set_status(root, "idle")
     watcher.poll_once()
 
-    assert "replied" not in [e["kind"] for e in events]
+    assert "answered" not in [e["kind"] for e in events]
 
 
 class _Speech:
@@ -209,6 +190,10 @@ class _Speech:
         self.said.append(text)
 
 
+_MESSAGE = {"id": 7, "body": "use Postgres for the store, not SQLite, and say why",
+            "reply": "Done: Postgres."}
+
+
 @pytest.mark.asyncio
 async def test_the_answer_is_announced_and_the_brain_is_told(wired, monkeypatch):
     server, _root, _watcher = wired
@@ -216,33 +201,38 @@ async def test_the_answer_is_announced_and_the_brain_is_told(wired, monkeypatch)
     monkeypatch.setattr(server, "speech", sp)
     monkeypatch.setattr(server, "_notes_for_brain", [])
 
-    await server._announce_reply({"session": {"voice_name": "agent-guard"}})
+    await server._announce_reply({"session": {"voice_name": "agent-guard"},
+                                  "message": _MESSAGE})
 
-    assert sp.said == ["agent-guard has answered, sir — shall I read it?"]
+    assert sp.said == ["agent-guard has answered your message about use Postgres "
+                       "for the store, not SQLite, and…, sir — shall I read it?"]
     turn = server._with_notes_for_brain("yes")
     assert turn.startswith("(JARVIS, not the user:")
-    assert "read_session_reply for agent-guard" in turn
+    assert "read_message_reply with message 7" in turn
     assert turn.endswith("\nyes")
     assert server._with_notes_for_brain("next") == "next", "a note is given once"
 
 
 @pytest.mark.asyncio
-async def test_a_replied_event_is_routed_to_the_announcement(wired, monkeypatch):
+async def test_an_answered_event_is_routed_to_the_announcement(wired, monkeypatch):
     server, _root, _watcher = wired
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
     monkeypatch.setattr(server, "_notes_for_brain", [])
+    broadcast = []
 
     async def _quiet(event):
-        return None
+        broadcast.append(event)
 
     monkeypatch.setattr(server, "_broadcast_session_event", _quiet)
-    server._on_session_event({"kind": "replied",
+    server._on_session_event({"kind": "answered", "message": {"id": 3, "body": "go on",
+                                                              "reply": "ok"},
                               "session": {"session_id": "g", "voice_name": "guard"}})
     for _ in range(5):
         await asyncio.sleep(0)
 
-    assert sp.said == ["guard has answered, sir — shall I read it?"]
+    assert sp.said == ["guard has answered your message about go on, sir — shall I read it?"]
+    assert broadcast == [], "a message's progress is not a change to a session row"
 
 
 # --- signed messages -------------------------------------------------------

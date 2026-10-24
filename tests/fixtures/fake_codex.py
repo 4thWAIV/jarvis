@@ -77,7 +77,7 @@ def app_server():
             out({"id": rid, "result": {"thread": {"id": "thread-1"}, "model": params.get("model")}})
         elif method == "mcpServerStatus/list":
             out({"id": rid, "result": {"data": [
-                {"name": "jarvis", "tools": {"capture": {}, "list_sessions": {}}},
+                {"name": "jarvis", "tools": {"capture": {}, "list_agents": {}}},
                 {"name": "broken", "tools": None}]}})
         elif method == "turn/start":
             text = "".join(i.get("text", "") for i in params.get("input") or [])

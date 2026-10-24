@@ -318,6 +318,19 @@ async def test_single_word_during_speech_does_not_barge_in_but_cancel_word_does(
     assert not s.is_speaking and "stop" in h.types()
 
 
+
+@pytest.mark.asyncio
+async def test_typed_words_are_never_echo_and_stop_him_mid_sentence(h):
+    """Typed into the page, his own words are what Tim means, and one typed
+    word is enough to stop him, where one heard word is not."""
+    s = h.sched
+    await s.say("Telling chitauri to proceed with the migration now.")
+    await asyncio.sleep(0.1)
+    assert s.classify("proceed with the migration now") == "echo"
+    assert s.classify("proceed with the migration now", typed=True) == "speech"
+    assert await s.user_final("yes", typed=True) == "speech"
+    assert not s.is_speaking and "stop" in h.types()
+
 @pytest.mark.parametrize("text,expected", [
     ("say that again", "replay"),
     ("say it again", "replay"),

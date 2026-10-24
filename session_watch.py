@@ -8,7 +8,9 @@ is what made JARVIS miscount sessions out loud, so speech uses conversations.
 
 Pure filesystem reading: no asyncio, no server imports, no LLM. Every parse is
 failure-tolerant, because these files are written live by other processes and
-will be read mid-write.
+will be read mid-write. The one write is the watcher's, through the message
+store it is handed (`SessionWatcher(messages=...)`): what it found of each
+message JARVIS sent.
 """
 
 from __future__ import annotations
@@ -17,7 +19,10 @@ import json
 import os
 import re
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
+
+from session_provider import Tracking
 
 # Both roots must be read: the CLI's default and the one Orcha sets via
 # CLAUDE_CONFIG_DIR. On the dev machine `~/.claude/sessions` was empty and
@@ -319,6 +324,150 @@ def read_last_reply(cwd: str, session_id: str,
         if path.exists():
             return last_reply_from(tail_objects(path, REPLY_TAIL_BYTES))
     return None
+
+
+# ── where a message stands in a transcript ─────────────────────────────────
+#
+# A message is found by Tim's words (the text after JARVIS's signature) in
+# lines written no earlier than it was staged. Measured on Claude Code
+# 2.1.300 transcripts that had received JARVIS's messages:
+#
+#   delivered  a `queue-operation` line, `operation: "enqueue"`, whose
+#              `content` is the whole message as sent.
+#   started    to an idle session: a `dequeue`, then a user line carrying the
+#              message (`isMeta`, `origin.kind: "peer"`, content "Another
+#              Claude session sent a message:\n…"), which begins its own turn.
+#              To a busy one: a `remove`, then an `attachment` of type
+#              `queued_command` whose `prompt` is the message — it is taken
+#              into the turn in progress, between two tool calls, and that
+#              turn is the one that answers it.
+#   answered   a `system` line of subtype `turn_duration` ends the turn: 41 of
+#              41 turns on a JARVIS message had one. A new turn starting is
+#              taken as the end too, should one ever be missing.
+#   reply      the text the turn wrote after its last tool call: its final
+#              answer, every block of it.
+
+def iso_seconds(stamp) -> float | None:
+    """An ISO-8601 transcript timestamp ("…Z") in epoch seconds, or None."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+# How far back from the end a message is looked for: the tail is widened
+# from the first size, four times over each time, until its first dated line
+# is older than the message or it is the whole file, but never past the last.
+# Transcripts reach tens of megabytes; a message is near the end of one.
+TRACK_TAIL_START = 256 * 1024
+TRACK_TAIL_MAX = 64 * 1024 * 1024
+
+
+def objects_since(path: Path, since: float) -> list[dict]:
+    """The transcript's lines from about `since` to its end."""
+    nbytes = TRACK_TAIL_START
+    while True:
+        objs = tail_objects(path, nbytes)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return []
+        if nbytes >= size or nbytes >= TRACK_TAIL_MAX:
+            return objs
+        first = next((t for t in (iso_seconds(o.get("timestamp")) for o in objs)
+                      if t is not None), None)
+        if first is not None and first < since:
+            return objs
+        nbytes *= 4
+
+
+def _user_text(obj: dict) -> str:
+    """Everything a user line says as text, whatever its content's shape."""
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b["text"] for b in content
+                         if isinstance(b, dict) and b.get("type") == "text"
+                         and isinstance(b.get("text"), str))
+    return ""
+
+
+def _starts_a_turn(obj: dict) -> bool:
+    """A user line that begins a turn of its own: something typed, or a
+    message from another session. Not a tool result, not the summary a
+    compaction writes, and not the text Claude Code adds to a turn under way
+    (`isMeta` — except a peer message, which is `isMeta` and is a turn)."""
+    if obj.get("type") != "user" or obj.get("isSidechain"):
+        return False
+    if obj.get("isCompactSummary") or obj.get("isVisibleInTranscriptOnly"):
+        return False
+    if not _is_prompt(obj):
+        return False
+    origin = obj.get("origin")
+    if obj.get("isMeta") and not (isinstance(origin, dict) and origin.get("kind") == "peer"):
+        return False
+    return True
+
+
+def track_from(objs: list[dict], body: str, since: float) -> Tracking:
+    """Where the message whose words are `body`, staged at `since`, stands
+    in these Claude Code transcript lines. See the note above."""
+    if not body:
+        return Tracking()
+    clock = None                       # the latest time the transcript has shown
+    delivered = started = answered = None
+    parts: list[str] = []
+    for o in objs:
+        ts = iso_seconds(o.get("timestamp"))
+        if o.get("isSidechain"):
+            continue
+        kind = o.get("type")
+        if started is None:
+            if ts is not None:
+                clock = ts if clock is None else max(clock, ts)
+            if ts is not None and ts < since:
+                continue
+            if (delivered is None and kind == "queue-operation"
+                    and o.get("operation") == "enqueue"
+                    and isinstance(o.get("content"), str) and body in o["content"]):
+                delivered = ts if ts is not None else clock
+                continue
+            attachment = o.get("attachment") if kind == "attachment" else None
+            taken_midturn = (isinstance(attachment, dict)
+                             and attachment.get("type") == "queued_command"
+                             and isinstance(attachment.get("prompt"), str)
+                             and body in attachment["prompt"])
+            if taken_midturn or (_starts_a_turn(o) and body in _user_text(o)):
+                started = clock if clock is not None else since
+                if delivered is None:
+                    delivered = started
+            continue
+        if kind == "system" and o.get("subtype") == "turn_duration":
+            answered = ts if ts is not None else clock
+            break
+        if _starts_a_turn(o):
+            answered = clock           # the last moment of the turn before it
+            break
+        if ts is not None:
+            clock = ts if clock is None else max(clock, ts)
+        if kind == "assistant":
+            message = o.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    parts = []         # what came before a tool call was not the answer
+                elif (block.get("type") == "text" and isinstance(block.get("text"), str)
+                        and block["text"].strip()):
+                    parts.append(block["text"].strip())
+    reply = ("\n\n".join(parts) or None) if answered is not None else None
+    return Tracking(delivered_at=delivered, started_at=started,
+                    answered_at=answered, reply=reply)
 
 
 def _roots_of(group: list, primary) -> list[Path]:
@@ -911,39 +1060,6 @@ def _name_by_age(group: list[SessionState], base: str) -> None:
                         else f"{base} number {i + 1}")
 
 
-# Words a person says around a name that carry no identity of their own.
-# "the newer one" distinguishes; "the", "one", "session" do not.
-_FILLER = frozenset({
-    "the", "a", "an", "one", "ones", "session", "sessions", "conversation",
-    "conversations", "project", "in", "on", "at", "my", "please", "that",
-    "this", "it", "s", "lets", "let", "go", "with", "use", "about",
-})
-
-
-def _name_words(s: "SessionState") -> set[str]:
-    """Every word that could identify this conversation out loud."""
-    import re as _re
-    text = f"{s.voice_name} {s.project}".lower()
-    return {w for w in _re.split(r"[^a-z0-9-]+", text) if w}
-
-
-def _prefer_real(matches: list[SessionState]) -> list[SessionState]:
-    """Among several name/project matches, a `fresh` conversation (never
-    prompted, no transcript) is noise, not a real candidate — offering it
-    alongside a real conversation turns "ask chitauri where we left off"
-    into a clarifying question about a session with nothing to report.
-
-    Drop the fresh ones IF at least one match is real. If EVERY match is
-    fresh, keep them all: the user may genuinely mean a fresh session, and
-    silently returning nothing would be wrong. And when several matches are
-    real, this changes nothing — ambiguity among real conversations must
-    still return all of them so the caller asks; that is a safety property,
-    not a rough edge to smooth over.
-    """
-    real = [s for s in matches if s.state != FRESH]
-    return real if real else matches
-
-
 @dataclass
 class Snapshot:
     """Every conversation on this machine at one instant."""
@@ -1014,78 +1130,10 @@ class Snapshot:
             key=lambda s: s.since if s.since is not None else float("-inf"),
             reverse=True)
 
-    def resolve(self, reference: str, last_mentioned: str | None = None
-                ) -> list[SessionState]:
-        """Map what the user said to conversations.
 
-        Returns EVERY candidate when ambiguous. The caller must ask; picking
-        `.first` steers the wrong session and cannot be undone.
-        """
-        ref = " ".join((reference or "").lower().split())
-        if not ref:
-            return []
-        if ref in ("that one", "that", "it", "the same one", "that session"):
-            s = self.by_id(last_mentioned) if last_mentioned else None
-            return [s] if s else []
-
-        exact = [s for s in self.sessions if s.voice_name.lower() == ref]
-        if exact:
-            return exact
-        sid = [s for s in self.sessions if s.session_id == reference]
-        if sid:
-            return sid
-        roster = [s for s in self.sessions if s.roster_name.lower() == ref]
-        if roster:
-            return roster
-
-        # Exact PROJECT match before any substring fallback. Verified live:
-        # with two `hammer` conversations plus a separate `hammer-private`
-        # project, substring matching alone made "hammer" a hit inside
-        # "hammer-private" too, offering an unrelated sibling project. An
-        # exact project-name match (case-insensitive) is unambiguous and
-        # must win outright, without also pulling in substring siblings.
-        exact_project = [s for s in self.sessions if s.project.lower() == ref]
-        if exact_project:
-            return _prefer_real(exact_project)
-
-        # A qualified answer to our OWN disambiguation question must resolve.
-        #
-        # Found live: asked "which one?", the user said "the newer one", and
-        # the substring rule below matched BOTH candidates again — the project
-        # name is inside every one of its own voice names — so the question
-        # looped forever and JARVIS said he could not pick. The ask-which-one
-        # flow was a dead end.
-        #
-        # So: if every distinguishing word the user said appears in a voice
-        # name, that name is a candidate, and the narrowest set wins. "newer
-        # webapp-fresh" keeps only "the newer webapp-fresh"; a bare
-        # "webapp-fresh" still matches both and still asks.
-        ref_words = {w for w in re.split(r"[^a-z0-9-]+", ref) if w and w not in _FILLER}
-        if ref_words:
-            token_hits = [s for s in self.sessions
-                          if ref_words <= _name_words(s)]
-            if token_hits:
-                narrowed = _prefer_real(token_hits)
-                if len(narrowed) < len(self.sessions):
-                    return narrowed
-
-        # Substring, both directions: "the chitauri one" contains "chitauri",
-        # and "hammer" is contained in "the newer hammer".
-        loose = [s for s in self.sessions
-                 if s.voice_name.lower() in ref or s.project.lower() in ref
-                 or ref in s.voice_name.lower()]
-        return _prefer_real(loose)
-
-
-def build_snapshot(entries: list[RosterEntry] | None = None,
-                   roots: list[Path] | None = None,
-                   now: float | None = None) -> Snapshot:
-    """Read everything and reduce it to conversations.
-
-    Processes are grouped by `sessionId`: measured live, 17 processes were 14
-    conversations. The conversation is the unit JARVIS names and counts.
-    """
-    import time as _time
+def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None,
+                     at: float) -> list[SessionState]:
+    """Claude Code's live conversations, out of its roster and transcripts."""
     if entries is None:
         entries = read_roster(roots)
     # JARVIS's own brain registers in the roster like any Claude Code
@@ -1099,7 +1147,6 @@ def build_snapshot(entries: list[RosterEntry] | None = None,
         grouped.setdefault(e.session_id, []).append(e)
 
     sessions: list[SessionState] = []
-    at = now if now is not None else _time.time()
     for session_id, group in grouped.items():
         primary = _pick_primary(group)
         # EVERY root the conversation registered in, not just the primary's.
@@ -1137,6 +1184,67 @@ def build_snapshot(entries: list[RosterEntry] | None = None,
             agents_capped=agents_capped,
         ))
 
+    return sessions
+
+
+class ClaudeSessions:
+    """Claude Code as a session provider (session_provider.py): the roster
+    under each config root, the transcripts, and each session's inbox
+    socket."""
+
+    name = PROVIDER
+    can_answer_dialogs = True         # dialog.py, by keystroke in its Terminal tab
+
+    def __init__(self, roots: list[Path] | None = None,
+                 entries: list[RosterEntry] | None = None):
+        self.roots = roots
+        self.entries = entries
+
+    def discover(self, now: float) -> list[SessionState]:
+        return _claude_sessions(self.entries, self.roots, now)
+
+    def last_reply(self, session: SessionState) -> str | None:
+        return read_last_reply(session.cwd, session.session_id, self.roots)
+
+    def send(self, session: SessionState, text: str) -> str:
+        import session_steer
+        return session_steer.post_to_session(session.socket_path, text)
+
+    def track(self, session: SessionState, message) -> Tracking:
+        for root in (self.roots if self.roots is not None else config_roots()):
+            path = transcript_path(root, session.cwd, session.session_id)
+            if path.exists():
+                return track_from(objects_since(path, message.staged_at),
+                                  message.body, message.staged_at)
+        return Tracking()
+
+
+def build_snapshot(entries: list[RosterEntry] | None = None,
+                   roots: list[Path] | None = None,
+                   now: float | None = None,
+                   providers: list | None = None) -> Snapshot:
+    """Read everything and reduce it to conversations.
+
+    Processes are grouped by `sessionId`: measured live, 17 processes were 14
+    conversations. The conversation is the unit JARVIS names and counts.
+
+    Every session provider's conversations together (session_provider.py);
+    Claude Code's alone, from `entries`/`roots`, when none are given.
+    """
+    import time as _time
+    at = now if now is not None else _time.time()
+    if providers is None:
+        providers = [ClaudeSessions(roots, entries)]
+    sessions: list[SessionState] = []
+    for provider in providers:
+        try:
+            sessions.extend(provider.discover(at))
+        except Exception as e:
+            # One provider that cannot be read must not hide the others.
+            import logging
+            logging.getLogger("jarvis.sessions").warning(
+                "sessions: %s could not be read: %s", provider.name, e)
+
     _assign_voice_names(sessions)
     _mark_primary(sessions)
     sessions.sort(key=lambda s: (s.project, s.voice_name))
@@ -1148,6 +1256,25 @@ def build_snapshot(entries: list[RosterEntry] | None = None,
 GONE_RETENTION_SEC = 600.0
 # Work shorter than this is a flicker, not a job worth announcing.
 MIN_WORK_SEC = 30.0
+# A message the provider accepted but that is not in the session's transcript
+# this long after it was sent never reached the conversation: it is failed,
+# and he is told the session hasn't picked it up. Both providers write the
+# message into the transcript within a second of taking it when the session
+# is idle, and when it is busy (Claude Code queues it, Codex holds it for the
+# next turn) the queueing itself is written at once; a poll takes about 3.3
+# seconds. A minute is many polls past any of that.
+DELIVERY_TIMEOUT_SEC = 60.0
+# A message he was told was not picked up is still looked for: a session can
+# take it late, most often once he approves a permission prompt it was held
+# behind, and then it is delivered and answered like any other. No message
+# is looked for longer than this after it was sent; then it is failed, so
+# what each poll looks for stays bounded.
+MESSAGE_WATCH_SEC = 24 * 3600.0
+# A session that has just answered a message is not also announced as
+# finished or as having stopped on a question for this long: the answer is
+# the one announcement. The roster's idle and the transcript's end of turn
+# can land on different polls.
+ANSWER_QUIET_SEC = 15.0
 
 
 class SessionWatcher:
@@ -1158,17 +1285,28 @@ class SessionWatcher:
     were already open.
     """
 
-    def __init__(self, roots: list[Path] | None = None, interval: float = 1.0):
+    def __init__(self, roots: list[Path] | None = None, interval: float = 1.0,
+                 providers: list | None = None, messages=None):
         self.roots = roots
         self.interval = interval
+        # Every session provider watched (session_provider.py); Claude Code's
+        # alone, under `roots`, when none are given.
+        self.providers = providers if providers is not None else [ClaudeSessions(roots)]
         self.snapshot = Snapshot()
         self._previous: dict[str, str] = {}          # session_id -> state
         self._working_since: dict[str, float] = {}
         self._gone_at: dict[str, float] = {}
         self._gone_cache: dict[str, SessionState] = {}
         self._subscribers: list = []
-        # Sessions JARVIS has sent a message to and is waiting to hear from.
-        self._awaiting_reply: set[str] = set()
+        # Where the messages JARVIS sends are recorded (run_store: its
+        # `open_messages` and `update_message`). Each poll looks for every
+        # open one in its session's transcript (the provider's `track`) and
+        # publishes `delivered`, `undelivered` and `answered`. None: no
+        # messages are followed. They are read from the store every poll, so
+        # a restarted watcher picks up where the last one stopped.
+        self.messages = messages
+        # session id -> when one of its messages was last answered.
+        self._answered_at: dict[str, float] = {}
         self._started = False
         self._task = None
         # Captured by start() so _publish() can tell whether it is running on
@@ -1181,15 +1319,8 @@ class SessionWatcher:
     def on_event(self, callback) -> None:
         self._subscribers.append(callback)
 
-    def expect_reply(self, session_id: str) -> None:
-        """Publish `replied`, once, the next time this session stops working.
-
-        Not `finished`: that needs MIN_WORK_SEC of work, and a short answer to
-        a question JARVIS relayed is exactly what must not go unannounced.
-        """
-        self._awaiting_reply.add(session_id)
-
-    def _publish(self, kind: str, session: SessionState, at: float) -> None:
+    def _publish(self, kind: str, session: SessionState, at: float,
+                 message=None) -> None:
         """Notify every subscriber, always on the event-loop thread.
 
         Subscribers (e.g. server._on_session_event) commonly call
@@ -1206,6 +1337,8 @@ class SessionWatcher:
         """
         import threading
         event = {"kind": kind, "at": at, "session": session_to_dict(session)}
+        if message is not None:
+            event["message"] = message_to_dict(message)
 
         def _invoke(cb) -> None:
             try:
@@ -1226,7 +1359,7 @@ class SessionWatcher:
     def poll_once(self, now: float | None = None) -> Snapshot:
         import time as _time
         now = now if now is not None else _time.time()
-        snap = build_snapshot(roots=self.roots, now=now)
+        snap = build_snapshot(now=now, providers=self.providers)
 
         # Carry recently-dead conversations forward so a completion can still
         # be announced after the process has exited.
@@ -1273,20 +1406,26 @@ class SessionWatcher:
         self.snapshot = snap                      # snapshot BEFORE notifying
         self._started = True
 
+        # Messages before states: a session answering one is announced for
+        # the answer, in place of the `needs_you` or `finished` it would
+        # otherwise have earned.
+        awaiting = self._track_messages(snap, now)
+
         for s in snap.sessions:
             was = self._previous.get(s.session_id)
             if s.state == WORKING and was != WORKING:
                 self._working_since[s.session_id] = now
 
-            if (was == WORKING and s.state != WORKING
-                    and s.session_id in self._awaiting_reply):
-                # One announcement for the answer, in place of the
-                # `needs_you` or `finished` it would otherwise have earned.
-                self._awaiting_reply.discard(s.session_id)
-                self._publish("replied", s, now)
-            elif not first_poll and s.announceable:
-                if s.state == NEEDS_YOU and was != NEEDS_YOU:
+            answering = (s.session_id in awaiting
+                         or now - self._answered_at.get(s.session_id, float("-inf"))
+                         < ANSWER_QUIET_SEC)
+            if not first_poll and s.announceable:
+                # A permission prompt or dialog mid-turn is still announced:
+                # the answer cannot come until he deals with it.
+                if s.state == NEEDS_YOU and was != NEEDS_YOU and not (answering and not s.needs):
                     self._publish("needs_you", s, now)
+                elif answering:
+                    pass
                 elif was == WORKING and s.state in (IDLE, GONE, UNKNOWN):
                     # A session that exits while its roster entry is still
                     # being torn down can land on `unknown` (no status field
@@ -1299,6 +1438,89 @@ class SessionWatcher:
             self._previous[s.session_id] = s.state
 
         return snap
+
+    def _track_messages(self, snap: Snapshot, now: float) -> set[str]:
+        """Follow every open message in its session's transcript, record what
+        has changed (the store first, then the event), and return the
+        sessions still working on one. Never raises: a store or transcript
+        that cannot be read now is read again next poll."""
+        import logging
+        log = logging.getLogger(__name__)
+        if self.messages is None:
+            return set()
+        try:
+            open_now = self.messages.open_messages()
+        except Exception:
+            log.warning("open messages could not be read", exc_info=True)
+            return set()
+        awaiting: set[str] = set()
+        for m in open_now:
+            try:
+                kind, session, m = self._follow(m, snap, now)
+            except Exception:
+                log.warning("message %s could not be followed", m.id, exc_info=True)
+                awaiting.add(m.session_id)
+                continue
+            # In its conversation and not yet answered. Merely sent is not
+            # enough: one that never arrives must not silence the session.
+            if m.is_open and str(m.status) not in ("sent", "undelivered"):
+                awaiting.add(m.session_id)
+            if kind is not None:
+                if kind == "answered":
+                    self._answered_at[m.session_id] = now
+                self._publish(kind, session, now, message=m)
+        return awaiting
+
+    def _follow(self, m, snap: Snapshot, now: float):
+        """(the event to publish or None, the session, the message as now
+        recorded) for one open message."""
+        from session_provider import for_session
+        session = snap.by_id(m.session_id)
+        provider = None
+        if session is not None:
+            provider = next((p for p in self.providers if p.name == m.provider), None) \
+                or for_session(session, self.providers)
+        t = provider.track(session, m) if provider is not None else Tracking()
+
+        fields: dict = {}
+        if t.delivered_at is not None and m.delivered_at is None:
+            fields["delivered_at"] = t.delivered_at
+        if t.started_at is not None and m.started_at is None:
+            fields["started_at"] = t.started_at
+        kind = None
+        unseen = m.status in ("sent", "undelivered")
+        if t.answered_at is not None:
+            fields.update(status="answered", answered_at=t.answered_at, reply=t.reply)
+            kind = "answered"
+        elif t.started_at is not None:
+            if m.status != "working":
+                fields["status"] = "working"
+                kind = "delivered" if unseen else None
+        elif t.delivered_at is not None:
+            if unseen:
+                fields["status"] = "delivered"
+                kind = "delivered"
+        elif now - (m.sent_at or m.staged_at) > MESSAGE_WATCH_SEC:
+            fields.update(status="failed", failure=(
+                "not delivered within a day" if unseen else "not answered within a day"))
+        elif m.status == "sent" and now - (m.sent_at or m.staged_at) > DELIVERY_TIMEOUT_SEC:
+            fields["status"] = "undelivered"
+            kind = "undelivered"
+        if not fields:
+            return None, session, m
+        self.messages.update_message(m.id, **fields)      # the store BEFORE the event
+        m = replace(m, **fields)
+        if session is None:
+            session = SessionState(session_id=m.session_id, cwd="", project=m.project,
+                                   state=GONE, voice_name=m.agent_name, provider=m.provider)
+        return kind, session, m
+
+    @property
+    def polled(self) -> bool:
+        """Whether the first poll has finished. Until it has, `snapshot` is
+        empty because nothing has been looked at yet, not because nothing is
+        running."""
+        return self._started
 
     async def start(self) -> None:
         import asyncio
@@ -1346,6 +1568,17 @@ def agent_name(s: SessionState) -> str:
     control and JARVIS's agent tools all read it from here). Today it is the
     voice name `_assign_voice_names` gives the session."""
     return s.voice_name
+
+
+def message_to_dict(m) -> dict:
+    """A message (run_store.Message) as an event carries it."""
+    return {"id": m.id, "session_id": m.session_id, "provider": m.provider,
+            "agent_name": m.agent_name, "project": m.project,
+            "capture_id": m.capture_id, "text": m.text, "body": m.body,
+            "status": str(m.status), "staged_at": m.staged_at,
+            "sent_at": m.sent_at, "delivered_at": m.delivered_at,
+            "started_at": m.started_at, "answered_at": m.answered_at,
+            "reply": m.reply, "failure": m.failure}
 
 
 def session_to_dict(s: SessionState) -> dict:

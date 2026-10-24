@@ -646,7 +646,7 @@ def test_every_generated_voice_name_resolves_to_exactly_one_session(tmp_path, al
     assert len(voice_names) == len(set(voice_names)), "voice names must be unique"
 
     for s in snap.sessions:
-        got = snap.resolve(s.voice_name)
+        got = _resolve(snap, s.voice_name)
         assert [x.session_id for x in got] == [s.session_id], \
             f"{s.voice_name!r} must resolve to exactly {s.session_id!r}, got {got}"
 
@@ -665,6 +665,14 @@ def test_a_voice_name_never_contains_the_roster_suffix(tmp_path, all_alive):
 
 # --- resolve -----------------------------------------------------------------
 
+def _resolve(snap, reference, last_mentioned=None):
+    """What the user said, matched against this snapshot's conversations the
+    one way JARVIS matches names: the agent directory."""
+    import agent_directory
+    agent_directory.connect(lambda: snap, rows=lambda: [], needs=lambda: {})
+    return agent_directory.find_sessions(reference, last_mentioned=last_mentioned)
+
+
 def _two_hammers(tmp_path):
     """Two hammer conversations in one folder plus a lone chitauri. Requires the
     `all_alive` fixture: the pids here are placeholders, not real processes."""
@@ -682,31 +690,31 @@ def _two_hammers(tmp_path):
 
 def test_resolve_returns_one_match_for_an_unambiguous_name(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("chitauri")] == ["c1"]
-    assert [s.session_id for s in snap.resolve("the chitauri one")] == ["c1"]
+    assert [s.session_id for s in _resolve(snap, "chitauri")] == ["c1"]
+    assert [s.session_id for s in _resolve(snap, "the chitauri one")] == ["c1"]
 
 
 def test_resolve_returns_every_candidate_when_ambiguous_it_never_guesses(tmp_path, all_alive):
     """JARVIS must ask, not pick .first — getting this wrong steers the wrong
     session, which is unrecoverable."""
     snap = _two_hammers(tmp_path)
-    matches = snap.resolve("hammer")
+    matches = _resolve(snap, "hammer")
     assert len(matches) == 2
     assert {s.session_id for s in matches} == {"h1", "h2"}
 
 
 def test_resolve_disambiguates_on_the_voice_name(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("the newer hammer")] == ["h2"]
+    assert [s.session_id for s in _resolve(snap, "the newer hammer")] == ["h2"]
 
 
 def test_that_one_resolves_to_the_last_mentioned_session(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("that one", last_mentioned="h1")] == ["h1"]
+    assert [s.session_id for s in _resolve(snap, "that one", last_mentioned="h1")] == ["h1"]
 
 
 def test_resolve_of_an_unknown_name_returns_nothing(tmp_path, all_alive):
-    assert _two_hammers(tmp_path).resolve("nonexistent") == []
+    assert _resolve(_two_hammers(tmp_path), "nonexistent") == []
 
 
 def test_resolve_prefers_exact_project_match_over_a_substring_sibling(tmp_path, all_alive):
@@ -729,8 +737,8 @@ def test_resolve_prefers_exact_project_match_over_a_substring_sibling(tmp_path, 
 
     snap = sw.build_snapshot(roots=[root])
 
-    assert {s.session_id for s in snap.resolve("hammer")} == {"h1", "h2"}
-    assert [s.session_id for s in snap.resolve("hammer-private")] == ["hp"]
+    assert {s.session_id for s in _resolve(snap, "hammer")} == {"h1", "h2"}
+    assert [s.session_id for s in _resolve(snap, "hammer-private")] == ["hp"]
 
 
 def test_resolve_finds_a_worktree_session_by_its_real_repo_name(tmp_path, all_alive):
@@ -746,7 +754,7 @@ def test_resolve_finds_a_worktree_session_by_its_real_repo_name(tmp_path, all_al
     snap = sw.build_snapshot(roots=[root])
 
     assert snap.sessions[0].project == "jarvis"
-    assert [s.session_id for s in snap.resolve("jarvis")] == ["s"]
+    assert [s.session_id for s in _resolve(snap, "jarvis")] == ["s"]
 
 
 def test_by_project_groups_conversations_the_way_a_person_talks(tmp_path, all_alive):
@@ -781,7 +789,7 @@ def test_resolve_prefers_the_one_real_conversation_over_two_fresh_siblings(tmp_p
     assert snap.by_id("fresh1").state == sw.FRESH
     assert snap.by_id("fresh2").state == sw.FRESH
 
-    assert [s.session_id for s in snap.resolve("chitauri")] == ["real"]
+    assert [s.session_id for s in _resolve(snap, "chitauri")] == ["real"]
 
 
 def test_resolve_still_asks_when_ambiguous_among_real_conversations_plus_a_fresh_one(tmp_path, all_alive):
@@ -802,7 +810,7 @@ def test_resolve_still_asks_when_ambiguous_among_real_conversations_plus_a_fresh
     snap = sw.build_snapshot(roots=[root])
     assert snap.by_id("h3fresh").state == sw.FRESH
 
-    matches = snap.resolve("hammer")
+    matches = _resolve(snap, "hammer")
     assert {s.session_id for s in matches} == {"h1", "h2"}
 
 
@@ -817,7 +825,7 @@ def test_resolve_returns_all_fresh_matches_when_nothing_real_matches(tmp_path, a
                  name="chitauri-3")
 
     snap = sw.build_snapshot(roots=[root])
-    assert {s.session_id for s in snap.resolve("chitauri")} == {"fresh1", "fresh2"}
+    assert {s.session_id for s in _resolve(snap, "chitauri")} == {"fresh1", "fresh2"}
 
 
 # --- needing_you orders by recency, not age ------------------------------------
@@ -896,7 +904,7 @@ def test_a_qualified_answer_picks_one(tmp_path, all_alive):
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    got = snap.resolve("newer webapp-fresh")
+    got = _resolve(snap, "newer webapp-fresh")
 
     assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
 
@@ -905,7 +913,7 @@ def test_a_qualified_answer_with_filler_words_still_picks_one(tmp_path, all_aliv
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    got = snap.resolve("let's go with the newer one in webapp-fresh")
+    got = _resolve(snap, "let's go with the newer one in webapp-fresh")
 
     assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
 
@@ -982,7 +990,7 @@ def test_an_unqualified_name_still_asks(tmp_path, all_alive):
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    assert len(snap.resolve("webapp-fresh")) == 2
+    assert len(_resolve(snap, "webapp-fresh")) == 2
 
 
 # ── one bad byte must not freeze the whole roster ──────────────────────────

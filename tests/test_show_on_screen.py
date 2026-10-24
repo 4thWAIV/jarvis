@@ -38,6 +38,7 @@ def test_a_display_is_sent_to_the_page_and_never_spoken(server):
     assert server.tool_show_on_screen(SOURCES) == "Shown on screen."
     (msg,) = server._sent
     assert msg["type"] == "display" and msg["kind"] == "sources" and msg["title"] == "Sources"
+    assert msg["utt"] is None, "outside a turn it goes with no reply"
     assert [i["host"] for i in msg["items"]] == ["www.metoffice.gov.uk", "", "www.bbc.co.uk"]
     assert msg["items"][1]["url"] == "", "only web addresses are kept as links"
     assert msg["items"][2]["note"] == "five-day"
@@ -55,12 +56,20 @@ def test_a_bad_display_is_refused_with_the_reason(server, args, reason):
     assert server._sent == []
 
 
-def test_the_last_twenty_are_kept_for_a_page_that_reconnects(server):
-    for n in range(25):
-        server.tool_show_on_screen({"kind": "list", "title": f"t{n}", "items": [{"label": "a"}]})
+def test_a_display_made_in_a_turn_names_that_turn_s_reply(server, monkeypatch):
+    """The page puts it after that reply's words, which may play after it
+    arrives."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(server, "_turn_utt", SimpleNamespace(id=42))
+    server.tool_show_on_screen({"kind": "links", "title": "Links", "items": [{"label": "a"}]})
+    assert server._sent[-1]["utt"] == 42
+
+
+def test_nothing_shown_is_kept_on_the_server(server):
+    """A shown item lives in the page's conversation, which a reload starts
+    afresh, so the server keeps none to send again."""
     from fastapi.testclient import TestClient
-    shown = TestClient(server.app).get("/api/displays").json()["displays"]
-    assert [d["title"] for d in shown] == [f"t{n}" for n in range(5, 25)]
+    assert TestClient(server.app).get("/api/displays").status_code == 404
 
 
 def test_the_brain_is_offered_the_tool_and_it_is_neither_acting_nor_tainting(server):
@@ -103,6 +112,44 @@ def test_a_reply_that_only_mentions_sources_is_spoken_whole(server):
     assert _run(server, [text]) == (text, [])
     assert _run(server, ["Sou", "rce of the Nile is far, sir."]) == (
         "Source of the Nile is far, sir.", [])
+
+
+def test_links_ending_a_reply_without_a_header_are_not_spoken_but_shown(server):
+    """Found live: the OpenAI brain ends a web answer with its sources as
+    links and no header, and their labels were read out and captioned."""
+    reply = ("We can move voice-to-text local with Whisper.cpp, sir. "
+             "[Whisper.cpp](https://github.com/ggml-org/whisper.cpp) "
+             "[Coqui TTS](https://github.com/coqui-ai/TTS)")
+    for deltas in ([reply], [reply[i:i + 7] for i in range(0, len(reply), 7)]):
+        spoken, shown = _run(server, deltas)
+        assert spoken.strip() == "We can move voice-to-text local with Whisper.cpp, sir."
+        (display,) = shown
+        assert display["kind"] == "sources"
+        assert [(i["label"], i["url"]) for i in display["items"]] == [
+            ("Whisper.cpp", "https://github.com/ggml-org/whisper.cpp"),
+            ("Coqui TTS", "https://github.com/coqui-ai/TTS")]
+
+
+def test_a_cited_site_in_brackets_and_a_bare_address_are_not_spoken(server):
+    spoken, shown = _run(server, ["It rained, sir ([BBC](https://www.bbc.co.uk/weather)",
+                                  "). More at https://www.metoffice.gov.uk/ today."])
+    assert spoken == "It rained, sir. More at  today."
+    assert [i["url"] for i in shown[0]["items"]] == [
+        "https://www.bbc.co.uk/weather", "https://www.metoffice.gov.uk/"]
+
+
+def test_square_brackets_that_are_not_a_link_are_spoken(server):
+    assert _run(server, ["Tests pass [all of them], sir."]) == (
+        "Tests pass [all of them], sir.", [])
+    assert _run(server, ["A list [a", "] and more, sir."]) == ("A list [a] and more, sir.", [])
+
+
+def test_inline_links_and_a_sources_block_make_one_display(server):
+    spoken, shown = _run(server, ["Done, sir. [A](https://a.example/)\nSources:\n",
+                                  "- [B](https://b.example/)\n"])
+    assert spoken.strip() == "Done, sir."
+    (display,) = shown
+    assert [i["label"] for i in display["items"]] == ["A", "B"]
 
 
 def test_a_bare_web_address_is_never_spoken(server):

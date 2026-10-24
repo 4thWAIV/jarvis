@@ -1,0 +1,373 @@
+"""
+codex_sessions.py — OpenAI's Codex as a session provider (session_provider.py).
+
+The Codex sessions the user runs in his terminals: found from the process
+list, matched to their threads in Codex's own state database, described from
+the end of each thread's transcript, and sent messages through Codex's own
+queue (`codex queue`), which a running session picks up.
+
+Everything here only reads Codex's files, except `send`, which asks Codex to
+queue a message. It reads the user's Codex home (`~/.codex`, or
+`JARVIS_CODEX_SESSIONS_HOME`), never JARVIS's own brain home
+(`data_paths.codex_home()`): the OpenAI brain is not one of his sessions.
+
+Measured against Codex CLI 0.154 and the 0.163 daemon; see
+.agents/in-progress/session-providers-design.md for what each part rests on
+and Codex's limits (no record of a pending approval, so no "needs you" for
+one, and no keystroke answers).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Optional
+
+import session_steer
+from session_provider import Tracking
+from session_watch import (IDLE, NEEDS_YOU, WORKING, FRESH, SessionState,
+                           _looks_like_a_question, objects_since, project_name)
+
+log = logging.getLogger("jarvis.sessions")
+
+NAME = "openai"
+TAIL_BYTES = 256 * 1024
+MAX_TEXT = 4000
+RECENT_TOOLS = 5
+# A new session's thread is created after its process starts; allow for the
+# clocks and the first write.
+NEW_THREAD_GRACE_SEC = 60.0
+QUEUE_TIMEOUT_SEC = 30.0
+
+# Subcommands that run the terminal UI: a session the user is in. Anything
+# else (app-server, exec, mcp, queue, ...) is Codex doing something else.
+_UI_SUBCOMMANDS = {"resume", "fork"}
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# Codex puts its own context into the conversation as user messages.
+_INJECTED = re.compile(r"^\s*(<[a-z_]+>|# [A-Za-z.]+ instructions for )")
+
+
+def codex_home() -> Path:
+    raw = os.getenv("JARVIS_CODEX_SESSIONS_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".codex"
+
+
+@dataclass
+class CodexProcess:
+    pid: int
+    started: float                  # epoch seconds
+    args: list[str]
+    cwd: str
+
+    @property
+    def thread_hint(self) -> Optional[str]:
+        """The thread a `codex resume <id>` names, if it names one."""
+        for a in self.args[1:]:
+            if _UUID.fullmatch(a):
+                return a
+        return None
+
+
+def _etime_seconds(text: str) -> Optional[float]:
+    """ps's elapsed time, `[[dd-]hh:]mm:ss`, in seconds."""
+    days, _, rest = text.strip().rpartition("-")
+    parts = [int(p) for p in rest.split(":") if p.isdigit()]
+    if not parts:
+        return None
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    h, m, sec = parts[-3:]
+    return (int(days) if days.isdigit() else 0) * 86400 + h * 3600 + m * 60 + sec
+
+
+def _cwd_of(pid: int) -> Optional[str]:
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return next((line[1:] for line in out.splitlines() if line.startswith("n")), None)
+
+
+def list_processes() -> list[CodexProcess]:
+    """The Codex terminal sessions running now."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,etime=,args="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    now = time.time()
+    found = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit():
+            continue
+        args = parts[2].split()
+        # The native binary, not the node wrapper that starts it.
+        if Path(args[0]).name != "codex":
+            continue
+        sub = next((a for a in args[1:] if not a.startswith("-")), None)
+        if sub is not None and sub not in _UI_SUBCOMMANDS and not _UUID.fullmatch(sub):
+            continue
+        elapsed = _etime_seconds(parts[1])
+        cwd = _cwd_of(int(parts[0]))
+        if elapsed is None or not cwd:
+            continue
+        found.append(CodexProcess(pid=int(parts[0]), started=now - elapsed, args=args, cwd=cwd))
+    return found
+
+
+def _threads(home: Path) -> dict[str, dict]:
+    """Codex's threads, by id, read-only."""
+    path = home / "state_5.sqlite"
+    if not path.exists():
+        return {}
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "select id, rollout_path, cwd, title, git_branch, created_at_ms, updated_at_ms "
+            "from threads where archived = 0").fetchall()
+    finally:
+        con.close()
+    return {r["id"]: dict(r) for r in rows}
+
+
+def _thread_for(proc: CodexProcess, threads: dict[str, dict]) -> Optional[dict]:
+    hint = proc.thread_hint
+    if hint and hint in threads:
+        return threads[hint]
+    here = [t for t in threads.values() if t["cwd"] == proc.cwd]
+    if not here:
+        return None
+    # A new session: the first thread made in its folder after it started.
+    newer = [t for t in here if (t["created_at_ms"] or 0) / 1000 >= proc.started - NEW_THREAD_GRACE_SEC]
+    if newer and hint is None and "--last" not in proc.args:
+        return min(newer, key=lambda t: t["created_at_ms"] or 0)
+    # `codex resume --last`, or a picker choice: the folder's latest.
+    return max(here, key=lambda t: t["updated_at_ms"] or 0)
+
+
+def _tail(path: str) -> list[dict]:
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - TAIL_BYTES))
+            raw = fh.read()
+    except OSError:
+        return []
+    lines = raw.split(b"\n")
+    if size > TAIL_BYTES:
+        lines = lines[1:]                     # the first is cut
+    out = []
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def _message(obj: dict) -> Optional[tuple[str, str]]:
+    """(role, text) of a transcript line that is something said, else None."""
+    if obj.get("type") != "response_item":
+        return None
+    p = obj.get("payload") or {}
+    if p.get("type") != "message" or p.get("role") not in ("user", "assistant"):
+        return None
+    text = "\n".join(c["text"] for c in p.get("content") or []
+                     if isinstance(c, dict) and isinstance(c.get("text"), str)).strip()
+    if not text or (p["role"] == "user" and _INJECTED.match(text)):
+        return None
+    return p["role"], text
+
+
+def _when(obj: dict) -> Optional[float]:
+    stamp = obj.get("timestamp")
+    if not isinstance(stamp, str):
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+@dataclass
+class Recap:
+    state: str
+    since: Optional[float]
+    last_prompt: Optional[str]
+    last_text: Optional[str]
+    recent_tools: list[str]
+
+
+def recap(objs: list[dict]) -> Recap:
+    """What the end of a transcript says: working or not, and what was said."""
+    state, since = FRESH, None
+    last_prompt = last_text = None
+    tools: list[str] = []
+    for obj in objs:
+        p = obj.get("payload") or {}
+        if obj.get("type") == "event_msg":
+            kind = p.get("type")
+            if kind == "task_started":
+                state, since = WORKING, _when(obj)
+            elif kind in ("task_complete", "turn_aborted"):
+                state, since = IDLE, _when(obj)
+        said = _message(obj)
+        if said:
+            if said[0] == "user":
+                last_prompt = said[1][:MAX_TEXT]
+            else:
+                last_text = said[1][:MAX_TEXT]
+            if state == FRESH:
+                state = IDLE
+        if obj.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
+            tools.append(str(p.get("name") or ""))
+    if state == IDLE and _looks_like_a_question(last_text):
+        state = NEEDS_YOU
+    return Recap(state, since, last_prompt, last_text, [t for t in tools if t][-RECENT_TOOLS:])
+
+
+def track_from(objs: list[dict], body: str, since: float) -> Tracking:
+    """Where the message whose words are `body`, staged at `since`, stands
+    in these Codex transcript lines.
+
+    Measured on Codex CLI 0.163: a message sent through `codex queue` is
+    taken as a turn of its own, never into one under way (`task_started`
+    with `turn_trigger: "queue"`), and the user `response_item` carrying it
+    is written as that turn begins — so it is delivered and started at once.
+    The turn ends at `task_complete` (or `turn_aborted`); its answer is what
+    it said after its last tool call."""
+    if not body:
+        return Tracking()
+    clock = None
+    delivered = answered = None
+    parts: list[str] = []
+    for obj in objs:
+        ts = _when(obj)
+        if ts is not None:
+            clock = ts if clock is None else max(clock, ts)
+        p = obj.get("payload") or {}
+        if delivered is None:
+            said = _message(obj)
+            if (said and said[0] == "user" and body in said[1]
+                    and (ts is None or ts >= since)):
+                delivered = clock if clock is not None else since
+            continue
+        if obj.get("type") == "event_msg" and p.get("type") in ("task_complete", "turn_aborted"):
+            answered = clock
+            break
+        if obj.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
+            parts = []                 # what came before a tool call was not the answer
+            continue
+        said = _message(obj)
+        if said and said[0] == "assistant":
+            parts.append(said[1])
+    reply = ("\n\n".join(parts) or None) if answered is not None else None
+    return Tracking(delivered_at=delivered, started_at=delivered,
+                    answered_at=answered, reply=reply)
+
+
+class CodexSessions:
+    """Codex as a session provider."""
+
+    name = NAME
+    can_answer_dialogs = False
+
+    def __init__(self, home: Optional[Path] = None,
+                 processes: Callable[[], list[CodexProcess]] = list_processes,
+                 codex: Optional[str] = None):
+        self._home = home
+        self._processes = processes
+        self._codex = codex
+
+    @property
+    def home(self) -> Path:
+        return self._home or codex_home()
+
+    def discover(self, now: float) -> list[SessionState]:
+        procs = self._processes()
+        if not procs:
+            return []
+        threads = _threads(self.home)
+        grouped: dict[str, list[CodexProcess]] = {}
+        for proc in procs:
+            thread = _thread_for(proc, threads)
+            if thread:
+                grouped.setdefault(thread["id"], []).append(proc)
+        sessions = []
+        for tid, group in grouped.items():
+            thread = threads[tid]
+            first = min(group, key=lambda p: p.started)
+            r = recap(_tail(thread["rollout_path"])) if thread.get("rollout_path") else \
+                Recap(FRESH, None, None, None, [])
+            sessions.append(SessionState(
+                session_id=tid,
+                cwd=thread["cwd"],
+                project=project_name(thread["cwd"]),
+                state=r.state,
+                pids=[p.pid for p in group],
+                primary_pid=first.pid,
+                roster_name="",
+                title=(thread.get("title") or "").split("\n")[0][:120] or None,
+                last_prompt=r.last_prompt,
+                last_text=r.last_text,
+                recent_tools=r.recent_tools,
+                started=first.started,
+                since=r.since or (thread.get("updated_at_ms") or 0) / 1000 or first.started,
+                origin="terminal",
+                provider=NAME,
+                # Codex's queue always takes a message; the session picks it
+                # up once it has loaded its conversation.
+                steerable=True,
+            ))
+        return sessions
+
+    def last_reply(self, session: SessionState) -> Optional[str]:
+        thread = _threads(self.home).get(session.session_id)
+        if not thread or not thread.get("rollout_path"):
+            return None
+        for obj in reversed(_tail(thread["rollout_path"])):
+            said = _message(obj)
+            if said and said[0] == "assistant":
+                return said[1]
+        return None
+
+    def track(self, session: SessionState, message) -> Tracking:
+        thread = _threads(self.home).get(session.session_id)
+        if not thread or not thread.get("rollout_path"):
+            return Tracking()
+        return track_from(objects_since(Path(thread["rollout_path"]), message.staged_at),
+                          message.body, message.staged_at)
+
+    def send(self, session: SessionState, text: str) -> str:
+        if not text or not text.strip():
+            return session_steer.REFUSED
+        codex = self._codex or shutil.which("codex")
+        if not codex:
+            return session_steer.FAILED
+        env = dict(os.environ)
+        env["CODEX_HOME"] = str(self.home)
+        try:
+            done = subprocess.run([*codex.split(), "queue", "--thread", session.session_id,
+                                   "--message", text.strip()],
+                                  capture_output=True, text=True, timeout=QUEUE_TIMEOUT_SEC, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning("codex queue failed: %s", type(e).__name__)
+            return session_steer.FAILED
+        if done.returncode != 0:
+            log.warning("codex queue exited %s", done.returncode)
+            return session_steer.FAILED
+        return session_steer.SENT

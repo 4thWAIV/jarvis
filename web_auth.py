@@ -23,8 +23,13 @@ It sends no `Origin` at all, but it can read the tool token out of a 0600
 file in the data directory, which only this user can open. That token is
 what admits it.
 
+**An agent the user has let do one kind of thing.** It carries an access
+key (access_keys.py) instead of the tool token, and is admitted only to the
+routes the key's categories cover.
+
 So: a request is authorized if its `Origin` is one JARVIS actually serves
-from, or if it carries the tool token. A WebSocket with no `Origin` is not a
+from, if it carries the tool token, or if it carries an access key that
+covers it. A WebSocket with no `Origin` is not a
 browser; it is refused unless it has the token, because "no Origin" is
 exactly what the LAN exploit looks like, and refusing it outright would
 break the local clients that legitimately have no origin to send.
@@ -67,6 +72,7 @@ from urllib.parse import urlsplit
 
 from starlette.responses import JSONResponse
 
+import access_keys
 import data_paths
 
 log = logging.getLogger("jarvis.auth")
@@ -467,9 +473,13 @@ def token_matches(supplied: Optional[str]) -> bool:
         return False
 
 
-def request_authorized(origin: Optional[str],
-                       authorization: Optional[str]) -> bool:
-    return origin_allowed(origin) or token_matches(bearer(authorization))
+def request_authorized(origin: Optional[str], authorization: Optional[str],
+                       method: str, path: str) -> bool:
+    """`method` is the HTTP method, or access_keys.WEBSOCKET for a handshake."""
+    if origin_allowed(origin):
+        return True
+    supplied = bearer(authorization)
+    return token_matches(supplied) or access_keys.allows(supplied, method, path)
 
 
 def _header(scope: dict, name: bytes) -> Optional[str]:
@@ -480,8 +490,11 @@ def _header(scope: dict, name: bytes) -> Optional[str]:
 
 
 def scope_authorized(scope: dict) -> bool:
+    method = (access_keys.WEBSOCKET if scope.get("type") == "websocket"
+              else scope.get("method", "").upper())
     return request_authorized(_header(scope, b"origin"),
-                              _header(scope, b"authorization"))
+                              _header(scope, b"authorization"),
+                              method, scope.get("path", ""))
 
 
 class OriginGuard:
@@ -532,7 +545,8 @@ class OriginGuard:
                     status_code=403,
                     content={"error": "Refused: this request did not come "
                                       "from a page JARVIS serves, and "
-                                      "carried no tool token."})
+                                      "carried no tool token or access "
+                                      "key that covers it."})
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)

@@ -518,6 +518,8 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     monkeypatch.setattr(preflight.sys, "platform", "linux")  # accessibility skipped -> fast warn
     monkeypatch.delenv("FISH_API_KEY", raising=False)
     monkeypatch.setattr(preflight, "_settings_path", lambda: preflight.Path("/nonexistent/settings.json"))
+    import session_skill
+    monkeypatch.setattr(session_skill, "status", lambda: {})  # never the real ~/.claude
 
     import claude_provider
     results = await preflight.run_checks(
@@ -526,6 +528,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",
         "fish_api_key", "anthropic_key_leftover", "cross_session_inbound",
+        "session_skill",
     }
 
 

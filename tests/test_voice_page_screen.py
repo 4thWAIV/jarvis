@@ -1,5 +1,6 @@
-"""What is shown and never said, on the page: a `display` lands in the Screen
-tab, which lights up without switching; an open capture shows in the capture
+"""What is shown and never said, on the page: a `display` lands in the
+conversation as a collapsed yellow Sources item after the words it goes with,
+and the right panel holds Diagnostics alone; an open capture shows in the capture
 box above the captions (the Main view), white while captured, amber once it is
 a message for an agent and while transmitting, the line being read lit while
 it is read back, and gone once sent.
@@ -25,15 +26,12 @@ DISPLAY = {"type": "display", "id": 7, "kind": "sources", "title": "Sources", "i
     {"label": "a plain line", "url": "", "host": "", "note": "no link"}]}
 
 
-async def _open(p, url, messages, displays=None, capture=None):
+async def _open(p, url, messages, capture=None, view="main"):
     try:
         browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
-    await page.route("**/api/displays", lambda route: route.fulfill(
-        status=200, content_type="application/json",
-        body=json.dumps({"displays": displays or []})))
     await page.route("**/api/capture", lambda route: route.fulfill(
         status=200, content_type="application/json",
         body=json.dumps({"captures": [capture] if capture else []})))
@@ -47,40 +45,56 @@ async def _open(p, url, messages, displays=None, capture=None):
         asyncio.ensure_future(run())
     await page.route_web_socket("**/ws/voice", voice)
     # The capture boxes above the captions are the Main view's.
-    await page.goto(url + "?view=main")
+    await page.goto(url + f"?view={view}")
     return browser, page
 
 
+SPOKEN = {"type": "audio", "utt": 1, "idx": 0, "text": "It will rain tomorrow, sir.",
+          "kind": "reply"}
+
+
 @pytest.mark.asyncio
-async def test_a_display_lands_in_the_screen_tab_which_lights_up_without_switching(page_url):
+async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_url):
+    clip = _silence_wav(0.3)
     async with async_api.async_playwright() as p:
-        browser, page = await _open(p, page_url, [DISPLAY])
-        await page.wait_for_selector(".right-tab.lit", timeout=10000)
-        assert await page.locator(".right-tab.selected").get_attribute("title") == "Diagnostics"
-        await page.click(".right-tab[title='Screen']")
-        await page.wait_for_selector(".screen-item")
+        browser, page = await _open(p, page_url, [
+            # The display names its reply and arrives before the reply's
+            # words are played; it still goes after them.
+            {"type": "status", "state": "speaking"}, {**DISPLAY, "utt": 1},
+            {**SPOKEN, "data": clip},
+            {"type": "status", "state": "idle"}], view="conversation")
+        await page.wait_for_selector(".conversation-history .sources-chip", timeout=10000)
+        await page.wait_for_function(
+            "document.querySelector('.conversation-history').textContent.includes('rain tomorrow')",
+            timeout=10000)
+        head = await page.evaluate("""() => {
+          const h = document.querySelector('.sources-chip-head');
+          const turns = [...document.querySelectorAll('.conversation-history > *')];
+          return {text: h.textContent, colour: getComputedStyle(h).color,
+                  after: turns.findIndex(t => t.querySelector('.sources-chip'))
+                       > turns.findIndex(t => t.textContent.includes('rain tomorrow')),
+                  open: !!document.querySelector('.sources-chip-body')}; }""")
+        assert head["text"].endswith("Sources (2)") and head["after"] and not head["open"], head
+        assert head["colour"].startswith("rgba(253, 224, 71"), head      # yellower than amber
+        await page.click(".sources-chip-head")
         got = await page.evaluate("""() => ({
-          title: document.querySelector('.screen-item h3').textContent,
-          link: document.querySelector('.screen-item a').getAttribute('href'),
-          target: document.querySelector('.screen-item a').getAttribute('target'),
-          host: document.querySelector('.screen-host').textContent,
-          plain: document.querySelectorAll('.screen-item li')[1].querySelector('a'),
-          lit: !!document.querySelector('.right-tab.lit')})""")
-        assert got == {"title": "Sources", "link": "https://www.metoffice.gov.uk/weather",
-                       "target": "_blank", "host": "www.metoffice.gov.uk", "plain": None,
-                       "lit": False}
+          link: document.querySelector('.sources-chip-body a').getAttribute('href'),
+          target: document.querySelector('.sources-chip-body a').getAttribute('target'),
+          host: document.querySelector('.sources-host').textContent,
+          plain: document.querySelectorAll('.sources-chip-body li')[1].querySelector('a')})""")
+        assert got == {"link": "https://www.metoffice.gov.uk/weather", "target": "_blank",
+                       "host": "www.metoffice.gov.uk", "plain": None}
         await browser.close()
 
 
 @pytest.mark.asyncio
-async def test_a_page_that_reconnects_gets_what_was_shown_without_it_lighting_up(page_url):
+async def test_the_right_panel_holds_diagnostics_and_workflows(page_url):
     async with async_api.async_playwright() as p:
-        browser, page = await _open(p, page_url, [], displays=[DISPLAY])
-        await page.click(".right-tab[title='Screen']")
-        await page.wait_for_selector(".screen-item")
-        await page.click(".right-tab[title='Diagnostics']")
-        await page.wait_for_timeout(300)
-        assert await page.locator(".right-tab.lit").count() == 0
+        browser, page = await _open(p, page_url, [DISPLAY])
+        await page.wait_for_selector(".right-tabs .right-tab")
+        titles = await page.evaluate(
+            "() => [...document.querySelectorAll('.right-tabs .right-tab')].map(t => t.title)")
+        assert titles == ["Diagnostics", "Workflows"]
         await browser.close()
 
 
@@ -136,7 +150,7 @@ async def test_transmitting_turns_the_box_yellow_and_sending_clears_it(page_url)
             {"type": "capture", "id": 3, "state": "capturing", "text": TEXT},
             {"type": "capture", "id": 3, "state": None},
             DISPLAY])
-        await page.wait_for_selector(".right-tab.lit", timeout=10000)   # all three arrived
+        await page.wait_for_selector(".sources-chip", timeout=10000)    # all three arrived
         assert await page.locator(".capture-box").count() == 0
         await browser.close()
 

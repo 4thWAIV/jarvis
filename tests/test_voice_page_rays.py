@@ -307,3 +307,155 @@ async def test_transmitting_fills_the_orb_and_leans_it_toward_the_ray(page_url):
         await page.wait_for_timeout(1500)
         assert _amber_halves(await orb.screenshot())[2] < 20, "it did not ease back"
         await browser.close()
+
+
+# --- The ray only ever ends at its own agent's card ---------------------------
+
+def _row(sid, name, state="idle"):
+    return {"session_id": sid, "name": name, "active": True, "state": state, "needs": 0,
+            "provider": "anthropic"}
+
+
+# Two cards in one project, and more agents than the list shows: the message
+# moves the target from the bottom to near the top, past the rows showing.
+_FILL = [_row(f"x{i}", f"other {i}") for i in range(10)]
+_BEFORE = {"agents": [_row("diag", "Diagnostics", "working"), _row("claude", "Agent Guard")]
+           + _FILL + [_row("codex", "agent-guard, the approval authority one")]}
+_AFTER = {"agents": [_BEFORE["agents"][0], _BEFORE["agents"][-1], _BEFORE["agents"][1]] + _FILL}
+
+# Every frame's answer to: which card does the ray end at? None when no ray.
+_RAY_ENDS_AT = """() => {
+  const core = document.querySelector('#ray-lane .ray-core');
+  if (!core) return null;
+  const n = core.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+  const [ex, ey] = [n[n.length - 1], n[n.length - 2]];
+  const li = [...document.querySelectorAll('.agents-list li')].find(li => {
+    const b = li.querySelector('.agent-orb').getBoundingClientRect();
+    return ex >= b.left && ex <= b.right && ey >= b.top && ey <= b.bottom; });
+  return li ? li.dataset.sessionId : 'no card';
+}"""
+
+
+async def _open_moving(p, url, list_delay_ms):
+    """The All view of _BEFORE; six seconds in, the server says the list
+    changed (answered with _AFTER, `list_delay_ms` late) and that a message
+    went to the codex card, in that order, as server.py sends them."""
+    calls = {"n": 0}
+
+    async def agents(route):
+        calls["n"] += 1
+        if calls["n"] > 1 and list_delay_ms:
+            await asyncio.sleep(list_delay_ms / 1000)
+        await route.fulfill(status=200, content_type="application/json",
+                            body=json.dumps(_BEFORE if calls["n"] == 1 else _AFTER))
+
+    try:
+        browser = await p.chromium.launch(headless=True)
+    except Exception as e:                              # pragma: no cover
+        pytest.skip(f"no headless Chromium: {e}")
+    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    await page.add_init_script(
+        "try { localStorage.setItem('jarvis.agents.show', 'all') } catch (e) {}")
+    await page.route("**/api/agents", agents)
+
+    def sessions(ws):
+        async def run():
+            await asyncio.sleep(6.0)
+            ws.send(json.dumps({"type": "agents"}))
+            ws.send(json.dumps(_to("codex")))
+        asyncio.ensure_future(run())
+    await page.route_web_socket("**/ws/sessions", sessions)
+    await page.goto(url)
+    return browser, page
+
+
+@pytest.mark.parametrize("list_delay_ms", [0, 300, 1500])
+@pytest.mark.asyncio
+async def test_the_ray_ends_only_at_its_own_card_while_the_list_moves(page_url, list_delay_ms):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open_moving(p, page_url, list_delay_ms)
+        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=15000)
+        # Every 20ms for the ray's six seconds; a frame with no ray is fine,
+        # one ending at any other card is not.
+        ends = []
+        for _ in range(300):
+            ends.append(await page.evaluate(_RAY_ENDS_AT))
+            await page.wait_for_timeout(20)
+        drawn = [end for end in ends if end is not None]
+        assert drawn and set(drawn) == {"codex"}, ends
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_ray_whose_card_is_moved_out_of_view_is_not_drawn_at_another(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open_moving(p, page_url, 0)
+        await page.wait_for_function(
+            "document.querySelector('#ray-lane .ray')"
+            " && document.querySelector('.agents-list li')?.dataset.sessionId", timeout=15000)
+        await page.wait_for_timeout(300)
+        # He moves the list on, past the card the ray goes to.
+        for _ in range(6):
+            await page.get_by_title("More agents").click()
+        assert not await page.evaluate(
+            "!!document.querySelector('.agents-list li[data-session-id=\"codex\"]')")
+        assert await page.evaluate(_RAY_ENDS_AT) is None
+        await browser.close()
+
+
+# --- The message arriving at the agent ----------------------------------------
+
+_AGENT_ORB = '.agents-list li[data-session-id="s1"] .agent-orb'
+
+
+def _warm_pixels(png: bytes) -> int:
+    """Pixels in the ray's amber (or any warm colour) in an agent's orb,
+    leaving out a band across the middle, where the ray runs in behind the
+    orb to its centre. The orb's own colours are all blue."""
+    import io
+    from PIL import Image
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    w, h = img.size
+    return sum(1 for y in range(h) if abs(y - h // 2) > max(3, h // 8)
+               for x in range(w)
+               if (lambda r, g, b: r > 90 and r > b + 40)(*img.getpixel((x, y))))
+
+
+@pytest.mark.asyncio
+async def test_the_agent_s_orb_takes_the_ray_s_colour_when_the_first_pulse_arrives(page_url):
+    """Not when the ray appears: when its first pulse has run the length of
+    it (RAY_TRAVEL_MS)."""
+    pytest.importorskip("PIL")
+    async with async_api.async_playwright() as p:
+        browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
+        orb = page.locator(_AGENT_ORB)
+        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
+        on_arrival = _warm_pixels(await orb.screenshot(scale="device"))
+        await page.wait_for_timeout(1500)                # arrived, and the wave is in
+        received = _warm_pixels(await orb.screenshot(scale="device"))
+        assert on_arrival < 5, on_arrival
+        assert received > 30, (on_arrival, received)     # 0 with the receipt off
+        await page.wait_for_function("!document.querySelector('#ray-lane .ray')", timeout=15000)
+        await page.wait_for_timeout(1500)
+        assert _warm_pixels(await orb.screenshot(scale="device")) < 5, "it did not ease back"
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open_scripted(p, page_url, [(4.0, _to("s1"))])
+        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
+        rings, centre = await page.evaluate("""(sel) => {
+          const t = document.querySelector(sel).getBoundingClientRect();
+          return [[...document.querySelectorAll('#ray-lane .ray-receipt')].map(c => ({
+                     x: +c.getAttribute('cx'), y: +c.getAttribute('cy'),
+                     delay: getComputedStyle(c).animationDelay,
+                     stroke: getComputedStyle(c).stroke })),
+                  [t.left + t.width / 2, t.top + t.height / 2]];
+        }""", _AGENT_ORB)
+        assert [r["delay"] for r in rings] == ["1.4s", "1.75s"], rings
+        for r in rings:
+            assert abs(r["x"] - centre[0]) < 1 and abs(r["y"] - centre[1]) < 1, (r, centre)
+            assert r["stroke"] == "rgb(251, 191, 36)", r          # the ray's amber
+        await browser.close()

@@ -166,6 +166,22 @@ def test_speech_corrections_still_apply(client):
         assert server.brain_instance.turns[0][0] == "open Claude Code"
 
 
+
+def test_typed_words_reach_the_brain_as_written(client):
+    """Typed into the white box: no speech corrections, and not echo even
+    when they repeat what JARVIS just said."""
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "open cloud code", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio")
+        ws.send_json({"type": "transcript", "text": "Echo: open cloud code", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio" and "Echo: Echo" in m["text"])
+        assert [t for t, _ in server.brain_instance.turns] == [
+            "open cloud code", "Echo: open cloud code"]
+
 def test_brain_not_ready_says_so_instead_of_hanging(client):
     c, server = client
     server.brain_instance.ready = False

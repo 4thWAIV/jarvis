@@ -26,8 +26,9 @@ def wired(monkeypatch, tmp_path):
 
 
 class _Watcher:
-    def __init__(self, sessions):
+    def __init__(self, sessions, polled=True):
         self.snapshot = sw.Snapshot(sessions=sessions, taken_at=1.0)
+        self.polled = polled
 
 
 def _session(sid, name, state=sw.IDLE):
@@ -78,6 +79,26 @@ def test_the_running_set_leaves_out_ended_sessions_and_uses_agent_name(wired, mo
                                         "s3": ("<tongs>", "fresh")}
 
 
+def test_names_and_activations_survive_a_start_before_the_first_poll(wired, monkeypatch):
+    server, store = wired
+    store.sync_agents({"s1": ("hammer", "idle")})
+    store.rename_agent("s1", "Forge")
+    store.set_agent_active("s1", True)
+
+    # Started, but the first look at the running sessions has not finished.
+    monkeypatch.setattr(server, "session_watcher", sw.SessionWatcher(providers=[]))
+    assert server._sync_agents() is False
+    monkeypatch.setattr(server, "session_watcher", None)
+    assert server._sync_agents() is False
+    assert store.list_agents() == [
+        {"session_id": "s1", "name": "Forge", "active": True, "state": "idle"}]
+
+    monkeypatch.setattr(server, "session_watcher", _Watcher([_session("s1", "hammer")]))
+    server._sync_agents()
+    assert store.official_names() == {"s1": "Forge"}
+    assert store.list_agents()[0]["active"] is True
+
+
 # --- the routes ----------------------------------------------------------------
 
 def test_the_page_reads_and_activates(wired):
@@ -86,8 +107,8 @@ def test_the_page_reads_and_activates(wired):
     client = TestClient(server.app)
 
     assert client.get("/api/agents").json() == {
-        "agents": [{"session_id": "s1", "name": "hammer", "active": False, "state": "idle",
-                    "needs": 0, "provider": None}]}
+        "agents": [{"session_id": "s1", "name": "hammer", "project": "", "provider": None,
+                    "state": "idle", "active": False, "needs": 0}]}
     r = client.post("/api/agents/s1/active", json={"active": True}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["active"] is True
     assert client.post("/api/agents/nope/active", json={"active": True},
@@ -109,18 +130,19 @@ def test_the_brain_lists_and_switches_agents(wired):
     server, store = wired
     store.sync_agents({"s1": ("hammer", "idle"), "s2": ("anvil", "idle")})
 
-    assert server.tool_list_agents({}) == "Two agents running. Inactive: anvil and hammer."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: inactive, idle."
     assert server.tool_set_agent_active({"name": "Hammer", "active": True}) == \
         "hammer is now active, sir."
-    assert server.tool_list_agents({}) == ("Two agents running. Active: hammer. "
-                                           "Inactive: anvil.")
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nhammer: active, idle."
+    assert server.tool_list_agents({"filter": "active"}) == "One agent:\nhammer: active, idle."
 
 
 def test_an_unknown_or_ambiguous_name_is_not_guessed(wired):
     server, store = wired
     store.sync_agents({"s1": ("hammer one", "idle"), "s2": ("hammer two", "idle")})
 
-    assert "don't see" in server.tool_set_agent_active({"name": "anvil", "active": True})
+    out = server.tool_set_agent_active({"name": "anvil", "active": True})
+    assert out == "No agent is called anvil. The agents running are:\nhammer one\nhammer two"
     out = server.tool_set_agent_active({"name": "hammer", "active": True})
     assert "Which one" in out
     assert not any(a["active"] for a in store.list_agents())
@@ -203,7 +225,7 @@ def test_the_brain_renames_by_the_current_name(wired):
         "hammer is now Forge, sir."
     assert "already goes by that name" in server.tool_rename_agent(
         {"name": "anvil", "new_name": "forge"})
-    assert server.tool_list_agents({}) == "Two agents running. Inactive: anvil and Forge."
+    assert server.tool_list_agents({}) == "Two agents:\nanvil: inactive, idle.\nForge: inactive, idle."
     assert "rename_agent" in server.ACTING_TOOLS
 
 
@@ -268,12 +290,16 @@ async def test_announcements_and_the_brain_s_note_use_the_official_name(wired, m
     spawned = []
     monkeypatch.setattr(server, "_spawn", lambda coro: spawned.append(coro))
 
-    server._on_session_event({"kind": "replied", "at": 1.0, "session": {
+    server._on_session_event({"kind": "answered", "at": 1.0,
+                              "message": {"id": 4, "body": "carry on", "reply": "ok"},
+                              "session": {"session_id": "s1", "voice_name": "hammer",
+                                          "project": "hammer"}})
+    server._on_session_event({"kind": "needs_you", "at": 2.0, "session": {
         "session_id": "s1", "voice_name": "hammer", "project": "hammer"}})
     for coro in spawned:
         await coro
 
-    assert said == ["Forge has answered, sir — shall I read it?"]
+    assert said[0] == "Forge has answered your message about carry on, sir — shall I read it?"
     note = server._with_notes_for_brain("go on")
     assert "Forge" in note and "hammer" not in note
     assert broadcast[0]["session"]["voice_name"] == "Forge"

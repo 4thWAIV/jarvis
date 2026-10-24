@@ -142,6 +142,11 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "dea4c901e908aa59d7175cd65d238353d4142d7cac6cfef080439644df2cd783",  # sources and links go on the screen, never in speech
     "30a27af7e4c6ddc85b9c6bb800f73b6dc5f1533274eea36434e54ee271e36327",  # everything sent to a session is a capture
     "32991d0b38ee01232891dc5270104dc46ecd7886c32bc57f4352a2f0161300db",  # read back, merge to one, see and clear the boxes
+    "e695838029d15e5ee165ade6ce59bfb44ef11944fbb41bbedafb0b69164546f0",  # several captures open, each sent on its own
+    "9bbc315eac1ddc822b1b6fccc784e650d3e508e6981938ba7742f8e7293a2ea8",  # an agent by its full listed name
+    "07c999f50ab37df1d0060bec02bdf2846f8b39827437049b4c3ab71df0347a73",  # messages have numbers: list_messages, read_message_reply
+    "cf26e7eb0401139200f963fd7edfad10e2bcfa0058fb74e160156b395ef72cdb",  # sessions send him messages: session_messages, read_session_message
+    "c00b76bf5df7dbc8bcaffabee1ba12a0230c64bca69836f0f51cc19d011cf7b9",  # one list of agents; workflow_status for workflows
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -331,6 +336,15 @@ def needs_dir() -> Path:
     return path
 
 
+def session_messages_dir() -> Path:
+    """Where sessions drop the messages they send the user, one folder per project
+    and one file per message (see session_messages.py). Created so a session
+    can always write."""
+    path = data_dir() / "messages"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 _SKILLS_SOURCE = Path(__file__).parent / "skills"
 
 
@@ -401,6 +415,11 @@ def usage_path(service: str = "anthropic") -> Path:
     if service == "anthropic":
         return data_dir() / "usage.json"
     return data_dir() / f"usage-{service}.json"
+
+
+def access_keys_path() -> Path:
+    """The digests of the access keys, by label and category (access_keys.py)."""
+    return data_dir() / "access-keys.json"
 
 
 def tool_token_path() -> Path:

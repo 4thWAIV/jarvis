@@ -9,6 +9,27 @@ import { createStore } from "./store";
  *  `n` counts messages, so the same agent twice draws twice. */
 export const agentMessage = createStore<{ sessionId: string; n: number } | null>(null);
 
+/** How long a message's ray shows (matching the CSS fade). The list keeps
+ *  the agent in view for as long. */
+export const RAY_MS = 6000;
+
+/** How long a pulse takes to run the whole ray (the CSS `ray-pulse`): the
+ *  first one to leave the main orb reaches the agent this long after the ray
+ *  appears, and that is when the agent's orb shows it received the message. */
+export const RAY_TRAVEL_MS = 1400;
+
+/** The latest message to reach an agent's orb, for that orb's receiving
+ *  state (AgentOrb.tsx). `n` is the message's, as in agentMessage. */
+export const agentReceipt = createStore<{
+  sessionId: string; n: number; colour: string;
+  direction: [number, number]; seconds: number;
+} | null>(null);
+
+/** Counts the agents list's commits to the page. Each one may have moved a
+ *  row, and a ray re-measures on it before the page is painted, so it never
+ *  shows ending at a row that now holds another agent. */
+export const agentsLaidOut = createStore(0);
+
 export interface AgentRow {
   session_id: string;
   name: string;

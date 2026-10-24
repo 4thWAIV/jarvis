@@ -26,6 +26,8 @@ When a user clones this repo and starts Claude Code, help them:
 9. Run the frontend: cd frontend && npm run dev
 10. Open Chrome (mic only works in Chrome) to http://localhost:5173
 11. Click to enable audio, speak to JARVIS
+12. Teach your own Claude Code and Codex sessions to reach you through
+    JARVIS: `python session_skill.py install`
 
 **The certs are required for the dev-server workflow**, despite `server.py`
 treating them as optional. `server.py` serves HTTPS only when `cert.pem` and
@@ -64,6 +66,11 @@ this presents as "the UI is up but nothing works" rather than as an error.
   request including reads, because DNS rebinding is the way around "no
   CORS". `--host` defaults to `127.0.0.1`; `0.0.0.0` still works and warns,
   and then needs `JARVIS_ALLOWED_ORIGINS`.
+  An agent the user lets do one kind of thing carries an access key
+  instead of the token (`access_keys.py`): it opens only the routes of its
+  categories (`captures`, `agents`, `runs`, `workflows`, `watch`), never the voice
+  socket, settings or `/internal/tool`. `python access_keys.py create
+  <label> <category>...` prints the key once; only its digest is stored.
 
 ## Clearing the conversation
 JARVIS never clears, rotates or replaces its conversation without the user's
@@ -76,6 +83,69 @@ cancels and says nothing was cleared. Context rotation likewise waits for a
 yes to its own question. Every clear or rotation is logged with its trigger
 and the exact utterance. The one involuntary replacement is the crash/stall
 restart in `brain.py`, which is recovery, not a decision, and is logged.
+
+## Messages to sessions
+Every message JARVIS sends a session (`steer_session`) is one row of the
+`messages` table in `run_store.py`, written when it is staged and BEFORE it is
+sent, then updated at each step; its status is `run_store.MessageStatus`
+(`staged`, `cancelled`, `sent`, `delivered`, `working`, `answered`,
+`failed`). `sent` only means the provider took it (bytes on the inbox socket,
+or `codex queue` exiting 0). The session watcher (`SessionWatcher`, given the
+store as `messages`) follows every open message on every poll through its
+session's provider: `track(session, message) -> Tracking` finds it in the
+transcript by the text after the signature (`session_steer.STEER_SIGNATURE`)
+and its staged time, and reports when it arrived, when the turn that took it
+began and ended, and that turn's final answer, which is stored as `reply`.
+Not seen within `session_watch.DELIVERY_TIMEOUT_SEC` (60s) it becomes
+`undelivered` and Tim hears "<agent> hasn't picked it up", but it is still
+looked for: arriving late (behind a permission prompt he then approves) it is
+delivered and answered as usual. Anything unresolved
+`session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
+watcher only ever looks for a bounded set; settled messages are never read
+again. Seen, he hears "Delivered to
+<agent>"; answered, he hears "<agent> has answered your message about …" and
+the brain's note carries the message's id. The record is written before each
+event, and the open messages are read from the store each poll, so a restart
+follows on from where it stopped. The brain reads the record with
+`list_messages` and a stored answer with `read_message_reply`;
+`read_session_reply` still reads whatever a session said last. Keystrokes
+(`answer_dialog`), Terminal commands and refused attempts that never formed a
+message (no session, no capture) stay in the `steers` table.
+
+## Messages from sessions
+A session starts a conversation with the user by dropping one Markdown file per
+message into `data/messages/<project>/` (`data_paths.session_messages_dir()`):
+first line `# <subject>`, the rest the message. `session_messages.collect`
+takes each file once it has not changed for `SETTLE_SEC`, never through a
+symlink. The server (`_watch_session_messages`) writes it to the
+`session_messages` table in `run_store.py`, THEN deletes the file (the
+session's sign it was picked up), then says "<agent> has sent you a message"
+and nothing of its text. The agent is every listed agent in that project
+(`_project_owner`, shared with the needs board). The brain reads the record
+with `session_messages` and one message with `read_session_message`, which
+marks it read; both taint the turn. Sessions learn both folders from the
+talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside
+`skills/` because that folder is copied into the brain's own home).
+`python session_skill.py install` renders it with this install's data paths
+into every Claude Code config root and the user's Codex home; preflight's
+`session_skill` check only reports whether it is there and current.
+
+## The workflow monitor
+A long workflow (a phased build, a run of several agents) reports every
+step to one durable record, `workflow_store.py`: `workflow_events` is
+append-only and is the truth, and the workflow's status, its phases and
+tasks, and its open waits, decisions and blockers are updated in the same
+transaction as each event, by `record`, the only writer. Going quiet
+(`SILENT_AFTER_SEC` with no event) is worked out when it is read, never
+stored. Sessions report with `workflow_report.py` and an access key in the
+`workflows` category (the talk-to-jarvis skill teaches them);
+`POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the
+page reads `GET /api/workflows*`, and a `workflows` hint on `/ws/sessions`
+says when to read again. JARVIS says a new phase, a decision needed, a
+blocker, a finish and going quiet, once each. The brain answers anything
+about a workflow from `workflow_status`; open decisions are added to the
+needs board (`with_decisions`) without writing the sessions' board files,
+and he answers them on the Workflows view.
 
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
@@ -110,7 +180,9 @@ arbitrary LLM and file content, so everything goes through
 - `frontend/src/jarvis.ts` — The voice page's state machine, started once
   the orb is on the page
 - `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
-- `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum
+- `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
+  the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
+  commands)
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
 - `stream_parser.py` — Pure parsing of the stream-json output (no I/O)
@@ -126,8 +198,21 @@ arbitrary LLM and file content, so everything goes through
   `projects/` Markdown. Allowed roots only, credentials and symlink escapes
   refused; results are untrusted
 - `session_watch.py` — Watches every Claude Code session on the machine
-  (process / conversation / project)
-- `session_steer.py` — Sends a message into a running session's inbox socket
+  (process / conversation / project), and follows each message JARVIS sent
+  through its session's transcript
+- `agent_directory.py` — The one way agents are listed and found: every
+  tool that lists agents or takes an agent's name goes through it, matching
+  names as they are said (`spoken_key`: hyphens and underscores are spaces)
+- `session_steer.py` — Sends a message into a running session's inbox socket;
+  holds the signature every message starts with
+- `session_messages.py` — Reads the messages sessions drop for Tim in
+  `data/messages/<project>/` (see "Messages from sessions")
+- `workflow_store.py` — The workflow monitor's one durable record (see "The
+  workflow monitor"); `workflow_report.py` is the command sessions report with
+- `access_keys.py` — Access keys by category, for agents the user lets
+  reach some of JARVIS's routes without the tool token
+- `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions
+  about the needs board and session messages
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
   it a keystroke (needs Accessibility)
 - `notifier.py` — macOS notification fallback when no browser tab is

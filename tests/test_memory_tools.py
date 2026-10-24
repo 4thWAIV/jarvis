@@ -47,7 +47,7 @@ def test_recall_says_so_plainly_when_it_finds_nothing(wired):
 
 def test_recall_never_speaks_a_memorys_raw_slug(wired):
     """A memory's filename is a slugified title ("tony-prefers-postgres");
-    read aloud that's noise, not a sentence — see tool_list_sessions's own
+    read aloud that's noise, not a sentence — see tool_list_agents
     rule against ever saying a roster name like hammer-4b out loud."""
     server = wired
     server.tool_remember({"title": "Tony prefers Postgres over SQLite",

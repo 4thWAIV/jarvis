@@ -21,6 +21,26 @@ NOT_LIVE = "not_live"
 REFUSED = "refused"
 FAILED = "failed"
 
+# The first line of every message JARVIS sends into a session, whichever
+# provider runs it. Without it the session saw only "another Claude session",
+# answered by messaging whichever session it guessed, and once recorded an
+# approval as coming from a session that had never written to it. The answer
+# belongs in its own transcript, where JARVIS reads it.
+STEER_SIGNATURE = (
+    "[From JARVIS, Tim's voice assistant, relaying Tim. Answer by ending your "
+    "turn with your full reply; JARVIS reads it from your transcript and "
+    "tells Tim. Do not send your answer to another session.]\n\n")
+
+
+def message_body(text: str) -> str:
+    """What a message says after the signature: Tim's own words, which is
+    what finds the message again in the session's transcript (each provider's
+    `track`). The signature is the same on every message, so it identifies
+    none of them."""
+    if text.startswith(STEER_SIGNATURE):
+        text = text[len(STEER_SIGNATURE):]
+    return text.strip()
+
 
 def post_to_session(socket_path: str | None, prompt: str,
                     timeout: float = 5.0) -> str:

@@ -512,12 +512,26 @@ class SpeechScheduler:
         tail = utt.splitter.flush()
         if tail:
             self._add_chunk(utt, tail)
+        self._add_reading(utt, text, capture)
+        self._kick()
+        return len(utt.chunks) - 1
+
+    def read_aloud(self, text: str, capture: int) -> Utterance:
+        """Read capture `capture` on its own, outside any turn (the Read
+        button on its box), after whatever is already queued. Its chunks are
+        marked as read_into's are; wait_for says when it has been heard."""
+        u = self._new(Priority.NORMAL, "say", immediate=True, label="reply")
+        self._add_reading(u, text, capture)
+        u.closed = True
+        self._pending.append(u)
+        self._kick()
+        return u
+
+    def _add_reading(self, utt: Utterance, text: str, capture: int) -> None:
         reading = SentenceSplitter()
         for piece in [*reading.feed(text), reading.flush()]:
             if piece:
                 self._add_chunk(utt, piece, capture=capture)
-        self._kick()
-        return len(utt.chunks) - 1
 
     async def wait_played(self, utt: Utterance, idx: int, timeout: float = 60.0) -> bool:
         """True once chunk `idx` of `utt` has been played; False on cancel or
@@ -589,9 +603,11 @@ class SpeechScheduler:
         finally:
             self._cancel_window_open = False
 
-    def classify(self, text: str, *, allow_cancel: bool = True, allow_replay: bool = True) -> str:
+    def classify(self, text: str, *, allow_cancel: bool = True, allow_replay: bool = True,
+                 typed: bool = False) -> str:
         """'echo' (JARVIS hearing himself), 'cancel', 'replay' ("say that
-        again" — see `_is_replay_request`), or 'speech'."""
+        again" — see `_is_replay_request`), or 'speech'. Typed words came
+        from the keyboard, not the microphone, so they are never his echo."""
         toks = _tokens(text)
         if not toks:
             return "echo"
@@ -619,7 +635,7 @@ class SpeechScheduler:
             return "cancel"
         if allow_replay and _is_replay_request(toks):
             return "replay"
-        recent = self._recent_tokens()
+        recent = set() if typed else self._recent_tokens()
         if recent:
             matching = sum(1 for t in toks if t in recent)
             if matching / len(toks) >= 0.7 and len(toks) - matching < 2:
@@ -772,8 +788,10 @@ class SpeechScheduler:
                 for r in recent)
             for t in toks)
 
-    async def user_final(self, text: str) -> str:
-        verdict = self.classify(text)
+    async def user_final(self, text: str, typed: bool = False) -> str:
+        """`typed`: typed into the page rather than heard. Never echo, and
+        sent on purpose, so it stops JARVIS mid-sentence like a reply would."""
+        verdict = self.classify(text, typed=typed)
         if verdict == "echo":
             return verdict
         self._last_user_speech = self._clock()
@@ -781,7 +799,8 @@ class SpeechScheduler:
         is_cancel_word = " ".join(_tokens(text)) in self.cancel_words
         if verdict == "cancel":
             self._cancel_event.set()
-        if self._speaking and (is_cancel_word or verdict == "replay" or self._nonmatching(text) >= 2):
+        if self._speaking and (typed or is_cancel_word or verdict == "replay"
+                               or self._nonmatching(text) >= 2):
             # A cancel — or a replay request — is an answer to what was being
             # said: it was heard, so it must not come back as "Before I
             # forget —". A single-word replay trigger ("repeat", "pardon")

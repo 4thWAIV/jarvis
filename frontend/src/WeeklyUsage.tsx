@@ -4,8 +4,10 @@
  * (100% minus what is used). The second: the provider's logo, and how far the
  * week is from a straight line across it (expected use minus actual use, in
  * percentage points: positive, green, means more left than expected). Both
- * figures take the number's colour. To their right, centred between the two
- * rows, a burn-down of the week. The server
+ * figures take the number's colour. To their right, as tall as the two
+ * rows, a burn-down of the week: the days left until it resets above it and
+ * the day it resets below it ("Fri 23 Oct"), both centred, monospaced and in
+ * the figures' colour. The server
  * works it out (usage_store.week); this only draws it. Details are on hover.
  */
 
@@ -158,9 +160,39 @@ function Provider({ provider }: { provider?: ReportProvider }) {
   );
 }
 
+/** Days from now until `resetsAt` (epoch seconds), one decimal place,
+ *  never below zero: "6.2 days", "1.0 day". */
+export function daysLeft(resetsAt: number, nowMs: number = Date.now()): string {
+  const days = Math.max(0, (resetsAt * 1000 - nowMs) / 86_400_000);
+  const shown = days.toFixed(1);
+  return `${shown} ${shown === "1.0" ? "day" : "days"}`;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The local day `at` (epoch seconds) falls on: "Fri 23 Oct". */
+export function resetDay(at: number): string {
+  const d = new Date(at * 1000);
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** The burn-down with the days left above it and the reset day below it. */
+function BurnDown({ week, good }: { week: Week; good: boolean }) {
+  const state = good ? "ahead" : "behind";
+  return (
+    <div className="weekly-burn">
+      <span className={`weekly-days ${state}`}>{daysLeft(week.resets_at!)}</span>
+      <Chart week={week} good={good} />
+      <span className={`weekly-reset ${state}`}>{resetDay(week.resets_at!)}</span>
+    </div>
+  );
+}
+
 /** Remaining (100% down to 0%) across the week: the straight line, and the
  *  readings so far. */
-function BurnDown({ week, good }: { week: Week; good: boolean }) {
+function Chart({ week, good }: { week: Week; good: boolean }) {
   const W = 280, H = 40;
   const start = week.week_start!, end = week.resets_at!;
   const x = (t: number) => ((t - start) / (end - start)) * W;

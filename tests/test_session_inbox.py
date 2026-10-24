@@ -144,6 +144,7 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
     class _Session:
         session_id = "s1"
         voice_name = "chitauri"
+        provider = "anthropic"
         project = "chitauri"
         needs_a_human_hand = False
         steerable = True
@@ -193,7 +194,7 @@ async def _perform_one(server, monkeypatch):
     await server._perform_steer(server._StagedSteer(
         session_id="s1", voice_name="chitauri", project="chitauri",
         prompt="use Postgres", socket_path="/tmp/x.sock"))
-    return speech.said[-1]
+    return speech.said[-1] if speech.said else ""
 
 
 @pytest.mark.asyncio
@@ -218,7 +219,7 @@ async def test_with_the_setting_on_there_is_no_warning(wired, monkeypatch):
     server, settings = wired
     _write(settings, {"crossSessionInbound": "accept"})
     said = await _perform_one(server, monkeypatch)
-    assert said == "Passed to chitauri, sir."
+    assert said == "", "nothing to warn of, and delivery is said once it is seen"
 
 
 # --- the tool -------------------------------------------------------------

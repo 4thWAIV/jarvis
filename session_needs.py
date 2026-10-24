@@ -1,7 +1,7 @@
 """The session needs board: what each session needs from the user.
 
 One Markdown file per project in `data_paths.needs_dir()`, written by the
-sessions themselves (the global how-to-communicate skill tells them how) and
+sessions themselves (the talk-to-jarvis skill, session_skill.py, tells them how) and
 read here. A file holds three headings — Decisions, Questions, Blockers — and
 one `- ` line per item. Pure reading and change tracking; no I/O beyond the
 folder, and nothing here speaks.
