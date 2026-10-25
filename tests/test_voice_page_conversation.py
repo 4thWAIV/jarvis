@@ -358,3 +358,135 @@ async def test_a_long_turn_shows_two_lines_and_opens_when_clicked(page_url):
         assert lines > 4, lines
         assert await page.locator(".history-turn.clamped").count() == 0
         await browser.close()
+
+
+def _record_item(id_, kind, text, at=1_000_000.0, **extra):
+    item = {"id": id_, "at": at, "kind": kind, "text": text, "agent_session_id": None,
+            "agent_name": None, "message_id": None, "session_message_id": None,
+            "capture_id": None, "message": None, "detail": {}}
+    item.update(extra)
+    return item
+
+
+class _Record:
+    """The conversation's record, faked: older items, a message to an agent
+    whose status the test moves, and that agent's thread."""
+
+    def __init__(self):
+        self.status = "delivered"
+        self.threads = []
+
+    def items(self):
+        agent = {"agent_session_id": "h", "agent_name": "hammer", "message_id": 7}
+        return [
+            _record_item(1, "heard", "Earlier, I asked about the build."),
+            _record_item(2, "jarvis", "It was green, sir."),
+            _record_item(3, "to_agent", "Use Postgres.",
+                         message={"id": 7, "status": self.status,
+                                  "answered": self.status == "answered", "failure": None},
+                         **agent),
+            *([_record_item(4, "answer", "Postgres it is.", **agent)]
+              if self.status == "answered" else []),
+        ]
+
+    async def page(self, route):
+        await route.fulfill(json={"items": self.items(), "earlier": None})
+
+    async def thread(self, route):
+        self.threads.append(route.request.url)
+        await route.fulfill(json={"items": [i for i in self.items() if i["agent_session_id"] == "h"],
+                                  "earlier": None,
+                                  "agent": {"session_id": "h", "name": "hammer", "state": "idle"}})
+
+
+@pytest.mark.asyncio
+async def test_the_history_reads_the_record_with_live_message_status_and_threads(page_url):
+    """What was said before the page opened comes from the record and is
+    there again after a reload; a message's status moves on a hint and opens
+    to the answer; an agent's name opens its thread."""
+    voice, record = _Voice(), _Record()
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_RECOGNITION)
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route("**/api/conversation/agents/**", record.thread)
+        await page.route("**/api/conversation", record.page)
+        await page.goto(page_url)
+        await page.wait_for_selector(".record-status")
+
+        async def history():
+            return await page.evaluate("""() => [...document.querySelectorAll(
+              '.conversation-history .history-turn')].map(e => e.textContent.trim())""")
+
+        got = await history()
+        assert got[:2] == ["Earlier, I asked about the build.", "It was green, sir."], got
+        assert await page.text_content(".record-status") == "Delivered"
+
+        record.status = "answered"
+        voice.send({"type": "conversation"})
+        await page.wait_for_function(
+            "document.querySelector('.record-status').textContent.startsWith('Answered')",
+            timeout=10000)
+        assert len(await history()) == 3, "the answer is drawn inside its message"
+        await page.click(".record-status")
+        assert await page.text_content(".record-answer") == "Postgres it is."
+
+        await page.reload()
+        await page.wait_for_function("window.__recognisers.length > 0", timeout=10000)
+        await page.wait_for_selector(".record-status")
+        assert (await history())[:2] == ["Earlier, I asked about the build.", "It was green, sir."]
+
+        await page.click(".record-agent")
+        await page.wait_for_selector("#agent-thread .record-message")
+        tab = await page.evaluate(
+            "() => document.querySelector('.centre-tabs [aria-selected=true]').textContent")
+        assert tab.lower() == "hammer" and record.threads, tab
+        assert await page.text_content("#agent-thread .thread-header h3") == "hammer"
+        await page.click(".thread-close")
+        await page.wait_for_selector("#agent-thread", state="detached")
+        assert await page.locator("#conversation").count() == 1
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_url):
+    voice, posted = _Voice(), []
+    restored = {"done": False}
+
+    def items():
+        out = [_record_item(1, "capture", "Use Postgres.", capture_id=3, agent_name="hammer"),
+               _record_item(2, "notice", "Capture 3 was cleared by JARVIS.", capture_id=3,
+                            detail={"capture_event": "cleared", "by": "JARVIS"})]
+        if restored["done"]:
+            out.append(_record_item(3, "notice", "Capture 3 was restored by you.", capture_id=3,
+                                    detail={"capture_event": "restored", "by": "you"}))
+        return [{**{"detail": {}}, **i} for i in out]
+
+    async def record(route):
+        await route.fulfill(json={"items": items(), "earlier": None})
+
+    async def restore(route):
+        posted.append(route.request.url.split("/api/")[1])
+        restored["done"] = True
+        await route.fulfill(json={"capture": 3, "restored": True})
+
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_RECOGNITION)
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route("**/api/conversation", record)
+        await page.route("**/api/capture/*/restore**", restore)
+        await page.goto(page_url)
+        await page.wait_for_selector(".record-restore")
+        await page.click(".record-restore")
+        await page.wait_for_selector(".record-restore", state="detached", timeout=10000)
+        assert posted == ["capture/3/restore?notice=2"], posted
+        await browser.close()

@@ -212,6 +212,21 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "restore_capture",
+        "description": (
+            "Bring back a capture that was cleared, deleted or merged away by "
+            "mistake, from its last wording on record: under its number, or a new "
+            "one if that number is in use again. It comes back unread: read it back "
+            "with read_capture before it can be sent. list_captures names the "
+            "recently cleared ones."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"capture": {"type": "integer",
+                                       "description": "The cleared capture's number."}},
+            "required": ["capture"],
+        },
+    },
+    {
         "name": "clear_capture",
         "description": (
             "Close capture boxes he no longer wants: the numbers given, or every "
@@ -347,6 +362,23 @@ TOOL_SPECS = [
                     "description": ("Optional: active, inactive, or a state: "
                                     "needs_you, working, idle, shell or fresh."),
                 },
+            },
+        },
+    },
+    {
+        "name": "conversation_history",
+        "description": (
+            "Earlier conversation from its durable record: what he said or typed, "
+            "what you said, captures, every message to and from an agent with its "
+            "status now, and each agent's answer. With `agent`, only that agent's "
+            "thread. Use it to recall what was said or sent before, or to pick up a "
+            "thread with an agent. Pages back with `before`."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "An agent, as he said it."},
+                "before": {"type": "integer",
+                           "description": "The item number a recall said to pass for earlier ones."},
             },
         },
     },

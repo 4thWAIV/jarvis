@@ -10,9 +10,14 @@
  *   - Workflow (WorkflowDetail.tsx): one workflow in full. Offered only while
  *     one is open, which clicking its row in the Workflows view does; it is
  *     selected then, and closing it goes back to Conversation.
+ *   - Thread (AgentThread.tsx): everything to and from one agent, the same
+ *     way: offered while open, which clicking an agent's name in the
+ *     Conversation history does.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { AgentThread } from "./AgentThread";
+import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
@@ -59,6 +64,13 @@ const VIEWS: Tab[] = [
   },
 ];
 
+const THREAD_VIEW: Tab = {
+  id: "thread",
+  title: "Thread",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -75,13 +87,23 @@ function firstView(): string {
 export function CentreArea() {
   const [selected, setSelected] = useState(firstView);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
-  // Opening a workflow shows it; closing it goes back to the first view.
+  const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
+  // Opening a workflow or a thread shows it; closing it goes back to the
+  // first view.
   useEffect(() => {
     setSelected((now) => (workflow ? "workflow" : now === "workflow" ? VIEWS[0].id : now));
   }, [workflow]);
-  const views: Tab[] = workflow
-    ? [...VIEWS, { ...WORKFLOW_VIEW, view: () => <WorkflowDetail key={workflow} id={workflow} /> }]
-    : VIEWS;
+  useEffect(() => {
+    setSelected((now) => (thread ? "thread" : now === "thread" ? VIEWS[0].id : now));
+  }, [thread]);
+  const views: Tab[] = [
+    ...VIEWS,
+    ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
+                    view: () => <AgentThread key={thread.sessionId} sessionId={thread.sessionId}
+                                             name={thread.name} /> }] : []),
+    ...(workflow ? [{ ...WORKFLOW_VIEW,
+                      view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
+  ];
   const view = views.find((v) => v.id === selected) ?? views[0];
   return (
     <>

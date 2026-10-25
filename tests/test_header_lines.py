@@ -403,6 +403,22 @@ EXEMPT = {
         "path; the string it returns names the project by `name`, which "
         "`_resolve_project_or_explain` resolved from the user's own list, and "
         "carries no roster field. Driven in test_one_writer_per_project.py"),
+    "run_store.get_messages": (
+        "it reads message rows back by id for the conversation's live status, "
+        "and returns records; it prints nothing at all"),
+    "server.tool_capture": (
+        "it records a capture in the conversation under the agent the "
+        "directory found; its sentences name agents only through `_agent_said` "
+        "and `_no_such_agent`, both driven"),
+    "server._record_capture_cleared": (
+        "it records a notice in the conversation naming a capture's number and "
+        "who cleared it; the agent's name goes in a link field, not the line"),
+    "server.api_capture_restore": (
+        "its note to the brain carries only capture numbers, and its refusal "
+        "comes from `_restore_capture`, which says only a number"),
+    "server.tool_restore_capture": (
+        "it says a capture's numbers and its `to`, the agent name the directory "
+        "gave when the capture was made, said through the capture box already"),
     "server._why_message_waits": (
         "the fields it reads are JARVIS's own: a session's derived `state`, and "
         "a message's id and status; it says only fixed words and a number"),
@@ -1260,6 +1276,22 @@ def _drive_workflow_silence(server, session, monkeypatch):
 
     asyncio.run(once())
     return said
+
+
+def _drive_conversation_history(server, session, monkeypatch):
+    """An agent's name and an answer in the record, both the payload."""
+    import conversation_log as cl
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda name: (session, None, None))
+    cl.connect(None)
+    for kind, text in (("to_agent", HOSTILE), ("answer", HOSTILE), ("heard", HOSTILE)):
+        cl.append(cl.ConversationItem.new(kind, text, agent_session_id=session.session_id,
+                                          agent_name=HOSTILE))
+    return [server.tool_conversation_history({}),
+            server.tool_conversation_history({"agent": "hammer"}),
+            server.tool_conversation_history({"agent": "hammer", "before": 1})]
+
+
+DRIVERS["server.tool_conversation_history"] = _drive_conversation_history
 
 
 for _name in ("server.tool_workflow_status", "server._workflow_line", "server._workflow_said",

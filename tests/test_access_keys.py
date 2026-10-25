@@ -54,7 +54,7 @@ def test_a_captures_key_opens_the_capture_buttons_and_nothing_else(data):
     key = access_keys.create("hammer", ["captures"])
     client = _client()
 
-    for action in ("read", "accept", "delete", "send"):
+    for action in ("read", "accept", "delete", "send", "restore"):
         assert client.post(f"/api/capture/3/{action}", headers=_bearer(key)).status_code == 200
     for path in ("/api/runs", "/api/settings/keys", "/api/restart", "/internal/tool",
                  "/api/capture/3/other"):

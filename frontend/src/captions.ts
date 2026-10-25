@@ -20,6 +20,9 @@ export interface Turn {
   sentences: string[];
   /** A user turn still being heard: the next thing heard replaces its text. */
   open: boolean;
+  /** When it began, in seconds: where it falls among the conversation's
+   *  record (conversation.ts), which is in the server's seconds. */
+  at?: number;
   /** For a JARVIS turn, the utterance its sentences belong to. */
   utt?: number;
   /** For a user turn the brain captured: which capture, who it is for, and
@@ -62,7 +65,7 @@ const PENDING_MS = 20000;
 
 function insert(turns: Turn[], displays: Display[], after: number): Turn[] {
   const fresh = displays.filter((d) => !turns.some((t) => t.display?.id === d.id))
-    .map((display): Turn => ({ id: nextId++, speaker: "jarvis", sentences: [], open: false, display }));
+    .map((display): Turn => ({ id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences: [], open: false, display }));
   let at = after + 1;
   while (at < turns.length && turns[at].display) at++;   // after those already shown with it
   return [...turns.slice(0, at), ...fresh, ...turns.slice(at)];
@@ -108,7 +111,7 @@ export function userHeard(text: string, final: boolean): number {
     commit(turns.map((t, i) => (i === at ? turn : t)), speaking);
     return turn.id;
   }
-  const turn: Turn = { id: nextId++, speaker: "user", sentences: [text], open: !final };
+  const turn: Turn = { id: nextId++, at: Date.now() / 1000, speaker: "user", sentences: [text], open: !final };
   commit([...turns, turn], speaking);
   return turn.id;
 }
@@ -118,7 +121,7 @@ export function userHeard(text: string, final: boolean): number {
  *  new turn after this one. Returns the turn's id, as `userHeard` does. */
 export function userTyped(text: string): number {
   const { turns, speaking } = conversation.get();
-  const turn: Turn = { id: nextId++, speaker: "user", sentences: [text], open: false };
+  const turn: Turn = { id: nextId++, at: Date.now() / 1000, speaker: "user", sentences: [text], open: false };
   commit([...turns.map((t) => (t.speaker === "user" && t.open ? { ...t, open: false } : t)), turn],
          speaking);
   return turn.id;
@@ -154,7 +157,7 @@ export function jarvisSpeaking(utt: number, text: string, seconds: number): void
     next = turns.map((t, i) => (i === at ? turn : t));
   } else {
     const closed = last && last.open ? turns.map((t, i) => (i === at ? { ...last, open: false } : t)) : turns;
-    turn = { id: nextId++, speaker: "jarvis", sentences: [text], open: false, utt };
+    turn = { id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences: [text], open: false, utt };
     next = [...closed, turn];
     const waiting = pending.get(utt);
     if (waiting) {

@@ -84,6 +84,7 @@ import repo_read
 import session_messages
 import session_needs
 import agent_directory
+import conversation_log
 import workflow_store
 import run_store
 import session_steer
@@ -527,6 +528,50 @@ _tts_client: Optional[httpx.AsyncClient] = None
 _brain_notice_at = {"restarting": 0.0}
 _bg_tasks: set[asyncio.Task] = set()
 _CONTENT_FRAMES = ("audio", "text")
+
+
+# The event loop the server runs on, so a conversation item recorded from a
+# worker thread can still tell the pages (`_hint_conversation`).
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _hint_conversation(_item=None) -> None:
+    """Tell every voice page to read the conversation again: an item was
+    recorded, or a message's status moved. From any thread."""
+    message = {"type": "conversation"}
+    try:
+        asyncio.get_running_loop()
+        _spawn(_voice_emit(message))
+    except RuntimeError:
+        if _main_loop is not None:
+            _main_loop.call_soon_threadsafe(lambda: _spawn(_voice_emit(message)))
+
+
+def _record(kind: str, text: str, **links) -> None:
+    """One item of the conversation, on record (conversation_log.append, the
+    only writer), then the pages are told. Never raises: a record that
+    cannot be written is logged, and the voice goes on."""
+    if not str(text or "").strip():
+        return
+    try:
+        conversation_log.append(conversation_log.ConversationItem.new(kind, text, **links))
+    except Exception as e:
+        log.warning(f"conversation: a {kind} item was not recorded: {e}")
+
+
+def _agent_links(event: dict) -> dict:
+    """The agent a watcher event is about, as conversation item links."""
+    session = event.get("session") or {}
+    message = event.get("message") or {}
+    sid = session.get("session_id") or message.get("session_id")
+    name = session.get("voice_name") or message.get("agent_name")
+    links = {"agent_session_id": sid, "agent_name": name}
+    if isinstance(message.get("id"), int):
+        links["message_id"] = message["id"]
+    return links
+
+
+conversation_log.connect(_hint_conversation)
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -1492,8 +1537,10 @@ def _on_session_event(event: dict) -> None:
         return
     if kind in _MESSAGE_ANNOUNCERS:
         # About a message, not a change in the session: the pages' session
-        # rows have nothing to update from it, so it is not broadcast.
+        # rows have nothing to update from it, so it is not broadcast. The
+        # conversation shows each message's status, which has just moved.
         _spawn(_MESSAGE_ANNOUNCERS[kind](event))
+        _hint_conversation()
         return
     _spawn(_broadcast_session_event(event))
     if kind == "needs_you":
@@ -1547,9 +1594,15 @@ def _message_number(message: dict) -> int:
         return 0
 
 
-async def _say_about_message(line: str, note: str, what: str) -> None:
-    """Say `line`, and tell the brain at its next turn that it was said."""
+async def _say_about_message(line: str, note: str, what: str,
+                             event: Optional[dict] = None) -> None:
+    """Say `line`, and tell the brain at its next turn that it was said. The
+    line goes in the conversation as a notice, under the agent `event` is
+    about, if any (a notice never claims a message's place: no message id)."""
     _notes_for_brain.append(note)
+    links = _agent_links(event) if event else {}
+    links.pop("message_id", None)
+    _record(conversation_log.ItemKind.NOTICE, line, **links)
     if speech is None:
         return
     try:
@@ -1565,7 +1618,7 @@ async def _announce_delivered(event: dict) -> None:
     await _say_about_message(
         f"Delivered to {name}, sir.",
         f"Since your last turn you told him message {number} was delivered "
-        f"to {name}.", "delivery")
+        f"to {name}.", "delivery", event)
 
 
 async def _announce_undelivered(event: dict) -> None:
@@ -1578,7 +1631,7 @@ async def _announce_undelivered(event: dict) -> None:
         f"{number}: it was sent but has not reached that session's "
         f"conversation. It is still looked for, for a day; if it arrives he "
         f"is told it was delivered. Nothing has been resent.",
-        "undelivered")
+        "undelivered", event)
 
 
 async def _announce_reply(event: dict) -> None:
@@ -1589,19 +1642,23 @@ async def _announce_reply(event: dict) -> None:
     number = _message_number(message)
     gist = _message_gist(message)
     about = f" about {gist}" if gist else ""
-    if not message.get("reply"):
+    if message.get("reply", event):
+        # The answer itself is on record in his conversation, under the
+        # agent and the message it answers, before anything is said.
+        _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
+    if not message.get("reply", event):
         await _say_about_message(
             f"{name} finished its turn on your message{about} without a "
             f"word, sir.",
             f"Since your last turn you told him {name} ended its turn on "
-            f"message {number} without saying anything.", "reply")
+            f"message {number} without saying anything.", "reply", event)
         return
     await _say_about_message(
         f"{name} has answered your message{about}, sir — shall I read it?",
         f"Since your last turn you told him {name} has answered message "
         f"{number} and asked whether to read it. If he says yes, call "
         f"read_message_reply with message {number} and read him every page.",
-        "reply")
+        "reply", event)
 
 
 _MESSAGE_ANNOUNCERS = {
@@ -1721,7 +1778,17 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
             except OSError:
                 log.error(f"session messages: {dropped.path} could not be moved "
                           f"aside and will be recorded again")
-        taken.append(run_store.get_session_message(message_id))
+        received = run_store.get_session_message(message_id)
+        if received is not None:
+            # The thread it joins: the project's agent, found the way its
+            # owner's name was (`_project_owner`).
+            owner = next((x for x in _snapshot_or_empty().sessions
+                          if x.project.lower() == dropped.project.lower()), None)
+            _record(conversation_log.ItemKind.FROM_AGENT,
+                    f"{received.subject}\n\n{received.body}".strip(),
+                    agent_session_id=getattr(owner, "session_id", None),
+                    agent_name=received.agent_name, session_message_id=message_id)
+        taken.append(received)
     return [m for m in taken if m is not None]
 
 
@@ -2522,6 +2589,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
         elif not result.text.strip():
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
+        if result.stop_reason == "result":
+            _record(conversation_log.ItemKind.JARVIS, result.text)
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
         await speech.wait_for(utt, timeout=120.0)
@@ -2650,6 +2719,8 @@ async def lifespan(application: FastAPI):
     # guard, and the `--host 0.0.0.0` warning — printed only from
     # `__main__` — was never seen by the launch that most needed it.
     _announce_bind(web_auth.detect_bind())
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
 
     run_store.init_db()
     try:
@@ -3362,7 +3433,8 @@ TOOL_HANDLERS["show_on_screen"] = tool_show_on_screen
 
 
 # Tools that may only run while the user is the one talking.
-ACTING_TOOLS = {"steer_session", "capture", "read_capture", "merge_captures", "clear_capture"}
+ACTING_TOOLS = {"steer_session", "capture", "read_capture", "merge_captures", "clear_capture",
+                "restore_capture"}
 
 # The acting tools JARVIS says out loud BEFORE they happen: each one stages
 # its work, `_perform_staged_steers`/`_perform_staged_dialogs` reads it back
@@ -3413,6 +3485,7 @@ TAINTING_TOOLS = {
     "session_needs": "a note another session wrote",
     "session_messages": "a message another session wrote",
     "workflow_status": "a workflow's reports, written by the session running it",
+    "conversation_history": "agents' answers and messages in the conversation record",
     "read_session_message": "a message another session wrote",
     # A run's own output: the words of an unattended Claude Code process that
     # has itself been reading files all over a repository.
@@ -3477,6 +3550,7 @@ TAINT_EXEMPT_TOOLS = {
     "read_capture": "it speaks a capture of Tim's own words back to him, it does not read",
     "merge_captures": "it joins captures of Tim's own words, it does not read",
     "clear_capture": "it closes capture boxes, it does not read",
+    "restore_capture": "it reopens one of his own captures from the record, it does not read",
     "list_captures": "it shows the brain its own captures of Tim's words, nothing foreign",
     "show_on_screen": (
         "it puts the brain's own words on the screen and reads nothing; the "
@@ -4598,6 +4672,9 @@ def tool_capture(args: dict) -> str:
             return ("That could be " + ", or ".join(_agent_said(a) for a in found)
                     + ". Nothing was captured; ask him which, then capture it again.")
         to = found[0].name
+        to_session = found[0].session_id
+    else:
+        to_session = None
     number = _capture_number(args.get("capture"))
     if args.get("capture") is not None and number not in _captures:
         return ("There is no open capture by that number: it was sent, merged "
@@ -4607,12 +4684,15 @@ def tool_capture(args: dict) -> str:
         _captures[number] = {"id": number, "text": "", "to": "", "heard": [],
                              "read": None, "state": "capturing"}
     capture = _captures[number]
-    if capture["text"] != text:
+    changed = capture["text"] != text
+    if changed:
         capture["read"] = None          # changed: it has to be heard again
     capture["text"] = text
     capture["to"] = to or capture["to"]
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
         capture["heard"].append(_turn_heard)
+    if changed:
+        _record_capture(capture, to_session)
     _capture_show(capture, "capturing")
     if len(_unsent_captures()) > 1:
         return (f"Capture {number} holds it. {_open_captures_note()} Each is "
@@ -4621,6 +4701,27 @@ def tool_capture(args: dict) -> str:
     return (f"Capture {number} holds it. Ask him whether he wants it read back; "
             f"read_capture reads it. steer_session sends only a capture read "
             f"back in full since it last changed.")
+
+
+def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
+    """Each wording of a capture is on record (a CAPTURE item: its text, who
+    it is for and the turns it was heard in), so one cleared by mistake can
+    be restored from it."""
+    if agent_session_id is None and capture["to"]:
+        found = agent_directory.find(capture["to"])
+        agent_session_id = found[0].session_id if len(found) == 1 else None
+    _record(conversation_log.ItemKind.CAPTURE, capture["text"], capture_id=capture["id"],
+            agent_session_id=agent_session_id, agent_name=capture["to"] or None,
+            detail={"heard": list(capture["heard"])})
+
+
+def _record_capture_cleared(capture: dict, by: str, how: str = "cleared") -> None:
+    """A notice that this capture was closed without being sent, and by whom
+    ("JARVIS" or "you"): what restore_capture and the Restore button undo."""
+    line = (f"Capture {capture['id']} was {how} by {'you' if by == 'you' else 'JARVIS'}.")
+    _record(conversation_log.ItemKind.NOTICE, line, capture_id=capture["id"],
+            agent_name=capture["to"] or None,
+            detail={"capture_event": "cleared", "by": by, "how": how})
 
 
 def _unsent_captures() -> list[int]:
@@ -4685,7 +4786,9 @@ def tool_merge_captures(args: dict) -> str:
         keep["to"] = keep["to"] or other["to"]
         keep["heard"] += [h for h in other["heard"] if h not in keep["heard"]]
         del _captures[other["id"]]
+        _record_capture_cleared(other, "JARVIS", f"merged into capture {keep['id']}")
         _capture_show(other, None)
+    _record_capture(keep)
     _capture_show(keep, "capturing")
     return (f"Merged into capture {keep['id']}. It has changed, so it needs "
             f"reading back before it can be sent.")
@@ -4720,22 +4823,49 @@ def _capture_sent(capture_id: Optional[int]) -> None:
         _capture_show(capture, None)
 
 
+RECENTLY_CLEARED_SHOWN = 5
+
+
+def _recently_cleared() -> list[tuple]:
+    """(notice, capture item) for the captures cleared lately and not
+    restored since, newest last, at most RECENTLY_CLEARED_SHOWN."""
+    latest: dict[int, object] = {}
+    for notice in conversation_log.capture_events():
+        latest[notice.capture_id] = notice
+    out = []
+    for number, notice in latest.items():
+        if notice.detail.get("capture_event") != "cleared" or number in _captures:
+            continue
+        found = conversation_log.cleared_capture(number, notice.id)
+        if found:
+            out.append(found)
+    return out[-RECENTLY_CLEARED_SHOWN:]
+
+
 def tool_list_captures(args: dict) -> str:
-    """What the capture boxes on his screen hold, so the brain sees them."""
+    """What the capture boxes on his screen hold, so the brain sees them,
+    and the captures cleared lately, which restore_capture can bring back."""
+    cleared = [f"Capture {c.capture_id}{' for ' + c.agent_name if c.agent_name else ''}, "
+               f"{n.detail.get('how', 'cleared')} by {'him' if n.detail.get('by') == 'you' else 'you'}"
+               f" {_say_age(time.time() - n.at)}: {c.text}"
+               for n, c in _recently_cleared()]
+    cleared_note = ("\nRecently cleared (restore_capture brings one back):\n" + "\n".join(cleared)
+                    if cleared else "")
     if not _captures:
-        return "No capture boxes are open."
+        return "No capture boxes are open." + cleared_note
     lines = []
     for c in _captures.values():
         heard = "read back in full" if c["read"] == c["text"] else "not read back since it changed"
         going = ", staged to send" if c.get("staged") else ""
         lines.append(f"Capture {c['id']} ({c['state']}, {heard}{going})"
                      f"{' for ' + c['to'] if c['to'] else ''}: {c['text']}")
-    return "\n".join(lines)
+    return "\n".join(lines) + cleared_note
 
 
-def _clear_captures(numbers: list[int]) -> list[int]:
+def _clear_captures(numbers: list[int], by: str = "JARVIS") -> list[int]:
     """Close the open captures among `numbers`; a staged send of one is
-    cancelled and not sent. The numbers closed."""
+    cancelled and not sent. Each is noted as cleared by `by` ("JARVIS" or
+    "you"), so it can be restored. The numbers closed."""
     global _staged_steers
     gone = [n for n in numbers if n in _captures]
     for s in _staged_steers:
@@ -4744,8 +4874,48 @@ def _clear_captures(numbers: list[int]) -> list[int]:
     _staged_steers = [s for s in _staged_steers
                       if getattr(s, "capture_id", None) not in gone]
     for n in gone:
-        _capture_show(_captures.pop(n), None)
+        capture = _captures.pop(n)
+        _record_capture_cleared(capture, by, "deleted on the screen" if by == "you" else "cleared")
+        _capture_show(capture, None)
     return gone
+
+
+def _restore_capture(number: int, notice_id: Optional[int] = None,
+                     by: str = "JARVIS") -> tuple[Optional[dict], Optional[str]]:
+    """Reopen a cleared capture from its latest wording on record: under the
+    same number, or a new one if that number is open again. It comes back
+    unread, so it is read back before it can be sent. (the capture, None) or
+    (None, why not)."""
+    found = conversation_log.cleared_capture(number, notice_id)
+    if found is None:
+        return None, (f"There is no cleared capture {number} on record to restore.")
+    _notice, item = found
+    new_number = number if number not in _captures else next(_capture_ids)
+    capture = {"id": new_number, "text": item.text, "to": item.agent_name or "",
+               "heard": list(item.detail.get("heard") or []), "read": None,
+               "state": "capturing"}
+    _captures[new_number] = capture
+    _record_capture(capture, item.agent_session_id)
+    _record(conversation_log.ItemKind.NOTICE,
+            f"Capture {number} was restored by {'you' if by == 'you' else 'JARVIS'}"
+            + (f" as capture {new_number}." if new_number != number else "."),
+            capture_id=number, agent_name=item.agent_name,
+            detail={"capture_event": "restored", "by": by, "as": new_number})
+    _capture_show(capture, "capturing")
+    return capture, None
+
+
+def tool_restore_capture(args: dict) -> str:
+    """Bring back a capture that was cleared by mistake."""
+    number = _capture_number(args.get("capture"))
+    if number is None:
+        return "Give the number of the cleared capture; list_captures names them."
+    capture, problem = _restore_capture(number)
+    if problem:
+        return problem
+    return (f"Capture {number} is back as capture {capture['id']}"
+            f"{' for ' + capture['to'] if capture['to'] else ''}. It has to be read "
+            f"back again before it can be sent.")
 
 
 def tool_clear_capture(args: dict) -> str:
@@ -4771,6 +4941,7 @@ TOOL_HANDLERS["read_capture"] = tool_read_capture
 TOOL_HANDLERS["merge_captures"] = tool_merge_captures
 TOOL_HANDLERS["list_captures"] = tool_list_captures
 TOOL_HANDLERS["clear_capture"] = tool_clear_capture
+TOOL_HANDLERS["restore_capture"] = tool_restore_capture
 
 
 @app.get("/api/capture")
@@ -4850,9 +5021,21 @@ async def api_capture_delete(number: int):
     """He has thrown it away. A send of it still in its cancel window is
     cancelled."""
     _open_capture_or_404(number)
-    _clear_captures([number])
+    _clear_captures([number], by="you")
     _notes_for_brain.append(f"He deleted capture {number} on screen; it will not be sent.")
     return {"capture": number, "deleted": True}
+
+
+@app.post("/api/capture/{number}/restore")
+async def api_capture_restore(number: int, notice: Optional[int] = None):
+    """He restored a cleared capture from the history's Restore button: the
+    clearing `notice` names, else its latest one."""
+    capture, problem = _restore_capture(number, notice, by="you")
+    if problem:
+        raise HTTPException(status_code=409, detail=problem)
+    _notes_for_brain.append(f"He restored capture {number} on screen as capture "
+                            f"{capture['id']}; it needs reading back before it is sent.")
+    return {"capture": capture["id"], "restored": True}
 
 
 @app.post("/api/capture/{number}/send")
@@ -5019,7 +5202,7 @@ async def _announce_queued_sent(event: dict) -> None:
     await _say_about_message(
         f"Your message has gone to {name}, sir.",
         f"Since your last turn you told him queued message {number} went to {name}.",
-        "queued send")
+        "queued send", event)
 
 
 async def _announce_queued_failed(event: dict) -> None:
@@ -5031,7 +5214,7 @@ async def _announce_queued_failed(event: dict) -> None:
     await _say_about_message(
         f"Your queued message to {name} could not go, sir: {why}.",
         f"Since your last turn you told him queued message {number} to {name} "
-        f"failed: {why}.", "queued send")
+        f"failed: {why}.", "queued send", event)
 
 
 def _deliver(item: _StagedSteer, text: str) -> str:
@@ -5576,6 +5759,8 @@ def _stage_capture(session, capture: dict,
     message_id = run_store.create_message(
         session.session_id, session.provider, session.voice_name, session.project,
         STEER_SIGNATURE + prompt, capture_id=capture["id"])
+    _record(conversation_log.ItemKind.TO_AGENT, prompt, agent_session_id=session.session_id,
+            agent_name=session.voice_name, message_id=message_id, capture_id=capture["id"])
     _stage_steer(_StagedSteer(session_id=session.session_id,
                               voice_name=session.voice_name,
                               project=session.project,
@@ -6139,6 +6324,93 @@ async def api_workflow_events(workflow_id: str, after: int = 0, kinds: str = "")
     wanted = {k for k in kinds.split(",") if k} or None
     found = await asyncio.to_thread(workflow_store.events, workflow_id, after, wanted)
     return {"events": [dataclasses.asdict(e) for e in found]}
+
+
+# --- The conversation bus (conversation_log.py) -----------------------------
+
+CONVERSATION_PAGE = conversation_log.PAGE
+
+
+def _conversation_json(items: list) -> dict:
+    """Items for the page, each message's status read now (never copied
+    into the log), and the cursor for the page before, None at the start."""
+    messages = conversation_log.statuses(items)
+    out = []
+    for item in items:
+        row = dataclasses.asdict(item)
+        m = messages.get(item.message_id) if item.message_id is not None else None
+        row["message"] = None if m is None else {
+            "id": m.id, "status": str(m.status), "answered": bool(m.reply),
+            "failure": m.failure}
+        out.append(row)
+    return {"items": out, "earlier": items[0].id if items else None}
+
+
+@app.get("/api/conversation")
+async def api_conversation(before: Optional[int] = None, limit: int = CONVERSATION_PAGE):
+    """The conversation, oldest first: the last `limit` items before item
+    `before`, the newest when omitted. `earlier` asks for the page before."""
+    items = await asyncio.to_thread(conversation_log.page, before, limit)
+    return await asyncio.to_thread(_conversation_json, items)
+
+
+@app.get("/api/conversation/agents/{session_id}")
+async def api_conversation_thread(session_id: str, before: Optional[int] = None,
+                                  limit: int = CONVERSATION_PAGE):
+    """Everything to and from one agent, the same way."""
+    items = await asyncio.to_thread(conversation_log.thread, session_id, before, limit)
+    body = await asyncio.to_thread(_conversation_json, items)
+    agent = next((a for a in agent_directory.agents() if a.session_id == session_id), None)
+    body["agent"] = {"session_id": session_id,
+                     "name": agent.name if agent else next(
+                         (i.agent_name for i in reversed(items) if i.agent_name), None),
+                     "state": agent.state if agent else "gone"}
+    return body
+
+
+# Items the brain reads back at once, at most.
+CONVERSATION_RECALL = 30
+
+
+def _history_line(item, message) -> str:
+    who = {"heard": "He said", "typed": "He typed", "jarvis": "You said",
+           "capture": "Captured", "to_agent": "To", "from_agent": "From",
+           "answer": "Answer from", "notice": "Notice"}[str(item.kind)]
+    agent = f" {item.agent_name}" if item.agent_name and str(item.kind) in (
+        "to_agent", "from_agent", "answer") else ""
+    status = f" [message {message.id}, {message.status}]" if message is not None else ""
+    when = time.strftime("%d %b %H:%M", time.localtime(item.at))
+    return f"#{item.id} {when} {who}{agent}{status}: {item.text}"
+
+
+def tool_conversation_history(args: dict) -> str:
+    """Earlier conversation from the record: all of it, or one agent's
+    thread, before item `before`. What agents wrote is another session's
+    words, so the whole recall is read as untrusted."""
+    name = str(args.get("agent") or "").strip()
+    try:
+        before = int(args["before"]) if args.get("before") is not None else None
+    except (TypeError, ValueError):
+        return "Give `before` as an item number from an earlier recall."
+    if name:
+        session, problem, _reason = _resolve_or_explain(name)
+        if problem:
+            return problem
+        items = conversation_log.thread(session.session_id, before, CONVERSATION_RECALL)
+        whose = f"with {_said_name(session, 'that agent')}"
+    else:
+        items = conversation_log.page(before, CONVERSATION_RECALL)
+        whose = "in the conversation"
+    if not items:
+        return f"Nothing earlier {whose} is on record."
+    messages = conversation_log.statuses(items)
+    lines = [_history_line(i, messages.get(i.message_id)) for i in items]
+    head = (f"{_say_number(len(items)).capitalize()} item{'s' if len(items) != 1 else ''} "
+            f"{whose}, oldest first; for earlier ones pass before={items[0].id}.")
+    return head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(lines))
+
+
+TOOL_HANDLERS["conversation_history"] = tool_conversation_history
 
 
 @app.get("/api/sessions/{session_id}/transcript")
@@ -8907,6 +9179,8 @@ async def voice_handler(ws: WebSocket):
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
                 log.info(f"User{' (typed)' if typed else ''}: {text}")
+                _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
+                        text)
                 cleared = _take_clear_answer(text)
                 if cleared:
                     continue

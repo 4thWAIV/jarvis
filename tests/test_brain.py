@@ -54,7 +54,7 @@ def test_command_has_exact_flags(tmp_path):
     assert "--dangerously-skip-permissions" in cmd
     assert '"crossSessionInbound": "accept"' in cmd[cmd.index("--settings") + 1].replace('":"', '": "')
     assert cmd[cmd.index("--tools") + 1] == (                     # an allowlist, not a denylist
-        "mcp__jarvis__list_agents,mcp__jarvis__workflow_status,mcp__jarvis__session_detail,"
+        "mcp__jarvis__list_agents,mcp__jarvis__workflow_status,mcp__jarvis__conversation_history,mcp__jarvis__restore_capture,mcp__jarvis__session_detail,"
         "mcp__jarvis__steer_session,mcp__jarvis__answer_dialog,"
         "mcp__jarvis__spawn_run,"
         "mcp__jarvis__start_build,mcp__jarvis__build_status,"

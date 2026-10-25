@@ -16,6 +16,7 @@ import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
+import { conversationChanged } from "./conversation";
 import { micLevel, micMuted } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 
@@ -228,6 +229,10 @@ export function startJarvis(orb: Orb): void {
     } else if (type === "capture") {
       // What Tim said to send: the capture box (CaptureBox.tsx).
       captureChanged(msg as unknown as CaptureMessage);
+    } else if (type === "conversation") {
+      // Something went on the conversation's record, or a message moved:
+      // the history reads it again (conversation.ts).
+      conversationChanged.set(conversationChanged.get() + 1);
     } else if (type === "display") {
       // Shown, never spoken: a Sources item in the conversation (SourcesChip.tsx).
       shown(msg as unknown as Display);

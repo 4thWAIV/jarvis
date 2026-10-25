@@ -52,6 +52,8 @@ SCRUBBED_ENV_KEYS = claude_env.SCRUBBED_ENV_KEYS
 ALLOWED_TOOLS = [
     "mcp__jarvis__list_agents",
     "mcp__jarvis__workflow_status",
+    "mcp__jarvis__conversation_history",
+    "mcp__jarvis__restore_capture",
     "mcp__jarvis__session_detail",
     "mcp__jarvis__steer_session",
     "mcp__jarvis__answer_dialog",

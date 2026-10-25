@@ -469,6 +469,18 @@ def get_message(message_id: int) -> Optional[Message]:
     return _message(row) if row else None
 
 
+def get_messages(message_ids) -> dict[int, Message]:
+    """Several messages by id, in one read: what the conversation log reads
+    each message's live status from."""
+    ids = sorted({int(i) for i in message_ids})
+    if not ids:
+        return {}
+    with closing(_connect()) as conn:
+        rows = conn.execute(f"SELECT * FROM messages WHERE id IN ({','.join('?' * len(ids))})",
+                            ids).fetchall()
+    return {r["id"]: _message(r) for r in rows}
+
+
 def list_messages(session_id: Optional[str] = None,
                   agent_name: Optional[str] = None,
                   open_only: bool = False, limit: int = 20) -> list[Message]:

@@ -54,8 +54,8 @@ class Category:
 
 CATEGORIES: dict[str, Category] = {
     "captures": Category(
-        "Accept, delete, send and read aloud the captures on the voice page.",
-        (("POST", r"/api/capture/\d+/(accept|delete|send|read)"),)),
+        "Accept, delete, send, read aloud and restore the captures on the voice page.",
+        (("POST", r"/api/capture/\d+/(accept|delete|send|read|restore)"),)),
     "agents": Category(
         "Rename agents and switch them active or inactive.",
         (("POST", r"/api/agents/[^/]+/(name|active)"),)),

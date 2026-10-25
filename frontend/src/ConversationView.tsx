@@ -15,6 +15,12 @@
  *     Enter sends what he typed as if he had said it, Shift+Enter starts a
  *     new line.
  *
+ * The history is the conversation's record (conversation.ts) as well as the
+ * live captions: what was said before the page opened, and every message to
+ * an agent with its status as it moves (Queued, Sent, Delivered, Working on
+ * it, Answered), opening to the agent's answer. An agent's name opens that
+ * agent's thread in the centre area. "Earlier" at the top reads further back.
+ *
  * What is live is in the two boxes. Tim's finished words stay in the white
  * box until the brain answers: they go to a capture if it makes one of them
  * (and the history shows a collapsed item for them), and otherwise into the
@@ -22,11 +28,14 @@
  * once he has finished saying it.
  */
 
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { conversation, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
+import { conversationChanged, fromRecord, getConversation, openThread, restoreCapture,
+         STATUS_WORDS, type ConversationItem } from "./conversation";
+import { useLiveRead } from "./liveRead";
 import { SourcesChip } from "./SourcesChip";
 import type { OrbState } from "./orb";
 import { sendTyped, voiceState } from "./voiceStatus";
@@ -60,20 +69,132 @@ export function ConversationView() {
   );
 }
 
+type Row = { at: number; key: string; turn?: Turn; item?: ConversationItem;
+             answer?: ConversationItem; restorable?: boolean };
+
+/** The live turns and the record's items, in the order they happened. An
+ *  agent's answer is drawn inside the message it answers when both are here.
+ *  `everything`: every record item (an agent's thread), not only those the
+ *  live captions do not draw. */
+export function historyRows(turns: Turn[], items: ConversationItem[],
+                            everything = false): Row[] {
+  const shown = everything ? items : items.filter(fromRecord);
+  const asked = new Set(shown.filter((i) => i.kind === "to_agent").map((i) => i.message_id));
+  const answers = new Map(shown.filter((i) => i.kind === "answer" && i.message_id != null)
+    .map((i) => [i.message_id, i] as const));
+  // A cleared capture can be restored until a later notice says it was.
+  const restoredLater = (i: ConversationItem) => items.some((j) => j.id > i.id
+    && j.capture_id === i.capture_id && j.detail?.capture_event === "restored");
+  const rows: Row[] = [
+    ...turns.map((t) => ({ at: t.at ?? 0, key: `t${t.id}`, turn: t })),
+    ...shown.filter((i) => !(i.kind === "answer" && asked.has(i.message_id)))
+      .map((i) => ({ at: i.at, key: `r${i.id}`, item: i,
+                     answer: i.kind === "to_agent" && i.message_id != null
+                       ? answers.get(i.message_id) : undefined,
+                     restorable: i.detail?.capture_event === "cleared" && !restoredLater(i) })),
+  ];
+  return rows.sort((a, b) => a.at - b.at);
+}
+
 function History({ turns }: { turns: Turn[] }) {
   const ref = useRef<HTMLDivElement>(null);
-  const newest = turns[turns.length - 1];
+  const live = useLiveRead(() => getConversation(), [conversationChanged]);
+  const [older, setOlder] = useState<ConversationItem[]>([]);
+  const [earlier, setEarlier] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (earlier === undefined && live.value) setEarlier(live.value.earlier);
+  }, [live.value, earlier]);
+  const latest = live.value?.items ?? [];
+  const newestIds = new Set(latest.map((i) => i.id));
+  const items = [...older.filter((i) => !newestIds.has(i.id)), ...latest];
+  const rows = historyRows(turns, items);
+  const newest = rows[rows.length - 1];
   // Rolling: the newest turn is in view whenever one arrives.
   useLayoutEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [newest?.id, newest?.sentences.length]);
+  }, [newest?.key, newest?.turn?.sentences.length, newest?.item?.message?.status]);
+  async function loadEarlier() {
+    if (earlier == null) return;
+    const page = await getConversation(earlier).catch(() => null);
+    if (!page) return;
+    setOlder((o) => [...page.items, ...o]);
+    setEarlier(page.items.length ? page.earlier : null);
+  }
   return (
     <div className="conversation-history" ref={ref} aria-label="History">
-      {turns.map((t) => (t.display
-        ? <div key={t.id} className="history-turn jarvis kind-sources"><SourcesChip display={t.display} /></div>
-        : <HistoryTurn key={t.id} turn={t} />))}
+      {earlier != null && <button type="button" className="history-earlier" onClick={loadEarlier}>
+        Earlier</button>}
+      {rows.map((r) => (r.item ? <RecordItem key={r.key} item={r.item} answer={r.answer}
+                                             restorable={r.restorable} />
+        : r.turn!.display
+          ? <div key={r.key} className="history-turn jarvis kind-sources"><SourcesChip display={r.turn!.display} /></div>
+          : <HistoryTurn key={r.key} turn={r.turn!} />))}
     </div>
   );
+}
+
+/** An agent's name, opening its thread. */
+export function AgentLink({ item }: { item: ConversationItem }) {
+  if (!item.agent_name) return null;
+  if (!item.agent_session_id) return <span className="record-agent">{item.agent_name}</span>;
+  return (
+    <button type="button" className="record-agent"
+            onClick={() => openThread.set({ sessionId: item.agent_session_id!, name: item.agent_name })}>
+      {item.agent_name}
+    </button>
+  );
+}
+
+/** One item from the record: what was said before the page opened, a
+ *  message to an agent with its live status (opening to the answer), a
+ *  message from an agent, or a notice. Drawn as text. */
+export function RecordItem({ item, answer, restorable }: {
+  item: ConversationItem; answer?: ConversationItem; restorable?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  if (item.kind === "to_agent") {
+    const status = item.message?.status ?? "staged";
+    return (
+      <div className={`history-turn record-message status-${status}`}>
+        <div className="record-head">
+          <span className="record-arrow" aria-hidden="true">→</span><AgentLink item={item} />
+          <button type="button" className={`record-status status-${status}`}
+                  disabled={!answer} onClick={() => setOpen(!open)}
+                  title={answer ? (open ? "Hide the answer" : "Show the answer") : undefined}>
+            {STATUS_WORDS[status] ?? status}{answer ? (open ? " ▴" : " ▾") : ""}
+          </button>
+        </div>
+        <p className="record-text">{item.text}</p>
+        {open && answer && <p className="record-answer">{answer.text}</p>}
+      </div>
+    );
+  }
+  if (item.kind === "answer" || item.kind === "from_agent") {
+    return (
+      <div className={`history-turn record-from kind-${item.kind}`}>
+        <div className="record-head">
+          <span className="record-arrow" aria-hidden="true">←</span><AgentLink item={item} />
+          <span className="record-label">{item.kind === "answer" ? "Answer" : "Message"}</span>
+        </div>
+        <p className="record-text">{item.text}</p>
+      </div>
+    );
+  }
+  if (item.kind === "notice" && item.detail?.capture_event === "cleared") {
+    // A capture closed without being sent: Restore brings it back, unread.
+    return (
+      <div className="history-turn record-notice record-cleared">
+        <span>{item.text}</span>
+        {restorable && <button type="button" className="record-restore"
+                               onClick={async () => setRefused(await restoreCapture(item))}>
+          Restore</button>}
+        {refused && <span className="read-failure">{refused}</span>}
+      </div>
+    );
+  }
+  if (item.kind === "notice") return <p className="history-turn record-notice">{item.text}</p>;
+  const speaker = item.kind === "jarvis" ? "jarvis" : "user";
+  return <p className={`history-turn ${speaker} record-said kind-${item.kind}`}>{item.text}</p>;
 }
 
 /** A captured turn takes its capture kind's look in the history. */
