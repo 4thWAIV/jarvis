@@ -366,7 +366,7 @@ def test_the_primary_process_prefers_alive_then_socket_then_recency(tmp_path):
 @pytest.mark.parametrize("status,waiting_for,expected", [
     ("busy", None, sw.WORKING),
     ("idle", None, sw.IDLE),
-    ("shell", None, sw.SHELL),
+    ("shell", None, sw.BACKGROUND),
     ("waiting", "permission prompt", sw.NEEDS_YOU),
     ("waiting", None, sw.NEEDS_YOU),
     ("idle", "dialog open", sw.NEEDS_YOU),
@@ -379,6 +379,49 @@ def test_state_is_derived_from_status_and_waiting_for(tmp_path, status, waiting_
     write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
 
     assert sw.build_snapshot(roots=[root]).sessions[0].state == expected
+
+
+def _activity(**facts):
+    base = dict(alive=True, prompted=True, turn=None, turn_marked_at=None, prompt_waiting=None,
+                asked=False, background_agents=0, background_commands=False, roster_status=None)
+    return sw.Activity(**{**base, **facts})
+
+
+@pytest.mark.parametrize("facts, state, needs, between", [
+    ({"alive": False}, sw.GONE, None, False),
+    ({"prompted": False}, sw.FRESH, None, True),
+    ({"prompt_waiting": "permission prompt", "turn": "open"}, sw.NEEDS_YOU, "permission prompt", False),
+    ({"turn": "open"}, sw.WORKING, None, False),
+    ({"turn": "closed"}, sw.IDLE, None, True),
+    ({"turn": "closed", "asked": True}, sw.NEEDS_YOU, None, True),
+    # Found live: the roster says busy while a fork works, but the
+    # conversation's own turn has ended, so a message can go.
+    ({"turn": "closed", "roster_status": "busy", "background_agents": 1}, sw.BACKGROUND, None, True),
+    ({"turn": "closed", "background_commands": True}, sw.BACKGROUND, None, True),
+    ({"turn": "open", "roster_status": "idle"}, sw.WORKING, None, False),
+    # No marker in the tail: the roster's word.
+    ({"roster_status": "busy"}, sw.WORKING, None, False),
+    ({"roster_status": "waiting"}, sw.NEEDS_YOU, None, False),
+    ({"roster_status": "shell", "background_commands": True}, sw.BACKGROUND, None, True),
+    ({"roster_status": "idle"}, sw.IDLE, None, True),
+    ({"roster_status": None}, sw.UNKNOWN, None, True),
+])
+def test_session_status_is_the_one_rule(facts, state, needs, between):
+    status = sw.session_status(_activity(**facts))
+    assert (status.state, status.needs, status.between_turns) == (state, needs, between)
+
+
+def test_a_turn_marker_in_the_transcript_beats_the_roster(tmp_path, monkeypatch):
+    """The roster says busy; the transcript's last word is the turn ending."""
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    path = sw.transcript_path(root, "/p", "s")
+    with open(path, "a") as fh:
+        fh.write('{"type":"user","timestamp":"2026-10-25T00:00:00Z","message":{"role":"user","content":"go"}}\n')
+        fh.write('{"type":"system","subtype":"turn_duration","timestamp":"2026-10-25T00:00:05Z"}\n')
+    s, = sw.build_snapshot(roots=[root]).sessions
+    assert (s.state, s.between_turns) == (sw.IDLE, True)
 
 
 def test_a_session_with_no_transcript_is_fresh_whatever_its_status(tmp_path):

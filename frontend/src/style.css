@@ -9,8 +9,10 @@
      mirrored on the right. */
   --ray-lane: 4vw;
   /* The two side panels: the left column (orb, status, mic, agents) and the
-     right-hand display. Exactly this wide. */
-  --panel-width: 230px;
+     right-hand display. One width for both, the only place either width is
+     set. It never grows past 230px and only shrinks, with the window, so the
+     centre area (whose edges are --panel-edge) is never covered. */
+  --panel-width: min(230px, 18vw);
   /* Where a side panel's inner edge is, from its own side of the page. */
   --panel-edge: calc(var(--ray-lane) + var(--panel-width));
   /* The space between the caption box and each side panel; the same both
@@ -87,6 +89,10 @@ html, body {
   display: flex;
   flex-direction: row-reverse;
   gap: 6px;
+  /* The menu button (#controls) is fixed 16px from the page's right edge and
+     36px wide; on a narrow window the side lane is narrower than that, so
+     the tabs start after it rather than under it. */
+  padding-right: max(0px, calc(16px + 36px + 6px - var(--ray-lane)));
 }
 
 .right-tab.selected {
@@ -1526,7 +1532,21 @@ html, body {
 
 /* The Workflows view of the right panel (WorkflowsView.tsx): one compact row
    per workflow, boxed like an agent's row. */
-.workflows-view { gap: 8px; height: 100%; overflow-y: auto; }
+/* A summary only, at the panel's fixed width: nothing in it may push the
+   panel wider, so anything too long is cut, never wrapped wider. */
+.workflows-view { gap: 8px; height: 100%; overflow-y: auto; overflow-x: hidden; }
+.workflows-list { container-type: inline-size; }
+/* A narrow window shrinks the panel: the row keeps its name, track and
+   icons, and drops what it can do without (the age, and the icons' counts,
+   which the detail has). */
+@container (max-width: 200px) {
+  .workflow-age { display: none; }
+  /* Its outcome is still its orb's ring and the row's colour. */
+  .workflow-row .workflow-outcome { display: none; }
+  .workflow-row .open-count { display: none; }
+  .workflow-row .open-icons { gap: 3px; }
+  .workflow-row .open-icon svg { width: 11px; height: 11px; }
+}
 .workflows-empty, .workflow-empty {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
@@ -1540,13 +1560,14 @@ html, body {
 .workflow-row {
   --wf: 251, 113, 133;       /* light red: the colour of a workflow */
   width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 44px 1fr auto;
-  grid-template-areas: "orb name age" "orb track track" "orb counts counts";
-  column-gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-areas: "orb name age" "orb strip strip";
+  column-gap: 8px;
   row-gap: 4px;
   align-items: center;
-  padding: 8px 10px;
+  padding: 6px 8px;
   font: inherit;
   font-size: 11px;
   text-align: left;
@@ -1575,10 +1596,13 @@ html, body {
 .workflow-outcome.outcome-succeeded { background: rgba(52, 211, 153, 0.2); color: #6ee7b7; }
 .workflow-outcome.outcome-failed { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 .workflow-outcome.outcome-cancelled { background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.7); }
+/* A finished row keeps room for its × at the end, so nothing sits under it. */
+.workflow-item.dismissible .workflow-row { padding-right: 28px; }
 .workflow-dismiss {
   position: absolute;
-  top: 4px;
-  right: 6px;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
   width: 20px;
   height: 20px;
   padding: 0;
@@ -1628,17 +1652,25 @@ html, body {
 .workflow-dismissed-mark { flex: none; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255, 255, 255, 0.35); }
 .workflow-row > .workflow-orb { grid-area: orb; }
-.workflow-counts { grid-area: counts; display: flex; align-items: center; gap: 10px; }
+/* Under the name: the phase track takes what the counts leave. */
+.workflow-strip { grid-area: strip; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.workflow-counts { flex: none; display: flex; align-items: center; gap: 5px; }
+.workflow-tasks { font-size: 10px; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.7); }
+/* One line: a long name is cut, and the whole of it is the row's title. */
 .workflow-name {
   grid-area: name;
   min-width: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 16px;
-  overflow-wrap: anywhere;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.workflow-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.4); }
-.workflow-track { grid-area: track; min-width: 0; }
+.workflow-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
+.workflow-row .workflow-outcome { grid-area: age; font-size: 10px; padding: 0 6px; white-space: nowrap; }
+.workflow-track { flex: 1; min-width: 16px; }
+.workflow-row .phase-segment { height: 4px; border-radius: 2px; }
 
 /* A thin bar of how much is done, in the workflow's colour. */
 .workflow-bar {

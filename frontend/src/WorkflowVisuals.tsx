@@ -116,7 +116,7 @@ export function OpenIcon({ kind, count }: { kind: keyof typeof ICONS; count?: nu
   return (
     <span className={`open-icon open-${kind}`} title={`${count ?? ""} open ${kind}${count === 1 ? "" : "s"}`}>
       <svg width="14" height="14" viewBox="0 0 16 16">{ICONS[kind]}</svg>
-      {count !== undefined && <span>{count}</span>}
+      {count !== undefined && <span className="open-count">{count}</span>}
     </span>
   );
 }

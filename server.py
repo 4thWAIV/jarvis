@@ -4073,7 +4073,7 @@ _STATE_WORDS = {
     session_watch.WORKING: "working",
     session_watch.IDLE: "idle",
     session_watch.NEEDS_YOU: "needs you",
-    session_watch.SHELL: "in a shell",
+    session_watch.BACKGROUND: "working in the background",
     session_watch.GONE: "finished",
     session_watch.FRESH: "not started",
     session_watch.UNKNOWN: "running",
@@ -4992,7 +4992,7 @@ def _why_message_waits(session_id: str, message_id: Optional[int] = None) -> Opt
             return f"has message {first.id} waiting ahead of it"
         return f"has not answered message {first.id} yet"
     session = _snapshot_or_empty().by_id(session_id)
-    if session is None or session_watch.free_for_message(session):
+    if session is None or session.between_turns:
         return None
     if session.state == session_watch.NEEDS_YOU:
         return "is stopped at a prompt waiting for you"

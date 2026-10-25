@@ -182,6 +182,12 @@ class Recap:
     last_prompt: str | None = None    # the CLI's own `lastPrompt`
     last_text: str | None = None      # what the session last said
     recent_tools: list[str] = field(default_factory=list)
+    # The main conversation's turn as its transcript last marked it: "open"
+    # after a turn starts (his words, a message, a background task's notice),
+    # "closed" after the turn-end marker, None when the tail shows neither.
+    # Subagents write elsewhere, so this is the main conversation's alone.
+    turn: str | None = None
+    turn_marked_at: float | None = None
 
     def summary(self) -> str | None:
         """One line describing the session: its title, else its last prompt."""
@@ -253,6 +259,11 @@ def recap_from(objs: list[dict]) -> Recap:
             r.title = _clip(o.get("aiTitle"), 200) or r.title
         elif kind == "last-prompt":
             r.last_prompt = _clip(o.get("lastPrompt")) or r.last_prompt
+        elif kind == "system" and o.get("subtype") == "turn_duration" \
+                and not o.get("isSidechain"):
+            r.turn, r.turn_marked_at = "closed", iso_seconds(o.get("timestamp"))
+        elif kind == "user" and _starts_a_turn(o):
+            r.turn, r.turn_marked_at = "open", iso_seconds(o.get("timestamp"))
         elif kind == "assistant" and not o.get("isSidechain"):
             message = o.get("message")
             content = message.get("content") if isinstance(message, dict) else None
@@ -703,14 +714,14 @@ def read_recap(root: Path, cwd: str, session_id: str,
     return recap_from(tail_objects(path, nbytes))
 
 
-# Derived conversation states.
+# Derived conversation states: what `session_status` says, and nothing else.
 FRESH = "fresh"          # alive but never prompted (no transcript) — never announced
-NEEDS_YOU = "needs_you"
-WORKING = "working"
-SHELL = "shell"
-IDLE = "idle"
-GONE = "gone"
-UNKNOWN = "unknown"      # alive, but the roster carries no status for it
+NEEDS_YOU = "needs_you"  # stopped at a prompt or dialog, or its turn ended on a question
+WORKING = "working"      # its main conversation is in a turn
+BACKGROUND = "background"  # between turns, with background agents or commands still running
+IDLE = "idle"            # between turns, nothing running
+GONE = "gone"            # no process left
+UNKNOWN = "unknown"      # alive, but neither its transcript nor the roster says
 
 # Keywords matched against a lowercased `waitingFor` reason to flag one that
 # a peer message cannot clear. The reason set itself is OPEN — "input needed"
@@ -728,6 +739,63 @@ _QUESTION_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 
 _URL_RE = re.compile(r"\S+://\S+|\bwww\.\S+")
+
+
+@dataclass(frozen=True)
+class Activity:
+    """Every raw fact about one session, read once per poll by its provider.
+    `session_status` is the only thing that turns it into a state."""
+    alive: bool                       # a process for it is running
+    prompted: bool                    # it has a transcript: someone has started it
+    turn: str | None                  # "open", "closed" or None: its main conversation's turn
+    turn_marked_at: float | None      # when its transcript marked that
+    prompt_waiting: str | None        # a permission prompt or dialog it is stopped at
+    asked: bool                       # its last turn ended asking him something
+    background_agents: int            # its subagents written to lately
+    background_commands: bool         # a background command still running
+    roster_status: str | None         # the roster's own word: used only when `turn` is None
+    roster_since: float | None = None  # when the roster's word last changed
+
+
+@dataclass(frozen=True)
+class Status:
+    """A session's state, and everything that follows from it."""
+    state: str
+    needs: str | None                 # what it waits on him for, if anything
+    between_turns: bool               # a message now starts a turn of its own
+    since: float | None               # when this state began, as near as is known
+
+
+def session_status(a: Activity) -> Status:
+    """The one way a session's state is worked out, for every provider and
+    every reader: the agents list and table, the message queue, the
+    announcements, the tools. Its transcript's turn markers decide, because
+    the roster says `busy` while any background agent works, found live with
+    a fork running while the conversation sat at its prompt; the roster's
+    word decides only where the transcript shows no marker."""
+    marked = a.turn_marked_at or a.roster_since
+    if not a.alive:
+        return Status(GONE, None, False, marked)
+    if not a.prompted:
+        return Status(FRESH, None, True, a.roster_since)
+    if a.prompt_waiting:
+        # A prompt mid-turn: the turn resumes when he answers it.
+        return Status(NEEDS_YOU, a.prompt_waiting, False, a.roster_since or marked)
+    turn = a.turn
+    if turn is None:
+        turn = {"busy": "open", "waiting": "open", "idle": "closed",
+                "shell": "closed"}.get(a.roster_status or "")
+        if turn is None:
+            return Status(UNKNOWN, None, True, marked)
+        if a.roster_status == "waiting":
+            return Status(NEEDS_YOU, None, False, marked)
+    if turn == "open":
+        return Status(WORKING, None, False, marked)
+    if a.asked:
+        return Status(NEEDS_YOU, None, True, marked)
+    if a.background_agents or a.background_commands:
+        return Status(BACKGROUND, None, True, marked)
+    return Status(IDLE, None, True, marked)
 
 
 def _looks_like_a_question(text: str | None) -> bool:
@@ -797,6 +865,8 @@ class SessionState:
     agents_active: int = 0
     # `agents_seen` hit MAX_AGENT_FILES: it is a floor, not a total.
     agents_capped: bool = False
+    # From `session_status`: a message now starts a turn of its own.
+    between_turns: bool = False
 
     @property
     def announceable(self) -> bool:
@@ -1073,32 +1143,30 @@ def _pick_primary(entries: list[RosterEntry]) -> RosterEntry:
     )[0]
 
 
-def _derive_state(entries: list[RosterEntry], recap: Recap) -> tuple[str, str | None]:
-    """The conversation's state and the reason it needs you, if it does."""
-    if not any(pid_alive(e.pid) for e in entries):
-        return GONE, None
-    if not recap.exists:
-        # Nobody has ever prompted it. True even when it sits at a startup
-        # dialog — measured on chitauri-67, which was `waiting`/`dialog open`.
-        return FRESH, None
+# The roster's words, most telling first, when several processes report.
+_ROSTER_ORDER = ("waiting", "busy", "shell", "idle")
 
+
+def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int) -> Activity:
+    """Claude Code's raw facts about one conversation: its roster entries,
+    its transcript's tail and its subagents."""
     live = [e for e in entries if pid_alive(e.pid)]
+    statuses = {e.status for e in live}
     waiting = next((e for e in live if e.waiting_for), None)
-    if waiting is not None:
-        return NEEDS_YOU, waiting.waiting_for
-    if any(e.status == "waiting" for e in live):
-        return NEEDS_YOU, None
-    if any(e.status == "busy" for e in live):
-        return WORKING, None
-    if any(e.status == "shell" for e in live):
-        return SHELL, None
-    if all(e.status is None for e in live):
-        return UNKNOWN, None
-    # Idle, but it may have stopped to ask something.
-    if any(t in _QUESTION_TOOLS for t in recap.recent_tools) or \
-            _looks_like_a_question(recap.last_text):
-        return NEEDS_YOU, None
-    return IDLE, None
+    newest = max(live, key=lambda e: e.status_updated_at or 0, default=None)
+    return Activity(
+        alive=bool(live),
+        prompted=recap.exists,
+        turn=recap.turn,
+        turn_marked_at=recap.turn_marked_at,
+        prompt_waiting=waiting.waiting_for if waiting else None,
+        asked=(any(t in _QUESTION_TOOLS for t in recap.recent_tools)
+               or _looks_like_a_question(recap.last_text)),
+        background_agents=agents_active,
+        background_commands="shell" in statuses,
+        roster_status=next((w for w in _ROSTER_ORDER if w in statuses), None),
+        roster_since=(newest.status_updated_at or newest.started_at) if newest else None,
+    )
 
 
 def _assign_voice_names(sessions: list[SessionState]) -> None:
@@ -1213,7 +1281,7 @@ _STATE_PHRASES = {
     NEEDS_YOU: "that needs you",
     WORKING: "that's working",
     IDLE: "that's idle",
-    SHELL: "in a shell",
+    BACKGROUND: "that's working in the background",
     GONE: "that's finished",
     FRESH: "that hasn't started",
     UNKNOWN: "in an unclear state",
@@ -1348,32 +1416,33 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         # "not started" — which is the one state JARVIS never announces.
         roots_here = _roots_of(group, primary)
         recap = _first_recap(roots_here, primary.cwd, session_id)
-        state, needs = _derive_state(group, recap)
         agents_seen, agents_active, agents_capped = count_agents(
             roots_here, primary.cwd, session_id, at)
+        status = session_status(claude_activity(group, recap, agents_active))
         live = [e for e in group if pid_alive(e.pid)]
         steerable_entry = next((e for e in live if e.steerable), None)
         sessions.append(SessionState(
             session_id=session_id,
             cwd=primary.cwd,
             project=project_name(primary.cwd),
-            state=state,
+            state=status.state,
             pids=[e.pid for e in group],
             primary_pid=primary.pid,
             roster_name=primary.name,
-            needs=needs,
+            needs=status.needs,
             title=recap.title,
             last_prompt=recap.last_prompt,
             last_text=recap.last_text,
             recent_tools=recap.recent_tools,
             started=(primary.started_at or primary.status_updated_at),
-            since=(primary.status_updated_at or primary.started_at),
+            since=status.since or primary.status_updated_at or primary.started_at,
             origin=_origin(primary),
             steerable=steerable_entry is not None,
             socket_path=steerable_entry.socket_path if steerable_entry else None,
             agents_seen=agents_seen,
             agents_active=agents_active,
             agents_capped=agents_capped,
+            between_turns=status.between_turns,
         ))
 
     return sessions
@@ -1414,24 +1483,6 @@ class ClaudeSessions:
                 return track_from(objects_since(path, message.staged_at),
                                   message.body, message.staged_at)
         return Tracking()
-
-
-# A session takes a message only between turns. Sent to one mid-turn
-# (working, or stopped at a prompt that wants him), Claude Code folds it into
-# the turn under way, and that turn's one answer becomes the reply to both.
-# Between turns is idle, never used, `shell` (at its prompt with a
-# background command still running, which a message does not interrupt:
-# found live, a session running its test suite in the background held two
-# messages queued), and `unknown` (no status at all, which would otherwise
-# hold the queue forever).
-SENDABLE_STATES = frozenset({IDLE, FRESH, SHELL, UNKNOWN})
-
-
-def free_for_message(session: SessionState) -> bool:
-    """Whether a message can go to this session now, as far as the session
-    itself goes: between turns. (Whether another message to it is still
-    open is the queue's to check.)"""
-    return session.state in SENDABLE_STATES
 
 
 def build_snapshot(entries: list[RosterEntry] | None = None,
@@ -1644,7 +1695,7 @@ class SessionWatcher:
                     self._publish("needs_you", s, now)
                 elif answering:
                     pass
-                elif was == WORKING and s.state in (IDLE, GONE, UNKNOWN):
+                elif was == WORKING and s.state in (IDLE, BACKGROUND, GONE, UNKNOWN):
                     # A session that exits while its roster entry is still
                     # being torn down can land on `unknown` (no status field
                     # at all) rather than cleanly on `gone` — treat that the
@@ -1659,7 +1710,7 @@ class SessionWatcher:
 
     def send_queued(self, snap: Snapshot | None = None, now: float | None = None) -> list:
         """Send each session's oldest queued message once that session is
-        free (`free_for_message`): idle, and nothing JARVIS sent it still
+        free (`between_turns`, from session_status), and nothing JARVIS sent it still
         open. One message per turn, so two can never merge into one turn
         and lose their own replies. Records the outcome (the store first,
         then a `sent` or `send_failed` event) and returns the messages it
@@ -1692,7 +1743,7 @@ class SessionWatcher:
                 elif now - m.staged_at > MESSAGE_WATCH_SEC:
                     fields = {"status": "failed",
                               "failure": "its session was not free within a day"}
-                elif free_for_message(session):
+                elif session.between_turns:
                     provider = next((p for p in self.providers if p.name == m.provider), None) \
                         or for_session(session, self.providers)
                     outcome = provider.send(session, m.text) if provider is not None else "failed"

@@ -190,7 +190,7 @@ async def _perform_one(server, monkeypatch):
     speech = _RecordingSpeech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(session_steer, "post_to_session",
-                        lambda path, prompt: session_steer.SENT)
+                        lambda path, prompt, interrupt=False: session_steer.SENT)
     await server._perform_steer(server._StagedSteer(
         session_id="s1", voice_name="chitauri", project="chitauri",
         prompt="use Postgres", socket_path="/tmp/x.sock"))

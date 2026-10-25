@@ -45,7 +45,7 @@ import session_watch
 # Session states that mean "something is actively happening here right now",
 # for the purpose of the project ordering rule. `needs_you` is its own,
 # higher-priority bucket and is deliberately not included here.
-_ACTIVE_SESSION_STATES = frozenset({session_watch.WORKING, session_watch.SHELL})
+_ACTIVE_SESSION_STATES = frozenset({session_watch.WORKING, session_watch.BACKGROUND})
 
 # Conversations that have STOPPED being conversations. `session_count`
 # includes them, which is right for "what does this project know about" and

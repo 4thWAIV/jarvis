@@ -1,10 +1,12 @@
 /**
- * The Workflows view of the right panel: every long workflow, one row each,
- * read at a glance rather than read. A row has the workflow's light red orb
- * (WorkflowVisuals.tsx), which moves with its state and is ringed in the
- * state's colour; its name and when it was last heard from; a track with a
- * segment per phase, done, current or to come; a ring of tasks done; and
- * its open decisions, blockers and waits as coloured icons with counts.
+ * The Workflows view of the right panel: a summary of every long workflow,
+ * one compact two-line row each at the panel's fixed width, read at a
+ * glance. A row has the workflow's light red orb (WorkflowVisuals.tsx),
+ * which moves with its state and is ringed in the state's colour; its name
+ * on one line (the whole of it on hover) and when it was last heard from; a
+ * slim track with a segment per phase, done, current or to come; tasks done
+ * out of all; and its open decisions, blockers and waits as coloured icons
+ * with counts. Everything else is in the detail, in the centre area.
  * Running workflows come first. A finished one stays in the list for a
  * couple of minutes (the server's LINGER_SEC) so its finish can be seen: its
  * orb ringed in its outcome's colour, a one-time glow, its outcome named,
@@ -17,7 +19,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ago, dismissals, dismissWorkflow, FINISHED, isGone, openWorkflow, STATE_WORDS,
          workflows, type Workflow } from "./workflows";
-import { OpenIcons, PhaseTrack, Ring, WorkflowOrb } from "./WorkflowVisuals";
+import { OpenIcons, PhaseTrack, WorkflowOrb } from "./WorkflowVisuals";
 
 /** Re-renders every `ms`, so ages stay true between reads. */
 export function useTick(ms: number): void {
@@ -56,7 +58,7 @@ export function WorkflowsView() {
       {live.value && current.length === 0 && <p className="workflows-empty">No workflows</p>}
       <ul className="workflows-list">
         {current.map((w) => (
-          <li key={w.id} className="workflow-item">
+          <li key={w.id} className={`workflow-item${FINISHED.has(w.state) ? " dismissible" : ""}`}>
             <WorkflowRow workflow={w} selected={w.id === open} />
             {FINISHED.has(w.state) && (
               <button type="button" className="workflow-dismiss" aria-label="Dismiss"
@@ -114,17 +116,21 @@ function WorkflowRow({ workflow: w, selected }: { workflow: Workflow; selected: 
     <button type="button" data-workflow-id={w.id} data-state={w.state}
             className={`workflow-row${finished ? ` finished outcome-${w.state}` : ""}${
               selected ? " selected" : ""}`}
-            title={STATE_WORDS[w.state]}
+            title={`${w.name}: ${STATE_WORDS[w.state]}`}
             onClick={() => openWorkflow.set(w.id)}>
-      <WorkflowOrb state={w.state} size={44} />
+      <WorkflowOrb state={w.state} size={30} />
       <span className="workflow-name">{w.name}</span>
-      <span className="workflow-age">{finished ? "" : ago(w.last_event_at)}</span>
-      <span className="workflow-track"><PhaseTrack w={w} /></span>
-      <span className="workflow-counts">
-        <Ring done={w.tasks_done} total={w.tasks_total} size={34} label="Tasks done" />
-        {finished
-          ? <span className={`workflow-outcome outcome-${w.state}`}>{STATE_WORDS[w.state]}</span>
-          : <OpenIcons w={w} />}
+      {finished
+        ? <span className={`workflow-outcome outcome-${w.state}`}>{STATE_WORDS[w.state]}</span>
+        : <span className="workflow-age">{ago(w.last_event_at)}</span>}
+      <span className="workflow-strip">
+        <span className="workflow-track"><PhaseTrack w={w} /></span>
+        <span className="workflow-counts">
+          {w.tasks_total > 0 && (
+            <span className="workflow-tasks" aria-label="Tasks done">{w.tasks_done}/{w.tasks_total}</span>
+          )}
+          {!finished && <OpenIcons w={w} />}
+        </span>
       </span>
     </button>
   );

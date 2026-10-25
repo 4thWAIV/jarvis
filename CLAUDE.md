@@ -204,7 +204,12 @@ arbitrary LLM and file content, so everything goes through
   transcripts (user and assistant text only) and the `journal/`, `memory/` and
   `projects/` Markdown. Allowed roots only, credentials and symlink escapes
   refused; results are untrusted
-- `session_watch.py` — Watches every Claude Code session on the machine
+- `session_watch.py` — Watches every Claude Code session on the machine. A
+  session's state has one source: each provider reads its raw facts into an
+  `Activity` and `session_status` alone turns that into the state, what it
+  needs, whether it is `between_turns` (the message queue's only test) and
+  since when; the transcript's turn markers decide, the roster's word only
+  where they are missing
   (process / conversation / project), and follows each message JARVIS sent
   through its session's transcript
 - `agent_directory.py` — The one way agents are listed and found: every

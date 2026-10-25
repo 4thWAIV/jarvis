@@ -32,7 +32,7 @@ from typing import Callable, Optional
 
 import session_steer
 from session_provider import Tracking
-from session_watch import (IDLE, NEEDS_YOU, WORKING, FRESH, SessionState,
+from session_watch import (Activity, session_status, SessionState,
                            _looks_like_a_question, objects_since, project_name,
                            tail_windows, TranscriptEntry, TRANSCRIPT_PAGE, lines_before,
                            tool_gist, _first_lines, _long)
@@ -242,16 +242,21 @@ def _when(obj: dict) -> Optional[float]:
 
 @dataclass
 class Recap:
-    state: str
-    since: Optional[float]
+    """What the end of a rollout says, raw: whether anything was ever said,
+    its turn as last marked, and what was said. The state is
+    session_watch.session_status's to decide."""
+    prompted: bool
+    turn: Optional[str]               # "open" after task_started, "closed" after task_complete
+    turn_marked_at: Optional[float]
     last_prompt: Optional[str]
     last_text: Optional[str]
     recent_tools: list[str]
 
 
 def recap(objs: list[dict]) -> Recap:
-    """What the end of a transcript says: working or not, and what was said."""
-    state, since = FRESH, None
+    """Reduce rollout lines to a recap."""
+    turn = marked = None
+    prompted = False
     last_prompt = last_text = None
     tools: list[str] = []
     for obj in objs:
@@ -259,22 +264,28 @@ def recap(objs: list[dict]) -> Recap:
         if obj.get("type") == "event_msg":
             kind = p.get("type")
             if kind == "task_started":
-                state, since = WORKING, _when(obj)
+                turn, marked = "open", _when(obj)
             elif kind in ("task_complete", "turn_aborted"):
-                state, since = IDLE, _when(obj)
+                turn, marked = "closed", _when(obj)
         said = _message(obj)
         if said:
+            prompted = True
             if said[0] == "user":
                 last_prompt = said[1][:MAX_TEXT]
             else:
                 last_text = said[1][:MAX_TEXT]
-            if state == FRESH:
-                state = IDLE
         if obj.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
             tools.append(str(p.get("name") or ""))
-    if state == IDLE and _looks_like_a_question(last_text):
-        state = NEEDS_YOU
-    return Recap(state, since, last_prompt, last_text, [t for t in tools if t][-RECENT_TOOLS:])
+    return Recap(prompted or turn is not None, turn, marked, last_prompt, last_text,
+                 [t for t in tools if t][-RECENT_TOOLS:])
+
+
+def activity(r: Recap) -> Activity:
+    """Codex's raw facts about a running session. It has no roster: its
+    rollout's task markers are the turn, and nothing runs in its background."""
+    return Activity(alive=True, prompted=r.prompted, turn=r.turn, turn_marked_at=r.turn_marked_at,
+                    prompt_waiting=None, asked=_looks_like_a_question(r.last_text),
+                    background_agents=0, background_commands=False, roster_status=None)
 
 
 def track_from(objs: list[dict], body: str, since: float) -> Tracking:
@@ -350,12 +361,15 @@ class CodexSessions:
             thread = threads[tid]
             first = min(group, key=lambda p: p.started)
             r = recap(_tail(thread["rollout_path"])) if thread.get("rollout_path") else \
-                Recap(FRESH, None, None, None, [])
+                Recap(False, None, None, None, None, [])
+            status = session_status(activity(r))
             sessions.append(SessionState(
                 session_id=tid,
                 cwd=thread["cwd"],
                 project=project_name(thread["cwd"]),
-                state=r.state,
+                state=status.state,
+                needs=status.needs,
+                between_turns=status.between_turns,
                 pids=[p.pid for p in group],
                 primary_pid=first.pid,
                 roster_name="",
@@ -364,7 +378,7 @@ class CodexSessions:
                 last_text=r.last_text,
                 recent_tools=r.recent_tools,
                 started=first.started,
-                since=r.since or (thread.get("updated_at_ms") or 0) / 1000 or first.started,
+                since=status.since or (thread.get("updated_at_ms") or 0) / 1000 or first.started,
                 origin="terminal",
                 provider=NAME,
                 # Codex's queue always takes a message; the session picks it

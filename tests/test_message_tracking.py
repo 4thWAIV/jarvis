@@ -740,9 +740,11 @@ class _QueueProvider:
         self.state, self.sent = state, []
 
     def discover(self, now):
+        # between_turns as session_status gives it for each state.
         return [] if self.state is None else [sw.SessionState(
             session_id=SID, cwd=CWD, project="guard", state=self.state, voice_name="guard",
-            steerable=True, socket_path="/x.sock", pids=[1], primary_pid=1)]
+            steerable=True, socket_path="/x.sock", pids=[1], primary_pid=1,
+            between_turns=self.state in ("idle", "background", "unknown", "fresh"))]
 
     def last_reply(self, session):
         return None
@@ -851,11 +853,12 @@ async def test_a_message_to_a_session_mid_turn_is_queued(server, monkeypatch):
     assert m.status == "queued"
 
 
-@pytest.mark.parametrize("state, sent", [("idle", True), ("shell", True), ("unknown", True),
+@pytest.mark.parametrize("state, sent", [("idle", True), ("background", True), ("unknown", True),
                                          ("fresh", True), ("working", False), ("needs_you", False)])
-def test_a_session_at_its_prompt_takes_a_message_even_with_a_shell_running(store, state, sent):
-    """A background command (a test suite, a wait loop) leaves the session
-    at its prompt: a message starts a turn of its own, so it goes."""
+def test_the_queue_sends_whenever_the_session_is_between_turns(store, state, sent):
+    """The queue asks only `between_turns`: a session working in the
+    background (agents or commands running) takes a message as a turn of
+    its own."""
     provider = _QueueProvider(state=state)
     w, _ = _queue_watcher(store, provider)
     mid = _queued(store, "use Postgres")

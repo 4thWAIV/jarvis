@@ -634,7 +634,7 @@ def sync_agents(running: dict[str, tuple[str, str]]) -> bool:
 
 # The states that count as busy: doing something, or waiting on the user.
 # Everything else (idle, not yet started, a shell) counts as idle.
-BUSY_AGENT_STATES = ("working", "needs_you")
+BUSY_AGENT_STATES = ("working", "needs_you", "background")
 
 
 def list_agents() -> list[dict]:

@@ -1,9 +1,9 @@
 """The Workflows view and a workflow's detail.
 
-The right panel's Workflows tab lists every workflow, one row each, drawn
-rather than written: its light red orb, its name, a segment per phase with
-the current one marked, a ring of tasks done and an icon per kind of open
-item. Its detail's Overview shows the orb large and the phases as a track.
+The right panel's Workflows tab lists every workflow as a compact summary row
+at the panel's fixed width: its light red orb, its name, a segment per phase
+with the current one marked, tasks done and an icon per kind of open item.
+Both sidebars share one width that only shrinks, and never cover the centre. Its detail's Overview shows the orb large and the phases as a track.
 Clicking a row opens the workflow in the centre area, and its Decisions tab
 answers a decision by posting the option clicked. A "workflows" hint on
 /ws/sessions makes the list read the record again.
@@ -102,7 +102,7 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_u
           orb: r.querySelector('.workflow-orb canvas').getBoundingClientRect().width,
           segments: [...r.querySelectorAll('.phase-segment')].map(s => [s.dataset.phase, s.className]),
           decisions: r.querySelector('.open-icon.open-decision').textContent})""")
-        assert got["orb"] >= 32, got
+        assert got["orb"] >= 28, got
         assert [p for p, _ in got["segments"]] == ["mic-recorder", "deepgram-engine"], got
         assert "at-done" in got["segments"][0][1] and "at-current" in got["segments"][1][1], got
         assert got["decisions"] == "1", got
@@ -291,4 +291,42 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
         await page.click(".workflow-done-row[data-workflow-id=wf-c]")
         await page.wait_for_selector("#workflow-detail .workflow-detail-dismissed")
         assert await page.locator(".workflow-detail-dismiss").count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [1440, 1200, 900])
+async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_url, width):
+    """One width for both sidebars, at most 230px and shrinking with the
+    window; the centre area always sits between them; a workflow row never
+    runs past its panel."""
+    server, sessions = _Server(), _Sessions()
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": width, "height": 860})
+        await page.add_init_script(FAKE_RECOGNITION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", sessions)
+        await page.route("**/api/workflows**", server)
+        await page.goto(page_url)
+        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.wait_for_selector(".workflow-row")
+        got = await page.evaluate("""() => {
+          const r = s => document.querySelector(s).getBoundingClientRect();
+          const left = r('#left-column'), right = r('#right-column'), centre = r('#conversation');
+          const panel = r('.right-panel');
+          const rows = [...document.querySelectorAll('.workflow-item')].map(e => e.getBoundingClientRect());
+          const tabs = r('.right-tabs [role=tab]'), menu = r('#btn-menu');
+          return {left: left.width, right: right.width, overlapLeft: centre.left < left.right,
+                  overlapRight: centre.right > right.left,
+                  rowsInside: rows.every(b => b.left >= panel.left - 0.5 && b.right <= panel.right + 0.5),
+                  tabsClearOfMenu: tabs.right <= menu.left + 0.5};
+        }""")
+        assert abs(got["left"] - got["right"]) < 0.5, got
+        assert got["left"] <= 230.5 and got["left"] <= width * 0.18 + 0.5, got
+        assert not got["overlapLeft"] and not got["overlapRight"], got
+        assert got["rowsInside"] and got["tabsClearOfMenu"], got
         await browser.close()
