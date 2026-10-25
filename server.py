@@ -6059,9 +6059,10 @@ async def _watch_workflow_silence() -> None:
                 name = _workflow_said(w)
                 await _say_about_message(
                     f"{name} has gone quiet, sir.",
-                    f"Since your last turn you told him {name} has reported nothing "
-                    f"for {_say_age(time.time() - w.last_event_at)}. workflow_status "
-                    f"with workflow {w.id} has its last report.", "workflow silence")
+                    f"Since your last turn you told him {name} has gone quiet: its "
+                    f"last report was {_say_age(time.time() - w.last_event_at)}. "
+                    f"workflow_status with workflow {w.id} has that report.",
+                    "workflow silence")
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, "workflow silence", look_for_quiet)
 

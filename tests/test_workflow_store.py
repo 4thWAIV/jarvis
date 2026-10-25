@@ -142,3 +142,12 @@ def test_open_decisions_appear_on_the_needs_board_without_writing_it(tmp_path):
     assert "Speech migration needs a decision (engine): Which engine?" in boards[0].text
     assert own.text.endswith("- one: x"), "the session's own board is never changed"
     assert ws.with_decisions([])[0].project == "jarvis"
+
+
+def test_a_workflow_that_said_it_is_waiting_is_not_called_quiet(monkeypatch):
+    wid = ws.start("Build", "hammer", [])
+    ws.record(_ev(wid, "wait_started", "Running the test suite.", key="suite"))
+    real = ws.time.time
+    monkeypatch.setattr(ws.time, "time", lambda: real() + ws.SILENT_AFTER_SEC + 1)
+    assert ws.snapshot(wid).state == "waiting"
+

@@ -142,7 +142,8 @@ step to one durable record, `workflow_store.py`: `workflow_events` is
 append-only and is the truth, and the workflow's status, its phases and
 tasks, and its open waits, decisions and blockers are updated in the same
 transaction as each event, by `record`, the only writer. Going quiet
-(`SILENT_AFTER_SEC` with no event) is worked out when it is read, never
+(running, with no event for `SILENT_AFTER_SEC`; a workflow that has said it
+is waiting is waiting, not quiet) is worked out when it is read, never
 stored. Sessions report with `workflow_report.py` and an access key in the
 `workflows` category (the talk-to-jarvis skill teaches them);
 `POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the

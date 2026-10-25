@@ -396,8 +396,10 @@ def _settle_state(conn, wid: str, event: WorkflowEvent, now: float) -> None:
 
 
 def _read_state(stored: str, last_event_at: float, now: float) -> str:
-    if stored in (WorkflowState.running.value, WorkflowState.waiting.value) \
-            and now - last_event_at > SILENT_AFTER_SEC:
+    """Only a running workflow goes quiet. One that has said it is waiting
+    (on a test suite, a build) is waiting, not silent: its open wait shows
+    how long, found when the pilot's ten-minute test run was called quiet."""
+    if stored == WorkflowState.running.value and now - last_event_at > SILENT_AFTER_SEC:
         return SILENT
     return stored
 
