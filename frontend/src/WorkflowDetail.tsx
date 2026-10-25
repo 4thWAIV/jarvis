@@ -27,13 +27,14 @@
  * drawn as plain text.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLiveRead } from "./liveRead";
 import { TabRow, type Tab } from "./Tabs";
 import { TaskBar, useTick } from "./WorkflowsView";
 import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
-import { ago, answerDecision, getEvents, getSessionTranscript, getTranscript, getWorkflow,
+import { ago, answerDecision, dismissals, dismissWorkflow, FINISHED, getEvents,
+         getSessionTranscript, getTranscript, getWorkflow, isGone,
          openWorkflow, STATE_WORDS, workflowsChanged, type OpenItem,
          type TranscriptEntry, type Workflow, type WorkflowItem } from "./workflows";
 
@@ -49,6 +50,8 @@ export function WorkflowDetail({ id }: { id: string }) {
   const [tab, setTab] = useState("overview");
   useTick(30000);
   const w = live.value;
+  useSyncExternalStore(dismissals.subscribe, dismissals.get);
+  const gone = w ? isGone(w) : false;
   const tabs: Tab[] = w ? [
     { id: "overview", title: "Overview", icon: null, view: () => <Overview w={w} /> },
     { id: "phases", title: "Phases", icon: null, view: () => <Phases w={w} /> },
@@ -69,8 +72,15 @@ export function WorkflowDetail({ id }: { id: string }) {
         <WorkflowOrb state={w?.state ?? "running"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{w?.name ?? "Workflow"}</span>
-          {w && <span className={`workflow-detail-state state-${w.state}`}>{STATE_WORDS[w.state]}</span>}
+          {w && <span className="workflow-detail-pills">
+            <span className={`workflow-detail-state state-${w.state}`}>{STATE_WORDS[w.state]}</span>
+            {gone && <span className="workflow-detail-dismissed">Dismissed</span>}
+          </span>}
         </span>
+        {w && FINISHED.has(w.state) && !gone && (
+          <button type="button" className="workflow-detail-dismiss"
+                  onClick={() => void dismissWorkflow(w.id)}>Dismiss</button>
+        )}
         <button type="button" className="workflow-close" title="Close" aria-label="Close"
                 onClick={() => openWorkflow.set(null)}>×</button>
       </div>

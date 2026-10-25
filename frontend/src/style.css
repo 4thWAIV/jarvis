@@ -1558,7 +1558,75 @@ html, body {
 }
 .workflow-row:hover { background: rgba(var(--wf), 0.12); }
 .workflow-row.selected { border-color: rgba(var(--wf), 0.9); box-shadow: 0 0 0 1px rgba(var(--wf), 0.4); }
-.workflow-row.finished { opacity: 0.5; border-color: rgba(255, 255, 255, 0.08); }
+/* Finished and still in view: its outcome's colour, a glow once as it
+   lands, so the finish is seen before it leaves the list. */
+.workflow-item { position: relative; }
+.workflow-row.finished { --outcome: 52, 211, 153; border-color: rgba(var(--outcome), 0.7);
+  background: rgba(var(--outcome), 0.07); animation: workflow-finish 1.6s ease-out 1; }
+.workflow-row.finished.outcome-failed { --outcome: 239, 68, 68; }
+.workflow-row.finished.outcome-cancelled { --outcome: 160, 160, 170; }
+@keyframes workflow-finish {
+  0% { box-shadow: 0 0 0 0 rgba(var(--outcome), 0.9); }
+  60% { box-shadow: 0 0 18px 4px rgba(var(--outcome), 0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--outcome), 0); }
+}
+@media (prefers-reduced-motion: reduce) { .workflow-row.finished { animation: none; } }
+.workflow-outcome { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; }
+.workflow-outcome.outcome-succeeded { background: rgba(52, 211, 153, 0.2); color: #6ee7b7; }
+.workflow-outcome.outcome-failed { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.workflow-outcome.outcome-cancelled { background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.7); }
+.workflow-dismiss {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 18px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.workflow-dismiss:hover { color: #fff; border-color: rgba(255, 255, 255, 0.6); }
+/* Dismissed: done with, kept out of the way under "Done". */
+.workflows-done { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.workflows-done-toggle {
+  align-self: flex-start;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.workflows-list.done { gap: 3px; }
+.workflow-done-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.workflow-done-row.selected { border-color: rgba(251, 113, 133, 0.5); }
+.workflow-done-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.workflow-outcome-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #34d399; }
+.workflow-outcome-dot.outcome-failed { background: #ef4444; }
+.workflow-outcome-dot.outcome-cancelled { background: rgba(255, 255, 255, 0.35); }
+.workflow-dismissed-mark { flex: none; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35); }
 .workflow-row > .workflow-orb { grid-area: orb; }
 .workflow-counts { grid-area: counts; display: flex; align-items: center; gap: 10px; }
 .workflow-name {
@@ -1654,6 +1722,25 @@ html, body {
 .workflow-detail-head { flex: none; display: flex; align-items: center; gap: 16px; }
 .workflow-detail-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .workflow-detail-name { font-size: 20px; font-weight: 600; color: #fecdd3; }
+.workflow-detail-pills { display: flex; gap: 6px; align-items: center; }
+.workflow-detail-dismissed {
+  padding: 1px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.workflow-detail-dismiss {
+  margin-left: auto;
+  padding: 4px 14px;
+  font: inherit;
+  font-size: 12px;
+  color: #fecdd3;
+  background: rgba(251, 113, 133, 0.12);
+  border: 1px solid rgba(251, 113, 133, 0.5);
+  border-radius: 6px;
+  cursor: pointer;
+}
 .workflow-detail-state {
   align-self: flex-start;
   padding: 1px 10px;

@@ -49,6 +49,12 @@ export interface Workflow {
   last_summary: string;
   items: WorkflowItem[];
   open: OpenItem[];
+  /** When it finished, or null while it has not. */
+  finished_at: number | null;
+  /** He dismissed it, or it finished long enough ago to have gone. */
+  dismissed: boolean;
+  /** When a finished one still in view dismisses itself, or null. */
+  dismiss_at: number | null;
 }
 
 export interface WorkflowEvent {
@@ -135,6 +141,33 @@ export const getEvents = (id: string) =>
 export const getTranscript = (id: string) =>
   getJson<{ agents: TranscriptAgent[] }>(`/api/workflows/${encodeURIComponent(id)}/transcript`)
     .then((r) => r.agents);
+
+// Dismissed on this page and not yet read back as dismissed: gone at once.
+const dismissedHere = createStore<ReadonlySet<string>>(new Set());
+
+/** Whether a workflow has gone from the main list: dismissed (by him, here
+ *  or anywhere, or by lingering past its time). It is listed as done. */
+export function isGone(w: Workflow, now = Date.now() / 1000): boolean {
+  return w.dismissed || dismissedHere.get().has(w.id)
+    || (w.dismiss_at != null && now >= w.dismiss_at);
+}
+
+export const dismissals = dismissedHere;
+
+/** Dismiss a finished workflow: gone from the list at once, then read again.
+ *  Resolves with the refusal's reason, or null. */
+export async function dismissWorkflow(id: string): Promise<string | null> {
+  dismissedHere.set(new Set([...dismissedHere.get(), id]));
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/dismiss`, { method: "POST" })
+    .catch(() => null);
+  workflowsChanged.set(workflowsChanged.get() + 1);
+  if (res?.ok) return null;
+  const left = new Set(dismissedHere.get());
+  left.delete(id);
+  dismissedHere.set(left);
+  const body = res ? (await res.json().catch(() => ({}))) as { error?: string; detail?: string } : {};
+  return body.error || body.detail || "the server did not answer";
+}
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
 export async function answerDecision(id: string, key: string, answer: string): Promise<string | null> {

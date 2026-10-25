@@ -151,3 +151,25 @@ def test_a_workflow_that_said_it_is_waiting_is_not_called_quiet(monkeypatch):
     monkeypatch.setattr(ws.time, "time", lambda: real() + ws.SILENT_AFTER_SEC + 1)
     assert ws.snapshot(wid).state == "waiting"
 
+
+def test_a_finished_workflow_lingers_then_is_dismissed_for_good(monkeypatch):
+    wid = ws.start("Build", "hammer", [])
+    w = ws.record(_ev(wid, "workflow_finished", "Done.", outcome="succeeded"))
+    assert not w.dismissed and w.dismiss_at == w.finished_at + ws.LINGER_SEC
+    real = ws.time.time
+    monkeypatch.setattr(ws.time, "time", lambda: real() + ws.LINGER_SEC + 1)
+    w = ws.snapshot(wid)
+    assert w.dismissed and w.dismiss_at is None and w.state == "succeeded"
+
+
+def test_he_can_dismiss_a_finished_workflow_at_once_and_only_once():
+    wid = ws.start("Build", "hammer", [])
+    with pytest.raises(ws.WorkflowRefused, match="Only a finished"):
+        ws.record(_ev(wid, "workflow_dismissed", "Dismissed."))
+    ws.record(_ev(wid, "workflow_finished", "Done.", outcome="failed"))
+    w = ws.record(_ev(wid, "workflow_dismissed", "Dismissed."))
+    assert w.dismissed and w.state == "failed"
+    assert [e.kind for e in ws.events(wid)][-1] == "workflow_dismissed"
+    with pytest.raises(ws.WorkflowRefused, match="already dismissed"):
+        ws.record(_ev(wid, "workflow_dismissed", "Again."))
+

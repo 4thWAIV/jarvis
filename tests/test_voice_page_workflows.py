@@ -202,3 +202,93 @@ async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(pag
         assert first == "Start the build." and "100" in asked
         assert await page.locator(".transcript-earlier").count() == 0
         await browser.close()
+
+
+def _finished(wid, name, state="succeeded", dismissed=False, dismiss_at=None):
+    import time as _t
+    w = _workflow("running")
+    w.update(id=wid, name=name, state=state, phases_done=2, phases_total=2,
+             tasks_done=10, tasks_total=10, finished_at=_t.time() - 5, dismissed=dismissed,
+             dismiss_at=None if dismissed else (dismiss_at or _t.time() + 3600))
+    for item in w["items"]:
+        item["state"] = "done"
+    return w
+
+
+@pytest.mark.asyncio
+async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(page_url):
+    """Finished, it stays in view with its outcome and an ×; dismissed, it
+    leaves the list at once and is listed under Done; one nobody dismisses
+    leaves on its own at its dismiss_at, without a hint."""
+    import time as _t
+    sessions = _Sessions()
+    state = {"list": [_finished("wf-a", "Transcript reader"),
+                      _finished("wf-b", "Panel width"),
+                      _finished("wf-c", "Old build", state="failed", dismissed=True)],
+             "posted": []}
+
+    async def api(route):
+        request = route.request
+        path = request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+        if request.method == "POST":
+            state["posted"].append(path)
+            wid = path.split("/")[2]
+            for w in state["list"]:
+                if w["id"] == wid:
+                    w.update(dismissed=True, dismiss_at=None)
+            await route.fulfill(json={"workflow": next(w for w in state["list"] if w["id"] == wid)})
+        elif path == "api/workflows":
+            # wf-b's time runs from the page's first read: 8 s, then gone.
+            if not state.get("read"):
+                state["read"] = True
+                state["list"][1]["dismiss_at"] = _t.time() + 8
+            # Past its time it reads as dismissed, as the server reads it.
+            for w in state["list"]:
+                if w["dismiss_at"] is not None and _t.time() >= w["dismiss_at"]:
+                    w.update(dismissed=True, dismiss_at=None)
+            await route.fulfill(json={"workflows": state["list"]})
+        else:
+            wid = path.split("/")[2]
+            await route.fulfill(json={"workflow": next(w for w in state["list"] if w["id"] == wid)})
+
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_RECOGNITION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", sessions)
+        await page.route("**/api/workflows**", api)
+        await page.goto(page_url)
+        await page.click(".right-tabs [role=tab][title=Workflows]")
+
+        main = ".workflows-list:not(.done) .workflow-row"
+        await page.wait_for_selector(f"{main}[data-workflow-id=wf-a]")
+        row = page.locator(f"{main}[data-workflow-id=wf-a]")
+        assert "finished" in await row.get_attribute("class")
+        assert (await page.text_content(f"{main}[data-workflow-id=wf-a] .workflow-outcome")) == "Finished"
+        assert await page.locator(f"{main}[data-workflow-id=wf-c]").count() == 0, \
+            "a dismissed one is not in the main list"
+        assert (await page.text_content(".workflows-done-toggle")).strip().endswith("Done (1)")
+
+        # Nobody dismisses wf-b: it leaves by itself at its dismiss_at, no hint sent.
+        await page.wait_for_selector(f"{main}[data-workflow-id=wf-b]", state="detached", timeout=20000)
+
+        # He dismisses wf-a: gone at once, and the dismissal is posted.
+        await page.click(".workflow-item:has([data-workflow-id=wf-a]) .workflow-dismiss")
+        await page.wait_for_selector(f"{main}[data-workflow-id=wf-a]", state="detached", timeout=5000)
+        assert "api/workflows/wf-a/dismiss" in state["posted"]
+
+        await page.click(".workflows-done-toggle")
+        done = await page.evaluate("""() => [...document.querySelectorAll('.workflow-done-row')]
+          .map(r => [r.dataset.workflowId, r.querySelector('.workflow-dismissed-mark').textContent])""")
+        assert sorted(done) == [["wf-a", "Dismissed"], ["wf-b", "Dismissed"], ["wf-c", "Dismissed"]], done
+        assert (await page.text_content(".workflows-done-toggle")).strip().endswith("Done (3)")
+
+        # A dismissed one still opens, marked Dismissed and without a Dismiss button.
+        await page.click(".workflow-done-row[data-workflow-id=wf-c]")
+        await page.wait_for_selector("#workflow-detail .workflow-detail-dismissed")
+        assert await page.locator(".workflow-detail-dismiss").count() == 0
+        await browser.close()

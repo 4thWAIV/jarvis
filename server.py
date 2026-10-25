@@ -6106,7 +6106,10 @@ async def api_start_workflow(req: WorkflowStartRequest):
 
 @app.post("/api/workflows/{workflow_id}/events")
 async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest):
-    """Record one step. Written before anything is said or shown."""
+    """Record one step. Written before anything is said or shown. Dismissing
+    is his alone (the page's dismiss route), never the reporter's."""
+    if req.kind == "workflow_dismissed":
+        return _workflow_refused(ValueError("Only he dismisses a workflow, from the page."))
     event = workflow_store.WorkflowEvent(workflow_id, req.kind, req.item, req.summary, req.detail)
     try:
         w = await asyncio.to_thread(workflow_store.record, event)
@@ -6175,6 +6178,21 @@ async def api_workflow_transcript(workflow_id: str):
                     "last_text": s.last_text,
                     "last_reply": await asyncio.to_thread(_session_reply, s)})
     return {"agents": out}
+
+
+@app.post("/api/workflows/{workflow_id}/dismiss")
+async def api_dismiss_workflow(workflow_id: str):
+    """He dismissed a finished workflow on the page: it leaves the list at
+    once and is listed as done from then on. Recorded as the workflow's own
+    workflow_dismissed event. The page's route only (not a reporter's key)."""
+    event = workflow_store.WorkflowEvent(workflow_id, "workflow_dismissed", None,
+                                         "Dismissed on the page.", {"by": "user"})
+    try:
+        w = await asyncio.to_thread(workflow_store.record, event)
+    except workflow_store.WorkflowRefused as e:
+        return _workflow_refused(e)
+    _send_to_session_clients({"type": "workflows"})
+    return {"workflow": _workflow_json(w)}
 
 
 @app.post("/api/workflows/{workflow_id}/decisions/{key}")

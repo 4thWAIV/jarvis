@@ -172,3 +172,19 @@ def test_workflow_status_is_offered_to_the_brain_and_taints_the_turn(wired):
     assert "workflow_status" in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "workflow_status" in server.TOOL_HANDLERS
     assert "workflow_status" in server.TAINTING_TOOLS
+
+
+def test_only_the_page_dismisses_and_the_reporter_cannot(wired):
+    server, hints, _ = wired
+    client = TestClient(server.app)
+    key = _key()
+    wid = _start(client, key)
+    client.post(f"/api/workflows/{wid}/events", headers=key,
+                json={"kind": "workflow_finished", "summary": "Done.", "detail": {"outcome": "succeeded"}})
+    r = client.post(f"/api/workflows/{wid}/events", headers=key,
+                    json={"kind": "workflow_dismissed", "summary": "Gone."})
+    assert r.status_code == 409 and "Only he dismisses" in r.json()["error"]
+    assert client.post(f"/api/workflows/{wid}/dismiss", headers=key).status_code == 403
+    r = client.post(f"/api/workflows/{wid}/dismiss", headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["workflow"]["dismissed"] is True
+

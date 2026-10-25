@@ -66,6 +66,7 @@ EventKind = Literal[
     "blocker_raised", "blocker_cleared",
     "agent_attached",                          # session id + provider: the live transcript
     "note",
+    "workflow_dismissed",                      # he dismissed it once finished (the page)
 ]
 EVENT_KINDS = frozenset(get_args(EventKind))
 
@@ -73,6 +74,11 @@ EVENT_KINDS = frozenset(get_args(EventKind))
 # for this long.
 SILENT = "silent"
 SILENT_AFTER_SEC = 10 * 60
+
+# A finished workflow stays in view this long, so its finish can be seen,
+# then counts as dismissed (read-time, like SILENT) unless he dismissed it
+# sooner. Dismissed is for good: it is listed as done, never as current.
+LINGER_SEC = 2 * 60
 
 FINISHED = frozenset({WorkflowState.succeeded, WorkflowState.failed, WorkflowState.cancelled})
 _DONE_ITEMS = frozenset({ItemState.done, ItemState.skipped})
@@ -144,6 +150,9 @@ class WorkflowSnapshot:
     last_summary: str
     items: list[Item] = field(default_factory=list)
     open: list[OpenItem] = field(default_factory=list)
+    finished_at: float | None = None
+    dismissed: bool = False           # he dismissed it, or it lingered its LINGER_SEC
+    dismiss_at: float | None = None   # when a finished one still in view dismisses itself
 
 
 _SCHEMA = """
@@ -193,10 +202,24 @@ _SCHEMA = """
 """
 
 
+_LATER_COLUMNS = (("finished_at", "REAL"), ("dismissed_at", "REAL"))
+
+
 def _connect() -> sqlite3.Connection:
-    """The same database as runs and messages, with this module's tables."""
+    """The same database as runs and messages, with this module's tables,
+    and the columns added after the first of them shipped."""
     conn = run_store._connect()
     conn.executescript(_SCHEMA)
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(workflows)")}
+    for name, kind in _LATER_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE workflows ADD COLUMN {name} {kind}")
+            if name == "finished_at":
+                # One finished before the column existed finished at its last event.
+                done = tuple(s.value for s in FINISHED)
+                conn.execute(f"UPDATE workflows SET finished_at=last_event_at WHERE state IN "
+                             f"({','.join('?' * len(done))})", done)
+                conn.commit()
     return conn
 
 
@@ -287,7 +310,18 @@ def record(event: WorkflowEvent) -> WorkflowSnapshot:
         row = conn.execute("SELECT * FROM workflows WHERE id=?", (event.workflow_id,)).fetchone()
         if row is None:
             raise WorkflowRefused("There is no workflow with that id.")
-        if row["state"] in {s.value for s in FINISHED}:
+        finished = row["state"] in {s.value for s in FINISHED}
+        if event.kind == "workflow_dismissed":
+            if not finished:
+                raise WorkflowRefused("Only a finished workflow is dismissed.")
+            if row["dismissed_at"] is not None:
+                raise WorkflowRefused("That workflow is already dismissed.")
+            conn.execute("UPDATE workflows SET dismissed_at=? WHERE id=?",
+                         (now, event.workflow_id))
+            _insert_event(conn, event, now)
+            conn.commit()
+            return snapshot(event.workflow_id)
+        if finished:
             raise WorkflowRefused("That workflow has finished; start a new one.")
         _apply(conn, row, event, now)
         _insert_event(conn, event, now)
@@ -371,6 +405,7 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
         outcome = detail.get("outcome", "succeeded")
         if outcome not in {s.value for s in FINISHED}:
             raise WorkflowRefused("A finished workflow succeeded, failed or was cancelled.")
+        conn.execute("UPDATE workflows SET finished_at=? WHERE id=?", (now, wid))
 
 
 def _open_key(event: WorkflowEvent) -> str:
@@ -404,6 +439,13 @@ def _read_state(stored: str, last_event_at: float, now: float) -> str:
     return stored
 
 
+def _dismissed(row, now: float) -> bool:
+    """Dismissed by him, or finished long enough ago to have gone (LINGER_SEC)."""
+    if row["dismissed_at"] is not None:
+        return True
+    return row["finished_at"] is not None and now - row["finished_at"] > LINGER_SEC
+
+
 def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
     wid = row["id"]
     items = [Item(r["slug"], r["kind"], r["phase"], r["title"], ItemState(r["state"]),
@@ -426,6 +468,10 @@ def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
         open_blockers=[o.key for o in open_items if o.kind == "blocker"],
         agents=json.loads(row["agents"]), started_at=row["started_at"],
         last_event_at=row["last_event_at"], last_summary=row["last_summary"],
+        finished_at=row["finished_at"],
+        dismissed=_dismissed(row, now),
+        dismiss_at=(row["finished_at"] + LINGER_SEC
+                    if row["finished_at"] is not None and not _dismissed(row, now) else None),
         items=items, open=open_items)
 
 
