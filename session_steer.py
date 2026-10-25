@@ -42,8 +42,16 @@ def message_body(text: str) -> str:
     return text.strip()
 
 
+# Claude Code's inbox takes a message's place in its own queue from this
+# field (its inbox handler reads `priority`, defaulting to "next": taken in
+# between two tool calls of the turn under way). "now" preempts that turn:
+# the session stops what it is doing and takes the message at once. Read
+# from Claude Code 2.1.309's inbox handler.
+INTERRUPT_PRIORITY = "now"
+
+
 def post_to_session(socket_path: str | None, prompt: str,
-                    timeout: float = 5.0) -> str:
+                    timeout: float = 5.0, interrupt: bool = False) -> str:
     """Deliver one prompt. Returns `sent`, `not_live`, `refused`, or `failed`.
 
     A missing socket file and a stale one left by a dead process are both
@@ -69,8 +77,10 @@ def post_to_session(socket_path: str | None, prompt: str,
     token = os.getenv("CLAUDE_CODE_MESSAGING_TOKEN", "")
     if token:
         lines.append(json.dumps({"type": "auth", "token": token}))
-    lines.append(json.dumps({"type": "user",
-                             "message": {"role": "user", "content": prompt.strip()}}))
+    line = {"type": "user", "message": {"role": "user", "content": prompt.strip()}}
+    if interrupt:
+        line["priority"] = INTERRUPT_PRIORITY
+    lines.append(json.dumps(line))
     payload = ("\n".join(lines) + "\n").encode()
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

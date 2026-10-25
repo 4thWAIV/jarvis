@@ -189,7 +189,7 @@ class _Provider:
         self.read.append(session.session_id)
         return f"reply from {self.name}"
 
-    def send(self, session, text):
+    def send(self, session, text, interrupt=False):
         self.sent.append((session.session_id, text))
         return session_steer.SENT
 

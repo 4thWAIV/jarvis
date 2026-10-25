@@ -71,6 +71,28 @@ export interface TranscriptAgent {
   last_reply?: string | null;
 }
 
+/** One entry of a session's transcript (session_watch.TranscriptEntry). */
+export interface TranscriptEntry {
+  offset: number;
+  at: number | null;
+  role: "you" | "jarvis" | "agent" | "tool" | "result";
+  text: string;
+  tool: string | null;
+}
+
+export interface TranscriptPage {
+  session_id: string;
+  name: string;
+  state: string;
+  entries: TranscriptEntry[];
+  /** The cursor for the page before, or null at the start of the transcript. */
+  earlier: number | null;
+}
+
+export const getSessionTranscript = (sessionId: string, before?: number | null) =>
+  getJson<TranscriptPage>(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`
+    + (before != null ? `?before=${before}` : ""));
+
 /** Moves on every "workflows" hint, and on every (re)connect of /ws/sessions. */
 export const workflowsChanged = createStore(0);
 

@@ -841,3 +841,18 @@ async def test_a_cancelled_message_draws_nothing(wired, fake_session, monkeypatc
     await server._perform_staged_steers()
 
     assert not [h for h in hints if h.get("type") == "agent_message"]
+
+
+def test_a_priority_message_asks_claude_code_to_take_it_now(fake_session):
+    """Claude Code's inbox reads `priority`: "now" stops the turn under way.
+    An ordinary message carries none and is taken between tool calls."""
+    path, received, _ = fake_session
+    assert session_steer.post_to_session(path, "stop and use Postgres", interrupt=True) == \
+        session_steer.SENT
+    import time as _t
+    for _ in range(100):
+        if received:
+            break
+        _t.sleep(0.01)
+    line = json.loads(received[-1].strip().splitlines()[-1])
+    assert line["priority"] == "now" and line["message"]["content"] == "stop and use Postgres"

@@ -34,14 +34,28 @@ export interface Orb {
   destroy(): void;
 }
 
+/** The colour each state settles to. JARVIS's own is blue. */
+export interface OrbPalette {
+  idle: number;
+  thinking: number;
+  speaking: number;
+  compacting: number;
+}
+
+export const BLUE_PALETTE: OrbPalette = {
+  idle: 0x4ca8e8, thinking: 0x6ec4ff, speaking: 0x5ab8f0, compacting: 0x3a5f8a,
+};
+
 export interface OrbOptions {
   particles?: number;      // 2000 for the main orb; fewer for a small one
   transparent?: boolean;   // draw on whatever is behind the canvas
   core?: boolean;          // a permanent glowing core at the centre (the main orb)
+  palette?: OrbPalette;    // another orb's colours: a workflow's is light red
 }
 
 export function createOrb(canvas: HTMLCanvasElement,
-                          { particles = 2000, transparent = false, core = false }: OrbOptions = {}): Orb {
+                          { particles = 2000, transparent = false, core = false,
+                            palette = BLUE_PALETTE }: OrbOptions = {}): Orb {
   let destroyed = false;
   const N = particles;
 
@@ -103,7 +117,7 @@ export function createOrb(canvas: HTMLCanvasElement,
   const col = new Float32Array(N * 3);
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
 
-  const base = new THREE.Color(0x4ca8e8);
+  const base = new THREE.Color(palette.idle);
   const mat = new THREE.PointsMaterial({
     color: 0xffffff, vertexColors: true, size: 0.4, transparent: true, opacity: 0.6,
     sizeAttenuation: true, blending: THREE.AdditiveBlending, depthWrite: false,
@@ -120,7 +134,7 @@ export function createOrb(canvas: HTMLCanvasElement,
   lineGeo.setDrawRange(0, 0);
 
   const lineMat = new THREE.LineBasicMaterial({
-    color: 0x4ca8e8, transparent: true, opacity: 0.0,
+    color: palette.idle, transparent: true, opacity: 0.0,
     blending: THREE.AdditiveBlending, depthWrite: false,
   });
 
@@ -197,7 +211,11 @@ export function createOrb(canvas: HTMLCanvasElement,
   const cloudShift = new THREE.Vector3();
   // The lines' own state colour; while transmitting they show the ray's
   // colour over it, like the particles.
-  const lineBase = new THREE.Color(0x4ca8e8);
+  const lineBase = new THREE.Color(palette.idle);
+  const stateColours = {
+    idle: new THREE.Color(palette.idle), thinking: new THREE.Color(palette.thinking),
+    speaking: new THREE.Color(palette.speaking), compacting: new THREE.Color(palette.compacting),
+  };
   const mixed = new THREE.Color();
   const THINKING_SPIN = 0.012;   // radians a frame
   const GRAY = 0x8a8a8a;
@@ -481,10 +499,10 @@ export function createOrb(canvas: HTMLCanvasElement,
     mat.size = currentSize + bass * 0.05;
 
     if (gray) { base.set(GRAY); lineBase.set(GRAY); }
-    else if (state === "thinking") { base.lerp(new THREE.Color(0x6ec4ff), 0.015); lineBase.lerp(new THREE.Color(0x6ec4ff), 0.015); }
-    else if (state === "speaking") { base.lerp(new THREE.Color(0x5ab8f0), 0.015); lineBase.lerp(new THREE.Color(0x5ab8f0), 0.015); }
-    else if (state === "compacting") { base.lerp(new THREE.Color(0x3a5f8a), 0.03); lineBase.lerp(new THREE.Color(0x3a5f8a), 0.03); }   // desaturated, cooler
-    else { base.lerp(new THREE.Color(0x4ca8e8), 0.015); lineBase.lerp(new THREE.Color(0x4ca8e8), 0.015); }
+    else if (state === "thinking") { base.lerp(stateColours.thinking, 0.015); lineBase.lerp(stateColours.thinking, 0.015); }
+    else if (state === "speaking") { base.lerp(stateColours.speaking, 0.015); lineBase.lerp(stateColours.speaking, 0.015); }
+    else if (state === "compacting") { base.lerp(stateColours.compacting, 0.03); lineBase.lerp(stateColours.compacting, 0.03); }   // desaturated, cooler
+    else { base.lerp(stateColours.idle, 0.015); lineBase.lerp(stateColours.idle, 0.015); }
 
     lineMat.color.copy(lineBase);
     if (tx) lineMat.color.lerp(tx.colour, txStrength * TX_COLOUR);

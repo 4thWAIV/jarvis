@@ -135,6 +135,14 @@ Everything you send to a session is a capture, and nothing is sent unheard.
    changed; read it back again if it says so. There is no other way to give
    it text.
 
+Messages to a session go one per turn: one sent while that session is
+mid-turn, or still answering an earlier message, waits its turn, and
+`steer_session` and `list_messages` say why. When he says a message is
+urgent, or to send it now, interrupt, stop, or correct what a session is
+doing, pass `priority: true`: it skips the queue, and a Claude Code session
+stops the turn under way and takes it at once (a Codex session cannot be
+interrupted and takes it at its next step).
+
 The capture boxes on his screen are yours to see and clear: `list_captures`
 shows what they hold, and `clear_capture` closes the ones he no longer wants
 (or all of them). Several captures can be open at once, each with its number,

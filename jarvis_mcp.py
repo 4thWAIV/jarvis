@@ -261,6 +261,14 @@ TOOL_SPECS = [
                          "description": "The session as the user refers to it."},
                 "capture": {"type": "integer",
                             "description": "The number `capture` returned for this message."},
+                "priority": {"type": "boolean",
+                             "description": (
+                                 "Only when he asks for it to go now, urgently, or to stop "
+                                 "and correct what a session is doing: it skips the queue, "
+                                 "and a Claude Code session stops the turn under way and "
+                                 "takes it at once (a Codex session takes it at its next step). "
+                                 "Otherwise omit it: each message waits until the session is "
+                                 "between turns and has answered the one before.")},
             },
             "required": ["name", "capture"],
         },

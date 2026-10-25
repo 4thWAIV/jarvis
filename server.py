@@ -4319,8 +4319,9 @@ def _message_state(m, now: float) -> str:
     if status == run_store.MessageStatus.STAGED:
         return "waiting out the moment in which he can stop it"
     if status == run_store.MessageStatus.QUEUED:
-        return ("waiting its turn: it goes once that session is between turns and "
-                "has answered every message sent to it before")
+        why = _why_message_waits(m.session_id, m.id)
+        return ("waiting its turn, because that session " + why if why else
+                "waiting its turn; that session is free now, so it goes within a second")
     if status == run_store.MessageStatus.CANCELLED:
         return "cancelled before it was sent"
     if status == run_store.MessageStatus.SENT:
@@ -4892,6 +4893,9 @@ class _StagedSteer:
     capture_id: Optional[int] = None    # the capture its text came from
     provider: str = session_watch.PROVIDER   # who runs the session it goes to
     message_id: Optional[int] = None    # its `messages` row, written when staged
+    # He asked for it to go now: it skips the queue and is sent even
+    # mid-turn, so the session takes it into the turn it is in.
+    priority: bool = False
 
 
 @dataclass
@@ -4965,16 +4969,34 @@ async def _perform_staged_steers() -> None:
             log.error(f"staged action for {what} failed: {e}", exc_info=True)
 
 
-def _message_must_wait(session_id: str) -> bool:
-    """Whether a message to this session has to queue: an earlier one to it
-    is queued or still open (sent and not yet answered), or the session is
-    in the middle of a turn. A session not in view is sent to at once, as
-    before, and its provider says whether that worked."""
-    if any(m.session_id == session_id
-           for m in run_store.queued_messages() + run_store.open_messages()):
-        return True
+def _can_interrupt(session) -> bool:
+    """Whether a priority message stops this session's turn, or only skips
+    the queue: its provider says (`can_interrupt`)."""
+    provider = _session_provider_named(session.provider)
+    return bool(getattr(provider, "can_interrupt", False))
+
+
+def _why_message_waits(session_id: str, message_id: Optional[int] = None) -> Optional[str]:
+    """Why a message to this session has to queue rather than go now, as the
+    end of a sentence about the session ("is in the middle of a turn"), or
+    None when it can go: an earlier message to it is waiting or not yet
+    answered, or the session is mid-turn or stopped at a prompt. A session
+    not in view is sent to at once, and its provider says whether that
+    worked. One reason, said to him when it queues and given by
+    list_messages while it waits."""
+    earlier = [m for m in run_store.queued_messages() + run_store.open_messages()
+               if m.session_id == session_id and (message_id is None or m.id < message_id)]
+    if earlier:
+        first = min(earlier, key=lambda m: m.id)
+        if str(first.status) == run_store.MessageStatus.QUEUED:
+            return f"has message {first.id} waiting ahead of it"
+        return f"has not answered message {first.id} yet"
     session = _snapshot_or_empty().by_id(session_id)
-    return session is not None and not session_watch.free_for_message(session)
+    if session is None or session_watch.free_for_message(session):
+        return None
+    if session.state == session_watch.NEEDS_YOU:
+        return "is stopped at a prompt waiting for you"
+    return "is in the middle of a turn"
 
 
 async def _message_went(session_id: str) -> None:
@@ -5014,14 +5036,15 @@ async def _announce_queued_failed(event: dict) -> None:
 
 def _deliver(item: _StagedSteer, text: str) -> str:
     """Send through the session's own provider: Claude Code's inbox socket,
-    or Codex's queue. One of session_steer's outcomes."""
+    or Codex's queue. A priority message interrupts the turn under way where
+    the provider can. One of session_steer's outcomes."""
     provider = _session_provider_named(item.provider)
     if provider is None:
         return session_steer.FAILED
     session = session_watch.SessionState(
         session_id=item.session_id, cwd="", project=item.project, state="",
         socket_path=item.socket_path, provider=item.provider)
-    return provider.send(session, text)
+    return provider.send(session, text, interrupt=item.priority)
 
 
 # The first line of every message JARVIS sends into a session; see
@@ -5076,14 +5099,16 @@ async def _perform_steer(item: _StagedSteer) -> None:
             await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
-        if _message_must_wait(item.session_id):         # a few small reads
+        why = None if item.priority else _why_message_waits(item.session_id, message_id)
+        if why:
             # One message per turn: sent now, it would be folded into the
             # turn under way, or answered with another message's reply. It
             # waits in the queue, on record, and the session watcher sends
-            # it once the session is free (SessionWatcher.send_queued).
+            # it once the session is free (SessionWatcher.send_queued). A
+            # priority message is the one exception: he asked for it now.
             settle(run_store.MessageStatus.QUEUED)
             _capture_sent(item.capture_id)
-            await speech.say(f"{_said_name(item)} is busy, sir. Your message waits its "
+            await speech.say(f"{_said_name(item)} {why}, sir. Your message waits its "
                              f"turn and goes as soon as it is free.",
                              Priority.NORMAL, label="readback-outcome")
             return
@@ -5477,9 +5502,20 @@ async def tool_steer_session(args: dict) -> str:
     global last_mentioned_session
     last_mentioned_session = session.session_id
 
-    message_id, problem = _stage_capture(session, capture)
+    priority = args.get("priority") is True
+    message_id, problem = _stage_capture(session, capture, priority)
     if problem:
         return problem
+    if priority:
+        staged_note = (f"staged as message {message_id}, PRIORITY: it goes to "
+                       f"{_said_name(session)} the moment this turn ends, ahead of "
+                       f"anything queued, after a short moment in which he can stop "
+                       f"it. " + ("It stops what that session is doing and is taken at "
+                                  "once. " if _can_interrupt(session) else
+                                  "That session cannot be interrupted (a Codex session), so "
+                                  "it is taken at its next step. ")
+                       + "Say briefly that it is going out now and end your turn.")
+        return staged_note
     staged_note = (f"staged as message {message_id} — it goes to "
                    f"{_said_name(session)} the moment this turn ends, after a "
                    f"short moment in which he can stop it. He has heard it "
@@ -5497,7 +5533,8 @@ async def tool_steer_session(args: dict) -> str:
     return staged_note
 
 
-def _stage_capture(session, capture: dict) -> tuple[Optional[int], Optional[str]]:
+def _stage_capture(session, capture: dict,
+                   priority: bool = False) -> tuple[Optional[int], Optional[str]]:
     """Record a capture as a message to `session` and stage it to send:
     (its message id, None), or (None, why it cannot go), recorded as failed.
     steer_session and the capture box's Send button both come through here."""
@@ -5546,7 +5583,8 @@ def _stage_capture(session, capture: dict) -> tuple[Optional[int], Optional[str]
                               socket_path=session.socket_path,
                               capture_id=capture["id"],
                               provider=session.provider,
-                              message_id=message_id))
+                              message_id=message_id,
+                              priority=priority))
     capture["staged"] = True
     return message_id, None
 
@@ -6097,6 +6135,24 @@ async def api_workflow_events(workflow_id: str, after: int = 0, kinds: str = "")
     wanted = {k for k in kinds.split(",") if k} or None
     found = await asyncio.to_thread(workflow_store.events, workflow_id, after, wanted)
     return {"events": [dataclasses.asdict(e) for e in found]}
+
+
+@app.get("/api/sessions/{session_id}/transcript")
+async def api_session_transcript(session_id: str, before: Optional[int] = None,
+                                 limit: int = session_watch.TRANSCRIPT_PAGE):
+    """One session's transcript, the last `limit` entries before byte
+    `before` (the end when omitted), oldest first, read by the session's own
+    provider. `earlier` is the cursor for the page before, None at the start."""
+    session = _snapshot_or_empty().by_id(session_id)
+    provider = _session_provider_named(session.provider) if session is not None else None
+    if provider is None or not hasattr(provider, "transcript"):
+        raise HTTPException(status_code=404, detail="No such session")
+    limit = max(1, min(int(limit), session_watch.TRANSCRIPT_PAGE))
+    entries = await asyncio.to_thread(provider.transcript, session, before, limit)
+    earlier = entries[0].offset if entries and entries[0].offset > 0 else None
+    return {"session_id": session_id, "name": session_watch.agent_name(session),
+            "state": session.state, "entries": [dataclasses.asdict(e) for e in entries],
+            "earlier": earlier}
 
 
 @app.get("/api/workflows/{workflow_id}/transcript")

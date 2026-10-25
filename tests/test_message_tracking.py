@@ -830,8 +830,11 @@ async def test_a_message_to_a_session_with_one_open_is_queued_not_sent(server, m
 
     later = max(m.id for m in server.run_store.list_messages())
     assert server.run_store.get_message(later).status == "queued" and sends == []
-    assert speech.said == ["guard is busy, sir. Your message waits its turn and goes as "
-                           "soon as it is free."]
+    assert speech.said == [f"guard has not answered message {earlier} yet, sir. Your message "
+                           f"waits its turn and goes as soon as it is free."]
+    # list_messages says the same reason while it waits.
+    assert f"because that session has not answered message {earlier} yet" in \
+        server._message_state(server.run_store.get_message(later), time.time())
 
 
 @pytest.mark.asyncio
@@ -846,4 +849,51 @@ async def test_a_message_to_a_session_mid_turn_is_queued(server, monkeypatch):
         socket_path="/x.sock"))
     (m,) = server.run_store.list_messages()
     assert m.status == "queued"
+
+
+@pytest.mark.parametrize("state, sent", [("idle", True), ("shell", True), ("unknown", True),
+                                         ("fresh", True), ("working", False), ("needs_you", False)])
+def test_a_session_at_its_prompt_takes_a_message_even_with_a_shell_running(store, state, sent):
+    """A background command (a test suite, a wait loop) leaves the session
+    at its prompt: a message starts a turn of its own, so it goes."""
+    provider = _QueueProvider(state=state)
+    w, _ = _queue_watcher(store, provider)
+    mid = _queued(store, "use Postgres")
+    w.poll_once()
+    assert (store.get_message(mid).status == "sent") is sent
+
+
+@pytest.mark.asyncio
+async def test_a_priority_message_skips_the_queue_and_goes_now(server, monkeypatch):
+    """He asked for it now: it goes even with another message open and the
+    session mid-turn, and the session takes it into the turn it is in."""
+    sends = []
+    monkeypatch.setattr(server, "_deliver", lambda item, text: sends.append(text) or session_steer.SENT)
+    monkeypatch.setattr(server, "speech", _Speech())
+    earlier = server.run_store.create_message(SID, "anthropic", "guard", "guard", SIG + "first")
+    server.run_store.update_message(earlier, status="working")
+    busy = sw.SessionState(session_id=SID, cwd=CWD, project="guard", state="working",
+                           voice_name="guard", steerable=True, socket_path="/x.sock")
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: sw.Snapshot(sessions=[busy]))
+
+    await server._perform_steer(server._StagedSteer(
+        session_id=SID, voice_name="guard", project="guard", prompt="stop everything",
+        socket_path="/x.sock", priority=True))
+
+    assert sends == [SIG + "stop everything"]
+    assert max(server.run_store.list_messages(), key=lambda m: m.id).status == "sent"
+
+
+def test_why_a_message_waits_names_the_reason(server, monkeypatch):
+    working = sw.SessionState(session_id=SID, cwd=CWD, project="guard", state="working",
+                              voice_name="guard", steerable=True, socket_path="/x.sock")
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: sw.Snapshot(sessions=[working]))
+    assert server._why_message_waits(SID) == "is in the middle of a turn"
+    stopped = sw.SessionState(session_id=SID, cwd=CWD, project="guard", state="needs_you",
+                              voice_name="guard", steerable=True, socket_path="/x.sock")
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: sw.Snapshot(sessions=[stopped]))
+    assert server._why_message_waits(SID) == "is stopped at a prompt waiting for you"
+    first = server.run_store.create_message(SID, "anthropic", "guard", "guard", SIG + "a")
+    server.run_store.update_message(first, status="queued")
+    assert server._why_message_waits(SID) == f"has message {first} waiting ahead of it"
 

@@ -1,16 +1,18 @@
 /**
- * The Workflows view of the right panel: every long workflow, one compact
- * row each, like the agents list. A row has its state as a coloured dot (a
- * workflow that has gone quiet has its own), its name, the phase it is on,
- * a small bar of the tasks done, how many decisions and blockers are open,
- * and when it was last heard from. Running workflows come first; finished
- * ones follow, dimmed. Clicking a row opens its detail in the centre area
- * (WorkflowDetail.tsx).
+ * The Workflows view of the right panel: every long workflow, one row each,
+ * read at a glance rather than read. A row has the workflow's light red orb
+ * (WorkflowVisuals.tsx), which moves with its state and is ringed in the
+ * state's colour; its name and when it was last heard from; a track with a
+ * segment per phase, done, current or to come; a ring of tasks done; and
+ * its open decisions, blockers and waits as coloured icons with counts.
+ * Running workflows come first; finished ones follow, dimmed. Clicking a
+ * row opens its detail in the centre area (WorkflowDetail.tsx).
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ago, FINISHED, openWorkflow, phaseText, STATE_WORDS, workflows,
+import { ago, FINISHED, openWorkflow, STATE_WORDS, workflows,
          type Workflow } from "./workflows";
+import { OpenIcons, PhaseTrack, Ring, WorkflowOrb } from "./WorkflowVisuals";
 
 /** Re-renders every `ms`, so ages stay true between reads. */
 export function useTick(ms: number): void {
@@ -52,29 +54,20 @@ export function TaskBar({ done, total }: { done: number; total: number }) {
 }
 
 function WorkflowRow({ workflow: w, selected }: { workflow: Workflow; selected: boolean }) {
-  const decisions = w.open_decisions.length;
-  const blockers = w.open_blockers.length;
   return (
     <button type="button" data-workflow-id={w.id} data-state={w.state}
             className={`workflow-row${FINISHED.has(w.state) ? " finished" : ""}${
               selected ? " selected" : ""}`}
+            title={STATE_WORDS[w.state]}
             onClick={() => openWorkflow.set(w.id)}>
-      <span className={`workflow-dot state-${w.state}`} title={STATE_WORDS[w.state]} />
+      <WorkflowOrb state={w.state} size={44} />
       <span className="workflow-name">{w.name}</span>
       <span className="workflow-age">{ago(w.last_event_at)}</span>
-      <span className="workflow-phase">{phaseText(w)}</span>
-      <span className="workflow-tasks">
-        <TaskBar done={w.tasks_done} total={w.tasks_total} />
-        <span className="workflow-task-count">{w.tasks_done}/{w.tasks_total} tasks</span>
+      <span className="workflow-track"><PhaseTrack w={w} /></span>
+      <span className="workflow-counts">
+        <Ring done={w.tasks_done} total={w.tasks_total} size={34} label="Tasks done" />
+        <OpenIcons w={w} />
       </span>
-      {(decisions > 0 || blockers > 0) && (
-        <span className="workflow-open">
-          {decisions > 0 && <span className="workflow-decisions">
-            {decisions} decision{decisions !== 1 ? "s" : ""}</span>}
-          {blockers > 0 && <span className="workflow-blockers">
-            {blockers} blocker{blockers !== 1 ? "s" : ""}</span>}
-        </span>
-      )}
     </button>
   );
 }

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Iterable, Optional, Protocol
 
 if TYPE_CHECKING:
     from run_store import Message
-    from session_watch import SessionState
+    from session_watch import SessionState, TranscriptEntry
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,19 @@ class SessionProvider(Protocol):
 
     def last_reply(self, session: "SessionState") -> Optional[str]: ...
 
-    def send(self, session: "SessionState", text: str) -> str:
-        """Deliver one message. One of session_steer's outcomes."""
+    def transcript(self, session: "SessionState", before: Optional[int] = None,
+                   limit: int = 200) -> list["TranscriptEntry"]:
+        """The session's transcript as entries (session_watch.TranscriptEntry):
+        the last `limit` before byte `before`, the end when None, oldest
+        first. Only reads."""
+        ...
+
+    can_interrupt: bool             # can a message stop the turn under way
+
+    def send(self, session: "SessionState", text: str, interrupt: bool = False) -> str:
+        """Deliver one message; with `interrupt`, stopping the turn under way
+        where the provider can (`can_interrupt`). One of session_steer's
+        outcomes."""
         ...
 
     def track(self, session: "SessionState", message: "Message") -> Tracking:

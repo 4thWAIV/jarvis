@@ -364,6 +364,160 @@ def read_last_reply(cwd: str, session_id: str,
     return None
 
 
+# ── a session's transcript, entry by entry ─────────────────────────────────
+#
+# What the Workflows view's Transcript tab shows: each prompt, reply, tool
+# call and tool result, newest last, read back from the end of the file a
+# page at a time. `offset` is each entry's line's byte offset, so "earlier"
+# reads only the bytes before the oldest entry shown. Everything here is
+# another session's text, shown on the page as text and never to the brain.
+
+TRANSCRIPT_PAGE = 200                 # entries per page
+TRANSCRIPT_TEXT_MAX = 4000            # a prompt or reply, per entry
+RESULT_LINES = 6                      # a tool result: its first lines
+RESULT_TEXT_MAX = 600
+
+
+@dataclass(frozen=True)
+class TranscriptEntry:
+    offset: int            # byte offset of its line in the transcript: the cursor for "earlier"
+    at: float | None
+    role: str              # "you" (a prompt), "jarvis" (a message from JARVIS), "agent", "tool", "result"
+    text: str
+    tool: str | None = None
+
+
+def lines_before(path: Path, before: int | None, limit: int,
+                 parse, window: int = 512 * 1024) -> list[TranscriptEntry]:
+    """The last `limit` entries that `parse(offset, obj)` makes of the lines
+    ending before byte `before` (the end of the file when None), oldest
+    first. Reads back a window at a time until it has `limit` or reaches the
+    start; never more of the file than that."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    end = size if before is None else max(0, min(before, size))
+    entries: list[TranscriptEntry] = []
+    while end > 0 and len(entries) < limit:
+        start = max(0, end - window)
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            raw = fh.read(end - start)
+        cut = 0
+        if start > 0:
+            cut = raw.find(b"\n") + 1           # the first line is partial
+            if cut == 0:                        # one line longer than the window
+                window *= 4
+                continue
+        page: list[TranscriptEntry] = []
+        offset = start + cut
+        for line in raw[cut:].split(b"\n"):
+            here, offset = offset, offset + len(line) + 1
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                page.extend(parse(here, obj))
+        entries = page + entries
+        end = start + cut
+    if len(entries) <= limit:
+        return entries
+    # A page starts on a whole line: one line can make several entries (a
+    # reply and the tool call after it), and the next page's cursor is that
+    # line's offset, so a line split here would lose its first entries.
+    first = entries[-limit].offset
+    return [e for e in entries if e.offset >= first]
+
+
+def _first_lines(text: str) -> str:
+    lines = [l for l in str(text).splitlines() if l.strip()][:RESULT_LINES]
+    out = "\n".join(lines)
+    return out if len(out) <= RESULT_TEXT_MAX else out[: RESULT_TEXT_MAX - 1] + "…"
+
+
+def _long(text: str) -> str:
+    text = str(text).strip()
+    return text if len(text) <= TRANSCRIPT_TEXT_MAX else text[: TRANSCRIPT_TEXT_MAX - 1] + "…"
+
+
+# The one argument that says what a tool call did, by the names tools use.
+_TOOL_GIST_KEYS = ("command", "file_path", "path", "pattern", "url", "query",
+                   "description", "prompt", "skill")
+
+
+def tool_gist(arguments) -> str:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            return _first_lines(arguments)
+    if isinstance(arguments, dict):
+        for key in _TOOL_GIST_KEYS:
+            if isinstance(arguments.get(key), str) and arguments[key].strip():
+                return _first_lines(arguments[key])
+    return ""
+
+
+def _claude_entries(offset: int, o: dict, calls: dict | None = None) -> list[TranscriptEntry]:
+    """`calls` maps each tool call's id to its tool's name as calls are read,
+    so a result can say which tool it came from."""
+    calls = {} if calls is None else calls
+    if o.get("isSidechain"):
+        return []
+    at = iso_seconds(o.get("timestamp"))
+    kind = o.get("type")
+    message = o.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    out: list[TranscriptEntry] = []
+    if kind == "user":
+        if isinstance(content, str) or _is_prompt(o):
+            text = _user_text(o).strip()
+            if text and not o.get("isCompactSummary"):
+                peer = isinstance(o.get("origin"), dict) and o["origin"].get("kind") == "peer"
+                if peer or not o.get("isMeta"):
+                    out.append(TranscriptEntry(offset, at, "jarvis" if peer else "you", _long(text)))
+        for block in content if isinstance(content, list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                result = block.get("content")
+                if isinstance(result, list):
+                    result = "\n".join(b.get("text", "") for b in result if isinstance(b, dict))
+                out.append(TranscriptEntry(offset, at, "result", _first_lines(result or ""),
+                                           tool=calls.get(block.get("tool_use_id"))))
+    elif kind == "attachment" and isinstance(o.get("attachment"), dict) \
+            and o["attachment"].get("type") == "queued_command":
+        out.append(TranscriptEntry(offset, at, "jarvis", _long(o["attachment"].get("prompt", ""))))
+    elif kind == "assistant":
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and str(block.get("text", "")).strip():
+                out.append(TranscriptEntry(offset, at, "agent", _long(block["text"])))
+            elif block.get("type") == "tool_use":
+                name = str(block.get("name") or "tool")[:80]
+                if block.get("id"):
+                    calls[block["id"]] = name
+                out.append(TranscriptEntry(offset, at, "tool", tool_gist(block.get("input")),
+                                           tool=name))
+    return out
+
+
+def read_transcript(cwd: str, session_id: str, roots: list[Path] | None = None,
+                    before: int | None = None, limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry]:
+    """A Claude Code session's transcript, the last `limit` entries before
+    `before`, from the first root that has it."""
+    for root in (roots if roots is not None else config_roots()):
+        path = transcript_path(root, cwd, session_id)
+        if path.exists():
+            calls: dict = {}
+            return lines_before(path, before, limit,
+                                lambda offset, o: _claude_entries(offset, o, calls))
+    return []
+
+
 # ── where a message stands in a transcript ─────────────────────────────────
 #
 # A message is found by Tim's words (the text after JARVIS's signature) in
@@ -1232,6 +1386,7 @@ class ClaudeSessions:
 
     name = PROVIDER
     can_answer_dialogs = True         # dialog.py, by keystroke in its Terminal tab
+    can_interrupt = True              # its inbox takes priority "now"
 
     def __init__(self, roots: list[Path] | None = None,
                  entries: list[RosterEntry] | None = None):
@@ -1244,9 +1399,13 @@ class ClaudeSessions:
     def last_reply(self, session: SessionState) -> str | None:
         return read_last_reply(session.cwd, session.session_id, self.roots)
 
-    def send(self, session: SessionState, text: str) -> str:
+    def transcript(self, session: SessionState, before: int | None = None,
+                   limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry]:
+        return read_transcript(session.cwd, session.session_id, self.roots, before, limit)
+
+    def send(self, session: SessionState, text: str, interrupt: bool = False) -> str:
         import session_steer
-        return session_steer.post_to_session(session.socket_path, text)
+        return session_steer.post_to_session(session.socket_path, text, interrupt=interrupt)
 
     def track(self, session: SessionState, message) -> Tracking:
         for root in (self.roots if self.roots is not None else config_roots()):
@@ -1257,10 +1416,15 @@ class ClaudeSessions:
         return Tracking()
 
 
-# A session takes a message only between turns: idle, or never used. Sent
-# to one mid-turn, Claude Code folds it into the turn under way, and that
-# turn's one answer becomes the reply to both.
-SENDABLE_STATES = frozenset({IDLE, FRESH})
+# A session takes a message only between turns. Sent to one mid-turn
+# (working, or stopped at a prompt that wants him), Claude Code folds it into
+# the turn under way, and that turn's one answer becomes the reply to both.
+# Between turns is idle, never used, `shell` (at its prompt with a
+# background command still running, which a message does not interrupt:
+# found live, a session running its test suite in the background held two
+# messages queued), and `unknown` (no status at all, which would otherwise
+# hold the queue forever).
+SENDABLE_STATES = frozenset({IDLE, FRESH, SHELL, UNKNOWN})
 
 
 def free_for_message(session: SessionState) -> bool:

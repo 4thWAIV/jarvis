@@ -403,6 +403,15 @@ EXEMPT = {
         "path; the string it returns names the project by `name`, which "
         "`_resolve_project_or_explain` resolved from the user's own list, and "
         "carries no roster field. Driven in test_one_writer_per_project.py"),
+    "server._why_message_waits": (
+        "the fields it reads are JARVIS's own: a session's derived `state`, and "
+        "a message's id and status; it says only fixed words and a number"),
+    "server._message_state": (
+        "it says a message's status in fixed words with ages and numbers; the "
+        "reason a queued one waits comes from `_why_message_waits`, the same"),
+    "session_watch._claude_entries": (
+        "it reads a transcript into entries the Transcript tab draws as text on "
+        "the page; nothing it makes reaches the brain or a spoken line"),
     "workflow_store._apply": (
         "it writes the record and prints nothing but its refusals, whose only "
         "values are slugs it has already checked against `SLUG`"),
@@ -914,7 +923,7 @@ def _drive_perform_steer(server, session, monkeypatch):
         speech = _Speech()
         monkeypatch.setattr(server, "speech", speech)
         monkeypatch.setattr(server.session_steer, "post_to_session",
-                            lambda path, prompt, _o=outcome: _o)
+                            lambda path, prompt, _o=outcome, interrupt=False: _o)
         item = server._StagedSteer(session_id=session.session_id,
                                    voice_name=session.voice_name,
                                    project=session.project,

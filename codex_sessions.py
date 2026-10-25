@@ -34,7 +34,8 @@ import session_steer
 from session_provider import Tracking
 from session_watch import (IDLE, NEEDS_YOU, WORKING, FRESH, SessionState,
                            _looks_like_a_question, objects_since, project_name,
-                           tail_windows)
+                           tail_windows, TranscriptEntry, TRANSCRIPT_PAGE, lines_before,
+                           tool_gist, _first_lines, _long)
 
 log = logging.getLogger("jarvis.sessions")
 
@@ -193,6 +194,41 @@ def _message(obj: dict) -> Optional[tuple[str, str]]:
     return p["role"], text
 
 
+def _codex_entries(offset: int, obj: dict, calls: Optional[dict] = None) -> list[TranscriptEntry]:
+    """A Codex rollout line as transcript entries: what was said, each tool
+    call and what it returned, the result named by its call's tool (`calls`,
+    call id to tool name, filled in as calls are read). Its own instructions
+    and reasoning are left out."""
+    calls = {} if calls is None else calls
+    if obj.get("type") != "response_item":
+        return []
+    p = obj.get("payload") or {}
+    at = _when(obj)
+    said = _message(obj)
+    if said:
+        role, text = said
+        if role == "user":
+            return [TranscriptEntry(offset, at, "jarvis" if session_steer.STEER_SIGNATURE.strip()[:20]
+                                    in text else "you", _long(text))]
+        return [TranscriptEntry(offset, at, "agent", _long(text))]
+    kind = p.get("type")
+    if kind in ("function_call", "custom_tool_call"):
+        name = str(p.get("name") or "tool")[:80]
+        if p.get("call_id"):
+            calls[p["call_id"]] = name
+        return [TranscriptEntry(offset, at, "tool", tool_gist(p.get("arguments", p.get("input"))),
+                                tool=name)]
+    if kind in ("function_call_output", "custom_tool_call_output"):
+        output = p.get("output")
+        if isinstance(output, list):
+            output = "\n".join(c.get("text", "") for c in output if isinstance(c, dict))
+        elif isinstance(output, dict):
+            output = output.get("content") or ""
+        return [TranscriptEntry(offset, at, "result", _first_lines(output or ""),
+                                tool=calls.get(p.get("call_id")))]
+    return []
+
+
 def _when(obj: dict) -> Optional[float]:
     stamp = obj.get("timestamp")
     if not isinstance(stamp, str):
@@ -286,6 +322,7 @@ class CodexSessions:
 
     name = NAME
     can_answer_dialogs = False
+    can_interrupt = False             # `codex queue` only queues
 
     def __init__(self, home: Optional[Path] = None,
                  processes: Callable[[], list[CodexProcess]] = list_processes,
@@ -349,6 +386,15 @@ class CodexSessions:
                     return said[1]
         return None
 
+    def transcript(self, session: SessionState, before: Optional[int] = None,
+                   limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry]:
+        thread = _threads(self.home).get(session.session_id)
+        if not thread or not thread.get("rollout_path"):
+            return []
+        calls: dict = {}
+        return lines_before(Path(thread["rollout_path"]), before, limit,
+                            lambda offset, obj: _codex_entries(offset, obj, calls))
+
     def track(self, session: SessionState, message) -> Tracking:
         thread = _threads(self.home).get(session.session_id)
         if not thread or not thread.get("rollout_path"):
@@ -356,7 +402,7 @@ class CodexSessions:
         return track_from(objects_since(Path(thread["rollout_path"]), message.staged_at),
                           message.body, message.staged_at)
 
-    def send(self, session: SessionState, text: str) -> str:
+    def send(self, session: SessionState, text: str, interrupt: bool = False) -> str:
         if not text or not text.strip():
             return session_steer.REFUSED
         codex = self._codex or shutil.which("codex")
