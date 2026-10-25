@@ -195,10 +195,45 @@ def test_the_same_words_sent_earlier_are_not_this_message():
     assert sw.track_from(objs, "something never sent", T0).delivered_at is None
 
 
-def test_a_turn_ended_without_a_word_is_answered_with_no_reply():
+def test_a_turn_ended_without_a_word_is_answered_with_no_reply_once_no_later_answer_can_come():
     objs = [peer_turn("go on", T0 + 1), tool(T0 + 2), result(T0 + 3), turn_end(T0 + 4)]
-    t = sw.track_from(objs, "go on", T0)
-    assert t.answered_at is not None and t.reply is None
+    t = sw.track_from(objs, "go on", T0, now=T0 + 4 + sw.LATE_ANSWER_SEC + 1)
+    assert t.answered_at == pytest.approx(T0 + 4, abs=0.01) and t.reply is None
+
+
+def test_a_turn_ended_without_a_word_stays_open_while_an_answer_can_still_come():
+    objs = [peer_turn("go on", T0 + 1), tool(T0 + 2), result(T0 + 3), turn_end(T0 + 4)]
+    t = sw.track_from(objs, "go on", T0, now=T0 + 60)
+    assert t.started_at is not None and t.answered_at is None
+
+
+def test_an_interrupted_turn_s_answer_in_the_next_turn_is_its_answer():
+    """late-answer-announcement: he typed into the session while it worked on
+    JARVIS's message; the turn stopped without a word and the answer came in
+    the turn his typing began."""
+    objs = [peer_turn("do you recognize it", T0 + 1), tool(T0 + 2),
+            typed("do you recognize it or not", T0 + 400), say("No, it is not mine.", T0 + 405),
+            turn_end(T0 + 406)]
+    t = sw.track_from(objs, "do you recognize it", T0, now=T0 + 410)
+    assert t.answered_at == pytest.approx(T0 + 406, abs=0.01)
+    assert t.reply == "No, it is not mine."
+
+
+def test_a_late_turn_still_under_way_keeps_the_message_open():
+    objs = [peer_turn("go on", T0 + 1), turn_end(T0 + 2),
+            typed("and?", T0 + 30), say("Looking.", T0 + 31), tool(T0 + 32)]
+    t = sw.track_from(objs, "go on", T0, now=T0 + 40)
+    assert t.answered_at is None
+
+
+def test_the_next_turn_is_not_the_answer_when_another_message_began_it_or_it_came_too_late():
+    for next_turn in (peer_turn("something else", T0 + 30),
+                      typed("hello", T0 + 2 + sw.LATE_ANSWER_SEC + 5)):
+        objs = [peer_turn("go on", T0 + 1), turn_end(T0 + 2), next_turn,
+                say("an answer to that", T0 + sw.LATE_ANSWER_SEC + 6),
+                turn_end(T0 + sw.LATE_ANSWER_SEC + 7)]
+        t = sw.track_from(objs, "go on", T0, now=T0 + sw.LATE_ANSWER_SEC + 10)
+        assert t.answered_at == pytest.approx(T0 + 2, abs=0.01) and t.reply is None
 
 
 def _transcript(root, lines, cwd=CWD, sid=SID):
@@ -900,3 +935,33 @@ def test_why_a_message_waits_names_the_reason(server, monkeypatch):
     server.run_store.update_message(first, status="queued")
     assert server._why_message_waits(SID) == f"has message {first} waiting ahead of it"
 
+
+
+def test_codex_takes_a_wordless_turn_s_answer_from_the_next_turn_unless_a_message_began_it():
+    import codex_sessions as cs
+    from tests.test_codex_sessions import _event, _say
+
+    def at(o, t):
+        return {**o, "timestamp": iso(t)}
+
+    def started(t, trigger=None):
+        o = at(_event("task_started"), t)
+        if trigger:
+            o["payload"]["turn_trigger"] = trigger
+        return o
+
+    asked = [started(T0 + 1, "queue"), at(_say("user", SIG + "is it yours"), T0 + 1.1),
+             at({"type": "response_item", "payload": {"type": "function_call", "name": "exec"}}, T0 + 2),
+             at(_event("turn_aborted"), T0 + 3)]
+    typed_next = [started(T0 + 30), at(_say("user", "well?"), T0 + 30.1),
+                  at(_say("assistant", "No, it is not mine."), T0 + 35), at(_event("task_complete"), T0 + 36)]
+    t = cs.track_from(asked + typed_next, "is it yours", T0, now=T0 + 40)
+    assert (t.answered_at, t.reply) == (pytest.approx(T0 + 36, abs=0.01), "No, it is not mine.")
+
+    assert cs.track_from(asked, "is it yours", T0, now=T0 + 40).answered_at is None, \
+        "still open while an answer can come"
+    wordless = cs.track_from(asked, "is it yours", T0, now=T0 + 3 + sw.LATE_ANSWER_SEC + 1)
+    assert (wordless.answered_at, wordless.reply) == (pytest.approx(T0 + 3, abs=0.01), None)
+    queued_next = [started(T0 + 30, "queue")] + typed_next[1:]
+    t = cs.track_from(asked + queued_next, "is it yours", T0, now=T0 + 40)
+    assert (t.answered_at, t.reply) == (pytest.approx(T0 + 3, abs=0.01), None)

@@ -288,7 +288,30 @@ def activity(r: Recap) -> Activity:
                     background_agents=0, background_commands=False, roster_status=None)
 
 
-def track_from(objs: list[dict], body: str, since: float) -> Tracking:
+def _turn_end(objs: list[dict], i: int, clock):
+    """Follow a turn from objs[i] to task_complete or turn_aborted: (the
+    index after it, when it ended or None, its final answer's blocks, the
+    latest time seen)."""
+    parts: list[str] = []
+    for j in range(i, len(objs)):
+        obj = objs[j]
+        ts = _when(obj)
+        if ts is not None:
+            clock = ts if clock is None else max(clock, ts)
+        p = obj.get("payload") or {}
+        if obj.get("type") == "event_msg" and p.get("type") in ("task_complete", "turn_aborted"):
+            return j + 1, clock, parts, clock
+        if obj.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
+            parts = []                 # what came before a tool call was not the answer
+            continue
+        said = _message(obj)
+        if said and said[0] == "assistant":
+            parts.append(said[1])
+    return len(objs), None, parts, clock
+
+
+def track_from(objs: list[dict], body: str, since: float,
+               now: Optional[float] = None) -> Tracking:
     """Where the message whose words are `body`, staged at `since`, stands
     in these Codex transcript lines.
 
@@ -297,32 +320,48 @@ def track_from(objs: list[dict], body: str, since: float) -> Tracking:
     with `turn_trigger: "queue"`), and the user `response_item` carrying it
     is written as that turn begins — so it is delivered and started at once.
     The turn ends at `task_complete` (or `turn_aborted`); its answer is what
-    it said after its last tool call."""
+    it said after its last tool call. A turn that ends without a word takes
+    its answer from the next turn, as session_watch.LATE_ANSWER_SEC says."""
+    from session_watch import LATE_ANSWER_SEC
     if not body:
         return Tracking()
+    now = time.time() if now is None else now
     clock = None
-    delivered = answered = None
-    parts: list[str] = []
-    for obj in objs:
+    delivered = None
+    i = 0
+    while i < len(objs) and delivered is None:
+        obj = objs[i]
+        i += 1
         ts = _when(obj)
         if ts is not None:
             clock = ts if clock is None else max(clock, ts)
-        p = obj.get("payload") or {}
-        if delivered is None:
-            said = _message(obj)
-            if (said and said[0] == "user" and body in said[1]
-                    and (ts is None or ts >= since)):
-                delivered = clock if clock is not None else since
-            continue
-        if obj.get("type") == "event_msg" and p.get("type") in ("task_complete", "turn_aborted"):
-            answered = clock
-            break
-        if obj.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
-            parts = []                 # what came before a tool call was not the answer
-            continue
         said = _message(obj)
-        if said and said[0] == "assistant":
-            parts.append(said[1])
+        if (said and said[0] == "user" and body in said[1]
+                and (ts is None or ts >= since)):
+            delivered = clock if clock is not None else since
+    if delivered is None:
+        return Tracking()
+    i, answered, parts, clock = _turn_end(objs, i, clock)
+    if answered is not None and not parts:
+        deadline, late = answered + LATE_ANSWER_SEC, None
+        for j in range(i, len(objs)):
+            obj, p = objs[j], objs[j].get("payload") or {}
+            if not (obj.get("type") == "event_msg" and p.get("type") == "task_started"):
+                continue
+            ts = _when(obj)
+            if p.get("turn_trigger") == "queue" or (ts is not None and ts > deadline):
+                late = (answered, [])
+                break
+            _, ended, said, _ = _turn_end(objs, j + 1, ts if ts is not None else clock)
+            late = None if ended is None else (ended, said) if said else (answered, [])
+            if late is None:
+                return Tracking(delivered_at=delivered, started_at=delivered)
+            break
+        else:
+            if now < deadline:
+                return Tracking(delivered_at=delivered, started_at=delivered)
+            late = (answered, [])
+        answered, parts = late
     reply = ("\n\n".join(parts) or None) if answered is not None else None
     return Tracking(delivered_at=delivered, started_at=delivered,
                     answered_at=answered, reply=reply)

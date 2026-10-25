@@ -19,6 +19,7 @@ import json
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -616,45 +617,33 @@ def _starts_a_turn(obj: dict) -> bool:
     return True
 
 
-def track_from(objs: list[dict], body: str, since: float) -> Tracking:
-    """Where the message whose words are `body`, staged at `since`, stands
-    in these Claude Code transcript lines. See the note above."""
-    if not body:
-        return Tracking()
-    clock = None                       # the latest time the transcript has shown
-    delivered = started = answered = None
+# A turn on a message that ends without a word (interrupted, typically, by
+# something typed into the session) is not taken as its answer at once: the
+# session's next turn, begun within this long and not by another session's
+# message, is, if it says anything. Until then the message stays open.
+LATE_ANSWER_SEC = 10 * 60
+
+
+def _is_peer(obj: dict) -> bool:
+    origin = obj.get("origin")
+    return isinstance(origin, dict) and origin.get("kind") == "peer"
+
+
+def _turn_from(objs: list[dict], i: int, clock: float | None):
+    """Follow the turn under way from objs[i] to its end: (the index after
+    it, when it ended or None if it has not, its final answer's blocks, the
+    latest time seen)."""
     parts: list[str] = []
-    for o in objs:
-        ts = iso_seconds(o.get("timestamp"))
+    for j in range(i, len(objs)):
+        o = objs[j]
         if o.get("isSidechain"):
             continue
+        ts = iso_seconds(o.get("timestamp"))
         kind = o.get("type")
-        if started is None:
-            if ts is not None:
-                clock = ts if clock is None else max(clock, ts)
-            if ts is not None and ts < since:
-                continue
-            if (delivered is None and kind == "queue-operation"
-                    and o.get("operation") == "enqueue"
-                    and isinstance(o.get("content"), str) and body in o["content"]):
-                delivered = ts if ts is not None else clock
-                continue
-            attachment = o.get("attachment") if kind == "attachment" else None
-            taken_midturn = (isinstance(attachment, dict)
-                             and attachment.get("type") == "queued_command"
-                             and isinstance(attachment.get("prompt"), str)
-                             and body in attachment["prompt"])
-            if taken_midturn or (_starts_a_turn(o) and body in _user_text(o)):
-                started = clock if clock is not None else since
-                if delivered is None:
-                    delivered = started
-            continue
         if kind == "system" and o.get("subtype") == "turn_duration":
-            answered = ts if ts is not None else clock
-            break
+            return j + 1, (ts if ts is not None else clock), parts, clock
         if _starts_a_turn(o):
-            answered = clock           # the last moment of the turn before it
-            break
+            return j, clock, parts, clock     # the last moment of the turn before it
         if ts is not None:
             clock = ts if clock is None else max(clock, ts)
         if kind == "assistant":
@@ -668,9 +657,79 @@ def track_from(objs: list[dict], body: str, since: float) -> Tracking:
                 elif (block.get("type") == "text" and isinstance(block.get("text"), str)
                         and block["text"].strip()):
                     parts.append(block["text"].strip())
+    return len(objs), None, parts, clock
+
+
+def track_from(objs: list[dict], body: str, since: float,
+               now: float | None = None) -> Tracking:
+    """Where the message whose words are `body`, staged at `since`, stands
+    in these Claude Code transcript lines. See the note above, and
+    LATE_ANSWER_SEC for a turn that ended without a word."""
+    if not body:
+        return Tracking()
+    now = time.time() if now is None else now
+    clock = None                       # the latest time the transcript has shown
+    delivered = started = None
+    i = 0
+    while i < len(objs) and started is None:
+        o = objs[i]
+        i += 1
+        if o.get("isSidechain"):
+            continue
+        ts = iso_seconds(o.get("timestamp"))
+        kind = o.get("type")
+        if ts is not None:
+            clock = ts if clock is None else max(clock, ts)
+        if ts is not None and ts < since:
+            continue
+        if (delivered is None and kind == "queue-operation"
+                and o.get("operation") == "enqueue"
+                and isinstance(o.get("content"), str) and body in o["content"]):
+            delivered = ts if ts is not None else clock
+            continue
+        attachment = o.get("attachment") if kind == "attachment" else None
+        taken_midturn = (isinstance(attachment, dict)
+                         and attachment.get("type") == "queued_command"
+                         and isinstance(attachment.get("prompt"), str)
+                         and body in attachment["prompt"])
+        if taken_midturn or (_starts_a_turn(o) and body in _user_text(o)):
+            started = clock if clock is not None else since
+            if delivered is None:
+                delivered = started
+    if started is None:
+        return Tracking(delivered_at=delivered)
+    i, answered, parts, clock = _turn_from(objs, i, clock)
+    if answered is not None and not parts:
+        # Ended without a word: the next turn may carry the answer.
+        late = _late_answer(objs, i, answered, clock, now)
+        if late is None:
+            return Tracking(delivered_at=delivered, started_at=started)
+        answered, parts = late
     reply = ("\n\n".join(parts) or None) if answered is not None else None
     return Tracking(delivered_at=delivered, started_at=started,
                     answered_at=answered, reply=reply)
+
+
+def _late_answer(objs: list[dict], i: int, ended: float, clock: float | None,
+                 now: float):
+    """After a turn on a message ended without a word at `ended`: (when the
+    answer ended, its blocks) — the next turn's, if it began within
+    LATE_ANSWER_SEC and not with another session's message, and said
+    something — or the wordless end itself once that can no longer happen.
+    None while it still can (the message stays open)."""
+    deadline = ended + LATE_ANSWER_SEC
+    for j in range(i, len(objs)):
+        o = objs[j]
+        if not _starts_a_turn(o):
+            continue
+        ts = iso_seconds(o.get("timestamp"))
+        if _is_peer(o) or (ts is not None and ts > deadline):
+            return ended, []
+        _, answered, parts, _ = _turn_from(objs, j + 1, ts if ts is not None else clock)
+        if answered is None:
+            return None                # that turn is still going
+        return (answered, parts) if parts else (ended, [])
+    return None if now < deadline else (ended, [])
 
 
 def _roots_of(group: list, primary) -> list[Path]:
