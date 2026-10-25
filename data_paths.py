@@ -331,6 +331,12 @@ def sync_connections() -> str:
                           "connections file")
 
 
+def models_dir() -> Path:
+    """Where downloaded models live, one folder each (see transcriber.py).
+    Not created here: a missing folder is how "not installed" reads."""
+    return data_dir() / "models"
+
+
 def needs_dir() -> Path:
     """Where sessions write what they need from the user, one file per
     project (see session_needs.py). Created so a session can always write."""

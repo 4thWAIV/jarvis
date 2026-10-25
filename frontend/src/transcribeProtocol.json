@@ -1,0 +1,16 @@
+{
+  "path": "/ws/transcribe",
+  "version": 1,
+  "sampleRate": 16000,
+  "channels": 1,
+  "format": "pcm_s16le",
+  "frameBytes": 3200,
+  "maxFrameBytes": 6400,
+  "queueLimitSec": 2.0,
+  "startupBufferSec": 10.0,
+  "interimEverySec": 0.2,
+  "finishLimitSec": 5.0,
+  "fromBrowser": ["start", "finish", "abort"],
+  "fromServer": ["loading", "ready", "interim", "final", "finished", "error"],
+  "errors": ["busy", "model-unavailable", "invalid-format", "overload", "decoder-failed", "interrupted"]
+}

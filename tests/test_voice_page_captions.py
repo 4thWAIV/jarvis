@@ -6,8 +6,9 @@ highlighted; and it scrolls itself so what is being said now is in view.
 
 Headless Chromium on the built page (built by test_agents_list_fits.py's
 fixture). JARVIS's voice socket is replaced by Playwright with one that sends
-spoken sentences, and the browser's speech recognition by a stand-in the
-test can make "hear" words, so no server and no microphone are needed.
+spoken sentences, and its speech recognition socket by a stand-in the test
+can make "hear" words; Chromium's fake microphone stands in for the real one,
+so no server and no microphone are needed.
 """
 
 import asyncio
@@ -24,25 +25,67 @@ pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
 
-AUTOPLAY = ["--autoplay-policy=no-user-gesture-required"]
+# Autoplay without a click, and Chromium's fake microphone (a tone) granted
+# without asking, so the page captures from the start as it does for him.
+BROWSER_ARGS = ["--autoplay-policy=no-user-gesture-required",
+                "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
 
-# A stand-in for the browser's SpeechRecognition with the same handlers the
-# page uses. `window.__hear(text, final)` delivers a result to the newest one.
-FAKE_RECOGNITION = """
+# A stand-in for JARVIS's speech recognition socket (/ws/transcribe): every
+# other socket is the real WebSocket. It answers `start` with `ready`, counts
+# the audio frames the page streams to it (`window.__framesSent`), and
+# `window.__hear(text, final)` makes the newest one send an interim or a
+# final, as the recogniser does when it hears words. `window.__transcribe`
+# can set `readyDelay` (ms before ready), `error` ({code, message} instead
+# of ready) and `finalOnFinish` (the text of a final sent on finish).
+FAKE_TRANSCRIPTION = """
 (() => {
+  const Real = window.WebSocket;
   const live = [];
-  class FakeRecognition {
-    constructor() { live.push(this); }
-    start() { setTimeout(() => { this.onstart && this.onstart(); this.onaudiostart && this.onaudiostart(); }, 0); }
-    stop() { setTimeout(() => this.onend && this.onend(), 0); }
-    abort() { this.stop(); }
+  window.__transcribers = live;
+  window.__framesSent = 0;
+  window.__transcribe = window.__transcribe || {};
+  class FakeTranscriber {
+    constructor(url) {
+      this.url = url; this.readyState = 0; this.bufferedAmount = 0;
+      this.binaryType = "blob"; this.segment = 0; this.session = "fake" + live.length;
+      this.createdAt = performance.now();
+      live.push(this);
+      setTimeout(() => { this.readyState = 1; this.onopen && this.onopen({}); }, 0);
+    }
+    _emit(msg) {
+      if (this.readyState !== 1) return;
+      this.onmessage && this.onmessage({ data: JSON.stringify({ session: this.session, ...msg }) });
+    }
+    send(data) {
+      if (typeof data !== "string") { window.__framesSent++; return; }
+      const msg = JSON.parse(data);
+      const script = window.__transcribe;
+      if (msg.type === "start") {
+        if (script.error) setTimeout(() => { this._emit({ type: "error", ...script.error }); this.close(); }, 0);
+        else setTimeout(() => this._emit({ type: "ready" }), script.readyDelay || 0);
+      }
+      if (msg.type === "finish") setTimeout(() => {
+        if (script.finalOnFinish) this._emit({ type: "final", segment: this.segment++, text: script.finalOnFinish });
+        this._emit({ type: "finished" }); this.close();
+      }, 0);
+      if (msg.type === "abort") this.close();
+    }
+    close() {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      setTimeout(() => this.onclose && this.onclose({}), 0);
+    }
   }
-  window.SpeechRecognition = FakeRecognition;
-  window.__recognisers = live;
+  window.WebSocket = function (url, protocols) {
+    return String(url).endsWith("/ws/transcribe") ? new FakeTranscriber(url)
+                                                   : new Real(url, protocols);
+  };
+  Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+  window.WebSocket.prototype = Real.prototype;
   window.__hear = (text, final) => {
-    const r = live[live.length - 1];
-    const result = [{ transcript: text }]; result.isFinal = final;
-    r.onresult && r.onresult({ resultIndex: 0, results: [result] });
+    const t = [...live].reverse().find((x) => x.readyState === 1);
+    if (!t) throw new Error("no open transcription socket");
+    t._emit(final ? { type: "final", segment: t.segment++, text } : { type: "interim", segment: t.segment, text });
   };
 })();
 """
@@ -60,11 +103,11 @@ def _silence_wav(seconds: float) -> str:
 
 async def _open(p, url, on_socket=None):
     try:
-        browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
-    await page.add_init_script(FAKE_RECOGNITION)
+    await page.add_init_script(FAKE_TRANSCRIPTION)
     if on_socket is not None:
         await page.route_web_socket("**/ws/voice", on_socket)
     # The captions are the Main view's, which the header does not offer yet.
@@ -137,7 +180,7 @@ async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_url):
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, _speaker(
             [["Good evening, sir.", "All six agents are idle."]], after_user=True))
-        await page.wait_for_function("window.__recognisers.length > 0", timeout=10000)
+        await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
         await page.evaluate("window.__hear('how are the', false)")
         await page.evaluate("window.__hear('how are the agents', false)")
         # The page passes on what is heard at most every so often, so wait.

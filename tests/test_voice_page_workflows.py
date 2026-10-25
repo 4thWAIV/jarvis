@@ -18,7 +18,7 @@ import json
 import pytest
 
 from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
-from tests.test_voice_page_captions import AUTOPLAY, FAKE_RECOGNITION
+from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
@@ -81,11 +81,11 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_u
     server, sessions = _Server(), _Sessions()
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", _Voice())
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", server)
@@ -168,11 +168,11 @@ async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(pag
 
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", _Voice())
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", server)
@@ -253,11 +253,11 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
 
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", _Voice())
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", api)
@@ -303,11 +303,11 @@ async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_ur
     server, sessions = _Server(), _Sessions()
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": width, "height": 860})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", _Voice())
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", server)

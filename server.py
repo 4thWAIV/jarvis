@@ -102,6 +102,7 @@ import data_paths
 import dialog
 import jarvis_memory
 import notifier
+import transcription_api
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
@@ -2736,6 +2737,7 @@ async def lifespan(application: FastAPI):
 
     await start_brain_and_speech()
     await start_session_watcher()
+    transcription_api.start()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
@@ -2753,6 +2755,7 @@ async def lifespan(application: FastAPI):
 
     yield
 
+    await transcription_api.stop()
     await stop_session_watcher()
     await stop_brain_and_speech()
 
@@ -2780,6 +2783,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 #
 # See web_auth.OriginGuard for what replaces it.
 app.add_middleware(web_auth.OriginGuard)
+transcription_api.mount(app)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -7068,12 +7072,11 @@ def _browser_for(args: dict) -> tuple[str | None, str | None]:
 
 # --- the microphone is a real constraint, not a preference ---------------
 #
-# JARVIS's own voice interface needs Chrome. `frontend/src/voice.ts` is built
-# on the Web Speech API's SpeechRecognition, which Firefox does not implement
-# at all — there is no flag and no permission to grant. Opening a WEB PAGE in
-# Firefox is perfectly fine; opening JARVIS HIMSELF there gives the user a
-# page whose microphone can never work, and he would reasonably conclude
-# JARVIS was broken.
+# JARVIS's own voice interface is only tested in Chrome. Its microphone
+# capture (frontend/src/voiceInput.ts: getUserMedia and an AudioWorklet) has
+# not been tried in Firefox or Safari, and a page whose microphone does not
+# work would look to the user like JARVIS being broken. Opening a WEB PAGE in
+# Firefox is perfectly fine; opening JARVIS HIMSELF there is not.
 #
 # So that one case is refused with the reason, rather than done silently. The
 # dashboard is deliberately NOT covered: `/dashboard` is a read-only monitor
@@ -7112,10 +7115,10 @@ def _is_jarvis_voice_ui(url: str) -> bool:
 
 
 MIC_NEEDS_CHROME = (
-    "My own interface only works in Chrome, sir — Firefox has no speech "
-    "recognition at all, so the microphone would be dead and you'd not be "
-    "able to say a word to me. I've left it. I'll open it in Chrome if you "
-    "like, or anything else in Firefox.")
+    "My own interface has only been tried in Chrome, sir — in Firefox the "
+    "microphone may well not work, and you'd not be able to say a word to "
+    "me. I've left it. I'll open it in Chrome if you like, or anything else "
+    "in Firefox.")
 
 
 def _project_roots() -> list[tuple[str, Path]]:

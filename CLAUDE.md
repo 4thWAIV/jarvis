@@ -5,7 +5,7 @@ JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for
 
 ## Quick Start
 Read `skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
-facts (mic-in-Chrome-only, the per-port permission trap, subscription vs. API
+facts (Chrome for the voice page, the per-port permission trap, subscription vs. API
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
@@ -16,18 +16,21 @@ When a user clones this repo and starts Claude Code, help them:
    subscription, not on an API key
 3. Get a Fish Audio API key from fish.audio (required — there is no fallback
    voice)
-4. Install Python dependencies: pip install -r requirements.txt
-5. Install the Playwright browser: python -m playwright install chromium
+4. Make the virtual environment and install Python dependencies:
+   `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
+5a. Install the local speech model (about 442 MiB):
+   `.venv/bin/python scripts/setup_speech_input.py`
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
-8. Run the backend: python server.py --host 127.0.0.1
+8. Run the backend: .venv/bin/python server.py --host 127.0.0.1
 9. Run the frontend: cd frontend && npm run dev
-10. Open Chrome (mic only works in Chrome) to http://localhost:5173
+10. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
 11. Click to enable audio, speak to JARVIS
 12. Teach your own Claude Code and Codex sessions to reach you through
-    JARVIS: `python session_skill.py install`
+    JARVIS: `.venv/bin/python session_skill.py install`
 
 **The certs are required for the dev-server workflow**, despite `server.py`
 treating them as optional. `server.py` serves HTTPS only when `cert.pem` and
@@ -181,7 +184,15 @@ arbitrary LLM and file content, so everything goes through
   utterance JARVIS speaks
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk
 - `frontend/src/orb.ts` — Three.js particle orb visualization
-- `frontend/src/voice.ts` — Web Speech API + audio playback
+- `frontend/src/voice.ts` — Audio playback; re-exports voice input
+- `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,
+  an AudioWorklet (`pcm-worklet.ts`, `pcm.ts`) making 16 kHz PCM16, streamed
+  to `/ws/transcribe`; its finals go to `/ws/voice` as before
+- `transcriber.py` — Local speech recognition: the model's identity and
+  where it lives, the sherpa-onnx engine, and the worker that owns it
+  (one capture at a time, overload refused rather than trimmed)
+- `transcription_api.py` — `/ws/transcribe`; the protocol is
+  `frontend/src/transcribeProtocol.json`, read by both sides
 - `frontend/src/main.tsx` — Renders the voice page with React (`App.tsx`;
   the orb is `OrbControl.tsx`)
 - `frontend/src/jarvis.ts` — The voice page's state machine, started once
@@ -308,6 +319,9 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   text may not act, and memory writers are refused for the rest of that
   generation. Off by default, so JARVIS keeps acting after reading foreign
   content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
+- `JARVIS_STT_MODEL_DIR` (optional) — where the local speech model is.
+  Defaults to `<data>/models/<model>`; `scripts/setup_speech_input.py`
+  installs it there, checked against the release's SHA-256
 - `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real

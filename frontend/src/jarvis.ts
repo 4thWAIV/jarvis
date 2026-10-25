@@ -8,7 +8,7 @@
  */
 
 import type { Orb, OrbState } from "./orb";
-import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
+import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
 import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped } from "./captions";
 import type { Display } from "./sources";
@@ -17,7 +17,7 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
-import { micLevel, micMuted } from "./mic";
+import { inputStatus, micLevel, micMuted } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 
 export function startJarvis(orb: Orb): void {
@@ -89,39 +89,27 @@ export function startJarvis(orb: Orb): void {
   const voiceInput = createVoiceInput(
     (text: string) => {
       // The server decides whether this is echo, a barge-in, or a new turn.
-      micMonitor.sawSpeech();
       // The turn's id goes with it, so a capture made from it can name it.
       const id = showHeard(text, true);
       socket.send({ type: "transcript", text, isFinal: true, ...(id === null ? {} : { id }) });
     },
     (text: string) => {
-      micMonitor.sawSpeech();
       showHeard(text, false);
       socket.send({ type: "interim", text });
     },
-    (msg: string) => {
-      showError(msg);
+    (event: string) => {
+      // Mirror the microphone's lifecycle to the server log: a browser-side
+      // failure the server cannot otherwise see, in a console nobody has open.
+      socket.send({ type: "mic", text: event });
     },
-    (event: string) => {
-      // Mirror the recogniser's lifecycle to the server log. Going deaf is a
-      // browser-side failure the server cannot otherwise see at all, and the
-      // console it used to be confined to is never open when it happens.
-      socket.send({ type: "mic", text: event });
-    }
-  );
-
-  // A live meter for the microphone itself. If this moves when you speak, the
-  // microphone is working — whatever else is or is not happening. It answers
-  // "is it even hearing me?" without a log, a console or anyone to ask.
-  // Drawn by the footer's meter (MicMeter.tsx).
-  const micMonitor = createMicMonitor(
-    micLevel.set,
-    (event: string) => {
-      socket.send({ type: "mic", text: event });
-      // Proven deaf: sound going in, nothing coming out. Do not wait for the
-      // rotation timer to happen along — measured once at 21 seconds, all of
-      // it lost. Rebuild the recogniser now.
-      if (event.startsWith("DEAF")) voiceInput.restart("deaf: audio in, no results");
+    {
+      // The meter (MicMeter.tsx) reads the same microphone stream that is
+      // transcribed: if it moves when you speak, the words are being heard.
+      onLevel: micLevel.set,
+      onStatus: inputStatus.set,
+      // A final heard while the voice socket is down would be dropped by
+      // socket.send; it is reported as not sent instead, and not replayed.
+      canDeliver: () => socket.isConnected(),
     }
   );
 
@@ -266,11 +254,10 @@ export function startJarvis(orb: Orb): void {
   // Kick off
   // ---------------------------------------------------------------------------
 
-  // Start listening after a brief delay for the orb to render
-  setTimeout(() => {
-    voiceInput.start();
-    if (currentState !== "speaking") transition("listening");
-  }, 1000);
+  // At once: there is no recogniser to wait for, and the microphone is
+  // taken as soon as the browser allows.
+  voiceInput.start();
+  transition("listening");
 
   // Resume AudioContext on ANY user interaction (browser autoplay policy)
   function ensureAudioContext() {
@@ -295,10 +282,9 @@ export function startJarvis(orb: Orb): void {
   micMuted.subscribe(() => {
     isMuted = micMuted.get();
     if (isMuted) {
-      voiceInput.mute();
-      micMonitor.close();          // the meter goes dark and nothing captures
+      voiceInput.mute();           // the meter goes dark and nothing captures
     } else {
-      micMonitor.open();
+      voiceInput.unmute();
       micFollowsState();
     }
   });
