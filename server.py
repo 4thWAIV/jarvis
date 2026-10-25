@@ -1605,6 +1605,8 @@ async def _announce_reply(event: dict) -> None:
 
 
 _MESSAGE_ANNOUNCERS = {
+    "sent": lambda event: _announce_queued_sent(event),
+    "send_failed": lambda event: _announce_queued_failed(event),
     "delivered": _announce_delivered,
     "undelivered": _announce_undelivered,
     "answered": _announce_reply,
@@ -4234,8 +4236,12 @@ def tool_session_detail(args: dict) -> str:
         body.append(f"Topic: {session.title}")
     if session.last_prompt:
         body.append(f"You last told it: {session.last_prompt}")
-    if session.last_text:
-        body.append(f"It last said: {session.last_text}")
+    # What it last said: the recap's latest words, else its latest reply
+    # from further back, so a turn of only tool calls does not leave the
+    # brain with nothing but the topic.
+    said = session.last_text or session_watch._clip(reply)
+    if said:
+        body.append(f"It last said: {said}")
     detail = "\n".join(head)
     if body:
         detail += "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(body))
@@ -4312,6 +4318,9 @@ def _message_state(m, now: float) -> str:
     status = str(m.status)
     if status == run_store.MessageStatus.STAGED:
         return "waiting out the moment in which he can stop it"
+    if status == run_store.MessageStatus.QUEUED:
+        return ("waiting its turn: it goes once that session is between turns and "
+                "has answered every message sent to it before")
     if status == run_store.MessageStatus.CANCELLED:
         return "cancelled before it was sent"
     if status == run_store.MessageStatus.SENT:
@@ -4956,6 +4965,53 @@ async def _perform_staged_steers() -> None:
             log.error(f"staged action for {what} failed: {e}", exc_info=True)
 
 
+def _message_must_wait(session_id: str) -> bool:
+    """Whether a message to this session has to queue: an earlier one to it
+    is queued or still open (sent and not yet answered), or the session is
+    in the middle of a turn. A session not in view is sent to at once, as
+    before, and its provider says whether that worked."""
+    if any(m.session_id == session_id
+           for m in run_store.queued_messages() + run_store.open_messages()):
+        return True
+    session = _snapshot_or_empty().by_id(session_id)
+    return session is not None and not session_watch.free_for_message(session)
+
+
+async def _message_went(session_id: str) -> None:
+    """A message has gone to this session: it moves up the agents list, and
+    the voice page draws the message going to it."""
+    try:
+        await asyncio.to_thread(run_store.mark_agent_messaged, session_id)
+        _hint_agents_changed()
+    except Exception as e:
+        log.warning(f"could not move {session_id} up the agents list: {e}")
+    _send_to_session_clients({"type": "agent_message", "session_id": session_id})
+
+
+async def _announce_queued_sent(event: dict) -> None:
+    """A queued message has gone, now that its session is free."""
+    session = event.get("session") or {}
+    await _message_went(session.get("session_id", ""))
+    name = _said_name(session, "The session")
+    number = _message_number(event.get("message") or {})
+    await _say_about_message(
+        f"Your message has gone to {name}, sir.",
+        f"Since your last turn you told him queued message {number} went to {name}.",
+        "queued send")
+
+
+async def _announce_queued_failed(event: dict) -> None:
+    """A queued message could not go: its session ended, or never came free."""
+    m = event.get("message") or {}
+    name = _said_name(event.get("session") or {}, "The session")
+    number = _message_number(m)
+    why = _plain_phrase(str(m.get("failure") or ""), "it could not be sent")
+    await _say_about_message(
+        f"Your queued message to {name} could not go, sir: {why}.",
+        f"Since your last turn you told him queued message {number} to {name} "
+        f"failed: {why}.", "queued send")
+
+
 def _deliver(item: _StagedSteer, text: str) -> str:
     """Send through the session's own provider: Claude Code's inbox socket,
     or Codex's queue. One of session_steer's outcomes."""
@@ -5020,6 +5076,18 @@ async def _perform_steer(item: _StagedSteer) -> None:
             await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
+        if _message_must_wait(item.session_id):         # a few small reads
+            # One message per turn: sent now, it would be folded into the
+            # turn under way, or answered with another message's reply. It
+            # waits in the queue, on record, and the session watcher sends
+            # it once the session is free (SessionWatcher.send_queued).
+            settle(run_store.MessageStatus.QUEUED)
+            _capture_sent(item.capture_id)
+            await speech.say(f"{_said_name(item)} is busy, sir. Your message waits its "
+                             f"turn and goes as soon as it is free.",
+                             Priority.NORMAL, label="readback-outcome")
+            return
+
         _capture_transmitting(item.capture_id)
         try:
             outcome = await asyncio.to_thread(_deliver, item, STEER_SIGNATURE + item.prompt)
@@ -5027,18 +5095,9 @@ async def _perform_steer(item: _StagedSteer) -> None:
             _capture_sent(item.capture_id)
         if outcome == session_steer.SENT:
             settle(run_store.MessageStatus.SENT, sent_at=time.time())
+            await _message_went(item.session_id)
         else:
             settle(run_store.MessageStatus.FAILED, failure=outcome)
-        if outcome == session_steer.SENT:
-            # It moves up the agents list, and the voice page draws the
-            # message going to it.
-            try:
-                await asyncio.to_thread(run_store.mark_agent_messaged, item.session_id)
-                _hint_agents_changed()
-            except Exception as e:
-                log.warning(f"could not move {item.session_id} up the agents list: {e}")
-            _send_to_session_clients({"type": "agent_message",
-                                      "session_id": item.session_id})
         if outcome == session_steer.SENT:
             # SENT means the bytes left over the socket, or `codex queue`
             # exited 0, nothing more. Whether it arrived is said when the

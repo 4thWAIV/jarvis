@@ -50,6 +50,57 @@ def test_a_session_that_has_said_nothing_has_no_reply():
     assert sw.last_reply_from([_line("user", "hello")]) is None
 
 
+
+def test_a_last_turn_with_no_text_yet_falls_back_to_the_turn_before():
+    """Still working, or only tool calls so far: the reader goes back one
+    turn, then another, never to nothing and never to the first turn."""
+    objs = [
+        _line("user", "first question"),
+        _line("assistant", [_text("the first answer")]),
+        _line("user", "second question"),
+        _line("assistant", [_text("the second answer")]),
+        _line("user", "third question"),
+        _line("assistant", [{"type": "tool_use", "name": "Bash", "input": {}}]),
+        _line("user", "fourth question"),
+    ]
+    assert sw.last_reply_from(objs) == "the second answer"
+
+
+def test_a_turn_cut_off_by_the_window_counts_only_when_nothing_is_cut():
+    objs = [_line("assistant", [_text("the end of an older answer")]),
+            _line("user", "the new question")]
+    assert sw.last_reply_from(objs, whole=False) is None
+    assert sw.last_reply_from(objs, whole=True) == "the end of an older answer"
+
+
+def test_the_reader_looks_further_back_when_the_recent_turns_said_nothing(tmp_path, monkeypatch):
+    root = tmp_path / ".claude"
+    write_transcript(root, cwd="/p/guard", session_id="g",
+                     assistant_texts=["The answer from a while ago."])
+    path = sw.transcript_path(root, "/p/guard", "g")
+    with open(path, "a") as fh:
+        for n in range(40):
+            fh.write(json.dumps(_line("user", f"prompt {n}")) + "\n")
+            fh.write(json.dumps(_line("assistant", [{"type": "tool_use", "name": "Bash",
+                                                     "input": {"pad": "x" * 200}}])) + "\n")
+    monkeypatch.setattr(sw, "REPLY_WINDOWS", (2048, 1024 * 1024))
+    assert sw.read_last_reply("/p/guard", "g", roots=[root]) == "The answer from a while ago."
+
+
+def test_session_detail_says_what_it_last_said_from_further_back(wired, monkeypatch):
+    server, root, watcher = wired
+    write_roster(root, pid=os.getpid(), session_id="g", cwd="/p/guard", name="guard",
+                 status="busy")
+    write_transcript(root, cwd="/p/guard", session_id="g", title="Old topic",
+                     assistant_texts=["The answer that matters."])
+    watcher.poll_once()
+    session = watcher.snapshot.sessions[0]
+    import dataclasses
+    stripped = dataclasses.replace(session, last_text=None)
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (stripped, None, None))
+    out = server.tool_session_detail({"name": "guard"})
+    assert "It last said: The answer that matters." in out
+
 def test_the_reply_is_read_unclipped_from_the_transcript(tmp_path):
     root = tmp_path / ".claude"
     long_text = "word " * 2000

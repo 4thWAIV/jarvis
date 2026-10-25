@@ -88,8 +88,14 @@ restart in `brain.py`, which is recovery, not a decision, and is logged.
 Every message JARVIS sends a session (`steer_session`) is one row of the
 `messages` table in `run_store.py`, written when it is staged and BEFORE it is
 sent, then updated at each step; its status is `run_store.MessageStatus`
-(`staged`, `cancelled`, `sent`, `delivered`, `working`, `answered`,
-`failed`). `sent` only means the provider took it (bytes on the inbox socket,
+(`staged`, `queued`, `cancelled`, `sent`, `delivered`, `working`, `answered`,
+`failed`). Messages go one per turn: one to a session that is mid-turn, or
+that has an earlier message queued or still open, is `queued` on record
+instead of sent (`server._message_must_wait`), and the session watcher sends
+each session's oldest queued message once it is between turns and has
+answered the one before (`SessionWatcher.send_queued`). Sent mid-turn, Claude
+Code would fold it into the turn under way and its one answer would become
+the reply to both. Queued messages survive a restart. `sent` only means the provider took it (bytes on the inbox socket,
 or `codex queue` exiting 0). The session watcher (`SessionWatcher`, given the
 store as `messages`) follows every open message on every poll through its
 session's provider: `track(session, message) -> Tracking` finds it in the

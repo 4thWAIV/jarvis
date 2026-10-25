@@ -373,6 +373,7 @@ def list_steers(limit: int = 50) -> list[dict]:
 
 class MessageStatus(StrEnum):
     STAGED = "staged"          # waiting out the cancel window
+    QUEUED = "queued"          # waiting its turn: its session is busy, or has a message open
     CANCELLED = "cancelled"    # Tim stopped it
     SENT = "sent"              # the provider accepted it
     UNDELIVERED = "undelivered"  # not seen within a minute (he was told); still looked for
@@ -499,6 +500,17 @@ def open_messages() -> list[Message]:
             f"SELECT * FROM messages WHERE status IN ({marks}) "
             "ORDER BY staged_at, id", [str(s) for s in OPEN_MESSAGE_STATUSES]
         ).fetchall()
+    return [_message(r) for r in rows]
+
+
+def queued_messages() -> list[Message]:
+    """Every message waiting its turn, oldest first. Never swept on a
+    restart: the queue is durable, and each goes out in order once its
+    session is free (session_watch.SessionWatcher.send_queued)."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM messages WHERE status=? ORDER BY staged_at, id",
+            (str(MessageStatus.QUEUED),)).fetchall()
     return [_message(r) for r in rows]
 
 

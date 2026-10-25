@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -288,20 +289,37 @@ def _is_prompt(obj: dict) -> bool:
         isinstance(b, dict) and b.get("type") == "text" for b in content)
 
 
-def last_reply_from(objs: list[dict]) -> str | None:
-    """Everything the session wrote since its last prompt, unclipped.
+# How far back the reply reader looks, widening only when the turns it can
+# see have no text: a whole reply first, then further back for one whose
+# latest turns were all tool calls. Never the whole of a long transcript.
+REPLY_WINDOWS = (REPLY_TAIL_BYTES, 16 * 1024 * 1024)
 
-    `recap_from` keeps only the LAST text block, cut at MAX_TEXT. A reply
-    that asks three questions across several blocks lost the rest that way,
-    which is what this exists to stop.
-    """
-    parts: list[str] = []
+
+def tail_windows(path: Path):
+    """(objects, whole) for each of REPLY_WINDOWS in turn, smallest first;
+    `whole` once a window holds the entire file, after which there is no
+    wider one."""
+    for nbytes in REPLY_WINDOWS:
+        objs = tail_objects(path, nbytes)
+        try:
+            whole = path.stat().st_size <= nbytes
+        except OSError:
+            return
+        yield objs, whole
+        if whole:
+            return
+
+
+def _turn_texts(objs: list[dict]) -> list[tuple[bool, str]]:
+    """Each turn in view, oldest first: whether its prompt is in view (a turn
+    cut off by the window's start is not), and everything it wrote."""
+    turns: list[tuple[bool, list[str]]] = [(False, [])]
     for o in objs:
         if o.get("isSidechain"):
             continue
         kind = o.get("type")
         if kind == "user" and _is_prompt(o):
-            parts = []
+            turns.append((True, []))
         elif kind == "assistant":
             message = o.get("message")
             content = message.get("content") if isinstance(message, dict) else None
@@ -311,18 +329,38 @@ def last_reply_from(objs: list[dict]) -> str | None:
                 if (isinstance(block, dict) and block.get("type") == "text"
                         and isinstance(block.get("text"), str)
                         and block["text"].strip()):
-                    parts.append(block["text"].strip())
-    return "\n\n".join(parts) or None
+                    turns[-1][1].append(block["text"].strip())
+    return [(seen, "\n\n".join(parts)) for seen, parts in turns]
+
+
+def last_reply_from(objs: list[dict], whole: bool = True) -> str | None:
+    """Everything the session wrote in its latest turn that wrote anything,
+    unclipped: the last turn, else the one before, and so on back. A turn
+    whose start is outside the window counts only if the window is the
+    whole file, since otherwise it may be missing its beginning.
+
+    `recap_from` keeps only the LAST text block, cut at MAX_TEXT. A reply
+    that asks three questions across several blocks lost the rest that way,
+    which is what this exists to stop.
+    """
+    for seen, text in reversed(_turn_texts(objs)):
+        if text and (seen or whole):
+            return text
+    return None
 
 
 def read_last_reply(cwd: str, session_id: str,
                     roots: list[Path] | None = None) -> str | None:
-    """A session's whole last reply, from the first root that has its
+    """A session's whole latest reply, from the first root that has its
     transcript, or None if it has said nothing."""
     for root in (roots if roots is not None else config_roots()):
         path = transcript_path(root, cwd, session_id)
         if path.exists():
-            return last_reply_from(tail_objects(path, REPLY_TAIL_BYTES))
+            for objs, whole in tail_windows(path):
+                reply = last_reply_from(objs, whole)
+                if reply:
+                    return reply
+            return None
     return None
 
 
@@ -1219,6 +1257,19 @@ class ClaudeSessions:
         return Tracking()
 
 
+# A session takes a message only between turns: idle, or never used. Sent
+# to one mid-turn, Claude Code folds it into the turn under way, and that
+# turn's one answer becomes the reply to both.
+SENDABLE_STATES = frozenset({IDLE, FRESH})
+
+
+def free_for_message(session: SessionState) -> bool:
+    """Whether a message can go to this session now, as far as the session
+    itself goes: between turns. (Whether another message to it is still
+    open is the queue's to check.)"""
+    return session.state in SENDABLE_STATES
+
+
 def build_snapshot(entries: list[RosterEntry] | None = None,
                    roots: list[Path] | None = None,
                    now: float | None = None,
@@ -1307,6 +1358,8 @@ class SessionWatcher:
         self.messages = messages
         # session id -> when one of its messages was last answered.
         self._answered_at: dict[str, float] = {}
+        # The poll and the server both send queued messages; one at a time.
+        self._send_lock = threading.Lock()
         self._started = False
         self._task = None
         # Captured by start() so _publish() can tell whether it is running on
@@ -1410,6 +1463,7 @@ class SessionWatcher:
         # the answer, in place of the `needs_you` or `finished` it would
         # otherwise have earned.
         awaiting = self._track_messages(snap, now)
+        self.send_queued(snap, now)
 
         for s in snap.sessions:
             was = self._previous.get(s.session_id)
@@ -1438,6 +1492,64 @@ class SessionWatcher:
             self._previous[s.session_id] = s.state
 
         return snap
+
+    def send_queued(self, snap: Snapshot | None = None, now: float | None = None) -> list:
+        """Send each session's oldest queued message once that session is
+        free (`free_for_message`): idle, and nothing JARVIS sent it still
+        open. One message per turn, so two can never merge into one turn
+        and lose their own replies. Records the outcome (the store first,
+        then a `sent` or `send_failed` event) and returns the messages it
+        settled. Never raises."""
+        import logging
+        import time as _time
+        from session_provider import for_session
+        log = logging.getLogger(__name__)
+        if self.messages is None:
+            return []
+        snap = snap if snap is not None else self.snapshot
+        now = now if now is not None else _time.time()
+        settled = []
+        with self._send_lock:
+            try:
+                queued = self.messages.queued_messages()
+                busy = {m.session_id for m in self.messages.open_messages()}
+            except Exception:
+                log.warning("queued messages could not be read", exc_info=True)
+                return []
+            for m in queued:
+                if m.session_id in busy:
+                    continue
+                busy.add(m.session_id)          # this one waits behind it, if not sent
+                session = snap.by_id(m.session_id)
+                fields = None
+                if session is None or session.state == GONE:
+                    fields = {"status": "failed",
+                              "failure": "its session ended before it was its turn"}
+                elif now - m.staged_at > MESSAGE_WATCH_SEC:
+                    fields = {"status": "failed",
+                              "failure": "its session was not free within a day"}
+                elif free_for_message(session):
+                    provider = next((p for p in self.providers if p.name == m.provider), None) \
+                        or for_session(session, self.providers)
+                    outcome = provider.send(session, m.text) if provider is not None else "failed"
+                    fields = ({"status": "sent", "sent_at": now} if outcome == "sent"
+                              else {"status": "failed", "failure": outcome})
+                if fields is None:
+                    continue
+                try:
+                    self.messages.update_message(m.id, **fields)   # the store BEFORE the event
+                except Exception:
+                    log.warning("message %s could not be recorded", m.id, exc_info=True)
+                    continue
+                m = replace(m, **fields)
+                settled.append(m)
+                if session is None:
+                    session = SessionState(session_id=m.session_id, cwd="", project=m.project,
+                                           state=GONE, voice_name=m.agent_name,
+                                           provider=m.provider)
+                self._publish("sent" if fields["status"] == "sent" else "send_failed",
+                              session, now, message=m)
+        return settled
 
     def _track_messages(self, snap: Snapshot, now: float) -> set[str]:
         """Follow every open message in its session's transcript, record what

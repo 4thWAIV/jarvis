@@ -378,8 +378,11 @@ async def test_several_open_captures_are_each_sent_on_their_own_by_number(wired,
     monkeypatch.setattr(server, "_deliver", lambda item, text: (
         sent.append(text), server.session_steer.SENT)[1])
     await server._perform_staged_steers()
-    assert sent == [server.STEER_SIGNATURE + "Add a health check.",
-                    server.STEER_SIGNATURE + "Use Postgres."], "one at a time, in order"
+    # One message per turn: the second waits, on record, for the first to be
+    # answered, and the session watcher sends it then (test_message_tracking).
+    assert sent == [server.STEER_SIGNATURE + "Add a health check."], "one at a time, in order"
+    assert [m.status for m in sorted(server.run_store.list_messages(), key=lambda m: m.id)] == \
+        ["sent", "queued"]
     assert set(server._captures) == {3}, "the one not sent stays open"
 
 

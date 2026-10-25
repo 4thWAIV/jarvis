@@ -1064,8 +1064,12 @@ def _drive_announce_message(server, session, monkeypatch):
     payload = {"voice_name": session.voice_name, "project": session.project,
                "state": session.state}
     out = []
-    for announce in (server._announce_delivered, server._announce_undelivered):
-        asyncio.run(announce({"session": payload, "message": _message_payload(session)}))
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
+    monkeypatch.setattr(server.run_store, "mark_agent_messaged", lambda sid: None)
+    for announce in (server._announce_delivered, server._announce_undelivered,
+                     server._announce_queued_sent, server._announce_queued_failed):
+        asyncio.run(announce({"session": payload, "message": {
+            **_message_payload(session), "failure": session.needs or "it ended"}}))
         out += speech.said + [server._with_notes_for_brain("")]
         speech.said.clear()
     for reply in (str(session.last_text or "x"), None):
@@ -1125,6 +1129,8 @@ def _drive_read_message_reply(server, session, monkeypatch):
 
 DRIVERS["server._announce_delivered"] = _drive_announce_message
 DRIVERS["server._announce_undelivered"] = _drive_announce_message
+DRIVERS["server._announce_queued_sent"] = _drive_announce_message
+DRIVERS["server._announce_queued_failed"] = _drive_announce_message
 DRIVERS["server.tool_list_messages"] = _drive_list_messages
 DRIVERS["server.tool_read_message_reply"] = _drive_read_message_reply
 

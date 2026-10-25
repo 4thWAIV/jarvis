@@ -33,7 +33,8 @@ from typing import Callable, Optional
 import session_steer
 from session_provider import Tracking
 from session_watch import (IDLE, NEEDS_YOU, WORKING, FRESH, SessionState,
-                           _looks_like_a_question, objects_since, project_name)
+                           _looks_like_a_question, objects_since, project_name,
+                           tail_windows)
 
 log = logging.getLogger("jarvis.sessions")
 
@@ -339,10 +340,13 @@ class CodexSessions:
         thread = _threads(self.home).get(session.session_id)
         if not thread or not thread.get("rollout_path"):
             return None
-        for obj in reversed(_tail(thread["rollout_path"])):
-            said = _message(obj)
-            if said and said[0] == "assistant":
-                return said[1]
+        # Its latest message, looking further back only when the turns in
+        # view said nothing (session_watch.tail_windows).
+        for objs, _whole in tail_windows(Path(thread["rollout_path"])):
+            for obj in reversed(objs):
+                said = _message(obj)
+                if said and said[0] == "assistant":
+                    return said[1]
         return None
 
     def track(self, session: SessionState, message) -> Tracking:

@@ -296,7 +296,8 @@ def test_a_message_is_recorded_staged_with_the_capture_and_the_exact_text(store)
     assert (m.status, m.capture_id, m.text, m.body) == ("staged", 3, SIG + "go on", "go on")
     assert m.staged_at > 0 and m.sent_at is None and not m.is_open
     assert [s.value for s in store.MessageStatus] == [
-        "staged", "cancelled", "sent", "undelivered", "delivered", "working", "answered", "failed"]
+        "staged", "queued", "cancelled", "sent", "undelivered", "delivered", "working",
+        "answered", "failed"]
 
 
 def test_only_sent_and_unanswered_messages_are_open(store):
@@ -723,3 +724,126 @@ def test_the_persona_names_the_new_tools():
     from pathlib import Path
     persona = (Path(__file__).parent.parent / "jarvis_home" / "CLAUDE.md").read_text()
     assert "list_messages" in persona and "read_message_reply" in persona
+
+
+# --- the queue: one message per turn -------------------------------------------
+# Sent mid-turn, Claude Code folds a message into the turn under way, and that
+# turn's one answer became the reply to both. Each message now waits, on
+# record, until its session is between turns and has answered the one before.
+
+class _QueueProvider:
+    """A provider whose one session's state the test sets, and which records
+    what it is sent. Tracks nothing, so a sent message stays open."""
+    name = "anthropic"
+
+    def __init__(self, state="idle"):
+        self.state, self.sent = state, []
+
+    def discover(self, now):
+        return [] if self.state is None else [sw.SessionState(
+            session_id=SID, cwd=CWD, project="guard", state=self.state, voice_name="guard",
+            steerable=True, socket_path="/x.sock", pids=[1], primary_pid=1)]
+
+    def last_reply(self, session):
+        return None
+
+    def track(self, session, message):
+        return sw.Tracking()
+
+    def send(self, session, text):
+        self.sent.append(text)
+        return session_steer.SENT
+
+
+def _queued(store, body):
+    mid = store.create_message(SID, "anthropic", "guard", "guard", SIG + body)
+    store.update_message(mid, status="queued")
+    return mid
+
+
+def _queue_watcher(store, provider):
+    w = sw.SessionWatcher(interval=999, providers=[provider], messages=store)
+    events = []
+    w.on_event(lambda e: events.append((e["kind"], e["message"]["id"])))
+    return w, events
+
+
+def test_a_queued_message_waits_while_its_session_is_mid_turn(store):
+    provider = _QueueProvider(state="working")
+    w, events = _queue_watcher(store, provider)
+    mid = _queued(store, "use Postgres")
+    w.poll_once()
+    assert provider.sent == [] and store.get_message(mid).status == "queued"
+
+    provider.state = "idle"
+    w.poll_once()
+    assert provider.sent == [SIG + "use Postgres"]
+    assert store.get_message(mid).status == "sent" and events == [("sent", mid)]
+
+
+def test_the_queue_sends_one_at_a_time_in_order(store):
+    provider = _QueueProvider()
+    w, events = _queue_watcher(store, provider)
+    first, second = _queued(store, "use Postgres"), _queued(store, "and add an index")
+    w.poll_once()
+    w.poll_once()
+    assert provider.sent == [SIG + "use Postgres"], "the second waits for the first's answer"
+    assert store.get_message(second).status == "queued"
+
+    store.update_message(first, status="answered", answered_at=time.time(), reply="Done.")
+    w.poll_once()
+    assert provider.sent == [SIG + "use Postgres", SIG + "and add an index"]
+    assert [e for e in events if e[0] == "sent"] == [("sent", first), ("sent", second)]
+
+
+def test_the_queue_survives_a_restart(store):
+    mid = _queued(store, "use Postgres")
+    store.sweep_staged_messages()                       # what a restart runs
+    provider = _QueueProvider()
+    w, _ = _queue_watcher(store, provider)              # a new process, the same store
+    w.poll_once()
+    assert store.get_message(mid).status == "sent"
+
+
+def test_a_queued_message_whose_session_ended_fails_and_says_why(store):
+    provider = _QueueProvider(state=None)
+    w, events = _queue_watcher(store, provider)
+    mid = _queued(store, "use Postgres")
+    w.poll_once()
+    m = store.get_message(mid)
+    assert (m.status, m.failure) == ("failed", "its session ended before it was its turn")
+    assert events == [("send_failed", mid)] and provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_message_to_a_session_with_one_open_is_queued_not_sent(server, monkeypatch):
+    sends = []
+    monkeypatch.setattr(server, "_deliver", lambda item, text: sends.append(text) or session_steer.SENT)
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    earlier = server.run_store.create_message(SID, "anthropic", "guard", "guard", SIG + "first")
+    server.run_store.update_message(earlier, status="working")
+
+    await server._perform_steer(server._StagedSteer(
+        session_id=SID, voice_name="guard", project="guard", prompt="second",
+        socket_path="/x.sock"))
+
+    later = max(m.id for m in server.run_store.list_messages())
+    assert server.run_store.get_message(later).status == "queued" and sends == []
+    assert speech.said == ["guard is busy, sir. Your message waits its turn and goes as "
+                           "soon as it is free."]
+
+
+@pytest.mark.asyncio
+async def test_a_message_to_a_session_mid_turn_is_queued(server, monkeypatch):
+    monkeypatch.setattr(server, "_deliver", lambda item, text: session_steer.SENT)
+    monkeypatch.setattr(server, "speech", _Speech())
+    busy = sw.SessionState(session_id=SID, cwd=CWD, project="guard", state="working",
+                           voice_name="guard", steerable=True, socket_path="/x.sock")
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: sw.Snapshot(sessions=[busy]))
+    await server._perform_steer(server._StagedSteer(
+        session_id=SID, voice_name="guard", project="guard", prompt="go on",
+        socket_path="/x.sock"))
+    (m,) = server.run_store.list_messages()
+    assert m.status == "queued"
+
