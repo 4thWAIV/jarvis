@@ -1,4 +1,4 @@
-"""The Diagnostics panel's account area, two rows of the same height: the
+"""The brains' account boxes, in the left column under the microphone, two rows of the same height: the
 avatar and what is left of the week's limit; then the provider's logo and the
 number (green when ahead of the straight line, red when behind). To their
 right, centred across both rows, a burn-down chart with the straight line and
@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url, show_diagnostics  # noqa: F401
+from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -44,7 +44,6 @@ async def _shown(page_url, body, status=200, logo=True):
             status=200, content_type="image/svg+xml", body=svg) if logo else route.fulfill(
             status=404, content_type="text/plain", body=""))
         await page.goto(page_url)
-        await show_diagnostics(page)
         await page.wait_for_selector(".weekly-usage")
         await page.wait_for_timeout(300)
         out = await page.evaluate("""() => {
@@ -251,7 +250,6 @@ async def test_each_figure_has_a_half_size_percent_and_the_sign_on_its_left(page
         await page.route("**/api/usage/week", lambda r: r.fulfill(
             status=200, content_type="application/json", body=body))
         await page.goto(page_url)
-        await show_diagnostics(page)
         await page.wait_for_selector(".weekly-ahead .weekly-sign")
         got = await page.evaluate("""() => ['.weekly-left', '.weekly-ahead'].map(s => {
           const fig = document.querySelector(s + ' .weekly-figure');

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url, show_diagnostics  # noqa: F401
+from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
 from tests.test_voice_page_settings import _Server, _open_settings
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
@@ -61,7 +61,6 @@ async def _page(p, url, live):
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
     await live.install(page)
     await page.goto(url)
-    await show_diagnostics(page)
     return browser, page
 
 
@@ -78,7 +77,7 @@ async def test_a_reload_before_the_server_is_back_says_so_and_catches_up(page_ur
         await brains_failure.first.wait_for(timeout=10000)
         await page.wait_for_function(f"{BOXES} === 2", timeout=15000)
         await page.wait_for_function(f"{LOGO} === 'openai'")
-        assert await page.locator(".right-view .read-failure", has_text="brains").count() == 0, \
+        assert await page.locator("#brain-usage .read-failure").count() == 0, \
             "said only while true"
         await browser.close()
 
@@ -124,7 +123,6 @@ async def test_adding_a_brain_in_settings_reaches_diagnostics_at_once(page_url):
         await page.route("**/api/usage/week**", lambda r: r.fulfill(
             status=200, content_type="application/json", body='{"measured": false}'))
         await page.goto(page_url)
-        await show_diagnostics(page)
         await page.wait_for_function(f"{BOXES} === 1", timeout=10000)
         await _open_settings(page)
         await page.get_by_role("button", name="+ Add OpenAI (Codex)").click()
@@ -149,7 +147,6 @@ async def test_preferences_cannot_be_saved_until_they_have_been_read(page_url):
                                 body=json.dumps({"user_name": "Tim", "honorific": "sir"}))
         await page.route("**/api/settings/preferences", preferences)
         await page.goto(page_url)
-        await show_diagnostics(page)
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Settings", exact=True).click()
         save = page.get_by_role("button", name="Save Preferences")

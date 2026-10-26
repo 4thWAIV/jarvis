@@ -8,7 +8,7 @@
   /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
      mirrored on the right. */
   --ray-lane: 4vw;
-  /* The two side panels: the left column (orb, status, mic) and the
+  /* The two side panels: the left column (orb, status, mic, brains) and the
      right-hand display. One width for both, the only place either width is
      set. It never grows past 230px and only shrinks, with the window, so the
      centre area (whose edges are --panel-edge) is never covered. */
@@ -1330,10 +1330,19 @@ html, body {
 }
 #hush:hover { color: #eaf8ff; border-color: rgba(79, 209, 255, 0.75); }
 
-/* The account (WeeklyUsage.tsx), in the Diagnostics panel: two rows of the
-   same height, the avatar and what is left of the week's limit, then the
-   provider's logo and the number; to their right, centred across both rows
-   and filling the rest of the panel, the burn-down. */
+/* The brains' account boxes (BrainUsage.tsx), in the left column under the
+   microphone, where the agents list was. */
+#left-column > #brain-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 0 0;
+}
+
+/* The account (WeeklyUsage.tsx): two rows of the same height, the avatar and
+   what is left of the week's limit, then the provider's logo and the number;
+   to their right, centred across both rows and filling the rest of the box,
+   the burn-down. */
 .right-view {
   padding: 10px 12px;
   display: flex;

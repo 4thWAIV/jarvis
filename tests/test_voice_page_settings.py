@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url, show_diagnostics  # noqa: F401
+from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -125,7 +125,6 @@ async def _open(p, url, server):
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
     await server.install(page)
     await page.goto(url)
-    await show_diagnostics(page)
     return browser, page
 
 
