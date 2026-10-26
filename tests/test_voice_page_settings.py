@@ -131,7 +131,9 @@ async def _open(p, url, server):
 async def _open_settings(page):
     await page.click("#btn-menu")
     await page.get_by_role("button", name="Settings", exact=True).click()
-    await page.get_by_placeholder("Your name").wait_for()
+    # The form is drawn before the preferences arrive, and their arrival
+    # fills it; a test that types first has its typing replaced.
+    await async_api.expect(page.get_by_placeholder("Your name")).to_have_value("Tim")
 
 
 # A status dot's colour as seen: green, red, yellow, or off (the dim grey of
@@ -154,11 +156,9 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
-        # The form is drawn before the preferences arrive; these wait for them.
-        expect = async_api.expect
-        await expect(page.get_by_placeholder("Your name")).to_have_value("Tim")
-        await expect(page.locator("select:has(option[value='none'])")).to_have_value("sir")
-        await expect(page.locator("text=Uptime").locator("..")).to_contain_text("1h")
+        assert await page.get_by_placeholder("Your name").input_value() == "Tim"
+        assert await page.locator("select:has(option[value='none'])").input_value() == "sir"
+        await async_api.expect(page.locator("text=Uptime").locator("..")).to_contain_text("1h")
         await browser.close()
 
 
