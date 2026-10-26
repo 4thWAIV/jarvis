@@ -38,6 +38,7 @@ def record(now: float):
               "quiet": False, "state": "healthy", "cause": ""}
     summary = {"state": "healthy", "cause": "", "pipeline": pipeline(), "last2min": [sample],
                "incidentsLastHour": {"drops": 2, "reconnects": 1, "errors": 0},
+               "lastHour": {"finals": 38, "drops": 2}, "lastDropAt": now - 600,
                "today": {"listenedSec": 600, "finals": 40, "typed": 2, "drops": 2, "reconnects": 1},
                "now": now}
     events = [
@@ -98,18 +99,20 @@ async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
         browser, page = await _open(p, page_url)
         await _health(page)
         await page.wait_for_function(
-            "document.querySelector('.voice-health')?.textContent === 'Hearing you'")
+            "document.querySelector('.voice-summary .voice-status-word')?.textContent === 'Hearing you'")
         assert await page.query_selector("#health-dot") is None
         await _health(page, state="decoder-slow", cause="Machine busy (load 16.9)",
                       backlogSec=1.4, pipeline=pipeline(recogniser="warn"))
         await page.wait_for_function(
-            "document.querySelector('.voice-health')?.textContent === 'Recogniser behind'")
-        assert await page.text_content(".voice-cause") == "Machine busy (load 16.9)"
+            "document.querySelector('.voice-summary .voice-status-word')?.textContent === 'Falling behind'")
+        assert await page.text_content(".voice-summary .voice-cause") == "Machine busy (load 16.9)"
         stage = await page.get_attribute("[data-stage='recogniser']", "class")
         assert "st-warn" in stage
         assert await page.get_attribute("#health-dot", "title") == \
             "Recogniser behind: Machine busy (load 16.9)"
-        assert await page.get_attribute(".voice-summary .voice-orb", "data-state") == "decoder-slow"
+        assert "tone-warn" in await page.get_attribute(".voice-summary .voice-status-word", "class")
+        assert "tone-warn" in await page.get_attribute(".voice-summary .heard-ring", "class")
+        assert await page.query_selector(".voice-summary canvas") is None, "no orb: it is not an agent"
         await browser.close()
 
 
@@ -166,6 +169,28 @@ async def test_the_quiet_page_is_reported_in_telemetry(page_url):
         await page.wait_for_function(f"window.__telemetry.length > {n} && "
                                      "window.__telemetry[window.__telemetry.length - 1].quiet === false",
                                      timeout=5000)
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url)
+        await _health(page, rtf=0.95, backlogSec=1.6)
+        await page.wait_for_function(
+            "document.querySelector('.voice-summary .speed-ring .ring-count')?.textContent === '95%'")
+        # The record's last hour: 38 sentences heard, 2 dropped -> 95%.
+        assert await page.text_content(".voice-summary .heard-ring .ring-count") == "95%"
+        assert "tone-warn" in await page.get_attribute(".voice-summary .speed-ring", "class")
+        assert "tone-bad" in await page.get_attribute(".voice-summary .headroom", "class")
+        width = await page.evaluate("document.querySelector('.voice-summary .headroom-bar span').style.width")
+        assert width == "80%"
+        assert "last drop" in await page.text_content(".voice-summary .voice-status")
+        # No audio at all is speech being dropped.
+        await _health(page, state="no-frames", cause="No audio from the microphone",
+                      pipeline=pipeline(mic="bad"))
+        await page.wait_for_function(
+            "document.querySelector('.voice-summary .voice-status-word')?.textContent === 'Dropping speech'")
         await browser.close()
 
 

@@ -23,8 +23,9 @@
 import { useState, useSyncExternalStore } from "react";
 import { useLiveRead } from "./liveRead";
 import { useTick } from "./WorkflowsView";
-import { Chip, PipelineTrack, Sparkline, VoiceOrb, type Point } from "./VoiceVisuals";
-import { BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, getHistory, health, HEALTH_WORDS, isQuiet, notices,
+import { Chip, HeadroomBar, HeardRing, PipelineTrack, Sparkline, SpeedRing, type Point } from "./VoiceVisuals";
+import { ago } from "./workflows";
+import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, getHistory, health, heardShare, isQuiet, notices,
          openDiagnostics, quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
 import { beforeDrops, clock, DROP_KINDS, groupMessages, INCIDENT_KINDS, INCIDENT_WORDS,
          noticesBySource, quietComparison } from "./voiceAnalysis";
@@ -65,18 +66,30 @@ function Overview() {
   useTick(1000);
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get).value;
-  const state = live?.state ?? record?.state ?? "idle";
+  const status = audioStatus(live?.state ?? record?.state ?? "idle", record?.lastDropAt ?? null);
   const cause = live ? live.cause : record?.cause ?? "";
   const pipeline = live?.pipeline ?? record?.pipeline;
+  const last = record?.last2min[record.last2min.length - 1];
   const t = record?.today;
   return (
     <section className="voice-overview" aria-label="Voice overview">
-      <VoiceOrb state={state} size={72} />
+      <span className="voice-ring-cap">
+        <HeardRing share={record ? heardShare(record.lastHour) : null} tone={status.tone} size={72} />
+        <small>heard, last hour</small>
+      </span>
       <div className="voice-overview-words">
-        <h2>{HEALTH_WORDS[state]}</h2>
-        <p className="voice-cause">{cause || " "}</p>
+        <h2 className={`voice-status-word tone-${status.tone}`}>{status.word}</h2>
+        <p className="voice-cause">
+          {status.tone !== "ok" && cause ? cause : " "}
+          {record?.lastDropAt != null && <span className="voice-last-drop"> · last drop {ago(record.lastDropAt)}</span>}
+        </p>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
+        <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
       </div>
+      <span className="voice-ring-cap">
+        <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={72} />
+        <small>speed</small>
+      </span>
       <button type="button" className="workflow-close" title="Close" aria-label="Close"
               onClick={() => openDiagnostics.set(false)}>×</button>
       {t && (

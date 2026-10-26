@@ -2130,21 +2130,6 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
    (VoiceVisuals.tsx). Green hearing him, amber behind, red dropping.
    --------------------------------------------------------------------------- */
 
-.voice-orb {
-  position: relative;
-  display: inline-block;
-  flex: none;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px #34d399;
-}
-.voice-orb canvas { display: block; width: 100%; height: 100%; }
-.voice-orb[data-state="browser-behind"], .voice-orb[data-state="connection-behind"],
-.voice-orb[data-state="server-starved"], .voice-orb[data-state="decoder-slow"] {
-  box-shadow: 0 0 0 2px #fbbf24, 0 0 12px rgba(251, 191, 36, 0.45);
-}
-.voice-orb[data-state="no-frames"] { box-shadow: 0 0 0 2px #ef4444; }
-.voice-orb[data-state="idle"] { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2); }
-
 .voice-summary { margin-bottom: 14px; }
 .voice-summary-open {
   display: flex;
@@ -2161,10 +2146,31 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   cursor: pointer;
 }
 .voice-summary-open:hover, .voice-summary-open:focus-visible { border-color: rgba(14, 165, 233, 0.5); }
-.voice-health-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.voice-health-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.voice-health { font-size: 14px; font-weight: 600; color: #e0f2fe; }
-.voice-cause { font-size: 11px; color: rgba(255, 255, 255, 0.6); overflow-wrap: anywhere; margin: 0; }
+.voice-rings { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.voice-keeping-up { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.voice-keeping-up .headroom { flex: 1; min-width: 0; }
+.voice-ring-cap { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
+.voice-ring-cap small { font-size: 10px; color: rgba(255, 255, 255, 0.5); }
+.voice-summary .ring-count, .voice-overview .ring-count { font-size: 13px; font-weight: 600; }
+.voice-keeping-up .ring-count { font-size: 11px; }
+.voice-overview .ring-count { font-size: 18px; }
+.voice-status { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.voice-status-word { font-size: 16px; font-weight: 600; }
+.tone-ok.voice-status-word { color: #34d399; }
+.tone-warn.voice-status-word { color: #fbbf24; }
+.tone-bad.voice-status-word { color: #f87171; }
+.tone-off.voice-status-word { color: rgba(255, 255, 255, 0.5); }
+.voice-cause { font-size: 11px; color: rgba(255, 255, 255, 0.65); overflow-wrap: anywhere; margin: 0; }
+.voice-last-drop { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+.heard-ring.tone-ok .ring-fill, .speed-ring.tone-ok .ring-fill { stroke: #34d399; }
+.heard-ring.tone-warn .ring-fill, .speed-ring.tone-warn .ring-fill { stroke: #fbbf24; }
+.heard-ring.tone-bad .ring-fill, .speed-ring.tone-bad .ring-fill { stroke: #ef4444; }
+.heard-ring.tone-off .ring-fill { stroke: rgba(255, 255, 255, 0.3); }
+.headroom { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 10px; color: rgba(255, 255, 255, 0.55); }
+.headroom-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.headroom-bar span { display: block; height: 100%; border-radius: 3px; background: #34d399; transition: width 0.4s; }
+.headroom.tone-warn .headroom-bar span { background: #fbbf24; }
+.headroom.tone-bad .headroom-bar span { background: #ef4444; }
 
 .pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; width: 100%; }
 .pipeline-stage { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: center; }
@@ -2221,6 +2227,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   flex-direction: column;
   gap: 14px;
   overflow-y: auto;
+  /* Room for the rings' edges: the scroll box clips anything outside it. */
+  padding: 6px;
   z-index: 10;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.85);

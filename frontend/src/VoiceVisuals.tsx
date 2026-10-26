@@ -2,34 +2,49 @@
  * The pictures voice health is drawn with, shared by the Diagnostics tab
  * (VoiceSummary.tsx) and the Diagnostics view (VoiceDiagnosticsView.tsx):
  *
- *   - VoiceOrb: JARVIS's blue orb, small, moving with the health state and
- *     ringed in its colour (calm when hearing him, churning when behind,
- *     gray when not listening);
+ *   - HeardRing: the share of his sentences heard in the last hour, ringed
+ *     in the status colour (voiceHealth.audioStatus);
+ *   - SpeedRing: how much of the recogniser's real-time budget it is using;
  *   - PipelineTrack: the five stages the audio passes through, each in its
- *     own colour, with its delay under it;
+ *     own colour, with its delay under any that is not well;
+ *   - HeadroomBar: how far behind recognition is, up to where speech drops;
  *   - Sparkline: a value over time against the lines that matter, with each
  *     drop marked;
  *   - Chip: one count or reading with a coloured dot.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BLUE_PALETTE, type OrbState } from "./orb";
-import { ParticleOrb } from "./WorkflowVisuals";
-import { STAGES, STAGE_WORDS, type HealthState, type Stage, type StageState } from "./voiceHealth";
+import { Ring } from "./WorkflowVisuals";
+import { BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, STAGES, STAGE_WORDS, type Stage, type StageState,
+         type Tone } from "./voiceHealth";
 
-const LOOK: Record<HealthState | "idle", { state: OrbState; gray: boolean }> = {
-  healthy: { state: "idle", gray: false },
-  "no-frames": { state: "compacting", gray: false },
-  "browser-behind": { state: "thinking", gray: false },
-  "connection-behind": { state: "thinking", gray: false },
-  "server-starved": { state: "thinking", gray: false },
-  "decoder-slow": { state: "thinking", gray: false },
-  idle: { state: "idle", gray: true },
-};
+export function HeardRing({ share, tone, size }: { share: number | null; tone: Tone; size: number }) {
+  const pct = share === null ? null : Math.floor(share * 100);
+  return <Ring done={pct ?? 0} total={100} size={size} className={`heard-ring tone-${tone}`}
+               label="Sentences heard, last hour" text={pct === null ? "—" : `${pct}%`} />;
+}
 
-export function VoiceOrb({ state, size }: { state: HealthState | "idle"; size: number }) {
-  return <ParticleOrb palette={BLUE_PALETTE} look={LOOK[state]} dataState={state}
-                      className="voice-orb" size={size} />;
+// Amber from here; red at all of it (it can no longer keep up).
+const SPEED_WARN = 0.9;
+
+export function SpeedRing({ rtf, size }: { rtf: number | null; size: number }) {
+  const pct = rtf === null ? null : Math.round(rtf * 100);
+  return <Ring done={Math.min(pct ?? 0, 100)} total={100} size={size}
+               className={`speed-ring tone-${tone(rtf, SPEED_WARN, 1)}`}
+               label="Recogniser time used per second of speech"
+               text={pct === null ? "—" : `${pct}%`} />;
+}
+
+export function HeadroomBar({ backlogSec }: { backlogSec: number | null }) {
+  const share = Math.min(1, Math.max(0, (backlogSec ?? 0) / BACKLOG_DROP_SEC));
+  return (
+    <span className={`headroom tone-${tone(backlogSec, BACKLOG_WARN_SEC, BACKLOG_DROP_SEC * 0.75)}`}
+          title={`${seconds(backlogSec)} behind; speech is dropped at ${BACKLOG_DROP_SEC} s`}>
+      <span className="headroom-label">Headroom</span>
+      <span className="headroom-bar"><span style={{ width: `${share * 100}%` }} /></span>
+      <span className="headroom-end">{BACKLOG_DROP_SEC} s drop</span>
+    </span>
+  );
 }
 
 /** "0.4 s", "—" when unknown. */
@@ -53,7 +68,7 @@ export function PipelineTrack({ pipeline, labels = true }: {
                data-stage={stage} title={`${STAGE_WORDS[stage]}: ${state}`}>
             <span className="pipeline-bar" />
             {labels && <span className="pipeline-label">{STAGE_WORDS[stage]}</span>}
-            {labels && <span className="pipeline-value">{stageValue(stage, value)}</span>}
+            {labels && <span className="pipeline-value">{state === "ok" ? "" : stageValue(stage, value)}</span>}
           </div>
         );
       })}

@@ -60,6 +60,8 @@ export interface Summary {
   pipeline: Record<Stage, { state: StageState; value: number | null }>;
   last2min: Sample[];
   incidentsLastHour: { drops: number; reconnects: number; errors: number };
+  lastHour: { finals: number; drops: number };
+  lastDropAt: number | null;
   today: { listenedSec: number; finals: number; typed: number; drops: number; reconnects: number };
   now: number;
 }
@@ -69,6 +71,31 @@ export const HEALTH_WORDS: Record<HealthState | "idle", string> = {
   "connection-behind": "Connection backed up", "server-starved": "Server too busy",
   "decoder-slow": "Recogniser behind", idle: "Not listening",
 };
+
+export type Tone = "ok" | "warn" | "bad" | "off";
+
+// Speech dropped this recently makes the status "Dropping speech".
+const DROPPING_FOR_SEC = 60;
+
+/** How well the audio is working, in one word and one colour: hearing him,
+ *  falling behind (any stage not healthy), dropping speech (a drop in the
+ *  last minute, or no audio at all), or not listening. */
+export function audioStatus(state: HealthState | "idle", lastDropAt: number | null,
+                            now = Date.now() / 1000): { word: string; tone: Tone } {
+  if (state === "idle") return { word: "Not listening", tone: "off" };
+  if (state === "no-frames" || (lastDropAt !== null && now - lastDropAt < DROPPING_FOR_SEC)) {
+    return { word: "Dropping speech", tone: "bad" };
+  }
+  if (state !== "healthy") return { word: "Falling behind", tone: "warn" };
+  return { word: "Hearing you", tone: "ok" };
+}
+
+/** Sentences heard as a share of sentences heard plus speech dropped, or
+ *  null with nothing said. */
+export function heardShare(h: { finals: number; drops: number }): number | null {
+  const said = h.finals + h.drops;
+  return said ? h.finals / said : null;
+}
 
 // What the record judges against, drawn on the charts.
 export const BACKLOG_WARN_SEC = 1;

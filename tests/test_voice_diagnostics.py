@@ -151,6 +151,8 @@ def test_the_summary_has_the_latest_state_the_pipeline_and_the_hour_s_incidents(
     assert len(got["last2min"]) == 6 and got["last2min"][-1]["loadAvg"] == 16
     assert got["incidentsLastHour"] == {"drops": 2, "reconnects": 1, "errors": 1}
     assert got["today"]["finals"] == 5
+    assert got["lastHour"] == {"finals": 5, "drops": 2}
+    assert got["lastDropAt"] == pytest.approx(now - 30)
 
 
 def test_with_nothing_recent_the_summary_says_idle():

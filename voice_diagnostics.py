@@ -417,14 +417,18 @@ def summary(now: Optional[float] = None) -> dict:
     drops, reconnects and errors in the last hour."""
     now = time.time() if now is None else now
     samples, events = history(now - 120, now)
-    hour_events = history(now - 3600, now)[1]
+    hour_samples, hour_events = history(now - 3600, now)
     latest = samples[-1] if samples and now - samples[-1].at < 5 else None
+    drops = [e.at for e in hour_events if e.kind == "overload"]
     return {
         "state": latest.state if latest else "idle",
         "cause": latest.cause if latest else "",
         "pipeline": pipeline(latest),
         "last2min": [sample_json(s) for s in samples],
         "incidentsLastHour": incident_counts(hour_events),
+        # The heard share: sentences heard against speech dropped.
+        "lastHour": {"finals": sum(x.finals for x in hour_samples), "drops": len(drops)},
+        "lastDropAt": last_drop_at(),
         "today": today(now),
         "now": now,
     }
@@ -444,6 +448,12 @@ def today(now: float) -> dict:
             (midnight,)).fetchall())
     return {"listenedSec": listened * SAMPLE_EVERY_SEC, "finals": finals, "typed": typed,
             "drops": kinds.get("overload", 0), "reconnects": kinds.get("reconnect", 0)}
+
+
+def last_drop_at() -> Optional[float]:
+    """When speech was last dropped, ever (within the record), or None."""
+    with closing(_connect()) as conn:
+        return conn.execute("SELECT MAX(at) FROM voice_events WHERE kind = 'overload'").fetchone()[0]
 
 
 def incident_counts(events: list[Event]) -> dict:

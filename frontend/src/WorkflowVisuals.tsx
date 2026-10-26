@@ -98,15 +98,17 @@ export function PhaseTrack({ w, labels = false }: { w: Workflow; labels?: boolea
   );
 }
 
-export function Ring({ done, total, size = 40, label, text }: {
+export function Ring({ done, total, size = 40, label, text, className = "" }: {
   done: number; total: number; size?: number; label?: string;
   /** What the middle says, instead of done/total. */
-  text?: string }) {
+  text?: string;
+  /** Extra classes, such as a tone that colours the fill. */
+  className?: string }) {
   const share = total > 0 ? Math.min(1, done / total) : 0;
   const r = size / 2 - 3;
   const c = 2 * Math.PI * r;
   return (
-    <span className="workflow-ring" style={{ width: size, height: size }} role="progressbar"
+    <span className={`workflow-ring ${className}`.trim()} style={{ width: size, height: size }} role="progressbar"
           aria-valuemin={0} aria-valuemax={total} aria-valuenow={done} aria-label={label}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <circle className="ring-track" cx={size / 2} cy={size / 2} r={r} />
