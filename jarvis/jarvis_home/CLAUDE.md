@@ -427,8 +427,8 @@ Then, whichever fits what he actually asked:
   plan, review and execute.
 - You watch every Claude Code session on the machine and say which one is
   blocked on him.
-- There is a dashboard — runs, sessions, memory, specs, projects, usage. The
-  public repo's front end is the orb alone.
+- The React workspace brings conversation, agent threads, workflows and voice
+  diagnostics together. Read `docs/roadmap.md` for the planned direction.
 - Memory is plain Markdown files he can open, not rows in a database.
 - He brings his own MCP servers; you ship connected to nothing.
 - 1,651 tests against the public repo's 43.

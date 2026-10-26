@@ -1,16 +1,16 @@
 # JARVIS — Voice AI Assistant
 
 ## Overview
-JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS. It runs locally on your machine, driving Claude Code for development tasks — every execution recorded as a *run* and watchable at `/dashboard`.
+JARVIS is a voice-first macOS workspace for conversation, coding agents and workflows. Its React interface centres on Conversation, with agent threads, workflow details and voice diagnostics opening alongside it. Claude and Codex are available as conversational brain providers. The project direction is in `docs/roadmap.md`; current user-facing changes are in `docs/whats-new.md`. Keep planned successor engines distinct from implemented prototype functionality.
 
 ## Quick Start
-Read `skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
+Read `jarvis/skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
 facts (Chrome for the voice page, the per-port permission trap, subscription vs. API
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
 When a user clones this repo and starts Claude Code, help them:
-1. Copy .env.example to .env
+1. Copy jarvis/.env.example to .env
 2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
@@ -20,21 +20,21 @@ When a user clones this repo and starts Claude Code, help them:
    `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
-5a. Install the local speech model (about 442 MiB):
+5a. Install the current local Kroko speech model:
    `.venv/bin/python scripts/setup_speech_input.py`
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
-8. Run the backend: .venv/bin/python server.py --host 127.0.0.1
+8. Run the backend: .venv/bin/python -m jarvis --host 127.0.0.1
 9. Run the frontend: cd frontend && npm run dev
 10. Open Chrome (the voice page is only tested in Chrome) to http://localhost:5173
 11. Click to enable audio, speak to JARVIS
 12. Teach your own Claude Code and Codex sessions to reach you through
-    JARVIS: `.venv/bin/python session_skill.py install`
+    JARVIS: `.venv/bin/python -m jarvis.session_skill install`
 
 **The certs are required for the dev-server workflow**, despite `server.py`
-treating them as optional. `server.py` serves HTTPS only when `cert.pem` and
-`key.pem` are both beside it, but `frontend/vite.config.ts` hard-codes its
+treating them as optional. JARVIS serves HTTPS only when `cert.pem` and
+`key.pem` are both in its configuration directory (the repository root in a checkout), but `frontend/vite.config.ts` hard-codes its
 proxy target as `https://localhost:8340`. Measured with a stand-in backend on
 8340 and `npx vite`: with a plain-HTTP backend the Vite dev server itself
 answers 200 while every proxied `/api` request returns **500**; with an HTTPS
@@ -42,18 +42,15 @@ backend the same request returns 200. The page loads either way, which is why
 this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
-- **Backend**: FastAPI + Python (server.py, ~5800 lines)
-- **Frontend**: Vite + TypeScript. The voice page is React, with the
-  Three.js audio-reactive orb as one control in its upper left; the
-  dashboard is vanilla TS
-- **Communication**: WebSocket (JSON messages + binary audio)
-- **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
-  the user's subscription; no Anthropic API calls on the voice path
+- **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; voice controls and brain usage are on the left; Agents, Diagnostics and Workflows are on the right. The Three.js orb is one control within that workspace.
+- **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
+- **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
   `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
-  `/ws/runs`, and the `/dashboard` UI
+  `/ws/runs`; the React workspace is the focus of user-interface development
 - **Internal tool channel**: the brain reaches JARVIS's tools (session
   listing, steering, etc.) via a stdio MCP child that forwards
   `tools/call` to `POST /internal/tool` over loopback HTTP, bearing the
@@ -72,8 +69,12 @@ this presents as "the UI is up but nothing works" rather than as an error.
   An agent the user lets do one kind of thing carries an access key
   instead of the token (`access_keys.py`): it opens only the routes of its
   categories (`captures`, `agents`, `runs`, `workflows`, `watch`), never the voice
-  socket, settings or `/internal/tool`. `python access_keys.py create
+  socket, settings or `/internal/tool`. `python -m jarvis.access_keys create
   <label> <category>...` prints the key once; only its digest is stored.
+
+## Product direction
+
+`docs/roadmap.md` is the shared product roadmap; keep priorities and status distinctions there rather than duplicating them in implementation notes. The new React workspace is the primary user interface. Denice and its successor engine stages are future product work, not implemented backends to describe as available today.
 
 ## Clearing the conversation
 JARVIS never clears, rotates or replaces its conversation without the user's
@@ -135,7 +136,7 @@ with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
 talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside
 `skills/` because that folder is copied into the brain's own home).
-`python session_skill.py install` renders it with this install's data paths
+`python -m jarvis.session_skill install` renders it with this install's data paths
 into every Claude Code config root and the user's Codex home; preflight's
 `session_skill` check only reports whether it is there and current.
 
@@ -193,10 +194,7 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
    WebSocket is a cache-invalidation hint, never a source of truth; clients
    reconcile against `/api/runs`.
 
-Two more rules for this area: no new npm or Python dependencies, and the
-dashboard never uses `innerHTML` / `insertAdjacentHTML` — it renders
-arbitrary LLM and file content, so everything goes through
-`createElement` / `textContent`.
+No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
 ## Key Files
 - `server.py` — Main server, WebSocket handler, HTTP API, action system
@@ -216,14 +214,17 @@ arbitrary LLM and file content, so everything goes through
   where it lives, the sherpa-onnx engine, and the worker that owns it
   (one capture at a time, overload refused rather than trimmed)
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
-  `frontend/src/transcribeProtocol.json`, read by both sides
+  `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
   `frontend/src/voiceHealth.ts` is the page's side of it
 - `frontend/src/main.tsx` — Renders the voice page with React (`App.tsx`;
   the orb is `OrbControl.tsx`)
 - `frontend/src/jarvis.ts` — The voice page's state machine, started once
   the orb is on the page
-- `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
+- `frontend/src/ConversationView.tsx` — Conversation history, live words, typed input, captures and sources
+- `frontend/src/AgentThread.tsx` — One agent's message thread
+- `frontend/src/WorkflowDetail.tsx` — Workflow phases, tasks, decisions, transcripts and events
+- `frontend/src/VoiceDiagnosticsView.tsx` — Voice incidents, timeline and notification analysis
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
   the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
   commands)
@@ -241,7 +242,7 @@ arbitrary LLM and file content, so everything goes through
   transcripts (user and assistant text only) and the `journal/`, `memory/` and
   `projects/` Markdown. Allowed roots only, credentials and symlink escapes
   refused; results are untrusted
-- `session_watch.py` — Watches every Claude Code session on the machine. A
+- `session_watch.py` — Watches Claude Code and Codex sessions through provider adapters. A
   session's state has one source: each provider reads its raw facts into an
   `Activity` and `session_status` alone turns that into the state, what it
   needs, whether it is `between_turns` (the message queue's only test) and
