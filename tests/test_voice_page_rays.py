@@ -105,7 +105,7 @@ PRIMARY, SECOND = "#fbbf24", "#f472b6"      # amber, pink: the start of rayColou
 
 async def _open_scripted(p, url, script):
     """Like _open, but the fake /ws/sessions sends each message after its own
-    delay (seconds from the page loading)."""
+    delay (seconds from the page loading), or once its asyncio.Event is set."""
     try:
         browser = await p.chromium.launch(headless=True)
     except Exception as e:                              # pragma: no cover
@@ -117,12 +117,22 @@ async def _open_scripted(p, url, script):
     def sessions(ws):
         async def run():
             for delay, m in script:
-                await asyncio.sleep(delay)
+                if isinstance(delay, asyncio.Event):
+                    await delay.wait()
+                else:
+                    await asyncio.sleep(delay)
                 ws.send(json.dumps(m))
         asyncio.ensure_future(run())
     await page.route_web_socket("**/ws/sessions", sessions)
     await page.goto(url)
     return browser, page
+
+
+async def _until(condition, timeout=10.0):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        assert asyncio.get_running_loop().time() < deadline, "timed out"
+        await asyncio.sleep(0.05)
 
 
 def _to(sid):
@@ -495,6 +505,7 @@ async def test_hints_still_arrive_with_the_agents_tab_closed(page_url):
     Workflows tab open, an "agents" hint still reaches the list the next
     time it opens, and a "workflows" hint reads the workflows again."""
     calls = {"workflows": 0}
+    hint = asyncio.Event()
 
     async def workflows(route):
         calls["workflows"] += 1
@@ -502,12 +513,16 @@ async def test_hints_still_arrive_with_the_agents_tab_closed(page_url):
                             body=json.dumps({"workflows": []}))
 
     async with async_api.async_playwright() as p:
-        browser, page = await _open_scripted(p, page_url, [(4.0, {"type": "workflows"})])
+        browser, page = await _open_scripted(p, page_url, [(hint, {"type": "workflows"})])
         await page.route("**/api/workflows", workflows)
         await page.click(".right-tabs [aria-label='Workflows']")
+        # The hint is sent only once the view has made its first read, so the
+        # read it causes cannot be mistaken for that one on a slow machine.
+        await _until(lambda: calls["workflows"] > 0)
+        await page.wait_for_timeout(500)
         before = calls["workflows"]
-        await page.wait_for_timeout(5000)
-        assert calls["workflows"] > before
+        hint.set()
+        await _until(lambda: calls["workflows"] > before)
         assert await page.locator(".agents-list").count() == 0
         await page.click(".right-tabs [aria-label='Agents']")
         await page.wait_for_selector(".agents-list li")
