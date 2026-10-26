@@ -36,11 +36,11 @@ FIXTURE = Path(__file__).parent / "fixtures" / "stream_success.jsonl"
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     server_module._pending_completions.clear()
@@ -303,12 +303,12 @@ def _fake_claude(tmp_path: Path) -> str:
 @pytest.fixture
 def real_executor(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
-    import run_executor
+    from jarvis import run_executor
     importlib.reload(run_executor)
     return run_store, run_executor
 
@@ -354,7 +354,7 @@ async def test_a_real_run_finishing_reaches_the_voice(real_executor, tmp_path,
     """End to end, with a real executor: `_on_run_event` is called by the real
     publish path, `_spawn` succeeds there, and the sentence is spoken."""
     store, mod = real_executor
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     speech = FakeSpeech()
     monkeypatch.setattr(server_module, "speech", speech)

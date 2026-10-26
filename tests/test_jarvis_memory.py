@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
 
-import data_paths
-import jarvis_memory as jm
+from jarvis import data_paths
+from jarvis import jarvis_memory as jm
 
 
 @pytest.fixture

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-import transcriber
-from transcriber import RecognitionEvent, SherpaSession
+from jarvis import transcriber
+from jarvis.transcriber import RecognitionEvent, SherpaSession
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import setup_speech_input  # noqa: E402

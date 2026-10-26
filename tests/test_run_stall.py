@@ -24,7 +24,7 @@ import json
 
 import pytest
 
-import stream_parser
+from jarvis import stream_parser
 
 
 # --- the pure decision ----------------------------------------------------
@@ -109,11 +109,11 @@ def test_malformed_events_do_not_raise():
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store

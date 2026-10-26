@@ -42,11 +42,11 @@ def env(monkeypatch, tmp_path):
     monkeypatch.delenv("JARVIS_ALLOWED_ORIGINS", raising=False)
     monkeypatch.delenv("JARVIS_DEBUG_DOCS", raising=False)
     monkeypatch.setenv("JARVIS_PORT", "8340")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     with TestClient(server.app) as c:
@@ -118,7 +118,7 @@ def test_a_wrong_token_is_not_a_token(env, no_spawn):
 
 def test_cancel_and_retry_are_refused_from_a_hostile_page(env, no_spawn):
     c, server, _ = env
-    import run_store
+    from jarvis import run_store
     run_id = run_store.create_run("work", "p", "/tmp/p", "voice")
     run_store.update_run(run_id, status=run_store.RunStatus.SUCCEEDED)
 
@@ -455,9 +455,9 @@ def test_the_openapi_console_can_be_turned_back_on_for_debugging(monkeypatch,
                                                                  tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_DEBUG_DOCS", "1")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import server
+    from jarvis import server
     importlib.reload(server)
     with TestClient(server.app) as c:
         assert c.get("/openapi.json").status_code == 200

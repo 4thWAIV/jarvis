@@ -20,7 +20,7 @@ def test_hush_stops_him_and_drops_what_was_left():
     Asserted against the server's own branch, not a stand-in: the handler
     lives inline in the websocket loop and there is nothing else to call.
     """
-    src = (Path(__file__).parent.parent / "server.py").read_text()
+    src = (Path(__file__).parent.parent / "jarvis" / "server.py").read_text()
     branch = src[src.index('if kind == "hush":'):]
     branch = branch[:branch.index("if kind == \"interim\":")]
     assert "barge_in(keep_unread=False" in branch, branch
@@ -30,7 +30,7 @@ def test_hush_stops_him_and_drops_what_was_left():
 def test_hush_is_not_reachable_as_a_spoken_word():
     """A spoken interrupt is the thing being avoided; it must not have been
     quietly added to the cancel words as well."""
-    speech_src = (Path(__file__).parent.parent / "speech.py").read_text()
+    speech_src = (Path(__file__).parent.parent / "jarvis" / "speech.py").read_text()
     cancel = speech_src[speech_src.index("CANCEL_WORDS = "):]
     cancel = cancel[:cancel.index("\n")]
     assert "hush" not in cancel, cancel

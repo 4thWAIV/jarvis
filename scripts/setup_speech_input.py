@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import transcriber  # noqa: E402
+from jarvis import transcriber  # noqa: E402
 
 
 def _sha256(path: Path) -> str:

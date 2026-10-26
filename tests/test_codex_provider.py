@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
-import brain
-import brain_provider
-import codex_provider
-import data_paths
-import history_read
-import preflight
-import usage_store
+from jarvis import brain
+from jarvis import brain_provider
+from jarvis import codex_provider
+from jarvis import data_paths
+from jarvis import history_read
+from jarvis import preflight
+from jarvis import usage_store
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_codex.py"
 

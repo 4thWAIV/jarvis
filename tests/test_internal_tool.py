@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     # An Origin the dashboard itself would send, so these tests reach the
     # endpoint's OWN bearer check rather than being turned away at the door

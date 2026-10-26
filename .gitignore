@@ -24,6 +24,10 @@ data/.jarvis_output.txt
 
 # Build
 dist/
+build/
+*.egg-info/
+# The built voice page and dashboard (frontend/vite.config.ts).
+jarvis/web/
 .vite/
 frontend/.vite/
 

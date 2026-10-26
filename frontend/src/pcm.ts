@@ -8,7 +8,7 @@
  * blocks: nothing is lost or repeated at a block boundary.
  */
 
-import protocol from "./transcribeProtocol.json";
+import protocol from "../../jarvis/transcribeProtocol.json";
 
 export const TARGET_RATE: number = protocol.sampleRate;
 export const FRAME_SAMPLES: number = protocol.frameBytes / 2;

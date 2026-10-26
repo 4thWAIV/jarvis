@@ -21,7 +21,7 @@ class FakeBrain:
         pass
 
     async def turn(self, text, origin="user", on_delta=None, on_tool=None):
-        from brain import TurnResult
+        from jarvis.brain import TurnResult
         self.turns.append((text, origin))
         out = f"Echo: {text}."
         if on_delta:
@@ -36,11 +36,11 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setenv("FISH_API_KEY", "fish-test")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
 

@@ -1,12 +1,12 @@
 import pytest
-import claude_provider
+from jarvis import claude_provider
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     return server_module
 
@@ -25,7 +25,7 @@ def test_remember_writes_a_file_and_indexes_it(wired):
                                 "body": "Said during chitauri work.",
                                 "hook": "database preference"})
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert "tony-prefers-postgres" in jm.list_memories()
     assert any("database preference" in ln for ln in jm.index_lines())
     assert "remember" in out.lower() or "noted" in out.lower()
@@ -73,7 +73,7 @@ def test_a_project_note_is_appended_and_read_back(wired):
     server.tool_project_note({"project": "chitauri", "text": "Uses WordPress."})
     server.tool_project_note({"project": "chitauri", "text": "301 fixed."})
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     text = jm.read_project_note("chitauri")
     assert "WordPress" in text and "301 fixed" in text
 
@@ -82,7 +82,7 @@ def test_write_journal_records_an_entry(wired):
     server = wired
     server.tool_write_journal({"text": "Worked on chitauri tonight."})
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert "chitauri" in jm.latest_journal()
 
 
@@ -105,12 +105,12 @@ def test_every_acting_tool_is_registered(wired):
 
 
 def test_the_brain_allowlist_matches_the_registered_tools(wired):
-    import brain
+    from jarvis import brain
     registered = {f"mcp__jarvis__{name}" for name in wired.TOOL_HANDLERS}
     assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= registered, \
         "allowlist names a JARVIS tool that does not exist"
 
 
 def test_the_mcp_server_advertises_every_registered_tool(wired):
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(wired.TOOL_HANDLERS)

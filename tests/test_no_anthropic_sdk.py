@@ -1,4 +1,5 @@
 import re
+import tomllib
 """JARVIS makes no Anthropic API calls, and no longer depends on the SDK.
 
 The README's headline promise is that JARVIS runs entirely on the user's
@@ -36,11 +37,11 @@ def client(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
 
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
 
@@ -59,11 +60,11 @@ def client(monkeypatch, tmp_path):
 # The dependency and the import
 # ---------------------------------------------------------------------------
 
-def test_requirements_does_not_install_the_anthropic_sdk():
-    text = (ROOT / "requirements.txt").read_text()
-    for line in text.splitlines():
-        name = line.split("#")[0].strip().split("=")[0].split(">")[0].split("[")[0]
-        assert name.lower() != "anthropic", f"anthropic is back in requirements: {line!r}"
+def test_pyproject_does_not_install_the_anthropic_sdk():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    for line in project["dependencies"] + sum(project["optional-dependencies"].values(), []):
+        name = re.split(r"[=<>\[ ]", line, maxsplit=1)[0]
+        assert name.lower() != "anthropic", f"anthropic is back in pyproject.toml: {line!r}"
 
 
 # The SDK itself, as a whole name: `import anthropic_usage` (JARVIS's own
@@ -76,14 +77,14 @@ def _imports_the_sdk(text: str) -> bool:
 
 
 def test_server_does_not_import_the_anthropic_sdk():
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     assert not _imports_the_sdk(text)
 
 
 def test_no_module_imports_the_anthropic_sdk():
     """Not just server.py -- nothing in the project may pull the SDK in."""
     offenders = []
-    for path in sorted(ROOT.glob("*.py")):
+    for path in sorted((ROOT / "jarvis").glob("*.py")):
         text = path.read_text()
         if _imports_the_sdk(text):
             offenders.append(path.name)
@@ -124,7 +125,7 @@ def test_lifespan_no_longer_warns_about_a_missing_api_key():
     """The startup log told every user "ANTHROPIC_API_KEY not set -- LLM
     features disabled", which was both false and the opposite of the
     project's promise."""
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     assert "LLM features disabled" not in text
 
 
@@ -187,8 +188,8 @@ def test_settings_status_does_not_report_a_workspace_id(client):
 def test_preflight_still_warns_about_a_stray_anthropic_variable(monkeypatch):
     """The check is about the user's `.env`, not about the SDK -- it stays,
     and it must not need the package to do its job."""
-    import preflight
-    text = (ROOT / "preflight.py").read_text()
+    from jarvis import preflight
+    text = (ROOT / "jarvis" / "preflight.py").read_text()
     assert not _imports_the_sdk(text)
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-abc123")

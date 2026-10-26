@@ -160,7 +160,7 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
 git clone <your fork of this repo> jarvis
 cd jarvis
 
-cp .env.example .env
+cp jarvis/.env.example .env
 
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -170,7 +170,7 @@ python3 -m venv .venv
 cd frontend && npm install && cd ..
 ```
 
-**Fill in the `.env`.** `.env.example` documents the lot; the short version is
+**Fill in the `.env`.** `jarvis/.env.example` documents the lot; the short version is
 one required key and three optional ones:
 
 ```env
@@ -186,7 +186,7 @@ FISH_API_KEY=...            # required, no fallback
 openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
 ```
 
-`server.py` serves HTTPS whenever `cert.pem` and `key.pem` sit beside it, and
+JARVIS serves HTTPS whenever `cert.pem` and `key.pem` are at the repository root, and
 `frontend/vite.config.ts` proxies `/api` and `/ws` to
 `https://localhost:8340`. Without the pair the backend serves plain HTTP, the
 dev server's proxy cannot reach it, and every API and WebSocket call through
@@ -196,7 +196,7 @@ way to spend an evening. Generate them once and forget about them.
 Then, in two terminals:
 
 ```bash
-.venv/bin/python server.py --host 127.0.0.1   # terminal 1
+.venv/bin/python -m jarvis --host 127.0.0.1   # terminal 1
 cd frontend && npm run dev               # terminal 2
 ```
 
@@ -473,7 +473,7 @@ full. Point `JARVIS_DATA_DIR` somewhere else to run an instance without
 touching your real data:
 
 ```bash
-JARVIS_DATA_DIR=/tmp/jarvis-scratch python server.py --host 127.0.0.1
+JARVIS_DATA_DIR=/tmp/jarvis-scratch python -m jarvis --host 127.0.0.1
 ```
 
 ## License

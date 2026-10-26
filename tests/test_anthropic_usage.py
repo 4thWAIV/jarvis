@@ -7,7 +7,7 @@ import urllib.error
 
 import pytest
 
-import anthropic_usage as au
+from jarvis import anthropic_usage as au
 
 ANSWER = {"five_hour": {"utilization": 3.0, "resets_at": "2026-10-21T11:10:00+00:00"},
           "seven_day": {"utilization": 0.5, "resets_at": "2026-10-28T03:00:00+00:00"}}
@@ -81,9 +81,9 @@ def test_the_answer_is_stored_as_a_percent(monkeypatch, tmp_path):
     """Anthropic says percent; half a percent must not become 50%."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import importlib
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import usage_store
+    from jarvis import usage_store
     importlib.reload(usage_store)
 
     usage_store.record(au.as_rate_limit_info(ANSWER), now=1_000.0)

@@ -7,7 +7,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-import session_watch as sw
+from jarvis import session_watch as sw
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -15,11 +15,11 @@ ORIGIN = {"Origin": "http://localhost:5173"}
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -150,7 +150,7 @@ def test_an_unknown_or_ambiguous_name_is_not_guessed(wired):
 
 def test_activation_is_an_acting_tool_and_offered_to_the_brain(wired):
     server, _store = wired
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert {"list_agents", "set_agent_active"} <= names
     assert "set_agent_active" in server.ACTING_TOOLS
@@ -245,7 +245,7 @@ def test_messages_resolve_by_the_official_name(wired, monkeypatch):
 
 
 def test_the_brain_is_offered_the_rename_tool():
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     spec = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}["rename_agent"]
     assert set(spec["inputSchema"]["required"]) == {"name", "new_name"}
 
@@ -322,7 +322,7 @@ def test_the_brain_route_names_the_running_brain_s_provider(wired, monkeypatch):
 
 
 def test_a_claude_code_brain_is_anthropic_s():
-    import brain
+    from jarvis import brain
     from pathlib import Path
     assert brain.BrainConfig(home=Path("/tmp")).provider == "anthropic"
 
@@ -331,7 +331,7 @@ def test_a_claude_code_brain_is_anthropic_s():
 
 def test_each_agent_carries_its_project_s_needs_board_count(wired, monkeypatch):
     server, store = wired
-    import data_paths
+    from jarvis import data_paths
     folder = data_paths.needs_dir()
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "Hammer.md").write_text(
@@ -366,7 +366,7 @@ def test_each_agent_carries_the_provider_of_the_session_it_is(wired, monkeypatch
 async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, monkeypatch):
     import asyncio
     server, _store = wired
-    import data_paths
+    from jarvis import data_paths
     folder = data_paths.needs_dir()
     folder.mkdir(parents=True, exist_ok=True)
     board = folder / "hammer.md"

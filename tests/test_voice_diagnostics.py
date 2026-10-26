@@ -12,9 +12,9 @@ from types import SimpleNamespace
 import pytest
 from starlette.testclient import TestClient
 
-import voice_diagnostics as vd
-from transcriber import Window
-from voice_diagnostics import Event, Sample
+from jarvis import voice_diagnostics as vd
+from jarvis.transcriber import Window
+from jarvis.voice_diagnostics import Event, Sample
 
 
 def healthy(**changes) -> Sample:
@@ -232,7 +232,7 @@ def test_page_text_in_telemetry_is_recorded_as_messages():
 # ── the routes ───────────────────────────────────────────────────────────
 
 def test_the_routes_read_the_record():
-    import server
+    from jarvis import server
     now = time.time()
     vd.record_sample(healthy(at=now - 1))
     vd.record_event(Event(at=now - 1, kind="overload", cause="Machine busy (load 16.0)"))

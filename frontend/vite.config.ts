@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { resolve } from "path";
 
 // The same headers server.py's OriginGuard puts on everything it serves.
@@ -19,6 +19,11 @@ export default defineConfig({
   server: {
     port: 5173,
     headers: SECURITY_HEADERS,
+    // The page imports the transcription protocol from the Python package,
+    // which both sides read.
+    fs: {
+      allow: [searchForWorkspaceRoot(process.cwd()), resolve(__dirname, "../jarvis/transcribeProtocol.json")],
+    },
     proxy: {
       "/ws": {
         target: "https://localhost:8340",
@@ -35,7 +40,9 @@ export default defineConfig({
     headers: SECURITY_HEADERS,
   },
   build: {
-    outDir: "dist",
+    // Inside the Python package, so the wheel ships the built pages.
+    outDir: "../jarvis/web",
+    emptyOutDir: true,
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),

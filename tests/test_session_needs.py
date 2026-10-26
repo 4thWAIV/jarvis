@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-import session_needs as sn
+from jarvis import session_needs as sn
 
 BOARD = """# agent-guard
 Updated: 2026-10-19 14:50
@@ -99,9 +99,9 @@ def test_an_emptied_board_is_not_announced(tmp_path):
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     return server_module, data_paths.needs_dir()
 
@@ -202,7 +202,7 @@ def test_a_board_with_no_agent_running_keeps_its_project_name(wired, monkeypatch
 
 
 def test_the_brain_is_offered_the_tool():
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     assert "session_needs" in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
 
 
@@ -210,7 +210,7 @@ def test_the_brain_is_offered_the_tool():
 
 def test_read_file_may_read_the_needs_board_but_no_other_jarvis_data(
         tmp_path, monkeypatch):
-    import repo_read
+    from jarvis import repo_read
     project = tmp_path / "jarvis"
     data = project / "data"
     monkeypatch.setenv("JARVIS_DATA_DIR", str(data))

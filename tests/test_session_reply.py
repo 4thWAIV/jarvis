@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.fixtures.roster import encode, write_roster, write_transcript
 
 
@@ -125,7 +125,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     root = tmp_path / ".claude"
     watcher = sw.SessionWatcher(roots=[root], interval=999)
@@ -207,7 +207,7 @@ def test_session_detail_says_nothing_extra_for_a_short_reply(wired):
 
 
 def test_the_brain_is_offered_the_tool():
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "read_session_reply" in names
 

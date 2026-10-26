@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import transcriber  # noqa: E402
+from jarvis import transcriber  # noqa: E402
 
 FRAME = transcriber.PROTOCOL["frameBytes"]
 # What the benchmark says, in the shape of things said to JARVIS.

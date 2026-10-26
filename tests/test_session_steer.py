@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-import session_steer
+from jarvis import session_steer
 from tests.fixtures.captures import captured
 
 
@@ -116,7 +116,7 @@ def test_an_auth_token_is_sent_first_when_the_environment_has_one(fake_session, 
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     # Reloading the module does NOT run FastAPI's lifespan (that only fires
     # for a started app, e.g. under TestClient) — and run_store.init_db() is
@@ -188,7 +188,7 @@ async def test_the_tool_stages_and_speaks_nothing_at_all(wired, fake_session,
     assert "staged" in result.lower()
     assert len(server._staged_steers) == 1
     assert server._staged_steers[0].prompt == "use Postgres"
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=50) == [], "a message is not a steers row"
     (m,) = _messages()
     assert (m.status, m.body) == ("staged", "use Postgres"), \
@@ -292,12 +292,12 @@ async def test_every_steer_is_recorded_whatever_the_outcome(wired, fake_session,
 
 def _messages():
     """Every message on record, newest first."""
-    import run_store
+    from jarvis import run_store
     return run_store.list_messages(limit=50)
 
 
 def _fake_session_state(socket_path):
-    import session_watch as sw
+    from jarvis import session_watch as sw
     return sw.SessionState(
         session_id="sid", cwd="/p/chitauri", project="chitauri",
         state="idle", voice_name="chitauri", steerable=socket_path is not None,
@@ -351,7 +351,7 @@ async def test_empty_prompt_is_recorded_exactly_once(wired, fake_session, monkey
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
-    import run_store
+    from jarvis import run_store
     before = len(run_store.list_steers(limit=50))
 
     result = await server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "   "}))
@@ -370,7 +370,7 @@ async def test_unresolved_name_is_recorded_exactly_once(wired, monkeypatch):
     monkeypatch.setattr(
         server, "_resolve_or_explain",
         lambda n: (None, "I don't see a session called bogus.", "unresolved"))
-    import run_store
+    from jarvis import run_store
     before = len(run_store.list_steers(limit=50))
 
     result = await server.tool_steer_session(captured(server, {"name": "bogus", "prompt": "go"}))
@@ -391,7 +391,7 @@ async def test_ambiguous_name_is_recorded_exactly_once(wired, monkeypatch):
     monkeypatch.setattr(
         server, "_resolve_or_explain",
         lambda n: (None, "There are 2: chitauri and hammer. Which one?", "ambiguous"))
-    import run_store
+    from jarvis import run_store
     before = len(run_store.list_steers(limit=50))
 
     result = await server.tool_steer_session(captured(server, {"name": "co", "prompt": "go"}))
@@ -406,8 +406,8 @@ async def test_ambiguous_name_is_recorded_exactly_once(wired, monkeypatch):
 def test_resolve_or_explain_reports_unresolved_and_ambiguous_reasons(monkeypatch):
     """End-to-end check of the real resolver's third element, not just the
     tool's handling of a monkeypatched stand-in."""
-    import server
-    import session_watch as sw
+    from jarvis import server
+    from jarvis import session_watch as sw
 
     empty = sw.Snapshot()
 
@@ -439,7 +439,7 @@ async def test_needs_a_human_hand_and_not_steerable_and_sent_are_each_recorded_o
     """Rounds out Finding 3's exactly-one-row list for outcomes already
     reachable before this fix: needs_a_human_hand, not_steerable, sent."""
     server, (path, received, _) = wired, fake_session
-    import run_store
+    from jarvis import run_store
 
     # needs_a_human_hand
     monkeypatch.setattr(server, "speech", FakeSpeech())
@@ -602,7 +602,7 @@ class ScriptedBrain:
             on_delta(self._reply)
         if self._boom:
             raise RuntimeError("the brain fell over")
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin=origin, text=self._reply,
                                 stop_reason=self._stop_reason)
 
@@ -781,7 +781,7 @@ async def test_a_staged_steer_is_never_performed_twice(wired, socket_factory,
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_fake_session_state(path), None, None))
-    import run_store
+    from jarvis import run_store
 
     await server.tool_steer_session(captured(server, _steer_args(prompt="use Postgres")))
     boom = asyncio.Event()

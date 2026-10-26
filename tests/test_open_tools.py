@@ -17,7 +17,7 @@ at the module boundary, and the recorder asserts what it was handed.
 import importlib
 
 import pytest
-import claude_provider
+from jarvis import claude_provider
 
 
 class _Actions:
@@ -51,11 +51,11 @@ def ready(monkeypatch, tmp_path):
     """A server with one project on disk and a recording `actions`."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -74,8 +74,8 @@ def ready(monkeypatch, tmp_path):
 # --- registered in all three places ---------------------------------------
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _fake, _project = ready
     for name in ("open_in_browser", "open_in_terminal"):
         assert name in server.TOOL_HANDLERS
@@ -95,7 +95,7 @@ async def test_a_watcher_turn_cannot_open_anything(ready, monkeypatch):
         current_origin = "session_event"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         r = client.post("/internal/tool",

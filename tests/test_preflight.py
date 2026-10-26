@@ -16,8 +16,8 @@ import time
 
 import pytest
 
-import preflight
-from preflight import Check, STATUS_FAIL, STATUS_OK, STATUS_WARN
+from jarvis import preflight
+from jarvis.preflight import Check, STATUS_FAIL, STATUS_OK, STATUS_WARN
 
 
 def _fake_run_subprocess(responses):
@@ -518,10 +518,10 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     monkeypatch.setattr(preflight.sys, "platform", "linux")  # accessibility skipped -> fast warn
     monkeypatch.delenv("FISH_API_KEY", raising=False)
     monkeypatch.setattr(preflight, "_settings_path", lambda: preflight.Path("/nonexistent/settings.json"))
-    import session_skill
+    from jarvis import session_skill
     monkeypatch.setattr(session_skill, "status", lambda: {})  # never the real ~/.claude
 
-    import claude_provider
+    from jarvis import claude_provider
     results = await preflight.run_checks(
         timeout=1.0, provider_checks=claude_provider.ClaudeProvider().preflight())
     names = {c.name for c in results}
@@ -615,7 +615,7 @@ def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypa
 
 
 def test_speech_input_is_ok_with_every_model_file_and_loads_nothing(monkeypatch, tmp_path):
-    import transcriber
+    from jarvis import transcriber
     for name in transcriber.MODEL_FILES:
         (tmp_path / name).write_text("x")
     monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path))

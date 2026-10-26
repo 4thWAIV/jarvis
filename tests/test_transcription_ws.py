@@ -12,12 +12,12 @@ from contextlib import asynccontextmanager
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-import access_keys
-import data_paths
-import transcriber
-import transcription_api
-import web_auth
-from transcriber import PROTOCOL, RecognitionEvent
+from jarvis import access_keys
+from jarvis import data_paths
+from jarvis import transcriber
+from jarvis import transcription_api
+from jarvis import web_auth
+from jarvis.transcriber import PROTOCOL, RecognitionEvent
 
 PAGE = {"Origin": "http://localhost:5173"}
 START = {"type": "start", "version": 1, "sampleRate": 16000, "channels": 1,
@@ -369,7 +369,7 @@ def test_the_page_or_the_token_opens_it_and_nothing_else_does(client, monkeypatc
 
 # ── diagnostics (voice_diagnostics.py) ───────────────────────────────────
 
-import voice_diagnostics
+from jarvis import voice_diagnostics
 
 TELEMETRY = {"type": "telemetry", "framesCaptured": 10, "framesSent": 10, "heldSec": 0.0,
              "socketSec": 0.0, "longTaskMs": 0.0, "longTasks": 0, "tabHidden": False,

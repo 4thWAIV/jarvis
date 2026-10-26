@@ -13,10 +13,10 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-import history_read
-import repo_read
+from jarvis import history_read
+from jarvis import repo_read
 from tests.test_untrusted_turn import _Brain
-import claude_provider
+from jarvis import claude_provider
 
 
 def _line(kind, content, ts, sidechain=False):
@@ -32,14 +32,14 @@ def _text(t):
 def hist(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
     importlib.reload(history_read)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -83,7 +83,7 @@ def hist(monkeypatch, tmp_path):
 @pytest.fixture
 def call(hist):
     server, _home, _tdir, _tmp = hist
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     brain = _Brain()
     with TestClient(server.app) as client:
@@ -234,8 +234,8 @@ def test_nothing_found_says_so_plainly(call):
 
 
 def test_the_tools_are_registered_everywhere(hist):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server = hist[0]
     for name in ("search_history", "read_history"):
         assert name in server.TOOL_HANDLERS

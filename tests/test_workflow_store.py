@@ -6,17 +6,17 @@ import importlib
 
 import pytest
 
-import session_needs
-import workflow_store as ws
-from workflow_store import WorkflowEvent
+from jarvis import session_needs
+from jarvis import workflow_store as ws
+from jarvis.workflow_store import WorkflowEvent
 
 
 @pytest.fixture(autouse=True)
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     importlib.reload(ws)
     run_store.init_db()

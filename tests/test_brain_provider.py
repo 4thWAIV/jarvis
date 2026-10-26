@@ -13,10 +13,10 @@ from typing import Optional
 
 import pytest
 
-import brain
-import brain_provider
-import claude_provider
-from brain_provider import SessionInfo, TextDelta, ToolStarted, TurnEnded, UsageSeen
+from jarvis import brain
+from jarvis import brain_provider
+from jarvis import claude_provider
+from jarvis.brain_provider import SessionInfo, TextDelta, ToolStarted, TurnEnded, UsageSeen
 
 
 class StandInSession:

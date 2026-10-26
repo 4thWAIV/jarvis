@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def migrated(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
 
@@ -48,7 +48,7 @@ def migrated(monkeypatch, tmp_path):
     conn.commit()
     conn.close()
 
-    mod = importlib.import_module("migrations.001_dispatches_to_runs")
+    mod = importlib.import_module("jarvis.migrations.001_dispatches_to_runs")
     importlib.reload(mod)
     return mod, run_store
 
@@ -89,11 +89,11 @@ def test_migrate_preserves_prompt_and_origin(migrated):
 
 def test_migrate_noop_without_dispatches_table(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
-    mod = importlib.import_module("migrations.001_dispatches_to_runs")
+    mod = importlib.import_module("jarvis.migrations.001_dispatches_to_runs")
     importlib.reload(mod)
     assert mod.migrate() == 0

@@ -3,7 +3,7 @@ import os
 import pytest
 from pathlib import Path
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 
 
@@ -711,7 +711,7 @@ def test_a_voice_name_never_contains_the_roster_suffix(tmp_path, all_alive):
 def _resolve(snap, reference, last_mentioned=None):
     """What the user said, matched against this snapshot's conversations the
     one way JARVIS matches names: the agent directory."""
-    import agent_directory
+    from jarvis import agent_directory
     agent_directory.connect(lambda: snap, rows=lambda: [], needs=lambda: {})
     return agent_directory.find_sessions(reference, last_mentioned=last_mentioned)
 
@@ -974,7 +974,7 @@ def test_brain_cwd_matches_data_paths_brain_home(monkeypatch, tmp_path):
     `mkdir` side effect, because session_watch polls once a second and must
     stay pure filesystem *reading*. Kept honest against the real thing."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     assert sw._brain_cwd() == str(data_paths.brain_home())
 
 

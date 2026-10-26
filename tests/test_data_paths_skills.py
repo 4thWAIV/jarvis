@@ -1,5 +1,5 @@
 """sync_skills: the tracked repo folder is the source, the data folder the output."""
-import data_paths
+from jarvis import data_paths
 
 
 def _src(tmp_path):

@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-import session_steer
-import session_watch as sw
+from jarvis import session_steer
+from jarvis import session_watch as sw
 from tests.fixtures.captures import captured
 from tests.fixtures.roster import write_roster
 
@@ -272,7 +272,7 @@ def test_claude_s_track_reads_far_enough_back_in_a_long_transcript(tmp_path, mon
 # --- the same, for Codex ------------------------------------------------------
 
 def test_codex_delivers_and_starts_with_the_user_item_and_answers_at_task_complete():
-    import codex_sessions as cs
+    from jarvis import codex_sessions as cs
     from tests.test_codex_sessions import _event, _say
 
     def at(o, t):
@@ -299,7 +299,7 @@ def test_codex_delivers_and_starts_with_the_user_item_and_answers_at_task_comple
 
 
 def test_codex_s_track_reads_the_thread_s_rollout(tmp_path):
-    import codex_sessions as cs
+    from jarvis import codex_sessions as cs
     from tests.test_codex_sessions import NOW, T1, _event, _home, _say
 
     home = _home(tmp_path, [{"id": T1, "cwd": "/w/a", "lines": [
@@ -320,7 +320,7 @@ def test_codex_s_track_reads_the_thread_s_rollout(tmp_path):
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    import run_store
+    from jarvis import run_store
     run_store.init_db()
     return run_store
 
@@ -380,7 +380,7 @@ class _Speech:
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     server_module.run_store.init_db()
     monkeypatch.setattr(server_module, "_inbound_accepted", lambda: True)
@@ -745,8 +745,8 @@ def test_read_message_reply_before_an_answer_or_for_no_such_message(server):
 
 
 def test_the_brain_is_offered_both_tools_and_read_session_reply_stays():
-    import jarvis_mcp
-    import server
+    from jarvis import jarvis_mcp
+    from jarvis import server
     specs = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}
     assert {"list_messages", "read_message_reply", "read_session_reply"} <= set(specs)
     assert specs["read_message_reply"]["inputSchema"]["required"] == ["message"]
@@ -757,7 +757,7 @@ def test_the_brain_is_offered_both_tools_and_read_session_reply_stays():
 
 def test_the_persona_names_the_new_tools():
     from pathlib import Path
-    persona = (Path(__file__).parent.parent / "jarvis_home" / "CLAUDE.md").read_text()
+    persona = (Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "CLAUDE.md").read_text()
     assert "list_messages" in persona and "read_message_reply" in persona
 
 
@@ -938,7 +938,7 @@ def test_why_a_message_waits_names_the_reason(server, monkeypatch):
 
 
 def test_codex_takes_a_wordless_turn_s_answer_from_the_next_turn_unless_a_message_began_it():
-    import codex_sessions as cs
+    from jarvis import codex_sessions as cs
     from tests.test_codex_sessions import _event, _say
 
     def at(o, t):

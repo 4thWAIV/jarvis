@@ -21,7 +21,7 @@ import pytest
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     return server_module
 
@@ -50,7 +50,7 @@ class _Brain:
 
     async def turn(self, text, origin="user", on_delta=None, on_tool=None):
         self.asked.append((text, origin))
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin, "We fixed chitauri and Tony chose Postgres.",
                                 "result")
 
@@ -78,7 +78,7 @@ async def test_a_pending_rotation_asks_for_a_journal_then_rotates(agreed, monkey
     assert b.asked[0][1] == "system", "the journal request is not a user turn"
     assert "chitauri" in (b.rotated_with or "")
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert "chitauri" in (jm.latest_journal() or ""), "the journal is on disk"
 
 
@@ -182,7 +182,7 @@ async def test_a_brain_that_will_not_write_a_journal_still_rotates(agreed, monke
     b = _Brain()
 
     async def refuse(text, origin="user", on_delta=None):
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin, "", "timeout")
 
     b.turn = refuse
@@ -190,7 +190,7 @@ async def test_a_brain_that_will_not_write_a_journal_still_rotates(agreed, monke
 
     await server._maybe_rotate()
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert jm.latest_journal(include_placeholders=True) is not None, \
         "the server wrote a minimal entry"
     assert jm.latest_journal() is None, \
@@ -206,7 +206,7 @@ async def test_an_error_turn_is_not_persisted_as_a_handover(agreed, monkeypatch)
     b = _Brain()
 
     async def errored(text, origin="user", on_delta=None):
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin, "API Error: overloaded_error", "error")
 
     b.turn = errored
@@ -216,7 +216,7 @@ async def test_an_error_turn_is_not_persisted_as_a_handover(agreed, monkeypatch)
 
     assert b.rotated_with is None, "no handover carried forward"
     assert b.rotation_pending is False, "but it still rotated"
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert "API Error" not in (jm.latest_journal() or "")
 
 
@@ -262,7 +262,7 @@ async def test_two_pauses_at_once_produce_one_rotation(agreed, monkeypatch):
         b.asked.append((text, origin))
         started.set()
         await release.wait()
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin, "handover", "result")
 
     b.turn = slow
@@ -327,7 +327,7 @@ async def test_shutdown_writes_a_journal(wired, monkeypatch):
 
     await server.stop_brain_and_speech()
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert jm.latest_journal() is not None
 
 
@@ -341,7 +341,7 @@ async def test_shutdown_journals_even_when_the_brain_never_started(wired, monkey
 
     await server.stop_brain_and_speech()
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert jm.latest_journal(include_placeholders=True) is not None
     assert jm.latest_journal() is None, "a tombstone is not a handover"
 
@@ -380,7 +380,7 @@ async def test_a_wedged_brain_cannot_hold_shutdown_open(wired, monkeypatch):
 
     await asyncio.wait_for(server.stop_brain_and_speech(), timeout=5.0)
 
-    import jarvis_memory as jm
+    from jarvis import jarvis_memory as jm
     assert jm.latest_journal(include_placeholders=True) is not None
     assert jm.latest_journal() is None, "a tombstone is not a handover"
     assert b.stopped
@@ -417,7 +417,7 @@ def test_active_project_names_skips_finished_and_never_started_sessions(wired,
     """`gone` conversations linger in the snapshot for ten minutes so a
     completion can still be announced; a `fresh` window has never been
     prompted. Neither is work in progress."""
-    import session_watch
+    from jarvis import session_watch
     server = wired
 
     def state(project, st):

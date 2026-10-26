@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import claude_provider
+from jarvis import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -30,7 +30,7 @@ def _carried(prompt: str) -> str:
 
 
 def _config(tmp_path, **kw):
-    import brain
+    from jarvis import brain
     return brain.BrainConfig(home=tmp_path / "jarvis",
                              claude_path=f"{sys.executable} {FAKE}",
                              turn_timeout=kw.pop("turn_timeout", 5.0),
@@ -39,8 +39,8 @@ def _config(tmp_path, **kw):
 
 
 def test_command_has_exact_flags(tmp_path):
-    import brain
-    import claude_provider
+    from jarvis import brain
+    from jarvis import claude_provider
     b = brain.Brain(_config(tmp_path, model="opus"))
     cmd = claude_provider.ClaudeSession(b.config, None, None).command(b.launch_prompt())
     joined = " ".join(cmd)
@@ -87,14 +87,14 @@ def test_command_has_exact_flags(tmp_path):
 
 
 def test_model_defaults_to_sonnet_and_env_overrides(tmp_path, monkeypatch):
-    import brain
+    from jarvis import brain
     assert brain.BrainConfig.from_env(tmp_path).model == "sonnet"
     monkeypatch.setenv("JARVIS_BRAIN_MODEL", "haiku")
     assert brain.BrainConfig.from_env(tmp_path).model == "haiku"
 
 
 def test_child_env_scrubs_claude_code_vars(monkeypatch):
-    import claude_provider
+    from jarvis import claude_provider
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "x")
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/keep/me")
@@ -105,7 +105,7 @@ def test_child_env_scrubs_claude_code_vars(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_warms_up_and_becomes_ready(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         assert await b.start() is True
@@ -118,7 +118,7 @@ async def test_start_warms_up_and_becomes_ready(tmp_path):
 
 @pytest.mark.asyncio
 async def test_turn_streams_deltas_and_accounts(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -143,7 +143,7 @@ async def test_turn_streams_deltas_and_accounts(tmp_path):
 
 @pytest.mark.asyncio
 async def test_current_origin_is_set_during_turn(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -157,7 +157,7 @@ async def test_current_origin_is_set_during_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tool_use_is_recorded(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -169,7 +169,7 @@ async def test_tool_use_is_recorded(tmp_path):
 
 @pytest.mark.asyncio
 async def test_turns_are_serialized(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -181,7 +181,7 @@ async def test_turns_are_serialized(tmp_path):
 
 @pytest.mark.asyncio
 async def test_stuck_turn_times_out_and_restarts(tmp_path):
-    import brain
+    from jarvis import brain
     states = []
     b = brain.Brain(_config(tmp_path, turn_timeout=0.5))
     try:
@@ -202,7 +202,7 @@ async def test_stuck_turn_times_out_and_restarts(tmp_path):
 
 @pytest.mark.asyncio
 async def test_crash_mid_turn_restarts_with_backoff(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -222,7 +222,7 @@ async def test_crash_mid_turn_restarts_with_backoff(tmp_path):
 
 @pytest.mark.asyncio
 async def test_too_many_crashes_marks_failed(tmp_path):
-    import brain
+    from jarvis import brain
     states = []
     cfg = _config(tmp_path, max_restarts=1, restart_window=300.0)
     b = brain.Brain(cfg)
@@ -248,7 +248,7 @@ async def test_too_many_crashes_marks_failed(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rate_limit_is_reported_and_blocks_turns(tmp_path):
-    import brain
+    from jarvis import brain
     states = []
     b = brain.Brain(_config(tmp_path))
     try:
@@ -266,7 +266,7 @@ async def test_rate_limit_is_reported_and_blocks_turns(tmp_path):
 
 @pytest.mark.asyncio
 async def test_missing_binary_fails_cleanly(tmp_path):
-    import brain
+    from jarvis import brain
     cfg = _config(tmp_path)
     cfg.claude_path = "/definitely/not/here/claude"
     b = brain.Brain(cfg)
@@ -288,7 +288,7 @@ async def _wait_until(pred, seconds=8.0):
 
 @pytest.mark.asyncio
 async def test_restart_keeps_trying_when_the_replacement_dies_during_warmup(tmp_path, monkeypatch):
-    import brain
+    from jarvis import brain
     marker = tmp_path / "die-once"
     monkeypatch.setenv("FAKE_BRAIN_DIE_ONCE", str(marker))
     states = []
@@ -310,7 +310,7 @@ async def test_restart_keeps_trying_when_the_replacement_dies_during_warmup(tmp_
 
 @pytest.mark.asyncio
 async def test_turn_during_the_restart_gap_does_not_bind_to_the_dying_process(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, turn_timeout=0.5))
     try:
         await b.start()
@@ -327,7 +327,7 @@ async def test_turn_during_the_restart_gap_does_not_bind_to_the_dying_process(tm
 
 @pytest.mark.asyncio
 async def test_rate_limit_without_resets_at_expires_after_the_default(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, rate_limit_default_sec=0.3))
     try:
         await b.start()
@@ -342,7 +342,7 @@ async def test_rate_limit_without_resets_at_expires_after_the_default(tmp_path):
 
 @pytest.mark.asyncio
 async def test_stop_cancels_a_pending_restart_and_leaves_nothing_running(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     await b.turn("DIE")                        # a restart is now pending (0.5 s backoff)
@@ -357,7 +357,7 @@ async def test_stop_cancels_a_pending_restart_and_leaves_nothing_running(tmp_pat
 async def test_rate_limit_spanning_a_restart_neither_fails_the_brain_nor_leaks(tmp_path):
     """The warm-up turn must bypass the rate-limit gate, or a transient limit that
     spans a crash burns the whole restart budget."""
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, max_restarts=2))
     try:
         await b.start()
@@ -374,7 +374,7 @@ async def test_rate_limit_spanning_a_restart_neither_fails_the_brain_nor_leaks(t
 
 @pytest.mark.asyncio
 async def test_start_after_failed_is_a_fresh_boot(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, max_restarts=0))
     try:
         await b.start()
@@ -390,7 +390,7 @@ async def test_start_after_failed_is_a_fresh_boot(tmp_path):
 @pytest.mark.asyncio
 async def test_launch_prompt_names_the_generation_being_started(tmp_path, monkeypatch):
     """The prompt is built before the spawn, so the generation bump must come first."""
-    import brain
+    from jarvis import brain
     seen = []
     real = asyncio.create_subprocess_exec
 
@@ -418,7 +418,7 @@ def _alive(pid: int) -> bool:
 
 @pytest.mark.asyncio
 async def test_start_on_a_running_brain_replaces_it_without_orphans(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -434,7 +434,7 @@ async def test_start_on_a_running_brain_replaces_it_without_orphans(tmp_path):
 
 @pytest.mark.asyncio
 async def test_start_during_a_pending_restart_yields_exactly_one_process(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -453,14 +453,14 @@ async def test_start_during_a_pending_restart_yields_exactly_one_process(tmp_pat
 
 @pytest.mark.asyncio
 async def test_warmup_timeout_kills_the_hung_child(tmp_path, monkeypatch):
-    import brain
+    from jarvis import brain
     marker = tmp_path / "hang-once"
     monkeypatch.setenv("FAKE_BRAIN_HANG_ONCE", str(marker))
     b = brain.Brain(_config(tmp_path, warmup_timeout=1.0, max_restarts=3))
     await b.start()
     marker.write_text("x")                             # the replacement will hang in warm-up
     hung = []
-    import claude_provider
+    from jarvis import claude_provider
     orig = claude_provider.ClaudeSession.kill
 
     def spy(session):
@@ -484,7 +484,7 @@ def test_child_env_never_carries_api_credentials(monkeypatch):
     """The server's .env puts ANTHROPIC_API_KEY in the environment for other
     features; the brain must never inherit it or the CLI bills the key (and,
     with an identity-linked key, fails with '400 anthropic-workspace-id')."""
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-identity-linked")
     monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_x")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok")
@@ -498,7 +498,7 @@ def test_child_env_never_carries_api_credentials(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_error_result_is_an_error_not_an_empty_success(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
@@ -515,7 +515,7 @@ async def test_an_error_result_is_an_error_not_an_empty_success(tmp_path):
 async def test_a_warmup_that_errors_never_reports_ready(tmp_path, monkeypatch):
     """Every spawn errors (e.g. credentials that never work): the brain must end
     up failed with the CLI's message in the reason — never 'ready' with ctx=0."""
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("FAKE_BRAIN_FORCE", "APIERROR")
     states = []
     b = brain.Brain(_config(tmp_path, max_restarts=1))
@@ -532,7 +532,7 @@ async def test_a_warmup_that_errors_never_reports_ready(tmp_path, monkeypatch):
 
 def test_spec_defaults_are_the_spec_defaults(tmp_path):
     """The suite overrides every timing knob; pin the shipped values here."""
-    import brain
+    from jarvis import brain
     cfg = brain.BrainConfig(home=tmp_path)
     assert (cfg.model, cfg.effort) == ("sonnet", "low")
     assert cfg.turn_timeout == 90.0 and cfg.warmup_timeout == 45.0
@@ -548,7 +548,7 @@ def test_spec_defaults_are_the_spec_defaults(tmp_path):
 
 @pytest.mark.asyncio
 async def test_auth_warmup_failure_is_fatal_after_one_attempt(tmp_path, monkeypatch):
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("FAKE_BRAIN_FORCE", "AUTHERROR")
     states = []
     b = brain.Brain(_config(tmp_path, max_restarts=3))
@@ -567,7 +567,7 @@ async def test_auth_warmup_failure_is_fatal_after_one_attempt(tmp_path, monkeypa
 async def test_ordinary_warmup_failure_still_retries(tmp_path, monkeypatch):
     """Contrast case: a non-auth warm-up failure is still assumed transient
     and gets the full restart budget, exactly as before this change."""
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("FAKE_BRAIN_FORCE", "APIERROR")
     states = []
     b = brain.Brain(_config(tmp_path, max_restarts=2))
@@ -584,7 +584,7 @@ async def test_ordinary_warmup_failure_still_retries(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_fatal_failure_kills_the_process_and_leaks_nothing(tmp_path, monkeypatch):
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("FAKE_BRAIN_FORCE", "AUTHERROR")
     b = brain.Brain(_config(tmp_path, max_restarts=3))
     try:
@@ -602,7 +602,7 @@ async def test_auth_fatal_failure_kills_the_process_and_leaks_nothing(tmp_path, 
 async def test_a_usage_warning_is_not_a_rate_limit(tmp_path):
     """The CLI sends `allowed_warning` when you pass a utilisation threshold —
     you are still allowed. Treating it as a limit muted JARVIS completely."""
-    import brain
+    from jarvis import brain
     states = []
     b = brain.Brain(_config(tmp_path))
     try:
@@ -622,8 +622,8 @@ async def test_a_usage_warning_is_not_a_rate_limit(tmp_path):
 async def test_an_unrecognised_status_fails_open(tmp_path):
     """An unknown status must not mute JARVIS: we try, and a real limit comes
     back as an error result we can speak."""
-    import brain
-    import claude_provider
+    from jarvis import brain
+    from jarvis import claude_provider
     assert "allowed_warning" not in claude_provider.BLOCKING_RATE_LIMIT_STATUSES
     b = brain.Brain(_config(tmp_path))
     try:
@@ -647,14 +647,14 @@ async def test_an_unrecognised_status_fails_open(tmp_path):
 def journal(monkeypatch, tmp_path):
     """An isolated brain home, so no test can read or write the real journal."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    import data_paths
-    import jarvis_memory
+    from jarvis import data_paths
+    from jarvis import jarvis_memory
     data_paths.ensure_memory_layout()
     return jarvis_memory
 
 
 def test_a_cold_start_carries_the_last_real_handover(tmp_path, journal):
-    import brain
+    from jarvis import brain
     journal.write_journal("We shipped the runs dashboard; chitauri is next.",
                           reason="shutdown")
 
@@ -668,7 +668,7 @@ def test_the_handover_tells_the_brain_not_to_resume_the_old_topic(tmp_path, jour
     """The handover is continuity of knowledge, not a script to open with. A
     fresh conversation must greet and let the user set the topic, not resume
     a question the previous conversation left unfinished."""
-    import brain
+    from jarvis import brain
     journal.write_journal("We shipped the runs dashboard; chitauri is next.",
                           reason="shutdown")
 
@@ -683,7 +683,7 @@ def test_the_handover_tells_the_brain_not_to_resume_the_old_topic(tmp_path, jour
 
 
 def test_a_cold_start_prefers_the_newest_real_handover(tmp_path, journal):
-    import brain
+    from jarvis import brain
     journal.write_journal("the older note", reason="shutdown")
     journal.write_journal("the newer note", reason="rotation")
 
@@ -697,7 +697,7 @@ def test_a_placeholder_never_displaces_a_real_handover(tmp_path, journal):
     """Shutdown ALWAYS writes an entry, including a tombstone when the brain
     said nothing. Carrying that forward would mean every session after one
     silent shutdown began knowing nothing."""
-    import brain
+    from jarvis import brain
     journal.write_journal("the real handover about chitauri", reason="shutdown")
     journal.write_journal("Session ended; the brain wrote no handover.",
                           reason="shutdown-silent")
@@ -709,7 +709,7 @@ def test_a_placeholder_never_displaces_a_real_handover(tmp_path, journal):
 
 
 def test_a_journal_of_nothing_but_placeholders_carries_nothing(tmp_path, journal):
-    import brain
+    from jarvis import brain
     journal.write_journal("Session ended; the brain wrote no handover.",
                           reason="shutdown-silent")
     journal.write_journal("No handover was written — the outgoing brain did not answer.",
@@ -722,7 +722,7 @@ def test_a_journal_of_nothing_but_placeholders_carries_nothing(tmp_path, journal
 
 
 def test_an_empty_journal_is_fine(tmp_path, journal):
-    import brain
+    from jarvis import brain
     prompt = brain.Brain(_config(tmp_path)).launch_prompt()
     assert HANDOVER_OPEN not in prompt
     assert "brain generation" in prompt
@@ -730,13 +730,13 @@ def test_an_empty_journal_is_fine(tmp_path, journal):
 
 def test_a_missing_journal_folder_is_fine(tmp_path, monkeypatch):
     """Nothing has ever been written: the folder itself does not exist."""
-    import brain
+    from jarvis import brain
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "never-created"))
     assert HANDOVER_OPEN not in brain.Brain(_config(tmp_path)).launch_prompt()
 
 
 def test_the_handover_is_bounded_to_1200_characters(tmp_path, journal):
-    import brain
+    from jarvis import brain
     assert brain.HANDOVER_MAX_CHARS == 1200
     journal.write_journal("x" * 6000, reason="shutdown")
 
@@ -750,7 +750,7 @@ def test_the_handover_is_bounded_to_1200_characters(tmp_path, journal):
 def test_an_in_process_handover_beats_the_journal(tmp_path, journal):
     """rotate() hands over what the OUTGOING brain just said; the journal on
     disk is the cold-start fallback and may be days old."""
-    import brain
+    from jarvis import brain
     journal.write_journal("yesterday's note", reason="shutdown")
     b = brain.Brain(_config(tmp_path))
     b._handover = "what I was doing thirty seconds ago"
@@ -762,7 +762,7 @@ def test_an_in_process_handover_beats_the_journal(tmp_path, journal):
 
 
 def test_the_launch_prompt_names_the_active_projects(tmp_path, journal):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     b.active_projects = lambda: ["chitauri", "jarvis"]
 
@@ -772,12 +772,12 @@ def test_the_launch_prompt_names_the_active_projects(tmp_path, journal):
 
 
 def test_no_projects_line_when_the_watcher_has_not_polled(tmp_path, journal):
-    import brain
+    from jarvis import brain
     assert "live Claude Code sessions" not in brain.Brain(_config(tmp_path)).launch_prompt()
 
 
 def test_a_broken_project_provider_cannot_stop_a_spawn(tmp_path, journal):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
 
     def boom():
@@ -788,7 +788,7 @@ def test_a_broken_project_provider_cannot_stop_a_spawn(tmp_path, journal):
 
 
 def test_an_unreadable_journal_cannot_stop_a_spawn(tmp_path, journal, monkeypatch):
-    import brain
+    from jarvis import brain
     monkeypatch.setattr(journal, "latest_journal",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")))
     assert "brain generation" in brain.Brain(_config(tmp_path)).launch_prompt()
@@ -840,44 +840,44 @@ async def test_large_single_line_parsed_correctly(tmp_path):
     """A real subprocess emits one stream-json line far bigger than the old
     64 KiB default (but under the raised limit); the brain must still parse
     it and complete the turn with its content intact."""
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
-    await _bounded(b.start(), 20, b, "brain.start()")
+    await _bounded(b.start(), 20, b, "jarvis.brain.start()")
     try:
-        r = await _bounded(b.turn("BIGLINE:200000"), 20, b, "brain.turn(BIGLINE)")
+        r = await _bounded(b.turn("BIGLINE:200000"), 20, b, "jarvis.brain.turn(BIGLINE)")
         assert r.stop_reason == "result"
         assert r.text == "H" * 200000
     finally:
         # `_bounded` guards a hanging coroutine, not a failing assert: without
         # this the child outlives the test, keeps pytest's captured stdout,
         # and the suite hangs instead of reporting the failure.
-        await _bounded(b.stop(), 20, b, "brain.stop()")
+        await _bounded(b.stop(), 20, b, "jarvis.brain.stop()")
 
 
 @pytest.mark.asyncio
 async def test_oversized_stdout_line_is_skipped_and_brain_survives(tmp_path, monkeypatch, caplog):
     """A line bigger than even the raised limit must be skipped — not left
     to kill the reader task — and the next real line must still parse."""
-    import brain
+    from jarvis import brain
     monkeypatch.setattr(claude_provider.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
     b = brain.Brain(_config(tmp_path))
-    await _bounded(b.start(), 20, b, "brain.start()")
+    await _bounded(b.start(), 20, b, "jarvis.brain.start()")
     try:
         with caplog.at_level(logging.WARNING, logger="jarvis.brain"):
             r = await _bounded(b.turn("SKIPSTDOUT:300000"), 20, b,
-                               "brain.turn(SKIPSTDOUT)")
+                               "jarvis.brain.turn(SKIPSTDOUT)")
         assert r.stop_reason == "result"
         assert r.text.startswith("Echo: SKIPSTDOUT:300000")
         assert any("oversized" in rec.message.lower() for rec in caplog.records)
         # The reader task must still be alive to serve the NEXT turn — proof
         # the oversized line did not kill it.
-        r2 = await _bounded(b.turn("hi again"), 20, b, "brain.turn(follow-up)")
+        r2 = await _bounded(b.turn("hi again"), 20, b, "jarvis.brain.turn(follow-up)")
         assert r2.stop_reason == "result" and r2.text == "Echo: hi again"
     finally:
         # `_bounded` guards a hanging coroutine, not a failing assert: without
         # this the child outlives the test, keeps pytest's captured stdout,
         # and the suite hangs instead of reporting the failure.
-        await _bounded(b.stop(), 20, b, "brain.stop()")
+        await _bounded(b.stop(), 20, b, "jarvis.brain.stop()")
 
 
 @pytest.mark.asyncio
@@ -885,14 +885,14 @@ async def test_oversized_stderr_line_is_skipped_and_brain_survives(tmp_path, mon
     """Same treatment for stderr: an oversized stderr line must not stop the
     drain loop outright (which would eventually deadlock the child once its
     stderr pipe fills) — draining must continue past it."""
-    import brain
+    from jarvis import brain
     monkeypatch.setattr(claude_provider.claude_env, "STREAM_LINE_LIMIT", 64 * 1024)
     b = brain.Brain(_config(tmp_path))
-    await _bounded(b.start(), 20, b, "brain.start()")
+    await _bounded(b.start(), 20, b, "jarvis.brain.start()")
     try:
         with caplog.at_level(logging.DEBUG, logger="jarvis.brain"):
             r = await _bounded(b.turn("SKIPSTDERR:300000"), 20, b,
-                               "brain.turn(SKIPSTDERR)")
+                               "jarvis.brain.turn(SKIPSTDERR)")
             for _ in range(50):
                 if any("STDERR-MARKER-AFTER-SKIP" in rec.message for rec in caplog.records):
                     break
@@ -904,7 +904,7 @@ async def test_oversized_stderr_line_is_skipped_and_brain_survives(tmp_path, mon
         # `_bounded` guards a hanging coroutine, not a failing assert: without
         # this the child outlives the test, keeps pytest's captured stdout,
         # and the suite hangs instead of reporting the failure.
-        await _bounded(b.stop(), 20, b, "brain.stop()")
+        await _bounded(b.stop(), 20, b, "jarvis.brain.stop()")
 
 
 # ---------------------------------------------------------------------------
@@ -917,8 +917,8 @@ async def test_oversized_stderr_line_is_skipped_and_brain_survives(tmp_path, mon
 async def test_a_usage_warning_is_persisted_for_the_dashboard(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import brain
-    import usage_store
+    from jarvis import brain
+    from jarvis import usage_store
     importlib.reload(usage_store)
 
     b = brain.Brain(_config(tmp_path))
@@ -945,8 +945,8 @@ async def test_a_rejection_is_persisted_too(tmp_path, monkeypatch):
     the user is asking about when JARVIS goes quiet."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import brain
-    import usage_store
+    from jarvis import brain
+    from jarvis import usage_store
     importlib.reload(usage_store)
 
     b = brain.Brain(_config(tmp_path))
@@ -968,8 +968,8 @@ async def test_a_failing_usage_store_still_leaves_the_limit_enforced(tmp_path, m
     it, the event handler would abort before setting `rate_limit` and JARVIS
     would keep firing turns straight into a limit it had already been told
     about — a disk problem turned into a wall of rejected turns."""
-    import brain
-    import usage_store
+    from jarvis import brain
+    from jarvis import usage_store
 
     def boom(*a, **kw):
         raise RuntimeError("disk on fire")
@@ -1001,18 +1001,18 @@ async def test_a_failing_usage_store_still_leaves_the_limit_enforced(tmp_path, m
 @pytest.mark.asyncio
 async def test_invalid_utf8_line_does_not_kill_the_reader(tmp_path, caplog):
     """A bad byte, then a real `result` line. The result must still be read."""
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
-    await _bounded(b.start(), 20, b, "brain.start()")
+    await _bounded(b.start(), 20, b, "jarvis.brain.start()")
     try:
-        r = await _bounded(b.turn("BADBYTE please"), 20, b, "brain.turn(BADBYTE)")
+        r = await _bounded(b.turn("BADBYTE please"), 20, b, "jarvis.brain.turn(BADBYTE)")
         assert r.stop_reason == "result", r
         assert r.text == "Echo: BADBYTE please"
         # And the reader is still there for the next turn.
-        r2 = await _bounded(b.turn("hi again"), 20, b, "brain.turn(follow-up)")
+        r2 = await _bounded(b.turn("hi again"), 20, b, "jarvis.brain.turn(follow-up)")
         assert r2.stop_reason == "result" and r2.text == "Echo: hi again"
     finally:
         # `_bounded` guards a hanging coroutine, not a failing assert: without
         # this the child outlives the test, keeps pytest's captured stdout,
         # and the suite hangs instead of reporting the failure.
-        await _bounded(b.stop(), 20, b, "brain.stop()")
+        await _bounded(b.stop(), 20, b, "jarvis.brain.stop()")

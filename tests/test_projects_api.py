@@ -12,7 +12,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-import session_watch as sw
+from jarvis import session_watch as sw
 
 # What the dashboard's own page sends. `POST /api/projects/open` opens an
 # editor, a Terminal or a browser on this machine, so the app refuses it
@@ -24,11 +24,11 @@ BROWSER = {"Origin": "http://localhost:5173"}
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store

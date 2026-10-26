@@ -4,8 +4,8 @@ sessions the needs board and session messages. Nothing here touches a real
 
 import pytest
 
-import preflight
-import session_skill
+from jarvis import preflight
+from jarvis import session_skill
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_the_skill_ships_nothing_personal():
 def test_the_skill_is_not_one_of_the_brain_s_own():
     """skills/ is copied into the brain's home; the brain must not be taught
     to send messages to itself."""
-    import data_paths
+    from jarvis import data_paths
     assert session_skill.TEMPLATE.parent.parent != data_paths._SKILLS_SOURCE
 
 
@@ -77,7 +77,7 @@ def test_preflight_reports_and_never_installs(homes):
     check = preflight._check_session_skill_sync()
 
     assert check.status == preflight.STATUS_WARN
-    assert "missing" in check.message and check.remedy == "Run: python session_skill.py install"
+    assert "missing" in check.message and check.remedy == "Run: python -m jarvis.session_skill install"
     assert preflight._phrase_for(check) == "your sessions don't have the talk-to-jarvis skill"
     assert not (claude / "skills").exists()
 

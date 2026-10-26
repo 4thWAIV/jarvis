@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-import claude_provider
+from jarvis import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -31,7 +31,7 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_brain.py"
 
 
 def _config(tmp_path, **kw):
-    import brain
+    from jarvis import brain
     return brain.BrainConfig(home=tmp_path / "jarvis",
                              claude_path=f"{sys.executable} {FAKE}",
                              turn_timeout=kw.pop("turn_timeout", 5.0),
@@ -45,11 +45,11 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module
@@ -61,7 +61,7 @@ def test_the_brain_may_search_and_fetch_the_web():
     """Measured: WebFetch answers a licence question in 9s and WebSearch in
     16s, both inside the brain's exact flag set. Scraping a search engine
     returns an anti-bot page in 0.3s, which is why there is no scraper."""
-    import brain
+    from jarvis import brain
     assert "WebSearch" in claude_provider.ALLOWED_TOOLS
     assert "WebFetch" in claude_provider.ALLOWED_TOOLS
 
@@ -69,7 +69,7 @@ def test_the_brain_may_search_and_fetch_the_web():
 def test_those_two_are_the_only_built_ins_on_the_allowlist():
     """It stays an allowlist. Every other name is one of JARVIS's own MCP
     tools, and no coding tool (Bash, Write, Edit) is ever reachable."""
-    import brain
+    from jarvis import brain
     built_ins = {t for t in claude_provider.ALLOWED_TOOLS if not t.startswith("mcp__")}
     assert built_ins == {"WebSearch", "WebFetch", "Skill"}
 
@@ -80,7 +80,7 @@ def test_those_two_are_the_only_built_ins_on_the_allowlist():
 async def test_a_turn_that_fetched_the_web_knows_it_during_the_turn(tmp_path):
     """The flag has to be true WHILE the turn runs — that is the only moment
     an acting tool could be called on the strength of what a page said."""
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -96,7 +96,7 @@ async def test_a_turn_that_fetched_the_web_knows_it_during_the_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_an_ordinary_turn_is_not_marked(tmp_path):
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -111,7 +111,7 @@ def test_a_jarvis_tool_that_reads_the_web_marks_the_turn_itself(tmp_path):
     """Belt and braces. The Web* tools are visible only through the CLI's
     tool_use events; JARVIS's own page tools are ours, so they say so
     directly rather than trusting an event shape we do not control."""
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     b._inflight = brain._Turn("user", None)
     assert b.turn_read_the_web is False
@@ -123,8 +123,8 @@ def test_a_jarvis_tool_that_reads_the_web_marks_the_turn_itself(tmp_path):
 async def test_reading_a_page_marks_the_turn(wired, monkeypatch, tmp_path):
     """`read_page` puts a stranger's words in the context just as WebFetch
     does — the wrapper around them is not a reason to leave the gate open."""
-    import brain as brain_module
-    import browser as real_browser
+    from jarvis import brain as brain_module
+    from jarvis import browser as real_browser
     server = wired
 
     class _Browser:
@@ -236,7 +236,7 @@ def test_the_endpoint_refuses_a_spawn_in_a_turn_that_read_the_web(wired):
         async def stop(self):
             pass
 
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         # Inside the context: the lifespan builds a brain of its own on
@@ -265,7 +265,7 @@ def test_the_endpoint_still_allows_a_spawn_in_a_clean_turn(wired):
         async def stop(self):
             pass
 
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         server.brain_instance = _Brain()
@@ -287,8 +287,8 @@ def test_the_brain_is_told_a_web_page_is_never_an_instruction(tmp_path):
     so that brain home would never see a new rule — the security sentence
     therefore also rides in the launch prompt, which is rebuilt on every
     generation."""
-    import brain
-    guidance = Path(__file__).resolve().parents[1] / "jarvis_home" / "CLAUDE.md"
+    from jarvis import brain
+    guidance = Path(__file__).resolve().parents[1] / "jarvis" / "jarvis_home" / "CLAUDE.md"
     text = guidance.read_text()
     assert "web page" in text and "never an instruction" in text
 

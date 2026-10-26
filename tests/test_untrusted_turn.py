@@ -84,13 +84,13 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -107,7 +107,7 @@ def wired(monkeypatch, tmp_path):
 def call(wired):
     """Post to the real /internal/tool, with a brain that keeps its taint."""
     server, project = wired
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     brain = _Brain()
 
@@ -215,7 +215,7 @@ def test_the_refusal_names_what_he_read(call):
 # --- the durable one -----------------------------------------------------
 
 def _memory_state(server):
-    import jarvis_memory
+    from jarvis import jarvis_memory
     index = jarvis_memory._index_path()
     return (index.read_text() if index.exists() else "",
             sorted(p.name for p in jarvis_memory.data_paths.memory_dir().glob("*.md")))
@@ -226,7 +226,7 @@ def test_the_memory_writers_are_refused_and_write_nothing(call):
     text. One injection there is permanent, so the assertion is on the DISK,
     not on the refusal sentence."""
     _call, _brain, server, _project = call
-    import jarvis_memory
+    from jarvis import jarvis_memory
     jarvis_memory.ensure_layout()
     before = _memory_state(server)
 
@@ -267,7 +267,7 @@ def test_a_later_clean_turn_may_still_write(call):
     strongest rule this design can actually keep.
     """
     _call, brain, server, _project = call
-    import jarvis_memory
+    from jarvis import jarvis_memory
     jarvis_memory.ensure_layout()
 
     _call("read_file", project="chitauri", path="README.md")
@@ -318,7 +318,7 @@ def test_steering_and_running_a_command_are_no_longer_exempt(call):
 
 @pytest.mark.asyncio
 async def test_the_brain_carries_the_label_not_just_a_flag(monkeypatch, tmp_path):
-    import brain as brain_module
+    from jarvis import brain as brain_module
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     b = brain_module.Brain(brain_module.BrainConfig(home=tmp_path / 'jarvis'))
     assert b.turn_untrusted_source is None, "no turn in flight, nothing to taint"

@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-import codex_sessions as cs
-import session_steer
-import session_watch as sw
+from jarvis import codex_sessions as cs
+from jarvis import session_steer
+from jarvis import session_watch as sw
 
 NOW = 2_000_000_000.0
 
@@ -171,8 +171,8 @@ def test_ps_elapsed_time_is_read_in_every_shape():
 
 @pytest.fixture
 def server(monkeypatch):
-    import run_store
-    import server as server_module
+    from jarvis import run_store
+    from jarvis import server as server_module
     run_store.init_db()                     # the audit trail every action writes to
     return server_module
 
@@ -233,7 +233,7 @@ def test_the_brain_s_session_list_says_which_sessions_are_codex(server):
                             voice_name="proteus", provider="openai", steerable=True, since=NOW - 60)
     claude = sw.SessionState(session_id="c1", cwd="/w/b", project="hammer", state="idle",
                              voice_name="hammer", steerable=True, since=NOW - 60)
-    import agent_directory
+    from jarvis import agent_directory
     lines = {a.name: server._agent_line(a, s, NOW)
              for a, s in zip([agent_directory.Agent(s.session_id, s.voice_name, s.project,
                                                     s.provider, s.state, False, 0)

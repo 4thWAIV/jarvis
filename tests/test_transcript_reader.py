@@ -8,9 +8,9 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-import codex_sessions
-import session_steer
-import session_watch as sw
+from jarvis import codex_sessions
+from jarvis import session_steer
+from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 
 
@@ -92,7 +92,7 @@ def test_a_codex_rollout_reads_the_same_way(tmp_path):
 def test_the_route_serves_a_session_s_page_and_its_cursor(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
-    import server
+    from jarvis import server
     importlib.reload(server)
     root = tmp_path / ".claude"
     write_roster(root, pid=os.getpid(), session_id="g", cwd="/p/guard", name="guard", status="idle")

@@ -47,15 +47,15 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(data))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
 
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import repo_read as repo_read_module
+    from jarvis import repo_read as repo_read_module
     importlib.reload(repo_read_module)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -117,7 +117,7 @@ async def test_search_never_surfaces_a_line_from_the_brain_home(wired,
                                                                 monkeypatch):
     """The named-path refusal is not enough on its own: a grep would have
     read the token out line by line without ever naming the file."""
-    import repo_read
+    from jarvis import repo_read
     server, _project, _dp = wired
     monkeypatch.setattr(repo_read, "_rg_path", lambda: None)   # the pure walk
     out = await server.tool_search_repo({"project": "jarvis-repo",
@@ -133,7 +133,7 @@ async def test_search_never_surfaces_a_line_from_the_brain_home(wired,
 async def test_ripgrep_takes_the_same_wall(wired):
     """Whichever engine is installed, the answer is the same. Skipped where
     ripgrep is not on PATH — there the walk above IS the live path."""
-    import repo_read
+    from jarvis import repo_read
     server, _project, _dp = wired
     if repo_read._rg_path() is None:
         pytest.skip("no ripgrep on this machine")
@@ -153,7 +153,7 @@ async def test_the_overview_does_not_list_the_brain_home(wired):
 def test_the_wall_is_a_path_and_not_a_name(wired, tmp_path):
     """A project may legitimately hold its own `mcp.json` or `MEMORY.md`, and
     the user is entitled to ask about those."""
-    import repo_read
+    from jarvis import repo_read
     other = tmp_path / "somebody-elses-project"
     (other / "config").mkdir(parents=True)
     (other / "config" / "mcp.json").write_text("{}\n")
@@ -167,7 +167,7 @@ def test_a_symlink_into_the_brain_home_is_refused(wired, tmp_path):
     """Both sides are resolved, so a link out of the project cannot make the
     comparison lie — the same reasoning `resolve_within` already used for
     containment."""
-    import repo_read
+    from jarvis import repo_read
     server, project, dp = wired
     link = project / "innocent.json"
     try:
@@ -213,11 +213,11 @@ async def test_open_in_browser_refuses_a_private_file(monkeypatch, tmp_path):
     Chrome — where `look_at_screen` then reads it back."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -310,7 +310,7 @@ CASE_VARIANTS = [(rel, spelling)
 def test_every_spelling_of_the_private_root_is_refused(wired, relative,
                                                        spelling):
     """`resolve_within` is the choke point; it must not care about case."""
-    import repo_read
+    from jarvis import repo_read
     _server, project, _dp = wired
     with pytest.raises(repo_read.Refused):
         repo_read.resolve_within(project, _recased(relative, spelling))
@@ -336,7 +336,7 @@ async def test_read_file_refuses_every_spelling(wired, spelling):
     "{s}/jarvis/memory/../connections.json",
 ])
 def test_a_traversal_that_rejoins_the_private_root_is_refused(wired, template):
-    import repo_read
+    from jarvis import repo_read
     _server, project, _dp = wired
     (project / "src").mkdir(exist_ok=True)
     for spelling in _spellings("data"):
@@ -345,7 +345,7 @@ def test_a_traversal_that_rejoins_the_private_root_is_refused(wired, template):
 
 
 def test_the_absolute_form_is_refused_in_every_spelling(wired):
-    import repo_read
+    from jarvis import repo_read
     _server, project, _dp = wired
     for spelling in _spellings("data"):
         target = str(project / spelling / "jarvis" / "mcp.json")
@@ -356,7 +356,7 @@ def test_the_absolute_form_is_refused_in_every_spelling(wired):
 def test_a_symlink_whose_target_is_miscased_is_refused(wired):
     """`ln -s data link` was refused and `ln -s DATA link` was not — the
     same file, reached the same way, decided differently by a string."""
-    import repo_read
+    from jarvis import repo_read
     _server, project, _dp = wired
     for i, spelling in enumerate(_spellings("data")):
         link = project / f"innocent{i}"
@@ -372,7 +372,7 @@ def test_the_walk_never_descends_a_miscased_private_root(wired):
     """A grep does not name a file, so the named-path refusal never runs.
     `walk._is_private` carried the identical string comparison, so a project
     root reached by any other spelling made the walk read the brain home."""
-    import repo_read
+    from jarvis import repo_read
     _server, project, _dp = wired
     roots = [project] + [project.parent / s for s in _spellings(project.name)]
     for root in roots:
@@ -387,7 +387,7 @@ def test_the_walk_never_descends_a_miscased_private_root(wired):
 
 @pytest.mark.asyncio
 async def test_search_refuses_every_spelling_of_the_root(wired, monkeypatch):
-    import repo_read
+    from jarvis import repo_read
     server, project, _dp = wired
     monkeypatch.setattr(repo_read, "_rg_path", lambda: None)
     for spelling in _spellings(project.name):
@@ -476,7 +476,7 @@ async def test_open_in_editor_still_opens_an_ordinary_project(wired,
 def test_somebody_elses_data_directory_is_not_jarviss(wired, tmp_path):
     """The wall is one absolute directory. A project of the user's own that
     happens to hold a `data/` is still theirs to read."""
-    import repo_read
+    from jarvis import repo_read
     other = tmp_path / "not-jarvis"
     (other / "data").mkdir(parents=True)
     (other / "data" / "notes.md").write_text("# ordinary\n")
@@ -493,7 +493,7 @@ def test_the_kernel_decides_where_the_spelling_cannot(wired):
     `st_dev`/`st_ino` is not. Skipped where the machine has no such alias,
     because then there is nothing to prove.
     """
-    import repo_read
+    from jarvis import repo_read
     _server, _project, dp = wired
     real = Path(os.path.realpath(str(dp.data_dir())))
 

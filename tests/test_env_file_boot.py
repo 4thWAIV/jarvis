@@ -10,7 +10,7 @@ def test_the_boot_loader_reads_the_file_jarvis_env_file_names(monkeypatch, tmp_p
     monkeypatch.setenv("JARVIS_ENV_FILE", str(dotenv))
     monkeypatch.delenv("JARVIS_TEST_BOOT_MARKER", raising=False)
 
-    import server
+    from jarvis import server
     importlib.reload(server)
 
     import os

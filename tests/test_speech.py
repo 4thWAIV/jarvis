@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def _split_all(text, **kw):
-    from speech import SentenceSplitter
+    from jarvis.speech import SentenceSplitter
     s = SentenceSplitter(**kw)
     out = []
     for i in range(0, len(text), 7):          # feed in awkward 7-char deltas
@@ -40,14 +40,14 @@ def test_splitter_sentences(text, expected):
 
 
 def test_boundary_waits_for_following_whitespace():
-    from speech import SentenceSplitter
+    from jarvis.speech import SentenceSplitter
     s = SentenceSplitter()
     assert s.feed("It is 3.") == []          # could be "3.5"
     assert s.feed("5 dollars. ") == ["It is 3.5 dollars."]
 
 
 def test_first_chunk_clause_cut_only_once():
-    from speech import SentenceSplitter
+    from jarvis.speech import SentenceSplitter
     s = SentenceSplitter(first_chunk_max=40)
     long = "This is a rather long opening clause, and it keeps going, and going without any full stop for a while yes"
     out = s.feed(long)
@@ -59,7 +59,7 @@ def test_first_chunk_clause_cut_only_once():
 
 
 def test_first_chunk_without_clause_break_waits():
-    from speech import SentenceSplitter
+    from jarvis.speech import SentenceSplitter
     s = SentenceSplitter(first_chunk_max=20)
     assert s.feed("x" * 50) == []
     assert s.flush() == "x" * 50
@@ -73,7 +73,7 @@ class Harness:
     """A scheduler wired to a fake synthesizer and a recording transport."""
 
     def __init__(self, **kw):
-        from speech import SpeechScheduler
+        from jarvis.speech import SpeechScheduler
         self.msgs = []
         self.fail_texts = set()
         self.synth_calls = []          # every text actually sent to TTS
@@ -163,7 +163,7 @@ async def test_normal_say_queues_behind_turn_without_preempting(h):
 
 @pytest.mark.asyncio
 async def test_urgent_preempts_at_boundary_then_resumes_with_bridge(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four.")
@@ -186,7 +186,7 @@ async def test_urgent_preempts_at_boundary_then_resumes_with_bridge(h):
 
 @pytest.mark.asyncio
 async def test_resume_is_dropped_when_user_spoke_meanwhile(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three.")
@@ -203,7 +203,7 @@ async def test_resume_is_dropped_when_user_spoke_meanwhile(h):
 
 @pytest.mark.asyncio
 async def test_resume_is_dropped_when_stale(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three.")
@@ -222,7 +222,7 @@ async def test_resume_is_dropped_when_stale(h):
 
 @pytest.mark.asyncio
 async def test_barge_in_marks_unheard_urgent_unread_and_reraises_at_pause(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     urgent = await s.say("Chitauri is waiting on you.", priority=Priority.URGENT, immediate=True)
     await asyncio.sleep(0.1)
@@ -238,7 +238,7 @@ async def test_barge_in_marks_unheard_urgent_unread_and_reraises_at_pause(h):
 
 @pytest.mark.asyncio
 async def test_no_proactive_speech_while_user_is_talking(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     await s.user_interim("so I was thinking that we")
     u = await s.say("A session finished.", priority=Priority.URGENT)
@@ -267,7 +267,7 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
 
 @pytest.mark.asyncio
 async def test_low_items_are_batched_into_one_utterance(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     await s.say("Chitauri finished.", priority=Priority.LOW)
     await s.say("Hammer finished.", priority=Priority.LOW)
@@ -389,7 +389,7 @@ def test_last_spoken_is_exempt_from_history_eviction():
     """UTTERANCE_HISTORY (64) caps how many finished utterances are kept, and
     eviction frees their audio. What "say that again" would replay must
     survive that even if 64+ other utterances happen first."""
-    from speech import SpeechScheduler, Priority, Utterance, Chunk, UTTERANCE_HISTORY
+    from jarvis.speech import SpeechScheduler, Priority, Utterance, Chunk, UTTERANCE_HISTORY
 
     async def synth(t):
         return b"x"
@@ -511,7 +511,7 @@ async def test_prepare_hook_is_applied_before_synthesis(h):
         seen.append(text)
         return b"x"
 
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     s = SpeechScheduler(synth, h.emit, prepare=lambda t: t.replace("**", ""))
     await s.start()
     await s.say("**Bold** claim.")
@@ -557,7 +557,7 @@ async def test_resume_with_slow_synthesis_speaks_the_right_audio_and_reaches_idl
     """A streaming turn: later chunks are still being synthesised when the
     preemption and the bridge insertion happen. Every audio chunk must carry the
     audio for its own text, and the turn must finish."""
-    from speech import Priority
+    from jarvis.speech import Priority
     s = slow.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Bee two. Cee three. ")
@@ -587,7 +587,7 @@ async def test_resume_with_slow_synthesis_speaks_the_right_audio_and_reaches_idl
 
 @pytest.mark.asyncio
 async def test_dropped_chunks_do_not_pin_speaking_or_poison_echo(slow):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = slow.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Bee two. Gamma three. Delta four.")
@@ -613,7 +613,7 @@ async def test_dropped_chunks_do_not_pin_speaking_or_poison_echo(slow):
 async def test_no_audio_is_emitted_after_stop():
     """A barge-in that lands while the send loop is suspended inside a transport
     await must not let the next chunk out after `stop`."""
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     gate = asyncio.Event()
     msgs = []
 
@@ -651,7 +651,7 @@ async def test_no_audio_is_emitted_after_stop():
 
 @pytest.mark.asyncio
 async def test_batched_low_say_becomes_done_when_spoken(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     low = await s.say("Chitauri finished.", priority=Priority.LOW)
     assert not low.done
@@ -674,7 +674,7 @@ async def test_three_synth_failures_report_once(h):
 
 @pytest.mark.asyncio
 async def test_history_is_bounded(h):
-    from speech import UTTERANCE_HISTORY
+    from jarvis.speech import UTTERANCE_HISTORY
     s = h.sched
     for i in range(UTTERANCE_HISTORY + 20):
         await s.say(f"Line {i}.")
@@ -685,7 +685,7 @@ async def test_history_is_bounded(h):
 
 @pytest.mark.asyncio
 async def test_cancel_word_does_not_reraise_the_cancelled_announcement(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     u = await s.say("Deploying in five seconds. Say wait to cancel.", priority=Priority.URGENT, immediate=True)
     await asyncio.sleep(0.1)
@@ -701,7 +701,7 @@ async def test_cancel_word_does_not_reraise_the_cancelled_announcement(h):
 
 @pytest.mark.asyncio
 async def test_two_urgent_items_produce_one_bridge(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four.")
@@ -723,7 +723,7 @@ async def test_two_urgent_items_produce_one_bridge(h):
 
 @pytest.mark.asyncio
 async def test_the_first_low_items_of_a_session_are_batched_together(h):
-    from speech import Priority
+    from jarvis.speech import Priority
     s = h.sched
     await s.say("Chitauri finished.", priority=Priority.LOW)
     await asyncio.sleep(0.02)
@@ -736,7 +736,7 @@ async def test_the_first_low_items_of_a_session_are_batched_together(h):
 
 @pytest.mark.asyncio
 async def test_a_raising_transport_abandons_the_utterance_instead_of_wedging():
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     msgs = []
     boom = {"on": 1}
 
@@ -778,7 +778,7 @@ async def test_voice_failing_notice_arrives_in_order(h):
 
 @pytest.mark.asyncio
 async def test_an_utterance_interrupted_too_often_is_dropped(h):
-    from speech import Priority, MAX_RESUMES, BRIDGES
+    from jarvis.speech import Priority, MAX_RESUMES, BRIDGES
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four. Epsilon five. Zeta six.")
@@ -825,7 +825,7 @@ def test_first_chunk_cuts_early_at_a_strong_break():
 async def test_a_lost_ack_does_not_mute_jarvis_forever():
     """One missing `played` (dead tab, parked AudioContext) used to pin the
     current utterance forever. The ack watchdog abandons it."""
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     msgs = []
 
     async def synth(text):
@@ -855,7 +855,7 @@ async def test_a_lost_ack_does_not_mute_jarvis_forever():
 async def test_urgent_speech_with_nobody_listening_is_kept_and_said_later():
     """Spec §4 'No one listening': an URGENT item is never lost because the tab
     was closed — it is re-raised once someone is connected."""
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
     msgs = []
     listening = {"on": False}
 
@@ -884,7 +884,7 @@ async def test_urgent_speech_with_nobody_listening_is_kept_and_said_later():
 
 
 def test_spec_defaults_are_the_spec_defaults():
-    from speech import SpeechScheduler, SentenceSplitter
+    from jarvis.speech import SpeechScheduler, SentenceSplitter
 
     async def nop(*a):
         return None
@@ -1027,7 +1027,7 @@ async def test_two_novel_words_are_unaffected_by_the_stem_rule(h):
 # replies after it.
 
 def _scheduler_with_clock():
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     t = {"now": 1000.0}
     async def synth(text): return b"x"
     async def emit(msg): pass
@@ -1038,7 +1038,7 @@ def _scheduler_with_clock():
 def _he_just_said(s, t, text, *, acked_ago):
     """Register `text` as a chunk the client finished playing `acked_ago`
     seconds before the clock's current reading."""
-    from speech import _Spoken, _tokens
+    from jarvis.speech import _Spoken, _tokens
     s._recent.append(_Spoken(utt=1, idx=0, tokens=set(_tokens(text)),
                              sent_at=t["now"] - acked_ago - 1.0,
                              acked_at=t["now"] - acked_ago))
@@ -1093,7 +1093,7 @@ def test_two_words_after_the_gap_are_speech_but_three_matching_are_not():
 def _he_is_saying(s, t, text, *, sent_ago=0.1):
     """Register `text` as a chunk that was SENT and has not been acked —
     what the scheduler holds while the client is still playing it."""
-    from speech import _Spoken, _tokens
+    from jarvis.speech import _Spoken, _tokens
     s._recent.append(_Spoken(utt=1, idx=0, tokens=set(_tokens(text)),
                              sent_at=t["now"] - sent_ago, acked_at=None))
 
@@ -1196,7 +1196,7 @@ def _mp3(seconds: float, kbps: int = 128) -> bytes:
 
 
 def test_mp3_seconds_reads_the_frame_header_and_nothing_else():
-    import speech
+    from jarvis import speech
     assert abs(speech.mp3_seconds(_mp3(2.0)) - 2.0) < 0.01
     assert abs(speech.mp3_seconds(_mp3(0.5, kbps=64)) - 0.5) < 0.01
     assert speech.mp3_seconds(b"A:Alpha one.") == 0.0, "a fake has no floor"
@@ -1268,7 +1268,7 @@ async def test_a_hold_taken_while_paused_is_not_discharged_against_the_bridge():
     arrives WHILE PAUSED sets it again, and the bridge then lands on that
     index with `earliest_ack` 0.0 — so the hold discharged at once, against
     audio that had not been sent."""
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
     async def synth(text):
@@ -1308,7 +1308,7 @@ async def test_a_resume_waits_for_the_kept_chunk_before_shifting_its_index():
     honest ack, for the index it was sent under, landed on the bridge that
     had just been inserted under that index. The resume now waits for that
     ack (bounded by the chunk's own floor plus a grace)."""
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
     async def synth(text):
@@ -1339,7 +1339,7 @@ async def test_a_resume_waits_for_the_kept_chunk_before_shifting_its_index():
 
 @pytest.mark.asyncio
 async def test_a_bridge_shifts_the_sent_bound_with_the_frames_it_displaces():
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
 
     async def synth(text):
         return b"A:" + text.encode()
@@ -1434,7 +1434,7 @@ def test_a_sent_chunk_stops_being_echo_relevant_after_the_backstop():
     """`RECENT_BACKSTOP_SEC` had no test at all: raising it to 1e9 left the
     whole suite green. It is the last-resort bound on how long an unacked
     chunk can be believed to be playing, and here it is asserted."""
-    import speech
+    from jarvis import speech
     assert speech.RECENT_BACKSTOP_SEC == 120.0, (
         "the number is the assertion, so the seconds below are written out "
         "rather than derived from it -- a test that jumps "
@@ -1454,7 +1454,7 @@ def test_an_orphaned_chunk_expires_on_the_watchdog_timescale_not_the_backstop():
     `ack_timeout`. A chunk it has stopped tracking must not outlive that by
     75 seconds just because `_recent`'s backstop is the only thing left
     watching it."""
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     t = {"now": 1000.0}
 
     async def synth(text):
@@ -1482,7 +1482,7 @@ async def test_a_dropped_preempted_chunk_does_not_poison_echo_for_two_minutes():
     `_current` nor `_paused`, so the 45s ack watchdog never sees it; only
     `RECENT_BACKSTOP_SEC` did, 120 seconds later. Driven live, `classify`
     answered "echo" for 119 of them."""
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
     msgs = []
     skew = {"d": 0.0}
 
@@ -1524,7 +1524,7 @@ async def test_the_last_listener_leaving_settles_everything_in_flight():
     voice client there is no speaker for an echo to come from, so every
     unacked chunk is settled at once -- otherwise a reloaded tab inherits the
     previous tab's unacked entries and hears itself for two minutes."""
-    from speech import SpeechScheduler
+    from jarvis.speech import SpeechScheduler
     t = {"now": 1000.0}
 
     async def synth(text):
@@ -1550,7 +1550,7 @@ async def test_an_ack_in_flight_across_a_preemption_still_counts():
     resume bridge rolls it back again. An ack already in the air for a chunk
     that really did go out is not a forgery, and rejecting it makes the
     scheduler resend a chunk the user has already heard."""
-    from speech import SpeechScheduler, Priority
+    from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
     async def synth(text):

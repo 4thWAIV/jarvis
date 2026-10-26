@@ -7,8 +7,8 @@ import importlib
 
 import pytest
 
-import agent_directory
-import session_watch as sw
+from jarvis import agent_directory
+from jarvis import session_watch as sw
 
 
 def _session(sid, name, project, state=sw.IDLE):
@@ -69,7 +69,7 @@ def test_nothing_is_guessed(directory):
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     server_module.run_store.init_db()
     monkeypatch.setattr(server_module, "_snapshot_or_empty",

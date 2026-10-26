@@ -23,10 +23,10 @@ def api(monkeypatch, tmp_path):
     """A server with an isolated JARVIS_DATA_DIR, and no real brain."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
-    import jarvis_memory
-    import run_store
-    import server as server_module
+    from jarvis import data_paths
+    from jarvis import jarvis_memory
+    from jarvis import run_store
+    from jarvis import server as server_module
     importlib.reload(server_module)
     with TestClient(server_module.app) as client:
         yield client, jarvis_memory, data_paths, run_store

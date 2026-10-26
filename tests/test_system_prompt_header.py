@@ -43,7 +43,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 REPO = Path(__file__).parent.parent
-MODULES = sorted(REPO.glob("*.py"))
+MODULES = sorted((REPO / "jarvis").glob("*.py"))
 
 # The same payload as tests/test_header_lines.py: closes a wrapper, then
 # speaks as JARVIS.
@@ -102,7 +102,7 @@ def test_every_system_prompt_site_is_driven():
 # --- the prompt itself ---------------------------------------------------
 
 def _brain(tmp_path, **kw):
-    import brain as brain_module
+    from jarvis import brain as brain_module
     config = brain_module.BrainConfig(home=tmp_path, **kw)
     return brain_module, brain_module.Brain(config)
 
@@ -144,7 +144,7 @@ def _with_hostile_handover(brain_module, b):
 
 
 def _with_hostile_journal(brain_module, b, monkeypatch=None):
-    import jarvis_memory
+    from jarvis import jarvis_memory
     b._handover = None
     b._boot_handover = lambda: HOSTILE
 
@@ -178,7 +178,7 @@ def test_the_hostile_input_list_covers_every_input_the_prompt_reads():
     """Held against `launch_prompt`'s own source: every `self.<x>` and
     `self.config.<x>` it reads is either driven above or is this process's
     own bookkeeping."""
-    import brain as brain_module
+    from jarvis import brain as brain_module
     src = Path(brain_module.__file__).read_text()
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
@@ -264,14 +264,14 @@ def test_the_server_supplies_names_that_are_already_ordinary(monkeypatch,
     import importlib
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
-    import session_watch
+    from jarvis import session_watch
 
     hostile_dir = "/Users/e/Projects/" + HOSTILE.replace("\n", " ")
     good = session_watch.SessionState(

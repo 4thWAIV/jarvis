@@ -12,9 +12,9 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-import access_keys
-import data_paths
-import web_auth
+from jarvis import access_keys
+from jarvis import data_paths
+from jarvis import web_auth
 
 
 @pytest.fixture

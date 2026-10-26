@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import jarvis_mcp
+from jarvis import jarvis_mcp
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -25,7 +25,7 @@ class Server:
 
     def __init__(self, env):
         self.p = subprocess.Popen(
-            [sys.executable, str(REPO / "jarvis_mcp.py")],
+            [sys.executable, "-m", "jarvis.jarvis_mcp"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=env, cwd=str(REPO))
         self._watchdog = threading.Timer(self.DEADLINE_SEC, self._expire)

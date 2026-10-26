@@ -7,7 +7,7 @@ The user may override this for any one task; the brain says so by passing
 
 import pytest
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.test_spawn_run_tool import _Executor, ready, wired  # noqa: F401
 
 
@@ -84,7 +84,7 @@ async def test_a_session_in_another_project_does_not_count(ready, monkeypatch, t
 
 
 def test_the_brain_is_offered_the_override():
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     specs = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}
     for name in ("spawn_run", "start_build"):
         assert "override" in specs[name]["inputSchema"]["properties"], name

@@ -11,9 +11,9 @@ WEEK = 7 * 24 * 3600
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import usage_store
+    from jarvis import usage_store
     importlib.reload(usage_store)
     return usage_store
 
@@ -93,7 +93,7 @@ def test_no_reading_or_an_expired_week_is_not_measured(store):
 
 
 def test_the_route_serves_it(store, monkeypatch):
-    import server
+    from jarvis import server
     importlib.reload(server)
     from fastapi.testclient import TestClient
     body = TestClient(server.app).get("/api/usage/week").json()

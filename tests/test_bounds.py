@@ -32,7 +32,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-EXECUTOR = ROOT / "run_executor.py"
+EXECUTOR = ROOT / "jarvis" / "run_executor.py"
 
 
 # --- 1. every bound the executor resolves from the environment -----------
@@ -74,7 +74,7 @@ def test_the_resolvers_are_found_in_the_source():
 def executor(monkeypatch):
     monkeypatch.delenv("JARVIS_RUN_TIMEOUT_SEC", raising=False)
     monkeypatch.delenv("JARVIS_RUN_IDLE_SEC", raising=False)
-    import run_executor
+    from jarvis import run_executor
     importlib.reload(run_executor)
     return run_executor
 
@@ -141,11 +141,11 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     monkeypatch.setenv("JARVIS_ENV_FILE", str(tmp_path / ".env"))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module

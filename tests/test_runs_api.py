@@ -12,11 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     # The dashboard's own Origin: creating, cancelling and retrying a run
@@ -119,7 +119,7 @@ def test_retry_active_run_is_409(client, status):
                                     "cancelled"])
 def test_retry_terminal_run_spawns(client, status, monkeypatch):
     c, store = client
-    import server
+    from jarvis import server
 
     spawned = []
 
@@ -219,7 +219,7 @@ def test_create_run_blank_project_path_returns_400(client):
 
 def test_create_run_with_valid_project_path_succeeds(client, monkeypatch):
     c, store = client
-    import server
+    from jarvis import server
 
     spawned = {}
 

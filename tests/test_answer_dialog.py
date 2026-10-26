@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-import dialog
-import claude_provider
+from jarvis import dialog
+from jarvis import claude_provider
 
 
 # --- the closed vocabulary --------------------------------------------------
@@ -320,7 +320,7 @@ async def test_a_digit_is_sent_as_that_one_character_and_nothing_else(
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     server_module.run_store.init_db()
     # Belt and braces: even reloaded, the server module must never be able to
@@ -369,7 +369,7 @@ class FakeBrain:
 
 
 def _state(pids=(4242,), voice_name="hammer", project="hammer"):
-    import session_watch as sw
+    from jarvis import session_watch as sw
     return sw.SessionState(session_id="sid", cwd="/p/hammer", project=project,
                            state="needs_you", voice_name=voice_name,
                            pids=list(pids), primary_pid=pids[0])
@@ -411,7 +411,7 @@ async def test_the_tool_stages_and_presses_nothing_at_all(tool):
     assert "staged" in result.lower()
     assert len(server._staged_dialogs) == 1
     assert server._staged_dialogs[0].key == "return"
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=50) == [], "staging is not an outcome"
 
 
@@ -462,7 +462,7 @@ async def test_a_cancel_word_in_the_window_blocks_the_keypress(wired, monkeypatc
     await server._perform_staged_dialogs()
 
     assert pressed == [], "nothing may be pressed after a cancel"
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:cancelled_by_user"
 
 
@@ -489,7 +489,7 @@ async def test_a_bargein_during_the_readback_blocks_it_and_records_a_cancel(
     await server._perform_staged_dialogs()
 
     assert pressed == []
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:cancelled_by_user"
 
 
@@ -513,7 +513,7 @@ async def test_a_readback_that_was_never_heard_presses_nothing(wired, monkeypatc
     await server._perform_staged_dialogs()
 
     assert pressed == [], "never press something the user cannot be shown to have heard"
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:readback_failed"
 
 
@@ -537,7 +537,7 @@ async def test_no_voice_refuses_rather_than_pressing_unannounced(wired, monkeypa
     assert pressed == []
     assert server._staged_dialogs == []
     assert "won't press" in result.lower()
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:no_voice"
 
 
@@ -559,7 +559,7 @@ async def test_the_tool_refuses_a_key_outside_the_vocabulary(bad, wired,
 
     assert server._staged_dialogs == [], "a refused key may not be staged"
     assert "return" in result.lower() and "escape" in result.lower()
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:bad_key"
 
 
@@ -577,7 +577,7 @@ async def test_an_ambiguous_name_asks_rather_than_guessing(wired, monkeypatch):
 
     assert "which one" in result.lower()
     assert server._staged_dialogs == []
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:ambiguous"
 
 
@@ -596,7 +596,7 @@ async def test_a_session_with_no_tty_is_refused_synchronously(wired, monkeypatch
 
     assert "terminal" in result.lower()
     assert server._staged_dialogs == []
-    import run_store
+    from jarvis import run_store
     assert run_store.list_steers(limit=5)[0]["outcome"] == "dialog:no_tty"
 
 
@@ -644,7 +644,7 @@ async def test_every_terminal_path_writes_exactly_one_audit_row(
     await server.tool_answer_dialog({"name": "hammer", "key": "yes"})
     await server._perform_staged_dialogs()
 
-    import run_store
+    from jarvis import run_store
     rows = run_store.list_steers(limit=50)
     assert len(rows) == 1, "exactly one row per attempt, never zero and never two"
     assert rows[0]["outcome"] == expected
@@ -668,7 +668,7 @@ async def test_a_raised_exception_still_leaves_an_audit_row(wired, monkeypatch):
     await server.tool_answer_dialog({"name": "hammer", "key": "yes"})
     await server._perform_staged_dialogs()      # must not raise out
 
-    import run_store
+    from jarvis import run_store
     rows = run_store.list_steers(limit=50)
     assert rows and rows[0]["outcome"] == "dialog:failed"
     assert server._staged_dialogs == []
@@ -710,8 +710,8 @@ def test_answer_dialog_is_gated_as_an_acting_tool(wired):
 
 
 def test_the_three_registries_agree(wired):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server = wired
     assert "mcp__jarvis__answer_dialog" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)

@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import brain
-import brains_config
+from jarvis import brain
+from jarvis import brains_config
 
 FAKE_CODEX = Path(__file__).parent / "fixtures" / "fake_codex.py"
 ORIGIN = {"Origin": "http://localhost:5173"}
@@ -21,21 +21,21 @@ ORIGIN = {"Origin": "http://localhost:5173"}
 @pytest.fixture
 def server(monkeypatch):
     monkeypatch.setenv("JARVIS_CODEX_PATH", f"{sys.executable} {FAKE_CODEX}")
-    import server as server_module
+    from jarvis import server as server_module
 
     async def fine(timeout=None):
-        import preflight
+        from jarvis import preflight
         return preflight.Check(name="claude_login", status=preflight.STATUS_OK, message="Signed in.")
 
     async def cli(timeout=None):
-        import preflight
+        from jarvis import preflight
         return preflight.Check(name="claude_cli", status=preflight.STATUS_OK, message="claude 2.1.306 on PATH.")
-    import claude_provider
+    from jarvis import claude_provider
     monkeypatch.setattr(claude_provider.ClaudeProvider, "preflight",
                         lambda self: ((cli,), ()))
-    import preflight
+    from jarvis import preflight
     monkeypatch.setattr(preflight, "_check_claude_login", fine)
-    import codex_provider
+    from jarvis import codex_provider
 
     async def codex_ok(timeout=None):
         return preflight.Check(name="codex_cli", status=preflight.STATUS_OK, message="codex 0.154.0 on PATH.")
@@ -119,7 +119,7 @@ async def test_codex_signs_in_from_the_page_and_the_page_hears_it_finish(server,
 
 
 def test_usage_is_kept_and_read_per_brain(server):
-    import usage_store
+    from jarvis import usage_store
     usage_store.record({"status": "allowed", "unifiedWindows": {
         "seven_day": {"utilization": 0.3, "resetsAt": 4_000_000_000}}},
         provider={"service": "openai", "subscription": "pro"}, now=3_999_900_000)
@@ -131,7 +131,7 @@ def test_usage_is_kept_and_read_per_brain(server):
 
 
 def test_the_brief_list_says_which_are_added_and_which_runs_without_asking_anyone(server, monkeypatch):
-    import codex_provider
+    from jarvis import codex_provider
     monkeypatch.setattr(codex_provider.CodexProvider, "account",
                         lambda self: (_ for _ in ()).throw(AssertionError("not asked")))
     client = TestClient(server.app)

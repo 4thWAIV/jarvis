@@ -21,7 +21,7 @@ HTML, and a run id or project path leaking into an outbound `Referer`.
 
 Deliberately NOT here: a full CSP. Verified against both source pages
 (`frontend/index.html`, `frontend/dashboard.html`) and both built ones
-(`frontend/dist/*.html`) — every script is an external `<script
+(`jarvis/web/*.html`) — every script is an external `<script
 type="module" src=...>`, every style an external stylesheet, and there is
 not one `onclick=` between them, so `script-src 'self'` would in fact hold
 today. It is still not added: it would only ever apply to the pages served
@@ -49,11 +49,11 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("JARVIS_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setenv("JARVIS_PORT", "8340")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     with TestClient(server.app) as c:

@@ -20,7 +20,7 @@ import pytest
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     server_module.voice_clients.clear()
     return server_module
@@ -55,7 +55,7 @@ class _Notifier:
 
 
 def _fake_notifier(monkeypatch, ok=True):
-    import notifier
+    from jarvis import notifier
     fake = _Notifier(ok)
     monkeypatch.setattr(notifier, "available", lambda: True)
     monkeypatch.setattr(notifier, "notify", fake.notify)
@@ -97,7 +97,7 @@ async def test_a_failing_notifier_does_not_break_the_announcement(wired, monkeyp
     speech = FakeSpeech()
     monkeypatch.setattr(server, "speech", speech)
 
-    import notifier
+    from jarvis import notifier
 
     async def explode(*a, **k):
         raise RuntimeError("osascript is on fire")
@@ -117,7 +117,7 @@ async def test_a_notification_failure_never_reaches_the_watcher(wired, monkeypat
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
 
-    import notifier
+    from jarvis import notifier
 
     async def explode(*a, **k):
         raise RuntimeError("osascript is on fire")
@@ -138,7 +138,7 @@ async def test_an_unavailable_notifier_is_not_called(wired, monkeypatch):
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
     fake = _fake_notifier(monkeypatch)
-    import notifier
+    from jarvis import notifier
     monkeypatch.setattr(notifier, "available", lambda: False)
 
     await server._announce_needs_you(_event())

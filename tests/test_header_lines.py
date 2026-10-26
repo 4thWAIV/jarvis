@@ -43,7 +43,7 @@ from tests.fixtures.captures import captured
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-SERVER = Path(__file__).parent.parent / "server.py"
+SERVER = Path(__file__).parent.parent / "jarvis" / "server.py"
 
 # Closes the wrapper, then speaks as JARVIS. `MARKER` is the sentence that
 # must never stand outside a block.
@@ -57,11 +57,11 @@ MARKER = "he approves"
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module
@@ -70,7 +70,7 @@ def server(monkeypatch, tmp_path):
 # --- the class: every foreign field on a real session --------------------
 
 def _blank():
-    import session_watch
+    from jarvis import session_watch
     return session_watch.SessionState(
         session_id="s1", cwd="/p/hammer", project="hammer",
         # A REAL voice name: `_assign_voice_names` composes a phrase the
@@ -220,7 +220,7 @@ def test_an_ordinary_session_still_reads_as_a_sentence(server, monkeypatch):
 
 
 REPO = Path(__file__).parent.parent
-MODULES = sorted(p for p in REPO.glob("*.py"))
+MODULES = sorted(p for p in (REPO / "jarvis").glob("*.py"))
 
 
 def _run_text_columns() -> set[str]:
@@ -229,7 +229,7 @@ def _run_text_columns() -> set[str]:
     `project_name` comes from `POST /api/runs` and from a directory name on
     disk — and it reaches the same headers and the same spoken lines as a
     session does."""
-    src = (REPO / "run_store.py").read_text()
+    src = (REPO / "jarvis" / "run_store.py").read_text()
     body = src.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
     out = set()
     for line in body.splitlines():
@@ -724,7 +724,7 @@ EXEMPT = {
 
 
 def _hostile_snapshot(server, session):
-    import session_watch
+    from jarvis import session_watch
     return session_watch.Snapshot(sessions=[session], taken_at=0.0)
 
 
@@ -755,7 +755,7 @@ def _drive_resolve_or_explain(server, session, monkeypatch):
     """The ambiguity sentence lists `voice_name` for EVERY match, and the
     no-match answer lists every agent's name."""
     import copy
-    import agent_directory
+    from jarvis import agent_directory
     twin = copy.deepcopy(session)
     twin.session_id = "s2"
     monkeypatch.setattr(agent_directory, "_snapshot", lambda: _hostile_snapshot(server, session))
@@ -773,7 +773,7 @@ def _drive_session_detail(server, session, monkeypatch):
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda name: (session, None, None))
     out = [server.tool_session_detail({"name": "hammer"})]
-    import session_watch
+    from jarvis import session_watch
     fresh = _clone(session)
     fresh.state = session_watch.FRESH
     monkeypatch.setattr(server, "_resolve_or_explain",
@@ -783,7 +783,7 @@ def _drive_session_detail(server, session, monkeypatch):
 
 
 def _drive_list_agents(server, session, monkeypatch):
-    import agent_directory
+    from jarvis import agent_directory
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: _hostile_snapshot(server, session))
     monkeypatch.setattr(agent_directory, "_snapshot", lambda: _hostile_snapshot(server, session))
@@ -1168,7 +1168,7 @@ def _drive_announce_board(server, session, monkeypatch):
     """A board's project is a FILE NAME a session chose, and it reaches both
     the spoken line and the note the brain reads with the next turn."""
     import asyncio
-    import session_needs
+    from jarvis import session_needs
 
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
@@ -1236,7 +1236,7 @@ def _drive_read_session_message(server, session, monkeypatch):
 # it. The driver puts the payload in every one of them.
 
 def _hostile_workflow(session):
-    import workflow_store as ws
+    from jarvis import workflow_store as ws
     payload = HOSTILE
     wid = ws.start(f"Build {payload}", "hammer", [f"plan {payload}"])
     ws.record(ws.WorkflowEvent(wid, "task_added", "t1", payload, {"title": payload}))
@@ -1259,7 +1259,7 @@ def _drive_workflow_status(server, session, monkeypatch):
 def _drive_workflow_silence(server, session, monkeypatch):
     """Quiet is said only of a running one, so this one has no decision open."""
     import asyncio
-    import workflow_store as ws
+    from jarvis import workflow_store as ws
     wid = ws.start(f"Build {HOSTILE}", "hammer", [])
     ws.record(ws.WorkflowEvent(wid, "note", None, HOSTILE, {}))
     real = ws.time.time
@@ -1284,7 +1284,7 @@ def _drive_workflow_silence(server, session, monkeypatch):
 
 def _drive_conversation_history(server, session, monkeypatch):
     """An agent's name and an answer in the record, both the payload."""
-    import conversation_log as cl
+    from jarvis import conversation_log as cl
     monkeypatch.setattr(server, "_resolve_or_explain", lambda name: (session, None, None))
     cl.connect(None)
     for kind, text in (("to_agent", HOSTILE), ("answer", HOSTILE), ("heard", HOSTILE)):
@@ -1325,13 +1325,13 @@ def _drive_agent_said(server, session, monkeypatch):
 
 
 def _drive_list_agents_by_row(server, session, monkeypatch):
-    import run_store
+    from jarvis import run_store
     monkeypatch.setattr(run_store, "list_agents", lambda: _agent_rows(session))
     return [server.tool_list_agents({})] + _drive_list_agents(server, session, monkeypatch)
 
 
 def _drive_set_agent_active(server, session, monkeypatch):
-    import run_store
+    from jarvis import run_store
     rows = _agent_rows(session)
     monkeypatch.setattr(run_store, "list_agents", lambda: rows)
     monkeypatch.setattr(run_store, "set_agent_active",
@@ -1343,7 +1343,7 @@ def _drive_set_agent_active(server, session, monkeypatch):
 
 
 def _drive_rename_agent(server, session, monkeypatch):
-    import run_store
+    from jarvis import run_store
     rows = _agent_rows(session)
     monkeypatch.setattr(run_store, "list_agents", lambda: rows)
     monkeypatch.setattr(server, "_rename_agent", lambda sid, name: (
@@ -1373,7 +1373,7 @@ DRIVERS["server._announce_reply"] = _drive_announce_reply
 # not know about at all.
 
 def _blank_run(**over):
-    import run_store
+    from jarvis import run_store
     now = time.time()
     run = {
         "id": "11111111-1111-4111-8111-111111111111",
@@ -1683,7 +1683,7 @@ def test_an_ordinary_session_completion_still_says_which_one(server, monkeypatch
 # assert that nothing the resolver says or returns carries it.
 
 def _hostile_project_sources(server, monkeypatch):
-    import session_watch
+    from jarvis import session_watch
 
     def _sess(cwd):
         s = _blank()
@@ -1888,7 +1888,7 @@ def _every_voice_name_session_watch_can_produce() -> list:
     """Every shape `_assign_voice_names` actually emits, produced by driving
     it — not typed here. The naming chain has three rules and each has its
     own format; a wall that admits only the first erases the other two."""
-    import session_watch
+    from jarvis import session_watch
 
     def _s(sid, cwd, title=None, state="idle", started=0.0):
         return session_watch.SessionState(
@@ -2025,7 +2025,7 @@ def test_an_ordinary_session_is_never_erased_by_the_wall(server, monkeypatch,
 def test_recent_tools_is_clipped_at_the_source():
     """Its three siblings in `recap_from` go through `_clip`; this one did
     not, so a transcript could put an unbounded string into a header line."""
-    import session_watch
+    from jarvis import session_watch
     recap = session_watch.recap_from([{
         "type": "assistant",
         "message": {"content": [{"type": "tool_use", "name": "A" * 5000}]},
@@ -2036,7 +2036,7 @@ def test_recent_tools_is_clipped_at_the_source():
 
 
 def test_an_ordinary_tool_name_is_untouched():
-    import session_watch
+    from jarvis import session_watch
     recap = session_watch.recap_from([{
         "type": "assistant",
         "message": {"content": [{"type": "tool_use", "name": "Bash"}]},

@@ -1,7 +1,7 @@
 import os
 import pytest
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 
 
@@ -19,7 +19,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
     import importlib
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     root = tmp_path / ".claude"
     watcher = sw.SessionWatcher(roots=[root], interval=999)

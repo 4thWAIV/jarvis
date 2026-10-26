@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_brain import _alive, _config, _wait_until  # noqa: E402
 
-import brain  # noqa: E402
+from jarvis import brain  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -335,7 +335,7 @@ def test_a_cache_rebuild_is_not_counted_as_the_conversation_growing():
     and again next turn under cache_read. Summing all three counted every
     cache miss as the conversation doubling. The window is the prompt as
     sent: input plus cache_read, and nothing else."""
-    import claude_provider
+    from jarvis import claude_provider
     # A cache-miss turn: everything was re-created, nothing was read.
     usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
              "cache_creation_input_tokens": 29_000, "output_tokens": 40}

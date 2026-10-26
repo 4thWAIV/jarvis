@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 
 

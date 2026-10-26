@@ -33,8 +33,8 @@ from pathlib import Path
 
 import pytest
 
-import repo_read
-import claude_provider
+from jarvis import repo_read
+from jarvis import claude_provider
 
 
 class _Actions:
@@ -56,11 +56,11 @@ def ready(monkeypatch, tmp_path):
     """A server with one real little repository on disk, and a fake editor."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -105,8 +105,8 @@ def no_ripgrep(monkeypatch):
 # --- registered in all three places ---------------------------------------
 
 def test_the_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _fake, _project = ready
     for name in ("repo_overview", "search_repo", "read_file", "open_in_editor"):
         assert name in server.TOOL_HANDLERS
@@ -136,7 +136,7 @@ async def test_a_watcher_turn_cannot_open_an_editor(ready, monkeypatch):
         current_origin = "session_event"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         blocked = client.post("/internal/tool",
@@ -677,7 +677,7 @@ async def test_an_editor_that_will_not_start_is_reported(ready, monkeypatch):
 def test_vs_code_is_preferred_but_not_required(monkeypatch):
     """Falls back to the system default, so this works on a Mac that has
     never had VS Code installed."""
-    import actions
+    from jarvis import actions
     monkeypatch.setattr(actions.shutil, "which", lambda name: None)
     monkeypatch.setattr(actions.os.path, "isdir", lambda p: False)
     assert actions._vscode_command("/tmp/x") is None
@@ -703,7 +703,7 @@ async def test_every_repo_tool_result_obeys_the_cap(ready, monkeypatch,
         current_origin = "user"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     calls = [
         ("repo_overview", {"project": "chitauri"}),

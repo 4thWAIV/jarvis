@@ -24,20 +24,20 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-import claude_provider
+from jarvis import claude_provider
 
 
 @pytest.fixture
 def ready(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import usage_store
+    from jarvis import usage_store
     importlib.reload(usage_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, usage_store
@@ -90,8 +90,8 @@ def _freeze(monkeypatch, server, usage_store, at: datetime = FROZEN_NOW):
 # --- registered in all three places ---------------------------------------
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _usage = ready
     assert "usage_status" in server.TOOL_HANDLERS
     assert "mcp__jarvis__usage_status" in claude_provider.ALLOWED_TOOLS
@@ -204,7 +204,7 @@ def test_a_threshold_warning_is_never_reported_as_cut_off(ready):
     """"allowed_warning" means a threshold was passed, NOT that you are
     blocked. Turning one into "you are cut off" is a bug this project has
     already shipped once, in brain.py."""
-    import brain
+    from jarvis import brain
     server, usage_store = ready
     assert "allowed_warning" not in claude_provider.BLOCKING_RATE_LIMIT_STATUSES
     usage_store.record({"status": "allowed_warning",
@@ -228,7 +228,7 @@ def test_a_real_rejection_is_reported_as_a_limit(ready):
 
 def test_the_blocking_statuses_come_from_one_place(ready):
     """Named from brain.py's set, so the two cannot drift apart."""
-    import brain
+    from jarvis import brain
     server, _usage = ready
     assert server.BLOCKING_RATE_LIMIT_STATUSES is \
         claude_provider.BLOCKING_RATE_LIMIT_STATUSES
@@ -247,7 +247,7 @@ def test_the_answer_fits_the_brains_budget(ready):
                                           "resetsAt": _at(days=3)},
                             "seven_day_opus": {"utilization": 0.11,
                                                "resetsAt": _at(days=3)}}})
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         r = client.post("/internal/tool",

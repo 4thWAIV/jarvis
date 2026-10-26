@@ -30,7 +30,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import screen as real_screen
+from jarvis import screen as real_screen
 
 
 # --- building real PNGs, with nothing but the standard library -------------

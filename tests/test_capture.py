@@ -13,15 +13,15 @@ import pytest
 from tests.test_session_steer import (FakeBrain, FakeSpeech, Harness, _Client,  # noqa: F401
                                       _fake_session_state, _wait_for_receipt,
                                       fake_session, wired)
-import claude_provider
+from jarvis import claude_provider
 
 
 @pytest.fixture(autouse=True)
 def _agents(wired, monkeypatch):
     """The agents a capture can be for: who it is to is settled when it is
     made, through the agent directory."""
-    import agent_directory
-    import session_watch as sw
+    from jarvis import agent_directory
+    from jarvis import session_watch as sw
     snap = sw.Snapshot(sessions=[
         sw.SessionState(session_id=sid, cwd=f"/p/{project}", project=project,
                         state="idle", voice_name=name, steerable=True,
@@ -160,7 +160,7 @@ async def test_a_send_uses_the_capture_s_text_shows_transmitting_then_clears(
         server.STEER_SIGNATURE + "Use Postgres, not SQLite."
     assert [s for _, s, _ in _captures(emitted)] == ["capturing", "transmitting", None]
     assert speech.said == [], "never read out a second time, and sent is not delivered"
-    import run_store
+    from jarvis import run_store
     (m,) = run_store.list_messages()
     assert (m.capture_id, m.body, m.status) == (1, "Use Postgres, not SQLite.", "sent"), \
         "the message records the capture it came from"
@@ -202,7 +202,7 @@ class _ReadingBrain:
         on_tool()
         self.read_result = await self._server.tool_read_capture({"capture": 1})
         on_delta("Shall I send it, sir?")
-        import brain
+        from jarvis import brain
         return brain.TurnResult(origin=origin, text="Shall I send it, sir?",
                                 stop_reason="result")
 
@@ -266,7 +266,7 @@ class _TwoTurnBrain(_ReadingBrain):
         if text.endswith("first"):
             await self.release.wait()
             on_delta("Done, sir.")
-            import brain
+            from jarvis import brain
             return brain.TurnResult(origin=origin, text="Done, sir.", stop_reason="result")
         return await super().turn(text, origin, on_delta, on_tool)
 
@@ -321,7 +321,7 @@ async def test_read_capture_outside_a_turn_reads_it_on_its_own(wired, monkeypatc
     assert [s for _, s, _ in _captures(emitted)] == ["capturing", "reading", "capturing"]
 
 def test_the_capture_tools_are_acting_tools_offered_to_the_brain(wired):
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     specs = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}
     for name in ("capture", "read_capture", "merge_captures", "clear_capture"):
         assert name in specs and name in wired.ACTING_TOOLS, name
@@ -389,8 +389,8 @@ async def test_several_open_captures_are_each_sent_on_their_own_by_number(wired,
 def test_the_brain_has_no_way_to_write_a_message_itself():
     """Every message is a capture: steer_session takes no text, and Claude
     Code's own messaging tools are not among the brain's tools."""
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     steer = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}["steer_session"]["inputSchema"]
     assert set(steer["properties"]) == {"name", "capture", "priority"}
     assert not {"SendMessage", "ListAgents"} & set(claude_provider.ALLOWED_TOOLS)
@@ -452,7 +452,7 @@ async def test_the_brain_can_clear_capture_boxes_and_a_cleared_one_is_never_sent
 def _press(server, number, action):
     """A button on the capture box, as the page presses it."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
     return TestClient(server.app).post(
         f"/api/capture/{number}/{action}",
         headers={"Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
@@ -491,7 +491,7 @@ async def test_delete_closes_the_box_and_cancels_a_staged_send(
 
     assert r.status_code == 200
     assert server._captures == {} and server._staged_steers == []
-    import run_store
+    from jarvis import run_store
     assert [m.status for m in run_store.list_messages()] == ["cancelled"]
     assert "deleted capture 1" in server._with_notes_for_brain("")
     assert _press(server, 1, "delete").status_code == 404

@@ -22,9 +22,9 @@ import json
 
 import pytest
 
-import preflight
+from jarvis import preflight
 from tests.fixtures.captures import captured
-import claude_provider
+from jarvis import claude_provider
 
 
 @pytest.fixture
@@ -38,11 +38,11 @@ def settings(monkeypatch, tmp_path):
 def wired(monkeypatch, tmp_path, settings):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, settings
@@ -186,7 +186,7 @@ class _RecordingSpeech:
 
 
 async def _perform_one(server, monkeypatch):
-    import session_steer
+    from jarvis import session_steer
     speech = _RecordingSpeech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(session_steer, "post_to_session",
@@ -225,8 +225,8 @@ async def test_with_the_setting_on_there_is_no_warning(wired, monkeypatch):
 # --- the tool -------------------------------------------------------------
 
 def test_it_is_an_acting_tool(wired):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _settings = wired
     assert "enable_session_inbox" in server.TOOL_HANDLERS
     assert "enable_session_inbox" in server.ACTING_TOOLS

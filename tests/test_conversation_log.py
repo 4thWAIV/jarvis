@@ -8,8 +8,8 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-import conversation_log as cl
-from conversation_log import ConversationItem, ItemKind
+from jarvis import conversation_log as cl
+from jarvis.conversation_log import ConversationItem, ItemKind
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -17,9 +17,9 @@ ORIGIN = {"Origin": "http://localhost:5173"}
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
     heard = []
@@ -80,11 +80,11 @@ def test_an_item_without_words_is_refused(store):
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     hints = []
@@ -143,7 +143,7 @@ async def test_every_writer_point_records_its_item_once(server, monkeypatch):
 
 def test_the_brain_recalls_an_agent_s_thread_as_untrusted(server, monkeypatch):
     srv, run_store, _ = server
-    import session_watch as sw
+    from jarvis import session_watch as sw
     hammer = sw.SessionState(session_id="h", cwd="/p/hammer", project="hammer", state="idle",
                              voice_name="hammer", steerable=True)
     monkeypatch.setattr(srv, "_resolve_or_explain", lambda n: (hammer, None, None))
@@ -167,8 +167,8 @@ def test_the_brain_recalls_an_agent_s_thread_as_untrusted(server, monkeypatch):
 @pytest.fixture
 def captures(server, monkeypatch):
     srv, run_store, hints = server
-    import agent_directory
-    import session_watch as sw
+    from jarvis import agent_directory
+    from jarvis import session_watch as sw
     snap = sw.Snapshot(sessions=[sw.SessionState(session_id="h", cwd="/p/hammer", project="hammer",
                                                  state="idle", voice_name="hammer", steerable=True)])
     monkeypatch.setattr(agent_directory, "_snapshot", lambda: snap)

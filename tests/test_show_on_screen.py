@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     sent = []
 
@@ -73,7 +73,7 @@ def test_nothing_shown_is_kept_on_the_server(server):
 
 
 def test_the_brain_is_offered_the_tool_and_it_is_neither_acting_nor_tainting(server):
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     assert "show_on_screen" in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "show_on_screen" not in server.ACTING_TOOLS
     assert "show_on_screen" in server.TAINT_EXEMPT_TOOLS
@@ -162,7 +162,7 @@ def test_a_bare_web_address_is_never_spoken(server):
 def test_every_server_line_says_its_kind():
     import ast
     from pathlib import Path
-    tree = ast.parse((Path(__file__).parent.parent / "server.py").read_text())
+    tree = ast.parse((Path(__file__).parent.parent / "jarvis" / "server.py").read_text())
     unlabelled = [n.lineno for n in ast.walk(tree)
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                   and n.func.attr == "say" and isinstance(n.func.value, ast.Name)
@@ -173,7 +173,7 @@ def test_every_server_line_says_its_kind():
 
 async def _first_audio_kind(make):
     """The kind on the first audio message a scheduler sends for `make(sched)`."""
-    import speech as speech_module
+    from jarvis import speech as speech_module
     sent = []
 
     async def emit(msg):

@@ -27,11 +27,11 @@ import pytest
 def ready(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     # No projects at all: everything below must work off the self-reference,
@@ -51,15 +51,15 @@ def test_his_own_root_is_derived_from_the_code_not_configured(ready):
     a git worktree, which is where this very test is running."""
     server = ready
     assert server._jarvis_source_root() == Path(
-        os.path.realpath(os.path.dirname(server.__file__)))
-    assert (server._jarvis_source_root() / "server.py").is_file()
+        os.path.realpath(os.path.dirname(os.path.dirname(server.__file__))))
+    assert (server._jarvis_source_root() / "jarvis" / "server.py").is_file()
 
 
 def test_the_root_ignores_the_environment(ready, monkeypatch):
     monkeypatch.setenv("JARVIS_DATA_DIR", "/nowhere")
     monkeypatch.setenv("JARVIS_PROJECTS_DIR", "/nowhere")
     server = ready
-    assert (server._jarvis_source_root() / "server.py").is_file()
+    assert (server._jarvis_source_root() / "jarvis" / "server.py").is_file()
 
 
 # --- what he answers to ----------------------------------------------------
@@ -109,7 +109,7 @@ async def test_he_can_find_where_something_lives_in_himself(ready):
 async def test_he_can_read_his_own_source(ready):
     server = ready
     answer = await server.tool_read_file({"project": "jarvis",
-                                          "path": "run_store.py",
+                                          "path": "jarvis/run_store.py",
                                           "around": "def init_db"})
     assert "run_store.py, lines" in answer
     assert "def init_db" in answer
@@ -134,7 +134,7 @@ async def test_the_refusal_is_not_simply_everything_failing(ready):
     non-secret file must come back."""
     server = ready
     answer = await server.tool_read_file({"project": "jarvis",
-                                          "path": ".env.example"})
+                                          "path": "jarvis/.env.example"})
     assert answer != server.REPO_SENSITIVE_REFUSAL
     assert "FISH_API_KEY" in answer, "the documented template should read fine"
 
@@ -155,7 +155,7 @@ def test_his_own_loopback_token_is_refused(ready):
     bearer token that is the only thing between a local process and every
     acting tool he has. `data/` defaults to a directory inside the repo, so
     this is not hypothetical. Refused by the existing wall, by exact name."""
-    import repo_read
+    from jarvis import repo_read
     assert repo_read.sensitive_reason(Path("data/jarvis/tool-token"))
     assert repo_read.sensitive_reason(Path("tokenizer.py")) is None, (
         "'token' as a fragment would refuse ordinary code")

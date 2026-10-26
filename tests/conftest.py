@@ -65,7 +65,7 @@ def refusal_on(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _never_spawn_a_real_brain(monkeypatch):
-    """server.lifespan builds the brain but must not start `claude` under test,
+    """jarvis.server.lifespan builds the brain but must not start `claude` under test,
     nor read the keychain and call Anthropic for the usage limits."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
     monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
@@ -89,7 +89,7 @@ def _never_post_a_real_notification(monkeypatch, request):
     """
     if request.module.__name__.endswith("test_notifier"):
         return
-    import notifier
+    from jarvis import notifier
 
     async def _blocked(*args, **kwargs):
         raise AssertionError("a test tried to post a real macOS notification; "

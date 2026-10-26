@@ -22,7 +22,7 @@
  * the Diagnostics views draw.
  */
 
-import protocol from "./transcribeProtocol.json";
+import protocol from "../../jarvis/transcribeProtocol.json";
 import { healthHeard, healthLost, takeTelemetry } from "./voiceHealth";
 import workletUrl from "./pcm-worklet.ts?worker&url";
 

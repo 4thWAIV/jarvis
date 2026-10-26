@@ -11,8 +11,8 @@ os.environ.setdefault("JARVIS_BRAIN_AUTOSTART", "0")
 
 import pytest
 
-import preflight
-import server
+from jarvis import preflight
+from jarvis import server
 
 
 def _check(name, status, message="x", remedy="do the thing"):

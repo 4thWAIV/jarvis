@@ -8,8 +8,8 @@ import asyncio
 import pytest
 import pytest_asyncio
 
-import server
-from speech import END_OF_TURN_SEC, Priority, SpeechScheduler
+from jarvis import server
+from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
 from tests.test_speech import Harness
 
 

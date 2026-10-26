@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import server
+from jarvis import server
 
 
 def test_only_the_exact_command_is_recognised():
