@@ -1336,7 +1336,9 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 14px 0 0;
+  /* The same side margins the boxes had in the Diagnostics tab (.right-view),
+     so they keep that size, centred in the column. */
+  padding: 14px 12px 0;
 }
 
 /* The account (WeeklyUsage.tsx): two rows of the same height, the avatar and
