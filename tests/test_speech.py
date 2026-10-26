@@ -250,13 +250,18 @@ async def test_no_proactive_speech_while_user_is_talking(h):
 
 
 @pytest.mark.asyncio
-async def test_turn_reply_starts_even_though_user_just_spoke(h):
+async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
+    """A reply never starts over him: it waits for end_of_turn of quiet
+    (capped at pause_after, 0.2 s here), then starts without the longer
+    pause announcements wait for. tests/test_turn_taking.py has the rest."""
     s = h.sched
     await s.user_final("what time is it")
     u = s.begin_turn()
     s.feed(u, "Half past nine, sir.")
     await s.end_turn(u)
     await asyncio.sleep(0.1)
+    assert h.audio() == []
+    await asyncio.sleep(0.2)
     assert h.audio() == [(u.id, 0, "Half past nine, sir.")]
 
 

@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -104,7 +104,7 @@ import jarvis_memory
 import notifier
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
-from speech import Priority, SpeechScheduler
+from speech import END_OF_TURN_SEC, Priority, SpeechScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 log = logging.getLogger("jarvis")
@@ -2225,7 +2225,8 @@ async def _run_preflight() -> None:
     if speech is not None and any(c.status == preflight.STATUS_FAIL for c in checks):
         summary = preflight.spoken_summary(checks)
         if summary:
-            await speech.say(summary, label="system")
+            # His own news, not an answer: it waits for a pause like any other.
+            await speech.say(summary, label="announcement")
 
 
 def _session_providers() -> list:
@@ -4623,6 +4624,54 @@ _capture_ids = itertools.count(1)
 _turn_utt = None
 _turn_heard: Optional[int] = None
 _turn_lock = asyncio.Lock()
+
+
+class _Utterance:
+    """What he says, gathered until he has finished. Each final the
+    recogniser gives is held for END_OF_TURN_SEC, and anything more he says
+    in that time (an interim or another final) joins it and starts the wait
+    again, so a pause mid-sentence does not send the brain half a sentence.
+    `send` gets the whole of it once he has been quiet that long, with the
+    id of the last final in it. What he types is not gathered: `now` sends
+    whatever was heard first, then the caller handles the typed words."""
+
+    def __init__(self, send: Callable[[str, Optional[int]], Awaitable[None]],
+                 hold: float = END_OF_TURN_SEC) -> None:
+        self._send = send
+        self._hold = hold
+        self._parts: list[str] = []
+        self._heard: Optional[int] = None
+        self._timer: Optional[asyncio.TimerHandle] = None
+
+    def heard(self, text: str, heard: Optional[int]) -> None:
+        self._parts.append(text)
+        self._heard = heard if heard is not None else self._heard
+        self._wait()
+
+    def still_talking(self) -> None:
+        if self._parts:
+            self._wait()
+
+    async def now(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if not self._parts:
+            return
+        text, heard = " ".join(self._parts), self._heard
+        self._parts, self._heard = [], None
+        await self._send(text, heard)
+
+    def drop(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+        self._parts, self._heard, self._timer = [], None, None
+
+    def _wait(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = asyncio.get_running_loop().call_later(
+            self._hold, lambda: _spawn(self.now()))
 
 
 def _transcript_id(msg: dict) -> Optional[int]:
@@ -9089,6 +9138,26 @@ async def voice_handler(ws: WebSocket):
     await ws.accept()
     queue = _add_voice_client(ws)
     log.info("Voice WebSocket connected")
+
+    async def take_utterance(text: str, heard: Optional[int], typed: bool = False) -> None:
+        """One whole thing he said (or typed): record it, and answer it."""
+        log.info(f"User{' (typed)' if typed else ''}: {text}")
+        _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
+                text)
+        cleared = _take_clear_answer(text)
+        if cleared:
+            return
+        if cleared is None and _is_fresh_start(text):
+            _spawn(_ask_to_clear(text))
+            return
+        if cleared is False and _rotation_answer(text) is False:
+            return                  # a plain no: consumed, not a request
+        if _take_rotation_answer(text):
+            return
+        _spawn(_handle_utterance(text, heard))
+
+    utterance = _Utterance(take_utterance)
+
     try:
         # Through this client's own queue, not straight down the socket, so
         # the opening frames cannot be overtaken by a broadcast that lands
@@ -9141,7 +9210,8 @@ async def voice_handler(ws: WebSocket):
                 # wrong happened after this point.
                 text = str(msg.get("text", ""))
                 log.info("mic-hears: %s", text[-70:])
-                await speech.user_interim(text)
+                if await speech.user_interim(text) == "speech":
+                    utterance.still_talking()
             elif kind == "played":
                 try:
                     # OverflowError is in there because `int(float('inf'))`
@@ -9178,25 +9248,18 @@ async def voice_handler(ws: WebSocket):
                         else "with nothing of his played yet"
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
-                log.info(f"User{' (typed)' if typed else ''}: {text}")
-                _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
-                        text)
-                cleared = _take_clear_answer(text)
-                if cleared:
-                    continue
-                if cleared is None and _is_fresh_start(text):
-                    _spawn(_ask_to_clear(text))
-                    continue
-                if cleared is False and _rotation_answer(text) is False:
-                    continue                # a plain no: consumed, not a request
-                if _take_rotation_answer(text):
-                    continue
-                _spawn(_handle_utterance(text, _transcript_id(msg)))
+                if typed:
+                    await utterance.now()
+                    await take_utterance(text, _transcript_id(msg), typed=True)
+                else:
+                    utterance.heard(text, _transcript_id(msg))
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:
         log.error(f"WebSocket error: {e}", exc_info=True)
     finally:
+        # Words still being gathered when the page went are sent, not lost.
+        _spawn(utterance.now())
         _drop_voice_client(ws)
 
 

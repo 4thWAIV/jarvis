@@ -355,12 +355,21 @@ class _Spoken:
                                           # is playing only until here
 
 
+# How long he must have been quiet before JARVIS takes it that he has
+# finished. The server waits this long after the last words it heard before
+# it sends them to the brain (so a pause mid-sentence does not send half of
+# it), and nothing JARVIS says starts while he has spoken more recently than
+# this, his replies included.
+END_OF_TURN_SEC = 1.5
+
+
 class SpeechScheduler:
     """Owns the mouth. Everything JARVIS says goes through here (spec §4)."""
 
     def __init__(self, synthesize: Synthesize, emit: Emit, *,
                  prepare: Optional[Callable[[str], str]] = None, prefetch: int = 2,
                  batch_interval: float = 20.0, pause_after: float = 3.0,
+                 end_of_turn: Optional[float] = None,
                  stale_after: float = 60.0, echo_window: float = 6.0,
                  batch_settle: float = 2.0, ack_timeout: float = 45.0,
                  transport_ready: Optional[Callable[[], bool]] = None,
@@ -383,6 +392,9 @@ class SpeechScheduler:
         self.prefetch = prefetch
         self.batch_interval = batch_interval
         self.pause_after = pause_after
+        # Never longer than announcements wait for him (pause_after).
+        self.end_of_turn = min(END_OF_TURN_SEC if end_of_turn is None else end_of_turn,
+                               pause_after)
         self.stale_after = stale_after
         self.echo_window = echo_window
         self.bridges = bridges
@@ -564,8 +576,10 @@ class SpeechScheduler:
     async def say(self, text: str, priority: Priority = Priority.NORMAL,
                   immediate: Optional[bool] = None, label: str = "system") -> Utterance:
         """A complete utterance. NORMAL starts at once; LOW/URGENT wait for a pause
-        unless `immediate` says otherwise. LOW is batched: the returned utterance
-        becomes done when the merged announcement it joined has been spoken."""
+        unless `immediate` says otherwise, and so does an announcement at any
+        priority: what JARVIS raises on his own never starts while he is
+        talking. LOW is batched: the returned utterance becomes done when the
+        merged announcement it joined has been spoken."""
         if priority == Priority.LOW and immediate is not True:
             u = self._new(priority, "batched", immediate=False, label=label)
             u.chunks.append(Chunk(text.strip()))
@@ -575,7 +589,7 @@ class SpeechScheduler:
             self._kick_later(self.batch_settle)
             return u
         if immediate is None:
-            immediate = priority == Priority.NORMAL
+            immediate = priority == Priority.NORMAL and label != "announcement"
         u = self._new(priority, "say", immediate=immediate, label=label)
         self._fill(u, text)
         self._pending.append(u)
@@ -698,6 +712,7 @@ class SpeechScheduler:
         verdict = self.classify(text, allow_cancel=False, allow_replay=False)
         if verdict == "speech":
             self._last_user_speech = self._clock()
+            self._kick_later(self.end_of_turn)
             self._kick_later(self.pause_after)
             if self._speaking and self._should_interrupt(text):
                 await self.barge_in(reason=f"heard {text[:40]!r}")
@@ -794,8 +809,11 @@ class SpeechScheduler:
         verdict = self.classify(text, typed=typed)
         if verdict == "echo":
             return verdict
-        self._last_user_speech = self._clock()
-        self._kick_later(self.pause_after)
+        if not typed:
+            # Typing is not talking: what he typed is answered at once.
+            self._last_user_speech = self._clock()
+            self._kick_later(self.end_of_turn)
+            self._kick_later(self.pause_after)
         is_cancel_word = " ".join(_tokens(text)) in self.cancel_words
         if verdict == "cancel":
             self._cancel_event.set()
@@ -966,8 +984,15 @@ class SpeechScheduler:
     def _user_silent(self, now: float) -> bool:
         return self._last_user_speech is None or now - self._last_user_speech >= self.pause_after
 
+    def _user_finished(self, now: float) -> bool:
+        return self._last_user_speech is None or now - self._last_user_speech >= self.end_of_turn
+
     def _startable(self, u: Utterance, now: float) -> bool:
-        return not u.cancelled and (u.immediate or self._user_silent(now))
+        """Even an immediate utterance (a reply) waits until he has been
+        quiet for `end_of_turn`: JARVIS never starts talking over him."""
+        if u.cancelled or not self._user_finished(now):
+            return False
+        return u.immediate or self._user_silent(now)
 
     def _settle(self, utt_id: int, *, above: int = -1) -> None:
         """Chunks the client will never play (dropped or cancelled) count as heard now."""
