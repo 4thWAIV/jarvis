@@ -69,7 +69,7 @@ from collections.abc import Mapping
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -103,6 +103,7 @@ import dialog
 import jarvis_memory
 import notifier
 import transcription_api
+import voice_diagnostics
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
@@ -6308,6 +6309,41 @@ async def api_record_workflow_event(workflow_id: str, req: WorkflowEventRequest)
     return {"workflow": _workflow_json(w)}
 
 
+# --- Voice diagnostics (voice_diagnostics.py) -------------------------------
+
+# The most one read of the record may span: the Diagnostics view's longest range.
+VOICE_HISTORY_MAX_SEC = 24 * 3600
+
+
+@app.get("/api/voice/diagnostics")
+async def api_voice_diagnostics():
+    """What the Diagnostics tab draws: the state and its cause, each stage
+    of the pipeline, the last two minutes, the last hour's incidents and
+    today's totals."""
+    return await asyncio.to_thread(voice_diagnostics.summary)
+
+
+@app.get("/api/voice/diagnostics/samples")
+async def api_voice_diagnostics_samples(start: float = Query(alias="from"),
+                                        end: float = Query(alias="to")):
+    """The record between two times (unix seconds), for the Diagnostics
+    view's timeline, incidents and messages."""
+    if not (end > start and end - start <= VOICE_HISTORY_MAX_SEC):
+        raise HTTPException(400, f"from must be before to, at most {VOICE_HISTORY_MAX_SEC} s apart")
+    samples, events = await asyncio.to_thread(voice_diagnostics.history, start, end)
+    return {"samples": [voice_diagnostics.sample_json(x) for x in samples],
+            "events": [voice_diagnostics.event_json(e) for e in events]}
+
+
+def _hint_voice(_event=None) -> None:
+    """Tell every open page the voice record has a new event, so the
+    Diagnostics views read it again. Content-free, like the other hints."""
+    _send_to_session_clients({"type": "voice"})
+
+
+voice_diagnostics.listeners.append(_hint_voice)
+
+
 @app.get("/api/workflows")
 async def api_list_workflows():
     """Every workflow, running ones and the most recently finished."""
@@ -9156,6 +9192,8 @@ async def voice_handler(ws: WebSocket):
             elif kind == "transcript" and msg.get("isFinal"):
                 # Typed words are what he wrote: no mis-hearings to correct.
                 typed = msg.get("typed") is True
+                if typed:
+                    voice_diagnostics.note_typed()
                 text = str(msg.get("text", "")).strip()
                 if not typed:
                     text = apply_speech_corrections(text)

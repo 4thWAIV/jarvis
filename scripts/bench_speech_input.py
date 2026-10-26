@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Measure the local speech model on this Mac, through transcriber.py's own
-engine and session classes, with the model's bundled public sample WAVs.
+engine and session classes, on spoken commands made with macOS's `say`.
 
     .venv/bin/python scripts/bench_speech_input.py [--threads 1 2 4] [--json]
 
@@ -15,9 +15,11 @@ memory are its own. For each it records:
   at real-time pace and then silence until the final arrives.
 - silence: finals produced by 30 s of silence (must be none).
 - repeat: finals for the same sentence said twice with a pause (must be two).
-- peak_rss_mb, and the WER of each sample against its reference.
+- peak_rss_mb, and the WER of each command against its words.
 
-It reads no microphone and records nothing.
+The commands are synthesised with `say` at 16 kHz into a temporary folder,
+each after half a second of silence. It reads no microphone and keeps
+nothing.
 """
 from __future__ import annotations
 
@@ -25,8 +27,10 @@ import argparse
 import json
 import re
 import resource
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -36,6 +40,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import transcriber  # noqa: E402
 
 FRAME = transcriber.PROTOCOL["frameBytes"]
+# What the benchmark says, in the shape of things said to JARVIS.
+COMMANDS = (
+    "send a message to agent guard asking for its current status",
+    "don't restart the server until the tests pass",
+    "read me the most recent reply from diagnostics",
+    "remind me at three thirty to call the bank",
+)
+LEAD_SILENCE = b"\x00" * (transcriber.BYTES_PER_SECOND // 2)
+
+
+def _spoken(text: str, folder: Path) -> bytes:
+    """`text` said by macOS's default voice, as 16 kHz PCM16."""
+    path = folder / f"{abs(hash(text))}.wav"
+    subprocess.run(["say", "-o", str(path), "--data-format=LEI16@16000", text], check=True)
+    return LEAD_SILENCE + _wav(path)
 SILENCE = b"\x00" * FRAME
 
 
@@ -121,31 +140,30 @@ def _finals(engine, pcm: bytes) -> list[str]:
 
 
 def child(threads: int) -> dict:
-    wavs = transcriber.model_dir() / "test_wavs"
-    refs = dict(line.split(" ", 1) for line in
-                (wavs / "trans.txt").read_text().strip().splitlines())
+    folder = Path(tempfile.mkdtemp(prefix="jarvis-bench-"))
+    clips = {text: _spoken(text, folder) for text in COMMANDS}
     t = time.monotonic()
     engine = transcriber.SherpaEngine(threads=threads)
     load = time.monotonic() - t
     cpu0 = time.process_time()
     wall0 = time.monotonic()
     result: dict = {"threads": threads, "load": load, "samples": {}}
-    for name in ("0.wav", "1.wav"):
-        pcm = _wav(wavs / name)
+    for name, pcm in clips.items():
         fast = _fast(engine, pcm)
         rt = _realtime(engine, pcm)
         result["samples"][name] = {
             **{k: fast[k] for k in ("rtf", "chunk_ms_mean", "chunk_ms_max")},
             "first_interim": rt["first_interim"], "final": rt["final"],
-            "wer_fast": _wer(refs[name], fast["text"]),
-            "wer_realtime": _wer(refs[name], rt["text"]),
+            "wer_fast": _wer(name, fast["text"]),
+            "wer_realtime": _wer(name, rt["text"]),
             "text": rt["text"]}
     result["cpu_share"] = (time.process_time() - cpu0) / (time.monotonic() - wall0)
     result["silence_finals"] = len(_finals(engine, b"\x00" * transcriber.BYTES_PER_SECOND * 30))
-    zero = _wav(wavs / "0.wav")
+    zero = clips[COMMANDS[0]]
     pause = b"\x00" * transcriber.BYTES_PER_SECOND * 2
     result["repeat_finals"] = _finals(engine, zero + pause + zero)
     result["peak_rss_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1 << 20)
+    shutil.rmtree(folder, ignore_errors=True)
     return result
 
 

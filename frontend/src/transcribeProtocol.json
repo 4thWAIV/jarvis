@@ -10,7 +10,8 @@
   "startupBufferSec": 10.0,
   "interimEverySec": 0.2,
   "finishLimitSec": 5.0,
-  "fromBrowser": ["start", "finish", "abort"],
-  "fromServer": ["loading", "ready", "interim", "final", "finished", "error"],
+  "telemetryEverySec": 1.0,
+  "fromBrowser": ["start", "finish", "abort", "telemetry"],
+  "fromServer": ["loading", "ready", "interim", "final", "finished", "error", "health"],
   "errors": ["busy", "model-unavailable", "invalid-format", "overload", "decoder-failed", "interrupted"]
 }

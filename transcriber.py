@@ -1,7 +1,14 @@
 """
-transcriber.py — the ears. Local English speech recognition: NVIDIA's
-Nemotron Speech Streaming EN 0.6B (the 560 ms int8 export) through
+transcriber.py — the ears. Local English speech recognition: Banafo's
+Kroko streaming Zipformer (the 2025-08-06 English community model) through
 sherpa-onnx, on the CPU, with nothing sent off the machine.
+
+Kroko replaced NVIDIA's Nemotron Speech Streaming EN 0.6B, which decoded at
+0.5 of real time on an idle i9-9980HK but fell to 2.4 times slower than real
+time when the machine was busy, so speech was dropped. Measured on the same
+machine and audio, with eight CPU-bound processes running, Kroko decodes at
+0.27 of real time (0.09 idle), with fewer word errors on spoken commands
+(2.7% against 3.6%), in a quarter of the memory.
 
 Three layers, each usable without the one above it:
 
@@ -53,26 +60,28 @@ BYTES_PER_SECOND = SAMPLE_RATE * 2
 QUEUE_LIMIT_SEC: float = PROTOCOL["queueLimitSec"]
 INTERIM_EVERY_SEC: float = PROTOCOL["interimEverySec"]
 
-MODEL_NAME = "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
+MODEL_NAME = "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
              f"asr-models/{MODEL_NAME}.tar.bz2")
 # The digest GitHub publishes for that release asset (its `digest` field),
 # checked before anything is extracted.
-MODEL_SHA256 = "78e2b79fcf7271553a74402a76b771b09ea40117a39566a79f52235b23db6358"
-MODEL_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx",
-               "tokens.txt")
+MODEL_SHA256 = "c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834"
+ENCODER, DECODER, JOINER, TOKENS = "encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"
+MODEL_FILES = (ENCODER, DECODER, JOINER, TOKENS)
 SETUP_COMMAND = ".venv/bin/python scripts/setup_speech_input.py"
 
-# The fewest threads that keep up: on an Intel i9-9980HK, one thread decodes
-# at 0.75-0.77 of real time (too close to falling behind), two at 0.50-0.54.
+# Two threads leave headroom for a busy machine: 0.27 of real time with eight
+# CPU-bound processes running beside it, on an Intel i9-9980HK.
 DEFAULT_THREADS = 2
 # Trailing silence, after words, that ends a segment. sherpa-onnx's default
-# is 1.2 s; the plan's gate is a final within 1.5 s of the end of speech, and
-# a 560 ms chunk is added on top of whatever this is.
+# is 1.2 s. With Kroko the final arrives about 1.7 s after the last word at
+# 0.8, and only 0.1 s sooner at 0.5, so the longer pause that keeps a
+# sentence with a pause in it whole is kept.
 ENDPOINT_SILENCE_SEC = 0.8
 # Silence fed after the last audio on finish, so the model's look-ahead sees
-# the end of the last word before the stream is closed.
-TAIL_PADDING_SEC = 0.66
+# the end of the last word before the stream is closed: Kroko drops the last
+# words with less than 1.5 s (17% of command words lost at 0.66 s, none at 1.5).
+TAIL_PADDING_SEC = 1.5
 
 
 def model_dir() -> Path:
@@ -127,8 +136,8 @@ def pcm16_to_float(pcm: bytes) -> list[float]:
 
 
 class SherpaEngine:
-    """The real recognizer. Building it loads the model (seconds, and about
-    a gigabyte of memory), so it is built on the worker thread, once."""
+    """The real recognizer. Building it loads the model (a few seconds, and
+    about 260 MB of memory), so it is built on the worker thread, once."""
 
     def __init__(self, directory: Optional[Path] = None,
                  threads: int = DEFAULT_THREADS) -> None:
@@ -144,10 +153,10 @@ class SherpaEngine:
                 f"({sys.executable}). Run .venv/bin/pip install -r requirements.txt."
             ) from exc
         self._recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-            tokens=str(directory / "tokens.txt"),
-            encoder=str(directory / "encoder.int8.onnx"),
-            decoder=str(directory / "decoder.int8.onnx"),
-            joiner=str(directory / "joiner.int8.onnx"),
+            tokens=str(directory / TOKENS),
+            encoder=str(directory / ENCODER),
+            decoder=str(directory / DECODER),
+            joiner=str(directory / JOINER),
             num_threads=threads,
             sample_rate=SAMPLE_RATE,
             feature_dim=80,
@@ -227,6 +236,16 @@ class TranscriptionError(Exception):
 Status = Literal["idle", "loading", "ready", "failed", "closed"]
 
 
+@dataclass
+class Window:
+    """One capture's counts over a stretch of time: audio in, audio
+    decoded, the worker's time spent decoding it, and finals produced."""
+    received_bytes: int = 0
+    decoded_bytes: int = 0
+    decode_sec: float = 0.0
+    finals: int = 0
+
+
 class Capture:
     """One admitted recognition session, as the socket sees it. Audio goes
     in with `feed`; events come out of `events()` until the capture ends.
@@ -240,6 +259,8 @@ class Capture:
         self._out: asyncio.Queue = asyncio.Queue()
         self.pending_bytes = 0
         self._oldest: list[float] = []   # enqueue times of audio not yet decoded
+        self._lagging = False
+        self._window = Window()          # since the last take_window()
         self._last_interim = 0.0
         self._held: Optional[RecognitionEvent] = None
         self._held_timer: Optional[asyncio.TimerHandle] = None
@@ -257,8 +278,21 @@ class Capture:
             raise TranscriptionError(
                 "overload", "Speech recognition fell behind, so this was not heard.")
         self.pending_bytes += len(pcm)
+        self._window.received_bytes += len(pcm)
         self._oldest.append(now)
         self._service._submit(("audio", self.generation, pcm))
+
+    def backlog(self) -> tuple[float, float]:
+        """Seconds of audio waiting to be decoded, and how long the oldest
+        of it has waited."""
+        oldest = time.monotonic() - self._oldest[0] if self._oldest else 0.0
+        return self.pending_bytes / BYTES_PER_SECOND, oldest
+
+    def take_window(self) -> "Window":
+        """What happened since the last call (voice_diagnostics samples it
+        once a second), and start a new window."""
+        window, self._window = self._window, Window()
+        return window
 
     async def finish(self) -> None:
         """Decode what is already queued, emit its final, and end."""
@@ -283,17 +317,27 @@ class Capture:
 
     # Called on the event loop by the service, never by the worker directly.
     def _deliver(self, consumed: int, events: list[RecognitionEvent],
-                 error: Optional[TranscriptionError], finished: bool) -> None:
+                 error: Optional[TranscriptionError], finished: bool,
+                 decode_sec: float = 0.0) -> None:
         if self.closed:
             return
+        self._window.decode_sec += decode_sec
         if consumed:
             self.pending_bytes -= consumed
+            self._window.decoded_bytes += consumed
             if self._oldest:
                 delay = time.monotonic() - self._oldest.pop(0)
-                if delay > QUEUE_LIMIT_SEC / 2:
+                lagging = delay > QUEUE_LIMIT_SEC / 2
+                # Once per episode, not once per frame: a slow decoder
+                # otherwise writes ten lines a second.
+                if lagging and not self._lagging:
                     log.warning("speech decoding is %.2fs behind the microphone", delay)
+                elif self._lagging and not lagging:
+                    log.info("speech decoding caught up")
+                self._lagging = lagging
         for event in events:
             if event.kind == "final":
+                self._window.finals += 1
                 self._cancel_held()
                 self._out.put_nowait(event)
             else:
@@ -365,6 +409,11 @@ class TranscriptionService:
             raise TranscriptionError(
                 "model-unavailable", self.failure or "Speech input is not running.")
 
+    @property
+    def active(self) -> Optional[Capture]:
+        """The capture now admitted, if any."""
+        return self._active
+
     def admit(self) -> Capture:
         """The one capture, or busy if another page already has it."""
         if self.status in ("failed", "closed", "idle"):
@@ -400,11 +449,11 @@ class TranscriptionService:
     def _post(self, generation: int, consumed: int = 0,
               events: Optional[list[RecognitionEvent]] = None,
               error: Optional[TranscriptionError] = None,
-              finished: bool = False) -> None:
+              finished: bool = False, decode_sec: float = 0.0) -> None:
         def deliver() -> None:
             capture = self._active
             if capture is not None and capture.generation == generation:
-                capture._deliver(consumed, events or [], error, finished)
+                capture._deliver(consumed, events or [], error, finished, decode_sec)
         self._loop.call_soon_threadsafe(deliver)
 
     def _settle(self, status: Status, failure: Optional[str] = None) -> None:
@@ -455,7 +504,10 @@ class TranscriptionService:
                 continue
             try:
                 if kind == "audio":
-                    self._post(gen, consumed=len(pcm), events=session.accept_pcm16(pcm))
+                    began = time.perf_counter()
+                    events = session.accept_pcm16(pcm)
+                    self._post(gen, consumed=len(pcm), events=events,
+                               decode_sec=time.perf_counter() - began)
                 elif kind == "finish":
                     self._post(gen, events=session.finish(), finished=True)
                     session.close()

@@ -318,7 +318,18 @@ def test_a_missing_model_is_reported_with_the_setup_command():
             assert transcriber.SETUP_COMMAND in msg["message"]
 
 
+def _connect_once(client):
+    with _open(client) as ws:
+        _ready(ws)
+        ws.send_bytes(word("x"))
+        ws.send_text(json.dumps({"type": "abort"}))
+
+
 def test_connecting_again_and_again_leaves_no_threads_or_sessions(client, engine):
+    # One connection first, so the loop's shared worker pool (which records
+    # each capture's events) already has its thread before counting.
+    _connect_once(client)
+    time.sleep(0.2)
     before = threading.active_count()
     for _ in range(10):
         with _open(client) as ws:
@@ -354,3 +365,89 @@ def test_the_page_or_the_token_opens_it_and_nothing_else_does(client, monkeypatc
     with pytest.raises(WebSocketDisconnect):
         with _open(client, {"Authorization": f"Bearer {key}"}) as ws:
             ws.receive_json()
+
+
+# ── diagnostics (voice_diagnostics.py) ───────────────────────────────────
+
+import voice_diagnostics
+
+TELEMETRY = {"type": "telemetry", "framesCaptured": 10, "framesSent": 10, "heldSec": 0.0,
+             "socketSec": 0.0, "longTaskMs": 0.0, "longTasks": 0, "tabHidden": False,
+             "notices": {"status": 1}, "voiceMsgs": 2, "sessionMsgs": 0, "renders": 3,
+             "quiet": False, "messages": [{"source": "Input", "text": "Listening again.", "at": 1}]}
+
+
+def _recorded(kind=None, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        samples, events = voice_diagnostics.history(0, 2e9)
+        if kind is None or any(e.kind == kind for e in events):
+            return samples, events
+        time.sleep(0.02)
+    return voice_diagnostics.history(0, 2e9)
+
+
+def test_a_page_that_asks_for_diagnostics_is_sent_its_health_and_its_seconds_are_recorded(
+        client, monkeypatch):
+    monkeypatch.setattr(voice_diagnostics, "SAMPLE_EVERY_SEC", 0.1)
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "diagnostics": True}))
+        while ws.receive_json()["type"] != "ready":
+            pass
+        ws.send_text(json.dumps(TELEMETRY))
+        ws.send_bytes(SILENCE)
+        health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
+        assert health["state"] in voice_diagnostics.STATES
+        assert set(health["pipeline"]) == {"mic", "browser", "connection", "recogniser", "jarvis"}
+        assert "text" not in health
+        ws.send_text(json.dumps({"type": "abort"}))
+    samples, events = _recorded("message")
+    assert any(s.frames_captured == 10 and s.notices_by_source == {"status": 1} for s in samples)
+    assert [(e.kind, e.text) for e in events if e.kind == "message"] == [("message", "Listening again.")]
+    assert any(e.kind == "ready" for e in events)
+
+
+def test_a_page_that_does_not_ask_is_never_sent_health(client, monkeypatch):
+    monkeypatch.setattr(voice_diagnostics, "SAMPLE_EVERY_SEC", 0.05)
+    with _open(client) as ws:
+        _ready(ws)
+        time.sleep(0.3)
+        ws.send_bytes(word("quiet"))
+        ws.send_bytes(SILENCE)
+        assert all(m["type"] != "health" for m in _until(ws, "final"))
+
+
+def test_bad_telemetry_is_ignored_and_listening_goes_on(client):
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "diagnostics": True}))
+        while ws.receive_json()["type"] != "ready":
+            pass
+        ws.send_text(json.dumps({**TELEMETRY, "framesCaptured": -5}))
+        ws.send_bytes(word("still"))
+        ws.send_bytes(SILENCE)
+        assert _until(ws, "final")[-1]["text"] == "still"
+
+
+def test_a_drop_is_recorded_with_its_cause_and_the_busiest_processes_then_the_reconnect(
+        client, engine, monkeypatch):
+    monkeypatch.setattr(voice_diagnostics, "top_processes",
+                        lambda limit=5: [{"name": "rider", "cpu": 99.0}])
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "diagnostics": True}))
+        while ws.receive_json()["type"] != "ready":
+            pass
+        engine.gate.clear()
+        for _ in range(int(PROTOCOL["queueLimitSec"] * 10) + 2):
+            try:
+                ws.send_bytes(b"\x01\x00" * 1600)
+            except Exception:
+                break
+        assert _until(ws, "error")[-1]["code"] == "overload"
+    engine.gate.set()
+    with _open(client) as ws:
+        _ready(ws)
+    _, events = _recorded("reconnect")
+    drop = next(e for e in events if e.kind == "overload")
+    assert drop.top_processes == [{"name": "rider", "cpu": 99.0}]
+    assert drop.text == "Speech recognition fell behind, so this was not heard."
+    assert [e.kind for e in events if e.kind in ("ready", "reconnect")] == ["ready", "reconnect"]

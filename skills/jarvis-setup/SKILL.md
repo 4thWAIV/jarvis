@@ -15,12 +15,12 @@ what lets you find out.
 The page streams the microphone (`frontend/src/voiceInput.ts`: one
 getUserMedia stream and an AudioWorklet making 16 kHz PCM16) to
 `/ws/transcribe`, and `transcriber.py` recognises it locally with NVIDIA's
-Nemotron Speech Streaming EN 0.6B through sherpa-onnx. Nothing goes to a
+Banafo's Kroko streaming Zipformer through sherpa-onnx. Nothing goes to a
 browser or cloud recogniser. That capture is only tested in Chrome; if
 someone asks for Firefox or Safari, say it has not been tried there.
 
 The model is installed once with `.venv/bin/python scripts/setup_speech_input.py`
-(about 442 MiB, checked against the release's SHA-256). Without it, or
+(about 55 MiB, checked against the release's SHA-256). Without it, or
 without sherpa-onnx in the Python the server runs on, the page shows why
 under the mic meter, preflight warns, and typing still works. The model
 loads in about 5 seconds when the server starts; what is said meanwhile is

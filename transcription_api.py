@@ -10,6 +10,12 @@ Every server message carries the `session` this connection was given; a
 reconnect is always a new session. The web boundary (web_auth.OriginGuard)
 covers this route like every other socket: the page's own Origin or the tool
 token, and no access-key category includes it.
+
+A page that asks for diagnostics (`"diagnostics": true` in its start) sends
+`telemetry` once a second and is sent `health` once a second: a
+voice_diagnostics.CaptureMonitor samples the capture, records the sample and
+classifies it. Every capture's start and end, and every failure with the
+cause in force, is recorded either way.
 """
 from __future__ import annotations
 
@@ -21,28 +27,41 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+import time
+
 import transcriber
+import voice_diagnostics
 from transcriber import PROTOCOL, TranscriptionError, TranscriptionService
+from voice_diagnostics import Event
 
 log = logging.getLogger("jarvis.transcription")
 
 START_WAIT_SEC = 10.0
+# A capture that becomes ready this soon after a failure is the page
+# reconnecting after it, and is recorded as a reconnect.
+RECONNECT_WITHIN_SEC = 10.0
 
 service: Optional[TranscriptionService] = None
+probe = voice_diagnostics.LoopProbe()
+_last_failure_at = 0.0
 
 
 def start(engine_factory=None) -> TranscriptionService:
     """Start loading the model in the background (from the server's
     lifespan). A missing model fails the service at once, without loading
     anything; the page is told when it connects."""
-    global service
+    global service, _last_failure_at
+    _last_failure_at = 0.0
     service = TranscriptionService(engine_factory or transcriber.SherpaEngine)
     service.start()
+    probe.start()
+    voice_diagnostics.record_soon_prune()
     return service
 
 
 async def stop() -> None:
     global service
+    await probe.stop()
     if service is not None:
         await service.close()
         service = None
@@ -85,8 +104,18 @@ async def transcribe(ws: WebSocket):
         async with lock:
             await ws.send_text(json.dumps({"type": kind, "session": session, **fields}))
 
+    monitor: Optional[voice_diagnostics.CaptureMonitor] = None
+
     async def fail(error: TranscriptionError) -> None:
+        global _last_failure_at
         log.info("transcription %s refused: %s", session, error.code)
+        if error.code in voice_diagnostics.INCIDENT_KINDS:
+            _last_failure_at = time.monotonic()
+            if monitor is not None:
+                await monitor.incident(error.code, error.message)
+            else:
+                voice_diagnostics.record_soon(Event(
+                    at=time.time(), kind=error.code, capture=session, text=error.message))
         try:
             await send("error", code=error.code, message=error.message)
             await ws.close()
@@ -95,6 +124,7 @@ async def transcribe(ws: WebSocket):
 
     capture = None
     forwarder: Optional[asyncio.Task] = None
+    sampler: Optional[asyncio.Task] = None
     try:
         try:
             first = json.loads(await asyncio.wait_for(ws.receive_text(), START_WAIT_SEC))
@@ -118,7 +148,15 @@ async def transcribe(ws: WebSocket):
             await fail(error)
             return
         log.info("transcription %s ready", session)
+        reconnect = time.monotonic() - _last_failure_at < RECONNECT_WITHIN_SEC
+        voice_diagnostics.record_soon(Event(
+            at=time.time(), kind="reconnect" if reconnect else "ready", capture=session))
         await send("ready")
+
+        if first.get("diagnostics") is True:
+            monitor = voice_diagnostics.CaptureMonitor(
+                capture, session, probe, lambda health: send("health", **health))
+            sampler = asyncio.create_task(monitor.run())
 
         async def forward() -> None:
             async for item in capture.events():
@@ -146,9 +184,17 @@ async def transcribe(ws: WebSocket):
                     return
                 continue
             try:
-                kind = json.loads(message.get("text") or "").get("type")
+                message_json = json.loads(message.get("text") or "")
+                kind = message_json.get("type")
             except (json.JSONDecodeError, AttributeError):
                 kind = None
+            if kind == "telemetry":
+                if monitor is not None:
+                    try:
+                        monitor.telemetry(voice_diagnostics.parse_telemetry(message_json))
+                    except ValueError as bad:
+                        log.info("transcription %s: telemetry refused (%s)", session, bad)
+                continue
             if kind == "abort":
                 capture.abort()
                 await ws.close()
@@ -163,6 +209,8 @@ async def transcribe(ws: WebSocket):
                         "so the last words were not sent."))
                     return
                 await forwarder
+                voice_diagnostics.record_soon(Event(
+                    at=time.time(), kind="finish", capture=session))
                 await send("finished")
                 await ws.close()
                 return
@@ -178,4 +226,7 @@ async def transcribe(ws: WebSocket):
             capture.abort()
         if forwarder is not None and not forwarder.done():
             forwarder.cancel()
+        if sampler is not None:
+            sampler.cancel()
+            await asyncio.gather(sampler, return_exceptions=True)
         log.info("transcription %s closed", session)

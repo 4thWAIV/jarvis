@@ -125,7 +125,7 @@ def test_a_missing_or_incomplete_model_names_the_setup_command(tmp_path):
     (tmp_path / "m").mkdir()
     (tmp_path / "m" / "tokens.txt").write_text("a 0")
     problem = transcriber.model_problem(tmp_path / "m")
-    assert "encoder.int8.onnx" in problem and "tokens.txt" not in problem.split("missing")[1]
+    assert transcriber.ENCODER in problem and "tokens.txt" not in problem.split("missing")[1]
     for name in transcriber.MODEL_FILES:
         (tmp_path / "m" / name).write_text("x")
     assert transcriber.model_problem(tmp_path / "m") is None

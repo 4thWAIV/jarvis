@@ -3,8 +3,8 @@
 
     .venv/bin/python scripts/setup_speech_input.py [--archive PATH]
 
-Downloads the sherpa-onnx export of NVIDIA's Nemotron Speech Streaming EN
-0.6B (560 ms, int8; about 442 MiB) from the sherpa-onnx GitHub release,
+Downloads Banafo's Kroko streaming Zipformer English model, as sherpa-onnx
+exports it (about 55 MiB), from the sherpa-onnx GitHub release,
 checks it against the SHA-256 GitHub publishes for that asset, extracts it
 into a temporary folder beside the destination, and renames the complete
 folder into place, so an interrupted run never looks installed. The
@@ -15,9 +15,8 @@ JARVIS_STT_MODEL_DIR.
 downloading; it is checked against the same digest. Nothing is downloaded
 anywhere but here: JARVIS never fetches the model on its own.
 
-The model is NVIDIA's, under the NVIDIA Open Model License; the export is
-sherpa-onnx's (Apache-2.0). See the model card:
-https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b
+The model is Banafo's community model, under CC-BY-SA; the sherpa-onnx
+engine is Apache-2.0. See https://huggingface.co/Banafo/Kroko-ASR
 """
 from __future__ import annotations
 

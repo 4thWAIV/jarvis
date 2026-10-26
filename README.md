@@ -142,11 +142,12 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   all go through AppleScript. There is no Linux or Windows path today.
 - **Google Chrome.** The voice page's microphone capture
   (`frontend/src/voiceInput.ts`) is only tested in Chrome. Speech
-  recognition itself runs on this Mac, not in the browser: NVIDIA's Nemotron
-  Speech Streaming EN 0.6B through sherpa-onnx, on the CPU, with no audio
-  sent anywhere. The model is about 442 MiB to download and 630 MiB on disk,
-  takes about 5 seconds to load when the server starts, and uses about
-  1.1 GB of memory while JARVIS runs. Without it, typing still works.
+  recognition itself runs on this Mac, not in the browser: Banafo's Kroko
+  streaming Zipformer (English community model, CC-BY-SA) through
+  sherpa-onnx, on the CPU, with no audio sent anywhere. The model is about
+  55 MiB to download and 81 MiB on disk, takes a few seconds to load when the
+  server starts, and uses about 260 MB of memory while JARVIS runs. Without
+  it, typing still works.
 - **Claude Code, installed and logged in.** `npm install -g
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
