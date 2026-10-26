@@ -325,12 +325,17 @@ def _connect_once(client):
         ws.send_text(json.dumps({"type": "abort"}))
 
 
+def _own_threads() -> int:
+    """Threads other than the event loop's shared worker pool, which records
+    each capture's events and may add a worker under load: a pool that grows
+    is not a connection that leaks."""
+    return sum(1 for t in threading.enumerate() if not t.name.startswith("asyncio_"))
+
+
 def test_connecting_again_and_again_leaves_no_threads_or_sessions(client, engine):
-    # One connection first, so the loop's shared worker pool (which records
-    # each capture's events) already has its thread before counting.
     _connect_once(client)
     time.sleep(0.2)
-    before = threading.active_count()
+    before = _own_threads()
     for _ in range(10):
         with _open(client) as ws:
             _ready(ws)
@@ -340,7 +345,7 @@ def test_connecting_again_and_again_leaves_no_threads_or_sessions(client, engine
     while not all(s.closed for s in engine.sessions) and time.monotonic() < deadline:
         time.sleep(0.01)
     assert all(s.closed for s in engine.sessions)
-    assert threading.active_count() <= before
+    assert _own_threads() <= before
 
 
 def test_shutdown_waits_for_the_running_inference_then_stops_the_worker(engine):
