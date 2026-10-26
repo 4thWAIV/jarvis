@@ -4,8 +4,9 @@
  *
  *   - one row: the heard ring (the share of his sentences heard in the last
  *     hour, ringed in the status colour), the status centred (Hearing you,
- *     Falling behind, Dropping speech, Not listening, with the cause only
- *     when there is a problem and when speech was last dropped), and the
+ *     Falling behind, Dropping speech, Not listening, and when speech was
+ *     last dropped; the cause is the health dot's title and is in the
+ *     Diagnostics view, and the stage at fault is coloured below), and the
  *     smaller speed ring (how much of the recogniser's real-time budget it
  *     uses);
  *   - the five stages the audio passes through, each in its colour;
@@ -30,7 +31,6 @@ export function VoiceSummary() {
   const record = useSyncExternalStore(summary.subscribe, summary.get);
   const s = record.value;
   const status = audioStatus(live?.state ?? s?.state ?? "idle", s?.lastDropAt ?? null);
-  const cause = live ? live.cause : s?.cause ?? "";
   const pipeline = live?.pipeline ?? s?.pipeline;
   const last = s?.last2min[s.last2min.length - 1];
 
@@ -46,7 +46,6 @@ export function VoiceSummary() {
           <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
           <small className="voice-ring-caption">heard</small>
           <span className="voice-status-detail">
-            {status.tone !== "ok" && cause && <span className="voice-cause">{cause}</span>}
             {s?.lastDropAt != null && <span className="voice-last-drop">last drop {ago(s.lastDropAt)}</span>}
           </span>
           <small className="voice-ring-caption">speed</small>

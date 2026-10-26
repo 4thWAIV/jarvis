@@ -105,7 +105,8 @@ async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
                       backlogSec=1.4, pipeline=pipeline(recogniser="warn"))
         await page.wait_for_function(
             "document.querySelector('.voice-summary .voice-status-word')?.textContent === 'Falling behind'")
-        assert await page.text_content(".voice-summary .voice-cause") == "Machine busy (load 16.9)"
+        assert await page.query_selector(".voice-summary .voice-cause") is None, \
+            "the cause is the dot's title, not more text in the summary"
         stage = await page.get_attribute("[data-stage='recogniser']", "class")
         assert "st-warn" in stage
         assert await page.get_attribute("#health-dot", "title") == \
