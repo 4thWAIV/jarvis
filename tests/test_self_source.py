@@ -101,8 +101,8 @@ async def test_he_can_describe_what_he_is(ready):
 async def test_he_can_find_where_something_lives_in_himself(ready):
     server = ready
     answer = await server.tool_search_repo({"project": "yourself",
-                                            "query": "BLOCKING_RATE_LIMIT_STATUSES"})
-    assert "claude_provider.py" in answer
+                                            "query": "BLOCKING_RATE_LIMIT_STATUSES ="})
+    assert "jarvis/claude_provider.py:" in answer
 
 
 @pytest.mark.asyncio

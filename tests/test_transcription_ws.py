@@ -377,11 +377,13 @@ TELEMETRY = {"type": "telemetry", "framesCaptured": 10, "framesSent": 10, "heldS
              "quiet": False, "messages": [{"source": "Input", "text": "Listening again.", "at": 1}]}
 
 
-def _recorded(kind=None, timeout=2.0):
+def _recorded(*kinds, timeout=2.0):
+    """The record once an event of every one of `kinds` is in it: each event
+    is written on its own, off the event loop, so one can land before another."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         samples, events = voice_diagnostics.history(0, 2e9)
-        if kind is None or any(e.kind == kind for e in events):
+        if all(any(e.kind == kind for e in events) for kind in kinds):
             return samples, events
         time.sleep(0.02)
     return voice_diagnostics.history(0, 2e9)
@@ -401,7 +403,7 @@ def test_a_page_that_asks_for_diagnostics_is_sent_its_health_and_its_seconds_are
         assert set(health["pipeline"]) == {"mic", "browser", "connection", "recogniser", "jarvis"}
         assert "text" not in health
         ws.send_text(json.dumps({"type": "abort"}))
-    samples, events = _recorded("message")
+    samples, events = _recorded("message", "ready")
     assert any(s.frames_captured == 10 and s.notices_by_source == {"status": 1} for s in samples)
     assert [(e.kind, e.text) for e in events if e.kind == "message"] == [("message", "Listening again.")]
     assert any(e.kind == "ready" for e in events)
