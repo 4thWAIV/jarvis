@@ -213,7 +213,14 @@ def _connect() -> sqlite3.Connection:
     have = {r["name"] for r in conn.execute("PRAGMA table_info(workflows)")}
     for name, kind in _LATER_COLUMNS:
         if name not in have:
-            conn.execute(f"ALTER TABLE workflows ADD COLUMN {name} {kind}")
+            try:
+                conn.execute(f"ALTER TABLE workflows ADD COLUMN {name} {kind}")
+            except sqlite3.OperationalError as e:
+                # Another connection opening the same new database added it
+                # between the PRAGMA and here, and did the rest.
+                if "duplicate column name" not in str(e):
+                    raise
+                continue
             if name == "finished_at":
                 # One finished before the column existed finished at its last event.
                 done = tuple(s.value for s in FINISHED)

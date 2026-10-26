@@ -173,3 +173,28 @@ def test_he_can_dismiss_a_finished_workflow_at_once_and_only_once():
     with pytest.raises(ws.WorkflowRefused, match="already dismissed"):
         ws.record(_ev(wid, "workflow_dismissed", "Again."))
 
+
+
+def test_a_column_another_connection_added_first_is_not_an_error(monkeypatch):
+    """Two connections opening a new database at once both find the column
+    missing; the second to add it must take it as done, not fail."""
+    import sqlite3
+    from jarvis import run_store
+    ws._connect().close()                      # every column is there now
+    real = run_store._connect
+
+    class Stale(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info(workflows)"):
+                return [r for r in super().execute(sql, *args) if r["name"] != "dismissed_at"]
+            return super().execute(sql, *args)
+
+    def stale_connect():
+        conn = sqlite3.connect(str(run_store.db_path()), factory=Stale)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    monkeypatch.setattr(run_store, "_connect", stale_connect)
+    ws._connect().close()
+    monkeypatch.setattr(run_store, "_connect", real)
+    assert ws.start("Rebrand", "denice", ["copy"])
