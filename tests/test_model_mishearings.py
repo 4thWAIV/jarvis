@@ -13,7 +13,7 @@ os.environ.setdefault("JARVIS_BRAIN_AUTOSTART", "0")
 
 import pytest
 
-import server
+from jarvis import server
 
 
 @pytest.mark.parametrize("heard,expected", [
@@ -79,7 +79,8 @@ def test_the_brain_is_told_that_recognition_mangles_model_names():
     """The normaliser cannot help if JARVIS never passes the word on — which
     is exactly what happened: he asked three times and called nothing."""
     import pathlib
-    guidance = pathlib.Path(__file__).resolve().parents[1] / "jarvis_home" / "CLAUDE.md"
+    guidance = pathlib.Path(__file__).resolve().parents[1] / "jarvis" / "jarvis_home" / "CLAUDE.md"
     text = guidance.read_text()
     assert "Sonic" in text, "the brain must know model names come through mangled"
-    assert "Never ask the same" in text
+    assert "Never ask which model to use." in text
+    assert "Never ask him to" in text and "use Sonnet" in text

@@ -24,6 +24,10 @@ data/.jarvis_output.txt
 
 # Build
 dist/
+build/
+*.egg-info/
+# The built voice page and dashboard (frontend/vite.config.ts).
+jarvis/web/
 .vite/
 frontend/.vite/
 
@@ -60,3 +64,20 @@ AGENTS.md
 # Always local — never tracked in the parent repo.
 .claude/worktrees/
 # <!-- orcha:managed:end -->
+
+# A reply file written for JARVIS to read; local only.
+jarvis-reply.md
+
+# This machine's own test settings (format: tests/local-config.example.toml).
+tests/local-config.toml
+
+# `claude mcp list` output saved by hand; it can hold connection strings with
+# passwords in them. Local only, and best deleted.
+mcp_list.txt
+mcp-list-out.txt
+
+# Console logs the Playwright MCP browser tool writes while a session drives it.
+.playwright-mcp/
+
+# The author's own private notes; never committed.
+.private/

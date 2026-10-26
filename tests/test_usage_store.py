@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import usage_store
+    from jarvis import usage_store
     importlib.reload(usage_store)
     return usage_store
 
@@ -186,22 +186,22 @@ def test_junk_never_becomes_a_number(store, payload):
 
 
 def test_a_corrupt_file_reads_as_no_data(store):
-    import data_paths
+    from jarvis import data_paths
     data_paths.usage_path().write_text("{not json at all")
     assert store.latest() is None
     assert store.snapshot()["measured"] is False
 
 
 def test_an_unwritable_location_does_not_raise(store, monkeypatch, tmp_path):
-    import data_paths
+    from jarvis import data_paths
     monkeypatch.setattr(data_paths, "usage_path",
-                        lambda: tmp_path / "no" / "such" / "dir" / "usage.json")
+                        lambda *a: tmp_path / "no" / "such" / "dir" / "usage.json")
     store.record(LIVE_EVENT, now=1000.0)           # must not raise into the brain
     assert store.snapshot()["measured"] is False
 
 
 def test_the_file_is_json_a_human_can_read(store):
-    import data_paths
+    from jarvis import data_paths
     store.record(LIVE_EVENT, now=1000.0)
     body = json.loads(data_paths.usage_path().read_text())
     assert body["windows"]["five_hour"]["utilization"] == 55.0

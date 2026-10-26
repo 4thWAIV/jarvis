@@ -21,7 +21,7 @@ class FakeBrain:
         pass
 
     async def turn(self, text, origin="user", on_delta=None, on_tool=None):
-        from brain import TurnResult
+        from jarvis.brain import TurnResult
         self.turns.append((text, origin))
         out = f"Echo: {text}."
         if on_delta:
@@ -36,11 +36,11 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setenv("FISH_API_KEY", "fish-test")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
 
@@ -72,6 +72,23 @@ def test_connect_sends_config_and_idle(client):
     with c.websocket_connect("/ws/voice") as ws:
         assert ws.receive_json() == {"type": "config", "muteMicDuringSpeech": False}
         assert ws.receive_json() == {"type": "status", "state": "idle"}
+
+
+def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(client):
+    c, server = client
+    with c.websocket_connect("/ws/transcribe") as ws:
+        ws.send_json({"type": "start", "version": 1, "sampleRate": 16000,
+                      "channels": 1, "format": "pcm_s16le"})
+        msg = ws.receive_json()
+        assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
+        assert "setup_speech_input.py" in msg["message"]
+    with c.websocket_connect("/ws/voice") as ws:
+        assert ws.receive_json() == {"type": "config", "muteMicDuringSpeech": False}
+        assert ws.receive_json() == {"type": "status", "state": "idle"}
+        ws.send_json({"type": "transcript", "text": "typed words", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio")
+        assert server.brain_instance.turns == [("typed words", "user")]
 
 
 def test_greeting_is_spoken_through_the_scheduler(client):
@@ -165,6 +182,22 @@ def test_speech_corrections_still_apply(client):
         _drain_until(ws, lambda m: m["type"] == "audio")
         assert server.brain_instance.turns[0][0] == "open Claude Code"
 
+
+
+def test_typed_words_reach_the_brain_as_written(client):
+    """Typed into the white box: no speech corrections, and not echo even
+    when they repeat what JARVIS just said."""
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "open cloud code", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio")
+        ws.send_json({"type": "transcript", "text": "Echo: open cloud code", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio" and "Echo: Echo" in m["text"])
+        assert [t for t, _ in server.brain_instance.turns] == [
+            "open cloud code", "Echo: open cloud code"]
 
 def test_brain_not_ready_says_so_instead_of_hanging(client):
     c, server = client

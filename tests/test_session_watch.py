@@ -3,7 +3,7 @@ import os
 import pytest
 from pathlib import Path
 
-import session_watch as sw
+from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
 
 
@@ -366,7 +366,7 @@ def test_the_primary_process_prefers_alive_then_socket_then_recency(tmp_path):
 @pytest.mark.parametrize("status,waiting_for,expected", [
     ("busy", None, sw.WORKING),
     ("idle", None, sw.IDLE),
-    ("shell", None, sw.SHELL),
+    ("shell", None, sw.BACKGROUND),
     ("waiting", "permission prompt", sw.NEEDS_YOU),
     ("waiting", None, sw.NEEDS_YOU),
     ("idle", "dialog open", sw.NEEDS_YOU),
@@ -379,6 +379,49 @@ def test_state_is_derived_from_status_and_waiting_for(tmp_path, status, waiting_
     write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
 
     assert sw.build_snapshot(roots=[root]).sessions[0].state == expected
+
+
+def _activity(**facts):
+    base = dict(alive=True, prompted=True, turn=None, turn_marked_at=None, prompt_waiting=None,
+                asked=False, background_agents=0, background_commands=False, roster_status=None)
+    return sw.Activity(**{**base, **facts})
+
+
+@pytest.mark.parametrize("facts, state, needs, between", [
+    ({"alive": False}, sw.GONE, None, False),
+    ({"prompted": False}, sw.FRESH, None, True),
+    ({"prompt_waiting": "permission prompt", "turn": "open"}, sw.NEEDS_YOU, "permission prompt", False),
+    ({"turn": "open"}, sw.WORKING, None, False),
+    ({"turn": "closed"}, sw.IDLE, None, True),
+    ({"turn": "closed", "asked": True}, sw.NEEDS_YOU, None, True),
+    # Found live: the roster says busy while a fork works, but the
+    # conversation's own turn has ended, so a message can go.
+    ({"turn": "closed", "roster_status": "busy", "background_agents": 1}, sw.BACKGROUND, None, True),
+    ({"turn": "closed", "background_commands": True}, sw.BACKGROUND, None, True),
+    ({"turn": "open", "roster_status": "idle"}, sw.WORKING, None, False),
+    # No marker in the tail: the roster's word.
+    ({"roster_status": "busy"}, sw.WORKING, None, False),
+    ({"roster_status": "waiting"}, sw.NEEDS_YOU, None, False),
+    ({"roster_status": "shell", "background_commands": True}, sw.BACKGROUND, None, True),
+    ({"roster_status": "idle"}, sw.IDLE, None, True),
+    ({"roster_status": None}, sw.UNKNOWN, None, True),
+])
+def test_session_status_is_the_one_rule(facts, state, needs, between):
+    status = sw.session_status(_activity(**facts))
+    assert (status.state, status.needs, status.between_turns) == (state, needs, between)
+
+
+def test_a_turn_marker_in_the_transcript_beats_the_roster(tmp_path, monkeypatch):
+    """The roster says busy; the transcript's last word is the turn ending."""
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    path = sw.transcript_path(root, "/p", "s")
+    with open(path, "a") as fh:
+        fh.write('{"type":"user","timestamp":"2026-10-25T00:00:00Z","message":{"role":"user","content":"go"}}\n')
+        fh.write('{"type":"system","subtype":"turn_duration","timestamp":"2026-10-25T00:00:05Z"}\n')
+    s, = sw.build_snapshot(roots=[root]).sessions
+    assert (s.state, s.between_turns) == (sw.IDLE, True)
 
 
 def test_a_session_with_no_transcript_is_fresh_whatever_its_status(tmp_path):
@@ -646,7 +689,7 @@ def test_every_generated_voice_name_resolves_to_exactly_one_session(tmp_path, al
     assert len(voice_names) == len(set(voice_names)), "voice names must be unique"
 
     for s in snap.sessions:
-        got = snap.resolve(s.voice_name)
+        got = _resolve(snap, s.voice_name)
         assert [x.session_id for x in got] == [s.session_id], \
             f"{s.voice_name!r} must resolve to exactly {s.session_id!r}, got {got}"
 
@@ -665,6 +708,14 @@ def test_a_voice_name_never_contains_the_roster_suffix(tmp_path, all_alive):
 
 # --- resolve -----------------------------------------------------------------
 
+def _resolve(snap, reference, last_mentioned=None):
+    """What the user said, matched against this snapshot's conversations the
+    one way JARVIS matches names: the agent directory."""
+    from jarvis import agent_directory
+    agent_directory.connect(lambda: snap, rows=lambda: [], needs=lambda: {})
+    return agent_directory.find_sessions(reference, last_mentioned=last_mentioned)
+
+
 def _two_hammers(tmp_path):
     """Two hammer conversations in one folder plus a lone chitauri. Requires the
     `all_alive` fixture: the pids here are placeholders, not real processes."""
@@ -682,31 +733,31 @@ def _two_hammers(tmp_path):
 
 def test_resolve_returns_one_match_for_an_unambiguous_name(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("chitauri")] == ["c1"]
-    assert [s.session_id for s in snap.resolve("the chitauri one")] == ["c1"]
+    assert [s.session_id for s in _resolve(snap, "chitauri")] == ["c1"]
+    assert [s.session_id for s in _resolve(snap, "the chitauri one")] == ["c1"]
 
 
 def test_resolve_returns_every_candidate_when_ambiguous_it_never_guesses(tmp_path, all_alive):
     """JARVIS must ask, not pick .first — getting this wrong steers the wrong
     session, which is unrecoverable."""
     snap = _two_hammers(tmp_path)
-    matches = snap.resolve("hammer")
+    matches = _resolve(snap, "hammer")
     assert len(matches) == 2
     assert {s.session_id for s in matches} == {"h1", "h2"}
 
 
 def test_resolve_disambiguates_on_the_voice_name(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("the newer hammer")] == ["h2"]
+    assert [s.session_id for s in _resolve(snap, "the newer hammer")] == ["h2"]
 
 
 def test_that_one_resolves_to_the_last_mentioned_session(tmp_path, all_alive):
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in snap.resolve("that one", last_mentioned="h1")] == ["h1"]
+    assert [s.session_id for s in _resolve(snap, "that one", last_mentioned="h1")] == ["h1"]
 
 
 def test_resolve_of_an_unknown_name_returns_nothing(tmp_path, all_alive):
-    assert _two_hammers(tmp_path).resolve("nonexistent") == []
+    assert _resolve(_two_hammers(tmp_path), "nonexistent") == []
 
 
 def test_resolve_prefers_exact_project_match_over_a_substring_sibling(tmp_path, all_alive):
@@ -729,8 +780,8 @@ def test_resolve_prefers_exact_project_match_over_a_substring_sibling(tmp_path, 
 
     snap = sw.build_snapshot(roots=[root])
 
-    assert {s.session_id for s in snap.resolve("hammer")} == {"h1", "h2"}
-    assert [s.session_id for s in snap.resolve("hammer-private")] == ["hp"]
+    assert {s.session_id for s in _resolve(snap, "hammer")} == {"h1", "h2"}
+    assert [s.session_id for s in _resolve(snap, "hammer-private")] == ["hp"]
 
 
 def test_resolve_finds_a_worktree_session_by_its_real_repo_name(tmp_path, all_alive):
@@ -746,7 +797,7 @@ def test_resolve_finds_a_worktree_session_by_its_real_repo_name(tmp_path, all_al
     snap = sw.build_snapshot(roots=[root])
 
     assert snap.sessions[0].project == "jarvis"
-    assert [s.session_id for s in snap.resolve("jarvis")] == ["s"]
+    assert [s.session_id for s in _resolve(snap, "jarvis")] == ["s"]
 
 
 def test_by_project_groups_conversations_the_way_a_person_talks(tmp_path, all_alive):
@@ -781,7 +832,7 @@ def test_resolve_prefers_the_one_real_conversation_over_two_fresh_siblings(tmp_p
     assert snap.by_id("fresh1").state == sw.FRESH
     assert snap.by_id("fresh2").state == sw.FRESH
 
-    assert [s.session_id for s in snap.resolve("chitauri")] == ["real"]
+    assert [s.session_id for s in _resolve(snap, "chitauri")] == ["real"]
 
 
 def test_resolve_still_asks_when_ambiguous_among_real_conversations_plus_a_fresh_one(tmp_path, all_alive):
@@ -802,7 +853,7 @@ def test_resolve_still_asks_when_ambiguous_among_real_conversations_plus_a_fresh
     snap = sw.build_snapshot(roots=[root])
     assert snap.by_id("h3fresh").state == sw.FRESH
 
-    matches = snap.resolve("hammer")
+    matches = _resolve(snap, "hammer")
     assert {s.session_id for s in matches} == {"h1", "h2"}
 
 
@@ -817,7 +868,7 @@ def test_resolve_returns_all_fresh_matches_when_nothing_real_matches(tmp_path, a
                  name="chitauri-3")
 
     snap = sw.build_snapshot(roots=[root])
-    assert {s.session_id for s in snap.resolve("chitauri")} == {"fresh1", "fresh2"}
+    assert {s.session_id for s in _resolve(snap, "chitauri")} == {"fresh1", "fresh2"}
 
 
 # --- needing_you orders by recency, not age ------------------------------------
@@ -896,7 +947,7 @@ def test_a_qualified_answer_picks_one(tmp_path, all_alive):
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    got = snap.resolve("newer webapp-fresh")
+    got = _resolve(snap, "newer webapp-fresh")
 
     assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
 
@@ -905,7 +956,7 @@ def test_a_qualified_answer_with_filler_words_still_picks_one(tmp_path, all_aliv
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    got = snap.resolve("let's go with the newer one in webapp-fresh")
+    got = _resolve(snap, "let's go with the newer one in webapp-fresh")
 
     assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
 
@@ -923,7 +974,7 @@ def test_brain_cwd_matches_data_paths_brain_home(monkeypatch, tmp_path):
     `mkdir` side effect, because session_watch polls once a second and must
     stay pure filesystem *reading*. Kept honest against the real thing."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     assert sw._brain_cwd() == str(data_paths.brain_home())
 
 
@@ -982,7 +1033,7 @@ def test_an_unqualified_name_still_asks(tmp_path, all_alive):
     snap = _two_named(tmp_path, "webapp-fresh",
                       cwd="/Users/e/Desktop/webapp-fresh")
 
-    assert len(snap.resolve("webapp-fresh")) == 2
+    assert len(_resolve(snap, "webapp-fresh")) == 2
 
 
 # ── one bad byte must not freeze the whole roster ──────────────────────────

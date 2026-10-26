@@ -1,100 +1,45 @@
-# What changed, against the original JARVIS
+# The new JARVIS workspace
 
-This is not the old JARVIS with features bolted
-on; the thing at the centre was replaced.
+Updated 2026-10-26. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
-This file exists so JARVIS can answer "how are you different now?" out loud.
-Keep it accurate: he reads it, and he will say what it says.
+## Conversation is the main view
 
----
+The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.
 
-## The one that changes everything: whose Claude is JARVIS
+The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has Agents, Diagnostics and Workflows tabs. Detailed views open in the centre while the surrounding controls remain available.
 
-**Public:** an Anthropic API client. `requirements.txt` installs the
-`anthropic` SDK, `.env.example` demands an `ANTHROPIC_API_KEY`, and every
-reply is a metered API call — Haiku for conversation, Opus for research. Talk
-to him for an evening and it appears on a bill.
+![Conversation and agents in the current interface, using fictional sample data.](images/workspace-conversation.png)
 
-**Here:** his brain is a **Claude Code process running on your own
-subscription** — the same login you use in the terminal. There is no
-Anthropic SDK in `requirements.txt`, no API key on the voice path, and no way
-to put one there: every child is launched through `claude_env.child_env()`,
-which strips every `ANTHROPIC_*` variable out of the environment first. That
-is deliberate rather than tidy — the CLI silently *prefers* an inherited key
-over your login, and `claude auth status` goes on reporting `loggedIn: true`
-while the billing quietly moves. So the key is removed rather than trusted.
+## Agents and workflows stay in context
 
-The honest cost question stopped being "how many dollars" and became "how much
-of my five-hour and seven-day windows is gone", which is what the Usage tab
-answers.
+The agent interface covers Claude Code and Codex sessions. Threads bring messages and replies together instead of requiring the user to reconstruct an exchange from separate announcements.
 
-## JARVIS stopped being a voice and became a foreman
+A workflow opens into its phases, tasks, progress, attached agent transcripts, waits, blockers, decisions and event history. Decisions can be answered in the workspace. The monitor reads reports from the sessions doing the work; it does not independently establish that every reported task is correct.
 
-Public JARVIS answers questions and can fire off actions. This one runs work
-and watches it:
+![A workflow opened in the centre, using fictional sample data.](images/workspace-workflow.png)
 
-- **A conversation is the design phase.** He brainstorms one question at a
-  time, offers a couple of approaches, and starts nothing until you agree.
-- **What you agreed gets written down** as a spec file inside the project
-  being built, before any process is spawned. You approve it by voice, by
-  section number.
-- **A build is a real Claude Code session** handed a brief: write a phased
-  plan, review it against the spec, then execute task by task under
-  test-driven development, ticking the plan's checkboxes. "How far has it
-  got" is answered by reading those boxes, not by guessing.
-- **He watches every Claude Code session on the machine** — not only his own.
-  Ask which are waiting on you and he checks live. He can post into one, and
-  answer a permission prompt for one running in Terminal.
-- **He interrupts when it matters.** A session blocked on a human is said out
-  loud immediately; one that merely finished is batched into a sentence at the
-  next pause. With no browser tab open it becomes a macOS notification.
+## Voice health has its own explanation
 
-## There is a dashboard now
+The Diagnostics tab summarizes whether speech is being heard, whether recognition is falling behind and how much headroom remains. Opening it reveals the pipeline, timeline, incidents, system load, notifications and grouped UI messages. The quiet-page comparison helps investigate whether interface activity accompanies drops. The displayed interval can be saved as JSON.
 
-The public repo's frontend is the orb and nothing else — `main.ts`, `orb.ts`.
-This one adds a six-tab dashboard: **Runs, Sessions, Memory, Specs, Projects,
-Usage**. Every Claude Code process he starts is a *run*: a row in SQLite with
-its prompt, project, status, token usage and full event stream, watchable
-live.
+Speech input currently uses local Kroko streaming recognition through sherpa-onnx. Fish Audio remains the speaking voice. Local recognition does not make the conversational provider or speech output offline.
 
-## Memory you can read
+![Voice diagnostics in the current interface, using fictional sample data.](images/workspace-diagnostics.png)
 
-Public memory is rows in SQLite. Here it is a folder of plain Markdown files,
-one fact per file, with an index he always sees. Open it in any text editor;
-edit it with anything.
+These captures render the real frontend with sample records; they are not production measurements.
 
-## He connects to whatever you use
+## More than one conversational provider
 
-He ships connected to nothing on purpose. Any MCP server works — drop its
-`mcpServers` block into `connections.json` and its tools are granted by name
-at launch. The grant is an allowlist computed from your file, never
-"everything except".
+Claude and Codex brain providers share the application interface. Settings expose provider configuration, and brain account usage appears in the left column. Development runs retain a separate execution path; conversational provider selection does not switch every execution engine.
 
-## Security became a design constraint
+## Packaged application layout
 
-Public added AppleScript escaping and a permissions toggle — real fixes to a
-codebase that started without them. Here it is load-bearing from the floor up:
+Python modules now live under `jarvis/`. Start the backend with `python -m jarvis`; the frontend build is packaged under `jarvis/web`. Configuration and data stay outside installed package files. The [README](../README.md#run-the-workspace) contains the current checkout setup commands.
 
-- Acting tools are gated **in the server**, not in the prompt, so a hostile
-  string in somebody else's transcript cannot make him act.
-- Anything read from a web page, a search result or a connected service is
-  information to report and **never** an instruction to follow — and for the
-  rest of any turn that read the web, the unsupervised actions are shut.
-- The loopback tool channel is bound to a bearer token created `O_EXCL` at
-  mode 0600, compared in constant time.
-- Credentials, keys and `.env` files are refused by the file reader, and his
-  own tool token by exact name.
+## What follows
 
-## And it is tested
+The priorities are a complete conversation-centred workspace, reliable voice under concurrent load, understandable agent coordination and the path from the Prototype Engine to Denice. Speech-output alternatives and eye tracking remain evaluations. See the [roadmap](roadmap.md) for status distinctions.
 
-Public: 6 test files, 43 tests. Here: 83 files, **2,405 tests**, named for the
-behaviour they protect rather than the function they call.
+## When explaining this by voice
 
----
-
-## Saying this out loud
-
-If asked how he differs, the short version is the first one — **he runs on
-your Claude subscription instead of an API key** — then whichever of these
-fits what was asked. Two sentences, not a tour. Never read this file aloud
-verbatim, and never read out a path from it.
+Answer the user's question from the current interface and relevant roadmap item. Keep shipped functionality separate from future work. Do not describe a planned engine or evaluated speech model as already installed.

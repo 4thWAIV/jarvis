@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_brain import _alive, _config, _wait_until  # noqa: E402
 
-import brain  # noqa: E402
+from jarvis import brain  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -127,14 +127,14 @@ async def test_a_failed_standby_leaves_the_current_brain_serving(tmp_path, monke
         await b.start()
         await b.turn("hello")
         gen = b.generation
-        pid = b._proc.pid
+        pid = b._session.proc.pid
         marker.write_text("x")                    # the replacement exits 1 at startup
 
         assert await b.rotate(handover="x") is False
 
         assert not marker.exists(), "the replacement really was spawned"
         assert b.ready is True and b.generation == gen
-        assert b._proc.pid == pid, "still the process that works"
+        assert b._session.proc.pid == pid, "still the process that works"
         assert (await b.turn("still there?")).stop_reason == "result"
         assert b.rotation_pending is True, "the rotation is still owed"
     finally:
@@ -152,7 +152,7 @@ async def test_a_failed_rotation_never_announces_a_dead_brain(tmp_path, monkeypa
         b.on_state(lambda s, info: states.append(s))
         await b.start()
         await b.turn("hello")
-        b._claude = "/definitely/not/here/claude"          # the CLI vanished mid-session
+        b.config.claude_path = "/definitely/not/here/claude"          # the CLI vanished mid-session
 
         assert await b.rotate(handover="x") is False
 
@@ -198,7 +198,7 @@ async def test_a_rotation_that_loses_both_processes_is_handed_back_to_the_restar
     try:
         await b.start()
         await b.turn("hello")
-        old = b._proc
+        old = b._session.proc
         real = asyncio.create_subprocess_exec
 
         async def kill_the_predecessor(*argv, **kw):
@@ -226,11 +226,11 @@ async def test_the_superseded_process_is_not_orphaned(tmp_path):
     try:
         await b.start()
         await b.turn("hello")
-        old_pid = b._proc.pid
+        old_pid = b._session.proc.pid
 
         assert await b.rotate(handover="x") is True
 
-        new_pid = b._proc.pid
+        new_pid = b._session.proc.pid
         assert new_pid != old_pid
         assert await _wait_until(lambda: not _alive(old_pid), 3.0), "superseded child still alive"
     finally:
@@ -259,31 +259,32 @@ async def test_rotating_a_brain_that_is_not_serving_is_refused(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rotation_is_forced_after_too_many_waiting_turns(tmp_path):
-    """A conversation that never pauses must still rotate eventually."""
-    b = brain.Brain(_config(tmp_path, context_budget=10,
-                            max_turns_before_forced_rotation=3))
+async def test_a_pending_rotation_is_never_forced_however_long_it_waits(tmp_path):
+    """Rotation is the user's call. The brain counts how long the rotation
+    has waited, so the server knows when to ask again, and that is all."""
+    b = brain.Brain(_config(tmp_path, context_budget=10))
     try:
         await b.start()
-        for _ in range(4):
+        for _ in range(25):
             await b.turn("hello")
 
-        assert b.rotation_overdue is True
+        assert b.rotation_pending is True
+        assert b.turns_since_rotation == 24
+        assert b.generation == 1, "nothing rotated on its own"
+        assert not hasattr(b, "rotation_overdue")
     finally:
         await b.stop()
 
 
 @pytest.mark.asyncio
-async def test_rotation_is_not_overdue_before_the_budget_is_crossed(tmp_path):
-    """The forced-rotation counter only starts once a rotation is owed."""
-    b = brain.Brain(_config(tmp_path, context_budget=10_000_000,
-                            max_turns_before_forced_rotation=1))
+async def test_the_wait_is_not_counted_before_the_budget_is_crossed(tmp_path):
+    b = brain.Brain(_config(tmp_path, context_budget=10_000_000))
     try:
         await b.start()
         for _ in range(3):
             await b.turn("hello")
 
-        assert b.rotation_overdue is False and b.turns_since_rotation == 0
+        assert b.rotation_pending is False and b.turns_since_rotation == 0
     finally:
         await b.stop()
 
@@ -295,7 +296,7 @@ async def test_a_brain_under_budget_never_schedules_a_rotation(tmp_path):
         await b.start()
         await b.turn("hello")
 
-        assert b.rotation_pending is False and b.rotation_overdue is False
+        assert b.rotation_pending is False
     finally:
         await b.stop()
 
@@ -318,9 +319,8 @@ async def test_the_warmup_alone_never_schedules_a_rotation(tmp_path):
 
 
 def test_the_budget_defaults_and_reads_the_environment(tmp_path, monkeypatch):
-    assert brain.BrainConfig(home=tmp_path).context_budget == 120000
-    assert brain.BrainConfig(home=tmp_path).max_turns_before_forced_rotation == 10
-    assert brain.BrainConfig.from_env(tmp_path).context_budget == 120000
+    assert brain.BrainConfig(home=tmp_path).context_budget == 900000
+    assert brain.BrainConfig.from_env(tmp_path).context_budget == 900000
     monkeypatch.setenv("JARVIS_BRAIN_CONTEXT_BUDGET", "25000")
     assert brain.BrainConfig.from_env(tmp_path).context_budget == 25000
 
@@ -335,17 +335,17 @@ def test_a_cache_rebuild_is_not_counted_as_the_conversation_growing():
     and again next turn under cache_read. Summing all three counted every
     cache miss as the conversation doubling. The window is the prompt as
     sent: input plus cache_read, and nothing else."""
-    t = brain._Turn("user", None)
+    from jarvis import claude_provider
     # A cache-miss turn: everything was re-created, nothing was read.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
-               "cache_creation_input_tokens": 29_000, "output_tokens": 40}
-    assert t.context_tokens() == 500, (
+    usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
+             "cache_creation_input_tokens": 29_000, "output_tokens": 40}
+    assert claude_provider.context_tokens(usage) == 500, (
         "29k of cache creation is the floor being rebuilt, not 29k of new "
         "conversation")
     # The next turn reads that cache back: THIS is the real window size.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
-               "cache_creation_input_tokens": 0, "output_tokens": 40}
-    assert t.context_tokens() == 29_500
+    usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
+             "cache_creation_input_tokens": 0, "output_tokens": 40}
+    assert claude_provider.context_tokens(usage) == 29_500
 
 
 @pytest.mark.asyncio

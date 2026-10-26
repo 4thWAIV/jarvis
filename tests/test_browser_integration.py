@@ -28,7 +28,7 @@ import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from browser import JarvisBrowser, SearchResult, PageContent
+from jarvis.browser import JarvisBrowser, SearchResult, PageContent
 
 
 def _has_network() -> bool:
@@ -177,7 +177,7 @@ async def test_browser_research(browser):
 
 def test_browse_action_keywords():
     """Action keywords include browse-related terms."""
-    from server import ACTION_KEYWORDS
+    from jarvis.server import ACTION_KEYWORDS
 
     assert "browse" in ACTION_KEYWORDS
     browse_keywords = ACTION_KEYWORDS["browse"]

@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-import project_maker
+from jarvis import project_maker
+from jarvis import claude_provider
 
 
 @pytest.fixture
@@ -32,11 +33,11 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_PROJECTS_DIR", str(tmp_path / "Projects"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     monkeypatch.setattr(server_module, "cached_projects", [])
@@ -292,12 +293,12 @@ def test_create_project_is_registered_and_gated(wired):
 
 
 def test_the_three_tool_sets_still_agree(wired):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _root = wired
-    assert "mcp__jarvis__create_project" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__create_project" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 
@@ -305,7 +306,7 @@ def test_the_three_tool_sets_still_agree(wired):
 async def test_a_watcher_turn_cannot_create_a_project(wired, monkeypatch):
     """The gate lives in /internal/tool, so it is exercised through it."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
     server, root = wired
 
     class _Brain:

@@ -31,7 +31,8 @@ import importlib
 
 import pytest
 
-import builds
+from jarvis import builds
+from jarvis import claude_provider
 
 
 # ---------------------------------------------------------------------------
@@ -328,11 +329,11 @@ def test_an_unreadable_project_is_simply_undocumented(tmp_path):
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -389,20 +390,20 @@ def test_the_new_tools_are_registered_and_gated_correctly(ready):
 
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _store, _ex = ready
     for name in ("start_build", "build_status", "run_command"):
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 
 def test_the_tool_descriptions_tell_the_brain_to_ask_which_model(ready):
     """The user asked for this in as many words: 'when we're building you
     should ask what model we want to run in'."""
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     specs = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}
     for name in ("start_build", "spawn_run"):
         assert "model" in specs[name]["description"].lower()
@@ -413,7 +414,7 @@ def test_the_tool_descriptions_tell_the_brain_to_ask_which_model(ready):
 async def test_a_watcher_turn_cannot_start_a_build_or_run_a_command(ready, monkeypatch):
     """The refusal lives in /internal/tool, not in the prompt."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
     server, store, ex = ready
 
     class _Brain:
@@ -479,7 +480,7 @@ async def test_starting_a_build_records_the_approval_as_a_file(ready, project):
     the new words never got. The act is now written down beside the spec,
     against a digest of the exact text, so both of those stop being true.
     """
-    import specs as specs_module
+    from jarvis import specs as specs_module
     server, _store, _ex = ready
 
     await server.tool_start_build({"project": "chitauri", "spec": SPEC,
@@ -534,17 +535,16 @@ async def test_the_model_is_passed_through_and_read_back_from_the_store(ready):
 
 
 @pytest.mark.asyncio
-async def test_no_model_asks_the_question_and_starts_nothing(ready, project):
-    """'when we're building you should ask what model we want to run in'."""
+async def test_no_model_defaults_to_sonnet_and_never_asks(ready, project):
+    """The user has repeatedly ordered: never ask which model."""
     server, _store, ex = ready
 
     out = await server.tool_start_build({"project": "chitauri", "spec": SPEC})
 
-    assert ex.spawned == [], "nothing may start before he has chosen"
-    assert not list((project / builds.SPEC_DIR).glob("*.md")) \
-        if (project / builds.SPEC_DIR).exists() else True
-    assert "which model" in out.lower()
-    assert "opus" in out.lower() and "sonnet" in out.lower()
+    assert len(ex.spawned) == 1, "a missing model must not stop the build"
+    assert ex.spawned[0]["model"] == "sonnet"
+    assert "which model" not in out.lower()
+    assert "sonnet" in out.lower()
 
 
 @pytest.mark.asyncio
@@ -714,7 +714,7 @@ class _FakeSpeech:
 def terminal(monkeypatch):
     """No test may open a real Terminal window. Patched on the `actions`
     module object, so a server reload cannot hand the real one back."""
-    import actions
+    from jarvis import actions
     opened: list[str] = []
 
     async def fake_open_terminal(command=""):

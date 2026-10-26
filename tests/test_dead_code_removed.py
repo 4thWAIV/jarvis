@@ -30,11 +30,11 @@ ROOT = Path(__file__).parent.parent
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     return server
@@ -45,7 +45,7 @@ def env(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_dispatch_registry_module_deleted():
-    assert not (ROOT / "dispatch_registry.py").exists()
+    assert not (ROOT / "jarvis" / "dispatch_registry.py").exists()
 
 
 def test_claude_task_manager_gone(env):
@@ -59,35 +59,35 @@ def test_focus_terminal_window_gone(env):
 
 
 def test_monitor_build_gone():
-    import actions
+    from jarvis import actions
     importlib.reload(actions)
     assert not hasattr(actions, "monitor_build")
     assert not hasattr(actions, "open_claude_in_project")
 
 
 def test_work_session_gone():
-    import work_mode
+    from jarvis import work_mode
     importlib.reload(work_mode)
     assert not hasattr(work_mode, "WorkSession")
     assert not hasattr(work_mode, "SESSION_FILE")
 
 
 def test_is_casual_question_survives():
-    import work_mode
+    from jarvis import work_mode
     importlib.reload(work_mode)
     assert work_mode.is_casual_question("what time is it") is True
     assert work_mode.is_casual_question("build me a dashboard") is False
 
 
 def test_no_sentinel_string_remains():
-    text = (ROOT / "actions.py").read_text()
+    text = (ROOT / "jarvis" / "actions.py").read_text()
     assert "JARVIS TASK COMPLETE" not in text
-    assert "JARVIS TASK COMPLETE" not in (ROOT / "server.py").read_text()
+    assert "JARVIS TASK COMPLETE" not in (ROOT / "jarvis" / "server.py").read_text()
 
 
 def test_active_session_json_not_referenced():
     for name in ("server.py", "work_mode.py"):
-        assert "active_session.json" not in (ROOT / name).read_text()
+        assert "active_session.json" not in (ROOT / "jarvis" / name).read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_execute_research_is_gone(env):
 def test_classify_intent_and_execute_action_are_gone(env):
     """The keyword/LLM intent-classifier pipeline was superseded by the
     [ACTION:X] tags `extract_action` parses out of the response."""
-    import actions
+    from jarvis import actions
     importlib.reload(actions)
     assert not hasattr(env, "classify_intent")
     assert not hasattr(actions, "execute_action")
@@ -145,11 +145,11 @@ def test_classify_intent_and_execute_action_are_gone(env):
 def test_executor_injection_into_actions_is_gone(env):
     """`actions.execute_action`'s build branch was the only spawner there, so
     no run will ever have origin == "terminal" any more. That is expected."""
-    import actions
+    from jarvis import actions
     importlib.reload(actions)
     assert not hasattr(actions, "set_executor")
     assert not hasattr(actions, "_executor")
-    assert "set_executor" not in (ROOT / "server.py").read_text()
+    assert "set_executor" not in (ROOT / "jarvis" / "server.py").read_text()
 
 
 def test_self_work_and_notify_is_gone(env):
@@ -168,7 +168,7 @@ def test_self_work_and_notify_is_gone(env):
 @pytest.fixture
 def api(env, monkeypatch):
     from fastapi.testclient import TestClient
-    import run_store
+    from jarvis import run_store
     server = env
     fake = FakeExecutor(run_store)
     # A route that is gone must read as gone (404/405) rather than as
@@ -206,7 +206,7 @@ def test_fix_self_route_is_gone(api):
 
 
 def test_no_tasks_or_fix_self_references_remain():
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     assert "/api/tasks" not in text
     assert "fix-self" not in text
 
@@ -251,7 +251,7 @@ def test_no_overclaimed_capability_strings_remain():
     read their calendar, mail, and notes autonomously — reactivating any of
     that text (even outside JARVIS_SYSTEM_PROMPT by name) would reintroduce
     the overclaim."""
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     banned_phrases = (
         "YOUR CAPABILITIES (these are REAL and ACTIVE",
         "You CAN see what's on",
@@ -274,7 +274,7 @@ def test_no_module_level_string_claims_screen_calendar_mail_or_notes():
     import ast
     import re
 
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     tree = ast.parse(text)
     claim_re = re.compile(
         r"\byou can (see|read)\b.{0,40}\b(screen|calendar|mail|email|notes)\b",
@@ -348,7 +348,7 @@ def test_server_no_longer_imports_the_screen_calendar_and_mail_readers_it_droppe
     """The imports the deleted lookups were the only users of. Leaving them
     bound in the module namespace would keep `server.describe_screen` a live
     attribute — one line away from being called again."""
-    server_text = (ROOT / "server.py").read_text()
+    server_text = (ROOT / "jarvis" / "server.py").read_text()
     for name in ("describe_screen", "get_active_windows", "refresh_calendar_cache",
                  "format_schedule_summary", "format_events_for_context",
                  "get_unread_messages", "format_unread_summary"):
@@ -358,7 +358,7 @@ def test_server_no_longer_imports_the_screen_calendar_and_mail_readers_it_droppe
     # JARVIS puts the user in a project's directory — but it is reached
     # through the `actions` namespace, never bound as a bare module-level
     # name the way the deleted lookups were.
-    import server as server_module
+    from jarvis import server as server_module
     assert not hasattr(server_module, "open_terminal")
     assert "from actions import" not in server_text \
         or "open_terminal" not in server_text.split("from actions import")[1].split("\n")[0]
@@ -369,7 +369,7 @@ def test_no_action_tag_is_emitted_or_parsed_any_more():
     (JARVIS_SYSTEM_PROMPT/generate_response) went in the previous batch, its
     parser and router go in this one, and nothing left in the server writes a
     tag or looks for one."""
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "jarvis" / "server.py").read_text()
     for tag in ("[ACTION:BUILD]", "[ACTION:BROWSE]", "[ACTION:OPEN_TERMINAL]",
                 "[ACTION:SCREEN]", "[ACTION:RESEARCH]", "[ACTION:PROMPT_PROJECT]"):
         assert tag not in text, f"{tag} has no parser left to reach"
@@ -383,7 +383,7 @@ def test_the_context_refresh_thread_is_gone():
 
     The user noticed Calendar launching and asked why. That is the bug.
     """
-    import server
+    from jarvis import server
     source = pathlib.Path(server.__file__).read_text()
     assert "_ctx_cache" not in source
     assert "_refresh_context_sync" not in source
@@ -395,7 +395,7 @@ def test_restart_does_not_hardcode_host_and_port():
     server was actually started, so a restart moved the UI to a different
     origin — and Chrome scopes microphone permission per origin INCLUDING the
     port, so the user silently lost their mic."""
-    import server
+    from jarvis import server
     source = pathlib.Path(server.__file__).read_text()
     i = source.index("async def api_restart")
     body = source[i:i + 1200]

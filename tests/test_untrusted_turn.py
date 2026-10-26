@@ -2,7 +2,7 @@
 
 The gate was built for `WebFetch` and stayed there. `read_page`,
 `look_at_page`, `github_repo` and the CLI's own two set it; `read_file`,
-`search_repo`, `repo_overview`, `session_detail`, `list_sessions`,
+`search_repo`, `repo_overview`, `session_detail`,
 `run_status`, `build_status`, `review_document` and `look_at_screen` did not.
 Those are every reader of repository files, of other sessions' transcripts, of
 run output and of the user's screen — and a README is written by a stranger
@@ -80,15 +80,17 @@ class _Brain:
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -105,7 +107,7 @@ def wired(monkeypatch, tmp_path):
 def call(wired):
     """Post to the real /internal/tool, with a brain that keeps its taint."""
     server, project = wired
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     brain = _Brain()
 
@@ -155,7 +157,7 @@ def test_every_reader_the_reviewer_named_is_in_the_set(wired):
     here rather than in the field."""
     server, _ = wired
     for reader in ("read_file", "search_repo", "repo_overview",
-                   "session_detail", "list_sessions", "run_status",
+                   "session_detail", "run_status",
                    "build_status", "review_document", "look_at_screen",
                    "what_is_on_screen", "read_page", "look_at_page",
                    "github_repo"):
@@ -213,7 +215,7 @@ def test_the_refusal_names_what_he_read(call):
 # --- the durable one -----------------------------------------------------
 
 def _memory_state(server):
-    import jarvis_memory
+    from jarvis import jarvis_memory
     index = jarvis_memory._index_path()
     return (index.read_text() if index.exists() else "",
             sorted(p.name for p in jarvis_memory.data_paths.memory_dir().glob("*.md")))
@@ -224,7 +226,7 @@ def test_the_memory_writers_are_refused_and_write_nothing(call):
     text. One injection there is permanent, so the assertion is on the DISK,
     not on the refusal sentence."""
     _call, _brain, server, _project = call
-    import jarvis_memory
+    from jarvis import jarvis_memory
     jarvis_memory.ensure_layout()
     before = _memory_state(server)
 
@@ -265,7 +267,7 @@ def test_a_later_clean_turn_may_still_write(call):
     strongest rule this design can actually keep.
     """
     _call, brain, server, _project = call
-    import jarvis_memory
+    from jarvis import jarvis_memory
     jarvis_memory.ensure_layout()
 
     _call("read_file", project="chitauri", path="README.md")
@@ -316,7 +318,7 @@ def test_steering_and_running_a_command_are_no_longer_exempt(call):
 
 @pytest.mark.asyncio
 async def test_the_brain_carries_the_label_not_just_a_flag(monkeypatch, tmp_path):
-    import brain as brain_module
+    from jarvis import brain as brain_module
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     b = brain_module.Brain(brain_module.BrainConfig(home=tmp_path / 'jarvis'))
     assert b.turn_untrusted_source is None, "no turn in flight, nothing to taint"
@@ -333,3 +335,39 @@ async def test_the_brain_carries_the_label_not_just_a_flag(monkeypatch, tmp_path
 
     b._inflight = None
     assert b.turn_untrusted_source is None, "the taint does not outlive the turn"
+
+
+# --- the opt-in ---
+
+def test_untrusted_actions_are_allowed_by_default(wired, monkeypatch):
+    server, _project = wired
+    monkeypatch.delenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", raising=False)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+    assert server._untrusted_content_refusal("remember", True) is None
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", "On"])
+def test_the_opt_in_refuses_acting_and_memory_writes(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", value)
+    assert "untrusted_content_in_this_turn" in server._untrusted_content_refusal(
+        "spawn_run", True)
+    assert "untrusted_content_in_this_session" in server._untrusted_content_refusal(
+        "remember", True)
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", ""])
+def test_a_falsy_opt_in_does_not_refuse(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", value)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+
+
+@pytest.mark.parametrize("value", ["1", "true", "0", ""])
+def test_the_obsolete_variable_has_no_effect(wired, monkeypatch, value):
+    server, _project = wired
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "")
+    monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", value)
+    assert server._untrusted_content_refusal("spawn_run", True) is None
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+    assert server._untrusted_content_refusal("spawn_run", True)

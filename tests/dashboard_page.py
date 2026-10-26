@@ -52,7 +52,7 @@ VIEWPORT = {"width": 1400, "height": 900}
 
 REPO = Path(__file__).resolve().parent.parent
 FRONTEND = REPO / "frontend"
-DIST = FRONTEND / "dist"
+DIST = REPO / "jarvis" / "web"
 BUILD_TIMEOUT_SEC = 300
 
 
@@ -73,14 +73,15 @@ def _newest_source() -> float:
     newest = 0.0
     for path in list((FRONTEND / "src").rglob("*")) + [
             FRONTEND / "dashboard.html", FRONTEND / "index.html",
-            FRONTEND / "vite.config.ts", FRONTEND / "package.json"]:
+            FRONTEND / "vite.config.ts", FRONTEND / "package.json",
+            REPO / "jarvis" / "transcribeProtocol.json"]:
         if path.is_file():
             newest = max(newest, path.stat().st_mtime)
     return newest
 
 
 def build_bundle() -> Path:
-    """`frontend/dist`, rebuilt only if a source file is newer than it.
+    """`jarvis/web`, rebuilt only if a source file is newer than it.
 
     The same `npm run build` a developer runs — never a bespoke bundling
     path, or the thing under test stops being the thing that ships.
@@ -122,7 +123,7 @@ class Api:
 
 
 class StubServer:
-    """`frontend/dist` on / and `Api` on /api, on one loopback port.
+    """`jarvis/web` on / and `Api` on /api, on one loopback port.
 
     One origin for both, which is how the built page is really served, so
     the fetches under test are the same-origin relative ones the code makes.

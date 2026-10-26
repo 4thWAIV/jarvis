@@ -18,13 +18,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import usage_store
+    from jarvis import usage_store
     importlib.reload(usage_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     with TestClient(server.app) as c:

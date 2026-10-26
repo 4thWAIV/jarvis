@@ -52,15 +52,15 @@ def env(monkeypatch, tmp_path):
         (r / "projects").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", os.pathsep.join(str(r) for r in roots))
 
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import session_watch
+    from jarvis import session_watch
     importlib.reload(session_watch)
-    import usage_scan
+    from jarvis import usage_scan
     importlib.reload(usage_scan)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
     # config_roots() always includes the two real defaults; point the scan at
@@ -143,7 +143,7 @@ def test_the_scan_is_not_repeated_on_every_request(client):
 
 def test_a_scan_that_blows_up_says_so_rather_than_serving_zeroes(client, monkeypatch):
     c, _roots, _rs = client
-    import server
+    from jarvis import server
 
     def boom(*a, **k):
         raise OSError("the disk went away")
@@ -191,7 +191,7 @@ def test_the_scan_reads_the_same_roots_the_session_watcher_does(client):
     roots from the Sessions tab, a conversation could appear in one and not
     the other and nobody would know which was wrong."""
     c, roots, _rs = client
-    import session_watch
+    from jarvis import session_watch
     write_transcript(roots[1], cwd="/p/two", session_id="s2",
                      turns=[dict(when=_now() - HOUR, out=5)])
 

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+from jarvis import claude_provider
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -51,12 +52,12 @@ def _fake_claude_lines(tmp_path: Path, lines: list[str], exit_code: int = 0) -> 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
-    import run_executor
+    from jarvis import run_executor
     importlib.reload(run_executor)
     return run_store, run_executor, tmp_path
 
@@ -687,12 +688,17 @@ async def test_events_are_batched_not_written_per_event(env, monkeypatch):
         return original(run_id, rows)
 
     monkeypatch.setattr(store, "append_events", counting)
+    # The half-second flush is wall-clock: on a loaded machine the fixture's
+    # lines can arrive more than 0.5 s apart and add a write, which is the
+    # flush working, not batching failing. Taken out, what is left is only
+    # the batching under test, and the count is the same on every machine.
+    monkeypatch.setattr(mod, "_EVENT_FLUSH_SEC", 3600.0)
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp, FIXTURE))
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id)
 
     assert len(store.get_events(run_id, limit=100)) == 14
-    assert len(calls) <= 3, f"expected batching, got {len(calls)} writes"
+    assert len(calls) <= 3, f"expected batching, got {len(calls)} writes: {calls}"
 
 
 @pytest.mark.asyncio
@@ -823,12 +829,11 @@ def test_the_scrub_is_shared_with_the_brain_not_copied():
     """One copy of the rule. The first copy of it was fixed for the brain and
     left broken here for a whole milestone; a second copy invites the same
     thing again."""
-    import brain
-    import claude_env
-    import run_executor as mod
+    from jarvis import claude_env
+    from jarvis import run_executor as mod
 
-    assert brain.SCRUBBED_ENV_PREFIXES is claude_env.SCRUBBED_ENV_PREFIXES
-    assert brain.Brain.child_env() == claude_env.child_env()
+    assert claude_provider.SCRUBBED_ENV_PREFIXES is claude_env.SCRUBBED_ENV_PREFIXES
+    assert claude_provider.ClaudeSession.child_env() == claude_env.child_env()
     assert mod.claude_env is claude_env
 
 
@@ -1292,7 +1297,7 @@ def test_extract_assistant_usage_has_a_caller():
     """The claim in its docstring — that the executor accumulates these — has
     to be true. Deleting the call must break this."""
     import inspect
-    import run_executor as mod
+    from jarvis import run_executor as mod
     assert "extract_assistant_usage" in inspect.getsource(mod)
 
 
@@ -1421,7 +1426,7 @@ async def test_a_multi_megabyte_event_is_not_stored_verbatim(env):
     line could put several MiB into jarvis.db for good, and a chatty build
     emits thousands of events."""
     store, mod, tmp = env
-    import stream_parser
+    from jarvis import stream_parser
     huge = json.dumps({"type": "user", "message": {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "toolu_1",
          "content": "z" * (3 * 1024 * 1024)}]}})

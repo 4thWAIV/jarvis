@@ -12,24 +12,31 @@ treated as a stranger's words.
 import hashlib
 import importlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from jarvis import claude_provider
+
+
+def _command(b):
+    """The `claude` command line the brain's session would run."""
+    return claude_provider.ClaudeSession(b.config, None, None).command(b.launch_prompt())
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def _fresh(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     return data_paths
 
 
 def _template_text() -> str:
-    return (Path(__file__).parent.parent / "jarvis_home" / "connections.json").read_text()
+    return (Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "connections.json").read_text()
 
 
 def _sha(text: str) -> str:
@@ -111,7 +118,7 @@ def test_the_call_the_server_actually_makes_on_boot_seeds_it(monkeypatch, tmp_pa
     user who is told to edit a file that does not exist writes a new one in
     the wrong place."""
     dp = _fresh(monkeypatch, tmp_path)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
     jarvis_memory.ensure_layout()
     assert dp.connections_path().exists()
@@ -124,17 +131,20 @@ def test_every_connections_template_this_project_has_shipped_is_listed(
     "edited" and they never get another improvement."""
     dp = _fresh(monkeypatch, tmp_path)
     repo = Path(__file__).resolve().parents[1]
-    rel = "jarvis_home/connections.json"
+    rel = "jarvis/jarvis_home/connections.json"
     try:
         commits = subprocess.run(
-            ["git", "-C", str(repo), "log", "--format=%H", "--", rel],
+            ["git", "-C", str(repo), "log", "--follow", "--format=%H", "--name-only", "--", rel],
             capture_output=True, text=True, timeout=60).stdout.split()
+        # Each commit with the template's path in it then: it has moved.
+        commits = [(c, path) for c, path in zip(commits, commits[1:])
+                   if re.fullmatch(r"[0-9a-f]{40}", c) and not re.fullmatch(r"[0-9a-f]{40}", path)]
     except (OSError, subprocess.SubprocessError):      # pragma: no cover
         pytest.skip("no usable git checkout here")
 
     missing = {}
-    for commit in commits:
-        blob = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{rel}"],
+    for commit, path in commits:
+        blob = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{path}"],
                               capture_output=True, timeout=60).stdout
         digest = hashlib.sha256(blob).hexdigest()
         if digest not in dp.KNOWN_CONNECTIONS_HASHES:
@@ -150,7 +160,7 @@ def test_every_connections_template_this_project_has_shipped_is_listed(
 def test_the_persona_and_the_connections_file_share_one_mechanism():
     """Two copies of "is this the user's file or ours" is two chances to get
     the destructive half wrong."""
-    import data_paths
+    from jarvis import data_paths
     source = Path(data_paths.__file__).read_text()
     assert source.count("KNOWN_TEMPLATE_HASHES") >= 1
     assert "_sync_template(" in source, \
@@ -162,10 +172,12 @@ def test_the_persona_and_the_connections_file_share_one_mechanism():
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
     """A reloaded server module with its own data dir."""
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     return server_module
 
@@ -180,7 +192,7 @@ def test_a_declared_server_is_written_into_the_config_the_brain_is_given(
     """The brain runs with --strict-mcp-config, so the generated mcp.json is
     the ONLY thing it can see. A server that does not land in this file does
     not exist as far as JARVIS is concerned."""
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {"notion": {"command": "npx",
                                      "args": ["-y", "@notionhq/notion-mcp-server"],
                                      "env": {"NOTION_TOKEN": "secret"}}})
@@ -195,7 +207,7 @@ def test_a_declared_server_is_written_into_the_config_the_brain_is_given(
 
 def test_an_http_server_is_carried_through_unchanged(srv, tmp_path):
     """Plenty of real servers are a URL, not a command."""
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {"linear": {"type": "http", "url": "https://mcp.linear.app/mcp"}})
     home = tmp_path / "home"
     home.mkdir()
@@ -217,7 +229,7 @@ def test_no_connections_file_changes_nothing(srv, tmp_path):
 def test_a_file_that_does_not_parse_is_named_not_swallowed(srv):
     """The single most likely mistake — a trailing comma — and the one that
     would otherwise make every server they added vanish in silence."""
-    import data_paths
+    from jarvis import data_paths
     data_paths.brain_home().mkdir(parents=True, exist_ok=True)
     data_paths.connections_path().write_text('{"mcpServers": {"notion": {},}}')
 
@@ -232,7 +244,7 @@ def test_a_file_that_does_not_parse_is_named_not_swallowed(srv):
 def test_servers_written_outside_the_mcpServers_block_are_named(srv):
     """Pasting the inner half of a README's snippet is the second most likely
     mistake, and it looks exactly like nothing happening."""
-    import data_paths
+    from jarvis import data_paths
     data_paths.brain_home().mkdir(parents=True, exist_ok=True)
     data_paths.connections_path().write_text(
         json.dumps({"notion": {"command": "npx"}}))
@@ -243,7 +255,7 @@ def test_servers_written_outside_the_mcpServers_block_are_named(srv):
 
 
 def test_an_entry_with_no_command_or_url_is_refused_by_name(srv):
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {"notion": {"args": ["-y", "something"]}})
     report = srv.declared_connections()
     assert report.servers == {}
@@ -252,7 +264,7 @@ def test_an_entry_with_no_command_or_url_is_refused_by_name(srv):
 
 
 def test_one_bad_entry_does_not_take_the_good_ones_with_it(srv):
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {"broken": {"nonsense": True},
                           "weather": {"command": "/usr/bin/weather"}})
     report = srv.declared_connections()
@@ -264,15 +276,14 @@ def test_a_user_cannot_replace_jarvis_himself(srv, tmp_path):
     """`mcp__jarvis__*` is how the brain reaches steer_session, spawn_run and
     run_command. A server that took that name would inherit the whole acting
     surface."""
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {"jarvis": {"command": "/tmp/evil"}})
     home = tmp_path / "home"
     home.mkdir()
     written = json.loads(srv._write_mcp_config(home).read_text())
 
     assert written["mcpServers"]["jarvis"]["command"] != "/tmp/evil"
-    assert str(Path(srv.__file__).parent / "jarvis_mcp.py") in \
-        written["mcpServers"]["jarvis"]["args"]
+    assert written["mcpServers"]["jarvis"]["args"] == ["-m", "jarvis.jarvis_mcp"]
     assert any("jarvis" in p for p in srv.declared_connections().problems)
 
 
@@ -281,7 +292,7 @@ def test_a_name_that_would_break_tool_namespacing_is_refused(srv, name):
     """Tools arrive as `mcp__<server>__<tool>`. A name with a space, a slash
     or its own double underscore makes that unparseable — and the failure
     would show up as tools that simply never appear."""
-    import data_paths
+    from jarvis import data_paths
     _declare(data_paths, {name: {"command": "/usr/bin/true"}})
     report = srv.declared_connections()
     assert report.servers == {}
@@ -290,7 +301,7 @@ def test_a_name_that_would_break_tool_namespacing_is_refused(srv, name):
 
 def test_the_problems_are_sentences_a_butler_could_say(srv):
     """They are read out by `connections`, not printed to a terminal."""
-    import data_paths
+    from jarvis import data_paths
     data_paths.brain_home().mkdir(parents=True, exist_ok=True)
     data_paths.connections_path().write_text("not json at all")
     problems = srv.declared_connections().problems
@@ -307,13 +318,13 @@ def test_the_allowlist_grants_exactly_the_servers_the_user_declared(tmp_path):
     nothing else. A server they did not declare is still refused, and so is
     every built-in a future CLI invents."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, connections=["notion", "linear"]))
-    granted = b.command()[b.command().index("--tools") + 1].split(",")
+    granted = _command(b)[_command(b).index("--tools") + 1].split(",")
 
-    assert granted[:len(brain.ALLOWED_TOOLS)] == brain.ALLOWED_TOOLS, \
+    assert granted[:len(claude_provider.ALLOWED_TOOLS)] == claude_provider.ALLOWED_TOOLS, \
         "the baseline is untouched — this adds, it never subtracts"
-    assert granted[len(brain.ALLOWED_TOOLS):] == ["mcp__notion", "mcp__linear"]
+    assert granted[len(claude_provider.ALLOWED_TOOLS):] == ["mcp__notion", "mcp__linear"]
     assert "mcp__github" not in granted, "not declared, not granted"
 
 
@@ -321,20 +332,20 @@ def test_no_declared_servers_leaves_the_flag_byte_identical(tmp_path):
     """The overwhelmingly common install connects nothing. It must be the
     exact command it was before any of this existed."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
-    cmd = b.command()
-    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS)
+    cmd = _command(b)
+    assert cmd[cmd.index("--tools") + 1] == ",".join(claude_provider.ALLOWED_TOOLS)
 
 
 def test_the_static_allowlist_still_names_only_jarvis_and_the_two_web_tools():
     """ALLOWED_TOOLS is the pinned baseline and stays pinned. The user's
     grants are computed per-launch from their file — they are never added
     here, where a coding tool could drift in beside them."""
-    import brain
-    assert {t for t in brain.ALLOWED_TOOLS if not t.startswith("mcp__")} == \
-        {"WebSearch", "WebFetch"}
-    assert all(t.startswith("mcp__jarvis__") for t in brain.ALLOWED_TOOLS
+    from jarvis import brain
+    assert {t for t in claude_provider.ALLOWED_TOOLS if not t.startswith("mcp__")} == \
+        {"WebSearch", "WebFetch", "Skill"}
+    assert all(t.startswith("mcp__jarvis__") for t in claude_provider.ALLOWED_TOOLS
                if t.startswith("mcp__"))
 
 
@@ -344,9 +355,9 @@ def test_the_grant_is_a_whole_server_not_a_guess_at_its_tools(tmp_path):
     server's tool names before it starts, so naming the server is the only
     grant it can make honestly."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, connections=["weather"]))
-    granted = b.command()[b.command().index("--tools") + 1].split(",")
+    granted = _command(b)[_command(b).index("--tools") + 1].split(",")
     assert "mcp__weather" in granted
     assert not any(g.startswith("mcp__weather__") for g in granted)
 
@@ -355,8 +366,8 @@ def test_the_server_hands_the_brain_the_names_it_accepted(srv, tmp_path):
     """The two halves have to agree: a server merged into mcp.json but left
     off the grant would be present and unusable, which is precisely the
     silent failure this feature exists to prevent."""
-    import data_paths
-    import brain
+    from jarvis import data_paths
+    from jarvis import brain
     _declare(data_paths, {"notion": {"command": "npx"},
                           "nope": {"args": ["x"]}})
     home = tmp_path / "home"
@@ -377,7 +388,7 @@ async def test_the_brain_records_what_connected_and_what_did_not(tmp_path):
     """The CLI says so in its init event and JARVIS used to throw it away —
     which is exactly how a server that failed to start became silence."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     home = tmp_path / "jarvis"
     home.mkdir(parents=True)
     (home / "mcp.json").write_text(json.dumps({"mcpServers": {
@@ -399,7 +410,7 @@ async def test_the_inventory_is_rebuilt_for_each_generation(tmp_path):
     """A rotation spawns a new process; a stale inventory would have JARVIS
     describing servers that are no longer running."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -416,7 +427,7 @@ async def test_the_resident_floor_is_measured_not_guessed(tmp_path):
     """The warm-up turn carries the system prompt, CLAUDE.md and every tool
     schema, and nothing else. Its context IS the price of being connected."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -433,7 +444,7 @@ async def test_the_budget_governs_the_conversation_not_the_tool_schemas(tmp_path
     by a quarter — for adding servers, silently. So the floor is measured and
     excluded, and the budget means what it says."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     floor = 10 + 9000 + 1000                  # what the stand-in reports
     conversation = (10 + 18000 + 1000) - floor
     b = brain.Brain(_config(tmp_path, context_budget=conversation + 1))
@@ -449,7 +460,7 @@ async def test_the_budget_governs_the_conversation_not_the_tool_schemas(tmp_path
 @pytest.mark.asyncio
 async def test_a_conversation_that_outgrows_the_budget_still_rotates(tmp_path):
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     floor = 10 + 9000 + 1000
     conversation = (10 + 18000 + 1000) - floor
     b = brain.Brain(_config(tmp_path, context_budget=conversation - 1))
@@ -504,7 +515,7 @@ def test_connections_is_read_only(srv):
 def test_a_bare_install_says_so_and_says_where_to_add_one(srv):
     """This is also the answer to "why can't you see my calendar" — it has to
     point somewhere, not just say no."""
-    import data_paths
+    from jarvis import data_paths
     handler = _wire(srv, _Brain(servers=[{"name": "jarvis", "status": "connected"}]))
     said = handler({})
     assert str(data_paths.connections_path()) in said
@@ -548,7 +559,7 @@ def test_a_server_that_would_not_start_is_named_out_loud(srv):
 def test_a_server_refused_before_it_was_ever_started_is_named_too(srv):
     """A malformed entry never reaches the CLI, so it appears in no init
     event. Without this it would be the one failure with no witness."""
-    import data_paths
+    from jarvis import data_paths
     handler = _wire(srv, _Brain(servers=[{"name": "jarvis", "status": "connected"}]))
     srv.LAST_CONNECTIONS = srv.ConnectionsReport(
         problems=['"notion" has neither a "command" nor a "url", so there is '
@@ -627,9 +638,9 @@ def test_the_answer_fits_in_a_tool_result(srv):
 
 
 def test_the_three_tool_sets_agree_about_connections(srv):
-    import brain
-    import jarvis_mcp
-    assert "mcp__jarvis__connections" in brain.ALLOWED_TOOLS
+    from jarvis import brain
+    from jarvis import jarvis_mcp
+    assert "mcp__jarvis__connections" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(srv.TOOL_HANDLERS)
 
 
@@ -642,18 +653,18 @@ def test_the_three_tool_sets_agree_about_connections(srv):
 # mechanism rather than a second one.
 
 def test_a_connected_services_result_taints_the_turn(tmp_path):
-    import brain
-    assert brain.untrusted_tool_source("mcp__notion__fetch_page") == "notion"
-    assert brain.untrusted_tool_source("WebFetch") == "a web page"
-    assert brain.untrusted_tool_source("WebSearch") == "a web page"
+    from jarvis import brain
+    assert claude_provider.untrusted_tool_source("mcp__notion__fetch_page") == "notion"
+    assert claude_provider.untrusted_tool_source("WebFetch") == "a web page"
+    assert claude_provider.untrusted_tool_source("WebSearch") == "a web page"
 
 
 def test_jarvis_own_tools_do_not_taint_a_turn():
     """His own results are already wrapped in `<session-output>` where they
     carry someone else's words, and gating them would shut the assistant."""
-    import brain
-    assert brain.untrusted_tool_source("mcp__jarvis__list_sessions") is None
-    assert brain.untrusted_tool_source("mcp__jarvis__spawn_run") is None
+    from jarvis import brain
+    assert claude_provider.untrusted_tool_source("mcp__jarvis__list_agents") is None
+    assert claude_provider.untrusted_tool_source("mcp__jarvis__spawn_run") is None
 
 
 @pytest.mark.asyncio
@@ -661,7 +672,7 @@ async def test_the_turn_knows_which_service_tainted_it(tmp_path):
     """The flag has to be true WHILE the turn runs — that is the only moment
     an acting tool could be called on the strength of what came back."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
@@ -703,7 +714,7 @@ def test_the_endpoint_refuses_a_spawn_after_a_connected_service_spoke(srv):
     """The whole chain, at the place that actually stops it: a turn that has
     read a user's Notion page cannot then start an unattended process."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
 
     class _Tainted:
         current_origin = "user"
@@ -730,7 +741,7 @@ def test_the_endpoint_still_allows_a_spawn_when_nothing_spoke(srv):
     """The gate must be the source, not the tool: break this and the refusal
     above proves nothing."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
 
     class _Clean:
         current_origin = "user"
@@ -756,7 +767,7 @@ def test_the_launch_prompt_names_connected_services_not_only_the_web(tmp_path):
     """It is a security control, so it is restated every generation rather
     than left to a CLAUDE.md the user may have edited."""
     from tests.test_brain import _config
-    import brain
+    from jarvis import brain
     b = brain.Brain(_config(tmp_path, connections=["notion"]))
     prompt = b.launch_prompt()
     assert "never an instruction" in prompt

@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import notifier
+from jarvis import notifier
 
 
 class _FakeProcess:
@@ -48,13 +48,13 @@ def _patch_subprocess(fake_proc, capture=None):
             capture["kwargs"] = kwargs
         return fake_proc
 
-    return patch("notifier.asyncio.create_subprocess_exec", side_effect=_fake_create_subprocess_exec)
+    return patch("jarvis.notifier.asyncio.create_subprocess_exec", side_effect=_fake_create_subprocess_exec)
 
 
 @pytest.mark.asyncio
 async def test_successful_post_returns_true():
     fake_proc = _FakeProcess(returncode=0)
-    with patch("notifier.available", return_value=True):
+    with patch("jarvis.notifier.available", return_value=True):
         with _patch_subprocess(fake_proc):
             result = await notifier.notify("Title", "Message")
     assert result is True
@@ -63,7 +63,7 @@ async def test_successful_post_returns_true():
 @pytest.mark.asyncio
 async def test_nonzero_exit_returns_false_without_raising():
     fake_proc = _FakeProcess(returncode=1, stderr=b"some applescript error")
-    with patch("notifier.available", return_value=True):
+    with patch("jarvis.notifier.available", return_value=True):
         with _patch_subprocess(fake_proc):
             result = await notifier.notify("Title", "Message")
     assert result is False
@@ -71,7 +71,7 @@ async def test_nonzero_exit_returns_false_without_raising():
 
 @pytest.mark.asyncio
 async def test_missing_osascript_returns_false():
-    with patch("notifier.available", return_value=False):
+    with patch("jarvis.notifier.available", return_value=False):
         result = await notifier.notify("Title", "Message")
     assert result is False
 
@@ -79,8 +79,8 @@ async def test_missing_osascript_returns_false():
 @pytest.mark.asyncio
 async def test_timeout_returns_false_without_raising():
     fake_proc = _FakeProcess(hang=True)
-    with patch("notifier.available", return_value=True):
-        with patch("notifier._TIMEOUT_SECONDS", 0.05):
+    with patch("jarvis.notifier.available", return_value=True):
+        with patch("jarvis.notifier._TIMEOUT_SECONDS", 0.05):
             with _patch_subprocess(fake_proc):
                 result = await notifier.notify("Title", "Message")
     assert result is False
@@ -92,8 +92,8 @@ async def test_spawn_failure_returns_false_without_raising():
     async def _raise(*args, **kwargs):
         raise OSError("no such file or directory: osascript")
 
-    with patch("notifier.available", return_value=True):
-        with patch("notifier.asyncio.create_subprocess_exec", side_effect=_raise):
+    with patch("jarvis.notifier.available", return_value=True):
+        with patch("jarvis.notifier.asyncio.create_subprocess_exec", side_effect=_raise):
             result = await notifier.notify("Title", "Message")
     assert result is False
 
@@ -137,7 +137,7 @@ INJECTION_PAYLOAD = '"; do shell script "touch ~/PWNED"; --\\ backslash " quote 
 async def test_injection_payload_reaches_boundary_as_literal_argv():
     fake_proc = _FakeProcess(returncode=0)
     capture = {}
-    with patch("notifier.available", return_value=True):
+    with patch("jarvis.notifier.available", return_value=True):
         with _patch_subprocess(fake_proc, capture=capture):
             result = await notifier.notify(INJECTION_PAYLOAD, "a normal message")
 
@@ -163,7 +163,7 @@ async def test_quotes_and_backslashes_pass_through_unescaped_in_message():
     fake_proc = _FakeProcess(returncode=0)
     capture = {}
     payload = 'She said \\"hello\\" and left \\ trailing backslash'
-    with patch("notifier.available", return_value=True):
+    with patch("jarvis.notifier.available", return_value=True):
         with _patch_subprocess(fake_proc, capture=capture):
             await notifier.notify("Title", payload)
 
@@ -177,7 +177,7 @@ async def test_long_text_is_truncated():
     capture = {}
     long_title = "T" * 500
     long_message = "M" * 500
-    with patch("notifier.available", return_value=True):
+    with patch("jarvis.notifier.available", return_value=True):
         with _patch_subprocess(fake_proc, capture=capture):
             await notifier.notify(long_title, long_message)
 

@@ -30,7 +30,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import screen as real_screen
+from jarvis import screen as real_screen
 
 
 # --- building real PNGs, with nothing but the standard library -------------
@@ -304,6 +304,7 @@ async def test_a_blank_check_that_cannot_run_does_not_block_a_good_capture(
 # --- the real sips, on real PNGs -------------------------------------------
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="sips is macOS's")
+@pytest.mark.sips
 @pytest.mark.asyncio
 async def test_the_real_sips_sees_a_real_black_png_as_blank(tmp_path):
     path = tmp_path / "black.png"
@@ -313,6 +314,7 @@ async def test_the_real_sips_sees_a_real_black_png_as_blank(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="sips is macOS's")
+@pytest.mark.sips
 @pytest.mark.asyncio
 async def test_the_real_sips_sees_a_busy_png_as_not_blank(tmp_path):
     path = tmp_path / "busy.png"

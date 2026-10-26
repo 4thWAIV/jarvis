@@ -23,7 +23,8 @@ import importlib
 
 import pytest
 
-import browser as real_browser
+from jarvis import browser as real_browser
+from jarvis import claude_provider
 
 
 class _Browser:
@@ -78,11 +79,11 @@ def ready(monkeypatch, tmp_path):
     """A server whose browser is a recorder."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -94,14 +95,14 @@ def ready(monkeypatch, tmp_path):
 # --- registered in all three places ---------------------------------------
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _fake = ready
     for name in ("read_page", "look_at_page"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 
@@ -121,7 +122,7 @@ async def test_a_watcher_turn_cannot_fetch_anything(ready, monkeypatch):
         current_origin = "session_event"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         r = client.post("/internal/tool",
@@ -204,7 +205,7 @@ async def test_the_capped_result_still_fits_the_brains_budget(ready):
         title="Long Read", url="https://stark.example/long",
         text="alpha bravo " * 2000, char_count=24000, truncated=True)
 
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         # AFTER the lifespan has run: it builds a brain of its own and would
@@ -313,7 +314,7 @@ async def test_a_stalled_fetch_gives_up_inside_the_tool_channels_timeout(ready,
 
 
 def test_the_hard_deadline_is_inside_the_tool_channels_timeout(ready):
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     server, _fake = ready
     assert server.PAGE_DEADLINE_SEC < jarvis_mcp.TIMEOUT_SEC
 
@@ -340,7 +341,7 @@ async def test_the_image_reaches_the_brain_as_a_base64_image_field(ready):
     from fastapi.testclient import TestClient
     server, fake = ready
 
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         # AFTER the lifespan has run: it builds a brain of its own and would
@@ -362,7 +363,7 @@ async def test_the_image_reaches_the_brain_as_a_base64_image_field(ready):
 async def test_an_ordinary_tool_carries_no_image_field(ready):
     from fastapi.testclient import TestClient
     server, _fake = ready
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         r = client.post("/internal/tool",
@@ -395,7 +396,7 @@ def test_the_look_functions_are_headless(ready):
 
 
 def test_the_page_timeout_leaves_room_under_the_tool_channel():
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     assert real_browser.LOOK_TIMEOUT_MS / 1000.0 < jarvis_mcp.TIMEOUT_SEC
 
 

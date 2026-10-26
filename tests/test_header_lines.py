@@ -12,8 +12,8 @@ stopped — the fields on the lines immediately above them stayed raw:
                          roster's own string
     session.recent_tools `str(block["name"])` out of a transcript, and the
                          only one of its four siblings with no `_clip`
-    session.voice_name   raw in `_needs_you_summary`, which is the one part
-                         of `list_sessions` that is NOT inside a block
+    session.voice_name   raw in the needs-you summary, which was the one part
+                         of the old session listing that was NOT inside a block
 
 A `</session-output>` in `waitingFor` closes the wrapper and everything
 after it reads as JARVIS's own words. Confirmed.
@@ -39,10 +39,11 @@ import time
 from pathlib import Path
 
 import pytest
+from tests.fixtures.captures import captured
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-SERVER = Path(__file__).parent.parent / "server.py"
+SERVER = Path(__file__).parent.parent / "jarvis" / "server.py"
 
 # Closes the wrapper, then speaks as JARVIS. `MARKER` is the sentence that
 # must never stand outside a block.
@@ -56,11 +57,11 @@ MARKER = "he approves"
 def server(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module
@@ -69,7 +70,7 @@ def server(monkeypatch, tmp_path):
 # --- the class: every foreign field on a real session --------------------
 
 def _blank():
-    import session_watch
+    from jarvis import session_watch
     return session_watch.SessionState(
         session_id="s1", cwd="/p/hammer", project="hammer",
         # A REAL voice name: `_assign_voice_names` composes a phrase the
@@ -135,45 +136,6 @@ def test_session_detail_keeps_every_foreign_field_out_of_its_header(server,
     assert_header_is_jarviss_own(server.tool_session_detail({"name": "hammer"}))
 
 
-@pytest.mark.parametrize("field", FOREIGN_FIELDS)
-def test_the_needs_you_summary_keeps_them_out(server, field):
-    """The one part of `list_sessions` that is deliberately NOT wrapped —
-    "`_needs_you_summary` above never quotes summary(), so it needs no wrap"
-    says the comment, and it was right about summary() and wrong about the
-    voice name and the reason beside it."""
-    import time as _time
-    out = server._needs_you_summary([_session(field)], _time.time())
-    assert_header_is_jarviss_own(out)
-
-
-@pytest.mark.parametrize("field", FOREIGN_FIELDS)
-def test_the_unwrapped_remainder_summary_keeps_them_out(server, field):
-    """`_rest_summary` is the other unwrapped branch."""
-    out = server._rest_summary([_session(field)])
-    assert_header_is_jarviss_own(out)
-
-
-def test_the_detailed_listing_is_only_ever_used_wrapped(server):
-    """`_session_line` prints `summary()` — another session's own words —
-    with no escaping of its own, which is fine ONLY because every caller
-    puts the whole listing inside a block. Checked statically, so a caller
-    added later has to make that decision on purpose."""
-    tree = ast.parse(SERVER.read_text())
-    wrapped_args = set()
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "_wrap_untrusted"):
-            for arg in node.args:
-                wrapped_args.add(id(arg))
-    unwrapped = []
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "_detailed_session_listing"
-                and id(node) not in wrapped_args):
-            unwrapped.append(node.lineno)
-    assert not unwrapped, f"unwrapped listing at lines {unwrapped}"
-
-
 def test_the_spoken_announcement_says_nothing_a_session_wrote(server,
                                                               monkeypatch):
     """`_announce_needs_you` speaks `_phrase_needs(needs)` straight into an
@@ -184,7 +146,7 @@ def test_the_spoken_announcement_says_nothing_a_session_wrote(server,
     said: list[str] = []
 
     class _Speech:
-        async def say(self, line, priority, immediate=True):
+        async def say(self, line, priority, immediate=True, label=None):
             said.append(line)
 
     monkeypatch.setattr(server, "speech", _Speech())
@@ -258,7 +220,7 @@ def test_an_ordinary_session_still_reads_as_a_sentence(server, monkeypatch):
 
 
 REPO = Path(__file__).parent.parent
-MODULES = sorted(p for p in REPO.glob("*.py"))
+MODULES = sorted(p for p in (REPO / "jarvis").glob("*.py"))
 
 
 def _run_text_columns() -> set[str]:
@@ -267,7 +229,7 @@ def _run_text_columns() -> set[str]:
     `project_name` comes from `POST /api/runs` and from a directory name on
     disk — and it reaches the same headers and the same spoken lines as a
     session does."""
-    src = (REPO / "run_store.py").read_text()
+    src = (REPO / "jarvis" / "run_store.py").read_text()
     body = src.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
     out = set()
     for line in body.splitlines():
@@ -384,15 +346,123 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
-    "server._session_line": (
-        "it prints `summary()` — another session's own words — with no "
-        "escaping at all, and that is correct only because every caller puts "
-        "the whole listing inside an untrusted block. Held statically by "
-        "test_the_detailed_listing_is_only_ever_used_wrapped, which is a "
-        "stronger check than driving it would be"),
-    "server._detailed_session_listing": (
-        "the same argument as `_session_line`, which is its only content: it "
-        "is wrapped by every one of its callers, checked from the AST"),
+    "server._finish_reading_aloud": (
+        "it compares the capture's text with what was read, to decide whether "
+        "it was heard unchanged, and prints neither: its note to the brain "
+        "carries only the capture's number"),
+    "server._board_owner": (
+        "it returns the listed names of the agents in a board's project, "
+        "joined, and says nothing itself: its one speaking caller, "
+        "_announce_board, passes the whole result through `_said_name` "
+        "(driven below), and `_board_under_owner` puts it in board text that "
+        "only ever reaches the brain inside `_one_page`'s untrusted block"),
+    "server._project_owner": (
+        "it returns the listed names of the agents in a project, joined, or "
+        "the project's folder name, and says nothing itself: its speaking "
+        "callers pass the result through `_said_name` (_announce_board and "
+        "_announce_session_messages, both driven below), and everywhere else "
+        "it reaches the brain inside an untrusted block"),
+    "server._take_session_messages": (
+        "it records each dropped message and deletes its file; the only text "
+        "it builds is log lines naming the file, which never reach the brain "
+        "or the speaker, and what it returns are records, whose every printer "
+        "is driven below"),
+    "server._board_under_owner": (
+        "it returns a board's own text under its owner's name, and that text "
+        "is a note a session wrote: its only caller, tool_session_needs, "
+        "hands all of it to `_one_page`, which wraps every page as untrusted"),
+    "run_store.update_message": (
+        "it builds SQL out of column names checked against a fixed list "
+        "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
+        "a bound parameter, and it returns nothing"),
+    "voice_diagnostics._camel": (
+        "it turns this module's own dataclass field names (fixed identifiers "
+        "such as `backlog_sec`) into JSON keys; no session, page or brain "
+        "text ever passes through it"),
+    "session_watch.track_from": (
+        "it returns a Tracking, not a sentence: the reply in it is a "
+        "session's own words, which are stored and reach the brain only "
+        "through read_message_reply, inside `_one_page`'s untrusted block "
+        "(driven below)"),
+    "server.tool_list_captures": (
+        "everything it prints the brain wrote itself: each capture's text is the "
+        "brain's own restatement of Tim's words and `to` is the name it gave, "
+        "both made through `capture` on a turn Tim drove; nothing in it was "
+        "read from another session or the web"),
+    "server.tool_merge_captures": (
+        "it prints only capture numbers, each parsed to an int before it is "
+        "printed; the captures' text and `to` go to the voice page "
+        "(drawn with textContent), never into what it returns"),
+    "server._display_from": (
+        "it builds a screen-only `display` from the brain's own tool arguments "
+        "(text the brain may have taken from a web page). None of it reaches a "
+        "header line or the brain: it goes only to the voice page, which draws "
+        "it with textContent, and the brain gets back 'Shown on screen.' or a "
+        "reason naming the allowed kinds, never its own words"),
+    "session_watch.agent_name": (
+        "it returns the session's voice name and prints nothing; every "
+        "function that prints an agent name is driven below"),
+    "server._live_session_redirect": (
+        "it reads a session's `cwd` only to compare it with the project's "
+        "path; the string it returns names the project by `name`, which "
+        "`_resolve_project_or_explain` resolved from the user's own list, and "
+        "carries no roster field. Driven in test_one_writer_per_project.py"),
+    "run_store.get_messages": (
+        "it reads message rows back by id for the conversation's live status, "
+        "and returns records; it prints nothing at all"),
+    "server.tool_capture": (
+        "it records a capture in the conversation under the agent the "
+        "directory found; its sentences name agents only through `_agent_said` "
+        "and `_no_such_agent`, both driven"),
+    "server._record_capture_cleared": (
+        "it records a notice in the conversation naming a capture's number and "
+        "who cleared it; the agent's name goes in a link field, not the line"),
+    "server.api_capture_restore": (
+        "its note to the brain carries only capture numbers, and its refusal "
+        "comes from `_restore_capture`, which says only a number"),
+    "server.tool_restore_capture": (
+        "it says a capture's numbers and its `to`, the agent name the directory "
+        "gave when the capture was made, said through the capture box already"),
+    "server._why_message_waits": (
+        "the fields it reads are JARVIS's own: a session's derived `state`, and "
+        "a message's id and status; it says only fixed words and a number"),
+    "server._message_state": (
+        "it says a message's status in fixed words with ages and numbers; the "
+        "reason a queued one waits comes from `_why_message_waits`, the same"),
+    "session_watch._claude_entries": (
+        "it reads a transcript into entries the Transcript tab draws as text on "
+        "the page; nothing it makes reaches the brain or a spoken line"),
+    "workflow_store._apply": (
+        "it writes the record and prints nothing but its refusals, whose only "
+        "values are slugs it has already checked against `SLUG`"),
+    "workflow_store.events": (
+        "it reads the log back as records; every printer of them is "
+        "`_workflow_detail`, driven, inside an untrusted block"),
+    "workflow_store.with_decisions": (
+        "it adds workflow decisions to the needs boards, which are already "
+        "another session's words: every reader of a board shows it inside an "
+        "untrusted block (`session_needs` through `_one_page`)"),
+    "workflow_report._post": (
+        "the reporter's command line: it prints JARVIS's refusal to the session "
+        "running the workflow, in that session's own terminal, never to the brain"),
+    "workflow_report.main": (
+        "the same command line: what it prints goes to the session that ran it"),
+    "agent_directory._find": (
+        "it prints nothing: its only f-strings pad a project's spoken key "
+        "with spaces to compare it with what the user said, and it returns "
+        "the matching agents, whose names every caller says through "
+        "`_agent_said`"),
+    "server._find_agent": (
+        "its sentences name agents only through `_agent_said` and "
+        "`_no_such_agent`, both driven, and it is itself driven through "
+        "tool_set_agent_active and tool_rename_agent"),
+    "server._rename_agent": (
+        "it reads other agents' names only to compare them with the new one "
+        "(`agent_directory.same_name`) and returns a row and a reason code, "
+        "never text"),
+    "server.tool_read_capture": (
+        "the field it reads is the capture's own `state`, which JARVIS set; "
+        "every sentence it returns carries only the capture's number"),
     "server._perform_staged_steers": (
         "the only field it reads goes into a log line — `log.error(f\"staged "
         "action for {what} failed\")`. A log is not the brain's context and "
@@ -441,12 +511,61 @@ EXEMPT = {
         "below already do against the source"),
 
     # --- the brain's own process, not somebody else's ---------------------
-    "brain._handle": (
+    "claude_provider._handle": (
         "`session_id`, `model` and `status` here are the CLI's own "
         "stream-json fields for JARVIS's OWN brain process, not another "
-        "conversation's roster entry. They reach a log line and the state "
-        "callback the frontend reads; the only text this composes for the "
-        "model is the assistant delta, which is the model's own output"),
+        "conversation's roster entry. They reach a log line and the brain "
+        "provider's events; the only text this composes for the model is the "
+        "assistant delta, which is the model's own output"),
+    "codex_provider._handle": (
+        "the app-server's own JSON-RPC fields for JARVIS's OWN brain thread "
+        "(a turn's status and error, token counts, the plan's limits, a tool's "
+        "server and name). They reach a log line, usage_store and the brain "
+        "provider's events; the only text it composes for the model is the "
+        "assistant delta, which is the model's own output"),
+    "codex_provider.open": (
+        "it logs the id Codex gave JARVIS's own thread, the Codex home path "
+        "JARVIS chose, and a count; the server and tool names it reads are "
+        "the brain's own MCP inventory, reported as SessionInfo"),
+    "codex_provider.call": (
+        "a JSON-RPC call inside CodexUsage.read: the only value it prints is "
+        "the method name, one of this module's own literals"),
+    "brains_config.load": (
+        "it logs why JARVIS's own brains.json could not be read; the names "
+        "it keeps are filtered to brains_config.KNOWN, this repository's own"),
+    "server._poll_usage": (
+        "it logs a brain's name, one of brains_config.KNOWN, and a "
+        "UsageUnavailable message composed by JARVIS's own provider code. "
+        "A log is not the brain's context and is not spoken"),
+    "server.api_brains_sign_in": (
+        "it logs a brain's name, checked against brains_config.KNOWN, and "
+        "hands the sign-in address Codex returned to the page, which opens it "
+        "in a new tab; nothing of it reaches the brain or is spoken"),
+    "session_watch.send": (
+        "ClaudeSessions.send: it hands the session's own inbox socket path and "
+        "a capture JARVIS read back to session_steer; it prints nothing"),
+    "codex_sessions.send": (
+        "it passes the session's thread id, which `fullmatch`es a UUID shape "
+        "when the process named it and otherwise comes from Codex's own "
+        "database, to `codex queue` as one argument (no shell), with a "
+        "capture JARVIS read back; it logs only an exception's type and an "
+        "exit code"),
+    "codex_sessions._threads": (
+        "it reads Codex's own thread table into a dict, read-only; nothing is "
+        "printed. What reaches the brain from it (titles, transcript text) "
+        "goes through the same SessionState fields, and the same walls, as "
+        "Claude's"),
+    "server._deliver": (
+        "it builds a SessionState out of a staged message's own fields and "
+        "hands it to the session's provider to send; it prints nothing"),
+    "brain._on_event": (
+        "the same fields, already turned into brain_provider events by the "
+        "provider: the brain's own session's id, model and limit status. They "
+        "are kept on the brain and reach the state callback; the only text it "
+        "passes on is the model's own delta"),
+    "brain._on_exit": (
+        "it logs the exit code of JARVIS's OWN brain session and the "
+        "provider's name, one of this repository's own literals"),
     "brain._spawn_locked": (
         "the same: the `session_id` is the one the CLI just gave this "
         "process for itself, and it goes to `log.info`. A log is not the "
@@ -527,14 +646,6 @@ EXEMPT = {
         "another of the three naming rules — it turns a roster state into "
         "the phrase that tells two same-named conversations apart. Same "
         "argument as `_assign_voice_names`, which is the only caller"),
-    "session_watch._name_words": (
-        "the helper that splits a title into words for `_name_by_topic`; "
-        "same argument, and its output is bounded there"),
-    "session_watch.resolve": (
-        "it MATCHES a spoken name against the roster and returns "
-        "SessionState objects — the f-strings in it are the lowered "
-        "comparison keys, not a sentence. What the caller then says about "
-        "the matches is `server._resolve_or_explain`, which is driven"),
 
     # --- values compared, not printed ------------------------------------
     "server._approval_clause": (
@@ -613,7 +724,7 @@ EXEMPT = {
 
 
 def _hostile_snapshot(server, session):
-    import session_watch
+    from jarvis import session_watch
     return session_watch.Snapshot(sessions=[session], taken_at=0.0)
 
 
@@ -624,7 +735,7 @@ class _Speech:
     def __init__(self):
         self.said = []
 
-    async def say(self, line, priority=None, immediate=None):
+    async def say(self, line, priority=None, immediate=None, label=None):
         self.said.append(line)
 
         class _U:
@@ -640,44 +751,20 @@ class _Speech:
         return False
 
 
-def _drive_needs_you_clause(server, session, monkeypatch):
-    import time as _t
-    return [server._needs_you_clause(session, _t.time())]
-
-
-def _drive_needs_you_summary(server, session, monkeypatch):
-    import time as _t
-    return [server._needs_you_summary([session], _t.time())]
-
-
-def _drive_rest_summary(server, session, monkeypatch):
-    return [server._rest_summary([session])]
-
-
 def _drive_resolve_or_explain(server, session, monkeypatch):
-    """The ambiguity sentence lists `voice_name` for EVERY match, and it was
-    the one site in this function nobody had looked at."""
+    """The ambiguity sentence lists `voice_name` for EVERY match, and the
+    no-match answer lists every agent's name."""
     import copy
+    from jarvis import agent_directory
     twin = copy.deepcopy(session)
     twin.session_id = "s2"
-    monkeypatch.setattr(server, "_snapshot_or_empty",
-                        lambda: _hostile_snapshot(server, session))
+    monkeypatch.setattr(agent_directory, "_snapshot", lambda: _hostile_snapshot(server, session))
+    monkeypatch.setattr(agent_directory, "_rows", lambda: [])
     out = []
-    # unresolved: no matches at all
-    monkeypatch.setattr(server, "_snapshot_or_empty",
-                        lambda: _hostile_snapshot(server, session))
-
-    class _Snap:
-        def __init__(self, matches):
-            self.matches = matches
-
-        def resolve(self, name, last_mentioned=None):
-            return self.matches
-
-    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: _Snap([]))
+    monkeypatch.setattr(agent_directory, "find_sessions", lambda name, last_mentioned=None: [])
     out.append(server._resolve_or_explain("hammer")[1] or "")
-    monkeypatch.setattr(server, "_snapshot_or_empty",
-                        lambda: _Snap([session, twin]))
+    monkeypatch.setattr(agent_directory, "find_sessions",
+                        lambda name, last_mentioned=None: [session, twin])
     out.append(server._resolve_or_explain("hammer")[1] or "")
     return out
 
@@ -686,7 +773,7 @@ def _drive_session_detail(server, session, monkeypatch):
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda name: (session, None, None))
     out = [server.tool_session_detail({"name": "hammer"})]
-    import session_watch
+    from jarvis import session_watch
     fresh = _clone(session)
     fresh.state = session_watch.FRESH
     monkeypatch.setattr(server, "_resolve_or_explain",
@@ -695,11 +782,13 @@ def _drive_session_detail(server, session, monkeypatch):
     return out
 
 
-def _drive_list_sessions(server, session, monkeypatch):
+def _drive_list_agents(server, session, monkeypatch):
+    from jarvis import agent_directory
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: _hostile_snapshot(server, session))
-    return [server.tool_list_sessions({}),
-            server.tool_list_sessions({"filter": "needs_you"})]
+    monkeypatch.setattr(agent_directory, "_snapshot", lambda: _hostile_snapshot(server, session))
+    monkeypatch.setattr(agent_directory, "_rows", lambda: [])
+    return [server.tool_list_agents({}), server.tool_list_agents({"filter": session.state})]
 
 
 def _drive_list_projects(server, session, monkeypatch):
@@ -745,7 +834,7 @@ def _drive_steer_session(server, session, monkeypatch):
         monkeypatch.setattr(server, "_resolve_or_explain",
                             lambda name: (s, None, None))
         server._staged_steers.clear()
-        return asyncio.run(server.tool_steer_session(args))
+        return asyncio.run(server.tool_steer_session(captured(server, args)))
 
     args = {"name": "hammer", "prompt": "carry on"}
 
@@ -771,6 +860,47 @@ def _drive_steer_session(server, session, monkeypatch):
     monkeypatch.setattr(server, "speech", _Speech())
     monkeypatch.setattr(server, "_inbound_accepted", lambda: True)
     out.append(_run(_clone(session), args))
+    return out
+
+
+def _drive_capture_send(server, session, monkeypatch):
+    """The capture box's Send button: every refusal the page shows under the
+    box, and the note the brain reads with the next turn when it goes."""
+    import asyncio
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    out = []
+
+    def _send(s):
+        monkeypatch.setattr(server, "_resolve_or_explain",
+                            lambda name: (s, None, None))
+        server._staged_steers.clear()
+        server._captures.clear()
+        server._captures[1] = {"id": 1, "text": "carry on", "to": "hammer",
+                               "heard": [], "read": None, "state": "capturing"}
+        try:
+            out.append(str(asyncio.run(server.api_capture_send(1))))
+        except HTTPException as e:
+            out.append(str(e.detail))
+        out.append(server._with_notes_for_brain(""))
+
+    monkeypatch.setattr(server, "speech", _Speech())
+    hand = _clone(session)
+    hand.needs = session.needs or "permission prompt"
+    monkeypatch.setattr(type(hand), "needs_a_human_hand",
+                        property(lambda self: True), raising=False)
+    _send(hand)
+    monkeypatch.setattr(type(hand), "needs_a_human_hand",
+                        property(lambda self: False), raising=False)
+    not_steerable = _clone(session)
+    not_steerable.steerable = False
+    _send(not_steerable)
+    monkeypatch.setattr(server, "speech", None)
+    _send(_clone(session))
+    monkeypatch.setattr(server, "speech", _Speech())
+    _send(_clone(session))
     return out
 
 
@@ -813,7 +943,7 @@ def _drive_perform_steer(server, session, monkeypatch):
         speech = _Speech()
         monkeypatch.setattr(server, "speech", speech)
         monkeypatch.setattr(server.session_steer, "post_to_session",
-                            lambda path, prompt, _o=outcome: _o)
+                            lambda path, prompt, _o=outcome, interrupt=False: _o)
         item = server._StagedSteer(session_id=session.session_id,
                                    voice_name=session.voice_name,
                                    project=session.project,
@@ -868,15 +998,15 @@ def _drive_build_progress_clause(server, session, monkeypatch):
 
 DRIVERS = {
     "server._build_progress_clause": _drive_build_progress_clause,
-    "server._needs_you_clause": _drive_needs_you_clause,
-    "server._needs_you_summary": _drive_needs_you_summary,
-    "server._rest_summary": _drive_rest_summary,
     "server._resolve_or_explain": _drive_resolve_or_explain,
     "server.tool_session_detail": _drive_session_detail,
-    "server.tool_list_sessions": _drive_list_sessions,
+    "server.tool_list_agents": _drive_list_agents,
+    "server._agent_line": _drive_list_agents,
     "server.tool_list_projects": _drive_list_projects,
     "server._tty_for_session_or_explain": _drive_tty_or_explain,
     "server.tool_steer_session": _drive_steer_session,
+    "server._stage_capture": _drive_steer_session,
+    "server.api_capture_send": _drive_capture_send,
     "server.tool_answer_dialog": _drive_answer_dialog,
     "server._perform_steer": _drive_perform_steer,
     "server._perform_dialog": _drive_perform_dialog,
@@ -913,6 +1043,323 @@ def _drive_announce_needs_you(server, session, monkeypatch):
 DRIVERS["server._announce_needs_you"] = _drive_announce_needs_you
 
 
+def _drive_read_session_reply(server, session, monkeypatch):
+    """Every page, the last-page header, a page out of range, and silence."""
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (session, None, None))
+    reply = " ".join([str(session.last_text or "")] * 40)
+    monkeypatch.setattr(server, "_session_reply", lambda s: reply)
+    out = [server.tool_read_session_reply({"name": "hammer"})]
+    pages = len(server._pages(reply, server.REPLY_PAGE_CHARS))
+    out.append(server.tool_read_session_reply({"name": "hammer", "page": pages}))
+    out.append(server.tool_read_session_reply({"name": "hammer", "page": pages + 1}))
+    monkeypatch.setattr(server, "_session_reply", lambda s: None)
+    out.append(server.tool_read_session_reply({"name": "hammer"}))
+    return out
+
+
+def _drive_announce_reply(server, session, monkeypatch):
+    """The spoken line AND the note the brain reads with the next turn: the
+    note is a header line too, in the user's own turn."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    payload = {"voice_name": session.voice_name, "project": session.project,
+               "state": session.state}
+    asyncio.run(server._announce_reply(
+        {"session": payload, "message": {"id": 7, "body": "carry on",
+                                         "reply": str(session.last_text or "x")}}))
+    return list(speech.said) + [server._with_notes_for_brain("")]
+
+
+def _message_payload(session, reply=None):
+    """A message as the watcher's event carries it: its agent name and
+    project are the session's, its reply the session's own words. Its body
+    is Tim's, a capture, and not a session field."""
+    return {"id": 7, "agent_name": session.voice_name, "project": session.project,
+            "body": "carry on", "reply": reply}
+
+
+def _drive_announce_message(server, session, monkeypatch):
+    """Delivered, not picked up, answered with words and without: every
+    spoken line and the note the brain reads with the next turn."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    payload = {"voice_name": session.voice_name, "project": session.project,
+               "state": session.state}
+    out = []
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
+    monkeypatch.setattr(server.run_store, "mark_agent_messaged", lambda sid: None)
+    for announce in (server._announce_delivered, server._announce_undelivered,
+                     server._announce_queued_sent, server._announce_queued_failed):
+        asyncio.run(announce({"session": payload, "message": {
+            **_message_payload(session), "failure": session.needs or "it ended"}}))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
+    for reply in (str(session.last_text or "x"), None):
+        asyncio.run(server._announce_reply(
+            {"session": payload, "message": _message_payload(session, reply)}))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
+    return out
+
+
+def _stored_message(server, session, status, reply=None):
+    """A message on record to this session, under its name."""
+    run_store = server.run_store
+    mid = run_store.create_message(session.session_id, "anthropic",
+                                   str(session.voice_name or ""),
+                                   str(session.project or ""),
+                                   server.STEER_SIGNATURE + "carry on")
+    fields = {"status": status, "sent_at": 1.0}
+    if status in ("delivered", "working", "answered"):
+        fields.update(delivered_at=2.0, started_at=2.0)
+    if status == "answered":
+        fields.update(answered_at=3.0, reply=reply)
+    if status == "failed":
+        fields["failure"] = "not_live"
+    run_store.update_message(mid, **fields)
+    return mid
+
+
+def _drive_list_messages(server, session, monkeypatch):
+    """Every status, listed by name and in full."""
+    for status in ("sent", "delivered", "working", "answered", "failed", "cancelled"):
+        _stored_message(server, session, status, reply=str(session.last_text or ""))
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (session, None, None))
+    out = [server.tool_list_messages({}), server.tool_list_messages({"name": "hammer"}),
+           server.tool_list_messages({"open_only": True})]
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (None, "I don't see a session by that name.", "unresolved"))
+    out.append(server.tool_list_messages({"name": str(session.voice_name or "")}))
+    return out
+
+
+def _drive_read_message_reply(server, session, monkeypatch):
+    """Every page, a page out of range, no answer yet, and silence."""
+    reply = " ".join([str(session.last_text or "")] * 40)
+    answered = _stored_message(server, session, "answered", reply=reply)
+    out = [server.tool_read_message_reply({"message": answered})]
+    pages = len(server._pages(reply, server.REPLY_PAGE_CHARS))
+    out.append(server.tool_read_message_reply({"message": answered, "page": pages}))
+    out.append(server.tool_read_message_reply({"message": answered, "page": pages + 1}))
+    out.append(server.tool_read_message_reply(
+        {"message": _stored_message(server, session, "working")}))
+    out.append(server.tool_read_message_reply(
+        {"message": _stored_message(server, session, "answered", reply=None)}))
+    return out
+
+
+DRIVERS["server._announce_delivered"] = _drive_announce_message
+DRIVERS["server._announce_undelivered"] = _drive_announce_message
+DRIVERS["server._announce_queued_sent"] = _drive_announce_message
+DRIVERS["server._announce_queued_failed"] = _drive_announce_message
+DRIVERS["server.tool_list_messages"] = _drive_list_messages
+DRIVERS["server.tool_read_message_reply"] = _drive_read_message_reply
+
+
+def _drive_announce_board(server, session, monkeypatch):
+    """A board's project is a FILE NAME a session chose, and it reaches both
+    the spoken line and the note the brain reads with the next turn."""
+    import asyncio
+    from jarvis import session_needs
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    board = session_needs.Board(project=str(session.voice_name or ""),
+                                text="- " + str(session.title or ""), mtime=1.0)
+    asyncio.run(server._announce_board(board))
+    return list(speech.said) + [server._with_notes_for_brain("")]
+
+
+DRIVERS["server._announce_board"] = _drive_announce_board
+
+
+def _stored_session_message(server, session):
+    """A message a session sent: its folder, subject and body are the
+    session's own words, and its agent name a listed name made from them."""
+    return server.run_store.create_session_message(
+        str(session.project or ""), str(session.voice_name or ""),
+        str(session.title or ""), " ".join([str(session.last_text or "")] * 40))
+
+
+def _drive_announce_session_messages(server, session, monkeypatch):
+    """One message and several: the spoken line and the brain's note."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    out = []
+    for n in (1, 3):
+        messages = [server.run_store.get_session_message(
+            _stored_session_message(server, session)) for _ in range(n)]
+        asyncio.run(server._announce_session_messages(messages))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
+    return out
+
+
+def _drive_session_messages(server, session, monkeypatch):
+    """Listed in full, by name, unread only, and by a name not running."""
+    _stored_session_message(server, session)
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (session, None, None))
+    out = [server.tool_session_messages({}),
+           server.tool_session_messages({"name": "hammer"}),
+           server.tool_session_messages({"unread_only": True})]
+    monkeypatch.setattr(server, "_resolve_or_explain",
+                        lambda name: (None, "I don't see a session by that name.", "unresolved"))
+    out.append(server.tool_session_messages({"name": str(session.voice_name or "")}))
+    return out
+
+
+def _drive_read_session_message(server, session, monkeypatch):
+    """Every page and a page out of range."""
+    mid = _stored_session_message(server, session)
+    m = server.run_store.get_session_message(mid)
+    pages = len(server._pages(f"Subject: {m.subject}\n\n{m.body}", server.REPLY_PAGE_CHARS))
+    return [server.tool_read_session_message({"message": mid}),
+            server.tool_read_session_message({"message": mid, "page": pages}),
+            server.tool_read_session_message({"message": mid, "page": pages + 1})]
+
+
+# --- Workflows ---------------------------------------------------------------
+# A workflow's name, summaries and titles are written by the session running
+# it. The driver puts the payload in every one of them.
+
+def _hostile_workflow(session):
+    from jarvis import workflow_store as ws
+    payload = HOSTILE
+    wid = ws.start(f"Build {payload}", "hammer", [f"plan {payload}"])
+    ws.record(ws.WorkflowEvent(wid, "task_added", "t1", payload, {"title": payload}))
+    ws.record(ws.WorkflowEvent(wid, "decision_needed", None, payload,
+                               {"key": "d1", "options": [payload], "recommendation": payload}))
+    return ws, ws.snapshot(wid)
+
+
+def _drive_workflow_status(server, session, monkeypatch):
+    ws, w = _hostile_workflow(session)
+    out = [server.tool_workflow_status({}), server.tool_workflow_status({"workflow": w.id}),
+           server.tool_workflow_status({"workflow": "nothing like it"})]
+    for kind, item in (("phase_started", "plan-x"), ("decision_needed", None),
+                       ("blocker_raised", None), ("workflow_finished", None)):
+        spoken = server._workflow_spoken(w, ws.WorkflowEvent(w.id, kind, item, HOSTILE, {}))
+        out += list(spoken)
+    return out
+
+
+def _drive_workflow_silence(server, session, monkeypatch):
+    """Quiet is said only of a running one, so this one has no decision open."""
+    import asyncio
+    from jarvis import workflow_store as ws
+    wid = ws.start(f"Build {HOSTILE}", "hammer", [])
+    ws.record(ws.WorkflowEvent(wid, "note", None, HOSTILE, {}))
+    real = ws.time.time
+    monkeypatch.setattr(ws.time, "time", lambda: real() + ws.SILENT_AFTER_SEC + 1)
+    said = []
+
+    async def say(line, note, what):
+        said.extend([line, note])
+
+    monkeypatch.setattr(server, "_say_about_message", say)
+    monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
+    monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)
+
+    async def once():
+        task = asyncio.create_task(server._watch_workflow_silence())
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(once())
+    return said
+
+
+def _drive_conversation_history(server, session, monkeypatch):
+    """An agent's name and an answer in the record, both the payload."""
+    from jarvis import conversation_log as cl
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda name: (session, None, None))
+    cl.connect(None)
+    for kind, text in (("to_agent", HOSTILE), ("answer", HOSTILE), ("heard", HOSTILE)):
+        cl.append(cl.ConversationItem.new(kind, text, agent_session_id=session.session_id,
+                                          agent_name=HOSTILE))
+    return [server.tool_conversation_history({}),
+            server.tool_conversation_history({"agent": "hammer"}),
+            server.tool_conversation_history({"agent": "hammer", "before": 1})]
+
+
+DRIVERS["server.tool_conversation_history"] = _drive_conversation_history
+
+
+for _name in ("server.tool_workflow_status", "server._workflow_line", "server._workflow_said",
+              "server._workflow_detail", "server._workflow_spoken"):
+    DRIVERS[_name] = _drive_workflow_status
+DRIVERS["server._watch_workflow_silence"] = _drive_workflow_silence
+DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
+
+DRIVERS["server._announce_session_messages"] = _drive_announce_session_messages
+DRIVERS["server.tool_session_messages"] = _drive_session_messages
+DRIVERS["server.tool_read_session_message"] = _drive_read_session_message
+
+
+# --- The agents list --------------------------------------------------------
+# An agent's name is a session's voice name, which can carry words from that
+# session's title. It is stored in jarvis.db and printed by the agent tools.
+
+def _agent_rows(session):
+    return [{"session_id": "s1", "name": str(session.voice_name or ""), "active": False,
+             "state": "idle"},
+            {"session_id": "s2", "name": str(session.title or ""), "active": True,
+             "state": "idle"}]
+
+
+def _drive_agent_said(server, session, monkeypatch):
+    return [server._agent_said(row) for row in _agent_rows(session)]
+
+
+def _drive_list_agents_by_row(server, session, monkeypatch):
+    from jarvis import run_store
+    monkeypatch.setattr(run_store, "list_agents", lambda: _agent_rows(session))
+    return [server.tool_list_agents({})] + _drive_list_agents(server, session, monkeypatch)
+
+
+def _drive_set_agent_active(server, session, monkeypatch):
+    from jarvis import run_store
+    rows = _agent_rows(session)
+    monkeypatch.setattr(run_store, "list_agents", lambda: rows)
+    monkeypatch.setattr(run_store, "set_agent_active",
+                        lambda sid, active: {**next(r for r in rows if r["session_id"] == sid),
+                                             "active": active})
+    return [server.tool_set_agent_active({"name": rows[0]["name"], "active": True}),
+            server.tool_set_agent_active({"name": rows[1]["name"], "active": False}),
+            server.tool_set_agent_active({"name": "", "active": True})]
+
+
+def _drive_rename_agent(server, session, monkeypatch):
+    from jarvis import run_store
+    rows = _agent_rows(session)
+    monkeypatch.setattr(run_store, "list_agents", lambda: rows)
+    monkeypatch.setattr(server, "_rename_agent", lambda sid, name: (
+        {**next(r for r in rows if r["session_id"] == sid), "name": rows[1]["name"]}, None))
+    return [server.tool_rename_agent({"name": rows[0]["name"], "new_name": rows[1]["name"]}),
+            server.tool_rename_agent({"name": "", "new_name": "x"})]
+
+
+DRIVERS["server._agent_said"] = _drive_agent_said
+DRIVERS["server.tool_rename_agent"] = _drive_rename_agent
+DRIVERS["server.tool_list_agents"] = _drive_list_agents_by_row
+DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
+DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
+DRIVERS["server._announce_reply"] = _drive_announce_reply
+
+
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------
 #
 # `project_name` comes from `POST /api/runs` and, where the body omits it,
@@ -926,7 +1373,7 @@ DRIVERS["server._announce_needs_you"] = _drive_announce_needs_you
 # not know about at all.
 
 def _blank_run(**over):
-    import run_store
+    from jarvis import run_store
     now = time.time()
     run = {
         "id": "11111111-1111-4111-8111-111111111111",
@@ -1236,7 +1683,7 @@ def test_an_ordinary_session_completion_still_says_which_one(server, monkeypatch
 # assert that nothing the resolver says or returns carries it.
 
 def _hostile_project_sources(server, monkeypatch):
-    import session_watch
+    from jarvis import session_watch
 
     def _sess(cwd):
         s = _blank()
@@ -1441,7 +1888,7 @@ def _every_voice_name_session_watch_can_produce() -> list:
     """Every shape `_assign_voice_names` actually emits, produced by driving
     it — not typed here. The naming chain has three rules and each has its
     own format; a wall that admits only the first erases the other two."""
-    import session_watch
+    from jarvis import session_watch
 
     def _s(sid, cwd, title=None, state="idle", started=0.0):
         return session_watch.SessionState(
@@ -1516,6 +1963,9 @@ ALT = {
     "last_text": "finished",
     "needs": "dialog open",
     "origin": "vscode",
+    # Set from session_watch.PROVIDER, never read off the roster; nothing
+    # prints it, and the page only uses it to pick a logo file.
+    "provider": "openai",
     # `pids` is `list[int]` off the roster, so it is in FOREIGN_FIELDS by
     # type. Nothing prints it; `_tty_for_session_or_explain` iterates it.
     "pids": [99],
@@ -1575,7 +2025,7 @@ def test_an_ordinary_session_is_never_erased_by_the_wall(server, monkeypatch,
 def test_recent_tools_is_clipped_at_the_source():
     """Its three siblings in `recap_from` go through `_clip`; this one did
     not, so a transcript could put an unbounded string into a header line."""
-    import session_watch
+    from jarvis import session_watch
     recap = session_watch.recap_from([{
         "type": "assistant",
         "message": {"content": [{"type": "tool_use", "name": "A" * 5000}]},
@@ -1586,7 +2036,7 @@ def test_recent_tools_is_clipped_at_the_source():
 
 
 def test_an_ordinary_tool_name_is_untouched():
-    import session_watch
+    from jarvis import session_watch
     recap = session_watch.recap_from([{
         "type": "assistant",
         "message": {"content": [{"type": "tool_use", "name": "Bash"}]},

@@ -25,8 +25,9 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import builds  # noqa: E402
-import specs  # noqa: E402
+from jarvis import builds  # noqa: E402
+from jarvis import specs  # noqa: E402
+from jarvis import claude_provider
 
 SPEC_BODY = """\
 A local web UI to browse and edit CLAUDE.md files
@@ -54,11 +55,11 @@ def wired(monkeypatch, tmp_path):
     """A reloaded server with exactly one project, on disk, in tmp_path."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server
+    from jarvis import server
     importlib.reload(server)
     run_store.init_db()
 
@@ -290,11 +291,11 @@ def test_an_unknown_project_is_a_404(client):
 
 def test_both_tools_are_wired_and_declared(wired):
     server, _, _ = wired
-    import jarvis_mcp
-    import brain
+    from jarvis import jarvis_mcp
+    from jarvis import brain
     for name in ("review_document", "approve_document"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
 

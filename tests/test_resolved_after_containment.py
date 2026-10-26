@@ -47,7 +47,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 REPO = Path(__file__).parent.parent
-MODULES = sorted(REPO.glob("*.py"))
+MODULES = sorted((REPO / "jarvis").glob("*.py"))
 
 # The three functions in this repository that DECIDE containment. Each
 # realpaths both sides and returns the real path; everything after them is
@@ -187,11 +187,11 @@ def server(monkeypatch, tmp_path):
     projects = tmp_path / "projects"
     projects.mkdir()
     monkeypatch.setenv("JARVIS_PROJECT_ROOTS", str(projects))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     server_module._projects_root_for_test = projects
@@ -240,7 +240,7 @@ def test_a_directory_index_that_is_a_link_to_jarviss_own_data_is_refused(
     loopback tool token's path and a verbatim copy of every `env` block in
     the user's `connections.json` — their Notion token, their GitHub token.
     Chrome would put it on the screen, where `look_at_screen` reads it."""
-    import data_paths
+    from jarvis import data_paths
     secret = data_paths.brain_home() / "mcp.json"
     secret.parent.mkdir(parents=True, exist_ok=True)
     secret.write_text('{"token": "sk-not-a-real-one"}')
@@ -270,7 +270,7 @@ def test_naming_the_file_and_naming_its_directory_agree(server, monkeypatch,
                                                         tmp_path):
     """The finding in one sentence: the two spellings of the same request
     gave different answers. They must give the same one."""
-    import data_paths
+    from jarvis import data_paths
     secret = data_paths.brain_home() / "mcp.json"
     secret.parent.mkdir(parents=True, exist_ok=True)
     secret.write_text("{}")

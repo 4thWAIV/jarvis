@@ -44,8 +44,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 ROOT = Path(__file__).parent.parent
-MEMORY_SRC = ROOT / "jarvis_memory.py"
-SERVER_SRC = ROOT / "server.py"
+MEMORY_SRC = ROOT / "jarvis" / "jarvis_memory.py"
+SERVER_SRC = ROOT / "jarvis" / "server.py"
 
 # A line break, then a line that reads as JARVIS's own system prose. The
 # marker is what must never begin a line of any file these writers touch.
@@ -57,9 +57,9 @@ MARKER = "## Standing instruction"
 @pytest.fixture
 def memory(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
     jarvis_memory.ensure_layout()
     return jarvis_memory
@@ -151,7 +151,7 @@ def test_every_parameter_of_every_writer_is_classified(memory, writer):
 
 def _all_text(memory) -> str:
     """Every byte of every markdown file under the memory home."""
-    import data_paths
+    from jarvis import data_paths
     home = data_paths.brain_home()
     return "\n".join(sorted(p.read_text()
                             for p in home.rglob("*.md")))
@@ -178,7 +178,7 @@ def test_a_one_line_field_can_never_author_a_line(memory, writer, param,
 
     # A fresh home, so the two calls are measured against the same start.
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data2"))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     importlib.reload(memory)
     memory.ensure_layout()
@@ -279,7 +279,7 @@ def _tools_that_write_memory() -> set:
                 break
 
     # function name -> registered tool name, from TOOL_HANDLERS itself
-    import server
+    from jarvis import server
     registered = {fn.__name__: name
                   for name, fn in server.TOOL_HANDLERS.items()}
     return {registered[f] for f in calling if f in registered}
@@ -340,15 +340,17 @@ class _Brain:
 
 @pytest.fixture
 def wired_server(monkeypatch, tmp_path):
+    # These tests exercise the refusal, which is opt-in.
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import jarvis_memory
+    from jarvis import jarvis_memory
     importlib.reload(jarvis_memory)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     jarvis_memory.ensure_layout()
@@ -367,7 +369,7 @@ def wired_server(monkeypatch, tmp_path):
 @pytest.fixture
 def call(wired_server, monkeypatch):
     server, project, _memory = wired_server
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     brain = _Brain()
 

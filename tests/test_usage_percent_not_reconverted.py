@@ -15,13 +15,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import usage_store
+from jarvis import usage_store
 
 
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
-    import data_paths
-    monkeypatch.setattr(data_paths, "usage_path", lambda: tmp_path / "usage.json")
+    from jarvis import data_paths
+    monkeypatch.setattr(data_paths, "usage_path", lambda *a: tmp_path / "usage.json")
     yield
 
 

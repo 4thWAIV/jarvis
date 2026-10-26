@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
     run_store.init_db()
     return run_store
@@ -180,9 +180,9 @@ _OLD_RUNS_SCHEMA = """
 
 def test_existing_database_without_requested_model_still_opens(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
 
     # Build a jarvis.db in the pre-`requested_model` shape directly,
@@ -229,9 +229,9 @@ def test_existing_database_without_is_error_still_opens(monkeypatch, tmp_path):
     """Same backfill as `requested_model`: CREATE TABLE IF NOT EXISTS never
     alters a table that already exists, so a live jarvis.db needs the ALTER."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
 
     conn = sqlite3.connect(str(data_paths.db_path()))

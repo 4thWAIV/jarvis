@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import usage_scan as us
+from jarvis import usage_scan as us
 from tests.fixtures.transcripts import (
     append_turns, encode, write_agent_sidecar, write_agent_transcript,
     write_transcript,

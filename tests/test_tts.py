@@ -14,7 +14,7 @@ def _client(handler):
 
 @pytest.mark.asyncio
 async def test_sends_balanced_latency_and_assembles_stream():
-    import tts
+    from jarvis import tts
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -35,14 +35,14 @@ async def test_sends_balanced_latency_and_assembles_stream():
 
 @pytest.mark.asyncio
 async def test_non_200_returns_none():
-    import tts
+    from jarvis import tts
     async with _client(lambda req: httpx.Response(401, content=b"nope")) as c:
         assert await tts.synthesize_chunk("x", api_key="k", voice_id="v", client=c) is None
 
 
 @pytest.mark.asyncio
 async def test_transport_error_returns_none():
-    import tts
+    from jarvis import tts
 
     def boom(request):
         raise httpx.ConnectError("down")
@@ -53,7 +53,7 @@ async def test_transport_error_returns_none():
 
 @pytest.mark.asyncio
 async def test_empty_text_or_missing_key_short_circuits():
-    import tts
+    from jarvis import tts
     calls = []
 
     async with _client(lambda req: calls.append(1) or httpx.Response(200, content=b"x")) as c:

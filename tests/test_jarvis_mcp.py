@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import jarvis_mcp
+from jarvis import jarvis_mcp
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -25,7 +25,7 @@ class Server:
 
     def __init__(self, env):
         self.p = subprocess.Popen(
-            [sys.executable, str(REPO / "jarvis_mcp.py")],
+            [sys.executable, "-m", "jarvis.jarvis_mcp"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=env, cwd=str(REPO))
         self._watchdog = threading.Timer(self.DEADLINE_SEC, self._expire)
@@ -118,7 +118,7 @@ def test_initialize_handshake_and_tool_listing(env_for):
 
         r = s.call("tools/list", {}, rid=2)
         names = [t["name"] for t in r["result"]["tools"]]
-        assert "list_sessions" in names and "session_detail" in names
+        assert "list_agents" in names and "session_detail" in names
         assert "steer_session" in names
         for t in r["result"]["tools"]:
             assert t["description"] and t["inputSchema"]["type"] == "object"
@@ -131,10 +131,10 @@ def test_a_tool_call_is_forwarded_with_the_bearer_token(env_for):
     s = Server(env)
     try:
         s.call("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
-        r = s.call("tools/call", {"name": "list_sessions", "arguments": {}}, rid=3)
+        r = s.call("tools/call", {"name": "list_agents", "arguments": {}}, rid=3)
         assert r["result"]["content"][0]["text"] == "fine"
         assert r["result"].get("isError") in (False, None)
-        assert calls[0]["payload"] == {"tool": "list_sessions", "arguments": {}}
+        assert calls[0]["payload"] == {"tool": "list_agents", "arguments": {}}
         assert calls[0]["auth"] == "Bearer s3cret"
     finally:
         s.close()
@@ -163,7 +163,7 @@ def test_an_unreachable_server_is_reported_not_raised(tmp_path):
     s = Server(env)
     try:
         s.call("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
-        r = s.call("tools/call", {"name": "list_sessions", "arguments": {}}, rid=5)
+        r = s.call("tools/call", {"name": "list_agents", "arguments": {}}, rid=5)
         assert r["result"]["isError"] is True
         assert "unreachable" in r["result"]["content"][0]["text"].lower()
     finally:
@@ -302,7 +302,7 @@ def test_a_tool_with_no_image_still_returns_text_alone(env_for):
     s = Server(env)
     try:
         s.call("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
-        r = s.call("tools/call", {"name": "list_sessions", "arguments": {}}, rid=8)
+        r = s.call("tools/call", {"name": "list_agents", "arguments": {}}, rid=8)
         assert r["result"]["content"] == [{"type": "text", "text": "fine"}]
     finally:
         s.close()

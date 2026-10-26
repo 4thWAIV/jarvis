@@ -24,7 +24,7 @@ import json
 
 import pytest
 
-import stream_parser
+from jarvis import stream_parser
 
 
 # --- the pure decision ----------------------------------------------------
@@ -109,11 +109,11 @@ def test_malformed_events_do_not_raise():
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -199,6 +199,19 @@ def test_run_status_reports_the_stall(wired):
                   result_text="Which theme, sir?")
     out = server.tool_run_status({"run": "tony-starks-website"})
     assert "stopped to ask a question" in out
+
+
+def test_run_status_returns_the_final_result_text(wired):
+    """run_status must tell the brain what a finished run produced, capped."""
+    server, store = wired
+    answer = "Built the page. " + "x" * 3000
+    _finished_run(store, [_assistant(tools=["Write"]), _assistant(answer)],
+                  result_text=answer)
+    out = server.tool_run_status({"run": "tony-starks-website"})
+    assert "and it worked" in out
+    assert "<session-output" in out and "Built the page." in out
+    assert "x" * server._RUN_RESULT_CHARS not in out   # header text eats some
+    assert out.count("x") <= server._RUN_RESULT_CHARS
 
 
 def test_a_huge_run_is_never_downgraded(wired, monkeypatch):

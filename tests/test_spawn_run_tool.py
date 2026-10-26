@@ -13,17 +13,18 @@ discarded the rest, which is how work lands in the wrong repository.
 import importlib
 
 import pytest
+from jarvis import claude_provider
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -72,11 +73,11 @@ def test_spawn_run_is_registered_and_gated(ready):
 
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _store, _ex = ready
-    assert "mcp__jarvis__spawn_run" in brain.ALLOWED_TOOLS
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert "mcp__jarvis__spawn_run" in claude_provider.ALLOWED_TOOLS
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
@@ -86,7 +87,7 @@ async def test_a_watcher_turn_cannot_start_a_run(ready, monkeypatch):
     """The refusal lives in /internal/tool, not in the prompt. Exercised
     through the endpoint so the gate itself is what is being tested."""
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
     server, store, ex = ready
 
     class _Brain:
@@ -160,7 +161,7 @@ async def test_an_exact_name_wins_over_its_own_prefixes(ready, monkeypatch, tmp_
 async def test_one_project_in_two_directories_asks_which(ready, monkeypatch, tmp_path):
     """Measured live: `chitauri` has conversations in both Projects and
     Desktop. Picking one silently starts the work in the wrong tree."""
-    import session_watch
+    from jarvis import session_watch
     server, _store, ex = ready
 
     def state(cwd):
@@ -196,7 +197,7 @@ async def test_no_projects_at_all_says_so(ready, monkeypatch):
 async def test_a_live_session_makes_its_project_startable(ready, monkeypatch):
     """A project nowhere near the Desktop is still somewhere JARVIS can start
     work — the watcher knows about it."""
-    import session_watch
+    from jarvis import session_watch
     server, _store, ex = ready
     monkeypatch.setattr(server, "cached_projects", [])
 
@@ -208,7 +209,10 @@ async def test_a_live_session_makes_its_project_startable(ready, monkeypatch):
 
     monkeypatch.setattr(server, "session_watcher", _Watcher())
 
-    await server.tool_spawn_run({"project": "zeltar", "prompt": "check the logs"})
+    # The session is live, so only the user's override starts a separate run
+    # there (test_one_writer_per_project.py); resolution is what is under test.
+    await server.tool_spawn_run({"project": "zeltar", "prompt": "check the logs",
+                                 "override": True})
 
     assert ex.spawned[0]["project_path"] == "/opt/zeltar"
 

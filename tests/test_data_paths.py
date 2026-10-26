@@ -7,21 +7,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_data_dir_defaults_to_repo_data(monkeypatch):
     monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.data_dir().name == "data"
 
 
 def test_data_dir_honors_env(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.data_dir() == tmp_path
 
 
 def test_db_path_is_inside_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.db_path() == tmp_path / "jarvis.db"
 
@@ -29,21 +29,23 @@ def test_db_path_is_inside_data_dir(monkeypatch, tmp_path):
 def test_data_dir_is_created(monkeypatch, tmp_path):
     target = tmp_path / "nested" / "dir"
     monkeypatch.setenv("JARVIS_DATA_DIR", str(target))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.data_dir().exists()
 
 
 def test_brain_home_is_under_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import importlib, data_paths
+    import importlib
+    from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.brain_home() == tmp_path / "jarvis"
 
 
 def test_ensure_brain_home_seeds_the_template_and_spares_an_edit(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import importlib, data_paths
+    import importlib
+    from jarvis import data_paths
     importlib.reload(data_paths)
     home = data_paths.ensure_brain_home()
     claude_md = home / "CLAUDE.md"
@@ -65,6 +67,7 @@ def test_ensure_brain_home_seeds_the_template_and_spares_an_edit(monkeypatch, tm
 
 import hashlib
 import json
+import re
 import subprocess
 
 import pytest
@@ -72,13 +75,13 @@ import pytest
 
 def _fresh(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
     return data_paths
 
 
 def _template_text() -> str:
-    return (Path(__file__).parent.parent / "jarvis_home" / "CLAUDE.md").read_text()
+    return (Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "CLAUDE.md").read_text()
 
 
 def _sha(text: str) -> str:
@@ -210,19 +213,22 @@ def test_every_template_this_project_has_shipped_is_listed(monkeypatch, tmp_path
     here rather than remembered."""
     dp = _fresh(monkeypatch, tmp_path)
     repo = Path(__file__).resolve().parents[1]
-    rel = "jarvis_home/CLAUDE.md"
+    rel = "jarvis/jarvis_home/CLAUDE.md"
     try:
         commits = subprocess.run(
-            ["git", "-C", str(repo), "log", "--format=%H", "--", rel],
+            ["git", "-C", str(repo), "log", "--follow", "--format=%H", "--name-only", "--", rel],
             capture_output=True, text=True, timeout=60).stdout.split()
+        # Each commit with the template's path in it then: it has moved.
+        commits = [(c, path) for c, path in zip(commits, commits[1:])
+                   if re.fullmatch(r"[0-9a-f]{40}", c) and not re.fullmatch(r"[0-9a-f]{40}", path)]
     except (OSError, subprocess.SubprocessError):      # pragma: no cover
         pytest.skip("no usable git checkout here")
     if not commits:                                    # pragma: no cover
         pytest.skip("no history for the template here")
 
     missing = {}
-    for commit in commits:
-        blob = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{rel}"],
+    for commit, path in commits:
+        blob = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{path}"],
                               capture_output=True, timeout=60).stdout
         digest = hashlib.sha256(blob).hexdigest()
         if digest not in dp.KNOWN_TEMPLATE_HASHES:

@@ -17,6 +17,7 @@ at the module boundary, and the recorder asserts what it was handed.
 import importlib
 
 import pytest
+from jarvis import claude_provider
 
 
 class _Actions:
@@ -50,11 +51,11 @@ def ready(monkeypatch, tmp_path):
     """A server with one project on disk and a recording `actions`."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -73,13 +74,13 @@ def ready(monkeypatch, tmp_path):
 # --- registered in all three places ---------------------------------------
 
 def test_the_three_tool_sets_still_agree(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _fake, _project = ready
     for name in ("open_in_browser", "open_in_terminal"):
         assert name in server.TOOL_HANDLERS
         assert name in server.ACTING_TOOLS, "it acts; the origin gate applies"
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
 
 
@@ -94,7 +95,7 @@ async def test_a_watcher_turn_cannot_open_anything(ready, monkeypatch):
         current_origin = "session_event"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         r = client.post("/internal/tool",
@@ -353,10 +354,10 @@ async def test_a_nonsense_default_falls_back_rather_than_breaking(ready,
 async def test_his_own_interface_is_not_opened_where_the_mic_is_dead(ready,
                                                                      monkeypatch,
                                                                      url):
-    """`frontend/src/voice.ts` is built on webkitSpeechRecognition, which
-    Firefox does not implement. Opening JARVIS there gives the user a page
-    whose microphone can never work, and he would conclude JARVIS is broken.
-    Say why; do not do it silently."""
+    """The voice page's microphone capture is only tested in Chrome, so
+    opening JARVIS in Firefox could give the user a page whose microphone
+    does not work, and he would conclude JARVIS is broken. Say why; do not
+    do it silently."""
     server, fake, _project = ready
     monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
     out = await server.tool_open_in_browser({"target": url})

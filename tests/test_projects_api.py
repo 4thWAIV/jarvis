@@ -12,7 +12,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-import session_watch as sw
+from jarvis import session_watch as sw
 
 # What the dashboard's own page sends. `POST /api/projects/open` opens an
 # editor, a Terminal or a browser on this machine, so the app refuses it
@@ -24,11 +24,11 @@ BROWSER = {"Origin": "http://localhost:5173"}
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -71,6 +71,8 @@ class _Actions:
 def test_empty_roster_and_no_runs_is_an_empty_list(wired):
     server, _store = wired
     with TestClient(server.app, headers=BROWSER) as c:
+        # Startup runs the real watcher, which sees this machine's sessions.
+        server.session_watcher = _Watcher([])
         r = c.get("/api/projects/view")
     assert r.status_code == 200
     assert r.json()["projects"] == []
@@ -109,6 +111,8 @@ def test_a_project_known_only_from_a_run_still_appears(wired):
     server, store = wired
     store.create_run("build it", "hammer", "/tmp/hammer", "voice")
     with TestClient(server.app, headers=BROWSER) as c:
+        # Startup runs the real watcher, which sees this machine's sessions.
+        server.session_watcher = _Watcher([])
         r = c.get("/api/projects/view")
     projects = r.json()["projects"]
     assert [p["name"] for p in projects] == ["hammer"]

@@ -22,7 +22,9 @@ import json
 
 import pytest
 
-import preflight
+from jarvis import preflight
+from tests.fixtures.captures import captured
+from jarvis import claude_provider
 
 
 @pytest.fixture
@@ -36,11 +38,11 @@ def settings(monkeypatch, tmp_path):
 def wired(monkeypatch, tmp_path, settings):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, settings
@@ -142,6 +144,7 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
     class _Session:
         session_id = "s1"
         voice_name = "chitauri"
+        provider = "anthropic"
         project = "chitauri"
         needs_a_human_hand = False
         steerable = True
@@ -157,7 +160,7 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
 
     import asyncio
     out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        server.tool_steer_session({"name": "chitauri", "prompt": "use Postgres"}))
+        server.tool_steer_session(captured(server, {"name": "chitauri", "prompt": "use Postgres"})))
 
     assert "staged" in out
     assert "approve" in out
@@ -183,15 +186,15 @@ class _RecordingSpeech:
 
 
 async def _perform_one(server, monkeypatch):
-    import session_steer
+    from jarvis import session_steer
     speech = _RecordingSpeech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(session_steer, "post_to_session",
-                        lambda path, prompt: session_steer.SENT)
+                        lambda path, prompt, interrupt=False: session_steer.SENT)
     await server._perform_steer(server._StagedSteer(
         session_id="s1", voice_name="chitauri", project="chitauri",
         prompt="use Postgres", socket_path="/tmp/x.sock"))
-    return speech.said[-1]
+    return speech.said[-1] if speech.said else ""
 
 
 @pytest.mark.asyncio
@@ -216,18 +219,18 @@ async def test_with_the_setting_on_there_is_no_warning(wired, monkeypatch):
     server, settings = wired
     _write(settings, {"crossSessionInbound": "accept"})
     said = await _perform_one(server, monkeypatch)
-    assert said == "Passed to chitauri, sir."
+    assert said == "", "nothing to warn of, and delivery is said once it is seen"
 
 
 # --- the tool -------------------------------------------------------------
 
 def test_it_is_an_acting_tool(wired):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _settings = wired
     assert "enable_session_inbox" in server.TOOL_HANDLERS
     assert "enable_session_inbox" in server.ACTING_TOOLS
-    assert "mcp__jarvis__enable_session_inbox" in brain.ALLOWED_TOOLS
+    assert "mcp__jarvis__enable_session_inbox" in claude_provider.ALLOWED_TOOLS
     assert "enable_session_inbox" in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
 
 

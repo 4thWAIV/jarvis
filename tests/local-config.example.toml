@@ -1,0 +1,21 @@
+# This machine's own test settings.
+#
+# Copy this file to tests/local-config.toml and edit the copy. Git ignores the
+# copy, so anything it skips is skipped on your computer only. With no copy,
+# nothing is skipped.
+
+[skip]
+# Tests to skip, by node id as pytest prints it. A file name skips every test
+# in that file.
+tests = [
+    # "tests/test_screen_sight.py::test_the_real_sips_sees_a_real_black_png_as_blank",
+]
+
+# Markers to skip; every test carrying one is skipped. The markers are listed
+# in pytest.ini.
+markers = [
+    # "sips",
+]
+
+# Shown beside each skipped test.
+# reason = "sips crashes on this Mac"

@@ -1,0 +1,72 @@
+# Test JARVIS and package it, on every push, every pull request, and by hand.
+#
+# macOS, not Ubuntu, on purpose: JARVIS is a macOS-only project, and while
+# every macOS-specific subprocess (osascript, screencapture, sips, claude) is
+# faked at the seam in tests, the environment the suite was written against
+# is a Mac. A green run here means what a green run on the author's machine
+# means.
+#
+# The suite needs Python 3.11+, Node for the frontend build, and Playwright's
+# Chromium. It does NOT need a Fish Audio key, a Claude login, or the
+# network: the `browser` tests (a headful browser on live sites) are the one
+# selection left out.
+#
+#   test        the default selection (`pytest`)
+#   page-tests  the voice page and dashboard in headless Chromium (`pytest -m page`)
+#   package     once both pass: the wheel and the sdist, installed into a
+#               clean venv to prove they run, then uploaded as `jarvis-dist`
+
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Test suite
+        env:
+          JARVIS_BRAIN_AUTOSTART: "0"
+        run: pytest -v -o faulthandler_timeout=300 -p no:cacheprovider
+
+  page-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Page tests
+        env:
+          JARVIS_BRAIN_AUTOSTART: "0"
+        run: pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider
+
+  package:
+    needs: [test, page-tests]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Build the wheel and the sdist
+        run: |
+          pip install build
+          python -m build
+      - name: The wheel installs and runs
+        run: |
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/wheel-check/bin/jarvis --help
+          /tmp/wheel-check/bin/python -c "import jarvis.server, jarvis.data_paths as p; assert (p.FRONTEND_DIST / 'index.html').is_file(); assert not p.CHECKOUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-dist
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error

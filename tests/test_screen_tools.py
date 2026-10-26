@@ -21,7 +21,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import screen as real_screen
+from jarvis import screen as real_screen
+from jarvis import claude_provider
 
 
 class _Screen:
@@ -72,11 +73,11 @@ class _UserBrain:
 def ready(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
 
@@ -86,12 +87,12 @@ def ready(monkeypatch, tmp_path):
 
 
 def test_both_screen_tools_are_registered_in_all_three_places(ready):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _fake = ready
     for name in ("look_at_screen", "what_is_on_screen"):
         assert name in server.TOOL_HANDLERS
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
         assert name in {t["name"] for t in jarvis_mcp.TOOL_SPECS}
 
 
@@ -111,7 +112,7 @@ async def test_a_watcher_turn_cannot_take_a_screenshot(ready, monkeypatch):
         current_origin = "session_event"
 
     monkeypatch.setattr(server, "brain_instance", _Brain())
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         for tool in ("look_at_screen", "what_is_on_screen"):
@@ -144,7 +145,7 @@ async def test_a_web_page_in_the_turn_does_not_shut_the_screen_tools(ready, monk
         async def stop(self):
             pass
 
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         # Inside the context: the lifespan builds a brain of its own on
@@ -203,7 +204,7 @@ async def test_looking_at_the_screen_returns_an_image_not_a_path(ready):
 async def test_the_screenshot_reaches_the_brain_as_a_base64_image_field(ready):
     from fastapi.testclient import TestClient
     server, fake = ready
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         server.brain_instance = _UserBrain()
@@ -258,7 +259,7 @@ async def test_a_stalled_capture_gives_up_inside_the_tool_channels_timeout(
 
 
 def test_the_screen_deadline_is_inside_the_tool_channels_timeout(ready):
-    import jarvis_mcp
+    from jarvis import jarvis_mcp
     server, _fake = ready
     assert server.SCREEN_DEADLINE_SEC < jarvis_mcp.TIMEOUT_SEC
 
@@ -361,7 +362,7 @@ async def test_the_window_list_fits_the_brains_budget(ready):
     server, fake = ready
     fake.windows = [real_screen.Window(f"App{i}", "x" * 200, False)
                     for i in range(30)]
-    import data_paths
+    from jarvis import data_paths
     token = data_paths.ensure_tool_token()
     with TestClient(server.app) as client:
         server.brain_instance = _UserBrain()
@@ -378,7 +379,7 @@ async def test_the_window_list_fits_the_brains_budget(ready):
 # --- what the brain is told about all this --------------------------------
 
 def test_the_brain_is_told_the_screen_is_not_the_session_list():
-    home = Path(__file__).parent.parent / "jarvis_home" / "CLAUDE.md"
+    home = Path(__file__).parent.parent / "jarvis" / "jarvis_home" / "CLAUDE.md"
     text = home.read_text()
     assert "look_at_screen" in text
     assert "what_is_on_screen" in text

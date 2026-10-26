@@ -1,462 +1,131 @@
 # JARVIS
 
-**Just A Rather Very Intelligent System — a voice for Claude Code.**
+**A voice-first workspace for conversations, coding agents and the work they share.**
 
-JARVIS is a British butler who sits on top of the Claude Code you already pay
-for. You talk to him. He brainstorms a project with you out loud, one question
-at a time; when you have settled on something he writes the design down as a
-file in your project; then he starts a real Claude Code session on it and
-drives it through plan → review → execute. While it runs he watches every
-Claude Code session on your machine, and when one of them is stuck waiting on
-a human he tells you which one, out loud, without you having to look.
+JARVIS brings spoken and typed conversation, agent threads, workflow decisions and voice diagnostics into one interface. It runs on macOS and connects to Claude Code and Codex. This repository is the Prototype Engine: a place to develop the interaction and coordination needed for the future Denice system.
 
-> "Will do, sir."
+The development direction is the new React workspace. Start with the [roadmap](docs/roadmap.md) for what comes next and [what's new](docs/whats-new.md) for the current interface.
 
-![Six seconds of the JARVIS orb while he is speaking, looping. Two thousand
-particles hold the shape of a hollow blue sphere, wired together by faint lines
-between the ones that drift close enough; a bright rim catches its lower edge.
-Through each spoken phrase the sphere swells and brightens and leans towards
-you, then falls back and contracts through the pause before the next one, three
-times over, while the camera drifts a few degrees around
-it.](docs/images/orb-speaking.gif)
+## Where the project is going
 
-*What you actually look at while you talk to him: `frontend/src/orb.ts`,
-rendered live. The audio driving the pulse is synthetic — a speech-shaped
-envelope fitted to a measurement of the real analyser, not a recording of his
-voice — but every pixel is that file running. Regenerate with
-`scripts/make_orb_loop.py`.*
+### One workspace for supervising work
 
-![A twenty-three second walkthrough of the JARVIS dashboard, looping. It opens
-on Runs: a red "Needs Attention" panel over a failed run and a timed-out one,
-then Active and History, every row carrying the project, the prompt, a status
-pill, elapsed time and tokens. A run opens to show its prompt, cost, model and
-live transcript. The Sessions tab shows every Claude Code conversation on the
-machine grouped by project; clicking a blocked one swaps the right-hand column
-from a tally into a red band reading "waiting on you for 51m — permission
-prompt", with the question the CLI actually asked quoted underneath. Specs
-shows a design document with big numbered sections you answer by voice.
-Projects drills into one project's conversations, runs and build progress.
-Usage ends on the subscription's two gauges — a five-hour window at 62 per
-cent and a seven-day one at 84 per cent.](docs/images/dashboard-walkthrough.gif)
+Conversation is the centre of the experience. The next focus is making it easy to move from a discussion to a recorded request, follow that request through an agent's work, answer a decision and understand the result. Agent threads and workflow details belong beside the conversation, with concise status and deeper evidence available when needed.
 
-*The whole dashboard, clicked through. Fictional sample data throughout — the
-projects, prompts, people and figures in every screenshot on this page are
-invented.*
+### Voice that keeps up with the whole machine
 
----
+Voice reliability means hearing complete commands while the browser, coding agents and speech output are active. The next focus is measurable performance across capture, transport, recognition and playback, backed by diagnostics that explain failures. Notification volume and browser workload are part of that investigation.
 
-## What it costs
+Speech-output alternatives remain under evaluation. A local model must meet the accepted voice quality and leave enough capacity for listening; installing a model is not evidence that it can replace the current Fish voice. Current speech recognition is local, while Fish output and the conversational providers retain their network dependencies.
 
-**No AI API usage, and none is possible.** JARVIS's brain is a Claude Code
-process running on *your* Claude subscription — the same login you use in the
-terminal. There is no Anthropic API key anywhere on the voice path, and there
-is no way to accidentally put one there:
+### Coordination across agents and providers
 
-```python
-# claude_env.py
-SCRUBBED_ENV_PREFIXES = ("CLAUDE_CODE_", "ANTHROPIC_")
-SCRUBBED_ENV_KEYS = {"CLAUDECODE"}
-```
+The direction is durable, understandable work state: which agent received a message, what it is doing, what is blocked and which decision is needed. Provider choice should preserve the same conversation and supervision workflow. A change of conversational brain should not be confused with a change of development executor.
 
-Every Claude Code process JARVIS spawns — the brain and every build — is
-launched through `claude_env.child_env()`, which strips **every** `ANTHROPIC_*`
-variable out of the environment first. This is deliberate and it is not a
-nicety: the CLI silently *prefers* an inherited `ANTHROPIC_API_KEY` over your
-login, and `claude auth status` goes on reporting `loggedIn: true` while
-billing quietly moves onto the key. So JARVIS removes the key rather than
-trusting itself not to pass it. Leave one in your `.env` if you like — the
-startup check will warn you it is there, and the brain will still never see it.
+### The path to Denice
 
-![The dashboard's Subscription panel, measured three minutes ago: a 5-hour
-session gauge at 62 per cent that resets at 6:00pm, and a 7-day week gauge at 84
-per cent that resets Sunday at 8:00am. Underneath, a note headed "what the CLI
-reports": two windows, and no separate per-model
-limit.](docs/images/dashboard-usage.png)
+Denice, pronounced Denise, is the successor direction. The planned progression moves from this Prototype Engine to the Parris Island Engine, then Bridge and Proteus. Those stages introduce the new Denice system, Agent Guardrails and the longer-term AI OS architecture. They are planned product stages, not capabilities already supplied by this repository. A rebrand alone does not implement them.
 
-*So the number that matters is not a dollar figure — it is how much of your
-subscription's two windows is gone. Fictional sample data.*
+The [full roadmap](docs/roadmap.md) separates current capabilities, next development focus, evaluations and future engines. It makes no release-date commitments.
 
-**The one thing you pay for is [Fish Audio](https://fish.audio/)**, which
-gives JARVIS his voice. Be aware there is no fallback: `tts.py` returns
-nothing without `FISH_API_KEY`, so JARVIS goes silent and his replies appear
-as text in the browser instead. If you would rather use a different TTS, that
-is a small, well-isolated file to replace — see *Make it yours* below.
+## The new interface today
 
-## What he does
+| Area | What it contains |
+|---|---|
+| **Conversation, in the centre** | Conversation history, live spoken words, typed input, captures and sources. Open an agent thread, a workflow or detailed diagnostics here. |
+| **Voice and brains, on the left** | The audio-reactive orb, voice status, microphone controls and brain account usage. |
+| **Work, on the right** | Agents, Diagnostics and Workflows tabs. Select an agent or a workflow to inspect the work in context. |
+| **Settings** | Brain providers, voice and other application configuration. |
 
-- **Brainstorms out loud.** The conversation is the design phase. He asks one
-  question at a time, offers two or three approaches, and does not start
-  anything until you have agreed on one.
-- **Writes the design down.** What you agreed goes on disk as
-  `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` *inside the project
-  being built* — before a single process is spawned. You can read it back by
-  numbered section and approve it by voice, or open it on the dashboard.
-- **Drives the build.** A build is a real `claude -p` session handed a brief
-  that tells it to write a phased plan, review that plan against the spec,
-  then execute it task by task under test-driven development, ticking the
-  plan's checkboxes as it goes. "How far has it got" is answered by reading
-  those checkboxes, not by guessing.
-- **Watches every Claude Code session on the machine** — not just his own. Ask
-  "which of my sessions are waiting on me?" and he checks live. He can post a
-  message into one, and answer a permission prompt for one running in
-  Terminal.app by pressing a single key.
-- **Interrupts you when it matters.** A session that needs a human gets said
-  out loud immediately; a session that merely finished gets batched into one
-  sentence at the next pause. If nobody has the browser tab open, it becomes a
-  macOS notification instead.
-- **Remembers.** Long-term memory is a folder of plain Markdown files, one
-  fact per file, with an index the brain always sees. You can read and edit it
-  in any text editor.
-- **Records everything.** Every Claude Code process JARVIS starts is a *run*:
-  a row in SQLite with its prompt, project, status, token usage and the full
-  event stream. Watch them live at `/dashboard`.
+Workflow details include phases, tasks, progress, attached transcripts, waits, blockers, decisions and events. Voice diagnostics show pipeline health and incident history, with notification analysis and a quiet-page comparison. See [what's new](docs/whats-new.md) for a short guide.
 
-![The Runs view of the JARVIS dashboard. A red "Needs Attention" panel holds a
-failed run and a timed-out one, with the failure's exit code and error printed
-under it. Below that, an Active panel with one run in progress and one queued,
-then History. Every row shows the project, the prompt the run was given, a
-status pill, how long it took, tokens spent, and the
-time.](docs/images/dashboard-runs.png)
+These are fresh captures of the actual React interface, rendered with fictional conversation, workflow, agent and diagnostic data. They do not show a live account or production measurements.
 
-*The Runs view. Every Claude Code process JARVIS starts is a row here, with
-the prompt that started it. Fictional sample data.*
+### Conversation and agents
 
-The dashboard has six tabs — Runs, Sessions, Memory, Specs, Projects and
-Usage. Usage shows what your subscription's five-hour and seven-day windows
-have left, and who spent it.
+![The current Conversation view, with voice controls and brain usage on the left and agents on the right.](docs/images/workspace-conversation.png)
 
-![The Sessions view. On the left, a "Needs You" panel with two blocked
-sessions, then every Claude Code session on the machine grouped by project and
-labelled needs you, working, shell, idle, gone or unknown. On the right, the
-selected session: a red band saying it has been waiting on you for 51 minutes
-at a permission prompt, that only your keystroke can answer it, and, quoted
-underneath, the question the CLI actually
-asked.](docs/images/dashboard-sessions.png)
+### Workflow progress and decisions
 
-*Sessions, with a blocked one open beside the list. The reason a session is
-stuck is the CLI's own words, not a guess. Fictional sample data.*
+![The current Workflow view, showing phase progress, task completion and a decision waiting for review.](docs/images/workspace-workflow.png)
 
-## Requirements
+### Voice diagnostics
 
-- **macOS.** Terminal control, window listing, screenshots and notifications
-  all go through AppleScript. There is no Linux or Windows path today.
-- **Google Chrome.** Not a preference — a constraint. The microphone uses the
-  Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`, see
-  `frontend/src/voice.ts`), which Firefox has never implemented. There is no
-  server-side transcription to fall back on.
-- **Claude Code, installed and logged in.** `npm install -g
-  @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
-  log in. This is what JARVIS runs on.
-- **Python 3.11+** and **Node.js 18+**.
-- **A Fish Audio API key.** Required; there is no fallback voice.
+![The current Diagnostics view, showing pipeline health, recognition performance and incident history.](docs/images/workspace-diagnostics.png)
 
-## Setup
+Regenerate these captures with `.venv/bin/python scripts/capture_docs.py`.
+
+## Run the workspace
+
+Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Fish Audio credentials are required for spoken output; without working synthesis, replies can appear as text.
+
+From a clone of this repository:
 
 ```bash
-git clone <your fork of this repo> jarvis
-cd jarvis
-
-cp .env.example .env
-
-pip install -r requirements.txt
-python -m playwright install chromium    # for read_page / look_at_page
-
-cd frontend && npm install && cd ..
+cp jarvis/.env.example .env
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m playwright install chromium
+.venv/bin/python scripts/setup_speech_input.py
+npm --prefix frontend install
 ```
 
-**Fill in the `.env`.** `.env.example` documents the lot; the short version is
-one required key and three optional ones:
+Set `FISH_API_KEY` in `.env`. The other settings are documented in [jarvis/.env.example](jarvis/.env.example). Claude uses the Claude Code subscription login. The Codex brain uses its own application-managed Codex home; see the provider controls in Settings. Fish Audio is a separate service with its own usage charges.
 
-```env
-FISH_API_KEY=...            # required, no fallback
-# JARVIS_BRAIN_MODEL=sonnet # optional: the brain's model
-# FISH_VOICE_ID=...         # optional: a different voice
-# USER_NAME=Tony            # optional: what he calls you
-```
-
-**Generate the certificates.** These are not optional:
+Generate the local certificates required by the Vite development proxy:
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
 ```
 
-`server.py` serves HTTPS whenever `cert.pem` and `key.pem` sit beside it, and
-`frontend/vite.config.ts` proxies `/api` and `/ws` to
-`https://localhost:8340`. Without the pair the backend serves plain HTTP, the
-dev server's proxy cannot reach it, and every API and WebSocket call through
-the front end fails with a 500 while the page itself still loads — a confusing
-way to spend an evening. Generate them once and forget about them.
-
-Then, in two terminals:
+Run these in separate terminals:
 
 ```bash
-python server.py --host 127.0.0.1        # terminal 1
-cd frontend && npm run dev               # terminal 2
+.venv/bin/python -m jarvis --host 127.0.0.1
 ```
 
-Open **Chrome** at `http://localhost:5173`, click the page once to allow
-audio, and speak. The dashboard is at `http://localhost:5173/dashboard.html`.
-
-> **Who can reach it.** `--host` defaults to `127.0.0.1` — this machine only.
-> Everything JARVIS serves acts with your full authority: `POST /api/runs`
-> spawns `claude --dangerously-skip-permissions`, `/api/sessions` reads every
-> Claude Code conversation you have. A strict `Origin` check stands in front
-> of every WebSocket and every state-changing route, so a web page you happen
-> to be visiting cannot open `/ws/voice` and speak as you. There is nothing
-> to configure: the page is same-origin, so the browser sends an `Origin` no
-> page can forge.
->
-> An `Origin` is only unforgeable when a *browser* sets it, though. Anything
-> speaking raw HTTP can claim to be the dashboard, so a client with no
-> `Origin` — a script, the brain's own MCP child — must instead present the
-> token in `<data-dir>/jarvis/tool-token`, and on the network the loopback
-> bind is the rest of the answer. `--host 0.0.0.0` still works if you mean
-> it; set `JARVIS_ALLOWED_ORIGINS` to the address you will actually open the
-> page at, or the browser will be turned away too.
->
-> This is one of five deliberate trust decisions in this design — see
-> [What this trusts, and why](#what-this-trusts-and-why) before you run it.
-
-One more thing about Chrome: the microphone permission is scoped to the
-**origin including the port**. If you restart Vite and it lands on 5174, the
-grant does not follow, and Chrome will not re-prompt — it just stays denied,
-silently. If the mic stops working after everything else looks right, check
-that the port has not moved.
-
-## Connections: bring your own
-
-JARVIS ships connected to nothing, because the useful thing is not our guess at
-what you use — it is the door. Any MCP server works. Put its `mcpServers` block
-into `data/jarvis/connections.json`:
-
-```json
-{
-  "mcpServers": {
-    "notion": {
-      "command": "npx",
-      "args": ["-y", "@notionhq/notion-mcp-server"],
-      "env": { "NOTION_TOKEN": "secret_..." }
-    }
-  }
-}
+```bash
+npm --prefix frontend run dev
 ```
 
-That is the block from the server's own README, unchanged. Restart JARVIS and
-ask him **"what are you connected to?"** — he answers from what actually
-started, names anything that would not start and why, and tells you what it
-costs him. (About 250 tokens of his context per tool, on every turn — a
-measured figure, and counted against the tools that actually loaded rather than
-the ones you meant to load. It is not charged against how much of your
-conversation he remembers.)
+Open **http://localhost:5173** in Chrome. Allow microphone access and click the page to enable audio. Microphone permissions are specific to the origin, including its port. The development proxy expects the backend at `https://localhost:8340`.
 
-Your other MCP servers are deliberately ignored. JARVIS runs with
-`--strict-mcp-config`, so nothing in `~/.claude.json` or Claude Desktop reaches
-him unless you put it in that file yourself — connecting something to JARVIS
-should be a thing you did, not a thing you inherited.
+To install the coordination instructions used by external Claude Code and Codex sessions:
 
-Whatever a connected server returns is treated the way a web page is: reported,
-never obeyed. You vouched for the server's code when you installed it; you did
-not write the ticket, the email, or the shared page it hands back.
-
-See `skills/jarvis-setup/SKILL.md` for the longer walkthrough — including what
-to do when a server does not start.
-
-Earlier versions of JARVIS came wired to Apple Calendar, Mail and Notes
-instead. Those are gone: they cost three AppleScript permission prompts on
-first launch, before you had heard him say anything, for an assistant whose job
-is building software. A door you choose is worth more than three we picked.
-
-## How it works
-
-```
-Microphone → Chrome Web Speech API → WebSocket → FastAPI (server.py)
-                                                      │
-                                                      ▼
-                                        the brain (brain.py) — ONE long-lived
-                                        `claude -p` process on your subscription
-                                                      │
-                    ┌─────────────────────────────────┼──────────────────────────────┐
-                    ▼                                 ▼                              ▼
-        speech.py → Fish Audio → speaker    MCP tools (jarvis_mcp.py       session_watch.py
-                                             → POST /internal/tool)     (every Claude Code
-                                                      │                  session on the machine)
-                                                      ▼
-                                        RunExecutor → run store (SQLite)
-                                                      │
-                                                      ▼
-                                        /api/runs + /ws/runs → /dashboard
+```bash
+.venv/bin/python -m jarvis.session_skill install
 ```
 
-The brain is **one persistent process**, not a request per turn. Your
-transcript is written to its stdin; its reply streams back and is split into
-sentences as it arrives, so the first words are already being spoken while the
-rest is still being written. It reaches JARVIS's own capabilities as MCP tools
-over a stdio channel that forwards to `POST /internal/tool`. The exact set
-is the allowlist at the top of `brain.py`, which is the list to read rather
-than a number to quote here.
+See the [setup guide](jarvis/skills/jarvis-setup/SKILL.md) for authentication, permissions and troubleshooting.
 
-What it does *not* get is a way to act on something it has just read off the
-web. A turn that used `WebSearch`, `WebFetch`, `read_page` or `look_at_page`
-is refused every acting tool for the rest of that turn, and no acting tool
-runs at all unless the turn began with you speaking. Text that arrives from a
-web page, a screenshot or another session's transcript is untrusted, and is
-treated that way.
+## Implementation and data
 
-Anything spawned as real work goes through one recorded pipeline, and two
-invariants hold throughout it:
+The Python application lives in `jarvis/`; the React and TypeScript interface lives in `frontend/src/`. `python -m jarvis` starts the service. Frontend builds are written to `jarvis/web` for packaging.
 
-1. **A run always reaches a terminal state** — `succeeded`, `failed`,
-   `timed_out` or `cancelled`. Never stuck in `running`.
-2. **Every state transition is a database write before it is a
-   notification.** The WebSocket is a cache-invalidation hint, never a source
-   of truth; the dashboard reconciles against `/api/runs`.
+```text
+Microphone → local recognition → conversation → Claude or Codex brain
+Typed input ────────────────────────┘                 │
+                         tools, agents and workflows ←┤
+                                  Fish Audio output ←┘
+```
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | FastAPI + Python (`server.py`) |
-| Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
-| Communication | WebSocket — JSON messages, base64 MP3 audio |
-| Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | Fish Audio, one request per sentence |
-| System | AppleScript — Terminal, Chrome, notifications, screenshots |
-| Storage | SQLite for runs and usage; plain Markdown for memory |
+Recognition currently uses Kroko through sherpa-onnx. The model and runtime are defined in [jarvis/transcriber.py](jarvis/transcriber.py). Speech scheduling and synthesis are separate components; the brain provider interface is in [jarvis/brain_provider.py](jarvis/brain_provider.py).
 
-### Key files
+SQLite records and Markdown memory live under `data/` in a checkout. `JARVIS_DATA_DIR` selects another data directory. An installed copy keeps configuration and data under `~/Library/Application Support/JARVIS`. MCP connections are configured through the brain home's `connections.json`; the setup guide explains the format.
 
-| File | Purpose |
-|------|---------|
-| `server.py` | The server: WebSocket handler, HTTP API, every `/internal/tool` handler |
-| `brain.py` | The voice brain — spawning, turns, restarts, context rotation |
-| `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
-| `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
-| `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
-| `tts.py` | Fish Audio synthesis — the whole voice, in one small file |
-| `builds.py` | Spec, brief and plan: the pipeline behind a real multi-hour build |
-| `specs.py` | The review surface — reading a design back by numbered section, and approving it |
-| `run_store.py` | SQLite `runs` / `run_events`, and the six-value status enum |
-| `run_executor.py` | Spawns runs and drives each to a terminal state |
-| `stream_parser.py` | Pure parsing of Claude Code's stream-json output (no I/O) |
-| `session_watch.py` | Watches every Claude Code session on the machine |
-| `session_steer.py` | Posts a message into a running session's inbox socket |
-| `dialog.py` | Presses one key in the Terminal tab that owns a session |
-| `jarvis_memory.py` | Memory as a folder of Markdown files, not a database |
-| `jarvis_home/CLAUDE.md` | JARVIS's persona and rules — the file to edit to change who he is |
-| `preflight.py` | First-run checks: CLI version, login, Accessibility, Fish key |
-| `data_paths.py` | The single source of truth for where JARVIS writes |
-| `frontend/src/voice.ts` | Web Speech API, audio playback |
-| `frontend/src/orb.ts` | The Three.js particle orb |
-| `frontend/src/dashboard/` | The dashboard (vanilla TS, no framework) |
-
-## What this trusts, and why
-
-Five things below are true on purpose. Each is a trade-off JARVIS's design
-made deliberately, not a bug waiting for a fix — know them before you run it.
-
-**A directory name can put words in JARVIS's mouth.** To say *which* session
-he means — "hammer in Desktop," not "one of them" — JARVIS composes a voice
-name out of directory names and a conversation's title, and accepts up to
-~60 characters of letters, digits, spaces and light punctuation (`,.-/+'`)
-in it (`_said_name` in `server.py`; `_plain_phrase` accepts the same class
-for a session's `waitingFor`). Anyone who can create a directory on this
-machine, or write a Claude Code roster file's `waitingFor` field, can put
-those words into a sentence JARVIS speaks aloud. There is no separator, no
-`<`, `>`, `"` or `=` in the allowed set, so it cannot forge a whole line or
-close a wrapper — only words, never a fake instruction with structure. The
-alternative is an assistant that cannot name what it is looking at.
-
-**The taint gate stops action, not persuasion.** Anything JARVIS reads from
-a web page, a file, another session, a run, the screen or a connected MCP
-server is marked untrusted, and every acting tool is refused for the rest
-of that turn — for the two tools that write memory, the rest of that
-generation (`_untrusted_content_refusal`, `TAINTING_TOOLS`, `MEMORY_WRITERS`
-in `server.py`). This does **not** mean text an attacker suggested is never
-acted on — nothing tracks where a sentence in the brain's context came from,
-so a suggestion planted by something JARVIS read is still sitting there when
-you next speak. It means you have to ask again, in your own words, on a turn
-that opened clean. That is the strongest guarantee this design can actually
-keep, not a claim that the suggestion is gone.
-
-**Every spawned run has full privileges.** `JARVIS_SKIP_PERMISSIONS`
-defaults on, so every run passes `--dangerously-skip-permissions`
-(`run_executor.py`) — there is no TTY to answer a permission prompt, so
-without it a run hangs forever instead of doing its job. A run is therefore
-a full-privilege process on your machine, in whatever directory you pointed
-it at, scrubbed only of `ANTHROPIC_*`/`CLAUDE_CODE_*` environment variables
-(`claude_env.py`), not of filesystem access. It can write anything you could
-write by hand, including the Claude Code session roster and transcripts that
-JARVIS himself later reads back as another session's words.
-
-**Loopback is trusted.** Anything on this machine that can present an
-`Origin` of `http://localhost:5173` through `5180`, or the API port itself
-(`DEV_SERVER_PORTS`, `JARVIS_DEFAULT_HOST` in `web_auth.py`), gets the same
-access a browser tab gets — including starting a run — because that is the
-same window Vite's own dev-server restarts land in. Any other process on
-your machine bound to one of those ports gets it too. `--host 0.0.0.0`
-widens the same trust to your LAN and prints a warning when you do it. The
-other door is the bearer token in `<data-dir>/jarvis/tool-token`, written
-`0600` (`data_paths.ensure_tool_token`) so only your user account can read
-it.
-
-**A dropped audio ack degrades hearing for up to 45 seconds.** The browser
-acks each chunk of speech as it finishes playing; JARVIS uses that to relax
-echo rejection for the one- and two-word replies people actually interrupt
-with ("now," "yes"). If the tab crashes or the socket drops, no more acks
-arrive, that relaxation stays off, and a short reply matching JARVIS's last
-sentence can be discarded as an echo of himself — until the `ack_timeout`
-watchdog (45 seconds, `speech.py`) gives up on the chunk and settles it.
-Reload the tab if a short answer seems to be getting ignored.
-
-## Make it yours
-
-This is a starting point, not an appliance. The whole idea is that you clone
-it and bend it to what you do. The seams are deliberately obvious:
-
-- **His personality** lives in `jarvis_home/CLAUDE.md` — how he speaks, what
-  he refuses to say, what he does when he is unsure. It is copied into his
-  data directory on first run; edit that copy and it is never overwritten, or
-  edit the template and it ships to a fresh install. If you want something
-  other than a British butler, this is the only file you need to touch.
-- **His voice** is `tts.py`: one HTTP call, sixty-odd lines. Swap in a
-  different provider, or a local model, without touching anything else.
-- **His tools** are the `TOOL_HANDLERS` table in `server.py`, exposed to the
-  brain through `jarvis_mcp.py` and gated by an allowlist in `brain.py`.
-  Adding one means writing a handler and naming it in those two places.
-- **The look** is `frontend/src/dashboard/theme/` — four CSS files, tokens
-  first. `frontend/dashboard-preview.html` renders every component on one page
-  against the real stylesheet, so you can redesign without running the
-  backend. The screenshots above are renders of that page.
-- **The orb** is `frontend/src/orb.ts`, self-contained Three.js.
-
-Contributions are welcome, and the most useful ones are the ones this cannot
-do yet: non-macOS system integration, alternative TTS engines, and a mobile
-client. Please open an issue before a large PR.
+The service binds to loopback by default. Host/origin checks, internal tool tokens and scoped access keys protect specific application boundaries. Development runs can have full user privileges, and `JARVIS_SKIP_PERMISSIONS` defaults on. The foreign-content action refusal is opt-in through `JARVIS_REFUSE_UNTRUSTED_ACTIONS`. These controls are not a universal sandbox or transactional rollback system. See [jarvis/web_auth.py](jarvis/web_auth.py), [jarvis/access_keys.py](jarvis/access_keys.py) and [jarvis/run_executor.py](jarvis/run_executor.py) for their implementation.
 
 ## Development
 
 ```bash
-pytest
+.venv/bin/python -m pytest
+.venv/bin/python -m pytest -m page
+npm --prefix frontend run build
 ```
 
-That runs the whole suite — around 1,640 tests — and touches neither the
-network nor your screen. Nine browser tests are deselected by default because
-they visit real URLs and `browser.py` launches Chromium with `headless=False`
-on purpose, so they open windows on your desk. Run those deliberately:
+The default suite excludes tests marked `page` or `browser`. The page suite builds and exercises the interface in headless Chromium. Tests marked `browser` use live browser/network integration and must be run explicitly. Avoid fixed test counts in documentation; the suite changes with the application.
 
-```bash
-pytest -m browser
-```
-
-No test spawns a real `claude` process, and none should. `tests/conftest.py`
-sets `JARVIS_BRAIN_AUTOSTART=0` for the whole suite.
-
-Everything JARVIS writes — the SQLite database, the memory folder, usage
-tracking, the internal tool token — lives under `data/`, which is ignored in
-full. Point `JARVIS_DATA_DIR` somewhere else to run an instance without
-touching your real data:
-
-```bash
-JARVIS_DATA_DIR=/tmp/jarvis-scratch python server.py --host 127.0.0.1
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [CLAUDE.md](CLAUDE.md) for implementation conventions. Start proposed work from the roadmap and distinguish new capability from experiments and release commitments.
 
 ## License
 
@@ -466,9 +135,7 @@ visit [ethanplus.ai](https://ethanplus.ai) for inquiries. See
 
 ## Credits
 
-Built by [Ethan](https://ethanplus.ai). Runs on
-[Claude Code](https://claude.com/claude-code) and
-[Fish Audio](https://fish.audio).
+Built by [Ethan](https://ethanplus.ai). Uses [Claude Code](https://claude.com/claude-code) or Codex for conversation and [Fish Audio](https://fish.audio) for speech output.
 
 Inspired by the AI that started it all — Tony Stark's JARVIS.
 

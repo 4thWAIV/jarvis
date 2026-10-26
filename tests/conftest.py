@@ -1,13 +1,81 @@
 import asyncio
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
+from tests.fixtures.local_config import read_local_skips
+
+# server.py loads its .env the moment it is imported, and test modules import
+# it at collection, before any fixture runs. Pointing JARVIS_ENV_FILE at a file
+# that does not exist, here, means even that first import never reads the
+# developer's real settings. Each test then gets its own file below.
+NO_DOTENV_UNDER_TEST = Path(tempfile.gettempdir()) / "jarvis-tests" / "no-dotenv" / ".env"
+os.environ["JARVIS_ENV_FILE"] = str(NO_DOTENV_UNDER_TEST)
+
+
+def pytest_report_header(config):
+    """Say up front when this machine's own file is skipping tests."""
+    skips = read_local_skips()
+    if skips:
+        return (f"tests/local-config.toml skips: tests={skips.tests} "
+                f"markers={skips.markers}")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip what tests/local-config.toml lists. No file, no skips."""
+    try:
+        skips = read_local_skips()
+    except ValueError as e:
+        raise pytest.UsageError(str(e)) from e
+    if not skips:
+        return
+    mark = pytest.mark.skip(reason=skips.reason)
+    for item in items:
+        if skips.skips(item.nodeid, {m.name for m in item.iter_markers()}):
+            item.add_marker(mark)
+
+
+@pytest.fixture(autouse=True)
+def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
+    """Every test starts from the shipped default: the refusal OFF.
+
+    `server.py` copies the repository's `.env` into the environment at import,
+    so a developer who set JARVIS_REFUSE_UNTRUSTED_ACTIONS there would flip
+    every test's default. A test that wants the refusal on sets it itself
+    (`refusal_on` below); the obsolete JARVIS_ALLOW_UNTRUSTED_ACTIONS is
+    cleared too.
+
+    Set to empty rather than deleted: the `.env` loader only fills in keys
+    that are missing (`os.environ.setdefault`), and the many tests that
+    `importlib.reload(server)` would put a deleted key straight back. Empty
+    reads as off.
+    """
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "")
+    monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "")
+
+
+@pytest.fixture
+def refusal_on(monkeypatch):
+    """Opt in to the untrusted-content refusal for one test or module."""
+    monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
+
 
 @pytest.fixture(autouse=True)
 def _never_spawn_a_real_brain(monkeypatch):
-    """server.lifespan builds the brain but must not start `claude` under test."""
+    """jarvis.server.lifespan builds the brain but must not start `claude` under test,
+    nor read the keychain and call Anthropic for the usage limits."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    monkeypatch.setenv("JARVIS_USAGE_POLL", "0")
+
+
+@pytest.fixture(autouse=True)
+def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
+    """The session watcher reads the user's Codex sessions out of ~/.codex
+    (codex_sessions.py). Under test it reads an empty Codex home instead."""
+    monkeypatch.setenv("JARVIS_CODEX_SESSIONS_HOME", str(tmp_path / "codex-sessions-home"))
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +89,7 @@ def _never_post_a_real_notification(monkeypatch, request):
     """
     if request.module.__name__.endswith("test_notifier"):
         return
-    import notifier
+    from jarvis import notifier
 
     async def _blocked(*args, **kwargs):
         raise AssertionError("a test tried to post a real macOS notification; "
@@ -67,6 +135,9 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     overwrote the live usage reading with a fixture's fake one.
     """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data-dir"))
+    # Nor load the real speech model: with no override it is looked for in
+    # that empty data folder, so the server starts with speech input failed.
+    monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
 
 
 @pytest_asyncio.fixture(autouse=True)

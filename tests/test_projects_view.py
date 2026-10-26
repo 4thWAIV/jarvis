@@ -6,9 +6,9 @@ import time
 
 import pytest
 
-import projects_view as pv
-import run_store
-import session_watch as sw
+from jarvis import projects_view as pv
+from jarvis import run_store
+from jarvis import session_watch as sw
 
 
 def _session(session_id, project, cwd, state=sw.IDLE, since=None, started=None):
@@ -307,7 +307,7 @@ def test_detail_item_carries_full_sessions_and_runs():
 
 def test_the_list_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     import asyncio
-    import server
+    from jarvis import server
 
     def slow():
         time.sleep(0.5)          # stands in for a disk that has to spin up
@@ -339,7 +339,7 @@ def test_the_detail_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     """The detail endpoint threads its repo walk but called `_project_views()`
     inline first — the same blocking read, on the same loop."""
     import asyncio
-    import server
+    from jarvis import server
 
     def slow():
         time.sleep(0.5)
@@ -372,7 +372,7 @@ def test_the_open_endpoint_does_not_freeze_the_event_loop(monkeypatch):
     but the same walk on the same loop, and a disk does not know the
     difference."""
     import asyncio
-    import server
+    from jarvis import server
 
     def slow():
         time.sleep(0.5)

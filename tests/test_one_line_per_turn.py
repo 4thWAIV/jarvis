@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import server
+from jarvis import server
 
 
 def spoken(script, hold_for=0.6):

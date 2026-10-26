@@ -15,17 +15,18 @@ import importlib
 import time
 
 import pytest
+from jarvis import claude_provider
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -372,20 +373,20 @@ def test_run_status_is_readable_by_anyone_and_cancel_is_not(wired):
 
 
 def test_the_three_tool_sets_still_agree(wired):
-    import brain
-    import jarvis_mcp
+    from jarvis import brain
+    from jarvis import jarvis_mcp
     server, _store = wired
     for name in ("run_status", "cancel_run"):
-        assert f"mcp__jarvis__{name}" in brain.ALLOWED_TOOLS
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert {t["name"] for t in jarvis_mcp.TOOL_SPECS} == set(server.TOOL_HANDLERS)
-    assert {t for t in brain.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
+    assert {t for t in claude_provider.ALLOWED_TOOLS if t.startswith("mcp__")} <= {
         f"mcp__jarvis__{n}" for n in server.TOOL_HANDLERS}
 
 
 @pytest.mark.asyncio
 async def test_a_watcher_turn_cannot_cancel_a_run(wired, monkeypatch):
     from fastapi.testclient import TestClient
-    import data_paths
+    from jarvis import data_paths
     server, store = wired
     ex = _Executor(store)
     _run(store, status=store.RunStatus.RUNNING)

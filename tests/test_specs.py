@@ -29,8 +29,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import builds  # noqa: E402
-import specs  # noqa: E402
+from jarvis import builds  # noqa: E402
+from jarvis import specs  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

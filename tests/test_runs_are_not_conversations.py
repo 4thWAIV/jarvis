@@ -21,18 +21,18 @@ import importlib
 
 import pytest
 
-import session_watch
+from jarvis import session_watch
 
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
-    import data_paths
+    from jarvis import data_paths
     importlib.reload(data_paths)
-    import run_store
+    from jarvis import run_store
     importlib.reload(run_store)
-    import server as server_module
+    from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
     return server_module, run_store
@@ -83,7 +83,7 @@ def test_two_dead_runs_no_longer_make_a_project_ambiguous(wired, monkeypatch):
     assert session.session_id == "the-users-own-window"
 
 
-def test_list_sessions_counts_conversations_not_runs(wired, monkeypatch):
+def test_list_agents_counts_conversations_not_runs(wired, monkeypatch):
     server, store = wired
     run_id = store.create_run("build", "tony-starks-website", "/tmp/tsw",
                               "voice")
@@ -93,9 +93,9 @@ def test_list_sessions_counts_conversations_not_runs(wired, monkeypatch):
     ]))
     server._run_ids_cache = (0.0, frozenset())
 
-    out = server.tool_list_sessions({})
+    out = server.tool_list_agents({})
 
-    assert "1 conversation in 1 project" in out
+    assert out.startswith("One agent:") and "chitauri" in out, out
     assert "tony-starks-website" not in out
 
 
