@@ -154,9 +154,11 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
-        assert await page.get_by_placeholder("Your name").input_value() == "Tim"
-        assert await page.locator("select:has(option[value='none'])").input_value() == "sir"
-        assert "1h" in await page.locator("text=Uptime").locator("..").text_content()
+        # The form is drawn before the preferences arrive; these wait for them.
+        expect = async_api.expect
+        await expect(page.get_by_placeholder("Your name")).to_have_value("Tim")
+        await expect(page.locator("select:has(option[value='none'])")).to_have_value("sir")
+        await expect(page.locator("text=Uptime").locator("..")).to_contain_text("1h")
         await browser.close()
 
 
