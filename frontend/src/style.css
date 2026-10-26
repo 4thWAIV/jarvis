@@ -2146,14 +2146,25 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   cursor: pointer;
 }
 .voice-summary-open:hover, .voice-summary-open:focus-visible { border-color: rgba(14, 165, 233, 0.5); }
-.voice-rings { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.voice-keeping-up { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.voice-keeping-up .headroom { flex: 1; min-width: 0; }
+.voice-rings {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+}
+.voice-ring-caption { font-size: 10px; color: rgba(255, 255, 255, 0.5); align-self: start; }
+.voice-status-detail { display: flex; flex-direction: column; align-items: center; gap: 1px;
+                       align-self: start; text-align: center; min-width: 0; }
+.voice-rings .voice-status-word { text-align: center; }
 .voice-ring-cap { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
 .voice-ring-cap small { font-size: 10px; color: rgba(255, 255, 255, 0.5); }
-.voice-summary .ring-count, .voice-overview .ring-count { font-size: 13px; font-weight: 600; }
-.voice-keeping-up .ring-count { font-size: 11px; }
-.voice-overview .ring-count { font-size: 18px; }
+.voice-summary .ring-count, .voice-overview .ring-count { font-weight: 600; letter-spacing: -0.2px; }
+/* Sized so "100%" has room inside its ring. */
+.voice-summary .heard-ring .ring-count { font-size: 11px; }
+.voice-summary .speed-ring .ring-count { font-size: 9.5px; }
+.voice-overview .ring-count { font-size: 15px; }
 .voice-status { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1;
                 min-width: 0; text-align: center; }
 .voice-status-word { font-size: 16px; font-weight: 600; }

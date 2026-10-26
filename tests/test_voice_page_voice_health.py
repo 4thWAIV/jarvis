@@ -185,7 +185,7 @@ async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
         assert "tone-bad" in await page.get_attribute(".voice-summary .headroom", "class")
         width = await page.evaluate("document.querySelector('.voice-summary .headroom-bar span').style.width")
         assert width == "80%"
-        assert "last drop" in await page.text_content(".voice-summary .voice-status")
+        assert "last drop" in await page.text_content(".voice-summary .voice-status-detail")
         # No audio at all is speech being dropped.
         await _health(page, state="no-frames", cause="No audio from the microphone",
                       pipeline=pipeline(mic="bad"))

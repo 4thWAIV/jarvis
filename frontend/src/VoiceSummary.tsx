@@ -38,20 +38,18 @@ export function VoiceSummary() {
     <section className="voice-summary" aria-label="Voice health">
       <button type="button" className="voice-summary-open" onClick={() => openDiagnostics.set(true)}
               title="Open the Diagnostics view">
+        {/* A grid: the rings and the status word on one line, centred on the
+            same middle; the captions and the status's details under them. */}
         <span className="voice-rings">
-          <span className="voice-ring-cap">
-            <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={48} />
-            <small>heard</small>
-          </span>
-          <span className="voice-status">
-            <b className={`voice-status-word tone-${status.tone}`}>{status.word}</b>
+          <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={48} />
+          <b className={`voice-status-word tone-${status.tone}`}>{status.word}</b>
+          <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
+          <small className="voice-ring-caption">heard</small>
+          <span className="voice-status-detail">
             {status.tone !== "ok" && cause && <span className="voice-cause">{cause}</span>}
             {s?.lastDropAt != null && <span className="voice-last-drop">last drop {ago(s.lastDropAt)}</span>}
           </span>
-          <span className="voice-ring-cap">
-            <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
-            <small>speed</small>
-          </span>
+          <small className="voice-ring-caption">speed</small>
         </span>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
         <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
