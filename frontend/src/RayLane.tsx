@@ -1,9 +1,12 @@
 /**
- * The lane on the far left of the page, kept clear for one thing: when JARVIS
- * sends a message to an agent, a ray like a fibre-optic cable carries it. It
- * runs in right angles: out of the main orb to the left, into the channel
- * down the middle of the lane (the same channel for every ray), down it, and
- * right into that agent's own orb. It is drawn behind the orbs, from the main
+ * The rays: when JARVIS sends a message to an agent, a ray like a fibre-optic
+ * cable carries it. It runs in right angles: up out of the main orb (upper
+ * left), along the strip above the centre area's tabs, across to the lane at
+ * the page's right edge, down the channel in the middle of that lane (the
+ * same channel for every ray), and left into that agent's own orb at the
+ * right end of its row in the right panel's Agents tab. When another tab is
+ * open there, the ray ends at the Agents tab's icon instead, which stays lit
+ * until the tab is opened. It is drawn behind the orbs, from the main
  * orb's centre, and the main orb spins up and fills with the ray's colour
  * from the centre outward as it goes. Pulses travel along it, and it fades out
  * after six seconds. When the first pulse reaches the agent, the agent's orb
@@ -17,7 +20,8 @@ import { useEffect, useState } from "react";
 import { isQuiet } from "./voiceHealth";
 import { mainOrb } from "./OrbControl";
 import { takeRayColour } from "./rayColours";
-import { agentMessage, agentReceipt, agentsLaidOut, RAY_MS, RAY_TRAVEL_MS } from "./agents";
+import { agentMessage, agentReceipt, agentsLaidOut, agentsTabLit, RAY_MS,
+         RAY_TRAVEL_MS } from "./agents";
 
 const FIND_TRIES = 30;          // frames to wait for the row to come into view
 const RECEIPT_RING_R = 10;      // px; a ring grows from about the agent orb's size
@@ -31,8 +35,12 @@ export function rayStart(orb: DOMRect): [number, number] {
   return [orb.left + orb.width / 2, orb.top + orb.height / 2];
 }
 
-/** The numbers in a ray's path: start x and y, the channel, then the end's
- *  y and x (rayPath). */
+// How far below the top of the page the ray crosses: above the centre
+// area's tabs (which start at --centre-header-top, 16px).
+const TOP_LANE_PX = 8;
+
+/** The numbers in a ray's path: start x and y, the top lane's y, the
+ *  channel's x, then the end's y and x (rayPath). */
 function rayPoints(d: string): number[] {
   return (d.match(/-?[\d.]+/g) ?? []).map(Number);
 }
@@ -40,36 +48,48 @@ function rayPoints(d: string): number[] {
 /** Which way the ray leaves the orb, on the screen: from its start to its
  *  first corner (the channel). */
 function rayDirection(d: string): [number, number] {
-  const [sx, , cx] = rayPoints(d);
-  return [Math.sign(cx - sx) || -1, 0];
+  const [, sy, top] = rayPoints(d);
+  return [0, Math.sign(top - sy) || -1];
 }
 
 /** Which way the ray arrives from at the agent's orb: from its end back to
  *  its last corner (the channel). */
 function rayArrival(d: string): [number, number] {
-  const [, , cx, , ex] = rayPoints(d);
-  return [Math.sign(cx - ex) || -1, 0];
+  const [, , , cx, , ex] = rayPoints(d);
+  return [Math.sign(cx - ex) || 1, 0];
 }
 
 /** Where the ray ends: the agent's orb's centre. */
 function rayEnd(d: string): [number, number] {
-  const [, , , ey, ex] = rayPoints(d);
+  const [, , , , ey, ex] = rayPoints(d);
   return [ex, ey];
 }
 
-/** The path, in right angles: left from the orb into the channel, down the
- *  channel, and right into the agent's orb. */
-function rayPath(sessionId: string): string | null {
+/** The path, in right angles: up from the orb to the top lane, across it
+ *  to the right-hand channel, down the channel, and left into the agent's
+ *  orb; or, with the Agents tab closed, into its icon (`toTab`). Null while
+ *  the tab is open but the agent's row is not showing yet. */
+function rayPath(sessionId: string): { d: string; toTab: boolean } | null {
   const orb = document.getElementById("orb-control")?.getBoundingClientRect();
-  const target = document.querySelector(
-    `.agents-list li[data-session-id="${CSS.escape(sessionId)}"] .agent-orb`)
+  const column = document.getElementById("right-column")?.getBoundingClientRect();
+  const list = document.querySelector(".agents-list");
+  const row = list?.querySelector(`li[data-session-id="${CSS.escape(sessionId)}"] .agent-orb`);
+  const target = (list ? row : document.querySelector(".right-tabs [aria-label='Agents']"))
     ?.getBoundingClientRect();
-  const column = document.getElementById("left-column")?.getBoundingClientRect();
   if (!orb || !target || !column) return null;
-  const channel = column.left / 2;                    // the middle of the lane
   const [sx, sy] = rayStart(orb);
   const ex = target.left + target.width / 2, ey = target.top + target.height / 2;
-  return `M ${sx} ${sy} H ${channel} V ${ey} H ${ex}`;
+  if (!list) {
+    // Straight down into the tab's icon from the top lane; the last run is
+    // empty, so the path keeps the same six numbers (rayPoints).
+    return { d: `M ${sx} ${sy} V ${TOP_LANE_PX} H ${ex} V ${ey} H ${ex}`, toTab: true };
+  }
+  // The middle of what is left of the right-hand lane beside the menu button
+  // (#controls, in the top right corner), so the ray never runs through it.
+  const menu = document.getElementById("controls")?.getBoundingClientRect();
+  const inner = Math.max(column.right, menu?.right ?? 0);
+  const channel = inner + (window.innerWidth - inner) / 2;
+  return { d: `M ${sx} ${sy} V ${TOP_LANE_PX} H ${channel} V ${ey} H ${ex}`, toTab: false };
 }
 
 export function RayLane() {
@@ -86,8 +106,9 @@ export function RayLane() {
       // The list may first have to bring the agent into view, so look for
       // its row over a few frames.
       const find = () => {
-        const d = rayPath(sessionId);
-        if (d) {
+        const path = rayPath(sessionId);
+        if (path) {
+          const { d } = path;
           const { colour, release } = takeRayColour();
           // The orb goes into its transmitting state for as long as the ray
           // shows, leaning the way the ray leaves it.
@@ -96,10 +117,12 @@ export function RayLane() {
           // The agent's orb receives when the first pulse gets there, and
           // only if its row is still showing: measured again, since the list
           // may have moved.
+          // The Agents tab's icon lights instead when another tab is open.
           setTimeout(() => {
             const there = rayPath(sessionId);
-            if (there) agentReceipt.set({
-              sessionId, n, colour, direction: rayArrival(there),
+            if (there?.toTab) agentsTabLit.set(true);
+            else if (there) agentReceipt.set({
+              sessionId, n, colour, direction: rayArrival(there.d),
               seconds: (RAY_MS - RAY_TRAVEL_MS) / 1000 });
           }, RAY_TRAVEL_MS);
           setTimeout(() => {
@@ -134,7 +157,7 @@ export function RayLane() {
     const remeasure = () => setRays((now) => {
       let moved = false;
       const next = now.map((ray) => {
-        const d = rayPath(ray.sessionId) ?? "";
+        const d = rayPath(ray.sessionId)?.d ?? "";
         if (d !== ray.d) { moved = true; return { ...ray, d }; }
         return ray;
       });

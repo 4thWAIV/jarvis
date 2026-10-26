@@ -20,6 +20,7 @@ import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
+import { startSessionsSocket } from "./sessionsSocket";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -48,6 +49,7 @@ export function startJarvis(orb: Orb): void {
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
+  startSessionsSocket();
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());

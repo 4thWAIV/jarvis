@@ -23,10 +23,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
 import { PROVIDERS } from "./providers";
-import { agentMessage, agentsLaidOut, listAgents, RAY_MS, setAgentActive, type AgentRow } from "./agents";
-import { workflowsChanged } from "./workflows";
-import { countSessionMessage, voiceChanged } from "./voiceHealth";
-import { createSocket } from "./ws";
+import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
+         type AgentRow } from "./agents";
 
 type Show = "active" | "all";
 const SHOW_KEY = "jarvis.agents.show";
@@ -37,23 +35,13 @@ const GESTURE_STEP_PX = 40;
 /** How many whole rows fit in `space` above the down chevron. The row size
  *  is a rendered row's real height when there is one, else the CSS
  *  `--agent-row` it is drawn from; the gap is the list's real row gap. */
-function rowsThatFit(space: HTMLElement, list: HTMLElement, downChevron: HTMLElement,
-                     givenAway: number): { rows: number; spare: number } {
+function rowsThatFit(space: HTMLElement, list: HTMLElement, downChevron: HTMLElement): number {
   const css = getComputedStyle(list);
   const firstRow = list.firstElementChild as HTMLElement | null;
   const row = firstRow ? firstRow.offsetHeight : parseFloat(css.getPropertyValue("--agent-row"));
   const gap = parseFloat(css.rowGap) || 0;
-  // The room the rows would have if the orb had not taken any spare.
-  const room = space.clientHeight - downChevron.offsetHeight + givenAway;
-  const rows = Math.max(1, Math.floor((room + gap) / (row + gap)));
-  return { rows, spare: Math.max(0, room - (rows * (row + gap) - gap)) };
-}
-
-/** The space under the last whole row, too little for another, goes to the
- *  orb (--orb-spare on the left column, read by #orb-control's height), so
- *  the list and its chevrons end exactly at the column's bottom. */
-function giveSpareToOrb(column: HTMLElement | null, spare: number): void {
-  column?.style.setProperty("--orb-spare", `${spare}px`);
+  const room = space.clientHeight - downChevron.offsetHeight;
+  return Math.max(1, Math.floor((room + gap) / (row + gap)));
 }
 
 function readShow(): Show {
@@ -90,16 +78,7 @@ export function AgentsControl() {
   useLayoutEffect(() => {
     const space = spaceRef.current, list = listRef.current, down = downRef.current;
     if (!space || !list || !down) return;
-    const column = space.closest<HTMLElement>("#left-column");
-    let givenAway = 0;
-    const measure = () => {
-      const { rows, spare } = rowsThatFit(space, list, down, givenAway);
-      setVisible(rows);
-      if (spare !== givenAway) {
-        givenAway = spare;
-        giveSpareToOrb(column, spare);
-      }
-    };
+    const measure = () => setVisible(rowsThatFit(space, list, down));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(space);
@@ -111,33 +90,21 @@ export function AgentsControl() {
     listAgents().then(setAgents).catch(() => {});
   }, []);
 
+  // Read when the list opens, and again on every "agents" hint and
+  // reconnect (sessionsSocket.ts).
   useEffect(() => {
     reconcile();
-    // /ws/sessions says "agents" when the list changes, and "snapshot" on
-    // every (re)connect; either way the list is fetched again.
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const socket = createSocket(`${proto}://${location.host}/ws/sessions`);
-    socket.onMessage((msg) => {
-      countSessionMessage();
-      if (msg.type === "agents" || msg.type === "snapshot") reconcile();
-      // ...and "voice" when the voice record has a new event (voiceHealth.ts).
-      if (msg.type === "voice" || msg.type === "snapshot") voiceChanged.set(voiceChanged.get() + 1);
-      // The same socket says "workflows" when a workflow's record changes
-      // (workflows.ts); a (re)connect may have missed one, so it too.
-      if (msg.type === "workflows" || msg.type === "snapshot") {
-        workflowsChanged.set(workflowsChanged.get() + 1);
-      }
-      // JARVIS has sent a message to an agent: bring it into view, and the
-      // ray (RayLane.tsx) is drawn to its row.
-      if (msg.type === "agent_message" && typeof msg.session_id === "string") {
-        const sessionId = msg.session_id;
-        setMessaged(sessionId);
-        setTimeout(() => setMessaged((now) => (now === sessionId ? null : now)), RAY_MS);
-        agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
-      }
-    });
-    return () => socket.close();
+    return agentsChanged.subscribe(reconcile);
   }, [reconcile]);
+
+  // JARVIS has sent an agent a message: bring it into view while its ray
+  // (RayLane.tsx) shows.
+  useEffect(() => agentMessage.subscribe(() => {
+    const sessionId = agentMessage.get()?.sessionId;
+    if (!sessionId) return;
+    setMessaged(sessionId);
+    setTimeout(() => setMessaged((now) => (now === sessionId ? null : now)), RAY_MS);
+  }), []);
 
   const choose = (next: Show) => {
     setShow(next);

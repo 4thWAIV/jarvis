@@ -1,9 +1,9 @@
 /**
- * The voice page: the left column (the orb, status, mic and agents), the right
- * panel, and the centre area between them with its views.
+ * The voice page: the left column (the orb, status and mic), the right panel
+ * (agents, diagnostics, workflows), and the centre area between them with
+ * its views.
  */
 
-import { AgentsControl } from "./AgentsControl";
 import { CentreArea } from "./CentreArea";
 import { Footer } from "./Footer";
 import { MenuControl } from "./MenuControl";
@@ -18,12 +18,12 @@ import { startJarvis } from "./jarvis";
 export function App() {
   return (
     <>
-      {/* The upper left: the orb, what he is doing, the microphone, then the agents. */}
+      {/* The upper left: the orb, what he is doing, and the microphone. The
+          agents are a tab of the right-hand display. */}
       <div id="left-column">
         <OrbControl onReady={startJarvis} />
         <StatusControl />
         <MicControl />
-        <AgentsControl />
       </div>
 
       {/* The right-hand display, mirroring the left column. */}

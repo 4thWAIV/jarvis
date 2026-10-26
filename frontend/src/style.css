@@ -8,7 +8,7 @@
   /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
      mirrored on the right. */
   --ray-lane: 4vw;
-  /* The two side panels: the left column (orb, status, mic, agents) and the
+  /* The two side panels: the left column (orb, status, mic) and the
      right-hand display. One width for both, the only place either width is
      set. It never grows past 230px and only shrinks, with the window, so the
      centre area (whose edges are --panel-edge) is never covered. */
@@ -44,9 +44,7 @@ html, body {
 /* The upper left column: the orb, a fifth of the page wide and between a
    third and a half of it high, with the status and mic controls below it.
    The rest of the page is black. */
-/* It runs the full height of the page, so the agents list below the other
-   controls can take exactly the space that is left (8px kept clear at the
-   bottom) and never run past it. */
+/* The agents list is a tab of the right-hand panel (RightPanel.tsx). */
 /* Ending exactly where the right-hand panel does, --above-footer above the
    footer. No
    visible box; the border is kept but transparent so every size inside is
@@ -95,6 +93,14 @@ html, body {
   padding-right: max(0px, calc(16px + 36px + 6px - var(--ray-lane)));
 }
 
+/* A tab with something new it has not shown: the Agents tab after a ray
+   went to its icon because another tab was open. */
+.right-tab.lit {
+  color: rgba(14, 165, 233, 0.95);
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.6);
+  border-color: rgba(14, 165, 233, 0.6);
+}
+
 .right-tab.selected {
   color: rgba(14, 165, 233, 0.95);
   background: rgba(14, 165, 233, 0.15);
@@ -109,14 +115,10 @@ html, body {
   border: 1px solid transparent;
 }
 
-/* One agent row shorter than it was (36vh), so the agents list below holds
-   one more row at any window height while the column still stops above the
-   footer; plus whatever is left under the last whole row (--orb-spare, set
-   by AgentsControl.tsx), so the column is filled to its bottom. */
 #orb-control {
   position: relative;
   width: 100%;
-  height: calc(36vh - var(--agent-row) - var(--agent-gap) + var(--orb-spare, 0px));
+  height: 36vh;
 }
 
 /* The active brain's logo, tight in the orb's lower left corner, lined up
@@ -1101,17 +1103,18 @@ html, body {
   box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
 }
 
-/* Every running agent. Inactive entries are grayed; active ones are bright.
-   The Active/All switch sits at the top; each entry has its own switch. */
-#left-column > #agents-control {
+/* Every running agent, in the right panel's Agents tab. Inactive entries are
+   grayed; active ones are bright. The Active/All switch sits at the top; each
+   entry has its own switch. Rows mirror the left side's: the agent's orb is
+   at the right end, where the ray arrives from the right-hand lane. */
+.agents-view { height: 100%; display: flex; flex-direction: column; }
+.agents-view > #agents-control {
   background: transparent;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* Inside the column's box; the box is the left edge the eye takes, so the
-     gaps either side of the captions still look the same. */
-  padding: 6px 6px 0;
+  padding: 0;
 }
 
 /* The space the rows get: whatever is left below the switch and the up
@@ -1160,6 +1163,7 @@ html, body {
 
 .agents-list li {
   display: flex;
+  flex-direction: row-reverse;      /* the switch on the left, the box to its right */
   align-items: center;
   gap: 4px;
   height: var(--agent-row);
@@ -1193,12 +1197,13 @@ html, body {
   min-width: 0;
   height: 100%;
   display: flex;
+  flex-direction: row-reverse;      /* the orb at the right end */
   align-items: center;
   gap: 6px;
-  padding: 0 8px 0 0;
+  padding: 0 0 0 8px;
   font: inherit;
   font-size: 12px;
-  text-align: left;
+  text-align: right;
   color: rgba(255, 255, 255, 0.35);
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1206,7 +1211,7 @@ html, body {
   cursor: default;
 }
 
-/* The small orb at the left inside each agent's box, as tall as the box. */
+/* The small orb at the right inside each agent's box, as tall as the box. */
 .agent-orb {
   flex: none;
   height: 100%;
@@ -1221,12 +1226,12 @@ html, body {
   text-overflow: ellipsis;
 }
 
-/* The needs-board count, in the box's upper right corner. */
-.agent-entry { position: relative; padding-right: 20px; }  /* the name stops short of both */
+/* The needs-board count, in the box's upper left corner. */
+.agent-entry { position: relative; padding-left: 20px; }  /* the name stops short of both */
 .agent-needs {
   position: absolute;
   top: 2px;
-  right: 5px;
+  left: 5px;
   font-size: 10px;
   line-height: 10px;
   font-weight: 600;
@@ -1235,8 +1240,8 @@ html, body {
 }
 .agent-needs.none { color: rgba(255, 255, 255, 0.35); }
 
-/* Who runs the agent, in the lower left, lined up with the logos in
-   Diagnostics: the brain's logo (18px) a little smaller. */
+/* Who runs the agent, in the lower left, under the needs count: the brain's
+   logo (18px) a little smaller. */
 .agent-provider {
   position: absolute;
   left: 4px;

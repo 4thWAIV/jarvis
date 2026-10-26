@@ -41,7 +41,7 @@ LAYOUT = """() => {
           gapLeft: caption.left - left.right, gapRight: right.left - caption.right,
           leftBottom: left.bottom, panelBottom: panel.bottom,
           captionBottom: centre.getBoundingClientRect().bottom,
-          lastThing: Math.max(...[...document.querySelectorAll('#left-column *')]
+          lastThing: Math.max(...[...document.querySelectorAll('.agents-view *')]
             .map(e => e.getBoundingClientRect().bottom))};
 }"""
 
@@ -66,25 +66,30 @@ async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_url, siz
         # The two side panels: the left column and the right panel.
         assert geo["leftWidth"] == 230 and geo["panelWidth"] == 230, geo
         assert geo["gapLeft"] > 0 and abs(geo["gapLeft"] - geo["gapRight"]) < 0.5, geo
-        # The left column ends flush with the right panel, and is filled to
-        # its bottom: no more than its (now invisible) border is left under
-        # the last thing in it.
+        # The left column ends flush with the right panel; the agents list,
+        # in the right panel's Agents tab, fills the panel to its bottom.
+        # (The left column has room under the mic now: the agents moved.)
         assert abs(geo["leftBottom"] - geo["panelBottom"]) < 0.5, geo
         # The Main view's stack ends level with them; the Conversation view's
         # sits at the top, under the header.
         if view:
             assert abs(geo["captionBottom"] - geo["panelBottom"]) < 0.5, geo
-        assert geo["leftBottom"] - geo["lastThing"] < 3, geo
+        # As many whole rows as fit: what is left under the list is less
+        # than another row (60px) and its gap.
+        assert 0 <= geo["panelBottom"] - geo["lastThing"] < 68, geo
         await browser.close()
 
 
+ROWS_1440, ROWS_1920 = 10, 12
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size, rows", [((1440, 900), 6), ((1920, 1080), 8)])
-async def test_the_agents_list_has_its_row_back_and_both_columns_end_together(
+@pytest.mark.parametrize("size, rows", [((1440, 900), ROWS_1440), ((1920, 1080), ROWS_1920)])
+async def test_the_agents_list_fills_the_right_panel_and_both_columns_end_together(
         page_url, size, rows):
-    """When the columns were stopped above the footer the list lost a row; the
-    orb gave up one row's height to get it back (5 -> 6 at 1440x900, 7 -> 8 at
-    1920x1080)."""
+    """In the right panel's Agents tab the list has the panel's whole height
+    below the tabs: more rows than it had under the orb in the left column
+    (6 at 1440x900, 8 at 1920x1080)."""
     async with async_api.async_playwright() as p:
         try:
             browser = await p.chromium.launch(headless=True)
@@ -101,6 +106,7 @@ async def test_the_agents_list_has_its_row_back_and_both_columns_end_together(
           footerTop: document.getElementById('footer').getBoundingClientRect().top})""")
         assert geo["rows"] == rows, geo["rows"]
         assert geo["left"]["bottom"] <= geo["footerTop"], geo
+        assert geo["right"]["bottom"] <= geo["footerTop"], geo
         await browser.close()
 
 

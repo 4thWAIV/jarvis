@@ -2,7 +2,7 @@
  * Long workflows, from the one durable record every workflow reports to
  * (server: workflow_store.py, /api/workflows). The page never keeps its own
  * account of one: /ws/sessions says "workflows" when any of them changes
- * (AgentsControl.tsx's socket moves `workflowsChanged`), and every view
+ * (sessionsSocket.ts moves `workflowsChanged`), and every view
  * reads the record again.
  */
 

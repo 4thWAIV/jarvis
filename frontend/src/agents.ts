@@ -9,6 +9,14 @@ import { createStore } from "./store";
  *  `n` counts messages, so the same agent twice draws twice. */
 export const agentMessage = createStore<{ sessionId: string; n: number } | null>(null);
 
+/** Moves whenever the agents list should be read again (the "agents"
+ *  hint, and every reconnect of /ws/sessions: sessionsSocket.ts). */
+export const agentsChanged = createStore(0);
+
+/** Whether the Agents tab has a message it has not shown: a ray went to the
+ *  tab's icon because another tab was open. Cleared when the tab opens. */
+export const agentsTabLit = createStore(false);
+
 /** How long a message's ray shows (matching the CSS fade). The list keeps
  *  the agent in view for as long. */
 export const RAY_MS = 6000;

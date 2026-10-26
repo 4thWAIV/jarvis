@@ -283,7 +283,9 @@ NEEDS = {"agents": [
 
 
 @pytest.mark.asyncio
-async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_right(page_url):
+async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_left(page_url):
+    """The rows mirror the old left-side ones: the orb at the right end, so
+    the count sits in the upper left, clear of the right-aligned name."""
     async with async_api.async_playwright() as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, NEEDS)
@@ -293,8 +295,8 @@ async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_right(page_u
           const name = li.querySelector('.agent-name').getBoundingClientRect();
           const r = n.getBoundingClientRect();
           return [li.querySelector('.agent-name').textContent, n.textContent,
-                  r.right <= box.right && box.right - r.right < 10,
-                  r.top >= box.top && r.top - box.top < 6, name.right <= r.left];
+                  r.left >= box.left && r.left - box.left < 10,
+                  r.top >= box.top && r.top - box.top < 6, name.left >= r.right];
         })""")
         assert got == [["with three", "3", True, True, True], ["with none", "0", True, True, True],
                        ["unknown", "0", True, True, True]]
@@ -357,3 +359,9 @@ async def test_the_list_stops_at_its_ends_and_each_arrow_shows_only_when_there_i
         await page.wait_for_timeout(200)
         assert (await page.evaluate(state))["names"] == bottom["names"]
         await browser.close()
+
+
+
+async def show_diagnostics(page):
+    """The right panel opens on Agents; the Diagnostics tab is one click."""
+    await page.click(".right-tabs [aria-label='Diagnostics']")

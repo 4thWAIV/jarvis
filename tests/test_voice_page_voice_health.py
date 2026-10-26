@@ -17,7 +17,7 @@ import pytest
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
-from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
+from tests.test_agents_list_fits import async_api, page_url, show_diagnostics  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 
 STAGES = ["mic", "browser", "connection", "recogniser", "jarvis"]
@@ -67,6 +67,7 @@ async def _open(p, url):
     await page.route_web_socket("**/ws/voice", lambda ws: (setattr(_open, "voice", ws),
                                                           ws.on_message(lambda m: voice.append(m))))
     await page.goto(url + "?view=main")
+    await show_diagnostics(page)
     await page.wait_for_function(
         "window.__transcribers.some((t) => t.readyState === 1) && window.__framesSent > 0",
         timeout=10000)

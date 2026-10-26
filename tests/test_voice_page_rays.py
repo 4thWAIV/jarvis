@@ -1,6 +1,8 @@
-"""The ray lane: the left column is 80% of the side area, shifted right, and
-when JARVIS sends a message to an agent a ray runs through the freed lane
-from the main orb to that agent's row, bringing the agent into view first.
+"""The rays: when JARVIS sends a message to an agent, a ray runs up out of the
+main orb, along the top of the page, down the lane at the right edge and into
+that agent's orb in the right panel's Agents tab, bringing the agent into
+view first; with another tab open it ends at the Agents tab's icon, which
+lights.
 
 Headless Chromium on the built page (built by test_agents_list_fits.py's
 fixture), with /api/agents and /ws/sessions replaced by Playwright.
@@ -60,8 +62,9 @@ RAYS = """() => [...document.querySelectorAll('#ray-lane .ray')].map(g => ({
 
 
 def _segments(d):
-    """'M sx sy H cx V ey H ex' -> (sx, sy, cx, ey, ex); fails on any other shape."""
-    m = re.fullmatch(r"M (\S+) (\S+) H (\S+) V (\S+) H (\S+)", d)
+    """'M sx sy V top H cx V ey H ex' -> (sx, sy, top, cx, ey, ex); fails on
+    any other shape."""
+    m = re.fullmatch(r"M (\S+) (\S+) V (\S+) H (\S+) V (\S+) H (\S+)", d)
     assert m, f"not a right-angle path: {d}"
     return tuple(float(x) for x in m.groups())
 
@@ -77,17 +80,19 @@ async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_
           const orb = document.getElementById('orb-control').getBoundingClientRect();
           const target = document.querySelector('.agents-list li[data-session-id="s25"] .agent-orb');
           const t = target && target.getBoundingClientRect();
-          const col = document.getElementById('left-column').getBoundingClientRect();
+          const col = document.getElementById('right-column').getBoundingClientRect();
+          const tabs = document.querySelector('.centre-tabs').getBoundingClientRect();
           return {orbCentre: orb.left + orb.width / 2,
                   orbMid: orb.top + orb.height / 2, shown: !!target,
                   targetX: t && t.left + t.width / 2, targetY: t && t.top + t.height / 2,
-                  laneRight: col.left};
+                  laneLeft: col.right, tabsTop: tabs.top};
         }""")
         assert info["shown"], "the messaged agent was not brought into view"
         (ray,) = await page.evaluate(RAYS)
-        sx, sy, cx, ey, ex = _segments(ray["d"])
+        sx, sy, top, cx, ey, ex = _segments(ray["d"])
         assert abs(sx - info["orbCentre"]) < 1 and abs(sy - info["orbMid"]) < 1, info
-        assert 0 < cx < info["laneRight"], info                       # in the lane
+        assert 0 < top < info["tabsTop"], info                         # above the centre tabs
+        assert info["laneLeft"] < cx < 1440, info                      # in the right-hand lane
         assert abs(ex - info["targetX"]) < 1 and abs(ey - info["targetY"]) < 1, info
         await page.wait_for_timeout(4000)
         assert await page.evaluate(RAYS), "the ray should still be showing at four seconds"
@@ -132,7 +137,7 @@ async def test_rays_share_one_channel_and_take_colours_in_order(page_url):
         await page.wait_for_function(
             "document.querySelectorAll('#ray-lane .ray').length === 3", timeout=10000)
         rays = await page.evaluate(RAYS)
-        assert len({_segments(r["d"])[2] for r in rays}) == 1       # one channel
+        assert len({_segments(r["d"])[3] for r in rays}) == 1       # one channel
         assert [r["colour"] for r in rays][:2] == [PRIMARY, SECOND]
         assert len({r["colour"] for r in rays}) == 3                # none shared
         await browser.close()
@@ -262,47 +267,47 @@ async def test_a_ray_follows_its_agent_when_the_list_reorders(page_url):
             .getBoundingClientRect();
           return [d, [t.left + t.width / 2, t.top + t.height / 2]];
         }""")
-        _, _, _, ey, ex = _segments(end)
+        _, _, _, _, ey, ex = _segments(end)
         assert abs(ex - target[0]) < 1 and abs(ey - target[1]) < 1, (end, target)
         await browser.close()
 
 
 
 def _amber_halves(png: bytes) -> tuple[int, int, int]:
-    """Amber pixels in the left half and the right half of the orb's box,
-    leaving out a band across the middle where the ray itself runs behind
+    """Amber pixels in the top half and the bottom half of the orb's box,
+    leaving out a band down the middle where the ray itself runs up behind
     the orb, and the total."""
     import io
     from PIL import Image
     img = Image.open(io.BytesIO(png)).convert("RGB")
     w, h = img.size
-    left = right = 0
+    top = bottom = 0
     for y in range(h):
-        if abs(y - h // 2) <= 8:
-            continue
         for x in range(w):
+            if abs(x - w // 2) <= 8:
+                continue
             r, g, b = img.getpixel((x, y))
             if r > 120 and g > 80 and b < g * 0.6:
-                if x < w // 2:
-                    left += 1
+                if y < h // 2:
+                    top += 1
                 else:
-                    right += 1
-    return left, right, left + right
+                    bottom += 1
+    return top, bottom, top + bottom
 
 
 @pytest.mark.asyncio
 async def test_transmitting_fills_the_orb_and_leans_it_toward_the_ray(page_url):
-    """The ray leaves to the left: while it shows, the orb takes the ray's
-    colour and its particles gather on the left; afterwards it is back."""
+    """The ray leaves upward: while it shows, the orb takes the ray's colour
+    and its particles gather at the top; afterwards it is back."""
     pytest.importorskip("PIL")
     async with async_api.async_playwright() as p:
         browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
         orb = page.locator("#orb-control")
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
         await page.wait_for_timeout(2500)                     # well into the state
-        left, right, during = _amber_halves(await orb.screenshot())
-        assert during > 100, (left, right)
-        assert left > 1.5 * right, (left, right)
+        top, bottom, during = _amber_halves(await orb.screenshot())
+        assert during > 100, (top, bottom)
+        assert top > 1.5 * bottom, (top, bottom)
         await page.wait_for_function("!document.querySelector('#ray-lane .ray')", timeout=15000)
         await page.wait_for_timeout(1500)
         assert _amber_halves(await orb.screenshot())[2] < 20, "it did not ease back"
@@ -318,7 +323,7 @@ def _row(sid, name, state="idle"):
 
 # Two cards in one project, and more agents than the list shows: the message
 # moves the target from the bottom to near the top, past the rows showing.
-_FILL = [_row(f"x{i}", f"other {i}") for i in range(10)]
+_FILL = [_row(f"x{i}", f"other {i}") for i in range(20)]
 _BEFORE = {"agents": [_row("diag", "Diagnostics", "working"), _row("claude", "Agent Guard")]
            + _FILL + [_row("codex", "agent-guard, the approval authority one")]}
 _AFTER = {"agents": [_BEFORE["agents"][0], _BEFORE["agents"][-1], _BEFORE["agents"][1]] + _FILL}
@@ -458,4 +463,52 @@ async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(
         for r in rings:
             assert abs(r["x"] - centre[0]) < 1 and abs(r["y"] - centre[1]) < 1, (r, centre)
             assert r["stroke"] == "rgb(251, 191, 36)", r          # the ray's amber
+        await browser.close()
+
+
+# --- With another tab open in the right panel ---------------------------------
+
+@pytest.mark.asyncio
+async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, [_to("s2")])
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
+        (ray,) = await page.evaluate(RAYS)
+        sx, sy, top, cx, ey, ex = _segments(ray["d"])
+        icon = await page.evaluate("""() => { const b = document.querySelector(
+          ".right-tabs [aria-label='Agents']").getBoundingClientRect();
+          return [b.left + b.width / 2, b.top + b.height / 2]; }""")
+        assert abs(ex - icon[0]) < 1 and abs(ey - icon[1]) < 1 and cx == ex, (ray, icon)
+        tab = page.locator(".right-tabs [aria-label='Agents']")
+        await page.wait_for_function(
+            "document.querySelector(\".right-tabs [aria-label='Agents']\").classList.contains('lit')",
+            timeout=5000)
+        await tab.click()
+        assert "lit" not in (await tab.get_attribute("class")), "seen once opened"
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_hints_still_arrive_with_the_agents_tab_closed(page_url):
+    """The sessions socket is the page's, not the agents list's: with the
+    Workflows tab open, an "agents" hint still reaches the list the next
+    time it opens, and a "workflows" hint reads the workflows again."""
+    calls = {"workflows": 0}
+
+    async def workflows(route):
+        calls["workflows"] += 1
+        await route.fulfill(status=200, content_type="application/json",
+                            body=json.dumps({"workflows": []}))
+
+    async with async_api.async_playwright() as p:
+        browser, page = await _open_scripted(p, page_url, [(4.0, {"type": "workflows"})])
+        await page.route("**/api/workflows", workflows)
+        await page.click(".right-tabs [aria-label='Workflows']")
+        before = calls["workflows"]
+        await page.wait_for_timeout(5000)
+        assert calls["workflows"] > before
+        assert await page.locator(".agents-list").count() == 0
+        await page.click(".right-tabs [aria-label='Agents']")
+        await page.wait_for_selector(".agents-list li")
         await browser.close()
