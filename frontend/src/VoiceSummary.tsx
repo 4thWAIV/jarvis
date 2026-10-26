@@ -2,14 +2,15 @@
  * Voice health at the top of the Diagnostics tab: how well the audio is
  * working, at a glance, at the panel's fixed width.
  *
- *   - the heard ring: the share of his sentences heard in the last hour,
- *     ringed in the status colour, with the status word beside it (Hearing
- *     you, Falling behind, Dropping speech, Not listening), the cause only
- *     when there is a problem, and when speech was last dropped;
+ *   - one row: the heard ring (the share of his sentences heard in the last
+ *     hour, ringed in the status colour), the status centred (Hearing you,
+ *     Falling behind, Dropping speech, Not listening, with the cause only
+ *     when there is a problem and when speech was last dropped), and the
+ *     smaller speed ring (how much of the recogniser's real-time budget it
+ *     uses);
  *   - the five stages the audio passes through, each in its colour;
- *   - keeping up: the speed ring (how much of the recogniser's real-time
- *     budget it uses) beside headroom (how far behind recognition is, up to
- *     where speech drops).
+ *   - headroom, close under them: how far behind recognition is, up to
+ *     where speech drops.
  *
  * Red means his speech is at risk, nothing else. The server's timing, CPU,
  * the machine's load, notifications and reconnects are in the Diagnostics
@@ -39,7 +40,7 @@ export function VoiceSummary() {
               title="Open the Diagnostics view">
         <span className="voice-rings">
           <span className="voice-ring-cap">
-            <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={52} />
+            <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={48} />
             <small>heard</small>
           </span>
           <span className="voice-status">
@@ -47,15 +48,13 @@ export function VoiceSummary() {
             {status.tone !== "ok" && cause && <span className="voice-cause">{cause}</span>}
             {s?.lastDropAt != null && <span className="voice-last-drop">last drop {ago(s.lastDropAt)}</span>}
           </span>
-        </span>
-        {pipeline && <PipelineTrack pipeline={pipeline} />}
-        <span className="voice-keeping-up">
           <span className="voice-ring-cap">
             <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
             <small>speed</small>
           </span>
-          <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
         </span>
+        {pipeline && <PipelineTrack pipeline={pipeline} />}
+        <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
       </button>
       {record.error && !s && <p className="read-failure">Couldn't read the voice record ({record.error}); trying again.</p>}
     </section>

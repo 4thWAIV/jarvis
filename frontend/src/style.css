@@ -2146,7 +2146,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   cursor: pointer;
 }
 .voice-summary-open:hover, .voice-summary-open:focus-visible { border-color: rgba(14, 165, 233, 0.5); }
-.voice-rings { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.voice-rings { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .voice-keeping-up { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .voice-keeping-up .headroom { flex: 1; min-width: 0; }
 .voice-ring-cap { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
@@ -2154,8 +2154,12 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .voice-summary .ring-count, .voice-overview .ring-count { font-size: 13px; font-weight: 600; }
 .voice-keeping-up .ring-count { font-size: 11px; }
 .voice-overview .ring-count { font-size: 18px; }
-.voice-status { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.voice-status { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1;
+                min-width: 0; text-align: center; }
 .voice-status-word { font-size: 16px; font-weight: 600; }
+.voice-summary .voice-status-word { font-size: 14px; line-height: 1.15; }
+.voice-summary .voice-cause, .voice-summary .voice-last-drop { font-size: 10px; }
+.voice-summary-open > .pipeline + .headroom { margin-top: -4px; }
 .tone-ok.voice-status-word { color: #34d399; }
 .tone-warn.voice-status-word { color: #fbbf24; }
 .tone-bad.voice-status-word { color: #f87171; }
@@ -2185,7 +2189,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pipeline-value { color: rgba(255, 255, 255, 0.8); font-variant-numeric: tabular-nums; min-height: 12px; }
+.pipeline-value { color: rgba(255, 255, 255, 0.8); font-variant-numeric: tabular-nums; }
+.pipeline-value:empty { display: none; }
 
 .sparkline { display: block; overflow: visible; }
 .spark-line { stroke-width: 1; stroke-dasharray: 3 3; }
