@@ -480,9 +480,13 @@ async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(
 
 @pytest.mark.asyncio
 async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_url):
+    # The message is sent once the other tab is open, so the ray cannot be
+    # drawn to the list before the tab changes on a slow machine.
+    other_tab_open = asyncio.Event()
     async with async_api.async_playwright() as p:
-        browser, page = await _open(p, page_url, [_to("s2")])
+        browser, page = await _open_scripted(p, page_url, [(other_tab_open, _to("s2"))])
         await page.click(".right-tabs [aria-label='Diagnostics']")
+        other_tab_open.set()
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
         (ray,) = await page.evaluate(RAYS)
         sx, sy, top, cx, ey, ex = _segments(ray["d"])
