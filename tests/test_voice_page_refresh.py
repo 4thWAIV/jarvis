@@ -73,11 +73,12 @@ async def test_a_reload_before_the_server_is_back_says_so_and_catches_up(page_ur
     live = _Live(active="openai", fail_first=2)
     async with async_api.async_playwright() as p:
         browser, page = await _page(p, page_url, live)
-        await page.wait_for_selector(".read-failure", timeout=10000)
-        assert "Couldn't read the brains" in await page.locator(".read-failure").first.text_content()
+        brains_failure = page.locator(".read-failure", has_text="Couldn't read the brains")
+        await brains_failure.first.wait_for(timeout=10000)
         await page.wait_for_function(f"{BOXES} === 2", timeout=15000)
         await page.wait_for_function(f"{LOGO} === 'openai'")
-        assert await page.locator(".right-view .read-failure").count() == 0, "said only while true"
+        assert await page.locator(".right-view .read-failure", has_text="brains").count() == 0, \
+            "said only while true"
         await browser.close()
 
 

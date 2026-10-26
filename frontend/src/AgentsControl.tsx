@@ -25,6 +25,7 @@ import { agentName } from "./agentName";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsLaidOut, listAgents, RAY_MS, setAgentActive, type AgentRow } from "./agents";
 import { workflowsChanged } from "./workflows";
+import { countSessionMessage, voiceChanged } from "./voiceHealth";
 import { createSocket } from "./ws";
 
 type Show = "active" | "all";
@@ -117,7 +118,10 @@ export function AgentsControl() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const socket = createSocket(`${proto}://${location.host}/ws/sessions`);
     socket.onMessage((msg) => {
+      countSessionMessage();
       if (msg.type === "agents" || msg.type === "snapshot") reconcile();
+      // ...and "voice" when the voice record has a new event (voiceHealth.ts).
+      if (msg.type === "voice" || msg.type === "snapshot") voiceChanged.set(voiceChanged.get() + 1);
       // The same socket says "workflows" when a workflow's record changes
       // (workflows.ts); a (re)connect may have missed one, so it too.
       if (msg.type === "workflows" || msg.type === "snapshot") {

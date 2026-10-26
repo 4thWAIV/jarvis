@@ -33,7 +33,6 @@ export function App() {
       <MenuControl />
       <Settings />
 
-      <div id="error-text"></div>
       <RayLane />
       {/* Between the two columns: the view tabs and the selected view. */}
       <CentreArea />

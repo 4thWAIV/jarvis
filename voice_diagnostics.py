@@ -32,15 +32,18 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import Awaitable, Callable, Optional
 
 import run_store
-from transcriber import BYTES_PER_SECOND
+from transcriber import BYTES_PER_SECOND, PROTOCOL
 
 log = logging.getLogger("jarvis.voice_diagnostics")
 
 SAMPLE_KEEP_SEC = 7 * 24 * 3600
 EVENT_KEEP_SEC = 30 * 24 * 3600
-SAMPLE_EVERY_SEC = 1.0
+SAMPLE_EVERY_SEC = PROTOCOL["telemetryEverySec"]
 PROBE_EVERY_SEC = 0.25
 PRUNE_EVERY_SAMPLES = 3600
+# A sample is taken this many seconds-between-samples after the last one
+# when the page has sent nothing.
+TELEMETRY_LATE = 1.5
 
 # What counts as behind, everywhere it is judged (the page draws the same
 # lines from the health message's numbers).
@@ -495,12 +498,14 @@ class CaptureMonitor:
         self._send_health = send_health
         self._cpu = CpuMeter()
         self._telemetry: Optional[Telemetry] = None
+        self._heard = asyncio.Event()       # telemetry arrived since the last sample
         self.state, self.cause = "healthy", ""
 
     def telemetry(self, telemetry: Telemetry) -> None:
         """The page's latest second. Its text lines are recorded now; its
         counts go into the next sample."""
         self._telemetry = telemetry
+        self._heard.set()
         for source, text, at in telemetry.messages:
             _record_later(Event(at=at, kind="message", capture=self._session,
                                 source=source, text=text))
@@ -529,9 +534,17 @@ class CaptureMonitor:
         return s
 
     async def run(self) -> None:
+        """One sample per second of the page's: taken as each telemetry
+        arrives, so a sample and the page's report always belong together,
+        or after TELEMETRY_LATE_SEC without one (a page that has stopped
+        reporting still gets the server's own numbers recorded)."""
         taken = 0
         while True:
-            await asyncio.sleep(SAMPLE_EVERY_SEC)
+            try:
+                await asyncio.wait_for(self._heard.wait(), SAMPLE_EVERY_SEC * TELEMETRY_LATE)
+            except asyncio.TimeoutError:
+                pass
+            self._heard.clear()
             s = self.sample()
             taken += 1
             if taken % PRUNE_EVERY_SAMPLES == 0:

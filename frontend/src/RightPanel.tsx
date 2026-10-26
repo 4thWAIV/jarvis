@@ -7,10 +7,12 @@
 import { useState, useSyncExternalStore } from "react";
 import { brains } from "./brains";
 import { TabRow, type Tab } from "./Tabs";
+import { VoiceSummary } from "./VoiceSummary";
 import { WeeklyUsage } from "./WeeklyUsage";
 import { WorkflowsView } from "./WorkflowsView";
 
-/** Every brain JARVIS has, each with its own account box; when there is more
+/** Voice health first (VoiceSummary.tsx), then every brain JARVIS has, each
+ *  with its own account box; when there is more
  *  than one, the one in use is marked BRAIN and the other STANDBY. Until the
  *  list is read, the running brain's box alone, and a line saying the list
  *  could not be read for as long as that is true (it is read again until it
@@ -21,6 +23,7 @@ function DiagnosticsView() {
   const several = added !== null && added.length > 1;
   return (
     <div className="right-view">
+      <VoiceSummary />
       {live.error && <p className="read-failure">Couldn't read the brains ({live.error}); trying again.</p>}
       {several
         ? added!.map((b) => <WeeklyUsage key={b.name} provider={b.name}

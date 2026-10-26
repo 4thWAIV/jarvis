@@ -24,6 +24,18 @@ from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 COUNT_MICROPHONES = """
 (() => {
   window.__micOpens = 0;
+  // Frames the worklet really produced: headless audio runs slower than the
+  // wall clock on a busy Mac, so held audio is checked against these.
+  window.__framesCaptured = 0;
+  const RealWorklet = window.AudioWorkletNode;
+  window.AudioWorkletNode = class extends RealWorklet {
+    constructor(...args) {
+      super(...args);
+      this.port.addEventListener("message", (e) => {
+        if (e.data?.type === "frame") window.__framesCaptured++;
+      });
+    }
+  };
   window.__liveTracks = () => (window.__streams || []).flatMap(s => s.getTracks())
     .filter(t => t.readyState === "live").length;
   const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -36,7 +48,10 @@ COUNT_MICROPHONES = """
 })();
 """
 
-STATUS = "() => document.querySelector('#input-status')?.textContent ?? ''"
+# What voice input says when it is not simply listening: the health dot's
+# title beside the meter (MicControl.tsx); the words are no longer written
+# under the orb.
+STATUS = "() => document.querySelector('#health-dot')?.title ?? ''"
 
 
 class Voice:
@@ -173,11 +188,11 @@ async def test_audio_said_while_the_recogniser_loads_is_held_then_sent(page_url)
             "connecting" in (await page.evaluate(STATUS)).lower()
         # Ready at 3 s: the held frames (about 30) go first, at one and a half
         # times real time, so by 10 s after that the backlog has drained and
-        # every frame captured since the session began has been sent.
+        # every frame the worklet produced has been sent, bar the one or two
+        # waiting for the next send tick.
         await page.wait_for_timeout(11500)
-        sent, captured = await page.evaluate("""() => [window.__framesSent,
-          (performance.now() - window.__transcribers[0].createdAt) / 100]""")
-        assert captured - 8 <= sent <= captured + 2, (sent, captured)
+        sent, captured = await page.evaluate("[window.__framesSent, window.__framesCaptured]")
+        assert captured - 3 <= sent <= captured, (sent, captured)
         assert await page.evaluate("window.__transcribers.length") == 1
         assert await page.evaluate(STATUS) == ""
         await browser.close()
@@ -188,7 +203,7 @@ async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(
     async with async_api.async_playwright() as p:
         browser, page, voice = await _open(p, page_url, {"readyDelay": 60000})
         await page.wait_for_function(
-            "document.querySelector('#input-status')?.textContent.includes('not sent')",
+            "document.querySelector('#health-dot')?.title.includes('not sent')",
             timeout=20000)
         assert await page.evaluate("window.__framesSent") == 0
         assert voice.finals() == []
@@ -205,7 +220,7 @@ async def test_a_busy_or_missing_recogniser_stays_on_screen(page_url, code, mess
         browser, page, voice = await _open(p, page_url, {"error": {"code": code,
                                                                    "message": message}})
         await page.wait_for_function(
-            f"document.querySelector('#input-status')?.textContent === {json.dumps(message)}",
+            f"document.querySelector('#health-dot')?.title === {json.dumps(message)}",
             timeout=10000)
         await page.wait_for_timeout(6000)       # longer than the old error toast
         assert await page.evaluate(STATUS) == message
@@ -221,6 +236,6 @@ async def test_a_final_heard_while_jarvis_is_disconnected_is_reported_not_lost(p
         await page.wait_for_timeout(200)
         await page.evaluate("window.__hear('deploy it', true)")
         await page.wait_for_function(
-            "document.querySelector('#input-status')?.textContent.includes('not sent')")
+            "document.querySelector('#health-dot')?.title.includes('not sent')")
         assert voice.finals() == []
         await browser.close()

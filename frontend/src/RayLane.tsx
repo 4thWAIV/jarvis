@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { isQuiet } from "./voiceHealth";
 import { mainOrb } from "./OrbControl";
 import { takeRayColour } from "./rayColours";
 import { agentMessage, agentReceipt, agentsLaidOut, RAY_MS, RAY_TRAVEL_MS } from "./agents";
@@ -80,6 +81,7 @@ export function RayLane() {
   useEffect(() => {
     const frames = new Set<number>();
     const draw = (sessionId: string, n: number) => {
+      if (isQuiet()) return;         // the quiet page draws no rays
       let tries = 0;
       // The list may first have to bring the agent into view, so look for
       // its row over a few frames.

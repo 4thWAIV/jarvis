@@ -13,6 +13,9 @@
  *   - Thread (AgentThread.tsx): everything to and from one agent, the same
  *     way: offered while open, which clicking an agent's name in the
  *     Conversation history does.
+ *   - Diagnostics (VoiceDiagnosticsView.tsx): voice health in full, the same
+ *     way: offered while open, which clicking the Diagnostics tab's voice
+ *     health or the health dot does.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -24,6 +27,8 @@ import { ConversationView } from "./ConversationView";
 import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow } from "./workflows";
+import { openDiagnostics } from "./voiceHealth";
+import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 
 function MainView() {
   return (
@@ -71,6 +76,13 @@ const THREAD_VIEW: Tab = {
   view: () => null,
 };
 
+const DIAGNOSTICS_VIEW: Tab = {
+  id: "diagnostics",
+  title: "Diagnostics",
+  icon: null,
+  view: () => <VoiceDiagnosticsView />,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -88,6 +100,7 @@ export function CentreArea() {
   const [selected, setSelected] = useState(firstView);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
+  const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -96,11 +109,15 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (thread ? "thread" : now === "thread" ? VIEWS[0].id : now));
   }, [thread]);
+  useEffect(() => {
+    setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? VIEWS[0].id : now));
+  }, [diagnostics]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
                     view: () => <AgentThread key={thread.sessionId} sessionId={thread.sessionId}
                                              name={thread.name} /> }] : []),
+    ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];

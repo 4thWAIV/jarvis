@@ -19,6 +19,8 @@ export interface Orb {
   setState(s: OrbState): void;
   /** Drawn entirely in gray, with no colour, while true. */
   setGray(gray: boolean): void;
+  /** Holds still (draws nothing new) while true: the quiet page. */
+  setPaused(paused: boolean): void;
   /** The "transmitting" state, laid over whatever state the orb is in: it
    *  spins up, fills with `colour` from the centre out, and its particles
    *  lean toward `direction` (screen x, y; the way the ray leaves), for
@@ -241,9 +243,12 @@ export function createOrb(canvas: HTMLCanvasElement,
 
   const clock = new THREE.Clock();
 
+  let paused = false;
+
   function animate() {
     if (destroyed) return;
     requestAnimationFrame(animate);
+    if (paused) return;
     const t = clock.getElapsedTime();
 
     switch (state) {
@@ -539,6 +544,7 @@ export function createOrb(canvas: HTMLCanvasElement,
   return {
     setState(s: OrbState) { state = s; },
     setGray(g: boolean) { gray = g; },
+    setPaused(p: boolean) { paused = p; },
     transmit(colour: string, options = {}) { startTransmission(colour, options, false); },
     receive(colour: string, options = {}) { startTransmission(colour, options, true); },
     endTransmission() { tx = null; },

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { openSettings } from "./Settings";
-import { statusText } from "./voiceStatus";
+import { notice } from "./voiceHealth";
 
 // How long a restart is given before the page reloads itself.
 const RELOAD_AFTER_MS = 4000;
@@ -22,12 +22,12 @@ export function MenuControl() {
 
   const restart = async () => {
     setOpen(false);
-    statusText.set("restarting...");
+    notice("Status", "Restarting the server.");
     try {
       await fetch("/api/restart", { method: "POST" });
       setTimeout(() => window.location.reload(), RELOAD_AFTER_MS);
     } catch {
-      statusText.set("restart failed");
+      notice("Status", "The restart failed: the server did not answer.");
     }
   };
 

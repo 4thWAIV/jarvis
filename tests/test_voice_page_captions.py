@@ -43,6 +43,8 @@ FAKE_TRANSCRIPTION = """
   const live = [];
   window.__transcribers = live;
   window.__framesSent = 0;
+  window.__telemetry = [];          // every telemetry message the page sent
+  window.__starts = [];             // every start message
   window.__transcribe = window.__transcribe || {};
   class FakeTranscriber {
     constructor(url) {
@@ -60,7 +62,9 @@ FAKE_TRANSCRIPTION = """
       if (typeof data !== "string") { window.__framesSent++; return; }
       const msg = JSON.parse(data);
       const script = window.__transcribe;
+      if (msg.type === "telemetry") window.__telemetry.push(msg);
       if (msg.type === "start") {
+        window.__starts.push(msg);
         if (script.error) setTimeout(() => { this._emit({ type: "error", ...script.error }); this.close(); }, 0);
         else setTimeout(() => this._emit({ type: "ready" }), script.readyDelay || 0);
       }

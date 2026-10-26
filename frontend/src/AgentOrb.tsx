@@ -10,7 +10,8 @@
  * receiving state in the ray's colour for as long as the ray still shows.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { isQuiet, quietUntil } from "./voiceHealth";
 import { agentReceipt, type AgentRow } from "./agents";
 import { createOrb, type Orb, type OrbState } from "./orb";
 
@@ -26,6 +27,7 @@ export function AgentOrb({ agent }: { agent: AgentRow }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const orbRef = useRef<Orb | null>(null);
   const look = agentOrbLook(agent);
+  const quiet = useSyncExternalStore(quietUntil.subscribe, isQuiet);
 
   useEffect(() => {
     orbRef.current = createOrb(canvasRef.current!, {
@@ -53,6 +55,8 @@ export function AgentOrb({ agent }: { agent: AgentRow }) {
     orbRef.current?.setGray(look.gray);
     orbRef.current?.setState(look.state);
   }, [look.gray, look.state]);
+
+  useEffect(() => { orbRef.current?.setPaused(quiet); }, [quiet]);
 
   return <canvas className="agent-orb" ref={canvasRef}
                  data-orb-state={look.state} data-orb-gray={look.gray} />;

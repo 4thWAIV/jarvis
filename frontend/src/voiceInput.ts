@@ -15,9 +15,15 @@
  * limit the whole attempt is dropped and the page says so; no frame is ever
  * quietly skipped, because losing the start of a sentence is the failure
  * this replaced.
+ *
+ * Each session asks for diagnostics: once a second it sends the server what
+ * the page measured (voiceHealth.takeTelemetry, with the frames captured and
+ * sent and the audio waiting here), and the server answers with the health
+ * the Diagnostics views draw.
  */
 
 import protocol from "./transcribeProtocol.json";
+import { healthHeard, healthLost, takeTelemetry } from "./voiceHealth";
 import workletUrl from "./pcm-worklet.ts?worker&url";
 
 export type InputState =
@@ -62,8 +68,9 @@ export interface VoiceInputHooks {
 const FRAME_MS = 1000 * (protocol.frameBytes / 2) / protocol.sampleRate;
 const HOLD_FRAMES = Math.round((protocol.startupBufferSec * 1000) / FRAME_MS);
 const SOCKET_LIMIT_BYTES = protocol.queueLimitSec * protocol.sampleRate * 2;
-// Held audio is sent at one and a half times real time, so a backlog drains
-// without arriving faster than the recogniser can take it.
+// Held audio is sent at one and a half times real time (frames per frame's
+// worth of time), so a backlog drains without arriving faster than the
+// recogniser can take it.
 const PACE_PER_TICK = 1.5;
 const RETRY_MAX_MS = 30000;
 // A muted session may wait for the recogniser to load before its held audio
@@ -72,6 +79,7 @@ const FINISH_WAIT_MS = 1000 * (protocol.startupBufferSec + protocol.finishLimitS
 // Connecting normally takes milliseconds; only say so if it does not.
 const SAY_CONNECTING_AFTER_MS = 1000;
 const METER_EVERY_MS = 100;
+const TELEMETRY_EVERY_MS = 1000 * protocol.telemetryEverySec;
 
 interface Frame { pcm: ArrayBuffer; at: number }
 
@@ -111,6 +119,8 @@ export function createVoiceInput(
   let retryDelay = 1000;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let status: InputStatus = { state: "starting", message: "" };
+  let framesCaptured = 0;    // since the last telemetry
+  let framesSent = 0;
 
   const mark = (what: string) => {
     console.info(`[voice] ${new Date().toLocaleTimeString()} ${what}`);
@@ -255,10 +265,25 @@ export function createVoiceInput(
                          finishSent: false, closed: false, outbox: [], credit: PACE_PER_TICK,
                          finals: new Set() };
     session = s;
+    // Credit by the time that has passed, not by ticks: a busy page's timers
+    // fire late, and counting ticks would then send slower than the
+    // microphone captures, so held audio would never drain.
+    let ticked = performance.now();
     const timer = setInterval(() => {
-      s.credit = Math.min(s.credit + PACE_PER_TICK, PACE_PER_TICK * 2);
+      const now = performance.now();
+      s.credit = Math.min(s.credit + PACE_PER_TICK * (now - ticked) / FRAME_MS, PACE_PER_TICK * 2);
+      ticked = now;
       pump(s);
     }, FRAME_MS);
+    const telemetry = setInterval(() => {
+      if (session !== s || !s.ready || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify(takeTelemetry({
+        framesCaptured, framesSent,
+        heldSec: s.outbox.length * FRAME_MS / 1000,
+        socketSec: ws.bufferedAmount / (protocol.sampleRate * 2),
+      })));
+      framesCaptured = framesSent = 0;
+    }, TELEMETRY_EVERY_MS);
     if (status.state !== "interrupted") setStatus("loading");
     setTimeout(() => {
       if (session === s && !s.ready && status.state === "loading" && !status.message) {
@@ -269,7 +294,7 @@ export function createVoiceInput(
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: "start", version: protocol.version,
                                sampleRate: protocol.sampleRate, channels: protocol.channels,
-                               format: protocol.format }));
+                               format: protocol.format, diagnostics: true }));
     };
     ws.onmessage = (event: MessageEvent) => {
       if (s.closed) return;
@@ -280,7 +305,9 @@ export function createVoiceInput(
       // is not this socket's, is stale.
       if (msg.session !== s.id) return;
       const type = msg.type as string;
-      if (type === "loading") {
+      if (type === "health") {
+        if (session === s) healthHeard(msg);
+      } else if (type === "loading") {
         setStatus("loading", "Speech recognition is loading; keep talking, it is being held.");
       } else if (type === "ready") {
         s.ready = true;
@@ -316,6 +343,8 @@ export function createVoiceInput(
     ws.onclose = () => {
       s.closed = true;
       clearInterval(timer);
+      clearInterval(telemetry);
+      if (!session || session === s) healthLost();
       if (closing === s) closing = null;
       if (session !== s) return;
       session = null;
@@ -345,6 +374,7 @@ export function createVoiceInput(
   }
 
   function onFrame(pcm: ArrayBuffer) {
+    framesCaptured++;
     // After mute, only the frames the worklet flushes for the muted session.
     const s = muted ? (closing && !closing.lastFrame ? closing : null) : session;
     if (!s || (paused && !muted)) return;
@@ -381,6 +411,7 @@ export function createVoiceInput(
       }
       s.ws.send(s.outbox.shift()!.pcm);
       s.credit -= 1;
+      framesSent++;
     }
     if (s.closing && s.lastFrame && !s.finishSent && !s.outbox.length) {
       s.ws.send(JSON.stringify({ type: "finish" }));

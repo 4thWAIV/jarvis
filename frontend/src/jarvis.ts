@@ -19,6 +19,7 @@ import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
+import { countVoiceMessage, notice } from "./voiceHealth";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -28,16 +29,6 @@ export function startJarvis(orb: Orb): void {
   type State = "idle" | "listening" | "thinking" | "speaking" | "compacting";
   let currentState: State = "idle";
   let isMuted = false;
-
-  const errorEl = document.getElementById("error-text")!;
-
-  function showError(msg: string) {
-    errorEl.textContent = msg;
-    errorEl.style.opacity = "1";
-    setTimeout(() => {
-      errorEl.style.opacity = "0";
-    }, 5000);
-  }
 
   function updateStatus(state: State) {
     const labels: Record<State, string> = {
@@ -106,7 +97,12 @@ export function startJarvis(orb: Orb): void {
       // The meter (MicMeter.tsx) reads the same microphone stream that is
       // transcribed: if it moves when you speak, the words are being heard.
       onLevel: micLevel.set,
-      onStatus: inputStatus.set,
+      // Shown as the health dot beside the meter (MicControl.tsx); the words
+      // go to the Diagnostics view's Messages, not under the orb.
+      onStatus: (status) => {
+        inputStatus.set(status);
+        if (status.message) notice("Input", status.message);
+      },
       // A final heard while the voice socket is down would be dropped by
       // socket.send; it is reported as not sent instead, and not replayed.
       canDeliver: () => socket.isConnected(),
@@ -185,7 +181,7 @@ export function startJarvis(orb: Orb): void {
   audioPlayer.onFinished(() => { jarvisQuiet(); captureQuiet(); });
 
   audioPlayer.onNeedsGesture(() => {
-    showError("Click anywhere to enable audio");
+    notice("Playback", "Click anywhere to enable audio.");
   });
 
   // ---------------------------------------------------------------------------
@@ -194,6 +190,7 @@ export function startJarvis(orb: Orb): void {
 
   socket.onMessage((msg) => {
     const type = msg.type as string;
+    countVoiceMessage();
 
     if (type === "config") {
       muteMicDuringSpeech = Boolean(msg.muteMicDuringSpeech);
@@ -237,16 +234,15 @@ export function startJarvis(orb: Orb): void {
       else if (state === "compacting") transition("compacting");
       else if (state === "idle") transition("listening");
     } else if (type === "text") {
-      // A chunk TTS could not voice: show it instead of losing it
+      // A chunk TTS could not voice: kept in Messages instead of lost.
       console.log("[JARVIS]", msg.text);
-      statusText.set(String(msg.text));
+      notice("Unvoiced speech", String(msg.text ?? ""));
     } else if (type === "notice") {
-      // Shown, never spoken. The server sends one when it is about to be busy
-      // for a few seconds (a context rotation), and an empty string to clear it.
-      // Without it the pause looks like a crash.
+      // Never spoken. The server sends one when it is about to be busy for a
+      // few seconds (a context rotation), and an empty string to clear it; the
+      // orb shows the state, and the words go to Messages.
       const text = String(msg.text ?? "");
-      statusText.set(text);
-      if (text) console.log("[notice]", text);
+      if (text) notice("Assistant", text);
     }
   });
 

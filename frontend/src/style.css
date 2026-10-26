@@ -662,21 +662,6 @@ html, body {
   color: rgba(14, 165, 233, 0.8);
 }
 
-#error-text {
-  position: fixed;
-  top: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: rgba(239, 68, 68, 0.7);
-  font-size: 13px;
-  letter-spacing: 1px;
-  font-weight: 300;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 10;
-  opacity: 0;
-}
-
 /* ---------------------------------------------------------------------------
    Settings Panel
    --------------------------------------------------------------------------- */
@@ -1081,22 +1066,25 @@ html, body {
   z-index: 20;
 }
 
-/* What voice input is doing when it is not simply listening. Stays until
-   resolved; amber while waiting on something, red when words were lost or
-   input cannot work. */
-.input-status {
-  flex-basis: 100%;
-  max-width: 260px;
-  font-size: 11px;
-  line-height: 1.35;
-  text-align: center;
-  color: rgba(245, 158, 11, 0.85);
+/* The health dot beside the meter: there only while voice input has a
+   problem (MicControl.tsx). Amber while waiting on something, red when words
+   were lost or input cannot work; the words are in its title and in the
+   Diagnostics view's Messages, which a click opens. */
+.health-dot {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: rgba(245, 158, 11, 0.9);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
 }
-.input-status.interrupted,
-.input-status.unavailable,
-.input-status.permission {
-  color: rgba(239, 68, 68, 0.85);
+.health-dot.bad {
+  background: rgba(239, 68, 68, 0.95);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
 }
+.health-dot:focus-visible { outline: 1px solid rgba(14, 165, 233, 0.8); outline-offset: 2px; }
 
 .control-button.small {
   width: 24px;
@@ -2135,3 +2123,179 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   cursor: pointer;
 }
 
+
+/* ---------------------------------------------------------------------------
+   Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the
+   Diagnostics view (VoiceDiagnosticsView.tsx) and their pictures
+   (VoiceVisuals.tsx). Green hearing him, amber behind, red dropping.
+   --------------------------------------------------------------------------- */
+
+.voice-orb {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #34d399;
+}
+.voice-orb canvas { display: block; width: 100%; height: 100%; }
+.voice-orb[data-state="browser-behind"], .voice-orb[data-state="connection-behind"],
+.voice-orb[data-state="server-starved"], .voice-orb[data-state="decoder-slow"] {
+  box-shadow: 0 0 0 2px #fbbf24, 0 0 12px rgba(251, 191, 36, 0.45);
+}
+.voice-orb[data-state="no-frames"] { box-shadow: 0 0 0 2px #ef4444; }
+.voice-orb[data-state="idle"] { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2); }
+
+.voice-summary { margin-bottom: 14px; }
+.voice-summary-open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+  background: rgba(14, 165, 233, 0.04);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.voice-summary-open:hover, .voice-summary-open:focus-visible { border-color: rgba(14, 165, 233, 0.5); }
+.voice-health-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.voice-health-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.voice-health { font-size: 14px; font-weight: 600; color: #e0f2fe; }
+.voice-cause { font-size: 11px; color: rgba(255, 255, 255, 0.6); overflow-wrap: anywhere; margin: 0; }
+
+.pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; width: 100%; }
+.pipeline-stage { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: center; }
+.pipeline-bar { height: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.15); }
+.pipeline-stage.st-ok .pipeline-bar { background: #34d399; }
+.pipeline-stage.st-warn .pipeline-bar { background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.6); }
+.pipeline-stage.st-bad .pipeline-bar { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+.pipeline-label, .pipeline-value {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pipeline-value { color: rgba(255, 255, 255, 0.8); font-variant-numeric: tabular-nums; min-height: 12px; }
+
+.sparkline { display: block; overflow: visible; }
+.spark-line { stroke-width: 1; stroke-dasharray: 3 3; }
+.spark-line.tone-warn { stroke: rgba(251, 191, 36, 0.7); }
+.spark-line.tone-bad { stroke: rgba(239, 68, 68, 0.8); }
+.spark-text { font-size: 8px; fill: rgba(255, 255, 255, 0.5); }
+.spark-area { fill: rgba(56, 189, 248, 0.15); stroke: none; }
+.spark-path { fill: none; stroke: #38bdf8; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark-end { fill: #e0f2fe; }
+.spark-bar { fill: rgba(56, 189, 248, 0.55); }
+.spark-mark { fill: #ef4444; stroke: #0b0b10; stroke-width: 1; }
+.spark-mark.clickable { cursor: zoom-in; }
+
+.voice-readings { display: flex; align-items: center; gap: 10px; }
+.voice-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 99px;
+}
+.voice-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; }
+.voice-chip.tone-warn .voice-chip-dot { background: #fbbf24; }
+.voice-chip.tone-bad .voice-chip-dot { background: #ef4444; }
+.voice-chip-note { font-size: 10px; color: rgba(255, 255, 255, 0.45); }
+
+#voice-diagnostics {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+}
+#voice-diagnostics h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+#voice-diagnostics h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.85);
+}
+#voice-diagnostics section { min-width: 0; }
+.voice-overview { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.voice-overview-words { display: flex; flex-direction: column; gap: 6px; flex: 1 1 260px; min-width: 0; }
+.voice-today { flex-basis: 100%; }
+.voice-range { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.voice-range-button, .voice-save, .voice-quiet-button {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(14, 165, 233, 0.9);
+  background: transparent;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.voice-range-button.selected, .voice-quiet-button.on { background: rgba(14, 165, 233, 0.15); }
+.voice-save { align-self: flex-start; }
+.voice-zoomed { font-size: 12px; color: rgba(255, 255, 255, 0.7); }
+.voice-timeline-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: center; }
+.voice-timeline-label { font-size: 11px; color: rgba(255, 255, 255, 0.6); }
+.voice-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 160px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+.voice-empty { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.voice-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.voice-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid #fbbf24;
+  border-radius: 6px;
+}
+.voice-card.kind-overload, .voice-card.kind-decoder-failed { border-left-color: #ef4444; }
+.voice-card p { margin: 0; overflow-wrap: anywhere; }
+.voice-card-when { font-size: 11px; color: rgba(255, 255, 255, 0.55); font-variant-numeric: tabular-nums; }
+.voice-card-busy { font-size: 11px; color: rgba(255, 255, 255, 0.65); }
+.voice-bars { display: flex; flex-direction: column; gap: 4px; max-width: 520px; }
+.voice-bar-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) 40px; gap: 8px; align-items: center; }
+.voice-bar-label { font-size: 11px; color: rgba(255, 255, 255, 0.65); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-bar { height: 8px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+.voice-bar span { display: block; height: 100%; border-radius: 2px; background: #38bdf8; }
+.voice-bar-count { font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.voice-compare { margin-top: 10px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.voice-compare th, .voice-compare td { padding: 3px 12px 3px 0; text-align: left; font-weight: normal; }
+.voice-compare thead th { color: rgba(255, 255, 255, 0.5); font-size: 11px; }
+.voice-quiet { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
+.voice-messages ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.voice-messages li {
+  display: grid;
+  grid-template-columns: 64px 120px minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.voice-messages time { font-size: 11px; color: rgba(255, 255, 255, 0.5); font-variant-numeric: tabular-nums; }
+.voice-message-source { font-size: 11px; color: rgba(14, 165, 233, 0.85); }
+.voice-message-text { overflow-wrap: anywhere; }

@@ -157,6 +157,30 @@ about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
 and he answers them on the Workflows view.
 
+## Voice diagnostics
+How voice input is doing is one durable record, `voice_diagnostics.py`:
+`voice_samples` (one a second while a page listens, taken as the page's
+`telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
+start and end, reconnects, every failure with the cause in force and the
+busiest processes, and every line of text the page showed). `classify` gives
+each second one state and one cause, in the order the audio travels: the
+microphone, the browser, the connection, the server, the decoder. Counts and
+timings only; no audio, and no words but the page's own text. Samples are
+kept 7 days, events 30. The page gets `health` once a second back on the same
+socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
+`/ws/sessions` says when to read again. The Diagnostics tab draws a summary
+(`VoiceSummary.tsx`) and the centre area's Diagnostics view the detail
+(`VoiceDiagnosticsView.tsx`). Nothing about voice input or JARVIS's own state
+is written under the orb any more: it goes to that view's Messages
+(`voiceHealth.notice`), and a health dot beside the meter shows a problem.
+
+## Turn-taking
+JARVIS waits for Tim to finish. The server gathers what he says
+(`server._Utterance`) until he has been quiet for `speech.END_OF_TURN_SEC`, so
+a pause mid-sentence does not send the brain half a sentence; typed words go
+at once. Nothing JARVIS says starts while he has spoken more recently than
+that, replies included, and announcements never start at once.
+
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 
@@ -193,6 +217,8 @@ arbitrary LLM and file content, so everything goes through
   (one capture at a time, overload refused rather than trimmed)
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
   `frontend/src/transcribeProtocol.json`, read by both sides
+- `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
+  `frontend/src/voiceHealth.ts` is the page's side of it
 - `frontend/src/main.tsx` — Renders the voice page with React (`App.tsx`;
   the orb is `OrbControl.tsx`)
 - `frontend/src/jarvis.ts` — The voice page's state machine, started once

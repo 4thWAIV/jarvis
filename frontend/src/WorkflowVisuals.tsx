@@ -14,7 +14,8 @@
  *   - AgeBar: how long something has been open, as a filling bar.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { isQuiet, quietUntil } from "./voiceHealth";
 import { createOrb, type Orb, type OrbPalette, type OrbState } from "./orb";
 import { FINISHED, type Workflow, type WorkflowItem, type WorkflowState } from "./workflows";
 
@@ -34,31 +35,42 @@ const ORB_LOOK: Record<WorkflowState, { state: OrbState; gray: boolean }> = {
   cancelled: { state: "idle", gray: true },
 };
 
-export function WorkflowOrb({ state, size, particles = 300 }: {
-  state: WorkflowState; size: number; particles?: number }) {
+/** A small orb in its own palette, in an orb state, ringed by CSS on
+ *  `className[data-state]`. It stops moving while the page is quiet
+ *  (voiceHealth.ts). The workflow orbs and the voice health orb are this. */
+export function ParticleOrb({ palette, look, dataState, className, size, particles = 300 }: {
+  palette: OrbPalette; look: { state: OrbState; gray: boolean }; dataState: string;
+  className: string; size: number; particles?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const orbRef = useRef<Orb | null>(null);
-  const look = ORB_LOOK[state];
+  const quiet = useSyncExternalStore(quietUntil.subscribe, isQuiet);
 
   useEffect(() => {
-    orbRef.current = createOrb(canvasRef.current!, {
-      particles, transparent: true, palette: WORKFLOW_PALETTE });
+    orbRef.current = createOrb(canvasRef.current!, { particles, transparent: true, palette });
     return () => {
       orbRef.current?.destroy();
       orbRef.current = null;
     };
-  }, [particles]);
+  }, [particles, palette]);
 
   useEffect(() => {
     orbRef.current?.setGray(look.gray);
     orbRef.current?.setState(look.state);
   }, [look.gray, look.state]);
 
+  useEffect(() => { orbRef.current?.setPaused(quiet); }, [quiet]);
+
   return (
-    <span className="workflow-orb" data-state={state} style={{ width: size, height: size }}>
+    <span className={className} data-state={dataState} style={{ width: size, height: size }}>
       <canvas ref={canvasRef} data-orb-state={look.state} data-orb-gray={look.gray} />
     </span>
   );
+}
+
+export function WorkflowOrb({ state, size, particles = 300 }: {
+  state: WorkflowState; size: number; particles?: number }) {
+  return <ParticleOrb palette={WORKFLOW_PALETTE} look={ORB_LOOK[state]} dataState={state}
+                      className="workflow-orb" size={size} particles={particles} />;
 }
 
 /** Where each phase stands, from the workflow's items and its current phase. */
@@ -86,8 +98,10 @@ export function PhaseTrack({ w, labels = false }: { w: Workflow; labels?: boolea
   );
 }
 
-export function Ring({ done, total, size = 40, label }: {
-  done: number; total: number; size?: number; label?: string }) {
+export function Ring({ done, total, size = 40, label, text }: {
+  done: number; total: number; size?: number; label?: string;
+  /** What the middle says, instead of done/total. */
+  text?: string }) {
   const share = total > 0 ? Math.min(1, done / total) : 0;
   const r = size / 2 - 3;
   const c = 2 * Math.PI * r;
@@ -100,7 +114,7 @@ export function Ring({ done, total, size = 40, label }: {
                 strokeDasharray={`${share * c} ${c}`}
                 transform={`rotate(-90 ${size / 2} ${size / 2})`} />
       </svg>
-      <span className="ring-count">{done}/{total}</span>
+      <span className="ring-count">{text ?? `${done}/${total}`}</span>
     </span>
   );
 }
