@@ -1074,10 +1074,28 @@ html, body {
 /* The microphone control, centred under the status control. */
 #mic-control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
   z-index: 20;
+}
+
+/* What voice input is doing when it is not simply listening. Stays until
+   resolved; amber while waiting on something, red when words were lost or
+   input cannot work. */
+.input-status {
+  flex-basis: 100%;
+  max-width: 260px;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  color: rgba(245, 158, 11, 0.85);
+}
+.input-status.interrupted,
+.input-status.unavailable,
+.input-status.permission {
+  color: rgba(239, 68, 68, 0.85);
 }
 
 .control-button.small {

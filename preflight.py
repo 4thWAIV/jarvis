@@ -654,13 +654,39 @@ def _check_session_skill_sync() -> Check:
     )
 
 
+def _check_speech_input_sync() -> Check:
+    """Whether local speech input can start: sherpa-onnx importable by the
+    Python JARVIS runs on, and every model file present. Looks at files
+    only; it never loads the model. Typing and JARVIS's voice work without
+    it."""
+    import importlib.util
+    import sys
+    import transcriber
+    if importlib.util.find_spec("sherpa_onnx") is None:
+        return Check(
+            name="speech_input",
+            status=STATUS_WARN,
+            message=f"sherpa-onnx is not installed for {sys.executable}, so the "
+                    "microphone cannot be transcribed. Typing still works.",
+            remedy="Run: .venv/bin/pip install -r requirements.txt",
+        )
+    problem = transcriber.model_problem()
+    if problem:
+        return Check(name="speech_input", status=STATUS_WARN,
+                     message=problem + " Typing still works.",
+                     remedy=f"Run: {transcriber.SETUP_COMMAND}")
+    return Check(name="speech_input", status=STATUS_OK,
+                 message=f"The speech model is installed at {transcriber.model_dir()}.")
+
+
 # ── running them all ─────────────────────────────────────────────────────
 
 # JARVIS's own checks. The brain provider's (for Claude Code: the CLI, its
 # login, a leftover API key) come from the provider and are passed in.
 _ASYNC_CHECKS = (_check_accessibility,)
 _SYNC_CHECKS = (_check_fish_api_key_sync, _check_cross_session_inbound_sync,
-                _check_screen_recording_sync, _check_session_skill_sync)
+                _check_screen_recording_sync, _check_session_skill_sync,
+                _check_speech_input_sync)
 
 
 async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:
@@ -737,6 +763,10 @@ def _phrase_for(check: Check) -> str:
         return "there's a leftover Anthropic API key in the environment"
     if name == "cross_session_inbound":
         return "cross-session steering isn't enabled"
+    if name == "speech_input":
+        if "sherpa-onnx" in msg:
+            return "the speech recognition package isn't installed, so I can't hear you"
+        return "the speech model isn't installed, so I can't hear you"
     if name == "session_skill":
         if "out of date" in msg:
             return "the talk-to-jarvis skill your sessions use is out of date"

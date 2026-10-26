@@ -74,6 +74,23 @@ def test_connect_sends_config_and_idle(client):
         assert ws.receive_json() == {"type": "status", "state": "idle"}
 
 
+def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(client):
+    c, server = client
+    with c.websocket_connect("/ws/transcribe") as ws:
+        ws.send_json({"type": "start", "version": 1, "sampleRate": 16000,
+                      "channels": 1, "format": "pcm_s16le"})
+        msg = ws.receive_json()
+        assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
+        assert "setup_speech_input.py" in msg["message"]
+    with c.websocket_connect("/ws/voice") as ws:
+        assert ws.receive_json() == {"type": "config", "muteMicDuringSpeech": False}
+        assert ws.receive_json() == {"type": "status", "state": "idle"}
+        ws.send_json({"type": "transcript", "text": "typed words", "isFinal": True,
+                      "typed": True})
+        _drain_until(ws, lambda m: m["type"] == "audio")
+        assert server.brain_instance.turns == [("typed words", "user")]
+
+
 def test_greeting_is_spoken_through_the_scheduler(client):
     c, server = client
     server._last_greeting_time = 0

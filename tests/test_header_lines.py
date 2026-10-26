@@ -375,6 +375,10 @@ EXEMPT = {
         "it builds SQL out of column names checked against a fixed list "
         "(`_MESSAGE_UPDATABLE`); every value, a session's reply included, is "
         "a bound parameter, and it returns nothing"),
+    "voice_diagnostics._camel": (
+        "it turns this module's own dataclass field names (fixed identifiers "
+        "such as `backlog_sec`) into JSON keys; no session, page or brain "
+        "text ever passes through it"),
     "session_watch.track_from": (
         "it returns a Tracking, not a sentence: the reply in it is a "
         "session's own words, which are stored and reach the brain only "

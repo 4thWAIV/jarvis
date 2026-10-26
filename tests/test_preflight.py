@@ -528,7 +528,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",
         "fish_api_key", "anthropic_key_leftover", "cross_session_inbound",
-        "session_skill",
+        "session_skill", "speech_input",
     }
 
 
@@ -601,3 +601,32 @@ def test_spoken_summary_warn_counts_as_something_wrong():
     summary = preflight.spoken_summary(checks)
     assert summary != ""
     assert "One thing needs attention" in summary
+
+
+# --- speech input ------------------------------------------------------------
+
+def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
+    check = preflight._check_speech_input_sync()
+    assert check.status == STATUS_WARN
+    assert "setup_speech_input.py" in check.remedy
+    assert "Typing still works" in check.message
+    assert "speech model" in preflight._phrase_for(check)
+
+
+def test_speech_input_is_ok_with_every_model_file_and_loads_nothing(monkeypatch, tmp_path):
+    import transcriber
+    for name in transcriber.MODEL_FILES:
+        (tmp_path / name).write_text("x")
+    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(transcriber, "SherpaEngine", None)   # building one would fail
+    assert preflight._check_speech_input_sync().status == STATUS_OK
+
+
+def test_speech_input_without_sherpa_onnx_says_how_to_install_it(monkeypatch):
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: None if name == "sherpa_onnx" else real(name, *a))
+    check = preflight._check_speech_input_sync()
+    assert "sherpa-onnx" in check.message and "requirements.txt" in check.remedy

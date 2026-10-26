@@ -140,10 +140,14 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
 
 - **macOS.** Terminal control, window listing, screenshots and notifications
   all go through AppleScript. There is no Linux or Windows path today.
-- **Google Chrome.** Not a preference — a constraint. The microphone uses the
-  Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`, see
-  `frontend/src/voice.ts`), which Firefox has never implemented. There is no
-  server-side transcription to fall back on.
+- **Google Chrome.** The voice page's microphone capture
+  (`frontend/src/voiceInput.ts`) is only tested in Chrome. Speech
+  recognition itself runs on this Mac, not in the browser: Banafo's Kroko
+  streaming Zipformer (English community model, CC-BY-SA) through
+  sherpa-onnx, on the CPU, with no audio sent anywhere. The model is about
+  55 MiB to download and 81 MiB on disk, takes a few seconds to load when the
+  server starts, and uses about 260 MB of memory while JARVIS runs. Without
+  it, typing still works.
 - **Claude Code, installed and logged in.** `npm install -g
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
@@ -158,8 +162,10 @@ cd jarvis
 
 cp .env.example .env
 
-pip install -r requirements.txt
-python -m playwright install chromium    # for read_page / look_at_page
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m playwright install chromium    # for read_page / look_at_page
+.venv/bin/python scripts/setup_speech_input.py     # the local speech model
 
 cd frontend && npm install && cd ..
 ```
@@ -190,7 +196,7 @@ way to spend an evening. Generate them once and forget about them.
 Then, in two terminals:
 
 ```bash
-python server.py --host 127.0.0.1        # terminal 1
+.venv/bin/python server.py --host 127.0.0.1   # terminal 1
 cd frontend && npm run dev               # terminal 2
 ```
 
@@ -269,7 +275,8 @@ is building software. A door you choose is worth more than three we picked.
 ## How it works
 
 ```
-Microphone → Chrome Web Speech API → WebSocket → FastAPI (server.py)
+Microphone → AudioWorklet (16 kHz PCM) → /ws/transcribe → local recogniser (transcriber.py)
+           → text → /ws/voice → FastAPI (server.py)
                                                       │
                                                       ▼
                                         the brain (brain.py) — ONE long-lived
@@ -343,7 +350,10 @@ invariants hold throughout it:
 | `jarvis_home/CLAUDE.md` | JARVIS's persona and rules — the file to edit to change who he is |
 | `preflight.py` | First-run checks: CLI version, login, Accessibility, Fish key |
 | `data_paths.py` | The single source of truth for where JARVIS writes |
-| `frontend/src/voice.ts` | Web Speech API, audio playback |
+| `frontend/src/voiceInput.ts` | The microphone, streamed to local speech recognition |
+| `frontend/src/voice.ts` | Audio playback |
+| `transcriber.py` | Local speech recognition: the model, its worker, one capture at a time |
+| `transcription_api.py` | `/ws/transcribe`, the socket the page streams the microphone to |
 | `frontend/src/orb.ts` | The Three.js particle orb |
 | `frontend/src/dashboard/` | The dashboard (vanilla TS, no framework) |
 

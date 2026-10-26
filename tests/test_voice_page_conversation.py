@@ -19,7 +19,7 @@ import json
 import pytest
 
 from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
-from tests.test_voice_page_captions import AUTOPLAY, FAKE_RECOGNITION, _silence_wav
+from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION, _silence_wav
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -43,14 +43,14 @@ class _Voice:
 
 async def _open(p, url, voice=None):
     try:
-        browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
-    await page.add_init_script(FAKE_RECOGNITION)
+    await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice or _Voice())
     await page.goto(url)
-    await page.wait_for_function("window.__recognisers.length > 0", timeout=10000)
+    await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
     return browser, page
 
 
@@ -407,11 +407,11 @@ async def test_the_history_reads_the_record_with_live_message_status_and_threads
     voice, record = _Voice(), _Record()
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", voice)
         await page.route("**/api/conversation/agents/**", record.thread)
         await page.route("**/api/conversation", record.page)
@@ -436,7 +436,7 @@ async def test_the_history_reads_the_record_with_live_message_status_and_threads
         assert await page.text_content(".record-answer") == "Postgres it is."
 
         await page.reload()
-        await page.wait_for_function("window.__recognisers.length > 0", timeout=10000)
+        await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
         await page.wait_for_selector(".record-status")
         assert (await history())[:2] == ["Earlier, I asked about the build.", "It was green, sir."]
 
@@ -476,11 +476,11 @@ async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_
 
     async with async_api.async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        await page.add_init_script(FAKE_RECOGNITION)
+        await page.add_init_script(FAKE_TRANSCRIPTION)
         await page.route_web_socket("**/ws/voice", voice)
         await page.route("**/api/conversation", record)
         await page.route("**/api/capture/*/restore**", restore)

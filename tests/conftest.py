@@ -135,6 +135,9 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     overwrote the live usage reading with a fixture's fake one.
     """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data-dir"))
+    # Nor load the real speech model: with no override it is looked for in
+    # that empty data folder, so the server starts with speech input failed.
+    monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
 
 
 @pytest_asyncio.fixture(autouse=True)

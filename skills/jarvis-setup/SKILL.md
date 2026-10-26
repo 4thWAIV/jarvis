@@ -10,17 +10,23 @@ session, not guessed. Check a claim against the code cited before repeating
 it to a user — if something here stops being true, the citation is exactly
 what lets you find out.
 
-## The microphone only works in Google Chrome
+## Speech is recognised on this Mac; the voice page is tested in Chrome
 
-This is a hard constraint, not a preference. The frontend uses the
-`SpeechRecognition` / `webkitSpeechRecognition` Web Speech API
-(`frontend/src/voice.ts`) to transcribe the user's voice in the browser.
-Firefox has never implemented that API at all — there is no flag, no
-polyfill, no workaround. Safari's support is too inconsistent to rely on.
-If someone asks to use Firefox (or anything but Chrome) for the mic, tell
-them directly that it will not work, rather than letting them debug a
-"broken" mic for an hour. `README.md` already states this requirement; don't
-let a setup walkthrough contradict it.
+The page streams the microphone (`frontend/src/voiceInput.ts`: one
+getUserMedia stream and an AudioWorklet making 16 kHz PCM16) to
+`/ws/transcribe`, and `transcriber.py` recognises it locally with NVIDIA's
+Banafo's Kroko streaming Zipformer through sherpa-onnx. Nothing goes to a
+browser or cloud recogniser. That capture is only tested in Chrome; if
+someone asks for Firefox or Safari, say it has not been tried there.
+
+The model is installed once with `.venv/bin/python scripts/setup_speech_input.py`
+(about 55 MiB, checked against the release's SHA-256). Without it, or
+without sherpa-onnx in the Python the server runs on, the page shows why
+under the mic meter, preflight warns, and typing still works. The model
+loads in about 5 seconds when the server starts; what is said meanwhile is
+held and sent once it is ready. JARVIS must be started with the
+`.venv/bin/python` that has sherpa-onnx; `/api/restart` re-executes the same
+interpreter it is already running on, so it cannot switch to the venv.
 
 ## Chrome's microphone permission is scoped per origin — INCLUDING THE PORT
 

@@ -354,10 +354,10 @@ async def test_a_nonsense_default_falls_back_rather_than_breaking(ready,
 async def test_his_own_interface_is_not_opened_where_the_mic_is_dead(ready,
                                                                      monkeypatch,
                                                                      url):
-    """`frontend/src/voice.ts` is built on webkitSpeechRecognition, which
-    Firefox does not implement. Opening JARVIS there gives the user a page
-    whose microphone can never work, and he would conclude JARVIS is broken.
-    Say why; do not do it silently."""
+    """The voice page's microphone capture is only tested in Chrome, so
+    opening JARVIS in Firefox could give the user a page whose microphone
+    does not work, and he would conclude JARVIS is broken. Say why; do not
+    do it silently."""
     server, fake, _project = ready
     monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
     out = await server.tool_open_in_browser({"target": url})

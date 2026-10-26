@@ -15,7 +15,7 @@ import json
 import pytest
 
 from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
-from tests.test_voice_page_captions import AUTOPLAY, _silence_wav
+from tests.test_voice_page_captions import BROWSER_ARGS, _silence_wav
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -28,7 +28,7 @@ DISPLAY = {"type": "display", "id": 7, "kind": "sources", "title": "Sources", "i
 
 async def _open(p, url, messages, capture=None, view="main"):
     try:
-        browser = await p.chromium.launch(headless=True, args=AUTOPLAY)
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
