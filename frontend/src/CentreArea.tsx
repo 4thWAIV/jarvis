@@ -16,6 +16,8 @@
  *   - Diagnostics (VoiceDiagnosticsView.tsx): voice health in full, the same
  *     way: offered while open, which clicking the Diagnostics tab's voice
  *     health or the health dot does.
+ *   - A subsystem (SubsystemView.tsx), named after it, the same way: offered
+ *     while open, which clicking its row in the Diagnostics tab does.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -28,6 +30,9 @@ import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
+import { openSubsystem } from "./subsystems";
+import { useSubsystems } from "./SubsystemList";
+import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 
 function MainView() {
@@ -83,6 +88,13 @@ const DIAGNOSTICS_VIEW: Tab = {
   view: () => <VoiceDiagnosticsView />,
 };
 
+const SUBSYSTEM_VIEW: Tab = {
+  id: "subsystem",
+  title: "Subsystem",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -101,6 +113,8 @@ export function CentreArea() {
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
+  const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
+  const subsystemName = useSubsystems().list.find((s) => s.id === subsystem)?.name;
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -112,12 +126,17 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? VIEWS[0].id : now));
   }, [diagnostics]);
+  useEffect(() => {
+    setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? VIEWS[0].id : now));
+  }, [subsystem]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
                     view: () => <AgentThread key={thread.sessionId} sessionId={thread.sessionId}
                                              name={thread.name} /> }] : []),
     ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
+    ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? "Subsystem",
+                       view: () => <SubsystemView key={subsystem} id={subsystem} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
