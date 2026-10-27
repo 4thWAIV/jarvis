@@ -313,8 +313,10 @@ def test_a_missing_model_is_reported_with_the_setup_command():
     with TestClient(_app(transcriber.SherpaEngine)) as client:
         with _open(client) as ws:
             ws.send_text(json.dumps(START))
-            msg = ws.receive_json()
-            assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
+            # The failed load reaches the event loop from the worker thread, so
+            # a page that connects first is told "loading" before the error.
+            msg = _until(ws, "error")[-1]
+            assert msg["code"] == "model-unavailable"
             assert transcriber.SETUP_COMMAND in msg["message"]
 
 
@@ -398,6 +400,11 @@ def _recorded(*kinds, timeout=2.0):
     return voice_diagnostics.history(0, 2e9)
 
 
+def _has_the_page_s_counts(samples) -> bool:
+    return any(s.frames_captured == 10 and s.notices_by_source == {"status": 1}
+               for s in samples)
+
+
 def test_a_page_that_asks_for_diagnostics_is_sent_its_health_and_its_seconds_are_recorded(
         client, monkeypatch):
     monkeypatch.setattr(voice_diagnostics, "SAMPLE_EVERY_SEC", 0.1)
@@ -407,13 +414,22 @@ def test_a_page_that_asks_for_diagnostics_is_sent_its_health_and_its_seconds_are
             pass
         ws.send_text(json.dumps(TELEMETRY))
         ws.send_bytes(SILENCE)
-        health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
-        assert health["state"] in voice_diagnostics.STATES
-        assert set(health["pipeline"]) == {"mic", "browser", "connection", "recogniser", "jarvis"}
-        assert "text" not in health
+        # Each health is sent after its sample is written. A sample taken
+        # before the telemetry arrived (a busy machine) has none of the page's
+        # counts; the next one has them. So read health until it is recorded.
+        deadline = time.monotonic() + 2.0
+        while True:
+            health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
+            assert health["state"] in voice_diagnostics.STATES
+            assert set(health["pipeline"]) == {"mic", "browser", "connection", "recogniser",
+                                               "jarvis"}
+            assert "text" not in health
+            samples, _ = voice_diagnostics.history(0, 2e9)
+            if _has_the_page_s_counts(samples) or time.monotonic() > deadline:
+                break
         ws.send_text(json.dumps({"type": "abort"}))
     samples, events = _recorded("message", "ready")
-    assert any(s.frames_captured == 10 and s.notices_by_source == {"status": 1} for s in samples)
+    assert _has_the_page_s_counts(samples)
     assert [(e.kind, e.text) for e in events if e.kind == "message"] == [("message", "Listening again.")]
     assert any(e.kind == "ready" for e in events)
 
@@ -457,7 +473,10 @@ def test_a_drop_is_recorded_with_its_cause_and_the_busiest_processes_then_the_re
     engine.gate.set()
     with _open(client) as ws:
         _ready(ws)
-    _, events = _recorded("reconnect")
+    # Every event the assertions read: the first capture's "ready" is written
+    # off the event loop like the others, and a busy machine can land it after
+    # the reconnect.
+    _, events = _recorded("ready", "overload", "reconnect")
     drop = next(e for e in events if e.kind == "overload")
     assert drop.top_processes == [{"name": "rider", "cpu": 99.0}]
     assert drop.text == "Speech recognition fell behind, so this was not heard."
