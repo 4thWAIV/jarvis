@@ -376,10 +376,14 @@ def test_the_page_or_the_token_opens_it_and_nothing_else_does(client, monkeypatc
 
 from jarvis import voice_diagnostics
 
+# The message is stamped now, as a page stamps it: one stamped in 1970 is past
+# EVENT_KEEP_SEC, and the prune every server start runs deletes it if that
+# prune's DELETE lands after the message's INSERT, which it sometimes does.
 TELEMETRY = {"type": "telemetry", "framesCaptured": 10, "framesSent": 10, "heldSec": 0.0,
              "socketSec": 0.0, "longTaskMs": 0.0, "longTasks": 0, "tabHidden": False,
              "notices": {"status": 1}, "voiceMsgs": 2, "sessionMsgs": 0, "renders": 3,
-             "quiet": False, "messages": [{"source": "Input", "text": "Listening again.", "at": 1}]}
+             "quiet": False, "messages": [{"source": "Input", "text": "Listening again.",
+                                           "at": time.time() * 1000}]}
 
 
 def _recorded(*kinds, timeout=2.0):
