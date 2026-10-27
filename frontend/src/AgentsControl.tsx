@@ -3,7 +3,8 @@
  * the top shows only active agents or all of them, and is remembered; in the
  * All view each entry has its own switch to activate or deactivate it, and in
  * the Active view there is none and the agent's box takes the whole row. The name itself is
- * disabled for now.
+ * disabled for now. While any of an agent's subagents are working, its box
+ * says how many ("2 working") in its lower edge, inside the row's size.
  *
  * The list shows as many whole rows as fit, with no scroll bar. The layout
  * gives the list the space left below everything above it (`.agents-space`,
@@ -24,7 +25,7 @@ import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
-         type AgentRow } from "./agents";
+         workingCount, type AgentRow } from "./agents";
 
 type Show = "active" | "all";
 const SHOW_KEY = "jarvis.agents.show";
@@ -204,6 +205,10 @@ export function AgentsControl() {
                 {/* Its needs-board count, in the upper right, zero included. */}
                 <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
                 <AgentProvider provider={agent.provider} />
+                {(agent.subagents_working ?? 0) > 0 && (
+                  <span className="agent-subagents">
+                    {workingCount(agent.subagents_working!, !!agent.subagents_capped)}</span>
+                )}
               </button>
               {/* Only in the All view; in Active the agent's box takes the
                   whole row. */}

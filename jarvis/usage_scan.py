@@ -470,45 +470,14 @@ def _claim_agents(session_dir: Path, found: dict, claim) -> None:
 
 # ── the reduced picture ─────────────────────────────────────────────────────
 
-# The sidecar the CLI writes beside every subagent transcript, measured
-# 2026-09-03: `{"agentType": "general-purpose", "description": "Research OSS
-# agent design skills", "toolUseId": "toolu_…", "parentAgentId": "a177e04…",
-# "spawnDepth": 2}`. It is the ONLY place a subagent says what it is — the
-# transcript holds the whole prompt and no type at all — and the only place a
-# nested agent (spawnDepth > 1) is visible.
-#
-# The name is `agent-<id>.meta.json`, so `with_suffix(".json")` finds nothing:
-# `.meta.json` is two suffixes and Path only replaces the last one. That is
-# not hypothetical — this module looked for `.json`, the fixture wrote
-# `.json`, and every one of these fields came back empty against the real
-# machine while the tests stayed green.
-MAX_DESCRIPTION = 120
-META_SUFFIX = ".meta.json"
-
-
 def read_agent_meta(path: Path, cache: Cache) -> dict:
-    """The sidecar beside `path`, or empty fields. Written once at spawn, so
-    cached by path forever. Never raises: it can be caught mid-write."""
-    side = path.with_name(path.stem + META_SUFFIX)
-    key = str(side)
+    """The sidecar beside `path` (session_watch.read_agent_meta). Its type
+    and description are written once at spawn, so cached by path forever."""
+    key = str(path)
     hit = cache.meta.get(key)
-    if hit is not None:
-        return hit
-    try:
-        body = json.loads(side.read_text())
-    except (OSError, ValueError):
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    out = {
-        "agent_type": str(body.get("agentType") or ""),
-        "description": " ".join(str(body.get("description") or "").split()
-                                )[:MAX_DESCRIPTION],
-        "parent_agent_id": str(body.get("parentAgentId") or ""),
-        "depth": _int(body.get("spawnDepth")),
-    }
-    cache.meta[key] = out
-    return out
+    if hit is None:
+        hit = cache.meta[key] = session_watch.read_agent_meta(path)
+    return hit
 
 
 @dataclass

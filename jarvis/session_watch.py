@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -475,11 +476,14 @@ def tool_gist(arguments) -> str:
     return ""
 
 
-def _claude_entries(offset: int, o: dict, calls: dict | None = None) -> list[TranscriptEntry]:
+def _claude_entries(offset: int, o: dict, calls: dict | None = None,
+                    sidechain: bool = False) -> list[TranscriptEntry]:
     """`calls` maps each tool call's id to its tool's name as calls are read,
-    so a result can say which tool it came from."""
+    so a result can say which tool it came from. A conversation's own
+    transcript skips sidechain lines; a subagent's (`sidechain`) is nothing
+    but them."""
     calls = {} if calls is None else calls
-    if o.get("isSidechain"):
+    if bool(o.get("isSidechain")) != sidechain:
         return []
     at = iso_seconds(o.get("timestamp"))
     kind = o.get("type")
@@ -525,10 +529,27 @@ def read_transcript(cwd: str, session_id: str, roots: list[Path] | None = None,
     for root in (roots if roots is not None else config_roots()):
         path = transcript_path(root, cwd, session_id)
         if path.exists():
-            calls: dict = {}
-            return lines_before(path, before, limit,
-                                lambda offset, o: _claude_entries(offset, o, calls))
+            return _entries_of(path, before, limit)
     return []
+
+
+def _entries_of(path: Path, before: int | None, limit: int,
+                sidechain: bool = False) -> list[TranscriptEntry]:
+    calls: dict = {}
+    return lines_before(path, before, limit,
+                        lambda offset, o: _claude_entries(offset, o, calls, sidechain))
+
+
+def read_subagent_transcript(cwd: str, session_id: str, agent_id: str,
+                             roots: list[Path] | None = None, before: int | None = None,
+                             limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry] | None:
+    """One subagent's transcript, as `read_transcript` reads a session's;
+    None when there is no such subagent."""
+    path = subagent_transcript_path(roots if roots is not None else config_roots(),
+                                    cwd, session_id, agent_id)
+    if path is None:
+        return None
+    return _entries_of(path, before, limit, sidechain=True)
 
 
 # ── where a message stands in a transcript ─────────────────────────────────
@@ -925,6 +946,9 @@ class SessionState:
     agents_active: int = 0
     # `agents_seen` hit MAX_AGENT_FILES: it is a floor, not a total.
     agents_capped: bool = False
+    # The same subagents one by one (`read_subagents`), working ones first.
+    # A floor too when `agents_capped`.
+    subagents: list[Subagent] = field(default_factory=list)
     # From `session_status`: a message now starts a turn of its own.
     between_turns: bool = False
 
@@ -1028,10 +1052,139 @@ AGENT_ACTIVE_WITHIN_SEC = 90.0
 # transcripts were measured under a single conversation.
 MAX_AGENT_FILES = 300
 
+# What a subagent's transcript says of it, and no more:
+#   finished  its last message is the assistant's, ending its turn
+#             (`stop_reason: end_turn`) — measured on every finished one;
+#   working   not finished, and written within AGENT_ACTIVE_WITHIN_SEC;
+#   stale     not finished, and not written for longer than that. It may be
+#             waiting on a long tool call, or it may have been stopped; the
+#             file cannot tell which, so it is not called either.
+AGENT_WORKING = "working"
+AGENT_FINISHED = "finished"
+AGENT_STALE = "stale"
 
-def count_agents(roots, cwd: str, session_id: str,
-                 now: float) -> tuple[int, int, bool]:
-    """(subagent transcripts seen, how many were written recently, capped?).
+# The sidecar the CLI writes beside every subagent transcript, measured
+# 2026-10-26: `{"agentType": "general-purpose", "description": "Write the
+# release notes", "toolUseId": "toolu_…", "spawnDepth": 1, "requestShape":
+# "background", …}`. It is the ONLY place a subagent says what it is — the
+# transcript holds the whole prompt and no type at all.
+#
+# The name is `agent-<id>.meta.json`, so `with_suffix(".json")` finds nothing:
+# `.meta.json` is two suffixes and Path only replaces the last one. That is
+# not hypothetical — usage_scan looked for `.json`, the fixture wrote
+# `.json`, and every one of these fields came back empty against the real
+# machine while the tests stayed green.
+META_SUFFIX = ".meta.json"
+MAX_DESCRIPTION = 120
+_AGENT_PREFIX = "agent-"
+# What an agent id may be, when it comes from a request.
+_AGENT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# Enough of the end of a transcript to hold its last message whole; a last
+# message longer than this reads as not finished, which is the safe side.
+_AGENT_TAIL_BYTES = 256 * 1024
+# Enough of the start to reach its first timestamped line: the first line can
+# be the whole prompt, or a fork's context reference with no time on it.
+_AGENT_HEAD_BYTES = 64 * 1024
+
+
+def _whole_int(raw) -> int:
+    """A count or depth, or 0. `True` is an int in Python and is not one."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 0
+    try:
+        return max(0, int(raw))
+    except (ValueError, OverflowError):
+        return 0
+
+
+def read_agent_meta(transcript: Path) -> dict:
+    """The sidecar beside a subagent's transcript, or empty fields. Never
+    raises (it can be caught mid-write) and never reads through a symlink."""
+    side = transcript.with_name(transcript.stem + META_SUFFIX)
+    body: object = {}
+    try:
+        if not side.is_symlink():
+            body = json.loads(side.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    return {
+        "agent_type": str(body.get("agentType") or ""),
+        "description": " ".join(str(body.get("description") or "").split())[:MAX_DESCRIPTION],
+        "parent_agent_id": str(body.get("parentAgentId") or ""),
+        "depth": _whole_int(body.get("spawnDepth")),
+        "background": body.get("requestShape") == "background",
+    }
+
+
+@dataclass(frozen=True)
+class Subagent:
+    """One subagent a conversation dispatched, as its own files tell it."""
+    agent_id: str
+    description: str
+    agent_type: str
+    background: bool
+    depth: int
+    state: str                    # AGENT_WORKING, AGENT_FINISHED or AGENT_STALE
+    started: float | None         # its first timestamped line; None if none was found
+    written: float                # its transcript's last write
+
+
+def _finished(path: Path) -> bool:
+    """Its last message is the assistant's, and ended the turn."""
+    for o in reversed(tail_objects(path, _AGENT_TAIL_BYTES)):
+        if o.get("type") in ("user", "assistant"):
+            message = o.get("message")
+            return (o.get("type") == "assistant" and isinstance(message, dict)
+                    and message.get("stop_reason") == "end_turn")
+    return False
+
+
+def _first_stamp(path: Path) -> float | None:
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(_AGENT_HEAD_BYTES)
+    except OSError:
+        return None
+    for line in raw.split(b"\n"):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and (at := iso_seconds(obj.get("timestamp"))) is not None:
+            return at
+    return None
+
+
+# What was read of each transcript, by path, with the stat it was read at:
+# a finished one never changes, so a 1 Hz poll re-reads only the files
+# that were written since. Bounded: the oldest entries go first.
+_AGENT_CACHE: dict[str, tuple[tuple, dict]] = {}
+_AGENT_CACHE_MAX = 4096
+_agent_cache_lock = threading.Lock()
+
+
+def _agent_facts(path: Path, st: os.stat_result) -> dict:
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    with _agent_cache_lock:
+        hit = _AGENT_CACHE.get(str(path))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    facts = {**read_agent_meta(path), "finished": _finished(path),
+             "started": _first_stamp(path) or getattr(st, "st_birthtime", None)}
+    with _agent_cache_lock:
+        _AGENT_CACHE.pop(str(path), None)
+        _AGENT_CACHE[str(path)] = (key, facts)
+        while len(_AGENT_CACHE) > _AGENT_CACHE_MAX:
+            del _AGENT_CACHE[next(iter(_AGENT_CACHE))]
+    return facts
+
+
+def read_subagents(roots, cwd: str, session_id: str,
+                   now: float) -> tuple[list[Subagent], bool]:
+    """(the subagents this conversation dispatched, capped?), working ones
+    first, then the most recently written.
 
     `roots` is one config root or several. Several are deduped BY FILE NAME:
     the two roots are hardlinked on the live machine, so `agent-x.jsonl`
@@ -1043,17 +1196,18 @@ def count_agents(roots, cwd: str, session_id: str,
     1,573 such files against 947 conversations.
 
     THE CAP COUNTS TRANSCRIPTS, NOT DIRECTORY ENTRIES. Every `agent-x.jsonl`
-    has an `agent-x.json` sidecar beside it, so one live folder held 418
+    has an `agent-x.meta.json` sidecar beside it, so one live folder held 418
     entries for 209 agents — slicing the raw listing first reported 150,
     which looked exactly like a real number. Filter, then cap.
 
-    BOTH COUNTS ARE FLOORS ONCE THE CAP IS HIT. `seen` obviously; `active`
-    just as much, because the slice is taken by FILE NAME and file names are
+    THE LIST IS A FLOOR ONCE THE CAP IS HIT, and so is every count made from
+    it, because the slice is taken by FILE NAME and file names are
     uncorrelated with recency — the 300 examined may hold none of the busy
-    ones. The third value says so, and both pills must render it.
+    ones. The second value says so, and everything that shows a count must
+    render it.
 
-    Never raises: this folder belongs to another process, and files appear
-    and vanish underneath it.
+    Never raises, and never reads through a symlink: this folder belongs to
+    another process, and files appear and vanish underneath it.
     """
     by_name: dict[str, Path] = {}
     for root in ([roots] if isinstance(roots, (str, Path)) else roots):
@@ -1064,23 +1218,64 @@ def count_agents(roots, cwd: str, session_id: str,
         except OSError:
             continue
         for f in entries:
-            if f.name.endswith(".jsonl"):
+            if f.name.startswith(_AGENT_PREFIX) and f.name.endswith(".jsonl"):
                 by_name.setdefault(f.name, f)
 
     transcripts = [by_name[name] for name in sorted(by_name)]
     capped = len(transcripts) > MAX_AGENT_FILES
-    seen = active = 0
+    agents: list[Subagent] = []
     for f in transcripts[:MAX_AGENT_FILES]:
         try:
-            st = f.stat()
+            st = f.lstat()
         except OSError:
             continue
-        if not os.path.isfile(f):
+        if not stat.S_ISREG(st.st_mode):        # a symlink, a folder: not ours to follow
             continue
-        seen += 1
-        if now - st.st_mtime <= AGENT_ACTIVE_WITHIN_SEC:
-            active += 1
-    return seen, active, capped
+        facts = _agent_facts(f, st)
+        if facts["finished"]:
+            state = AGENT_FINISHED
+        elif now - st.st_mtime <= AGENT_ACTIVE_WITHIN_SEC:
+            state = AGENT_WORKING
+        else:
+            state = AGENT_STALE
+        agents.append(Subagent(
+            agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
+            description=facts["description"], agent_type=facts["agent_type"],
+            background=facts["background"], depth=facts["depth"], state=state,
+            started=facts["started"], written=st.st_mtime))
+    agents.sort(key=lambda a: (a.state != AGENT_WORKING, -a.written))
+    return agents, capped
+
+
+def working_agents(agents: list[Subagent]) -> int:
+    return sum(a.state == AGENT_WORKING for a in agents)
+
+
+def count_agents(roots, cwd: str, session_id: str,
+                 now: float) -> tuple[int, int, bool]:
+    """(subagent transcripts seen, how many are working, capped?), out of
+    `read_subagents`; both counts are floors when capped."""
+    agents, capped = read_subagents(roots, cwd, session_id, now)
+    return len(agents), working_agents(agents), capped
+
+
+def subagent_transcript_path(roots, cwd: str, session_id: str,
+                             agent_id: str) -> Path | None:
+    """One subagent's transcript, from the first root that has it as a plain
+    file, or None. `agent_id` comes from a request, so it must be an id and
+    nothing that could leave the folder."""
+    if not _AGENT_ID_RE.fullmatch(agent_id or ""):
+        return None
+    for root in ([roots] if isinstance(roots, (str, Path)) else roots):
+        path = (Path(root) / "projects" / encode_cwd(cwd) / session_id / "subagents"
+                / f"{_AGENT_PREFIX}{agent_id}.jsonl")
+        try:
+            if stat.S_ISREG(path.lstat().st_mode):
+                return path
+        except OSError:
+            continue
+    return None
+
 
 
 def project_name(cwd: str) -> str:
@@ -1476,8 +1671,8 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         # "not started" — which is the one state JARVIS never announces.
         roots_here = _roots_of(group, primary)
         recap = _first_recap(roots_here, primary.cwd, session_id)
-        agents_seen, agents_active, agents_capped = count_agents(
-            roots_here, primary.cwd, session_id, at)
+        subagents, agents_capped = read_subagents(roots_here, primary.cwd, session_id, at)
+        agents_active = working_agents(subagents)
         status = session_status(claude_activity(group, recap, agents_active))
         live = [e for e in group if pid_alive(e.pid)]
         steerable_entry = next((e for e in live if e.steerable), None)
@@ -1499,9 +1694,10 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
             origin=_origin(primary),
             steerable=steerable_entry is not None,
             socket_path=steerable_entry.socket_path if steerable_entry else None,
-            agents_seen=agents_seen,
+            agents_seen=len(subagents),
             agents_active=agents_active,
             agents_capped=agents_capped,
+            subagents=subagents,
             between_turns=status.between_turns,
         ))
 
@@ -1531,6 +1727,12 @@ class ClaudeSessions:
     def transcript(self, session: SessionState, before: int | None = None,
                    limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry]:
         return read_transcript(session.cwd, session.session_id, self.roots, before, limit)
+
+    def subagent_transcript(self, session: SessionState, agent_id: str,
+                            before: int | None = None,
+                            limit: int = TRANSCRIPT_PAGE) -> list[TranscriptEntry] | None:
+        return read_subagent_transcript(session.cwd, session.session_id, agent_id,
+                                        self.roots, before, limit)
 
     def send(self, session: SessionState, text: str, interrupt: bool = False) -> str:
         from jarvis import session_steer
@@ -2004,4 +2206,13 @@ def session_to_dict(s: SessionState) -> dict:
         "agents_seen": s.agents_seen,
         "agents_active": s.agents_active,
         "agents_capped": s.agents_capped,
+        # Each one as its own files tell it. `description` and `type` are
+        # the sidecar's words, written by another process: text, never markup.
+        "subagents": [subagent_to_dict(a) for a in s.subagents],
     }
+
+
+def subagent_to_dict(a: Subagent) -> dict:
+    return {"id": a.agent_id, "description": a.description, "type": a.agent_type,
+            "background": a.background, "depth": a.depth, "state": a.state,
+            "started": a.started, "written": a.written}

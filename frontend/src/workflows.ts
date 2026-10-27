@@ -55,6 +55,54 @@ export interface Workflow {
   dismissed: boolean;
   /** When a finished one still in view dismisses itself, or null. */
   dismiss_at: number | null;
+  /** Its attached sessions' subagents while it ran: on a single
+   *  workflow's read only. */
+  subagents?: SubagentRow[];
+}
+
+export type SubagentState = "working" | "finished" | "stale";
+
+/** A subagent a session dispatched, as the Workflows area shows it
+ *  (server: _subagent_row). Worked out from the session's own files when
+ *  read, never reported to the workflow record. */
+export interface SubagentRow {
+  /** Its name among the workflows: `openWorkflow` opens it by this. */
+  key: string;
+  session_id: string;
+  /** The session that dispatched it. */
+  session_name: string;
+  project: string;
+  id: string;
+  /** The sidecar's words, written by another process: drawn as text. */
+  description: string;
+  type: string;
+  background: boolean;
+  depth: number;
+  /** Finished: its last message ended its turn. Working: written lately.
+   *  Stale: neither, which is all the file can say. */
+  state: SubagentState;
+  started: number | null;
+  written: number;
+  /** When one no longer working leaves the list, or null while working. */
+  dismiss_at: number | null;
+}
+
+/** A subagent is drawn as a workflow in this state would be. */
+export const SUBAGENT_LOOK: Record<SubagentState, WorkflowState> = {
+  working: "running", finished: "succeeded", stale: "silent",
+};
+
+export const SUBAGENT_WORDS: Record<SubagentState, string> = {
+  working: "Working", finished: "Finished", stale: "Gone quiet",
+};
+
+/** The session and subagent a `SubagentRow.key` names, or null for a
+ *  workflow's id. */
+export function subagentOf(key: string): { sessionId: string; agentId: string } | null {
+  if (!key.startsWith("agent:")) return null;
+  const rest = key.slice("agent:".length);
+  const cut = rest.lastIndexOf("/");
+  return cut > 0 ? { sessionId: rest.slice(0, cut), agentId: rest.slice(cut + 1) } : null;
 }
 
 export interface WorkflowEvent {
@@ -90,14 +138,23 @@ export interface TranscriptPage {
   session_id: string;
   name: string;
   state: string;
+  /** With a subagent's transcript: the session that dispatched it. */
+  session_name?: string;
   entries: TranscriptEntry[];
   /** The cursor for the page before, or null at the start of the transcript. */
   earlier: number | null;
 }
 
-export const getSessionTranscript = (sessionId: string, before?: number | null) =>
-  getJson<TranscriptPage>(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`
-    + (before != null ? `?before=${before}` : ""));
+/** A session's transcript, or with `subagent` one of its subagents'. */
+export function getSessionTranscript(sessionId: string, before?: number | null,
+                                     subagent?: string | null): Promise<TranscriptPage> {
+  const query = new URLSearchParams();
+  if (before != null) query.set("before", String(before));
+  if (subagent) query.set("subagent", subagent);
+  const rest = query.toString();
+  return getJson<TranscriptPage>(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`
+    + (rest ? `?${rest}` : ""));
+}
 
 /** Moves on every "workflows" hint, and on every (re)connect of /ws/sessions. */
 export const workflowsChanged = createStore(0);
@@ -127,20 +184,25 @@ export function ordered(list: Workflow[]): Workflow[] {
           ...list.filter((w) => FINISHED.has(w.state)).sort(byHeard)];
 }
 
+/** The workflows, and every subagent in view that belongs to none of the
+ *  running ones. */
 export const workflows = liveRead(
-  () => getJson<{ workflows: Workflow[] }>("/api/workflows").then((r) => ordered(r.workflows)),
+  () => getJson<{ workflows: Workflow[]; subagents?: SubagentRow[] }>("/api/workflows")
+    .then((r) => ({ workflows: ordered(r.workflows), subagents: r.subagents ?? [] })),
   [workflowsChanged]);
 
 export const getWorkflow = (id: string) =>
-  getJson<{ workflow: Workflow }>(`/api/workflows/${encodeURIComponent(id)}`).then((r) => r.workflow);
+  getJson<{ workflow: Workflow; subagents?: SubagentRow[] }>(`/api/workflows/${encodeURIComponent(id)}`)
+    .then((r) => ({ ...r.workflow, subagents: r.subagents ?? [] }));
 
 export const getEvents = (id: string) =>
   getJson<{ events: WorkflowEvent[] }>(`/api/workflows/${encodeURIComponent(id)}/events`)
     .then((r) => r.events);
 
 export const getTranscript = (id: string) =>
-  getJson<{ agents: TranscriptAgent[] }>(`/api/workflows/${encodeURIComponent(id)}/transcript`)
-    .then((r) => r.agents);
+  getJson<{ agents: TranscriptAgent[]; subagents?: SubagentRow[] }>(
+    `/api/workflows/${encodeURIComponent(id)}/transcript`)
+    .then((r) => ({ agents: r.agents, subagents: r.subagents ?? [] }));
 
 // Dismissed on this page and not yet read back as dismissed: gone at once.
 const dismissedHere = createStore<ReadonlySet<string>>(new Set());

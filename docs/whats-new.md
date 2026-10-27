@@ -18,6 +18,12 @@ A workflow opens into its phases, tasks, progress, attached agent transcripts, w
 
 ![A workflow opened in the centre, using fictional sample data.](images/workspace-workflow.png)
 
+## Subagents appear with the workflows
+
+The subagents a Claude Code session dispatches are read from the session's own files: what each was asked to do, its type, and whether its transcript shows it finished, still being written, or gone quiet. A subagent of a session attached to a running workflow is listed in that workflow's Overview, and its transcript follows the attached agents' in the Transcript tab. Any other subagent has its own row in the Workflows list, in the same style, naming the session that dispatched it; a finished one stays for a couple of minutes, as a finished workflow does. Opening the row shows its transcript in the centre. An agent with working subagents shows the count on its box in the Agents tab. These rows are worked out when read and are not added to the workflow record. Codex sessions keep no subagent files, so none are shown for them.
+
+![A subagent's transcript opened from its row in the Workflows list, using fictional sample data.](images/workspace-subagent.png)
+
 ## Voice health has its own explanation
 
 The Diagnostics tab summarizes whether speech is being heard, whether recognition is falling behind and how much headroom remains. Opening it reveals the pipeline, timeline, incidents, system load, notifications and grouped UI messages. The quiet-page comparison helps investigate whether interface activity accompanies drops. The displayed interval can be saved as JSON.

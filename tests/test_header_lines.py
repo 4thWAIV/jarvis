@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import pytest
+from jarvis.session_watch import Subagent
 from tests.fixtures.captures import captured
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -346,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._subagent_row": (
+        "its one f-string is the row's `key`, made of the session's id and the "
+        "subagent's file id, and the row is JSON for the page's Workflows "
+        "area only: never spoken, never in a note to the brain, and the page "
+        "draws every field of it as text"),
     "server._finish_reading_aloud": (
         "it compares the capture's text with what was read, to decide whether "
         "it was heard unchanged, and prints neither: its note to the brain "
@@ -1976,6 +1982,11 @@ ALT = {
     "session_id": "s2",
     "socket_path": "/tmp/cc-socks/s2.sock",
     "state": "working",
+    # Its descriptions are a sidecar's words, but nothing that speaks or
+    # writes to the brain reads them: only the page's Workflows area, as text.
+    "subagents": [Subagent(
+        agent_id="a1", description="check the schema", agent_type="Explore", background=False,
+        depth=1, state="working", started=0.0, written=0.0)],
     "title": "the run pipeline",
     "voice_name": "chitauri in Desktop",
 }

@@ -3,7 +3,8 @@
 
 Run from the checkout: .venv/bin/python scripts/capture_docs.py
 Uses the existing browser-test fixtures, Playwright and frontend dependencies.
-Builds into a temporary directory; writes only docs/images/workspace-*.png.
+Builds into a temporary directory; writes only docs/images/workspace-*.png,
+or into the folder given as its one argument.
 No physical microphone, model, external service or live user data is used.
 """
 import asyncio
@@ -16,7 +17,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -26,6 +27,8 @@ from tests.test_voice_page_workflows import _workflow
 from tests.test_voice_page_diagnostics import _week
 from tests.test_voice_page_settings import _status
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+from tests.test_voice_page_subagents import (lone_subagents, subagent_transcript,
+                                             workflow_subagents)
 
 
 def fixtures():
@@ -76,8 +79,10 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-async def capture(url):
+async def capture(url, output):
     summary,history,workflow,week,conversation=fixtures()
+    now=time.time()
+    inside,lone=workflow_subagents(now),lone_subagents(now)
     async with async_playwright() as p:
         browser=await p.chromium.launch(headless=True,args=BROWSER_ARGS)
         try:
@@ -87,7 +92,8 @@ async def capture(url):
             # Chromium's synthetic microphone and the test recognition socket.
             await page.add_init_script(FAKE_TRANSCRIPTION)
             async def api(route):
-                path=urlsplit(route.request.url).path
+                url=urlsplit(route.request.url)
+                path=url.path
                 if path=='/api/settings/status': body=_status()
                 elif path=='/api/settings/preferences': body={'user_name':'Example','honorific':'sir'}
                 elif path=='/api/brains':
@@ -96,16 +102,32 @@ async def capture(url):
                 elif path=='/api/usage/week': body=week
                 elif path=='/api/agents':
                     body={'agents':[dict(session_id=f's{i}',name=name,active=True,state=state,
-                                         needs=1 if state=='needs_you' else 0,provider=provider)
-                        for i,(name,state,provider) in enumerate([
-                            ('Interface','working','anthropic'),('Review','needs_you','openai'),
-                            ('Diagnostics','working','anthropic'),('Documentation','idle','openai')])]}
+                                         needs=1 if state=='needs_you' else 0,provider=provider,
+                                         subagents_working=working,subagents_capped=False)
+                        for i,(name,state,provider,working) in enumerate([
+                            ('Interface','working','anthropic',2),('Review','needs_you','openai',0),
+                            ('Diagnostics','working','anthropic',0),('Documentation','working','anthropic',1)])]}
                 elif path=='/api/conversation': body={'items':conversation,'earlier':None}
                 elif path=='/api/voice/diagnostics': body=summary
                 elif path=='/api/voice/diagnostics/samples': body=history
-                elif path=='/api/workflows': body={'workflows':[workflow]}
+                elif path=='/api/workflows': body={'workflows':[workflow],'subagents':lone}
+                elif path.endswith('/transcript') and path.startswith('/api/workflows/'):
+                    body={'agents':[dict(session_id='s1',name='Interface',state='working')],
+                          'subagents':inside}
                 elif path.startswith('/api/workflows/'):
-                    body={'events':[]} if path.endswith('/events') else {'workflow':workflow}
+                    body={'events':[]} if path.endswith('/events') else {'workflow':workflow,'subagents':inside}
+                elif path.endswith('/transcript'):
+                    agent=parse_qs(url.query).get('subagent',[''])[0]
+                    row=next((r for r in inside+lone if r['id']==agent),None)
+                    body=({'session_id':row['session_id'],'subagent':agent,'name':row['description'],
+                           'state':row['state'],'session_name':row['session_name'],
+                           'entries':subagent_transcript(now,row['description']),'earlier':None}
+                          if row else
+                          {'session_id':'s1','name':'Interface','state':'working','earlier':None,
+                           'entries':[dict(offset=0,at=now-600,role='you',tool=None,
+                                           text='Prepare the workspace release; use subagents for the notes and the layout check.'),
+                                      dict(offset=500,at=now-590,role='agent',tool=None,
+                                           text='Dispatching two subagents and reviewing the interface meanwhile.')]})
                 elif path=='/api/captures': body={'captures':[]}
                 else: body={}
                 await route.fulfill(json=body)
@@ -120,32 +142,43 @@ async def capture(url):
             await page.wait_for_selector('.agents-list li')
             await page.evaluate('document.fonts.ready')
             await page.wait_for_timeout(1200)
-            output=ROOT/'docs/images'
             await page.screenshot(path=str(output/'workspace-conversation.png'))
+            await page.locator('#agents-control').screenshot(path=str(output/'workspace-agents.png'))
             await page.click('.right-tabs [role=tab][title=Workflows]')
             await page.click('.workflow-row')
             await page.wait_for_selector('#workflow-detail .workflow-detail-name')
             await page.wait_for_timeout(700)
             await page.screenshot(path=str(output/'workspace-workflow.png'))
+            await page.click('.workflow-tabs [role=tab][title=Transcript]')
+            await page.wait_for_selector('.workflow-transcript .transcript-entry.role-agent')
+            await page.wait_for_timeout(500)
+            await page.screenshot(path=str(output/'workspace-workflow-transcript.png'))
+            await page.click('.subagent-row')
+            await page.wait_for_selector('.subagent-detail .transcript-entry.role-agent')
+            await page.wait_for_timeout(700)
+            await page.screenshot(path=str(output/'workspace-subagent.png'))
             await page.click('.right-tabs [role=tab][title=Diagnostics]')
             await page.click('.voice-summary-open')
             await page.wait_for_selector('#voice-diagnostics')
             await page.wait_for_timeout(700)
             await page.screenshot(path=str(output/'workspace-diagnostics.png'))
             if errors: raise RuntimeError('\n'.join(errors))
-            print('Captured Conversation, Workflow and Diagnostics from the current frontend.')
+            print('Captured Conversation, Agents, Workflow, its Transcript, a Subagent and '
+                  'Diagnostics from the current frontend.')
         finally:
             await browser.close()
 
 
 def main():
+    output=Path(sys.argv[1]) if len(sys.argv)>1 else ROOT/'docs/images'
+    output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='jarvis-docs-') as tmp:
         subprocess.run(['npx','vite','build','--outDir',tmp,'--emptyOutDir','--logLevel','error'],
                        cwd=ROOT/'frontend',check=True)
         server=http.server.ThreadingHTTPServer(('127.0.0.1',0),
             functools.partial(QuietHandler,directory=tmp))
         threading.Thread(target=server.serve_forever,daemon=True).start()
-        try: asyncio.run(capture(f'http://127.0.0.1:{server.server_address[1]}/'))
+        try: asyncio.run(capture(f'http://127.0.0.1:{server.server_address[1]}/',output))
         finally: server.shutdown();server.server_close()
 
 if __name__=='__main__': main()

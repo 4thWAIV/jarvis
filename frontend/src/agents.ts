@@ -50,6 +50,10 @@ export interface AgentRow {
   /** Who runs it, as a key of providers.ts's PROVIDERS ("anthropic"); null
    *  when the server could not tell. */
   provider: string | null;
+  /** How many of its subagents are working now; a floor when
+   *  `subagents_capped`. Absent from a server that does not count them. */
+  subagents_working?: number;
+  subagents_capped?: boolean;
 }
 
 export async function listAgents(): Promise<AgentRow[]> {
@@ -65,4 +69,9 @@ export async function setAgentActive(sessionId: string, active: boolean): Promis
     body: JSON.stringify({ active }),
   });
   if (!res.ok) throw new Error(`POST active: ${res.status}`);
+}
+
+/** "2 working", or "2+ working" when the count is a floor. */
+export function workingCount(n: number, capped: boolean): string {
+  return `${n}${capped ? "+" : ""} working`;
 }

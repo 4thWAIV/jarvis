@@ -37,6 +37,10 @@ class Agent:
     state: str            # working, idle, needs_you, ...
     active: bool
     needs: int            # needs-board items
+    # Its subagents working now (session_watch.read_subagents); a floor when
+    # `subagents_capped`.
+    subagents_working: int = 0
+    subagents_capped: bool = False
 
 
 # Words a person says around a name that carry no identity of their own.
@@ -112,12 +116,20 @@ def _entries() -> list[tuple[Agent, session_watch.SessionState | None]]:
         out.append((Agent(session_id=row["session_id"], name=row["name"], project=project,
                           provider=s.provider if s else None,
                           state=s.state if s else row["state"], active=bool(row["active"]),
-                          needs=needs.get(project.lower(), 0) if project else 0), s))
+                          needs=needs.get(project.lower(), 0) if project else 0,
+                          **_subagent_counts(s)), s))
     for s in sessions.values():
         out.append((Agent(session_id=s.session_id, name=session_watch.agent_name(s),
                           project=s.project, provider=s.provider, state=s.state,
-                          active=False, needs=needs.get(s.project.lower(), 0)), s))
+                          active=False, needs=needs.get(s.project.lower(), 0),
+                          **_subagent_counts(s)), s))
     return out
+
+
+def _subagent_counts(s: session_watch.SessionState | None) -> dict:
+    if s is None:
+        return {}
+    return {"subagents_working": s.agents_active, "subagents_capped": s.agents_capped}
 
 
 def agents() -> list[Agent]:

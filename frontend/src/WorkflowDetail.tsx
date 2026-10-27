@@ -23,8 +23,15 @@
  *     recommended one lit, and a box for any other answer;
  *   - Events: the whole log, filtered by kind.
  *
- * Everything here was written by the session running the workflow and is
- * drawn as plain text.
+ * The subagents its attached sessions dispatched while it ran are listed
+ * under the Overview, and each one's transcript follows the attached
+ * agents' in Transcript. A subagent that belongs to no running workflow is
+ * opened here too, from its own row in the list (SubagentDetail): its orb,
+ * what it was asked to do, the session that dispatched it, and its
+ * transcript.
+ *
+ * Everything here was written by the session running the workflow, or by
+ * its subagents, and is drawn as plain text.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -35,8 +42,9 @@ import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
 import { ago, answerDecision, dismissals, dismissWorkflow, FINISHED, getEvents,
          getSessionTranscript, getTranscript, getWorkflow, isGone,
-         openWorkflow, STATE_WORDS, workflowsChanged, type OpenItem,
-         type TranscriptEntry, type Workflow, type WorkflowItem } from "./workflows";
+         openWorkflow, STATE_WORDS, SUBAGENT_LOOK, SUBAGENT_WORDS, subagentOf, workflowsChanged,
+         type OpenItem, type SubagentRow, type SubagentState, type TranscriptEntry,
+         type TranscriptPage, type Workflow, type WorkflowItem } from "./workflows";
 
 const TRANSCRIPT_EVERY_MS = 5000;
 
@@ -45,7 +53,13 @@ function clock(seconds: number): string {
                                                             second: "2-digit" });
 }
 
+/** A workflow's detail, or a subagent's when `id` names one. */
 export function WorkflowDetail({ id }: { id: string }) {
+  const subagent = subagentOf(id);
+  return subagent ? <SubagentDetail {...subagent} /> : <OneWorkflow id={id} />;
+}
+
+function OneWorkflow({ id }: { id: string }) {
   const live = useLiveRead(() => getWorkflow(id), [workflowsChanged]);
   const [tab, setTab] = useState("overview");
   useTick(30000);
@@ -108,6 +122,61 @@ function Overview({ w }: { w: Workflow }) {
       </div>
       {w.last_summary && <p className="workflow-caption">{w.last_summary}</p>}
       <p className="workflow-times">started {ago(w.started_at)} · heard from {ago(w.last_event_at)}</p>
+      {!!w.subagents?.length && <Subagents agents={w.subagents} />}
+    </div>
+  );
+}
+
+/** The subagents a workflow's sessions dispatched: one line each, working
+ *  ones first, each opening its own detail. */
+function Subagents({ agents }: { agents: SubagentRow[] }) {
+  return (
+    <section className="workflow-subagents">
+      <h5>Subagents</h5>
+      <ul>
+        {agents.map((a) => (
+          <li key={a.key}>
+            <button type="button" className="workflow-subagent" data-subagent-key={a.key}
+                    data-state={a.state} onClick={() => openWorkflow.set(a.key)}>
+              <span className={`subagent-dot subagent-${a.state}`} />
+              <span className="workflow-subagent-name">{a.description || a.type || "Subagent"}</span>
+              <span className="workflow-subagent-of">{a.session_name}</span>
+              <span className="workflow-subagent-age">{ago(a.written)}</span>
+              <span className={`workflow-subagent-state subagent-${a.state}`}>{SUBAGENT_WORDS[a.state]}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** One subagent, opened from its row: its orb ringed by its state, what it
+ *  was asked to do, the session that dispatched it, and its transcript. */
+function SubagentDetail({ sessionId, agentId }: { sessionId: string; agentId: string }) {
+  const [page, setPage] = useState<TranscriptPage | null>(null);
+  const state = (page?.state ?? "") as SubagentState;
+  const known = state in SUBAGENT_LOOK;
+  return (
+    <div id="workflow-detail" className="subagent-detail" data-subagent-key={`agent:${sessionId}/${agentId}`}>
+      <div className="workflow-detail-head">
+        <WorkflowOrb state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
+        <span className="workflow-detail-title">
+          <span className="workflow-detail-name">{page?.name ?? "Subagent"}</span>
+          {page && <span className="workflow-detail-pills">
+            <span className={`workflow-detail-state state-${known ? SUBAGENT_LOOK[state] : "silent"}`}>
+              {known ? SUBAGENT_WORDS[state] : "Unknown"}</span>
+            {page.session_name && <span className="workflow-detail-dismissed">
+              Subagent of {page.session_name}</span>}
+          </span>}
+        </span>
+        <button type="button" className="workflow-close" title="Close" aria-label="Close"
+                onClick={() => openWorkflow.set(null)}>×</button>
+      </div>
+      <div className="workflow-tab-view subagent-transcript">
+        <AgentTranscript sessionId={sessionId} subagent={agentId} fallbackName="Subagent"
+                         gone={false} bare onPage={setPage} />
+      </div>
     </div>
   );
 }
@@ -265,13 +334,17 @@ function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
 
 function Transcript({ id }: { id: string }) {
   const live = useLiveRead(() => getTranscript(id), [workflowsChanged]);
-  const agents = live.value;
+  const agents = live.value?.agents;
   return (
     <div className="workflow-transcript">
       {live.error && <p className="read-failure">Couldn't read the transcript ({live.error}); trying again.</p>}
       {agents && agents.length === 0 && <p className="workflow-empty">No agent has attached to this workflow</p>}
       {agents?.map((a) => <AgentTranscript key={a.session_id} sessionId={a.session_id}
                                            fallbackName={a.name ?? a.session_id} gone={a.state === "gone"} />)}
+      {live.value?.subagents.map((a) => (
+        <AgentTranscript key={a.key} sessionId={a.session_id} subagent={a.id}
+                         fallbackName={a.description || "Subagent"} gone={false} />
+      ))}
     </div>
   );
 }
@@ -281,14 +354,18 @@ const ROLE_LABELS: Record<TranscriptEntry["role"], string> = {
 };
 
 /** One agent's transcript: the latest page, kept current, and earlier pages
- *  added above it on request. Stays at the bottom while it is there. */
-function AgentTranscript({ sessionId, fallbackName, gone }: {
-  sessionId: string; fallbackName: string; gone: boolean }) {
+ *  added above it on request. Stays at the bottom while it is there. With
+ *  `subagent`, that subagent of the session instead; `bare` leaves out its
+ *  own heading, and `onPage` hears each latest page read. */
+function AgentTranscript({ sessionId, fallbackName, gone, subagent, bare, onPage }: {
+  sessionId: string; fallbackName: string; gone: boolean; subagent?: string; bare?: boolean;
+  onPage?: (page: TranscriptPage) => void }) {
   const [latest, setLatest] = useState<TranscriptEntry[]>([]);
   const [older, setOlder] = useState<TranscriptEntry[]>([]);
   const [earlier, setEarlier] = useState<number | null>(null);
   const [name, setName] = useState(fallbackName);
   const [state, setState] = useState("");
+  const [parent, setParent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -296,11 +373,13 @@ function AgentTranscript({ sessionId, fallbackName, gone }: {
   useEffect(() => {
     if (gone) return;
     let stopped = false;
-    const read = () => getSessionTranscript(sessionId).then((page) => {
+    const read = () => getSessionTranscript(sessionId, null, subagent).then((page) => {
       if (stopped) return;
       setLatest(page.entries);
       setName(page.name);
       setState(page.state);
+      setParent(page.session_name ?? null);
+      onPage?.(page);
       setError(null);
       setEarlier((e) => (older.length ? e : page.earlier));
     }).catch((e: Error) => { if (!stopped) setError(e.message); });
@@ -308,7 +387,7 @@ function AgentTranscript({ sessionId, fallbackName, gone }: {
     const timer = setInterval(read, TRANSCRIPT_EVERY_MS);
     const unsubscribe = workflowsChanged.subscribe(read);
     return () => { stopped = true; clearInterval(timer); unsubscribe(); };
-  }, [sessionId, gone, older.length]);
+  }, [sessionId, subagent, gone, older.length]);
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -318,7 +397,7 @@ function AgentTranscript({ sessionId, fallbackName, gone }: {
   async function loadEarlier() {
     if (earlier == null) return;
     try {
-      const page = await getSessionTranscript(sessionId, earlier);
+      const page = await getSessionTranscript(sessionId, earlier, subagent);
       setOlder((o) => [...page.entries, ...o]);
       setEarlier(page.earlier);
     } catch (e) {
@@ -331,7 +410,8 @@ function AgentTranscript({ sessionId, fallbackName, gone }: {
   const entries = [...older.filter((e) => !seen.has(`${e.offset}:${e.role}:${e.text.length}`)), ...latest];
   return (
     <section className="workflow-agent">
-      <h4>{name} <span className="workflow-item-slug">{gone ? "ended" : state}</span></h4>
+      {!bare && <h4>{name} <span className="workflow-item-slug">{gone ? "ended" : state}</span>
+        {subagent && parent && <span className="workflow-item-slug"> · subagent of {parent}</span>}</h4>}
       {gone && <p className="workflow-empty">This agent's session has ended.</p>}
       {error && <p className="read-failure">Couldn't read its transcript ({error}); trying again.</p>}
       <div className="transcript-entries" ref={box}
