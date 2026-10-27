@@ -107,6 +107,7 @@ from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
 from jarvis import voice_diagnostics
+from jarvis import subsystem_diagnostics
 from jarvis import tts
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
@@ -682,6 +683,8 @@ async def _voice_emit(msg: dict) -> None:
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
     r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    if FISH_API_KEY and (text or "").strip():
+        subsystem_diagnostics.voice_output_calls.note(r is not None)
     if r is None:
         return None
     _session_tokens["tts_calls"] += 1
@@ -1064,6 +1067,10 @@ def _live_session_redirect(name: str, path, args: dict, tool: str) -> Optional[s
             f"a separate run anyway, call {tool} again with override true.")
 
 
+def _brain_autostart() -> bool:
+    return os.getenv("JARVIS_BRAIN_AUTOSTART", "1") == "1"
+
+
 async def start_brain_and_speech() -> None:
     global brain_instance, speech, _tts_client
     _tts_client = httpx.AsyncClient(timeout=15.0)
@@ -1088,7 +1095,7 @@ async def start_brain_and_speech() -> None:
     # entry itself, and asks us who is working right now. Called at spawn
     # time, so the watcher (started after us in lifespan) has had its chance.
     brain_instance.active_projects = _active_project_names
-    if os.getenv("JARVIS_BRAIN_AUTOSTART", "1") == "1":
+    if _brain_autostart():
         _spawn(brain_instance.start())
     else:
         log.info("brain autostart disabled (JARVIS_BRAIN_AUTOSTART=0)")
@@ -1728,14 +1735,19 @@ async def _announce_board(board: session_needs.Board) -> None:
 
 async def _every(seconds: float, what: str, look) -> None:
     """Await `look()` every `seconds`, forever. A failed look is logged and
-    the next one still happens. Never raises out but for cancellation."""
+    the next one still happens. Never raises out but for cancellation. Each
+    look is a heartbeat the Diagnostics tab judges the loop by
+    (subsystem_diagnostics.beat)."""
+    beat = subsystem_diagnostics.beat(what, seconds)
     while True:
         try:
             await look()
+            beat.ok()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning(f"{what}: {e}")
+            beat.failed(str(e))
         await asyncio.sleep(seconds)
 
 
@@ -1757,7 +1769,7 @@ async def _watch_needs_board() -> None:
         for board in tracker.changed(boards):
             await _announce_board(board)
 
-    await _every(NEEDS_POLL_SEC, "needs board", look)
+    await _every(NEEDS_POLL_SEC, subsystem_diagnostics.NEEDS_LOOP, look)
 
 
 # How often the session messages folder is looked at: a session waits for
@@ -1832,7 +1844,7 @@ async def _watch_session_messages() -> None:
         messages = await asyncio.to_thread(_take_session_messages)
         await _announce_session_messages(messages)
 
-    await _every(SESSION_MESSAGES_POLL_SEC, "session messages", look)
+    await _every(SESSION_MESSAGES_POLL_SEC, subsystem_diagnostics.SESSION_MESSAGES_LOOP, look)
 
 
 async def _announce_needs_you(event: dict) -> None:
@@ -2259,21 +2271,25 @@ async def start_session_watcher() -> None:
     await session_watcher.start()
     log.info("session watcher started")
     global _needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task
+    global _subsystems_task
     _needs_task = _spawn(_watch_needs_board())
     _session_messages_task = _spawn(_watch_session_messages())
     _workflow_task = _spawn(_watch_workflow_silence())
     _agents_task = _spawn(_watch_agents())
+    _subsystems_task = _spawn(_watch_subsystems())
     if _usage_poll_enabled():
         _usage_task = _spawn(_poll_usage())
 
 
 async def stop_session_watcher() -> None:
     global session_watcher, _needs_task, _agents_task, _usage_task
-    global _session_messages_task, _workflow_task
-    for task in (_needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task):
+    global _session_messages_task, _workflow_task, _subsystems_task
+    for task in (_needs_task, _agents_task, _usage_task, _session_messages_task, _workflow_task,
+                 _subsystems_task):
         if task is not None:
             task.cancel()
     _needs_task = _agents_task = _usage_task = _session_messages_task = _workflow_task = None
+    _subsystems_task = None
     if session_watcher is not None:
         try:
             await session_watcher.stop()
@@ -3763,7 +3779,9 @@ async def internal_tool(request: Request):
     expected = data_paths.ensure_tool_token()
     supplied = request.headers.get("Authorization", "")
     if not _bearer_token_matches(supplied, expected):
+        subsystem_diagnostics.tool_calls.note(False, "the token does not match")
         raise HTTPException(status_code=401, detail="bad token")
+    subsystem_diagnostics.tool_calls.note(True)
 
     try:
         body = await request.json()
@@ -6309,7 +6327,7 @@ async def _watch_workflow_silence() -> None:
                     f"workflow_status with workflow {w.id} has that report.",
                     "workflow silence")
 
-    await _every(WORKFLOW_SILENCE_POLL_SEC, "workflow silence", look_for_quiet)
+    await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
 
 class WorkflowStartRequest(BaseModel):
@@ -6397,6 +6415,69 @@ def _hint_voice(_event=None) -> None:
 
 
 voice_diagnostics.listeners.append(_hint_voice)
+
+
+# --- Subsystem diagnostics (subsystem_diagnostics.py) -----------------------
+
+# When this server started: a subsystem not yet up this soon after is
+# starting, not down.
+_server_started_at = time.time()
+SUBSYSTEMS_POLL_SEC = 5.0
+_subsystems_task: Optional[asyncio.Task] = None
+COMMS_DOWN_LINE = "Communications with the agents are down, sir."
+COMMS_BACK_LINE = "Communications with the agents are back, sir."
+
+
+def _subsystems() -> list:
+    """Every subsystem, read now (blocking: it reads the database)."""
+    return subsystem_diagnostics.gather(
+        watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
+        has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at)
+
+
+@app.get("/api/diagnostics/subsystems")
+async def api_subsystems():
+    """What the Diagnostics tab lists: each subsystem's state, why, and the
+    checks that decided it."""
+    now = time.time()
+    return subsystem_diagnostics.to_json(await asyncio.to_thread(_subsystems), now)
+
+
+async def _watch_subsystems() -> None:
+    """Look at every subsystem every few seconds. A state that moved tells
+    the pages to read again; communications going down, and coming back,
+    are said once each. Never raises out."""
+    states: dict[str, str] = {}
+    said_down = False
+
+    async def look_at_subsystems() -> None:
+        nonlocal states, said_down
+        now = {s.id: s for s in await asyncio.to_thread(_subsystems)}
+        if states and {k: s.state for k, s in now.items()} != states:
+            _send_to_session_clients({"type": "subsystems"})
+        states = {k: s.state for k, s in now.items()}
+        comms = now["communications"]
+        if comms.state == subsystem_diagnostics.DOWN and not said_down:
+            said_down = True
+            # The parts by their own fixed names only: a detail can quote an
+            # error, and an error can quote a file a session wrote.
+            parts = _join_natural([c.name.lower() for c in comms.checks
+                                   if c.state == subsystem_diagnostics.DOWN])
+            await _say_about_message(
+                COMMS_DOWN_LINE,
+                f"Since your last turn you told him communications with the agents "
+                f"are down (what is down: {parts}). Messages to and from sessions may "
+                f"not arrive until they are back; the Diagnostics tab has the detail.",
+                "communications down")
+        elif said_down and comms.state in (subsystem_diagnostics.OK, subsystem_diagnostics.IDLE,
+                                           subsystem_diagnostics.DEGRADED):
+            said_down = False
+            await _say_about_message(
+                COMMS_BACK_LINE,
+                "Since your last turn you told him communications with the agents are "
+                "back.", "communications back")
+
+    await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 
 
 @app.get("/api/workflows")
