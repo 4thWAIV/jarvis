@@ -49,11 +49,10 @@ def parse(text: str) -> tuple[str, str]:
     return "", text
 
 
-def collect(folder: Path, now: float) -> list[Dropped]:
-    """Every settled message file under `folder`, oldest first. Never raises:
-    an unreadable file is skipped and left for the next look, and a missing
-    folder holds nothing. Symlinks and anything not a regular file are never
-    read, so a link cannot pull a file from elsewhere into the brain."""
+def _settled(folder: Path, now: float, older_than: float) -> list[tuple[float, Path, str]]:
+    """(mtime, path, project) of every message file under `folder` unchanged
+    for `older_than` seconds, oldest first. Regular files only, never
+    through a symlink. Never raises."""
     found: list[tuple[float, Path, str]] = []
     try:
         projects = [d for d in folder.iterdir()
@@ -72,12 +71,26 @@ def collect(folder: Path, now: float) -> list[Dropped]:
                 continue
             if not stat.S_ISREG(info.st_mode):
                 continue
-            if now - info.st_mtime < SETTLE_SEC:
+            if now - info.st_mtime < older_than:
                 continue
             found.append((info.st_mtime, path, project.name))
     found.sort()
+    return found
+
+
+def waiting(folder: Path, now: float, older_than: float) -> int:
+    """How many message files have waited longer than `older_than` seconds
+    to be picked up: the diagnostics' sign the folder is not being taken."""
+    return len(_settled(folder, now, older_than))
+
+
+def collect(folder: Path, now: float) -> list[Dropped]:
+    """Every settled message file under `folder`, oldest first. Never raises:
+    an unreadable file is skipped and left for the next look, and a missing
+    folder holds nothing. Symlinks and anything not a regular file are never
+    read, so a link cannot pull a file from elsewhere into the brain."""
     out = []
-    for _mtime, path, project in found[:MAX_PER_LOOK]:
+    for _mtime, path, project in _settled(folder, now, SETTLE_SEC)[:MAX_PER_LOOK]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:

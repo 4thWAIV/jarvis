@@ -101,6 +101,15 @@ html, body {
   border-color: rgba(14, 165, 233, 0.6);
 }
 
+/* A tab whose view shows something down: the Diagnostics tab while any
+   subsystem is down, whichever tab is open. Red wins over lit and selected. */
+.right-tab.alert, .right-tab.alert.selected {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.9);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.75);
+  animation: subsystem-alarm 1.6s ease-in-out infinite;
+}
+
 .right-tab.selected {
   color: rgba(14, 165, 233, 0.95);
   background: rgba(14, 165, 233, 0.15);
@@ -2139,6 +2148,123 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   cursor: pointer;
 }
 
+
+/* ---------------------------------------------------------------------------
+   Subsystems: the Diagnostics tab's list (SubsystemList.tsx) and one
+   subsystem in the centre area (SubsystemView.tsx). Green working, amber
+   struggling, grey idle or unread, and red down: the strongest colour on
+   the page, the row filled and its dot glowing, so it cannot be missed.
+   --------------------------------------------------------------------------- */
+
+.subsystems ul, .subsystem-checks, .subsystem-messages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.subsystem-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+  background: rgba(14, 165, 233, 0.04);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.subsystem-row:disabled { cursor: default; }
+.subsystem-row:not(:disabled):hover, .subsystem-row:focus-visible { border-color: rgba(14, 165, 233, 0.5); }
+.subsystem-row .subsystem-summary {
+  grid-column: 2 / 4;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subsystem-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subsystem-state { font-size: 10.5px; color: rgba(255, 255, 255, 0.6); }
+.subsystem-waiting { margin: 4px 0 0; font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+
+.subsystem-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+.subsystem-dot.big { width: 18px; height: 18px; flex: none; }
+.subsystem-dot.state-ok { background: #34d399; }
+.subsystem-dot.state-degraded { background: #fbbf24; box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
+.subsystem-dot.state-down {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.9);
+  animation: subsystem-alarm 1.6s ease-in-out infinite;
+}
+.subsystem-row.state-degraded .subsystem-state, .subsystem-head-state.state-degraded { color: #fbbf24; }
+.subsystem-row.state-down {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.95);
+  color: #fecaca;
+}
+.subsystem-row.state-down .subsystem-state { color: #f87171; font-weight: 700; text-transform: uppercase; }
+.subsystem-row.state-down .subsystem-summary { color: #fecaca; white-space: normal; }
+@keyframes subsystem-alarm {
+  0%, 100% { box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+  50% { box-shadow: 0 0 14px rgba(239, 68, 68, 1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subsystem-dot.state-down, .right-tab.alert { animation: none; }
+}
+
+#subsystem-detail {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#subsystem-detail h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+#subsystem-detail h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.85);
+}
+.subsystem-head { display: flex; align-items: center; gap: 12px; }
+.subsystem-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.subsystem-head-state { margin: 0; }
+.subsystem-head-state.state-down { color: #f87171; font-weight: 600; }
+.subsystem-checks li, .subsystem-messages li {
+  display: grid;
+  grid-template-columns: 10px minmax(120px, 200px) 90px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.04);
+}
+.subsystem-messages li { grid-template-columns: 70px minmax(100px, 180px) 90px 1fr; }
+.subsystem-checks li.state-down { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
+.subsystem-messages li.outcome-lost { background: rgba(239, 68, 68, 0.15); }
+.subsystem-messages time { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
 
 /* ---------------------------------------------------------------------------
    Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the

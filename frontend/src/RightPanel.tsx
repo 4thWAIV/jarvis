@@ -7,15 +7,18 @@
 import { useState, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { agentsTabLit } from "./agents";
+import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { TabRow, type Tab } from "./Tabs";
 import { VoiceSummary } from "./VoiceSummary";
 import { WorkflowsView } from "./WorkflowsView";
 
-/** Voice health (VoiceSummary.tsx). The brains' account boxes are in the
- *  left column (BrainUsage.tsx). */
+/** One row per subsystem (SubsystemList.tsx), then voice health in more
+ *  detail (VoiceSummary.tsx). The brains' account boxes are in the left
+ *  column (BrainUsage.tsx). */
 function DiagnosticsView() {
   return (
     <div className="right-view">
+      <SubsystemList />
       <VoiceSummary />
     </div>
   );
@@ -69,6 +72,8 @@ const TABS: Tab[] = [
 export function RightPanel() {
   const [selected, setSelected] = useState(TABS[0].id);
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
+  // Something down shows on the Diagnostics tab whichever tab is open.
+  const down = useAnyDown();
   const tab = TABS.find((t) => t.id === selected) ?? TABS[0];
   const select = (id: string) => {
     setSelected(id);
@@ -77,7 +82,8 @@ export function RightPanel() {
   return (
     <div id="right-column">
       <TabRow tabs={TABS} selected={selected} onSelect={select} className="right-tabs"
-              lit={(t) => t.id === "agents" && lit && selected !== "agents"} />
+              lit={(t) => t.id === "agents" && lit && selected !== "agents"}
+              alert={(t) => t.id === "diagnostics" && down} />
       <div className="right-panel" role="tabpanel" aria-label={tab.title}>
         {tab.view()}
       </div>

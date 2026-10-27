@@ -1845,6 +1845,12 @@ class SessionWatcher:
         # check.
         self._event_loop = None
         self._loop_thread = None
+        # How the polling is doing, for the diagnostics (subsystem_diagnostics.py):
+        # when a poll last finished without raising, how many have raised in
+        # a row since, and the last one's error.
+        self.last_poll_ok_at: float | None = None
+        self.poll_failures = 0
+        self.last_poll_error: str | None = None
 
     def on_event(self, callback) -> None:
         self._subscribers.append(callback)
@@ -2120,16 +2126,26 @@ class SessionWatcher:
         self._loop_thread = threading.current_thread()
         self._task = asyncio.create_task(self._loop())
 
+    @property
+    def running(self) -> bool:
+        """Whether the polling task is alive: started, and not ended."""
+        return self._task is not None and not self._task.done()
+
     async def _loop(self) -> None:
         import asyncio
+        import time as _time
         while True:
             try:
                 await asyncio.to_thread(self.poll_once)
+                self.last_poll_ok_at = _time.time()
+                self.poll_failures, self.last_poll_error = 0, None
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as e:
                 import logging
                 logging.getLogger(__name__).warning("watch tick failed", exc_info=True)
+                self.poll_failures += 1
+                self.last_poll_error = f"{type(e).__name__}: {e}"[:200]
             await asyncio.sleep(self.interval)
 
     async def stop(self) -> None:

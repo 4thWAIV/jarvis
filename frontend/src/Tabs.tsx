@@ -15,13 +15,15 @@ export interface Tab {
 }
 
 /** The row of tabs. `lit` marks a tab that has something new without
- *  selecting it. `words` shows each tab's title instead of its icon. */
-export function TabRow({ tabs, selected, onSelect, className, lit, words }: {
+ *  selecting it; `alert` one whose view shows something down, in red.
+ *  `words` shows each tab's title instead of its icon. */
+export function TabRow({ tabs, selected, onSelect, className, lit, alert, words }: {
   tabs: Tab[];
   selected: string;
   onSelect: (id: string) => void;
   className: string;
   lit?: (tab: Tab) => boolean;
+  alert?: (tab: Tab) => boolean;
   words?: boolean;
 }) {
   return (
@@ -30,7 +32,8 @@ export function TabRow({ tabs, selected, onSelect, className, lit, words }: {
         <button key={t.id} type="button" role="tab" title={t.title} aria-label={t.title}
                 aria-selected={t.id === selected}
                 className={`control-button right-tab${words ? " word-tab" : ""}${
-                  t.id === selected ? " selected" : ""}${lit?.(t) ? " lit" : ""}`}
+                  t.id === selected ? " selected" : ""}${lit?.(t) ? " lit" : ""}${
+                  alert?.(t) ? " alert" : ""}`}
                 onClick={() => onSelect(t.id)}>
           {words ? t.title : t.icon}
         </button>

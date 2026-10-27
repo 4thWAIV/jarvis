@@ -352,6 +352,40 @@ EXEMPT = {
         "subagent's file id, and the row is JSON for the page's Workflows "
         "area only: never spoken, never in a note to the brain, and the page "
         "draws every field of it as text"),
+    "server._watch_subsystems": (
+        "it compares subsystem states, a fixed vocabulary of five words worked "
+        "out by subsystem_diagnostics, and says one of two fixed lines; its note "
+        "to the brain names the parts that are down by their own fixed check "
+        "names, never a check's detail, which can quote an error"),
+    "server.look_at_subsystems": (
+        "the look inside _watch_subsystems: it reads each subsystem's `state`, "
+        "one of five fixed words, and speaks only COMMS_DOWN_LINE or "
+        "COMMS_BACK_LINE, with the down checks named by their fixed names"),
+    "subsystem_diagnostics.from_checks": (
+        "it reads each check's `state` (one of five fixed words) and joins a "
+        "fixed check name with its detail for the Diagnostics tab, which the "
+        "page draws with React text nodes; nothing it builds reaches the brain "
+        "or the speaker"),
+    "subsystem_diagnostics.watcher_check": (
+        "it reads each session's `state` only to count the live ones; the line "
+        "it builds carries that count and ages, never a session's name or text, "
+        "and goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.outgoing_check": (
+        "it reads each message's `session_id` only to count how many different "
+        "sessions lost messages; the line it builds carries counts alone and "
+        "goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.voice_input": (
+        "it reads the voice record's own `state` and the stage states of its "
+        "pipeline, fixed words the server classified; the cause it shows is the "
+        "server's own classification, for the Diagnostics tab only"),
+    "subsystem_diagnostics.tool_channel": (
+        "it reads the `status` the brain's CLI reports for JARVIS's own MCP "
+        "server and shows it on the Diagnostics tab only; no session's text "
+        "and nothing a page wrote passes through it"),
+    "subsystem_diagnostics.workflows": (
+        "it reads each running workflow's `state`, a fixed word the workflow "
+        "store works out, only to count the quiet and running ones; the line it "
+        "builds carries counts and goes only to the Diagnostics tab"),
     "server._finish_reading_aloud": (
         "it compares the capture's text with what was read, to decide whether "
         "it was heard unchanged, and prints neither: its note to the brain "

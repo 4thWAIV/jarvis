@@ -322,6 +322,22 @@ class Brain:
         return self._failure_reason
 
     @property
+    def restarting(self) -> bool:
+        """Whether a crash/stall restart is under way."""
+        return self._restart_task is not None and not self._restart_task.done()
+
+    @property
+    def recent_restarts(self) -> int:
+        """Crash/stall restarts within the restart window (what the budget
+        counts)."""
+        now = time.monotonic()
+        return sum(now - x < self.config.restart_window for x in self._restart_times)
+
+    @property
+    def rate_limited(self) -> bool:
+        return self._rate_limited()
+
+    @property
     def current_origin(self) -> Optional[str]:
         return self._inflight.origin if self._inflight else None
 
