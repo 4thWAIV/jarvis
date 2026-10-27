@@ -9,6 +9,8 @@ export interface JarvisSocket {
   onMessage(handler: MessageHandler): void;
   /** Each time the socket (re)connects. */
   onOpen(handler: () => void): void;
+  /** Each time the socket closes (it then tries again). */
+  onClose(handler: () => void): void;
   close(): void;
   isConnected(): boolean;
 }
@@ -17,6 +19,7 @@ export function createSocket(url: string): JarvisSocket {
   let ws: WebSocket | null = null;
   let handlers: MessageHandler[] = [];
   const openHandlers: (() => void)[] = [];
+  const closeHandlers: (() => void)[] = [];
   let reconnectDelay = 1000;
   let closed = false;
   let connected = false;
@@ -44,6 +47,7 @@ export function createSocket(url: string): JarvisSocket {
 
     ws.onclose = () => {
       connected = false;
+      for (const h of closeHandlers) h();
       if (!closed) {
         console.log(`[ws] reconnecting in ${reconnectDelay}ms`);
         setTimeout(connect, reconnectDelay);
@@ -70,6 +74,9 @@ export function createSocket(url: string): JarvisSocket {
     },
     onOpen(handler) {
       openHandlers.push(handler);
+    },
+    onClose(handler) {
+      closeHandlers.push(handler);
     },
     close() {
       closed = true;
