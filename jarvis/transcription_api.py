@@ -43,7 +43,9 @@ RECONNECT_WITHIN_SEC = 10.0
 
 service: Optional[TranscriptionService] = None
 probe = voice_diagnostics.LoopProbe()
-_last_failure_at = 0.0
+# None until a capture fails: time.monotonic() counts from boot on macOS, so
+# a zero here would make every capture in a boot's first seconds a reconnect.
+_last_failure_at: Optional[float] = None
 
 
 def start(engine_factory=None) -> TranscriptionService:
@@ -51,7 +53,7 @@ def start(engine_factory=None) -> TranscriptionService:
     lifespan). A missing model fails the service at once, without loading
     anything; the page is told when it connects."""
     global service, _last_failure_at
-    _last_failure_at = 0.0
+    _last_failure_at = None
     service = TranscriptionService(engine_factory or transcriber.SherpaEngine)
     service.start()
     probe.start()
@@ -148,7 +150,8 @@ async def transcribe(ws: WebSocket):
             await fail(error)
             return
         log.info("transcription %s ready", session)
-        reconnect = time.monotonic() - _last_failure_at < RECONNECT_WITHIN_SEC
+        reconnect = (_last_failure_at is not None
+                     and time.monotonic() - _last_failure_at < RECONNECT_WITHIN_SEC)
         voice_diagnostics.record_soon(Event(
             at=time.time(), kind="reconnect" if reconnect else "ready", capture=session))
         await send("ready")
