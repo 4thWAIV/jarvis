@@ -14,11 +14,20 @@
  * on time, without waiting for a hint. Dismissed ones are listed under a
  * collapsed "Done", dimmed and marked Dismissed. Clicking any row opens its
  * detail in the centre area (WorkflowDetail.tsx).
+ *
+ * Below the workflows, every subagent a session has dispatched that belongs
+ * to no running workflow (one that does is in that workflow's detail): a
+ * row in the same style, its orb ringed by its state, what it was asked to
+ * do as its name, when it last wrote, and the session that dispatched it.
+ * One that has finished lingers as a finished workflow does and leaves on
+ * time; there is nothing to dismiss, as nothing was recorded. Clicking it
+ * opens its transcript in the centre area the same way.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ago, dismissals, dismissWorkflow, FINISHED, isGone, openWorkflow, STATE_WORDS,
-         workflows, type Workflow } from "./workflows";
+         SUBAGENT_LOOK, SUBAGENT_WORDS, workflows, type SubagentRow as Subagent,
+         type Workflow } from "./workflows";
 import { OpenIcons, PhaseTrack, WorkflowOrb } from "./WorkflowVisuals";
 
 /** Re-renders every `ms`, so ages stay true between reads. */
@@ -37,14 +46,15 @@ export function WorkflowsView() {
   const [showDone, setShowDone] = useState(false);
   const [, setNow] = useState(0);
   useTick(30000);
-  const list = live.value ?? [];
+  const list = live.value?.workflows ?? [];
   const now = Date.now() / 1000;
   const current = list.filter((w) => !isGone(w, now));
   const done = list.filter((w) => isGone(w, now));
+  const subagents = (live.value?.subagents ?? []).filter((a) => a.dismiss_at == null || now < a.dismiss_at);
 
-  // A finished workflow leaves the list at its dismiss_at: on time, by a
-  // timer of its own, and the record is read again then.
-  const next = Math.min(...current.map((w) => w.dismiss_at ?? Infinity));
+  // A finished workflow or subagent leaves the list at its dismiss_at: on
+  // time, by a timer of its own, and the record is read again then.
+  const next = Math.min(...[...current, ...subagents].map((w) => w.dismiss_at ?? Infinity));
   useEffect(() => {
     if (!Number.isFinite(next)) return;
     const timer = setTimeout(() => { setNow(Date.now()); workflows.refresh(); },
@@ -55,7 +65,8 @@ export function WorkflowsView() {
   return (
     <div className="right-view workflows-view">
       {live.error && <p className="read-failure">Couldn't read the workflows ({live.error}); trying again.</p>}
-      {live.value && current.length === 0 && <p className="workflows-empty">No workflows</p>}
+      {live.value && current.length === 0 && subagents.length === 0 &&
+        <p className="workflows-empty">No workflows</p>}
       <ul className="workflows-list">
         {current.map((w) => (
           <li key={w.id} className={`workflow-item${FINISHED.has(w.state) ? " dismissible" : ""}`}>
@@ -64,6 +75,11 @@ export function WorkflowsView() {
               <button type="button" className="workflow-dismiss" aria-label="Dismiss"
                       title="Dismiss" onClick={() => void dismissWorkflow(w.id)}>×</button>
             )}
+          </li>
+        ))}
+        {subagents.map((a) => (
+          <li key={a.key} className="workflow-item">
+            <SubagentRow agent={a} selected={a.key === open} />
           </li>
         ))}
       </ul>
@@ -131,6 +147,31 @@ function WorkflowRow({ workflow: w, selected }: { workflow: Workflow; selected: 
           )}
           {!finished && <OpenIcons w={w} />}
         </span>
+      </span>
+    </button>
+  );
+}
+
+/** A subagent that belongs to no running workflow, drawn as a workflow is:
+ *  its orb ringed by its state, what it was asked to do, when it last
+ *  wrote, and below, the session that dispatched it. */
+function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolean }) {
+  const look = SUBAGENT_LOOK[a.state];
+  const ended = a.state === "finished";
+  const name = a.description || a.type || "Subagent";
+  return (
+    <button type="button" data-subagent-key={a.key} data-state={a.state}
+            className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
+              selected ? " selected" : ""}`}
+            title={`${name}: ${SUBAGENT_WORDS[a.state]}`}
+            onClick={() => openWorkflow.set(a.key)}>
+      <WorkflowOrb state={look} size={30} />
+      <span className="workflow-name">{name}</span>
+      {ended
+        ? <span className="workflow-outcome outcome-succeeded">{SUBAGENT_WORDS[a.state]}</span>
+        : <span className="workflow-age">{ago(a.written)}</span>}
+      <span className="workflow-strip subagent-parent">
+        {a.background ? "Background subagent" : "Subagent"} of {a.session_name}
       </span>
     </button>
   );

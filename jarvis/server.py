@@ -2191,6 +2191,23 @@ def _sync_agents() -> bool:
     return run_store.sync_agents(_running_agents())
 
 
+# Each running session's subagents as last told to the pages: id and state.
+_subagents_told: dict[str, tuple] = {}
+
+
+def _subagents_moved() -> bool:
+    """Whether any session's subagents came, went or changed state since
+    the last look: the agents list counts the working ones, and the
+    Workflows list shows each running one."""
+    global _subagents_told
+    if session_watcher is None or not session_watcher.polled:
+        return False
+    now = {s.session_id: tuple((a.agent_id, a.state) for a in s.subagents)
+           for s in _snapshot_or_empty().sessions if s.state != session_watch.GONE}
+    moved, _subagents_told = now != _subagents_told, now
+    return moved
+
+
 async def _watch_agents() -> None:
     """Keep the agents list in step with what is running, and tell the pages
     when it changes. Never raises: a bad poll must not end the loop.
@@ -2202,6 +2219,9 @@ async def _watch_agents() -> None:
         try:
             if await asyncio.to_thread(_sync_agents):
                 _hint_agents_changed()
+            if await asyncio.to_thread(_subagents_moved):
+                _hint_agents_changed()
+                _send_to_session_clients({"type": "workflows"})
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -6417,6 +6437,48 @@ def _hint_voice(_event=None) -> None:
 voice_diagnostics.listeners.append(_hint_voice)
 
 
+# --- Subagents in the Workflows area ------------------------------------------
+#
+# The subagents sessions dispatch are shown with the workflows, worked out
+# here at read time from the sessions snapshot (session_watch.read_subagents)
+# and never written to workflow_store: the store stays the record of what
+# sessions report. A subagent whose session is attached to a running
+# workflow belongs to that workflow; any other gets its own row in the list,
+# drawn like a workflow's. One that is no longer working lingers as long as
+# a finished workflow does, from its last write, and then leaves.
+
+_WORKFLOW_FINISHED = {s.value for s in workflow_store.FINISHED}
+
+
+def _subagent_row(s, a) -> dict:
+    """One subagent as the Workflows area shows it. `key` names it among
+    the workflows (the page opens its detail by it)."""
+    return {"key": f"agent:{s.session_id}/{a.agent_id}", "session_id": s.session_id,
+            "session_name": session_watch.agent_name(s), "project": s.project,
+            **session_watch.subagent_to_dict(a),
+            "dismiss_at": (None if a.state == session_watch.AGENT_WORKING
+                           else a.written + workflow_store.LINGER_SEC)}
+
+
+def _lone_subagents(workflows, now: float) -> list[dict]:
+    """Every subagent still in view whose session reports to no running
+    workflow."""
+    attached = {sid for w in workflows if w.state not in _WORKFLOW_FINISHED for sid in w.agents}
+    return [_subagent_row(s, a) for s in _snapshot_or_empty().sessions
+            if s.session_id not in attached for a in s.subagents
+            if a.state == session_watch.AGENT_WORKING
+            or now < a.written + workflow_store.LINGER_SEC]
+
+
+def _workflow_subagents(w) -> list[dict]:
+    """The subagents a workflow's attached sessions dispatched while it ran:
+    written since it started, and started before it finished."""
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    return [_subagent_row(s, a) for sid in w.agents if (s := sessions.get(sid)) is not None
+            for a in s.subagents if a.written >= w.started_at
+            and (w.finished_at is None or (a.started or a.written) <= w.finished_at)]
+
+
 # --- Subsystem diagnostics (subsystem_diagnostics.py) -----------------------
 
 # When this server started: a subsystem not yet up this soon after is
@@ -6482,9 +6544,11 @@ async def _watch_subsystems() -> None:
 
 @app.get("/api/workflows")
 async def api_list_workflows():
-    """Every workflow, running ones and the most recently finished."""
-    return {"workflows": [_workflow_json(w)
-                          for w in await asyncio.to_thread(workflow_store.recent)]}
+    """Every workflow, running ones and the most recently finished; and every
+    subagent in view that belongs to none of the running ones."""
+    found = await asyncio.to_thread(workflow_store.recent)
+    return {"workflows": [_workflow_json(w) for w in found],
+            "subagents": _lone_subagents(found, time.time())}
 
 
 @app.get("/api/workflows/{workflow_id}")
@@ -6492,7 +6556,7 @@ async def api_workflow(workflow_id: str):
     w = await asyncio.to_thread(workflow_store.snapshot, workflow_id)
     if w is None:
         raise HTTPException(status_code=404, detail="No such workflow")
-    return {"workflow": _workflow_json(w)}
+    return {"workflow": _workflow_json(w), "subagents": _workflow_subagents(w)}
 
 
 @app.get("/api/workflows/{workflow_id}/events")
@@ -6591,20 +6655,34 @@ TOOL_HANDLERS["conversation_history"] = tool_conversation_history
 
 @app.get("/api/sessions/{session_id}/transcript")
 async def api_session_transcript(session_id: str, before: Optional[int] = None,
-                                 limit: int = session_watch.TRANSCRIPT_PAGE):
+                                 limit: int = session_watch.TRANSCRIPT_PAGE,
+                                 subagent: Optional[str] = None):
     """One session's transcript, the last `limit` entries before byte
     `before` (the end when omitted), oldest first, read by the session's own
-    provider. `earlier` is the cursor for the page before, None at the start."""
+    provider. `earlier` is the cursor for the page before, None at the start.
+    With `subagent`, one of its subagents' transcripts instead, the same way
+    (a provider that keeps none has none to give)."""
     session = _snapshot_or_empty().by_id(session_id)
     provider = _session_provider_named(session.provider) if session is not None else None
-    if provider is None or not hasattr(provider, "transcript"):
+    reader = "subagent_transcript" if subagent is not None else "transcript"
+    if provider is None or not hasattr(provider, reader):
         raise HTTPException(status_code=404, detail="No such session")
     limit = max(1, min(int(limit), session_watch.TRANSCRIPT_PAGE))
-    entries = await asyncio.to_thread(provider.transcript, session, before, limit)
+    name, state = session_watch.agent_name(session), session.state
+    if subagent is not None:
+        entries = await asyncio.to_thread(provider.subagent_transcript, session, subagent,
+                                          before, limit)
+        if entries is None:
+            raise HTTPException(status_code=404, detail="No such subagent")
+        known = next((a for a in session.subagents if a.agent_id == subagent), None)
+        name = known.description if known and known.description else "Subagent"
+        state = known.state if known else session_watch.UNKNOWN
+    else:
+        entries = await asyncio.to_thread(provider.transcript, session, before, limit)
     earlier = entries[0].offset if entries and entries[0].offset > 0 else None
-    return {"session_id": session_id, "name": session_watch.agent_name(session),
-            "state": session.state, "entries": [dataclasses.asdict(e) for e in entries],
-            "earlier": earlier}
+    return {"session_id": session_id, "subagent": subagent, "name": name,
+            "state": state, "session_name": session_watch.agent_name(session),
+            "entries": [dataclasses.asdict(e) for e in entries], "earlier": earlier}
 
 
 @app.get("/api/workflows/{workflow_id}/transcript")
@@ -6625,7 +6703,7 @@ async def api_workflow_transcript(workflow_id: str):
                     "last_prompt": s.last_prompt, "recent_tools": list(s.recent_tools),
                     "last_text": s.last_text,
                     "last_reply": await asyncio.to_thread(_session_reply, s)})
-    return {"agents": out}
+    return {"agents": out, "subagents": _workflow_subagents(w)}
 
 
 @app.post("/api/workflows/{workflow_id}/dismiss")

@@ -2465,3 +2465,64 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .voice-messages time { font-size: 11px; color: rgba(255, 255, 255, 0.5); font-variant-numeric: tabular-nums; }
 .voice-message-source { font-size: 11px; color: rgba(14, 165, 233, 0.85); }
 .voice-message-text { overflow-wrap: anywhere; }
+
+/* How many of an agent's subagents are working, in its box's lower edge
+   beside the provider's logo. Absolutely placed, so the row keeps its size
+   (AgentsControl's rowsThatFit measures it). */
+.agent-subagents {
+  position: absolute;
+  left: 22px;
+  bottom: 4px;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #c4b5fd;
+}
+
+/* A subagent's row in the Workflows list (WorkflowsView.tsx): a workflow's
+   row, with the session that dispatched it where the phases would be. */
+.subagent-parent {
+  font-size: 10px;
+  line-height: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* A workflow's subagents, under its Overview (WorkflowDetail.tsx): one line
+   each, its state as a dot and a word. */
+.workflow-subagents h5 { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+                         color: rgba(255, 255, 255, 0.55); margin: 8px 0 4px; }
+.workflow-subagents ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.workflow-subagent {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.workflow-subagent:hover { background: rgba(251, 113, 133, 0.08); border-color: rgba(251, 113, 133, 0.3); }
+.workflow-subagent-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.workflow-subagent-of, .workflow-subagent-age { flex: none; font-size: 11px; color: rgba(255, 255, 255, 0.45); }
+.workflow-subagent-state { flex: none; padding: 0 8px; border-radius: 9px; font-size: 11px; background: rgba(255, 255, 255, 0.08); }
+.workflow-subagent-state.subagent-working { background: rgba(251, 113, 133, 0.25); }
+.workflow-subagent-state.subagent-finished { background: rgba(52, 211, 153, 0.2); }
+.subagent-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, 0.3); }
+.subagent-dot.subagent-working { background: #fb7185; }
+.subagent-dot.subagent-finished { background: rgb(52, 211, 153); }
+.subagent-dot.subagent-stale { background: transparent; border: 1px solid rgba(255, 255, 255, 0.35); }
+/* A subagent's own detail: its transcript takes the height below the head. */
+.subagent-transcript { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.subagent-transcript .workflow-agent { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.subagent-transcript .transcript-entries { max-height: none; flex: 1 1 0; min-height: 0; }

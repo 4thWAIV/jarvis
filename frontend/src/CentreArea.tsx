@@ -9,7 +9,8 @@
  *     page opens on it at `?view=main`, so it keeps working and stays tested.
  *   - Workflow (WorkflowDetail.tsx): one workflow in full. Offered only while
  *     one is open, which clicking its row in the Workflows view does; it is
- *     selected then, and closing it goes back to Conversation.
+ *     selected then, and closing it goes back to Conversation. A subagent's
+ *     row opens its detail in the same place, named Subagent.
  *   - Thread (AgentThread.tsx): everything to and from one agent, the same
  *     way: offered while open, which clicking an agent's name in the
  *     Conversation history does.
@@ -28,7 +29,7 @@ import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
 import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
-import { openWorkflow } from "./workflows";
+import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
 import { openSubsystem } from "./subsystems";
 import { useSubsystems } from "./SubsystemList";
@@ -137,7 +138,7 @@ export function CentreArea() {
     ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
     ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? "Subsystem",
                        view: () => <SubsystemView key={subsystem} id={subsystem} /> }] : []),
-    ...(workflow ? [{ ...WORKFLOW_VIEW,
+    ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];

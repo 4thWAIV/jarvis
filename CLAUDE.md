@@ -158,6 +158,24 @@ about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
 and he answers them on the Workflows view.
 
+## Subagents
+The subagents a Claude Code session dispatches are read from its own files by
+`session_watch.read_subagents`, the one reader (the counts on the snapshot
+come from it too): `agent-<id>.jsonl` and the `agent-<id>.meta.json` beside it
+in `projects/<encoded cwd>/<sessionId>/subagents/`. Finished means its last
+message is the assistant's with `stop_reason: end_turn`; otherwise it is
+`working` while written within `AGENT_ACTIVE_WITHIN_SEC`, else `stale`, which
+claims neither. Deduped by name across roots, capped at `MAX_AGENT_FILES`
+(a floor when capped), never through a symlink, never raising. They ride on
+the sessions snapshot (`subagents`), and `/api/sessions/{id}/transcript
+?subagent=<id>` reads one. The Workflows area shows them, worked out at read
+time and never written to `workflow_store`: a subagent of a session attached
+to a running workflow is in that workflow's detail (`subagents` on
+`/api/workflows/{id}` and its transcript), any other has its own row
+(`subagents` on `/api/workflows`), lingering `LINGER_SEC` once it stops. The
+Agents panel shows "2 working" on an agent's box. An `agents` and a
+`workflows` hint go out when any session's subagents change.
+
 ## Voice diagnostics
 How voice input is doing is one durable record, `voice_diagnostics.py`:
 `voice_samples` (one a second while a page listens, taken as the page's
@@ -249,7 +267,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   the orb is on the page
 - `frontend/src/ConversationView.tsx` — Conversation history, live words, typed input, captures and sources
 - `frontend/src/AgentThread.tsx` — One agent's message thread
-- `frontend/src/WorkflowDetail.tsx` — Workflow phases, tasks, decisions, transcripts and events
+- `frontend/src/WorkflowDetail.tsx` — Workflow phases, tasks, decisions, transcripts and events;
+  a subagent's detail and transcript (see "Subagents")
 - `frontend/src/VoiceDiagnosticsView.tsx` — Voice incidents, timeline and notification analysis
 - `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
   subsystem rows and one subsystem in full (see "Subsystem diagnostics")
@@ -276,8 +295,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   needs, whether it is `between_turns` (the message queue's only test) and
   since when; the transcript's turn markers decide, the roster's word only
   where they are missing
-  (process / conversation / project), and follows each message JARVIS sent
-  through its session's transcript
+  (process / conversation / project), follows each message JARVIS sent
+  through its session's transcript, and reads each session's subagents
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
   names as they are said (`spoken_key`: hyphens and underscores are spaces)
