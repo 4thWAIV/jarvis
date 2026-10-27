@@ -175,6 +175,29 @@ socket; `GET /api/voice/diagnostics*` reads the record and a `voice` hint on
 is written under the orb any more: it goes to that view's Messages
 (`voiceHealth.notice`), and a health dot beside the meter shows a problem.
 
+## Subsystem diagnostics
+The Diagnostics tab lists each major part of JARVIS, one row each:
+communications with the agents first, then voice input, the brain, voice
+output, the tool channel and the workflow monitor
+(`subsystem_diagnostics.py`), and last this page's own connection, which only
+the page can judge (`frontend/src/subsystems.ts`). Each is `ok`, `degraded`,
+`down`, `idle` or `unknown`, worked out when it is read and never stored,
+from records that already exist (the `messages` table, the workflow record,
+`voice_diagnostics.summary`) and what the server holds in memory (the
+session watcher's last poll and failures in a row, the brain, each Fish
+synthesis and each `/internal/tool` request, and a heartbeat per `_every`
+loop). Communications are down when the session watcher is not running, has
+not finished a poll for a minute or has failed three in a row; when the
+messages sent last, back to the last one that arrived, were lost on their way
+to two or more different sessions; or when the loop taking session messages
+or reading the needs board has stopped. `GET /api/diagnostics/subsystems`
+reads it all; `_watch_subsystems` looks every five seconds, sends a
+`subsystems` hint on `/ws/sessions` when any state moves, and says once
+"Communications with the agents are down, sir." and once that they are back.
+A down row is red, and so is the Diagnostics tab whichever tab is open;
+clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
+opens the voice view).
+
 ## Turn-taking
 JARVIS waits for Tim to finish. The server gathers what he says
 (`server._Utterance`) until he has been quiet for `speech.END_OF_TURN_SEC`, so
@@ -217,6 +240,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
   `frontend/src/voiceHealth.ts` is the page's side of it
+- `subsystem_diagnostics.py` — Each subsystem's state, worked out at read
+  time (see "Subsystem diagnostics"); `frontend/src/subsystems.ts` is the
+  page's side of it
 - `frontend/src/main.tsx` — Renders the voice page with React (`App.tsx`;
   the orb is `OrbControl.tsx`)
 - `frontend/src/jarvis.ts` — The voice page's state machine, started once
@@ -225,6 +251,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/AgentThread.tsx` — One agent's message thread
 - `frontend/src/WorkflowDetail.tsx` — Workflow phases, tasks, decisions, transcripts and events
 - `frontend/src/VoiceDiagnosticsView.tsx` — Voice incidents, timeline and notification analysis
+- `frontend/src/SubsystemList.tsx` / `SubsystemView.tsx` — The Diagnostics tab's
+  subsystem rows and one subsystem in full (see "Subsystem diagnostics")
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum;
   the `messages` table (see "Messages to sessions") and `steers` (keystrokes,
   commands)
