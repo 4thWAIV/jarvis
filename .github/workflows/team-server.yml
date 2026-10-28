@@ -12,7 +12,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 22.04, not latest: the ubuntu-24.04 image of 2026-10-25 has a Linux
+    # kernel (6.19+) that MongoDB 8.0 refuses to start on (SERVER-121912).
+    # Move back once GitHub's image has kernel 7.0.14 or later.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     services:
       mongo:
