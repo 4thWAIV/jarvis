@@ -114,6 +114,9 @@ async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page
         await page.get_by_role("button", name="Manage members").click()
         await async_api.expect(team.locator(".team-member-name").nth(1)).to_have_text("<b>bold</b>")
         assert await team.locator(".team-member b").count() == 0
+        # Text with no colour of its own is light, not the browser's black.
+        name = await team.locator(".team-member-name").first.evaluate("e => getComputedStyle(e).color")
+        assert name == "rgba(255, 255, 255, 0.85)", name
         await team.get_by_role("button", name="Make administrator").click()
         await async_api.expect(team.get_by_role("button", name="Confirm with GitHub")).to_be_visible()
         await team.get_by_role("button", name="Disconnect").click()
