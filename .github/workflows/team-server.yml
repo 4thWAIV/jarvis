@@ -18,6 +18,13 @@ jobs:
       mongo:
         image: mongo:8.0
         ports: ["27017:27017"]
+        # The job waits for this before its steps, so the tests never start
+        # before MongoDB accepts connections.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1})'"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
