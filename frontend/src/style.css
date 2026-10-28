@@ -1319,6 +1319,17 @@ html, body {
 .mic-segment.mid.on { background: #f5c518; }
 .mic-segment.high.on { background: #ff4d4f; }
 
+/* In the meter's place while muted or off: nothing is being sent. */
+#mic-silenced {
+  min-width: 94px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ef4444;
+}
+
 /* Stop — shown only while he is speaking, because that is the only moment it
    means anything. Escape does the same thing without reaching for the mouse. */
 #hush {

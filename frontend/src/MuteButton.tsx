@@ -1,5 +1,7 @@
 /**
- * Turns the microphone off and on. Only the microphone: see `mute()` in voice.ts.
+ * Mutes and unmutes: nothing is sent while muted, but the microphone stays
+ * open so unmuting is quick. See `mute()` in voiceInput.ts; MicOffButton
+ * releases the microphone itself.
  */
 
 import { useSyncExternalStore } from "react";

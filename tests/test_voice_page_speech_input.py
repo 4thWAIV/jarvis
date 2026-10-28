@@ -1,6 +1,7 @@
 """The voice page's speech input: one microphone stream, streamed at once and
 continuously to the transcription socket; what it hears goes to /ws/voice as
-before; mute finishes the words already spoken and releases the microphone;
+before; mute finishes the words already spoken and sends nothing more, with
+the microphone kept open; mic off finishes them and releases the microphone;
 held audio is sent once the recogniser is ready; and every way input can fail
 stays on screen.
 
@@ -144,15 +145,36 @@ async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_url):
         await page.click("#btn-mute")
         assert await _until(voice.finals)
         assert voice.finals() == ["turn off the lights"]
-        assert await page.evaluate("window.__liveTracks()") == 0
+        assert await page.evaluate("window.__liveTracks()") == 1, "mute released the microphone"
         after = await page.evaluate("window.__framesSent")
         await page.wait_for_timeout(1500)
         assert await page.evaluate("window.__framesSent") == after, "audio sent while muted"
         lit = await page.evaluate("document.querySelectorAll('#mic-meter .mic-segment.on').length")
         assert lit == 0
 
-        # Unmuted: a fresh microphone and a fresh session, streaming again.
+        # Unmuted: the same microphone and a fresh session, streaming again.
         await page.click("#btn-mute")
+        assert await _until(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
+        assert await page.evaluate("window.__micOpens") == 1
+        assert await page.evaluate("window.__transcribers.length") == 2
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_mic_off_sends_the_words_already_spoken_then_releases_the_microphone(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url,
+                                           {"finalOnFinish": "turn off the lights"})
+        await _ready(page)
+        await page.evaluate("window.__hear('turn off the', false)")
+        await page.click("#btn-mic-off")
+        assert await _until(voice.finals)
+        assert voice.finals() == ["turn off the lights"]
+        await page.wait_for_function("window.__liveTracks() === 0")
+        after = await page.evaluate("window.__framesSent")
+
+        # On again: a fresh microphone and a fresh session, streaming again.
+        await page.click("#btn-mic-off")
         await page.wait_for_function("window.__micOpens === 2 && window.__liveTracks() === 1")
         assert await _until(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
         assert await page.evaluate("window.__transcribers.length") == 2

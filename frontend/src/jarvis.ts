@@ -17,7 +17,7 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
-import { inputStatus, micLevel, micMuted } from "./mic";
+import { inputStatus, micLevel, micMuted, micOff } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startSessionsSocket } from "./sessionsSocket";
@@ -30,6 +30,7 @@ export function startJarvis(orb: Orb): void {
   type State = "idle" | "listening" | "thinking" | "speaking" | "compacting";
   let currentState: State = "idle";
   let isMuted = false;
+  let isOff = false;
 
   function updateStatus(state: State) {
     const labels: Record<State, string> = {
@@ -65,9 +66,10 @@ export function startJarvis(orb: Orb): void {
     micFollowsState();
   }
 
-  // Mute only turns the microphone off; it has no say in the orb's state.
+  // Mute and mic off only stop the microphone; they have no say in the orb's
+  // state.
   function micFollowsState() {
-    if (isMuted) return;
+    if (isMuted || isOff) return;
     if (currentState === "speaking" && muteMicDuringSpeech) {
       voiceInput.pause();
     } else {
@@ -275,14 +277,26 @@ export function startJarvis(orb: Orb): void {
   // UI Controls
   // ---------------------------------------------------------------------------
 
-  // The mute button (MuteButton.tsx) sets this; muting only turns the
-  // microphone off.
+  // The mute button (MuteButton.tsx) sets this: nothing is sent while
+  // muted, and the microphone stays open.
   micMuted.subscribe(() => {
     isMuted = micMuted.get();
     if (isMuted) {
-      voiceInput.mute();           // the meter goes dark and nothing captures
+      voiceInput.mute();           // the meter reads zero and nothing is sent
     } else {
       voiceInput.unmute();
+      micFollowsState();
+    }
+  });
+
+  // The mic-off button (MicOffButton.tsx) sets this: the microphone itself
+  // is released.
+  micOff.subscribe(() => {
+    isOff = micOff.get();
+    if (isOff) {
+      voiceInput.micOff();
+    } else {
+      voiceInput.micOn();
       micFollowsState();
     }
   });

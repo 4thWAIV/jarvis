@@ -8,7 +8,9 @@
  * input is on, capture is continuous: there are no recogniser sessions to
  * rotate and no gaps between them, and a pause in speech only ends a
  * segment on the server. What it cannot do is hear before the browser has
- * the microphone, or while it is muted, and the status says which.
+ * the microphone, while it is muted or while the microphone is off, and the
+ * status says which. Mute keeps the microphone open and sends nothing, so
+ * unmuting is only a new session; mic off releases the microphone itself.
  *
  * Audio captured while the recogniser is still loading is held (up to
  * `startupBufferSec`) and sent in order, paced, once it is ready. Past any
@@ -32,7 +34,8 @@ export type InputState =
   | "loading"       // the recogniser is loading; what is said is being held
   | "listening"
   | "paused"        // JARVIS is speaking and the mic is set to stop for it
-  | "muted"
+  | "muted"         // the microphone is open and nothing is sent
+  | "off"           // the microphone is released
   | "busy"          // another JARVIS page has the recogniser
   | "interrupted"   // something was said that was not sent; listening again
   | "unavailable";  // no microphone, no recogniser, or no AudioWorklet
@@ -49,11 +52,15 @@ export interface VoiceInput {
    *  discarded as echo. */
   pause(): void;
   resume(): void;
-  /** The mute button: take nothing new, release the microphone, and still
-   *  send the words already spoken. */
+  /** The mute button: send the words already spoken, then nothing; the
+   *  microphone stays open and the level reads zero. */
   mute(): void;
-  /** Take the microphone again after mute, with a fresh session. */
+  /** Send again after mute: a fresh session on the open microphone. */
   unmute(): void;
+  /** The mic-off button: as mute, then release the microphone. */
+  micOff(): void;
+  /** Take the microphone again after mic off; still muted if mute is on. */
+  micOn(): void;
   /** The words in flight cannot be delivered: drop them and say so. */
   interrupt(message: string): void;
 }
@@ -112,6 +119,7 @@ export function createVoiceInput(
   let wanted = false;        // start() until stop()
   let paused = false;
   let muted = false;
+  let off = false;           // the microphone is released
   let mic: Microphone | null = null;
   let micOpening = 0;        // generation of the getUserMedia call in flight
   let session: Session | null = null;
@@ -121,6 +129,9 @@ export function createVoiceInput(
   let status: InputStatus = { state: "starting", message: "" };
   let framesCaptured = 0;    // since the last telemetry
   let framesSent = 0;
+
+  /** Nothing is sent: muted, or the microphone is off. */
+  const quiet = () => muted || off;
 
   const mark = (what: string) => {
     console.info(`[voice] ${new Date().toLocaleTimeString()} ${what}`);
@@ -160,7 +171,7 @@ export function createVoiceInput(
       }
       return;
     }
-    if (mine !== micOpening || !wanted || muted) {   // stopped or muted while asking
+    if (mine !== micOpening || !wanted || off) {     // stopped or turned off while asking
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
@@ -188,7 +199,7 @@ export function createVoiceInput(
       setStatus("unavailable", `The audio worklet failed to load (${(e as Error)?.message}).`);
       return;
     }
-    if (mine !== micOpening || !wanted || muted) {
+    if (mine !== micOpening || !wanted || off) {
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
       return;
@@ -210,7 +221,7 @@ export function createVoiceInput(
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-      hooks.onLevel?.(Math.sqrt(sum / buf.length));
+      hooks.onLevel?.(quiet() ? 0 : Math.sqrt(sum / buf.length));
     }, METER_EVERY_MS);
 
     node.port.onmessage = (event: MessageEvent) => {
@@ -224,7 +235,7 @@ export function createVoiceInput(
         mark("microphone track ended");
         closeMicrophone();
         dropSession("The microphone was disconnected, so what was being said was not sent.");
-        if (wanted && !muted) scheduleRetry(openMicrophone);
+        if (wanted && !off) scheduleRetry(openMicrophone);
       };
     }
     mic = { stream, ctx, node, meter };
@@ -235,12 +246,15 @@ export function createVoiceInput(
       // Not silence: the browser has not let audio run yet. Say so, and
       // start on the first click or key.
       setStatus("permission", "Click anywhere to start listening.");
-      const resume = () => ctx.resume().then(() => { if (mic?.ctx === ctx) beginSession(); });
+      const resume = () => ctx.resume().then(() => {
+        if (mic?.ctx !== ctx) return;
+        if (muted) setStatus("muted"); else beginSession();
+      });
       document.addEventListener("click", resume, { once: true });
       document.addEventListener("keydown", resume, { once: true });
       return;
     }
-    beginSession();
+    if (muted) setStatus("muted"); else beginSession();
   }
 
   function closeMicrophone() {
@@ -257,7 +271,7 @@ export function createVoiceInput(
   // ── the recognition session ───────────────────────────────────────────
 
   function beginSession() {
-    if (!wanted || paused || muted || !mic || session) return;
+    if (!wanted || paused || quiet() || !mic || session) return;
     const url = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${protocol.path}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
@@ -345,10 +359,15 @@ export function createVoiceInput(
       clearInterval(timer);
       clearInterval(telemetry);
       if (!session || session === s) healthLost();
-      if (closing === s) closing = null;
+      if (closing === s) {
+        closing = null;
+        // Unmuted while it was finishing: the recogniser takes one capture
+        // at a time, so the fresh session starts now.
+        beginSession();
+      }
       if (session !== s) return;
       session = null;
-      if (!wanted || paused || muted) return;
+      if (!wanted || paused || quiet()) return;
       // The server went away mid-session (a restart): what was in flight is lost.
       if (s.ready) {
         setStatus("interrupted", "Lost the connection to speech recognition; reconnecting.");
@@ -361,7 +380,10 @@ export function createVoiceInput(
     mark(`speech recognition error: ${code}`);
     s.closed = true;
     if (session === s) session = null;
-    if (closing === s) closing = null;
+    if (closing === s) {
+      closing = null;
+      beginSession();
+    }
     s.ws.close();
     if (code === "busy") {
       setStatus("busy", message || "Another JARVIS page is listening. Typing still works here.");
@@ -370,14 +392,14 @@ export function createVoiceInput(
     } else {
       setStatus("interrupted", `${message} Listening again.`);
     }
-    if (wanted && !paused && !muted) scheduleRetry(beginSession);
+    if (wanted && !paused && !quiet()) scheduleRetry(beginSession);
   }
 
   function onFrame(pcm: ArrayBuffer) {
     framesCaptured++;
-    // After mute, only the frames the worklet flushes for the muted session.
-    const s = muted ? (closing && !closing.lastFrame ? closing : null) : session;
-    if (!s || (paused && !muted)) return;
+    // While quiet, only the frames the worklet flushes for the muted session.
+    const s = quiet() ? (closing && !closing.lastFrame ? closing : null) : session;
+    if (!s || (paused && !quiet())) return;
     s.outbox.push({ pcm, at: performance.now() });
     if (s === session && s.outbox.length > HOLD_FRAMES) {
       dropSession(s.ready
@@ -397,7 +419,7 @@ export function createVoiceInput(
       s.lastFrame = true;
       pump(s);
     }
-    if (muted) closeMicrophone();
+    if (off) closeMicrophone();
   }
 
   function pump(s: Session) {
@@ -438,8 +460,9 @@ export function createVoiceInput(
 
   /** Mute: stop taking audio, ask the worklet for its partial last frame,
    *  and finish the session with everything held, even if the recogniser
-   *  is still loading (it is sent once ready). The microphone is released
-   *  when the last frame arrives, or after a moment if it never does. */
+   *  is still loading (it is sent once ready). With the microphone off it
+   *  is released when the last frame arrives, or after a moment if it
+   *  never does. */
   function finishSession() {
     const s = session;
     session = null;
@@ -464,9 +487,25 @@ export function createVoiceInput(
     }
   }
 
+  /** Mute or mic off from sending: finish the session and read zero. */
+  function stopSending() {
+    cancelRetry();
+    finishSession();
+    hooks.onLevel?.(0);
+  }
+
+  /** The muted session keeps whatever it already has; nothing more is
+   *  flushed into it. */
+  function endMutedSession() {
+    if (closing && !closing.lastFrame) {
+      closing.lastFrame = true;
+      pump(closing);
+    }
+  }
+
   function interruptWith(message: string) {
     dropSession(message);
-    if (wanted && !paused && !muted) scheduleRetry(beginSession);
+    if (wanted && !paused && !quiet()) scheduleRetry(beginSession);
   }
 
   function scheduleRetry(what: () => void) {
@@ -487,7 +526,7 @@ export function createVoiceInput(
     start() {
       wanted = true;
       paused = false;
-      if (!muted) {
+      if (!off) {
         if (mic) beginSession(); else void openMicrophone();
       }
     },
@@ -502,35 +541,56 @@ export function createVoiceInput(
       if (paused) return;
       paused = true;
       dropSession();
-      if (!muted) setStatus("paused");
+      if (!quiet()) setStatus("paused");
     },
     resume() {
       if (!paused) return;
       paused = false;
-      if (!wanted || muted) return;
+      if (!wanted || quiet()) return;
       if (mic) beginSession(); else void openMicrophone();
     },
     mute() {
       if (muted) return;
+      const wasQuiet = quiet();
       muted = true;
-      cancelRetry();
-      finishSession();
-      setStatus("muted");
+      if (!wasQuiet) stopSending();
+      if (!off) setStatus("muted");
     },
     unmute() {
       if (!muted) return;
-      // The muted session keeps whatever it already has; the old microphone
-      // goes now rather than waiting for its last partial frame.
-      if (closing && !closing.lastFrame) {
-        closing.lastFrame = true;
-        pump(closing);
-      }
-      closeMicrophone();
       muted = false;
+      if (off) return;
+      endMutedSession();
       retryDelay = 1000;
-      // A fresh microphone and, once it is capturing, a fresh session.
-      if (wanted) void openMicrophone();
+      // The microphone is still open: only a fresh session, once the muted
+      // one has finished (see ws.onclose).
+      if (wanted) {
+        if (!mic) void openMicrophone(); else if (!closing) beginSession();
+      }
       if (paused) setStatus("paused");
+    },
+    micOff() {
+      if (off) return;
+      const wasQuiet = quiet();
+      off = true;
+      cancelRetry();
+      if (!wasQuiet) {
+        stopSending();               // released once its last frame is in
+      } else {
+        endMutedSession();
+        closeMicrophone();
+      }
+      setStatus("off");
+    },
+    micOn() {
+      if (!off) return;
+      off = false;
+      retryDelay = 1000;
+      // A fresh microphone and, unless muted, a fresh session once it is
+      // capturing.
+      if (wanted) void openMicrophone();
+      if (muted) setStatus("muted");
+      else if (paused) setStatus("paused");
     },
     interrupt(message: string) {
       interruptWith(message);
