@@ -211,9 +211,11 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel and the workflow monitor
+output, the tool channel, the workflow monitor and the team server connection
 (`subsystem_diagnostics.py`), and last this page's own connection, which only
-the page can judge (`frontend/src/subsystems.ts`). Each is `ok`, `degraded`,
+the page can judge (`frontend/src/subsystems.ts`). The team server row reads
+`team_client`'s status and is never worse than `degraded`, since JARVIS works
+without a team server; the left column shows it too (`TeamIndicator.tsx`). Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
 from records that already exist (the `messages` table, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the

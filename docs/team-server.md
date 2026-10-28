@@ -27,7 +27,7 @@ Missing or malformed values are reported by name in the log and `/health/ready` 
 - `GET /health/ready` — 200 when configuration is valid, MongoDB answers within the time limit and indexes exist. `reason: awaiting_bootstrap` means no team yet but bootstrap is configured. 503 reasons: `config_invalid`, `database_unavailable`, `recovery_required` (no team data and no bootstrap configured: restore or configure a fresh installation).
 - `GET /version` — service version, the Git commit the image was built from, API major version, the stable server ID and capabilities.
 
-Railway's health check only gates a rollout; it does not watch the service afterwards. A scheduled external probe of `/health/ready` with an alert is still to be arranged (see the release notes in the PR).
+Railway's health check only gates a rollout; it does not watch the service afterwards. The `team-server-health` workflow (`.github/workflows/team-server-health.yml`) asks staging and production `/health/ready` every 15 minutes, three tries each; a failed run is the alert, which GitHub emails to whoever last changed that schedule. Scheduled runs happen only once the workflow is on the default branch; run it by hand from the Actions tab to check it.
 
 ## Deploying
 
