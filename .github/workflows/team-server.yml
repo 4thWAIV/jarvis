@@ -1,0 +1,46 @@
+# The team server's own tests (team_server/), against a real MongoDB.
+# Separate from ci.yml: a different service with its own dependencies, and it
+# runs on Linux like its image.
+name: team-server
+
+on:
+  push:
+    paths: ["team_server/**", ".github/workflows/team-server.yml"]
+  pull_request:
+    paths: ["team_server/**", ".github/workflows/team-server.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    # 22.04, not latest: the ubuntu-24.04 image of 2026-10-25 has a Linux
+    # kernel (6.19+) that MongoDB 8.0 refuses to start on (SERVER-121912).
+    # Move back once GitHub's image has kernel 7.0.14 or later.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:8.0
+        ports: ["27017:27017"]
+        # The job waits for this before its steps, so the tests never start
+        # before MongoDB accepts connections.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1})'"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install -r team_server/requirements-test.txt
+      - name: Test
+        working-directory: team_server/tests
+        env:
+          TEAM_SERVER_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+        run: python -m pytest -v -p no:cacheprovider
+      - name: Image builds
+        run: |
+          echo '{"commit": "ci"}' > team_server/build_info.json
+          docker build -t team-server-ci team_server

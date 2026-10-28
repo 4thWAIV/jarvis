@@ -158,6 +158,21 @@ about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
 and he answers them on the Workflows view.
 
+## The team server
+`team_server/` is a separate service, not part of the JARVIS package: its own
+pinned `requirements.txt`, `Dockerfile`, tests (`team_server/tests`, against a
+real MongoDB) and API contract (`team_server/openapi.json`, checked by its
+tests). It gives one team GitHub sign-in, administrator-managed membership,
+device pairing, status, version and health; messaging and presence are not
+in it. Operating it is `docs/team-server.md`. JARVIS's side is
+`team_client.py` (the connection, its 30-second status poll and the
+Keychain store, through `security` with the secret on stdin) and
+`team_api.py` (`/api/team*`, the Settings Team section's routes). The
+session credential lives only in the Keychain; the saved connection
+(`data_paths.team_connection_path()`) holds the URL, the pinned server ID and
+non-secret status. Nothing on a voice or agent path waits for the team
+server. Tests never touch the Keychain (`conftest._never_touch_the_real_keychain`).
+
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
 `session_watch.read_subagents`, the one reader (the counts on the snapshot
@@ -196,9 +211,11 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel and the workflow monitor
+output, the tool channel, the workflow monitor and the team server connection
 (`subsystem_diagnostics.py`), and last this page's own connection, which only
-the page can judge (`frontend/src/subsystems.ts`). Each is `ok`, `degraded`,
+the page can judge (`frontend/src/subsystems.ts`). The team server row reads
+`team_client`'s status and is never worse than `degraded`, since JARVIS works
+without a team server; the left column shows it too (`TeamIndicator.tsx`). Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
 from records that already exist (the `messages` table, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
@@ -337,6 +354,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `work_mode.py` — Vestigial. `is_casual_question` is imported by `server.py`
   and called by nothing; the Haiku-vs-`claude -p` routing it classified for is
   gone. Left in place only because a test pins it
+- `team_client.py` / `team_api.py` — The connection to a team server and the
+  Team section's routes (see "The team server")
+- `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -401,7 +421,16 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   suite redirects it so no test reads or rewrites the developer's real
   configuration
 
+- `JARVIS_TEAM_DEV_SERVERS` (optional) — comma-separated exact origins
+  (e.g. `http://127.0.0.1:18080`) JARVIS may connect to as a team server
+  despite being plain http or on a private address. For running a team
+  server locally only
+
 ## Testing
+The team server has its own suite: `cd team_server/tests && pytest` with its
+own environment (`pip install -r team_server/requirements-test.txt`) and a
+MongoDB (`TEAM_SERVER_TEST_MONGODB_URI`, default `mongodb://127.0.0.1:27099`).
+
 Run the suite as:
 
 ```bash

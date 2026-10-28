@@ -450,6 +450,13 @@ def access_keys_path() -> Path:
     return data_dir() / "access-keys.json"
 
 
+def team_connection_path() -> Path:
+    """The saved team-server connection (team_client.py): server URL, pinned
+    server ID and the last non-secret status. The session credential is in
+    the macOS Keychain, never here."""
+    return data_dir() / "team-connection.json"
+
+
 def tool_token_path() -> Path:
     """The bearer token the MCP child uses to reach /internal/tool."""
     return brain_home() / "tool-token"

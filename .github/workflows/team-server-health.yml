@@ -1,0 +1,38 @@
+# The team server's outside health check: Railway's own health check only
+# gates a rollout, so this asks staging and production every 15 minutes
+# whether they are ready. A failed run is GitHub's alert: it emails the
+# person who last changed this schedule. Scheduled runs only happen on the
+# default branch.
+name: team-server-health
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ready:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        server:
+          - https://team-server-staging.up.railway.app
+          - https://team-server-production-0fbf.up.railway.app
+    steps:
+      - name: Ready
+        env:
+          SERVER: ${{ matrix.server }}
+        run: |
+          for attempt in 1 2 3; do
+            body=$(curl -sS -m 15 -w '\n%{http_code}' "$SERVER/health/ready") || body=$'\n000'
+            code=${body##*$'\n'}
+            echo "attempt $attempt: $code ${body%$'\n'*}"
+            [ "$code" = 200 ] && exit 0
+            sleep 20
+          done
+          echo "::error::$SERVER is not ready"
+          exit 1

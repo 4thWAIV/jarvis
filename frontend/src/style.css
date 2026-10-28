@@ -2537,3 +2537,53 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .subagent-transcript { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .subagent-transcript .workflow-agent { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .subagent-transcript .transcript-entries { max-height: none; flex: 1 1 0; min-height: 0; }
+
+/* -- Settings: Team (TeamSection.tsx) -------------------------------------- */
+.team { display: flex; flex-direction: column; gap: 12px; }
+/* The pairing code is read and compared by eye against the team server's
+   page, so it is light on a lit panel, never left to inherit a dark colour. */
+.team-pairing p { margin: 0 0 6px; font-size: 13px; color: rgba(255, 255, 255, 0.85); }
+.team-code {
+  display: inline-block;
+  font: 600 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 4px;
+  color: #f8fafc;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-radius: 8px;
+  padding: 8px 16px;
+  margin: 4px 0 10px;
+}
+.team-members h4 { margin: 8px 0; font-size: 13px; font-weight: 600; }
+.team-member-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.team-member {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px;
+  font-size: 13px;
+}
+.team-member-name { font-weight: 600; overflow-wrap: anywhere; }
+.team-member-meta { color: rgba(255, 255, 255, 0.5); font-size: 12px; }
+.team-member-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.team-confirm p { margin: 0 0 8px; font-size: 13px; }
+
+/* The left column's team server indicator (TeamIndicator.tsx): a dot and a
+   word under the microphone; a click opens the team server's detail. */
+#team-indicator {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.55);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#team-indicator:hover, #team-indicator:focus-visible { color: rgba(255, 255, 255, 0.85); }
+#team-indicator.state-ok .team-indicator-state { color: #34d399; }
+#team-indicator.state-degraded .team-indicator-state { color: #fbbf24; }

@@ -386,6 +386,12 @@ EXEMPT = {
         "it reads each running workflow's `state`, a fixed word the workflow "
         "store works out, only to count the quiet and running ones; the line it "
         "builds carries counts and goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.team_server": (
+        "it prints the team's name, the member's login and the client's own "
+        "error line, which come from the team server, into the team row's "
+        "summary for the Diagnostics tab and the left column's title, both "
+        "drawn as React text; the row is never worse than degraded, so "
+        "_watch_subsystems never names it to the brain or the speaker"),
     "server._finish_reading_aloud": (
         "it compares the capture's text with what was read, to decide whether "
         "it was heard unchanged, and prints neither: its note to the brain "

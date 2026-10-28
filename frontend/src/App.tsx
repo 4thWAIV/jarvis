@@ -9,6 +9,7 @@ import { Footer } from "./Footer";
 import { MenuControl } from "./MenuControl";
 import { BrainUsage } from "./BrainUsage";
 import { MicControl } from "./MicControl";
+import { TeamIndicator } from "./TeamIndicator";
 import { RayLane } from "./RayLane";
 import { RightPanel } from "./RightPanel";
 import { Settings } from "./Settings";
@@ -19,12 +20,14 @@ import { startJarvis } from "./jarvis";
 export function App() {
   return (
     <>
-      {/* The upper left: the orb, what he is doing, the microphone, and the
-          brains' weekly usage. The agents are a tab of the right-hand display. */}
+      {/* The upper left: the orb, what he is doing, the microphone, the team
+          server connection and the brains' weekly usage. The agents are a
+          tab of the right-hand display. */}
       <div id="left-column">
         <OrbControl onReady={startJarvis} />
         <StatusControl />
         <MicControl />
+        <TeamIndicator />
         <BrainUsage />
       </div>
 
