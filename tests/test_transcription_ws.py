@@ -5,6 +5,7 @@ boundary. No model weights and no microphone are involved."""
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -453,6 +454,17 @@ def test_bad_telemetry_is_ignored_and_listening_goes_on(client):
         ws.send_bytes(word("still"))
         ws.send_bytes(SILENCE)
         assert _until(ws, "final")[-1]["text"] == "still"
+
+
+def test_a_capture_in_the_first_seconds_after_boot_is_ready_not_a_reconnect(client, monkeypatch):
+    """time.monotonic() counts from boot on macOS: five seconds in, with no
+    failure yet, the first capture is still ready."""
+    monkeypatch.setattr(transcription_api, "time",
+                        SimpleNamespace(time=time.time, monotonic=lambda: 5.0))
+    with _open(client) as ws:
+        _ready(ws)
+    _, events = _recorded("ready")
+    assert [e.kind for e in events if e.kind in ("ready", "reconnect")] == ["ready"]
 
 
 def test_a_drop_is_recorded_with_its_cause_and_the_busiest_processes_then_the_reconnect(
