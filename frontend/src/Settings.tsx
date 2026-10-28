@@ -1,7 +1,7 @@
 /**
  * The Settings view, opened from the ⋮ menu (MenuControl.tsx): a large view
  * over the page with its sections listed down the left and stacked in one
- * scrolling body — Brains, Voice, You, System.
+ * scrolling body — Brains, Voice, You, Team, System.
  *
  * With no Fish Audio key set it opens by itself, two seconds after the page
  * loads, as first-time setup: Voice first, then You, then it closes.
@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { BrainsSection } from "./BrainsSection";
+import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
@@ -33,6 +34,7 @@ const SECTIONS = [
   { id: "brains", title: "Brains" },
   { id: "voice", title: "Voice" },
   { id: "you", title: "You" },
+  { id: "team", title: "Team" },
   { id: "system", title: "System" },
 ] as const;
 
@@ -132,6 +134,8 @@ export function Settings() {
             {shown("voice") && <VoiceSection status={status} statusFailed={statusFailed}
                                              reload={loadStatus} />}
             {shown("you") && <YouSection reload={loadStatus} />}
+            {shown("team") && <section className="settings-section" id="settings-team">
+              <h3>Team</h3><TeamSection /></section>}
             {shown("system") && <SystemSection status={status} statusFailed={statusFailed} />}
             {setup !== null && (
               <div className="setup-nav">

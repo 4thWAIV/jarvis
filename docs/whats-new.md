@@ -1,6 +1,6 @@
 # The new JARVIS workspace
 
-Updated 2026-10-26. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-10-28. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
 ## Conversation is the main view
 
@@ -13,6 +13,10 @@ The left column holds the orb, voice status, microphone controls and brain accou
 ## Mute and mic off
 
 Mute stops sending what the microphone hears, and a red "Muted" takes the level meter's place until it is pressed again. The microphone stays open while muted, so unmuting starts listening again without asking the browser for it; the browser's own recording indicator therefore stays on. The mic-off button beside it releases the microphone, which turns that indicator off, and shows "Mic off"; turning it on asks for the microphone again and takes longer than unmuting.
+
+## Connect to your team
+
+Settings has a Team section. Enter your team server's address and choose Sign in with GitHub: the team server's page opens, you sign in there and approve this Mac after checking the code JARVIS shows. JARVIS then shows the team, your role and when it last reached the server, checking every 30 seconds; it says so when the server can't be reached or your session has ended. The session is kept in your Keychain. Disconnect removes it and signs out on the server when it can be reached. Administrators manage members from the same section. Voice and agents carry on as before whether or not the team server is reachable. Team messaging and seeing who is online are not part of this yet. Running a team server is described in [the operator runbook](team-server.md).
 
 ## Agents and workflows stay in context
 

@@ -106,6 +106,7 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import team_api
 from jarvis import voice_diagnostics
 from jarvis import subsystem_diagnostics
 from jarvis import tts
@@ -2782,6 +2783,9 @@ async def lifespan(application: FastAPI):
     await start_brain_and_speech()
     await start_session_watcher()
     transcription_api.start()
+    # The team server connection (team_client.py): its own task, off every
+    # audio path; a team server that is down changes only its status.
+    team_api.start()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
@@ -2799,6 +2803,7 @@ async def lifespan(application: FastAPI):
 
     yield
 
+    await team_api.stop()
     await transcription_api.stop()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -2828,6 +2833,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 # See web_auth.OriginGuard for what replaces it.
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
+team_api.mount(app)
 
 
 # -- REST Endpoints --------------------------------------------------------
