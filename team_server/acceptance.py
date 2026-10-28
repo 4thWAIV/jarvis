@@ -384,7 +384,9 @@ class Harness:
             check("restart persistence", False, "skipped: no ACCEPT_RAILWAY_LINK_DIR")
             return
         before = await team_mod.get(self.db)
-        p = subprocess.run(["railway", "restart", "-s", "team-server", "-y"], cwd=self.link_dir,
+        # stdin closed: given a terminal-less stdin, the CLI otherwise waits.
+        p = subprocess.run(["railway", "restart", "-s", "team-server", "-y", "--json"],
+                           cwd=self.link_dir, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=120)
         if p.returncode != 0:
             check("restart persistence", False, f"railway restart exit {p.returncode}")
