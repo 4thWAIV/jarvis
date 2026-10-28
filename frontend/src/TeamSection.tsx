@@ -22,6 +22,7 @@ interface TeamInfo { name: string; member_count: number; member_limit: number }
 interface TeamStatus {
   state: "disconnected" | "pairing" | "connecting" | "connected" | "stale" | "signed_out";
   server_url: string | null;
+  last_server_url: string | null;
   team: TeamInfo | null;
   me: Me | null;
   last_contact_at: string | null;
@@ -82,6 +83,13 @@ export function TeamSection() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+
+  // Offer the last address again once a code expires or is cancelled, so
+  // starting over does not mean typing it again.
+  const lastUrl = status?.last_server_url ?? null;
+  useEffect(() => {
+    if (lastUrl) setUrl((typed) => typed || lastUrl);
+  }, [lastUrl]);
 
   // Re-read the backend's status while this view is open: quickly while a
   // pairing is waiting, otherwise at the backend's own pace.

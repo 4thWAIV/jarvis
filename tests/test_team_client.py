@@ -177,6 +177,15 @@ async def test_pairing_denied(conn, server):
 
 
 @pytest.mark.asyncio
+async def test_the_address_is_offered_again_after_a_pairing_ends(conn, server):
+    await conn.begin_pairing(URL, "JARVIS on test")
+    await conn.cancel_pairing()
+    snap = conn.snapshot()
+    assert snap["state"] == "disconnected" and snap["server_url"] is None
+    assert snap["last_server_url"] == URL
+
+
+@pytest.mark.asyncio
 async def test_not_a_team_server(conn, server):
     server.server_id = ""
     with pytest.raises(TeamError):
@@ -268,6 +277,7 @@ async def test_disconnect_revokes_remotely(conn, server):
     assert conn.store.get(SERVER_ID) is None
     assert not data_paths.team_connection_path().exists()
     assert conn.snapshot()["state"] == "disconnected"
+    assert conn.snapshot()["last_server_url"] == URL
 
 
 @pytest.mark.asyncio

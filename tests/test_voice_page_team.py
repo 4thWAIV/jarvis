@@ -17,7 +17,7 @@ pytestmark = pytest.mark.page
 
 PAIRING = {"user_code": "BCDF-GHJK", "verification_uri_complete": "https://team.example/device?code=BCDF-GHJK",
            "expires_at": "2099-01-01T00:00:00+00:00"}
-BASE = {"server_url": None, "server_id": None, "team": None, "me": None, "session_expires_at": None,
+BASE = {"server_url": None, "last_server_url": None, "server_id": None, "team": None, "me": None, "session_expires_at": None,
         "recent_auth_until": None, "last_contact_at": None, "last_error": None,
         "poll_interval_sec": 30, "pairing": None}
 CONNECTED = dict(BASE, state="connected", server_url="https://team.example", server_id="s",
@@ -79,6 +79,20 @@ async def test_connecting_shows_the_code_and_opens_the_approval_page(page_url):
         assert (await popup.value).url.startswith("https://team.example/device?code=BCDF-GHJK")
         await async_api.expect(page.locator(".team-code")).to_have_text("BCDF-GHJK")
         assert ("POST /connect", {"server_url": "https://team.example"}) in server.team_posts
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_after_a_code_expires_the_address_is_offered_again(page_url):
+    server = _TeamServer()
+    server.team = dict(BASE, state="disconnected", last_server_url="https://team.example",
+                       last_error="The pairing code expired. Start again.")
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        await async_api.expect(page.get_by_placeholder("https://team.example.com")).to_have_value(
+            "https://team.example")
+        await async_api.expect(page.get_by_role("button", name="Sign in with GitHub")).to_be_enabled()
         await browser.close()
 
 

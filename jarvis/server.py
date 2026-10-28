@@ -106,7 +106,7 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
-from jarvis import team_api
+from jarvis import team_api, team_client
 from jarvis import voice_diagnostics
 from jarvis import subsystem_diagnostics
 from jarvis import tts
@@ -6500,7 +6500,8 @@ def _subsystems() -> list:
     """Every subsystem, read now (blocking: it reads the database)."""
     return subsystem_diagnostics.gather(
         watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
-        has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at)
+        has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at,
+        team=team_client.connection.snapshot())
 
 
 @app.get("/api/diagnostics/subsystems")

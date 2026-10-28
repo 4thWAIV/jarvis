@@ -404,7 +404,7 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows"]
+                   "workflows", "team_server"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail"} for c in s["checks"])
@@ -483,3 +483,26 @@ def test_communications_down_and_back_are_said_once_each(server, monkeypatch):
     assert "what is down: session watcher" in notes[0]
     # ok>down, down>unknown, unknown>degraded, degraded>down: four changes.
     assert hints == [{"type": "subsystems"}] * 4
+
+
+# ── the team server ──────────────────────────────────────────────────────
+
+def test_team_server_connected_is_online_with_the_team_and_last_contact():
+    now = 1_000_000.0
+    last = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - 20))
+    s = sd.team_server({"state": "connected", "server_url": "https://team.example.com",
+                        "team": {"name": "Tokens"}, "me": {"login": "tistocks"},
+                        "last_contact_at": last}, now)
+    assert s.id == "team_server" and s.state == sd.OK
+    assert s.summary == "Online: Tokens as tistocks, last contact 20 s ago"
+
+
+def test_team_server_unreachable_is_degraded_never_down():
+    s = sd.team_server({"state": "stale", "server_url": "https://team.example.com"}, 0.0)
+    assert s.state == sd.DEGRADED and s.summary.startswith("Can't reach the team server")
+    assert sd.team_server({"state": "signed_out"}, 0.0).state == sd.DEGRADED
+
+
+def test_team_server_not_connected_is_idle():
+    assert sd.team_server({}, 0.0).state == sd.IDLE
+    assert sd.team_server({"state": "disconnected"}, 0.0).summary == "Not connected"

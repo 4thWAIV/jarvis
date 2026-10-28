@@ -25,7 +25,8 @@ export function useAnyDown(): boolean {
   return useSubsystems().list.some((s) => s.state === "down");
 }
 
-function open(id: string) {
+/** Open one subsystem's detail: voice input has its own view. */
+export function openSubsystemRow(id: string) {
   if (id === "voice_input") {
     openSubsystem.set(null);
     openDiagnostics.set(true);
@@ -44,7 +45,7 @@ export function SubsystemList() {
           <li key={s.id}>
             <button type="button" className={`subsystem-row state-${s.state}`} data-subsystem={s.id}
                     title={`${s.name}: ${STATE_WORDS[s.state]}. ${s.summary}`}
-                    disabled={s.id === "page"} onClick={() => open(s.id)}>
+                    disabled={s.id === "page"} onClick={() => openSubsystemRow(s.id)}>
               <span className={`subsystem-dot state-${s.state}`} aria-hidden="true" />
               <span className="subsystem-name">{s.name}</span>
               <span className="subsystem-state">{STATE_WORDS[s.state]}</span>

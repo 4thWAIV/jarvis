@@ -217,6 +217,9 @@ class TeamConnection:
         self.saved: Optional[dict] = None
         self.pairing: Optional[Pairing] = None
         self.last_error: Optional[str] = None
+        # The address last paired with or disconnected from, so the Team
+        # section can offer it again once a code expires or is cancelled.
+        self.last_server_url: Optional[str] = None
         self.last_failure_at: Optional[float] = None
         self.failures = 0
         self.signed_out = False
@@ -320,6 +323,7 @@ class TeamConnection:
         body = resp.json()
         await self.cancel_pairing()
         expires = _parse_ts(body.get("expires_at")) or (_now() + 600)
+        self.last_server_url = origin
         self.pairing = Pairing(
             server_url=origin, server_id=server_id, user_code=str(body["user_code"]),
             verification_uri_complete=str(body["verification_uri_complete"]),
@@ -500,6 +504,7 @@ class TeamConnection:
         if not self.saved:
             return {"remote": "none", "message": "JARVIS wasn't connected to a team server."}
         saved = self.saved
+        self.last_server_url = saved["server_url"]
         token = await self._secret()
         await self._forget_secret(saved["server_id"])
         self.saved = None
@@ -557,6 +562,7 @@ class TeamConnection:
         return {
             "state": self.state(),
             "server_url": saved.get("server_url") or (p.server_url if p else None),
+            "last_server_url": saved.get("server_url") or self.last_server_url,
             "server_id": saved.get("server_id"),
             "team": saved.get("team"),
             "me": saved.get("me"),

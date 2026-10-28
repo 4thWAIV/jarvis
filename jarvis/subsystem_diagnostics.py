@@ -18,6 +18,8 @@ heartbeats and outcomes kept here).
   - Voice input: voice_diagnostics.summary, judged, not repeated.
   - Brain, voice output (Fish Audio), the tool channel (the brain's MCP child
     to /internal/tool) and the workflow monitor.
+  - The team server: team_client's own status, never worse than degraded,
+    since JARVIS works without it.
 
 The page judges its own connection. `gather` does the reads; the server's
 route returns it, and the server's watch (`_watch_subsystems`) hints the
@@ -28,6 +30,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Optional
 
 from jarvis import data_paths, run_store, session_messages, voice_diagnostics, workflow_store
@@ -409,10 +412,45 @@ def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     return s
 
 
+def team_server(team: dict, now: float) -> Subsystem:
+    """The team server connection, from team_client's snapshot. Optional,
+    so at worst degraded: a team server that is gone never turns the
+    Diagnostics tab red."""
+    state = team.get("state")
+    since = ""
+    last = team.get("last_contact_at")
+    if last:
+        try:
+            since = age(now - datetime.fromisoformat(last.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            since = ""
+    server = team.get("server_url") or team.get("last_server_url") or ""
+    if state == "connected":
+        me = (team.get("me") or {}).get("login")
+        name = (team.get("team") or {}).get("name")
+        shown = (OK, "Online" + (f": {name}" if name else "") + (f" as {me}" if me else "")
+                     + (f", last contact {since} ago" if since else ""))
+    elif state == "stale":
+        shown = (DEGRADED, "Can't reach the team server"
+                           + (f"; last contact {since} ago" if since else ""))
+    elif state == "signed_out":
+        shown = (DEGRADED, team.get("last_error") or "Signed out; sign in again in Settings")
+    elif state == "connecting":
+        shown = (UNKNOWN, "Connecting")
+    elif state == "pairing":
+        shown = (IDLE, "Waiting for this Mac to be approved on the team server")
+    else:
+        shown = (IDLE, "Not connected")
+    checks = [Check("connection", "Connection", *shown)]
+    if server:
+        checks.append(Check("server", "Server", IDLE, server))
+    return Subsystem("team_server", "Team server", shown[0], shown[1], checks)
+
+
 # ── all of them ──────────────────────────────────────────────────────────
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
-           now: Optional[float] = None) -> list[Subsystem]:
+           team: Optional[dict] = None, now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
     now = time.time() if now is None else now
@@ -426,6 +464,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         voice_output(has_fish_key, voice_output_calls, now),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
+        team_server(team or {}, now),
     ]
 
 

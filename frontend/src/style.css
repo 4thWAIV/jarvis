@@ -2557,3 +2557,25 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .team-member-meta { color: rgba(255, 255, 255, 0.5); font-size: 12px; }
 .team-member-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .team-confirm p { margin: 0 0 8px; font-size: 13px; }
+
+/* The left column's team server indicator (TeamIndicator.tsx): a dot and a
+   word under the microphone; a click opens the team server's detail. */
+#team-indicator {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.55);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#team-indicator:hover, #team-indicator:focus-visible { color: rgba(255, 255, 255, 0.85); }
+#team-indicator.state-ok .team-indicator-state { color: #34d399; }
+#team-indicator.state-degraded .team-indicator-state { color: #fbbf24; }
