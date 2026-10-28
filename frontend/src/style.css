@@ -38,6 +38,9 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #050508;
+  /* Text that sets no colour of its own is light: left to the browser it
+     was black, and black on this background cannot be read. */
+  color: rgba(255, 255, 255, 0.85);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
@@ -157,7 +160,7 @@ html, body {
 }
 
 #status-text {
-  color: rgba(14, 165, 233, 0.5);
+  color: rgba(14, 165, 233, 0.85);
   font-size: 13px;
   letter-spacing: 2px;
   text-transform: lowercase;
@@ -622,7 +625,7 @@ html, body {
   border: 1px solid rgba(14, 165, 233, 0.15);
   border-radius: 8px;
   background: rgba(14, 165, 233, 0.05);
-  color: rgba(14, 165, 233, 0.4);
+  color: rgba(14, 165, 233, 0.65);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -659,7 +662,7 @@ html, body {
   padding: 8px 16px;
   border: none;
   background: none;
-  color: rgba(14, 165, 233, 0.5);
+  color: rgba(14, 165, 233, 0.75);
   font-size: 12px;
   letter-spacing: 1px;
   text-align: left;
@@ -879,7 +882,7 @@ html, body {
   font-weight: 500;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .settings-field {
@@ -940,7 +943,7 @@ html, body {
   margin: 6px 0 0 0;
   font-size: 11px;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .settings-restart-notice {
@@ -1034,7 +1037,7 @@ html, body {
 .status-detail {
   margin-left: auto;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .sysinfo-grid {
@@ -1145,7 +1148,7 @@ html, body {
   font: inherit;
   font-size: 11px;
   letter-spacing: 1px;
-  color: rgba(14, 165, 233, 0.45);
+  color: rgba(14, 165, 233, 0.65);
   background: transparent;
   border: 1px solid rgba(14, 165, 233, 0.2);
   cursor: pointer;
