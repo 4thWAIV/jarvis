@@ -1,5 +1,6 @@
 /**
- * The microphone control, directly below the orb: the level meter, mute, and
+ * The microphone control, directly below the orb: the level meter (a red
+ * "Muted" or "Mic off" in its place while nothing is sent), mute, mic off, and
  * the health dot while voice input has a problem (loading, blocked, busy in
  * another tab, interrupted, unavailable, or the recogniser falling behind).
  * The words are in the dot's title and in the Diagnostics view's Messages,
@@ -7,13 +8,14 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { inputStatus } from "./mic";
+import { inputStatus, micMuted, micOff } from "./mic";
 import { MicMeter } from "./MicMeter";
+import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
 import { health, HEALTH_WORDS, openDiagnostics } from "./voiceHealth";
 import type { InputStatus } from "./voiceInput";
 
-const QUIET_STATES = new Set(["listening", "paused", "muted"]);
+const QUIET_STATES = new Set(["listening", "paused", "muted", "off"]);
 const LOST_STATES = new Set(["interrupted", "unavailable", "permission"]);
 
 /** What the dot says, and whether words were lost, or null when all is well. */
@@ -41,11 +43,20 @@ function HealthDot() {
   );
 }
 
+/** The meter, or what stands in for it while nothing is sent. */
+function MicLevel() {
+  const muted = useSyncExternalStore(micMuted.subscribe, micMuted.get);
+  const off = useSyncExternalStore(micOff.subscribe, micOff.get);
+  if (!muted && !off) return <MicMeter />;
+  return <span id="mic-silenced">{off ? "Mic off" : "Muted"}</span>;
+}
+
 export function MicControl() {
   return (
     <div id="mic-control">
-      <MicMeter />
+      <MicLevel />
       <MuteButton />
+      <MicOffButton />
       <HealthDot />
     </div>
   );

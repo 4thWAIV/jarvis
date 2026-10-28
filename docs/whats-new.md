@@ -10,6 +10,10 @@ The left column holds the orb, voice status, microphone controls and brain accou
 
 ![Conversation and agents in the current interface, using fictional sample data.](images/workspace-conversation.png)
 
+## Mute and mic off
+
+Mute stops sending what the microphone hears, and a red "Muted" takes the level meter's place until it is pressed again. The microphone stays open while muted, so unmuting starts listening again without asking the browser for it; the browser's own recording indicator therefore stays on. The mic-off button beside it releases the microphone, which turns that indicator off, and shows "Mic off"; turning it on asks for the microphone again and takes longer than unmuting.
+
 ## Agents and workflows stay in context
 
 The agent interface covers Claude Code and Codex sessions. Threads bring messages and replies together instead of requiring the user to reconstruct an exchange from separate announcements.
