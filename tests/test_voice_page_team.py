@@ -78,6 +78,10 @@ async def test_connecting_shows_the_code_and_opens_the_approval_page(page_url):
             await page.get_by_role("button", name="Sign in with GitHub").click()
         assert (await popup.value).url.startswith("https://team.example/device?code=BCDF-GHJK")
         await async_api.expect(page.locator(".team-code")).to_have_text("BCDF-GHJK")
+        # Read by eye against the team server's page: light text, not the
+        # panel's dark default.
+        colour = await page.evaluate("getComputedStyle(document.querySelector('.team-code')).color")
+        assert colour == "rgb(248, 250, 252)", colour
         assert ("POST /connect", {"server_url": "https://team.example"}) in server.team_posts
         await browser.close()
 
