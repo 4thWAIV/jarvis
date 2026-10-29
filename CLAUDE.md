@@ -173,6 +173,16 @@ session credential lives only in the Keychain; the saved connection
 (`data_paths.team_connection_path()`) holds the URL, the pinned server ID and
 non-secret status. Nothing on a voice or agent path waits for the team
 server. Tests never touch the Keychain (`conftest._never_touch_the_real_keychain`).
+Staging alone has a test sign-in (`team_server/teamserver/staging_sessions.py`,
+`POST /api/v1/test/device-sessions`): with the test key as bearer it gives an
+ordinary device session to the synthetic member `test-a` or `test-b`
+(GitHub IDs -1 and -2, never an administrator), so a workflow can pair test
+backends with no GitHub login and no Approve click. The route exists only when
+`RAILWAY_ENVIRONMENT_NAME` is `staging` and `TEST_SESSION_KEY_SHA256` is set;
+the server refuses to start with that digest anywhere else, a wrong or missing
+key gets the same 404 as no route, and it is not in `openapi.json`. The key
+itself is only in this Mac's Keychain; rotating or removing it is in
+`docs/team-server.md`.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -194,7 +204,11 @@ its own health when the snapshot is built. The page's Network tab
 (`NetworkPanel.tsx`, one `NetworkTile.tsx` per node, `NodeView.tsx` in the
 centre) and the left column's Team Server tile (`TeamServerTile.tsx`,
 `TeamServerView.tsx`) read only that snapshot (`network.ts`); nothing local
-is merged in, this machine's own tile included.
+is merged in, this machine's own tile included. The Team Server tile's word
+is decided in one place, `network.readiness`: signed out is Sign in;
+otherwise the network exchange decides, not the 30-second status poll, so
+no snapshot or a stale one is No contact (never Ready), a database the team
+server says is down is Not ready, and a fresh snapshot is Ready.
 
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
@@ -399,6 +413,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `team_server/teamserver/staging_sessions.py` — The staging-only test sign-in
+  (see "The team server")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live

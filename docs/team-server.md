@@ -2,7 +2,7 @@
 
 The team server (`team_server/`) is a small FastAPI service, deployed on its own, that gives one team GitHub sign-in, administrator-managed membership and a way to connect JARVIS to it. It is separate from JARVIS: its own dependencies (`team_server/requirements.txt`), its own image (`team_server/Dockerfile`) and its own tests. JARVIS keeps working, voice and agents included, when the team server is down or was never set up.
 
-The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health. Team messaging and live presence are not in it; `/version` lists exactly what it offers.
+The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Team messaging is not in it; `/version` lists exactly what it offers (`network` among its capabilities).
 
 ## Configuration
 
@@ -18,6 +18,8 @@ Set in the hosting environment (Railway variables). Never put values in files or
 | `TEAM_NAME` | for bootstrap | The team's name, used once, when the team is created. |
 | `INITIAL_ADMIN_GITHUB_ID` | for bootstrap | Numeric GitHub user ID of the first administrator. Remove it after the team exists. |
 | `TEAM_SERVER_DEV_INSECURE` | never in hosting | `1` allows a plain-http loopback `PUBLIC_BASE_URL` for local development. |
+| `TEST_SESSION_KEY_SHA256` | staging only | SHA-256 hex digest of the staging test key; turns on the test sign-in (below). Set anywhere but staging, the server refuses to start with `config_invalid`. |
+| `RAILWAY_ENVIRONMENT_NAME` | set by Railway | The Railway environment's name. The test sign-in exists only when it is `staging`. |
 
 Missing or malformed values are reported by name in the log and `/health/ready` answers 503 `config_invalid`; values are never printed.
 
@@ -28,6 +30,45 @@ Missing or malformed values are reported by name in the log and `/health/ready` 
 - `GET /version` — service version, the Git commit the image was built from, API major version, the stable server ID and capabilities.
 
 Railway's health check only gates a rollout; it does not watch the service afterwards. The `team-server-health` workflow (`.github/workflows/team-server-health.yml`) asks staging and production `/health/ready` every 15 minutes, three tries each; a failed run is the alert, which GitHub emails to whoever last changed that schedule. Scheduled runs happen only once the workflow is on the default branch; run it by hand from the Actions tab to check it.
+
+## The network
+
+Every paired JARVIS sends `POST /api/v1/network/nodes/self` every five seconds with its device session, and the answer is the whole team's network snapshot, so one request carries both directions. The update holds the node's ID, device name and version, the machine's CPU and memory, each brain's account as a keyed reference with its quota windows, and the last human activity as a sequence number, an age and a source. It holds no prompts, transcripts, commands, paths, credentials or account emails, and every field is bounded (a value out of range is 422).
+
+- A node belongs to the member whose session first published it; nobody else can publish under its ID (403), and a member has at most 16 nodes.
+- An update from an older boot of the node, or one whose sequence is not above the last stored, is refused with 409. A repeated activity sequence never moves the human time.
+- Presence is worked out when the snapshot is built: online within 15 s of the last update, delayed up to 45 s, then offline. A suspended or departed member's nodes are not in the snapshot.
+- A node that has sent nothing for 30 days is removed.
+- The snapshot also carries the server's own health: a database ping every five seconds, the last node write that succeeded, the last database error by class name only, uptime, CPU and memory, and a short history. When the database cannot be reached the route answers 503 with that health.
+- The team's account key (random, 256 bits) is made the first time a paired JARVIS asks for its status and is kept on the team record. It is given only to device sessions, in `GET /api/v1/status`, and is never logged. JARVIS keys its brain account references with it, so one subscription on two machines counts once.
+
+## Staging test sign-in
+
+Staging has a test sign-in so a workflow can pair test backends with no GitHub login and no Approve click. Production can never have it.
+
+- `POST /api/v1/test/device-sessions` with `Authorization: Bearer <test key>` and the body `{"member": "test-a" | "test-b", "device_name": "..."}` returns an ordinary device session, which JARVIS stores in the Keychain exactly as after a pairing.
+- `test-a` and `test-b` are ordinary members (never administrators) with GitHub IDs -1 and -2, which no real account has. They are added on first use. Their sessions last 12 hours and end with **End sessions** or `revoke-all-sessions` like anyone's.
+- The route exists only when `RAILWAY_ENVIRONMENT_NAME` is `staging` and `TEST_SESSION_KEY_SHA256` is set. A wrong or missing key gets the same 404 as a route that does not exist. The route is not in `openapi.json`, and every use is written to the audit history before the session is issued.
+- The key is 256 random bits. It is kept only in the Keychain of the Mac that runs the tests (service "JARVIS team server staging test key", account "staging"); Railway holds only its SHA-256 digest.
+
+**Rotating the key.** Make a new key straight into the Keychain (through `security -i` on stdin, so it is never printed or on a command line), then print only its digest:
+
+```sh
+python3 -c 'import secrets; print("add-generic-password -U -s \"JARVIS team server staging test key\" -a staging -w " + secrets.token_urlsafe(32))' \
+  | security -i
+security find-generic-password -s "JARVIS team server staging test key" -a staging -w \
+  | tr -d '\n' | shasum -a 256 | cut -d' ' -f1
+```
+
+Set the printed digest as `TEST_SESSION_KEY_SHA256` in the staging environment only (Railway redeploys). The old key gets 404 from then on. Sessions it issued earlier keep their 12 hours; end them with **End sessions** for `test-a` and `test-b` if the old key may have leaked.
+
+**Removing the test sign-in.** Delete `TEST_SESSION_KEY_SHA256` from staging (Railway redeploys; the route is then gone and answers 404), end the test members' sessions, and delete the key from the Keychain:
+
+```sh
+security delete-generic-password -s "JARVIS team server staging test key" -a staging
+```
+
+The test members stay in the roster as ordinary members; suspend them from Settings → Team → Manage members if wanted (a member who has signed in cannot be removed). Their offline nodes are removed after 30 days.
 
 ## Deploying
 
@@ -64,6 +105,7 @@ Sessions last 12 hours and are never refreshed; people sign in again after that.
 
 - **GitHub client secret**: generate a new secret on the OAuth App, set `GITHUB_CLIENT_SECRET` in the environment (Railway redeploys), confirm a sign-in works, then delete the old secret on GitHub. Existing sessions are unaffected.
 - **MongoDB password**: change the restricted user's password in Atlas, update `MONGODB_URI`, confirm `/health/ready` is 200.
+- **Staging test key**: see "Staging test sign-in" above.
 - **Ending every session** (suspected leak): run `revoke-all-sessions` below.
 
 ## Recovery
@@ -88,4 +130,4 @@ Never restore over the shared cluster. Restore into an isolated target (a separa
 
 ## What is stored
 
-One MongoDB database: `installation` (server ID), `team` (the team and its roster, one document), `sessions` (SHA-256 of each session credential, never the credential), `oauth_states` and `device_authorizations` (short-lived, one-use), `audit` (administrative history, kept 90 days). No GitHub tokens are kept. Logs record method, path and status only, never query strings, codes or tokens.
+One MongoDB database: `installation` (server ID), `team` (the team and its roster, one document), `sessions` (SHA-256 of each session credential, never the credential), `oauth_states` and `device_authorizations` (short-lived, one-use), `audit` (administrative history, kept 90 days), `network_nodes` (each JARVIS backend's current record, removed 30 days after its last update) and `network_meta` (the snapshot's revision). The team record also holds the network account key. No GitHub tokens are kept. Logs record method, path and status only, never query strings, codes or tokens.
