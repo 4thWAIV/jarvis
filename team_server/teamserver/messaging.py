@@ -570,6 +570,23 @@ class Messaging:
 
 # -- the routes -----------------------------------------------------------------------
 
+def _inline(schema: dict) -> dict:
+    """A model's JSON schema with its own definitions written in place, for
+    a body the route reads itself (so FastAPI does not document it)."""
+    defs = schema.pop("$defs", {})
+
+    def walk(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref", "")
+            if ref.startswith("#/$defs/"):
+                return walk(dict(defs[ref.rsplit("/", 1)[-1]]))
+            return {k: walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+    return walk(schema)
+
+
 async def _bounded_body(request: Request, limit: int) -> bytes:
     """The body, counted as it is read: a Content-Length that lies, or none
     (a chunked body), cannot get more than `limit` bytes past this."""
@@ -602,7 +619,10 @@ def mount(app: FastAPI, *, device: Callable, enabled: bool,
                                      faults=faults, lease_sec=lease_sec)
         return st.messaging
 
-    @app.post(PREFIX, response_model=SendResult, responses=responses)
+    send_body = {"requestBody": {"required": True, "content": {"application/json": {
+        "schema": _inline(SendRequest.model_json_schema())}}}}
+
+    @app.post(PREFIX, response_model=SendResult, responses=responses, openapi_extra=send_body)
     async def send_message(request: Request, svc: Messaging = Depends(service),
                            p: sessions.Principal = Depends(device)):
         req = parse_send(await _bounded_body(request, MESSAGE_REQUEST_MAX_BYTES))
