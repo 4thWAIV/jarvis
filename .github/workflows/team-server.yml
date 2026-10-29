@@ -3,12 +3,19 @@
 # runs on Linux like its image.
 name: team-server
 
+# Like ci.yml: once per pull request, on push only for main, and a newer
+# commit cancels a branch's older run.
 on:
   push:
+    branches: [main]
     paths: ["team_server/**", ".github/workflows/team-server.yml"]
   pull_request:
     paths: ["team_server/**", ".github/workflows/team-server.yml"]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:

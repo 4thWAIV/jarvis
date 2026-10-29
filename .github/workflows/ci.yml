@@ -1,4 +1,10 @@
-# Test JARVIS and package it, on every push, every pull request, and by hand.
+# Test JARVIS and package it: on every pull request, on every push to main,
+# and by hand. Branch work runs once, through its pull request; a push to a
+# branch without one runs nothing until the pull request is opened (or it is
+# started by hand). A newer commit cancels a branch's older run; main's runs
+# always finish, since the live checkout waits for main's CI to pass.
+# Changes only under team_server/ or docs/ skip this workflow: the team
+# server has its own (team-server.yml), and docs change no code.
 #
 # macOS, not Ubuntu, on purpose: JARVIS is a macOS-only project, and while
 # every macOS-specific subprocess (osascript, screencapture, sips, claude) is
@@ -20,8 +26,15 @@ name: ci
 
 on:
   push:
+    branches: [main]
+    paths-ignore: ["team_server/**", "docs/**", ".github/workflows/team-server*.yml"]
   pull_request:
+    paths-ignore: ["team_server/**", "docs/**", ".github/workflows/team-server*.yml"]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
