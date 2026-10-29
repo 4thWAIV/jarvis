@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import brain_accounts, brain_provider, brains_config, usage_store
+from jarvis import brain_accounts, brain_provider, brains_config, data_paths, usage_store
 from jarvis.brain_provider import Account
 
 KEY = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
@@ -166,12 +166,44 @@ async def test_the_brain_it_starts_with_is_the_brain_and_the_others_standby(acco
     assert roles == {"anthropic": "standby", "openai": "brain"}
 
 
+def node_ref(key=KEY, provider="anthropic"):
+    return base64.urlsafe_b64encode(hmac.new(
+        base64.urlsafe_b64decode(key + "="), f"{provider}\nnode:{data_paths.node_id()}".encode(),
+        hashlib.sha256).digest()).rstrip(b"=").decode()
+
+
+def test_a_brain_not_read_yet_is_this_node_s_own_and_not_measured():
+    record_usage()
+    [brain] = brain_accounts.brains(KEY, now=NOW)
+    assert brain["account_ref"] == node_ref()
+    assert brain["state"] == "not_measured"
+
+
 @pytest.mark.asyncio
-async def test_a_brain_whose_account_is_not_known_is_left_out(accounts):
-    assert brain_accounts.brains(KEY, now=NOW) == [], "never checked"
-    accounts["anthropic"] = Account(False, "", "Not signed in.")
+@pytest.mark.parametrize("said", [
+    Account(False, "", "Not signed in."),
+    Account(False, "", "Expired.", email=EMAIL),
+    Account(True, "", "Signed in with an API key.")])
+async def test_a_brain_with_no_signed_in_email_is_this_node_s_own_and_sign_in_needed(accounts, said):
+    record_usage()
+    accounts["anthropic"] = said
     await brain_accounts.refresh()
-    assert brain_accounts.brains(KEY, now=NOW) == [], "no email to make a reference from"
+    [brain] = brain_accounts.brains(KEY, now=NOW)
+    assert brain["account_ref"] == node_ref()
+    assert brain["state"] == "sign_in_needed"
+
+
+@pytest.mark.asyncio
+async def test_a_brain_with_no_email_is_never_merged_across_data_folders(accounts, monkeypatch, tmp_path):
+    refs = []
+    for folder in ("a", "b"):
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / folder))
+        monkeypatch.setattr(brain_accounts, "_accounts", {})
+        accounts["anthropic"] = Account(False, "", "Not signed in.")
+        await brain_accounts.refresh()
+        refs.append(brain_accounts.brains(KEY, now=NOW)[0]["account_ref"])
+    assert refs[0] != refs[1]
+    assert brain_accounts.brains(OTHER_KEY, now=NOW)[0]["account_ref"] != refs[1]
 
 
 @pytest.mark.asyncio

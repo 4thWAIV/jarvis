@@ -12,6 +12,12 @@ brains_config, each with
   state        "sign_in_needed" when the last sign-in check said so,
                "measured" when the usage record has a current seven-day
                window, else "not_measured"
+
+A brain with no known signed-in email (signed out, signed in with an API
+key, or not read yet) has the same HMAC over provider + "\\n" + "node:" +
+node ID instead: shown on this machine only, never merged with another
+machine's brain. Its state is "sign_in_needed", or "not_measured" before
+the first read.
   windows      the usage record's current windows, with their original
                observation time as `age_ms`; the seven-day one's expected
                share from usage_store.week(), the five-hour one's None
@@ -35,7 +41,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from jarvis import brain_provider, brains_config, usage_store
+from jarvis import brain_provider, brains_config, data_paths, usage_store
 from jarvis.brain_provider import Account
 
 log = logging.getLogger("jarvis.brain_accounts")
@@ -60,10 +66,19 @@ async def refresh(name: Optional[str] = None) -> None:
                         f"({type(e).__name__})")
 
 
-def account_ref(key: bytes, provider: str, email: str, org_id: Optional[str]) -> str:
-    said = f"{provider}\n{email.lower()}\n{org_id or ''}".encode()
-    digest = hmac.new(key, said, hashlib.sha256).digest()
+def _keyed(key: bytes, said: str) -> str:
+    digest = hmac.new(key, said.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def account_ref(key: bytes, provider: str, email: str, org_id: Optional[str]) -> str:
+    """The reference one subscription has on every machine of the team."""
+    return _keyed(key, f"{provider}\n{email.lower()}\n{org_id or ''}")
+
+
+def node_ref(key: bytes, provider: str, node_id: str) -> str:
+    """The reference of a brain whose account is not known: this node's own."""
+    return _keyed(key, f"{provider}\nnode:{node_id}")
 
 
 def _key_bytes(key: Optional[str]) -> Optional[bytes]:
@@ -95,16 +110,29 @@ def _windows(service: str, week: dict, now: float) -> list[dict]:
     return out[:MAX_WINDOWS]
 
 
-def _state(account: Account, week: dict) -> str:
-    if not account.signed_in:
+def _known(account: Optional[Account]) -> bool:
+    """Whether the last check named a signed-in email."""
+    return account is not None and account.signed_in and bool(account.email)
+
+
+def _state(account: Optional[Account], week: dict) -> str:
+    if account is None:
+        return "not_measured"
+    if not _known(account):
         return "sign_in_needed"
     return "measured" if week["measured"] else "not_measured"
+
+
+def _ref(secret: bytes, provider: str, account: Optional[Account]) -> str:
+    if _known(account):
+        return account_ref(secret, provider, account.email, account.org_id)
+    return node_ref(secret, provider, data_paths.node_id())
 
 
 def brains(key: Optional[str], *, now: Optional[float] = None) -> list[dict]:
     """The node update's `brains`: empty without the team's key. A brain
     whose signed-in account is not known (never checked, or no email) has
-    no reference to give and is left out."""
+    this node's own reference."""
     secret = _key_bytes(key)
     if secret is None:
         return []
@@ -113,10 +141,8 @@ def brains(key: Optional[str], *, now: Optional[float] = None) -> list[dict]:
     out = []
     for name in cfg["brains"]:
         account = _accounts.get(name)
-        if account is None or not account.email:
-            continue
         week = usage_store.week(now=at, service=name)
-        out.append({"account_ref": account_ref(secret, name, account.email, account.org_id),
+        out.append({"account_ref": _ref(secret, name, account),
                     "provider": name,
                     "role": "brain" if name == cfg["default"] else "standby",
                     "state": _state(account, week),
