@@ -2668,10 +2668,14 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .health-row.unknown { color: #fbbf24; }
 .health-row.unknown > i { background: none; border: 1.5px solid currentColor; }
 .health-row.unknown strong b { color: #fde68a; }
-@container (max-width: 222px) {
+/* The tile is the container and has no padding of its own, so its size is
+   its width less the 2px of border; the content (less the body's 8px and
+   10px padding) is 18px less again: 205px of content is 223px here, 180px
+   is 198px. */
+@container (max-width: 223px) {
   .health-row .ago { display: none; }
 }
-@container (max-width: 197px) {
+@container (max-width: 198px) {
   #team-server-tile .health-row { grid-template-columns: 6px minmax(0, 1fr) auto; gap: 3px; }
   #team-server-tile .health-row > i { width: 6px; height: 6px; }
   #team-server-tile .health-row.bad > i { width: 4px; height: 4px; }
