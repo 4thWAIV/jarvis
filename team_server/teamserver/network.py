@@ -394,8 +394,12 @@ async def watch(health: HealthMonitor, db: AsyncDatabase) -> None:
 
 class ResourceSampler:
     """CPU busy and memory used of the container this server runs in when
-    cgroup v2 sets it a memory limit, else of the Linux host; unsupported
-    where neither can be read. CPU is unknown until the second sample."""
+    cgroup v2 sets it a CPU or a memory limit, else of the Linux host;
+    unsupported where neither can be read. CPU is unknown until the second
+    sample. The same rule as JARVIS's own reader (jarvis/host_resources.py
+    LinuxReader): either limit makes the scope the container, a container
+    with no memory limit has the host's memory as its total, and used memory
+    is clamped to the total."""
 
     def __init__(self, root: Path = Path("/"),
                  monotonic: Callable[[], float] = time.monotonic):
@@ -437,33 +441,42 @@ class ResourceSampler:
         path = self.root.joinpath(*parts)
         return path.read_text() if path.is_file() else None
 
+    def _limit(self, name: str) -> Optional[list[str]]:
+        """A cgroup v2 limit file's fields, or None when there is no limit."""
+        text = self._read("sys/fs/cgroup", name)
+        fields = text.split() if text else []
+        return None if not fields or fields[0] == "max" else fields
+
     def _container(self):
         """(scope, busy s, capacity s, used, total) from cgroup v2, or None
-        when this process has no memory limit there."""
-        limit = self._read("sys/fs/cgroup/memory.max")
-        if limit is None or limit.strip() == "max":
+        when this process has neither a CPU nor a memory limit there."""
+        cpu_limit, memory_limit = self._limit("cpu.max"), self._limit("memory.max")
+        if cpu_limit is None and memory_limit is None:
             return None
-        total = int(limit)
+        total = int(memory_limit[0]) if memory_limit else self._host_memory()[1]
         stat = dict(line.split() for line in self._read("sys/fs/cgroup/memory.stat").splitlines())
-        used = int(self._read("sys/fs/cgroup/memory.current")) - int(stat.get("inactive_file", 0))
+        current = int(self._read("sys/fs/cgroup/memory.current"))
+        used = min(max(current - int(stat.get("inactive_file", 0)), 0), total)
         cpu = dict(line.split() for line in self._read("sys/fs/cgroup/cpu.stat").splitlines())
         busy = int(cpu["usage_usec"]) / 1e6
-        cpus = os.cpu_count() or 1
-        quota, period = (self._read("sys/fs/cgroup/cpu.max") or "max 100000").split()[:2]
-        if quota != "max":
-            cpus = min(cpus, int(quota) / int(period))
+        cpus = (int(cpu_limit[0]) / int(cpu_limit[1]) if cpu_limit
+                else os.cpu_count() or 1)
         return "container", busy, self.monotonic() * cpus, used, total
+
+    def _host_memory(self) -> tuple[int, int]:
+        """(used, total) bytes from /proc/meminfo: total less available."""
+        mem = {line.split(":")[0]: int(line.split()[1]) * 1024
+               for line in self._read("proc/meminfo").splitlines() if line.strip()}
+        total = mem["MemTotal"]
+        return total - mem["MemAvailable"], total
 
     def _host(self):
         """(scope, busy jiffies, total jiffies, used, total) from /proc, or
         None where there is no /proc."""
         stat = self._read("proc/stat")
-        meminfo = self._read("proc/meminfo")
-        if stat is None or meminfo is None:
+        if stat is None or self._read("proc/meminfo") is None:
             return None
         fields = [int(v) for v in stat.splitlines()[0].split()[1:9]]
         idle = fields[3] + fields[4]
-        mem = {line.split(":")[0]: int(line.split()[1]) * 1024
-               for line in meminfo.splitlines() if line.strip()}
-        total = mem["MemTotal"]
-        return "host", sum(fields) - idle, sum(fields), total - mem["MemAvailable"], total
+        used, total = self._host_memory()
+        return "host", sum(fields) - idle, sum(fields), used, total

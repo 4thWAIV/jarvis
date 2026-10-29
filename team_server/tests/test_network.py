@@ -474,6 +474,29 @@ def test_container_resources_with_scope(tmp_path):
     assert second.age_ms == 2000
 
 
+def test_a_cpu_limit_alone_is_the_container_with_the_hosts_memory(tmp_path):
+    """Either limit makes the scope the container (as host_resources does);
+    with no memory limit the total is the host's, and used never exceeds it."""
+    cg = "sys/fs/cgroup/"
+    write(tmp_path, cg + "memory.max", "max\n")
+    write(tmp_path, cg + "memory.current", "5000000\n")
+    write(tmp_path, cg + "memory.stat", "inactive_file 1000\n")
+    write(tmp_path, cg + "cpu.max", "100000 100000\n")
+    write(tmp_path, cg + "cpu.stat", "usage_usec 0\n")
+    write(tmp_path, "proc/meminfo", "MemTotal: 1000 kB\nMemAvailable: 400 kB\n")
+    write(tmp_path, "proc/stat", "cpu  100 0 100 700 100 0 0 0 0 0\n")
+    mono = Mono()
+    s = network.ResourceSampler(root=tmp_path, monotonic=mono)
+    s.sample()
+    mono.t += 4
+    write(tmp_path, cg + "cpu.stat", "usage_usec 1000000\n")    # 1 s busy of 1 cpu x 4 s
+    s.sample()
+    r = s.resources()
+    assert r.scope == "container" and r.cpu_percent == 25.0
+    assert r.memory_total_bytes == 1000 * 1024
+    assert r.memory_used_bytes == 1000 * 1024                   # clamped to the total
+
+
 def test_host_resources_from_proc(tmp_path):
     write(tmp_path, "proc/meminfo", "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 400 kB\n")
     write(tmp_path, "proc/stat", "cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 1 1 1 1\n")
