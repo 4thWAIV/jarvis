@@ -10,13 +10,15 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { graphicsTrouble } from "./orb";
 import { openSubsystem, sessionsConnected, STATE_WORDS, subsystems, withPage, type Subsystem } from "./subsystems";
 import { openDiagnostics } from "./voiceHealth";
 
 export function useSubsystems(): { list: Subsystem[]; error: string | null; read: boolean } {
   const live = useSyncExternalStore(subsystems.subscribe, subsystems.get);
   const socket = useSyncExternalStore(sessionsConnected.subscribe, sessionsConnected.get);
-  return { list: withPage(live.value?.subsystems, live.error, socket), error: live.error,
+  const graphics = useSyncExternalStore(graphicsTrouble.subscribe, graphicsTrouble.get);
+  return { list: withPage(live.value?.subsystems, live.error, socket, graphics), error: live.error,
            read: live.value !== null };
 }
 

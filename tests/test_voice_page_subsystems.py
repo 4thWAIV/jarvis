@@ -156,3 +156,51 @@ async def test_a_page_that_cannot_reach_jarvis_says_so(page_url):
         assert "Can't read JARVIS" in await page.text_content(f"{row} .subsystem-summary")
         assert "alert" in await page.get_attribute(".right-tabs [aria-label='Diagnostics']", "class")
         await browser.close()
+
+
+async def _open_with(p, page_url, args):
+    try:
+        browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS + args)
+    except Exception as e:                                  # pragma: no cover
+        pytest.skip(f"no headless Chromium: {e}")
+    voice = _Voice()
+    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    await page.add_init_script(FAKE_TRANSCRIPTION)
+    await page.route_web_socket("**/ws/voice", voice)
+    await page.route_web_socket("**/ws/sessions", _Sessions())
+    await page.route("**/api/diagnostics/subsystems", _Server())
+    await page.goto(page_url)
+    return browser, page, voice
+
+
+@pytest.mark.asyncio
+async def test_with_webgl_switched_off_the_page_still_runs_and_says_why(page_url):
+    """Measured 29 October 2026: after three graphics-process crashes Chrome
+    ran with --use-gl=disabled, the orb's WebGL renderer threw, and the whole
+    page stopped before it connected to JARVIS; reloading did the same."""
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open_with(p, page_url, ["--disable-webgl", "--disable-3d-apis"])
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        row = ".subsystem-row[data-subsystem='page']"
+        await page.wait_for_selector(f"{row}.state-degraded", timeout=10000)
+        assert "switched WebGL off" in await page.text_content(f"{row} .subsystem-summary")
+        assert voice.ws is not None, "the voice page started without the orb"
+        assert await page.locator(".subsystem-row[data-subsystem='communications']").count() == 1
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_lost_graphics_context_is_shown_until_it_comes_back(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open_with(p, page_url, [])
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        row = ".subsystem-row[data-subsystem='page']"
+        await page.wait_for_selector(f"{row}.state-ok", timeout=10000)
+        await page.evaluate("""() => {
+            const gl = document.getElementById('orb-canvas').getContext('webgl2');
+            window.__lose = gl.getExtension('WEBGL_lose_context'); window.__lose.loseContext(); }""")
+        await page.wait_for_selector(f"{row}.state-degraded")
+        assert "took the orbs' graphics away" in await page.text_content(f"{row} .subsystem-summary")
+        await page.evaluate("() => window.__lose.restoreContext()")
+        await page.wait_for_selector(f"{row}.state-ok")
+        await browser.close()
