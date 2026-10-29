@@ -354,6 +354,9 @@ async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_ur
             assert tile["label"].startswith(f"Team server: {word}. "), (name, tile["label"])
             beacon = await page.get_attribute("#team-server-tile", "class")
             assert f"readiness-{word.lower().replace(' ', '-')}" in beacon.split(), (name, beacon)
+            if word == "Ready":             # the rows follow the exchange too, not the poll
+                rows = await page.evaluate(SERVER_ROWS)
+                assert all(r["state"] == "ok" and r["figure"] != "—" for r in rows), (name, rows)
         await browser.close()
 
 
