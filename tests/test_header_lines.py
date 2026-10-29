@@ -347,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "brain_accounts.refresh": (
+        "the `provider` it reads is brain_provider's own function, called to "
+        "find a configured brain, not a session's field; its one f-string is a "
+        "log warning carrying that brain's configured name and an exception's "
+        "class name, never spoken and never in a note to the brain"),
     "server._subagent_row": (
         "its one f-string is the row's `key`, made of the session's id and the "
         "subagent's file id, and the row is JSON for the page's Workflows "

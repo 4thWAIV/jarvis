@@ -20,7 +20,24 @@ with a REQUEST_TIMEOUT_SEC timeout and exponential backoff on failure. 401
 or 403 means the session is over (expired, revoked, suspended): the
 credential is deleted and the Team section asks to sign in again. Anything
 else that fails leaves the credential alone and shows the last successful
-contact.
+contact. The status also carries the team's `network_account_key`, which is
+kept in memory only (never in the saved connection, the snapshot or a log).
+
+The network exchange is the other loop while paired: every
+NETWORK_INTERVAL_SEC (5s) on the monotonic clock, one node update (built by
+the caller's `node_update`, given that key) goes to
+/api/v1/network/nodes/self, and the team server's answer, the whole team's
+NetworkSnapshot, is stored verbatim as the network cache (`NetworkCache`):
+never merged with a local value. One request in flight, a
+NETWORK_TIMEOUT_SEC timeout, published at once on start and on (re)pairing,
+backing off on failure up to NETWORK_MAX_BACKOFF_SEC and never sooner than a
+Retry-After. A 503 carrying the server's health keeps the last snapshot's
+nodes, takes that health as its `server` and is stale; any other failure
+keeps the last snapshot, stale, with no round trip. Whether the session is
+still good is the status poll's to judge: a 401 or 403 on the exchange wakes
+it rather than signing out. Each change to the cache calls `on_network`
+(the `network` hint on /ws/sessions); `network_status()` is GET
+/api/team/network's body.
 """
 from __future__ import annotations
 
@@ -31,6 +48,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import secrets
 import socket
 import subprocess
@@ -57,6 +75,21 @@ KEYCHAIN_SERVICE = "JARVIS team server session"
 # Origins allowed to break the URL rules (http, loopback/private addresses),
 # for running a team server locally. Comma-separated, exact origins.
 DEV_SERVERS_ENV = "JARVIS_TEAM_DEV_SERVERS"
+
+NETWORK_PATH = "/api/v1/network/nodes/self"
+NETWORK_INTERVAL_SEC = 5.0
+# One interval: a slow answer never queues old samples behind it.
+NETWORK_TIMEOUT_SEC = 5.0
+NETWORK_MAX_BACKOFF_SEC = 60.0
+# The handoff's bound: no accepted update for this long is stale.
+NETWORK_STALE_AFTER_SEC = 15.0
+# The first exchange waits up to this long, so backends started together
+# do not all publish in the same instant.
+NETWORK_STARTUP_JITTER_SEC = 1.0
+
+# Builds the node update from the local collectors, given the team's key
+# (or None, and then no brains).
+NodeUpdateBuilder = Callable[[Optional[str]], dict]
 
 
 class TeamError(Exception):
@@ -169,10 +202,19 @@ def _now() -> float:
     return time.time()
 
 
-def _iso(ts: Optional[float]) -> Optional[str]:
+def iso_utc(ts: Optional[float]) -> Optional[str]:
+    """An epoch time as UTC ISO 8601 with a `Z`, the form the team server's
+    models take; the one formatter for times JARVIS sends or shows."""
     if ts is None:
         return None
-    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _backoff(failures: int, interval: float, ceiling: float) -> float:
+    """Doubling from `interval` with each failure in a row, up to `ceiling`."""
+    if failures == 0:
+        return interval
+    return min(ceiling, interval * (2 ** (failures - 1)))
 
 
 def _parse_ts(value: Any) -> Optional[float]:
@@ -205,8 +247,64 @@ def _error_body(resp: httpx.Response) -> tuple[str, str]:
         return "", ""
 
 
+@dataclass
+class NetworkCache:
+    """The last network snapshot the team server sent, as its bytes, and
+    the few facts only this JARVIS knows about it."""
+    raw: Optional[bytes] = None
+    revision: Optional[int] = None
+    received_at: Optional[float] = None
+    failed: bool = False
+    last_error: Optional[str] = None
+    round_trip_ms: Optional[int] = None
+    failures: int = 0
+    retry_after: float = 0.0
+
+
+def _snapshot_of(raw: bytes) -> Optional[dict]:
+    """The NetworkSnapshot in a 200's body, or None when it isn't one."""
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return None
+    if (not isinstance(body, dict) or not isinstance(body.get("revision"), int)
+            or not isinstance(body.get("you_node_id"), str)
+            or not isinstance(body.get("nodes"), list)
+            or not isinstance(body.get("server"), dict)):
+        return None
+    return body
+
+
+def _health_of(resp: httpx.Response) -> Optional[dict]:
+    """The ServerHealth a 503 from the network route carries, or None."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if isinstance(body, dict) and body.get("database") in ("connected", "unreachable"):
+        return body
+    return None
+
+
+def _retry_after(resp: httpx.Response) -> float:
+    """A Retry-After in seconds, bounded; 0 for none or a form not read."""
+    value = resp.headers.get("retry-after", "")
+    return float(min(int(value), MAX_BACKOFF_SEC)) if value.isdigit() else 0.0
+
+
+async def cancel_task(task: Optional[asyncio.Task]) -> None:
+    """Cancel a background task and wait until it has stopped."""
+    if task:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
 class TeamConnection:
-    """One saved connection (or none), its status, and the pairing under way."""
+    """One saved connection (or none), its status, the pairing under way and
+    the network exchange."""
 
     def __init__(self, store: Optional[SecretStore] = None,
                  transport: Optional[httpx.AsyncBaseTransport] = None,
@@ -226,6 +324,14 @@ class TeamConnection:
         self._poller: Optional[asyncio.Task] = None
         self._wake = asyncio.Event()
         self._lock = asyncio.Lock()
+        # The team's key for brain account references, from the status:
+        # memory only.
+        self._account_key: Optional[str] = None
+        self.network = NetworkCache()
+        self.on_network: Callable[[], None] = lambda: None
+        self._node_update: Optional[NodeUpdateBuilder] = None
+        self._exchanger: Optional[asyncio.Task] = None
+        self._network_wake = asyncio.Event()
 
     # -- persistence -----------------------------------------------------------
 
@@ -387,6 +493,8 @@ class TeamConnection:
         await asyncio.to_thread(self.store.set, p.server_id, token)
         if old and old["server_id"] != p.server_id:
             await self._forget_secret(old["server_id"])
+            self._account_key = None
+            self._clear_network()
         if old_token and old_token != token and old and old["server_url"] == p.server_url:
             await self._remote_logout(old["server_url"], old_token)  # superseded session
         self.saved = {"server_url": p.server_url, "server_id": p.server_id,
@@ -399,6 +507,7 @@ class TeamConnection:
         self._save()
         log.info("team: connected to %s", p.server_url)
         self._wake.set()
+        self._network_wake.set()
 
     # -- status polling ---------------------------------------------------------------
 
@@ -444,7 +553,11 @@ class TeamConnection:
             self.last_error = None
             self.saved["last_contact_at"] = _now()
             self._apply_status(status)
+            key = status.get("network_account_key")
+            self._account_key = key if isinstance(key, str) and key else None
             self._save()
+            if self.network.failures:
+                self._network_wake.set()   # back in contact: publish now
 
     def _failed(self, message: str) -> None:
         self.failures += 1
@@ -454,13 +567,14 @@ class TeamConnection:
     def _sign_out(self, message: str) -> None:
         self.signed_out = True
         self.last_error = message
+        self._account_key = None
         self._save()
         log.info("team: signed out (%s)", message)
+        if self.network.raw is not None:
+            self._network_failed(message)
 
     def next_delay(self) -> float:
-        if self.failures == 0:
-            return STATUS_INTERVAL_SEC
-        return min(MAX_BACKOFF_SEC, STATUS_INTERVAL_SEC * (2 ** (self.failures - 1)))
+        return _backoff(self.failures, STATUS_INTERVAL_SEC, MAX_BACKOFF_SEC)
 
     async def run(self) -> None:
         """The polling loop, for the server's lifespan."""
@@ -472,20 +586,157 @@ class TeamConnection:
             except asyncio.TimeoutError:
                 pass
 
-    def start(self) -> None:
+    def start(self, node_update: Optional[NodeUpdateBuilder] = None,
+              on_network: Optional[Callable[[], None]] = None) -> None:
+        """Start the status poll and, given a node update builder, the
+        network exchange."""
         self.load()
+        if on_network is not None:
+            self.on_network = on_network
         if self._poller is None or self._poller.done():
             self._poller = asyncio.create_task(self.run())
+        if node_update is not None:
+            self._node_update = node_update
+            if self._exchanger is None or self._exchanger.done():
+                self._exchanger = asyncio.create_task(self.run_network())
 
     async def stop(self) -> None:
         await self.cancel_pairing()
-        if self._poller:
-            self._poller.cancel()
+        for task in (self._poller, self._exchanger):
+            await cancel_task(task)
+        self._poller = self._exchanger = None
+
+    # -- the network exchange ----------------------------------------------------------
+
+    def _paired(self) -> bool:
+        return bool(self.saved) and not self.signed_out
+
+    def _network_changed(self) -> None:
+        try:
+            self.on_network()
+        except Exception as e:  # a hint that fails must not stop the exchange
+            log.warning("team: network hint failed (%s)", type(e).__name__)
+
+    def _network_failed(self, message: str, *, round_trip_ms: Optional[int] = None,
+                        retry_after: float = 0.0) -> None:
+        """A failed exchange: the last snapshot stays, stale. Only a 503
+        with health keeps a round trip (`round_trip_ms`)."""
+        n = self.network
+        n.failed = True
+        n.failures += 1
+        n.last_error = message
+        n.round_trip_ms = round_trip_ms
+        n.retry_after = retry_after
+        self._network_changed()
+
+    def _clear_network(self) -> None:
+        self.network = NetworkCache()
+        self._network_changed()
+
+    def _store_snapshot(self, raw: bytes, revision: int, round_trip_ms: int) -> None:
+        n = self.network
+        if n.revision is None or revision >= n.revision:
+            n.raw, n.revision, n.received_at = raw, revision, _now()
+        n.failed = False
+        n.failures = 0
+        n.last_error = None
+        n.round_trip_ms = round_trip_ms
+        n.retry_after = 0.0
+        self._network_changed()
+
+    def _store_health(self, health: dict, round_trip_ms: int) -> None:
+        """A 503 with the server's health: the last snapshot's nodes, the
+        new health. Without a snapshot yet there is nothing to put it in."""
+        if self.network.raw is not None:
+            snapshot = json.loads(self.network.raw)
+            snapshot["server"] = health
+            self.network.raw = json.dumps(snapshot, separators=(",", ":")).encode()
+        self._network_failed("The team server can't reach its database.",
+                             round_trip_ms=round_trip_ms)
+
+    async def exchange_once(self) -> None:
+        """One node update out, one snapshot back. Never raises."""
+        if not self._paired() or self._node_update is None:
+            return
+        saved = self.saved
+        token = await self._secret()
+        if not token:
+            self._network_failed("JARVIS has no saved session for this server.")
+            self._wake.set()           # the status poll decides what that means
+            return
+        try:
+            body = self._node_update(self._account_key)
+        except Exception as e:
+            log.warning("team: the node update could not be built (%s)", type(e).__name__)
+            self._network_failed("JARVIS couldn't put together its node update.")
+            return
+        started = time.monotonic()
+        try:
+            resp = await self._request("POST", saved["server_url"] + NETWORK_PATH,
+                                       token=token, json_body=body,
+                                       timeout=NETWORK_TIMEOUT_SEC)
+        except TeamError as e:
+            if self.saved is saved and self._paired():
+                self._network_failed(str(e))
+            return
+        round_trip_ms = round((time.monotonic() - started) * 1000)
+        if self.saved is not saved or not self._paired():
+            return                     # signed out or disconnected meanwhile
+        if resp.status_code == 200:
+            snapshot = _snapshot_of(resp.content)
+            if snapshot is None:
+                self._network_failed("The team server sent an unreadable network snapshot.")
+            else:
+                self._store_snapshot(resp.content, snapshot["revision"], round_trip_ms)
+            return
+        if resp.status_code == 503 and (health := _health_of(resp)) is not None:
+            self._store_health(health, round_trip_ms)
+            return
+        _, message = _error_body(resp)
+        self._network_failed(message or f"The team server answered {resp.status_code}.",
+                             retry_after=_retry_after(resp))
+        if resp.status_code in (401, 403):
+            self._wake.set()           # the status poll decides whether it's over
+
+    def network_delay(self) -> float:
+        """How long after the start of one exchange the next one starts."""
+        n = self.network
+        return max(_backoff(n.failures, NETWORK_INTERVAL_SEC, NETWORK_MAX_BACKOFF_SEC),
+                   n.retry_after)
+
+    async def run_network(self) -> None:
+        """The exchange loop, for the server's lifespan: one at a time,
+        scheduled on the monotonic clock; idle while not paired."""
+        await asyncio.sleep(random.uniform(0, NETWORK_STARTUP_JITTER_SEC))
+        while True:
+            self._network_wake.clear()
+            started = time.monotonic()
+            delay: Optional[float] = None
+            if self._paired():
+                await self.exchange_once()
+                delay = max(0.0, self.network_delay() - (time.monotonic() - started))
             try:
-                await self._poller
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait_for(self._network_wake.wait(), timeout=delay)
+            except asyncio.TimeoutError:
                 pass
-            self._poller = None
+
+    def network_status(self) -> bytes:
+        """GET /api/team/network's body: the stored snapshot exactly as the
+        team server sent it (or null), and this JARVIS's own facts about
+        it. The snapshot's bytes are passed through, not re-encoded."""
+        n = self.network
+        stale = n.raw is not None and (
+            n.failed or n.received_at is None
+            or _now() - n.received_at > NETWORK_STALE_AFTER_SEC)
+        local = json.dumps({
+            "received_at": iso_utc(n.received_at),
+            "stale": stale,
+            "last_error": n.last_error,
+            "round_trip_ms": n.round_trip_ms,
+            "last_contact_at": iso_utc((self.saved or {}).get("last_contact_at")),
+            "connection": self.state(),
+        }).encode()
+        return b'{"snapshot":' + (n.raw or b"null") + b"," + local[1:]
 
     # -- disconnecting ---------------------------------------------------------------
 
@@ -509,6 +760,8 @@ class TeamConnection:
         await self._forget_secret(saved["server_id"])
         self.saved = None
         self.signed_out = False
+        self._account_key = None
+        self._clear_network()
         self.last_error = None
         self.failures = 0
         self._save()
@@ -568,13 +821,13 @@ class TeamConnection:
             "me": saved.get("me"),
             "session_expires_at": saved.get("session_expires_at"),
             "recent_auth_until": saved.get("recent_auth_until"),
-            "last_contact_at": _iso(saved.get("last_contact_at")),
+            "last_contact_at": iso_utc(saved.get("last_contact_at")),
             "last_error": self.last_error,
             "poll_interval_sec": STATUS_INTERVAL_SEC,
             "pairing": None if p is None else {
                 "user_code": p.user_code,
                 "verification_uri_complete": p.verification_uri_complete,
-                "expires_at": _iso(p.expires_at),
+                "expires_at": iso_utc(p.expires_at),
             },
         }
 

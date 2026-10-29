@@ -11,6 +11,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -455,6 +456,49 @@ def team_connection_path() -> Path:
     server ID and the last non-secret status. The session credential is in
     the macOS Keychain, never here."""
     return data_dir() / "team-connection.json"
+
+
+def node_id_path() -> Path:
+    """This backend's node ID for the team server's network (node_id)."""
+    return data_dir() / "node-id"
+
+
+# The node ID once resolved, with the file it came from: one per run per
+# data directory, even when the file cannot be written.
+_node_id: Optional[tuple[Path, str]] = None
+
+
+def node_id() -> str:
+    """Who this backend is on the team's network: a random UUID made once per
+    data directory and kept, so a restart, a new session or pairing again is
+    the same node. Not a secret. An unreadable or malformed file is replaced,
+    which makes a new node rather than a broken one. Read or made once and
+    then held, so a file that cannot be written still gives one ID a run."""
+    global _node_id
+    path = node_id_path()
+    if _node_id is not None and _node_id[0] == path:
+        return _node_id[1]
+    _node_id = (path, _read_or_make_node_id(path))
+    return _node_id[1]
+
+
+def _read_or_make_node_id(path: Path) -> str:
+    try:
+        return str(uuid.UUID(path.read_text().strip()))
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        log.warning(f"data_paths: unusable node ID replaced ({type(e).__name__})")
+    made = str(uuid.uuid4())
+    if not _write_atomically(path, made + "\n"):
+        log.warning("data_paths: the node ID could not be kept; it lasts this run only")
+    return made
+
+
+def human_activity_path() -> Path:
+    """The last human activity this backend saw (human_activity.py): its
+    sequence number, time and source, never what was said or done."""
+    return data_dir() / "human-activity.json"
 
 
 def tool_token_path() -> Path:

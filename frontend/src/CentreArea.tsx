@@ -19,6 +19,12 @@
  *     health or the health dot does.
  *   - A subsystem (SubsystemView.tsx), named after it, the same way: offered
  *     while open, which clicking its row in the Diagnostics tab does.
+ *   - Team server (TeamServerView.tsx) or one JARVIS instance (NodeView.tsx),
+ *     named after it, the same way: offered while open, which clicking the
+ *     Team Server tile or an instance's tile in the Network tab does.
+ *
+ * Conversation stays on the page, hidden, while another of these is shown,
+ * so going back finds it as it was left, scrolled where it was.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -32,6 +38,9 @@ import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
 import { openSubsystem } from "./subsystems";
+import { network, openNetwork } from "./network";
+import { NodeView } from "./NodeView";
+import { TeamServerView } from "./TeamServerView";
 import { useSubsystems } from "./SubsystemList";
 import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
@@ -96,6 +105,13 @@ const SUBSYSTEM_VIEW: Tab = {
   view: () => null,
 };
 
+const NETWORK_VIEW: Tab = {
+  id: "network",
+  title: "Network",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -116,6 +132,8 @@ export function CentreArea() {
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
   const subsystemName = useSubsystems().list.find((s) => s.id === subsystem)?.name;
+  const networkOpen = useSyncExternalStore(openNetwork.subscribe, openNetwork.get);
+  const nodes = useSyncExternalStore(network.subscribe, network.get).value?.snapshot?.nodes;
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -130,6 +148,9 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? VIEWS[0].id : now));
   }, [subsystem]);
+  useEffect(() => {
+    setSelected((now) => (networkOpen ? "network" : now === "network" ? VIEWS[0].id : now));
+  }, [networkOpen]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
@@ -138,14 +159,28 @@ export function CentreArea() {
     ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
     ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? "Subsystem",
                        view: () => <SubsystemView key={subsystem} id={subsystem} /> }] : []),
+    ...(networkOpen ? [networkOpen.kind === "server"
+      ? { ...NETWORK_VIEW, title: "Team server", view: () => <TeamServerView /> }
+      : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? "Instance",
+          view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
+  const conversation = VIEWS[0];
+  // Kept, hidden, under every view but Main (which is the centre as it was
+  // before views, without it).
+  const kept = view.id !== "main";
   return (
     <>
       <TabRow tabs={views} selected={view.id} onSelect={setSelected} className="centre-tabs" words />
-      {view.view()}
+      {kept && (
+        <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}
+             inert={view.id !== conversation.id}>
+          {conversation.view()}
+        </div>
+      )}
+      {view.id !== conversation.id && view.view()}
     </>
   );
 }

@@ -163,8 +163,9 @@ and he answers them on the Workflows view.
 pinned `requirements.txt`, `Dockerfile`, tests (`team_server/tests`, against a
 real MongoDB) and API contract (`team_server/openapi.json`, checked by its
 tests). It gives one team GitHub sign-in, administrator-managed membership,
-device pairing, status, version and health; messaging and presence are not
-in it. Operating it is `docs/team-server.md`. JARVIS's side is
+device pairing, status, version and health, and holds the team's network
+inventory and each node's presence (see "The Network view"); messaging is
+not in it. Operating it is `docs/team-server.md`. JARVIS's side is
 `team_client.py` (the connection, its 30-second status poll and the
 Keychain store, through `security` with the secret on stdin) and
 `team_api.py` (`/api/team*`, the Settings Team section's routes). The
@@ -172,6 +173,42 @@ session credential lives only in the Keychain; the saved connection
 (`data_paths.team_connection_path()`) holds the URL, the pinned server ID and
 non-secret status. Nothing on a voice or agent path waits for the team
 server. Tests never touch the Keychain (`conftest._never_touch_the_real_keychain`).
+Staging alone has a test sign-in (`team_server/teamserver/staging_sessions.py`,
+`POST /api/v1/test/device-sessions`): with the test key as bearer it gives an
+ordinary device session to the synthetic member `test-a` or `test-b`
+(GitHub IDs -1 and -2, never an administrator), so a workflow can pair test
+backends with no GitHub login and no Approve click. The route exists only when
+`RAILWAY_ENVIRONMENT_NAME` is `staging` and `TEST_SESSION_KEY_SHA256` is set;
+the server refuses to start with that digest anywhere else, a wrong or missing
+key gets the same 404 as no route, and it is not in `openapi.json`. The key
+itself is only in this Mac's Keychain; rotating or removing it is in
+`docs/team-server.md`.
+
+## The Network view
+Every paired JARVIS backend is a node on the team's network. Every five
+seconds while paired, `team_client` sends one node update to the team
+server (`POST /api/v1/network/nodes/self`, `team_server/teamserver/network.py`)
+and stores the team's whole snapshot that comes back exactly as it was
+sent; `GET /api/team/network` returns it unchanged, and a `network` hint on
+`/ws/sessions` says when to read again. The update is built by
+`team_api.node_update` from the local collectors alone: the node ID
+(`data_paths.node_id()`, one per data directory), the boot ID and update
+sequence (`team_api`), the machine's CPU and memory (`host_resources.py`),
+each brain's account as a keyed hash with its quota windows
+(`brain_accounts.py`; no email leaves the machine) and the last human
+activity (`human_activity.py`: a sequence number, an age and a source, never
+content). The team server binds each node to the member whose session first
+published it, refuses an older boot or sequence, and works out presence
+(online within 15 s, delayed to 45 s, then offline), the brains' pace and
+its own health when the snapshot is built. The page's Network tab
+(`NetworkPanel.tsx`, one `NetworkTile.tsx` per node, `NodeView.tsx` in the
+centre) and the left column's Team Server tile (`TeamServerTile.tsx`,
+`TeamServerView.tsx`) read only that snapshot (`network.ts`); nothing local
+is merged in, this machine's own tile included. The Team Server tile's word
+is decided in one place, `network.readiness`: signed out is Sign in;
+otherwise the network exchange decides, not the 30-second status poll, so
+no snapshot or a stale one is No contact (never Ready), a database the team
+server says is down is Not ready, and a fresh snapshot is Ready.
 
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
@@ -215,7 +252,7 @@ output, the tool channel, the workflow monitor and the team server connection
 (`subsystem_diagnostics.py`), and last this page's own connection, which only
 the page can judge (`frontend/src/subsystems.ts`). The team server row reads
 `team_client`'s status and is never worse than `degraded`, since JARVIS works
-without a team server; the left column shows it too (`TeamIndicator.tsx`). Each is `ok`, `degraded`,
+without a team server; the left column shows it too (`TeamServerTile.tsx`). Each is `ok`, `degraded`,
 `down`, `idle` or `unknown`, worked out when it is read and never stored,
 from records that already exist (the `messages` table, the workflow record,
 `voice_diagnostics.summary`) and what the server holds in memory (the
@@ -355,8 +392,29 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   and called by nothing; the Haiku-vs-`claude -p` routing it classified for is
   gone. Left in place only because a test pins it
 - `team_client.py` / `team_api.py` — The connection to a team server and the
-  Team section's routes (see "The team server")
+  Team section's routes (see "The team server"), the network exchange and
+  `/api/team/network` (see "The Network view")
+- `host_resources.py` — The whole machine's CPU and memory (or a limited
+  container's), sampled every five seconds for the node update
+- `human_activity.py` — When a person last used this JARVIS (page input and
+  accepted speech), as a sequence number, age and source; never content
+- `brain_accounts.py` — This node's brains for the node update: a keyed hash
+  per account, its role, state and quota windows
+- `team_server/teamserver/network.py` — The team server's network: node
+  records, ownership and ordering, the snapshot, and its own health and
+  resources
+- `frontend/src/network.ts` — The page's one source for the Network view and
+  the Team Server tile: the stored team server snapshot, read and worded
+- `frontend/src/NetworkPanel.tsx` / `NetworkTile.tsx` / `NodeView.tsx` — The
+  Network tab, one node's tile, and one node in full
+- `frontend/src/TeamServerTile.tsx` / `TeamServerView.tsx` — The left
+  column's Team Server tile and the team server's health in full
+- `frontend/src/humanActivity.ts` — The page's one human-activity collector
+- `frontend/src/timeFormat.ts` — How long ago something was, the one way the
+  page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `team_server/teamserver/staging_sessions.py` — The staging-only test sign-in
+  (see "The team server")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live

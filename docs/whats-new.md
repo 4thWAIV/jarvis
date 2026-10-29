@@ -1,12 +1,12 @@
 # The new JARVIS workspace
 
-Updated 2026-10-28. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-10-29. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
 ## Conversation is the main view
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.
 
-The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has Agents, Diagnostics and Workflows tabs. Detailed views open in the centre while the surrounding controls remain available.
+The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has Agents, Diagnostics, Workflows and Network tabs. Detailed views open in the centre while the surrounding controls remain available.
 
 ![Conversation and agents in the current interface, using fictional sample data.](images/workspace-conversation.png)
 
@@ -16,7 +16,13 @@ Mute stops sending what the microphone hears, and a red "Muted" takes the level 
 
 ## Connect to your team
 
-Settings has a Team section. Enter your team server's address and choose Sign in with GitHub: the team server's page opens, you sign in there and approve this Mac after checking the code JARVIS shows. JARVIS then shows the team, your role and when it last reached the server, checking every 30 seconds; it says so when the server can't be reached or your session has ended. The session is kept in your Keychain. Disconnect removes it and signs out on the server when it can be reached. Administrators manage members from the same section. If a code expires or you cancel, the address stays filled in, so starting again is one click. The left column shows the team server as Online, Offline, Connecting or Not connected, and the Diagnostics tab has a Team server row saying the team, who you are and when JARVIS last reached it; a team server that can't be reached is shown as struggling, never down. Voice and agents carry on as before whether or not the team server is reachable. Team messaging and seeing who is online are not part of this yet. Running a team server is described in [the operator runbook](team-server.md).
+Settings has a Team section. Enter your team server's address and choose Sign in with GitHub: the team server's page opens, you sign in there and approve this Mac after checking the code JARVIS shows. JARVIS then shows the team, your role and when it last reached the server, checking every 30 seconds; it says so when the server can't be reached or your session has ended. The session is kept in your Keychain. Disconnect removes it and signs out on the server when it can be reached. Administrators manage members from the same section. If a code expires or you cancel, the address stays filled in, so starting again is one click. The left column's Team Server tile says Ready, Not ready, No contact or Sign in, and the Diagnostics tab has a Team server row saying the team, who you are and when JARVIS last reached it; a team server that can't be reached is shown as struggling, never down. Voice and agents carry on as before whether or not the team server is reachable. Team messaging is not part of this yet. Running a team server is described in [the operator runbook](team-server.md).
+
+## See your team's network
+
+Once paired, JARVIS reports to the team server every five seconds, browser open or not: this Mac's CPU and memory, its brain accounts' usage and when a person last used it. The team server answers with every paired JARVIS on the team, and that answer is all the Network tab shows. Each JARVIS has one compact tile: its name, online, delayed or offline, CPU and memory, the brains' remaining allowance and pace against the week, and how long ago someone last used it (a click, a key, typing or accepted speech, never what was said or typed). Your own is outlined and marked "THIS MAC", and its figures too come from the team server, so they match what everyone else sees. Two JARVIS on two of your Macs show as two tiles. Selecting a tile opens that JARVIS in the centre.
+
+The Team Server tile in the left column opens the server's health in the centre: its database round trip and writes, uptime, CPU and memory. When the team server can't be reached the tiles keep their last values and say they are stale, and the Team Server tile says No contact as soon as the five-second exchange fails; no JARVIS is called offline because your own link dropped.
 
 ## Agents and workflows stay in context
 

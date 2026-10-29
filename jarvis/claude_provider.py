@@ -27,7 +27,7 @@ from jarvis import anthropic_usage
 from jarvis import claude_env
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, HistorySource, SessionInfo, SignIn,
-                            TextDelta, ToolStarted, TurnEnded, UsageReading, UsageSeen)
+                            TextDelta, ToolStarted, TurnEnded, UsageReading, UsageSeen, identity_text)
 
 if TYPE_CHECKING:
     from jarvis.brain import BrainConfig
@@ -477,6 +477,27 @@ class ClaudeTranscripts:
         return history_read.claude_message_text(record)
 
 
+async def _signed_in_identity() -> tuple[Optional[str], Optional[str]]:
+    """(email, organisation ID) from `claude auth status --json`, under the
+    environment the brain runs with; (None, None) when it cannot be had.
+    Read only for brain_accounts' keyed reference: what it printed is never
+    logged."""
+    from jarvis import preflight
+    claude = shutil.which("claude")
+    if not claude:
+        return None, None
+    rc, out, _ = await preflight._run_subprocess(claude, "auth", "status", "--json",
+                                                 timeout=preflight.DEFAULT_CHECK_TIMEOUT,
+                                                 env=claude_env.child_env())
+    try:
+        said = json.loads(out) if rc == 0 else None
+    except ValueError:
+        said = None
+    if not isinstance(said, dict) or not said.get("loggedIn"):
+        return None, None
+    return identity_text(said.get("email")), identity_text(said.get("orgId"))
+
+
 class ClaudeProvider:
     name = "anthropic"
     title = "Claude"
@@ -487,10 +508,12 @@ class ClaudeProvider:
 
     async def account(self) -> Account:
         from jarvis import preflight
-        check = await preflight._check_claude_login()
+        check, (email, org_id) = await asyncio.gather(preflight._check_claude_login(),
+                                                      _signed_in_identity())
         reading = usage_store.latest("anthropic") or {}
         plan = str((reading.get("provider") or {}).get("subscription") or "")
-        return Account(signed_in=check.ok, plan=plan, detail=check.message)
+        return Account(signed_in=check.ok, plan=plan, detail=check.message,
+                       email=email, org_id=org_id)
 
     async def start_sign_in(self) -> Optional[SignIn]:
         return None             # `claude` signs in for itself

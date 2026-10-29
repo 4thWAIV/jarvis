@@ -6,6 +6,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
+import { NetworkPanel } from "./NetworkPanel";
 import { agentsTabLit } from "./agents";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { TabRow, type Tab } from "./Tabs";
@@ -66,6 +67,20 @@ const TABS: Tab[] = [
       </svg>
     ),
     view: () => <WorkflowsView />,
+  },
+  {
+    id: "network",
+    title: "Network",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="5" r="3" />
+        <circle cx="5" cy="18" r="3" />
+        <circle cx="19" cy="18" r="3" />
+        <path d="M10.5 8L6.5 15M13.5 8l4 7M8 18h8" />
+      </svg>
+    ),
+    view: () => <NetworkPanel />,
   },
 ];
 

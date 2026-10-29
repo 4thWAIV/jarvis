@@ -14,6 +14,7 @@ ROUTES = {
     ("post", "/api/v1/device-authorizations"),
     ("post", "/api/v1/device-authorizations/approve"),
     ("post", "/api/v1/device-authorizations/exchange"),
+    ("post", "/api/v1/network/nodes/self"),
 }
 
 

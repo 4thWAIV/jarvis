@@ -43,7 +43,8 @@ from jarvis import data_paths
 from jarvis import preflight
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
-                            ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable)
+                            ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
+                            identity_text)
 
 if TYPE_CHECKING:
     from jarvis.brain import BrainConfig
@@ -650,7 +651,8 @@ class CodexProvider:
                 return Account(False, "", "Not signed in.")
             if acct.get("type") != "chatgpt":
                 return Account(False, "", "Signed in with an API key, not ChatGPT.")
-            return Account(True, str(acct.get("planType") or ""), "Signed in with ChatGPT.")
+            return Account(True, str(acct.get("planType") or ""), "Signed in with ChatGPT.",
+                           email=identity_text(acct.get("email")))
         return await asyncio.to_thread(read)
 
     async def start_sign_in(self) -> Optional[SignIn]:

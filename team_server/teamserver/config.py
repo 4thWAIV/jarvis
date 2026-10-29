@@ -3,6 +3,9 @@
 Required: PORT, PUBLIC_BASE_URL, MONGODB_URI, MONGODB_DATABASE,
 GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET. TEAM_NAME and
 INITIAL_ADMIN_GITHUB_ID only matter before the team exists (bootstrap).
+TEST_SESSION_KEY_SHA256 turns on the staging test sign-in
+(`staging_sessions`); it is refused unless RAILWAY_ENVIRONMENT_NAME is
+`staging`.
 
 Problems are reported by variable NAME only, never with a value, because
 several of these values are credentials.
@@ -23,6 +26,11 @@ _DB_NAME = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 # An explicit local-development exception: a plain-HTTP loopback base URL is
 # accepted only when this is set. Never set in Railway.
 DEV_INSECURE_FLAG = "TEAM_SERVER_DEV_INSECURE"
+# The staging test sign-in: the SHA-256 of its key, only ever in staging.
+TEST_KEY_DIGEST = "TEST_SESSION_KEY_SHA256"
+ENVIRONMENT_NAME = "RAILWAY_ENVIRONMENT_NAME"
+STAGING = "staging"
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ConfigError(Exception):
@@ -44,6 +52,8 @@ class Config:
     dev_insecure: bool = False
     github_api_url: str = "https://api.github.com"
     github_web_url: str = "https://github.com"
+    environment_name: Optional[str] = None
+    test_session_key_sha256: Optional[str] = None
 
     @property
     def secure(self) -> bool:
@@ -56,6 +66,13 @@ class Config:
     @property
     def callback_url(self) -> str:
         return self.public_base_url + "/auth/github/callback"
+
+    @property
+    def test_sessions_enabled(self) -> bool:
+        """Both conditions, checked here as well as in `load`, so a Config
+        built any other way cannot open the staging test sign-in either."""
+        return (self.environment_name == STAGING
+                and bool(self.test_session_key_sha256))
 
     @property
     def bootstrap_configured(self) -> bool:
@@ -132,6 +149,12 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         problems.append(f"TEAM_NAME is longer than {TEAM_NAME_MAX} characters")
     if admin_id is not None and not team_name:
         problems.append("TEAM_NAME is required with INITIAL_ADMIN_GITHUB_ID")
+    environment = get(ENVIRONMENT_NAME) or None
+    test_digest = get(TEST_KEY_DIGEST).lower() or None
+    if test_digest and environment != STAGING:
+        problems.append(f"{TEST_KEY_DIGEST} is set outside the {STAGING} environment")
+    elif test_digest and not _SHA256_HEX.match(test_digest):
+        problems.append(f"{TEST_KEY_DIGEST} must be a SHA-256 hex digest")
     if problems:
         raise ConfigError(problems)
     return Config(
@@ -141,4 +164,5 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         initial_admin_github_id=admin_id, dev_insecure=dev_insecure,
         github_api_url=get("GITHUB_API_URL") or "https://api.github.com",
         github_web_url=get("GITHUB_WEB_URL") or "https://github.com",
+        environment_name=environment, test_session_key_sha256=test_digest,
     )

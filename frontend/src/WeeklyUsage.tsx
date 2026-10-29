@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { PROVIDERS, type ReportProvider } from "./providers";
+import { shortAgo } from "./timeFormat";
 
 interface Week {
   measured: boolean;
@@ -40,12 +41,6 @@ export function magnitude(value: number): string {
  *  as 00.0 is level. */
 export function sign(value: number): "+" | "-" {
   return value < 0 && magnitude(value) !== "00.0" ? "-" : "+";
-}
-
-function age(sec: number): string {
-  if (sec < 90) return "just now";
-  if (sec < 5400) return `${Math.round(sec / 60)} min ago`;
-  return `${Math.round(sec / 3600)} h ago`;
 }
 
 /** One brain's account box. `provider` names whose figures (the running
@@ -106,7 +101,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const left = Math.max(0, 100 - week.used!);
   return (
     <section className={box} data-provider={provider}
-             title={`${Math.round(week.expected_used!)}% of the week gone, ${Math.round(week.used!)}% used, reading ${age(week.age_sec!)}`}>
+             title={`${Math.round(week.expected_used!)}% of the week gone, ${Math.round(week.used!)}% used, reading ${shortAgo(week.age_sec! * 1000, 90_000)}`}>
       {roleTag}
       <div className="account-rows">
         <div className="account-row available">

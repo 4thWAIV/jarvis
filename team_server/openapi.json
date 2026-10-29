@@ -1,6 +1,211 @@
 {
   "components": {
     "schemas": {
+      "AccountPace": {
+        "properties": {
+          "account_ref": {
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Ms"
+          },
+          "left_at_reset_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left At Reset Percent"
+          },
+          "pace_points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pace Points"
+          },
+          "provider": {
+            "enum": [
+              "anthropic",
+              "openai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "remaining_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Percent"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resets At"
+          },
+          "role": {
+            "enum": [
+              "brain",
+              "standby"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "runs_out_hours_before_reset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs Out Hours Before Reset"
+          }
+        },
+        "required": [
+          "account_ref",
+          "provider",
+          "role",
+          "remaining_percent",
+          "pace_points",
+          "resets_at",
+          "left_at_reset_percent",
+          "runs_out_hours_before_reset",
+          "age_ms"
+        ],
+        "title": "AccountPace",
+        "type": "object"
+      },
+      "BrainAccount": {
+        "properties": {
+          "account_ref": {
+            "pattern": "^[A-Za-z0-9_-]{16,64}$",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "anthropic",
+              "openai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "brain",
+              "standby"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "measured",
+              "not_measured",
+              "sign_in_needed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/QuotaWindow"
+            },
+            "maxItems": 4,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "account_ref",
+          "provider",
+          "role",
+          "state",
+          "windows"
+        ],
+        "title": "BrainAccount",
+        "type": "object"
+      },
+      "BrainSummary": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountPace"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "average_remaining_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Remaining Percent"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "integer"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "integer"
+          },
+          "pace_points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pace Points"
+          }
+        },
+        "required": [
+          "configured",
+          "measured",
+          "average_remaining_percent",
+          "pace_points",
+          "accounts"
+        ],
+        "title": "BrainSummary",
+        "type": "object"
+      },
       "DeviceDecided": {
         "properties": {
           "device_name": {
@@ -235,6 +440,76 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthPoint": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "database_ping_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Ping Ms"
+          },
+          "write_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write Ok"
+          }
+        },
+        "required": [
+          "at",
+          "database_ping_ms",
+          "write_ok"
+        ],
+        "title": "HealthPoint",
+        "type": "object"
+      },
+      "HumanActivity": {
+        "properties": {
+          "activity_seq": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Activity Seq",
+            "type": "integer"
+          },
+          "age_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "title": "Age Ms",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "gui",
+              "speech",
+              "typed"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity_seq",
+          "age_ms",
+          "source"
+        ],
+        "title": "HumanActivity",
         "type": "object"
       },
       "Live": {
@@ -488,6 +763,263 @@
         "title": "MemberChanged",
         "type": "object"
       },
+      "NetworkSnapshot": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerHealth"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "you_node_id": {
+            "format": "uuid",
+            "title": "You Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "server_time",
+          "you_node_id",
+          "nodes",
+          "server"
+        ],
+        "title": "NetworkSnapshot",
+        "type": "object"
+      },
+      "NodeUpdate": {
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanActivity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "boot_id": {
+            "format": "uuid",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "brains": {
+            "items": {
+              "$ref": "#/components/schemas/BrainAccount"
+            },
+            "maxItems": 8,
+            "title": "Brains",
+            "type": "array"
+          },
+          "jarvis_version": {
+            "maxLength": 32,
+            "title": "Jarvis Version",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "os": {
+            "maxLength": 40,
+            "title": "Os",
+            "type": "string"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/Resources"
+          },
+          "seq": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "node_id",
+          "boot_id",
+          "seq",
+          "label",
+          "jarvis_version",
+          "os",
+          "resources",
+          "brains"
+        ],
+        "title": "NodeUpdate",
+        "type": "object"
+      },
+      "NodeView": {
+        "properties": {
+          "activity_state": {
+            "enum": [
+              "never_observed",
+              "available",
+              "unsupported"
+            ],
+            "title": "Activity State",
+            "type": "string"
+          },
+          "brains": {
+            "$ref": "#/components/schemas/BrainSummary"
+          },
+          "jarvis_version": {
+            "title": "Jarvis Version",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_human_activity_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Human Activity At"
+          },
+          "last_human_activity_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "gui",
+                  "speech",
+                  "typed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Human Activity Source"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "os": {
+            "title": "Os",
+            "type": "string"
+          },
+          "owner_github_id": {
+            "title": "Owner Github Id",
+            "type": "integer"
+          },
+          "owner_login": {
+            "title": "Owner Login",
+            "type": "string"
+          },
+          "presence": {
+            "enum": [
+              "online",
+              "delayed",
+              "offline"
+            ],
+            "title": "Presence",
+            "type": "string"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/Resources"
+          }
+        },
+        "required": [
+          "node_id",
+          "owner_github_id",
+          "owner_login",
+          "label",
+          "jarvis_version",
+          "os",
+          "presence",
+          "last_seen_at",
+          "resources",
+          "brains",
+          "activity_state"
+        ],
+        "title": "NodeView",
+        "type": "object"
+      },
+      "QuotaWindow": {
+        "properties": {
+          "age_ms": {
+            "maximum": 604800000.0,
+            "minimum": 0.0,
+            "title": "Age Ms",
+            "type": "integer"
+          },
+          "expected_used_percent": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Used Percent"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "used_percent": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Used Percent",
+            "type": "number"
+          },
+          "window": {
+            "enum": [
+              "five_hour",
+              "seven_day"
+            ],
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "window",
+          "used_percent",
+          "resets_at",
+          "age_ms"
+        ],
+        "title": "QuotaWindow",
+        "type": "object"
+      },
       "Ready": {
         "properties": {
           "ready": {
@@ -576,6 +1108,80 @@
         "title": "Resolved",
         "type": "object"
       },
+      "Resources": {
+        "properties": {
+          "age_ms": {
+            "maximum": 60000.0,
+            "minimum": 0.0,
+            "title": "Age Ms",
+            "type": "integer"
+          },
+          "cpu_percent": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpu Percent"
+          },
+          "memory_total_bytes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 9.223372036854776e+18,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Total Bytes"
+          },
+          "memory_used_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Used Bytes"
+          },
+          "scope": {
+            "enum": [
+              "host",
+              "container"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "measured",
+              "warming_up",
+              "unsupported",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "scope",
+          "age_ms"
+        ],
+        "title": "Resources",
+        "type": "object"
+      },
       "Roster": {
         "properties": {
           "member_limit": {
@@ -602,6 +1208,99 @@
         "title": "Roster",
         "type": "object"
       },
+      "ServerHealth": {
+        "properties": {
+          "commit": {
+            "title": "Commit",
+            "type": "string"
+          },
+          "database": {
+            "enum": [
+              "connected",
+              "unreachable"
+            ],
+            "title": "Database",
+            "type": "string"
+          },
+          "database_checked_at": {
+            "format": "date-time",
+            "title": "Database Checked At",
+            "type": "string"
+          },
+          "database_failures_in_a_row": {
+            "title": "Database Failures In A Row",
+            "type": "integer"
+          },
+          "database_ping_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Ping Ms"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/HealthPoint"
+            },
+            "maxItems": 30,
+            "title": "History",
+            "type": "array"
+          },
+          "last_database_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Database Error"
+          },
+          "last_write_ok_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Write Ok At"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/Resources"
+          },
+          "uptime_sec": {
+            "title": "Uptime Sec",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "database",
+          "database_ping_ms",
+          "database_checked_at",
+          "last_write_ok_at",
+          "last_database_error",
+          "database_failures_in_a_row",
+          "uptime_sec",
+          "version",
+          "commit",
+          "resources",
+          "history"
+        ],
+        "title": "ServerHealth",
+        "type": "object"
+      },
       "SessionsRevoked": {
         "properties": {
           "revision": {
@@ -624,6 +1323,18 @@
         "properties": {
           "me": {
             "$ref": "#/components/schemas/Me"
+          },
+          "network_account_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The team's key for brain account references, base64url; device sessions only, null for a browser session",
+            "title": "Network Account Key"
           },
           "recent_auth_until": {
             "format": "date-time",
@@ -1220,6 +1931,94 @@
           }
         },
         "summary": "Get Me"
+      }
+    },
+    "/api/v1/network/nodes/self": {
+      "post": {
+        "operationId": "publish_node_api_v1_network_nodes_self_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerHealth"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Publish Node"
       }
     },
     "/api/v1/status": {

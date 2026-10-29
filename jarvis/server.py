@@ -106,6 +106,8 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import brain_accounts
+from jarvis import human_activity
 from jarvis import team_api, team_client
 from jarvis import voice_diagnostics
 from jarvis import subsystem_diagnostics
@@ -2783,15 +2785,20 @@ async def lifespan(application: FastAPI):
     await start_brain_and_speech()
     await start_session_watcher()
     transcription_api.start()
-    # The team server connection (team_client.py): its own task, off every
-    # audio path; a team server that is down changes only its status.
-    team_api.start()
+    # The team server connection (team_client.py): its own tasks, off every
+    # audio path; a team server that is down changes only its status. The
+    # network exchange runs while paired whether or not a page is open, and
+    # each stored snapshot is a `network` hint (network.ts reads it again).
+    team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}))
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
     # is kept in _background so it is not garbage-collected mid-flight.
     _background.add(task := asyncio.create_task(_run_preflight()))
     task.add_done_callback(_background.discard)
+    # Who each brain is signed in as, for the network's account references
+    # (brain_accounts.py); off the startup path for the same reason.
+    _spawn(brain_accounts.refresh())
     if _untrusted_actions_refused():
         log.info(
             "JARVIS_REFUSE_UNTRUSTED_ACTIONS is ON: JARVIS will refuse to act "
@@ -2834,6 +2841,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 team_api.mount(app)
+human_activity.mount(app)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -3007,6 +3015,8 @@ async def api_brains_sign_in(name: str):
         ok = await provider.sign_in_finished(started.sign_in_id, SIGN_IN_WAIT_SEC)
         log.info("brains: %s sign-in %s", name, "finished" if ok else "did not finish")
         await _voice_emit({"type": "brain_sign_in", "name": name, "ok": ok})
+        if ok:
+            await brain_accounts.refresh(name)
     _spawn(finish())
     return {"url": started.url, "sign_in_id": started.sign_in_id}
 
@@ -9442,6 +9452,10 @@ async def voice_handler(ws: WebSocket):
                 if not text:
                     continue
                 verdict = await speech.user_final(text, typed=typed)
+                if not typed and verdict != "echo":
+                    # Accepted as his words (stop, cancel and "say that
+                    # again" included). Typed words are the page's to report.
+                    human_activity.recorder.observe("speech")
                 if verdict == "replay":
                     # "Say that again": resend what was already synthesized —
                     # no brain turn, so no cost and no risk of coming back

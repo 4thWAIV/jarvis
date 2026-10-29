@@ -2,11 +2,12 @@
 
 Public: GET /version, /health/live, /health/ready; the browser pages
 (/, /device, /static/app.js); GET /auth/github/start and /callback.
-Product API: /api/v1/... (see openapi.json). Pairing start/exchange
-authenticate with their own transaction credentials; everything else needs
-a product session — a Bearer token (a paired JARVIS) or the browser's
-session cookie, whose mutations also need the server's Origin and the
-session's CSRF token.
+Product API: /api/v1/... (see openapi.json); in staging only, the test
+sign-in (`staging_sessions`), which is not in the contract. Pairing
+start/exchange authenticate with their own transaction credentials;
+everything else needs a product session — a Bearer token (a paired JARVIS)
+or the browser's session cookie, whose mutations also need the server's
+Origin and the session's CSRF token.
 """
 from __future__ import annotations
 
@@ -21,16 +22,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pymongo.errors import PyMongoError
 
-from teamserver import (build_info, clock, db as dbmod, login, pages, pairing,
-                        sessions, team as team_mod)
+from teamserver import (build_info, clock, db as dbmod, login, network, pages,
+                        pairing, sessions, staging_sessions, team as team_mod)
 from teamserver.config import Config, ConfigError, load
 from teamserver.errors import Problem, forbidden, unauthenticated
 from teamserver.github import GitHub, RealGitHub
 from teamserver.models import (DeviceDecided, DeviceDecision, DeviceExchange,
                                DevicePending, DeviceSession, DeviceStart,
                                DeviceStarted, ErrorBody, Live, LoggedOut, Me,
-                               Member, MemberChange, MemberChanged, Ready,
-                               Resolved, ResolveRequest, Roster,
+                               Member, MemberChange, MemberChanged,
+                               NetworkSnapshot, NodeUpdate, Ready, Resolved,
+                               ResolveRequest, Roster, ServerHealth,
                                SessionsRevoked, Status, Team, Version)
 from teamserver.ratelimit import RateLimiter
 from teamserver.secrets_util import csrf_token, normalize_user_code, same
@@ -63,6 +65,14 @@ def team_view(t: dict) -> Team:
                 member_limit=team_mod.MEMBER_LIMIT)
 
 
+def device_session_view(token: str, session: dict, team: dict,
+                        member: dict) -> DeviceSession:
+    return DeviceSession(status="approved", session_token=token,
+                         session_expires_at=session["expires_at"],
+                         server_id=team["server_id"], team=team_view(team),
+                         me=me_view(member))
+
+
 # -- the app -----------------------------------------------------------------
 
 def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
@@ -81,16 +91,17 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         st.db = None
         st.server_id = None
         st.initialized = False
-        init_task = None
+        tasks = []
         if problems:
             log.error("configuration invalid: %s", "; ".join(problems))
         else:
             st.client = dbmod.connect(config.mongodb_uri)
             st.db = dbmod.database(st.client, config.mongodb_database)
-            init_task = asyncio.create_task(_init_until_done(app))
+            tasks = [asyncio.create_task(_init_until_done(app)),
+                     asyncio.create_task(network.watch(st.health, st.db))]
         yield
-        if init_task:
-            init_task.cancel()
+        for task in tasks:
+            task.cancel()
         if st.client is not None:
             await st.client.close()
 
@@ -101,6 +112,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     app.state.config_problems = problems
     app.state.github = github or (RealGitHub(config) if config else None)
     app.state.limiter = limiter or RateLimiter()
+    app.state.health = network.HealthMonitor()
     cookie_name = "__Host-ts_session" if (config and config.secure) else "ts_session"
 
     # -- middleware ----------------------------------------------------------
@@ -146,6 +158,11 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         log.error("database error on %s: %s", request.url.path, type(exc).__name__)
         return await on_problem(request, Problem(
             503, "dependency_unavailable", "The team server cannot reach its database."))
+
+    @app.exception_handler(network.DatabaseDown)
+    async def on_network_database(request: Request, exc: network.DatabaseDown):
+        return JSONResponse(request.app.state.health.report().model_dump(mode="json"),
+                            status_code=503)
 
     @app.exception_handler(RequestValidationError)
     async def on_invalid(request: Request, exc: RequestValidationError):
@@ -206,6 +223,21 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
             sessions.SESSION_LIFETIME.total_seconds()), path="/",
             secure=config.secure, httponly=True, samesite="lax")
 
+    async def device(request: Request) -> sessions.Principal:
+        """A paired JARVIS's session, for the network route: a database
+        that is down or not yet initialized answers with the server's health
+        (DatabaseDown), never with an error body."""
+        try:
+            with request.app.state.health.watching():
+                p = await principal(request)
+        except Problem as e:
+            if e.code == "not_ready":
+                raise network.DatabaseDown() from e
+            raise
+        if p.session["kind"] != "device":
+            raise forbidden("device_required", "Only a paired JARVIS publishes a node.")
+        return p
+
     async def optional_principal(request: Request) -> Optional[sessions.Principal]:
         try:
             return await principal(request)
@@ -221,7 +253,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Version(service=build_info.SERVICE, version=build_info.VERSION,
                        commit=build_info.commit(), api_version=build_info.API_VERSION,
                        server_id=request.app.state.server_id,
-                       capabilities=list(build_info.CAPABILITIES))
+                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY])
 
     @app.get("/health/live", response_model=Live)
     async def live():
@@ -236,7 +268,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         if st.config_problems:
             return no("config_invalid")
         try:
-            await asyncio.wait_for(st.db.command("ping"), timeout=3)
+            if not await st.health.connected(st.db):
+                return no("database_unavailable")
             if not st.initialized:
                 await asyncio.wait_for(_init_once(app), timeout=8)
             team = await asyncio.wait_for(team_mod.get(st.db), timeout=3)
@@ -334,12 +367,15 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return team_view(p.team)
 
     @app.get("/api/v1/status", response_model=Status, responses=ERRORS)
-    async def get_status(p: sessions.Principal = Depends(principal)):
+    async def get_status(request: Request, p: sessions.Principal = Depends(principal)):
+        account_key = (await team_mod.network_account_key(database(request), p.team)
+                       if p.session["kind"] == "device" else None)
         return Status(server_time=clock.now(), server_id=p.team["server_id"],
                       session_expires_at=p.session["expires_at"],
                       session_kind=p.session["kind"],
                       recent_auth_until=p.session["auth_at"] + sessions.RECENT_AUTH,
-                      team=team_view(p.team), me=me_view(p.member))
+                      team=team_view(p.team), me=me_view(p.member),
+                      network_account_key=account_key)
 
     @app.post("/api/v1/logout", response_model=LoggedOut, responses=ERRORS)
     async def logout(request: Request, p: sessions.Principal = Depends(principal)):
@@ -430,10 +466,31 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                                         body.code_verifier)
         if result["status"] == "authorization_pending":
             return JSONResponse(DevicePending(**result).model_dump(), status_code=202)
-        return DeviceSession(status="approved", session_token=result["token"],
-                             session_expires_at=result["session"]["expires_at"],
-                             server_id=result["team"]["server_id"],
-                             team=team_view(result["team"]), me=me_view(result["member"]))
+        return device_session_view(result["token"], result["session"],
+                                   result["team"], result["member"])
+
+    @app.post("/api/v1/network/nodes/self", response_model=NetworkSnapshot,
+              responses={**ERRORS, 503: {"model": ServerHealth}})
+    async def publish_node(request: Request, body: NodeUpdate,
+                           p: sessions.Principal = Depends(device)):
+        return await network.publish(database(request), p.member, p.team, body,
+                                     request.app.state.health)
+
+    if config and config.test_sessions_enabled:
+        # Every method, and no body parameter: FastAPI would otherwise answer
+        # 405 or 422 before the key is checked, telling a caller without the
+        # key that the route exists. Without the key, everything is the 404.
+        @app.api_route(staging_sessions.PATH, methods=staging_sessions.METHODS,
+                       response_model=DeviceSession, include_in_schema=False)
+        async def test_device_session(request: Request):
+            staging_sessions.check_key(request)
+            if request.method != "POST":
+                raise staging_sessions.not_found()
+            body = staging_sessions.parse(await request.body())
+            token, session, team, member = await staging_sessions.issue(
+                database(request), body.member, body.device_name)
+            log.info("staging test session issued for %s", body.member)
+            return device_session_view(token, session, team, member)
 
     return app
 
