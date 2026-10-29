@@ -239,6 +239,8 @@ async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first
         server = await page.evaluate(TILE, "#team-server-tile")
         brain = await page.evaluate(TILE, ".weekly-usage")
         assert server["height"] == brain["height"] == 76, (server, brain)
+        # Brain and Standby are widened to the Team Server tile's width.
+        assert abs(server["width"] - brain["width"]) < 0.5, (server, brain)
         assert server["radius"] == "16px"
         # Under the microphone, above the brains, which are unchanged.
         order = await page.evaluate("""() => [...document.querySelectorAll('#left-column > *')].map(e => e.id)""")
