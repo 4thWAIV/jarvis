@@ -28,14 +28,39 @@ What it holds:
 Wire names are snake_case. Display names and node labels are presentation,
 never authority: the sender, the server and the source node's owner come
 from the authenticated session.
+
+The routes (all under the team server's existing error body and `device`
+dependency: every messaging route takes only a paired JARVIS's device
+session, never the team server page's cookie session, so `device_required`
+answers anything else; a sign-in's session state codes are in ERRORS):
+
+    POST /api/v1/messages                         SendRequest -> SendResult
+    GET  /api/v1/messages/sync?node_id&continuation&limit   -> SyncPage
+    GET  /api/v1/messages/recipients                        -> RecipientList
+    POST /api/v1/messages/receipts                ReceiptBatch -> ReceiptBatchResult
+    GET  /api/v1/messages/{message_id}                      -> AcceptedMessage
+    POST /api/v1/messages/{message_id}/announcement
+                                       AnnouncementRequest -> AnnouncementLease
+    PUT  /api/v1/messages/threads/{thread_id}/work-state
+                                        WorkCommandRequest -> WorkState
+    POST /api/v1/attachments                  AttachmentCreate -> AttachmentStatus
+    PUT  /api/v1/attachments/{attachment_id}/bytes  (octet-stream) -> AttachmentStatus
+    POST /api/v1/attachments/{attachment_id}/finalize               -> AttachmentStatus
+    GET  /api/v1/attachments/{attachment_id}                        -> AttachmentStatus
+    GET  /api/v1/messages/{message_id}/attachments/{attachment_id}/content
+                                                          (the verified bytes)
+
+The fixed paths (`sync`, `recipients`, `receipts`, `threads`) are registered
+before `/{message_id}`, which would otherwise take them as an id.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID
 
@@ -48,7 +73,7 @@ SCHEMA_VERSION = 1                   # every envelope carries it
 # Changes when any wire shape, rule or fixture changes. Workers build
 # against one revision; a breaking change bumps the number and regenerates
 # every consumer in the same batch.
-INTERFACE_REVISION = "messaging.v1-contract.1"
+INTERFACE_REVISION = "messaging.v1-contract.2"
 DIGEST_VERSION = 1
 
 
@@ -80,6 +105,27 @@ SYNC_PAGE_MAX = 50
 SYNC_CONTINUATION_TTL_SEC = 600
 RECEIPT_BATCH_MAX = 100
 INT64_MAX = 2**63 - 1
+
+# Files, proposed defaults recorded at the contract gate (handoff stage 5,
+# "Define lease/fencing and retention at the contract gate"). The team
+# server may configure lower, never higher (its setting names are in
+# teamserver/messaging_ports.ATTACHMENT_SETTINGS); release-prepare confirms
+# them against measured storage. Accepted files are kept as long as their
+# message: nothing accepted is deleted in v1.
+STAGING_EXPIRY_SEC = 24 * 3600          # an unpinned staging record is cleaned after this
+OWNER_STAGING_QUOTA_BYTES = 2 * PACKAGE_MAX_BYTES   # unpinned staged bytes per owner
+UPLOAD_STREAMS_MAX = 2                  # concurrent uploads per owner (Serve) and per JARVIS
+UPLOAD_IDLE_TIMEOUT_SEC = 60            # an attempt with no bytes this long is aborted
+UPLOAD_CHUNK_BYTES = 1024 * 1024        # bounded chunks; nothing buffers a whole file
+# Recovery of pins whose message was never inserted: only one recovery
+# worker at a time, holding a fenced lease of RECOVERY_LEASE_SEC; it may
+# release a pin only once the pin is ORPHAN_PIN_AFTER_SEC old AND no
+# accepted message has its message_id. That age is far beyond the whole
+# automatic retry schedule, so a live submission is never robbed; a later
+# manual Retry that finds its pin released gets `attachment_not_ready` and
+# uploads the same local snapshot again. A restart never releases pins.
+ORPHAN_PIN_AFTER_SEC = 3600
+RECOVERY_LEASE_SEC = 120
 
 _SHA256 = r"^[0-9a-f]{64}$"
 _DIGEST = r"^sha256:[0-9a-f]{64}$"
@@ -135,6 +181,33 @@ def subject_problem(value: str) -> Optional[str]:
     if _has_control(value, set()):
         return "invalid_request"
     return None
+
+
+def normalize_filename(value: str) -> str:
+    """A chosen file's name as the manifest carries it, made once when the
+    file is snapshotted (before review): its last path part, NFC, control
+    characters dropped, trimmed, at most FILENAME_MAX_BYTES of UTF-8 (cut at
+    a character, keeping a short extension), and "file" when nothing usable
+    is left. `filename_problem` of the result is always None."""
+    name = unicodedata.normalize("NFC", value).replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in name if not _has_control(c, set())).strip()
+    stem, dot, ext = name.rpartition(".")
+    keep = dot + ext if stem and len((dot + ext).encode("utf-8")) <= 32 else ""
+    base = name[:len(name) - len(keep)]
+    while True:
+        name = unicodedata.normalize("NFC", base.rstrip() + keep).strip()
+        if len(name.encode("utf-8")) <= FILENAME_MAX_BYTES:
+            break
+        base = base[:-1]
+    return "file" if name in ("", ".", "..") else name
+
+
+def normalize_media_type(value: Optional[str]) -> str:
+    """The browser's type as the manifest carries it: lower case, without
+    parameters; anything that is not a plain type/subtype (or nothing) is
+    application/octet-stream. A hint only, never a safety decision."""
+    plain = (value or "").split(";", 1)[0].strip().lower()
+    return plain if re.fullmatch(_MEDIA_TYPE, plain) else "application/octet-stream"
 
 
 def filename_problem(value: str) -> Optional[str]:
@@ -227,13 +300,6 @@ class AcceptedMessage(MessageContent):
     accepted_at: datetime
 
 
-class SendResult(_Strict):
-    """The answer to POST /api/v1/messages, the same for a first send and for
-    an identical retry. `duplicate` says the server had it already."""
-    message: AcceptedMessage
-    duplicate: bool
-
-
 # -- the digest -----------------------------------------------------------------
 
 def digest_input(content: MessageContent, *, server_id: str, sender_github_id: int) -> dict:
@@ -300,13 +366,30 @@ class ReceiptFacts(_Strict):
     revision: Revision
 
 
-class ReceiptRequest(_Strict):
-    """POST /api/v1/messages/{message_id}/receipts, by the recipient's own
-    paired node. `read` only ever comes from the owner's GUI after the body
-    was displayed (or an explicit mark-read), never from a notification, a
-    summary or the model."""
+class ReceiptItem(_Strict):
+    """One receipt. `read` only ever comes from the owner's GUI after the
+    body was displayed (or an explicit mark-read), never from a
+    notification, a summary or the model."""
+    message_id: UUID
     kind: ReceiptKind
+
+
+class ReceiptBatch(_Strict):
+    """POST /api/v1/messages/receipts, by one of the recipient's own paired
+    nodes (`node_id`, checked like `source_node_id`). One receipt is a batch
+    of one; a node sends what it owes in batches of at most
+    RECEIPT_BATCH_MAX."""
     node_id: UUID
+    receipts: list[ReceiptItem] = Field(min_length=1, max_length=RECEIPT_BATCH_MAX)
+
+
+class ReceiptBatchResult(_Strict):
+    """The facts after the batch, one per message the caller is the
+    recipient of. `not_found` lists the rest: a message that does not exist,
+    that the caller may not see, or that the caller sent (the sender's own
+    read is no receipt). It is settled: the node stops owing it."""
+    facts: list[ReceiptFacts]
+    not_found: list[UUID] = Field(default_factory=list)
 
 
 def merge_receipt(facts: ReceiptFacts, kind: ReceiptKind, node_id: UUID,
@@ -407,7 +490,7 @@ class _Command(_Strict):
 
 class OpenItem(_Command):
     """Activate: Waiting -> Active. Records no read receipt; that is a
-    separate ReceiptRequest once a specific body was displayed."""
+    separate read receipt (ReceiptItem) once a specific body was displayed."""
     command: Literal["open"] = "open"
 
 
@@ -447,8 +530,22 @@ WorkCommand = Annotated[Union[OpenItem, PutBack, SetAddressed, SetUnreadReminder
 
 
 class WorkCommandRequest(_Strict):
-    """PUT /api/v1/messages/threads/{thread_id}/work-state."""
+    """PUT /api/v1/messages/threads/{thread_id}/work-state. (Supersedes the
+    handoff's proposed /messages/{message_id}/work-state: the item is the
+    thread.)"""
     change: WorkCommand
+
+
+class SendResult(_Strict):
+    """The answer to POST /api/v1/messages, the same shape for a first send
+    and for an identical retry. `duplicate` says the server had it already.
+    It carries what JARVIS stores in one transaction with the accepted
+    message: its receipts (none yet) and the sender's own item after it, at
+    the server's revision, so no local copy of `on_message` can diverge."""
+    message: AcceptedMessage
+    receipts: ReceiptFacts
+    work_state: WorkState
+    duplicate: bool
 
 
 class ContractError(Exception):
@@ -512,12 +609,142 @@ class SyncEntry(_Strict):
 
 
 class SyncPage(_Strict):
-    """GET /api/v1/messages/sync?continuation=…&limit=…"""
+    """GET /api/v1/messages/sync?node_id=…&continuation=…&limit=…. `node_id`
+    is the caller's own paired node (`source_node_not_owned` otherwise); the
+    continuation is bound to it, so one node's scan never advances
+    another's."""
     epoch: str = Field(min_length=1, max_length=64)
     entries: list[SyncEntry] = Field(max_length=SYNC_PAGE_MAX)
     continuation: Optional[str] = Field(default=None, max_length=512)
     scan_complete: bool                   # no continuation: the next call starts a new epoch
     server_time: datetime
+
+
+# -- recipients -------------------------------------------------------------------
+
+class TeamMember(_Strict):
+    github_id: GithubId
+    login: str = Field(min_length=1, max_length=39)
+    name: Optional[str] = Field(default=None, max_length=255)
+
+
+class RecipientList(_Strict):
+    """GET /api/v1/messages/recipients: the existing team roster's active
+    members, readable by every member's paired JARVIS (the roster route
+    itself stays administrators' only). It includes the caller, who is
+    shown as Me. Not a second directory: it is that roster, read."""
+    members: list[TeamMember]
+
+
+# -- the announcement lease -------------------------------------------------------
+#
+# Which of the recipient's paired nodes announces an arrival. One lease per
+# (server, recipient, message), held by the team server so every node of the
+# owner sees the same one: a node claims it before it enqueues speech, says
+# when it has started (`attempted`) and when it is done (`completed`). An
+# expired claimed or attempted lease may be claimed again by any of the
+# owner's nodes, so a crash may repeat an announcement; nothing claims
+# exactly-once speech. A completed one is never claimed again. The length
+# of the lease is the signals stream's setting (`lease_sec`).
+
+AnnouncementStep = Literal["claim", "attempted", "completed"]
+AnnouncementState = Literal["claimed", "attempted", "completed"]
+
+
+class AnnouncementRequest(_Strict):
+    """POST /api/v1/messages/{message_id}/announcement, by one of the
+    message's recipient's own nodes. `claim` carries no token; `attempted`
+    and `completed` carry the one their claim returned."""
+    node_id: UUID
+    step: AnnouncementStep
+    lease_token: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def _token(self):
+        if (self.step == "claim") != (self.lease_token is None):
+            raise ValueError("a claim has no token; the later steps carry it")
+        return self
+
+
+class AnnouncementLease(_Strict):
+    """`lease_token` only in the answer to the node holding it."""
+    message_id: UUID
+    owner_github_id: GithubId
+    node_id: UUID
+    state: AnnouncementState
+    lease_token: Optional[UUID] = None
+    expires_at: datetime
+    revision: Revision
+
+
+def apply_announcement(lease: Optional[AnnouncementLease], request: AnnouncementRequest, *,
+                       message_id: UUID, owner_github_id: int, now: datetime,
+                       new_token: UUID, lease_sec: float) -> AnnouncementLease:
+    """One step on the lease. A repeat by its holder changes nothing; a
+    claim of a live lease held by another node, or a step with the wrong
+    token, is `announcement_claimed` with the lease (its token withheld)."""
+    def refused():
+        return ContractError("announcement_claimed",
+                             latest=lease.model_copy(update={"lease_token": None}))
+
+    if request.step == "claim":
+        live = lease is not None and (lease.state == "completed" or lease.expires_at > now)
+        if not live:
+            return AnnouncementLease(
+                message_id=message_id, owner_github_id=owner_github_id, node_id=request.node_id,
+                state="claimed", lease_token=new_token,
+                expires_at=now + timedelta(seconds=lease_sec),
+                revision=lease.revision + 1 if lease else 1)
+        if lease.node_id == request.node_id and lease.state != "completed":
+            return lease
+        raise refused()
+    if lease is None:
+        raise ContractError("message_not_found")
+    if lease.lease_token != request.lease_token or lease.node_id != request.node_id:
+        raise refused()
+    target = request.step if request.step == "completed" or lease.state == "claimed" \
+        else lease.state
+    if target == lease.state:
+        return lease
+    return lease.model_copy(update={"state": target, "revision": lease.revision + 1})
+
+
+# -- attachments ------------------------------------------------------------------
+#
+# A file goes up after its message is approved, as a staging record bound to
+# its owner, message, size and SHA-256: create, stream the bytes (each
+# attempt starts again from byte 0; there is no byte-range resumption in
+# v1), finalize (the server computes size and hash; a difference is
+# `attachment_mismatch`). Staging is invisible to the recipient. Acceptance
+# pins each verified record to the message by compare-and-set, then inserts
+# the message: that insert is the visibility commit, and only an accepted
+# message the viewer may see authorizes a download. A zero-byte file is
+# valid.
+
+StagingState = Literal["uploading", "verified", "pinned", "published", "expired"]
+# expired: claimed by cleanup (deleted or being deleted); never pinned again.
+
+
+class AttachmentCreate(_Strict):
+    """POST /api/v1/attachments. Owner and server come from the session.
+    Creating the same attachment_id again with the same binding returns the
+    existing record; a different binding is `idempotency_conflict`."""
+    attachment_id: UUID
+    message_id: UUID
+    size_bytes: int = Field(ge=0, le=FILE_MAX_BYTES)
+    sha256: str = Field(pattern=_SHA256)
+
+
+class AttachmentStatus(_Strict):
+    """The answer to create, an upload attempt, finalize and GET: only ever
+    to the record's owner."""
+    attachment_id: UUID
+    message_id: UUID
+    state: StagingState
+    size_bytes: int = Field(ge=0, le=FILE_MAX_BYTES)
+    sha256: str = Field(pattern=_SHA256)
+    received_bytes: int = Field(ge=0)     # of the latest attempt
+    expires_at: Optional[datetime] = None  # while unpinned
 
 
 # -- errors ---------------------------------------------------------------------
@@ -545,25 +772,54 @@ ERRORS: dict[str, ErrorSpec] = {
     "too_large": ErrorSpec(413, False, "The message or its files are too large."),
     "quota_exceeded": ErrorSpec(413, False, "The team server has no room for these files."),
     "session_invalid": ErrorSpec(401, False, "Sign in to the team server again."),
+    "session_missing": ErrorSpec(401, False, "Sign in to the team server again."),
+    "session_expired": ErrorSpec(401, False, "Your team server sign-in expired; sign in "
+                                             "again."),
+    "session_revoked": ErrorSpec(401, False, "Sign in to the team server again."),
+    "membership_suspended": ErrorSpec(403, False, "Your access to the team is suspended."),
+    "device_required": ErrorSpec(403, False, "Only a paired JARVIS can do that."),
     "recipient_not_allowed": ErrorSpec(403, False, "That person is not an active member "
                                                    "of the team."),
     "relation_not_allowed": ErrorSpec(403, False, "A linked message is not one both of "
                                                   "you can see."),
     "source_node_not_owned": ErrorSpec(403, False, "This JARVIS is not paired to you."),
     "message_not_found": ErrorSpec(404, False, "That message is not available."),
+    "attachment_not_found": ErrorSpec(404, False, "That file is not available."),
     "idempotency_conflict": ErrorSpec(409, False, "A different message was already sent "
                                                   "under this one's identity."),
     "revision_conflict": ErrorSpec(409, False, "This item changed on another JARVIS; "
                                                "showing the latest."),
     "attachment_not_ready": ErrorSpec(409, False, "A file is not uploaded and verified; "
                                                   "upload it again."),
+    "attachment_mismatch": ErrorSpec(422, False, "A file's bytes are not the ones approved; "
+                                                 "prepare it again."),
+    "announcement_claimed": ErrorSpec(409, False, "Another of your JARVIS instances is "
+                                                  "announcing this."),
     "sync_restart": ErrorSpec(410, True, "Catching up from the beginning."),
     "rate_limited": ErrorSpec(429, True, "The team server asked JARVIS to slow down."),
     "messaging_disabled": ErrorSpec(503, False, "Messaging is switched off on the team "
                                                 "server."),
     "dependency_unavailable": ErrorSpec(503, True, "The team server cannot reach its "
                                                    "database."),
+    "not_ready": ErrorSpec(503, True, "The team server is starting up."),
+    "internal": ErrorSpec(500, True, "The team server had an internal error."),
 }
+
+
+def error_spec(code: str, status: int) -> ErrorSpec:
+    """How to treat an answer: its code's spec, or, for a code this revision
+    does not know, by its status: any 401 ends the session (stop
+    submitting, keep every unsent draft and approved send), any 5xx is
+    retried, anything else is not."""
+    known = ERRORS.get(code)
+    if known is not None:
+        return known
+    return ErrorSpec(status, status >= 500, "The team server refused the request.")
+
+
+def session_ended(status: int) -> bool:
+    """A 401, whatever its code: the session is over until he signs in."""
+    return status == 401
 # Automatic retries of a retryable code or a transport failure: full-jitter
 # exponential backoff from RETRY_BASE_SEC, capped at RETRY_MAX_SEC, at most
 # RETRY_MAX_ATTEMPTS before the send is shown as failed with a Retry action.
@@ -595,6 +851,7 @@ FAULT_POINTS: tuple[str, ...] = (
     "server_before_attachment_finalize",
     "server_after_attachment_finalize",
     "server_after_pin_before_insert",       # Serve: files pinned, message not inserted
+    "server_after_insert_before_projection",  # Serve: inserted, work items not derived
 )
 
 

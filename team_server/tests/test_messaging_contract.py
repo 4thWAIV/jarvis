@@ -94,6 +94,31 @@ def test_filenames_are_safe_display_names(name, problem):
     assert mm.filename_problem(name) == problem
 
 
+@pytest.mark.parametrize("chosen", [
+    "plan.pdf", "/Users/tim/Desktop/plan.pdf", "C:\\Users\\tim\\plan.pdf", "  spaced  .txt ",
+    "bell\u0007.txt", "e\u0301.txt", "..", "/", "", "x" * 300 + ".pdf", "é" * 200,
+    "x" * 250 + "." + "y" * 40])
+def test_a_chosen_files_name_always_normalizes_to_a_safe_display_name(chosen):
+    name = mm.normalize_filename(chosen)
+    assert mm.filename_problem(name) is None
+    assert mm.normalize_filename(name) == name, "normalizing twice changes nothing"
+
+
+def test_normalized_names_keep_what_they_can():
+    assert mm.normalize_filename("/Users/tim/Desktop/plan.pdf") == "plan.pdf"
+    assert mm.normalize_filename("..") == "file"
+    long = mm.normalize_filename("x" * 300 + ".pdf")
+    assert long.endswith(".pdf") and len(long.encode()) <= mm.FILENAME_MAX_BYTES
+
+
+@pytest.mark.parametrize("given, kept", [
+    ("text/plain; charset=utf-8", "text/plain"), ("Application/PDF", "application/pdf"),
+    ("", "application/octet-stream"), (None, "application/octet-stream"),
+    ("pdf", "application/octet-stream"), ("image/svg+xml", "image/svg+xml")])
+def test_a_media_type_is_a_plain_lowercase_hint(given, kept):
+    assert mm.normalize_media_type(given) == kept
+
+
 def test_a_file_only_message_is_valid_and_an_empty_one_is_not():
     pdf = mm.AttachmentRef(attachment_id=_id(31), filename="plan.pdf",
                            media_type="application/pdf", size_bytes=1, sha256="a" * 64)
@@ -325,13 +350,28 @@ def test_work_commands_are_a_closed_set_by_their_name():
 
 def test_every_error_has_a_status_and_only_transient_ones_retry():
     assert {c for c, s in mm.ERRORS.items() if s.retryable} == \
-        {"sync_restart", "rate_limited", "dependency_unavailable"}
+        {"sync_restart", "rate_limited", "dependency_unavailable", "not_ready", "internal"}
     for code, spec in mm.ERRORS.items():
         assert 400 <= spec.status < 600 and spec.shown and code == code.lower()
     # The team server's existing codes keep their meaning.
     assert mm.ERRORS["invalid_request"].status == 422
     assert mm.ERRORS["too_large"].status == 413
     assert mm.ERRORS["session_invalid"].status == 401
+
+
+def test_the_team_servers_own_session_and_startup_codes_are_known():
+    for code in ("session_missing", "session_expired", "session_revoked", "session_invalid"):
+        assert mm.ERRORS[code].status == 401
+    for code in ("membership_suspended", "device_required"):
+        assert mm.ERRORS[code].status == 403
+    assert mm.ERRORS["not_ready"].status == 503 and mm.ERRORS["internal"].status == 500
+
+
+def test_an_unknown_code_is_judged_by_its_status():
+    assert mm.error_spec("brand_new", 503).retryable
+    assert not mm.error_spec("brand_new", 409).retryable
+    assert mm.session_ended(401) and not mm.session_ended(403)
+    assert mm.error_spec("digest_mismatch", 500) == mm.ERRORS["digest_mismatch"]
 
 
 def test_retry_backoff_is_bounded_full_jitter():
@@ -359,3 +399,59 @@ def test_the_services_interfaces_are_checkable():
     for proto in (messaging_ports.MessageRepository, messaging_ports.AttachmentStorage,
                   messaging_ports.IdSource):
         assert getattr(proto, "_is_runtime_protocol", False)
+
+
+def test_file_settings_default_to_the_contract_and_name_the_team_server():
+    settings = messaging_ports.ATTACHMENT_SETTINGS
+    assert all(name.startswith("TEAM_SERVER_") for name in settings)
+    assert settings["TEAM_SERVER_FILE_MAX_BYTES"] == mm.FILE_MAX_BYTES
+    assert mm.ORPHAN_PIN_AFTER_SEC > mm.RETRY_MAX_ATTEMPTS * mm.RETRY_MAX_SEC, \
+        "recovery never robs a submission still inside its automatic retries"
+
+
+def test_the_insert_and_projection_gap_has_a_fault_point():
+    assert "server_after_insert_before_projection" in mm.FAULT_POINTS
+
+
+# -- the announcement lease --------------------------------------------------------------
+
+LAPTOP, DESK = _id(101), _id(103)
+
+
+def _announce(lease, node, step, token=None, at=T0, new=_id(301)):
+    return mm.apply_announcement(lease, mm.AnnouncementRequest(
+        node_id=node, step=step, lease_token=token), message_id=_id(2),
+        owner_github_id=TIM, now=at, new_token=new, lease_sec=30)
+
+
+def test_one_node_holds_the_announcement_and_a_repeat_changes_nothing():
+    lease = _announce(None, LAPTOP, "claim")
+    assert (lease.state, lease.node_id, lease.lease_token, lease.revision) == \
+        ("claimed", LAPTOP, _id(301), 1)
+    assert _announce(lease, LAPTOP, "claim", new=_id(302)) == lease
+    with pytest.raises(mm.ContractError) as e:
+        _announce(lease, DESK, "claim", new=_id(302))
+    assert e.value.code == "announcement_claimed" and e.value.latest.lease_token is None
+    tried = _announce(lease, LAPTOP, "attempted", token=_id(301))
+    assert (tried.state, tried.revision) == ("attempted", 2)
+    assert _announce(tried, LAPTOP, "attempted", token=_id(301)) == tried
+    done = _announce(tried, LAPTOP, "completed", token=_id(301))
+    assert _announce(done, LAPTOP, "attempted", token=_id(301)) == done, "never backwards"
+
+
+def test_an_expired_lease_passes_on_and_a_completed_one_never_does():
+    lease = _announce(None, LAPTOP, "claim")
+    later = T0 + timedelta(seconds=31)
+    taken = _announce(lease, DESK, "claim", at=later, new=_id(302))
+    assert (taken.node_id, taken.lease_token, taken.revision) == (DESK, _id(302), 2)
+    with pytest.raises(mm.ContractError):
+        _announce(taken, LAPTOP, "completed", token=_id(301), at=later)
+    done = _announce(taken, DESK, "completed", token=_id(302), at=later)
+    with pytest.raises(mm.ContractError):
+        _announce(done, LAPTOP, "claim", at=later + timedelta(days=1), new=_id(303))
+
+
+def test_a_step_without_a_claim_is_not_found():
+    with pytest.raises(mm.ContractError) as e:
+        _announce(None, LAPTOP, "completed", token=_id(301))
+    assert e.value.code == "message_not_found"

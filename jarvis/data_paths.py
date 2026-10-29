@@ -451,6 +451,19 @@ def access_keys_path() -> Path:
     return data_dir() / "access-keys.json"
 
 
+def messaging_snapshots_dir() -> Path:
+    """Private, immutable copies of the files chosen for human messages
+    (messaging_files.py), one per attachment. Not created here: the files
+    service creates it with owner-only permissions."""
+    return data_dir() / "messaging" / "snapshots"
+
+
+def messaging_downloads_dir() -> Path:
+    """Received files, written privately and moved here only once their size
+    and hash are verified (messaging_files.py). Not created here, as above."""
+    return data_dir() / "messaging" / "downloads"
+
+
 def team_connection_path() -> Path:
     """The saved team-server connection (team_client.py): server URL, pinned
     server ID and the last non-secret status. The session credential is in

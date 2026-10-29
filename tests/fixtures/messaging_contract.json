@@ -66,9 +66,43 @@
       "digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
       "sender_github_id": 863470,
       "server_id": "00000000-0000-4000-8000-0000000000aa"
+    },
+    {
+      "canonical": "{\"attachments\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000020\",\"filename\":\"notes.txt\",\"media_type\":\"text/plain\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size_bytes\":0},{\"attachment_id\":\"00000000-0000-4000-8000-00000000001f\",\"filename\":\"plan.pdf\",\"media_type\":\"application/pdf\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size_bytes\":48213}],\"content_revision\":3,\"digest_version\":1,\"in_reply_to_message_id\":null,\"message_id\":\"00000000-0000-4000-8000-000000000004\",\"recipient_github_id\":1001,\"related_message_ids\":[],\"schema_version\":1,\"sender_github_id\":863470,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"Files\",\"text\":\"Both attached.\",\"thread_id\":\"00000000-0000-4000-8000-000000000004\"}",
+      "case": "two_files_in_order",
+      "content": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000020",
+            "filename": "notes.txt",
+            "media_type": "text/plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "size_bytes": 0
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_revision": 3,
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000004",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "subject": "Files",
+        "text": "Both attached.",
+        "thread_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "digest": "sha256:b609af3a3d275224c03c05806f02c45271ed561c51161403c5c0b90797dbef6f",
+      "sender_github_id": 863470,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
     }
   ],
-  "interface_revision": "messaging.v1-contract.1",
+  "interface_revision": "messaging.v1-contract.2",
   "invalid": [
     {
       "case": "unknown_field",
@@ -506,11 +540,566 @@
       }
     },
     {
-      "case": "unknown_kind",
-      "model": "ReceiptRequest",
+      "case": "control_character",
+      "model": "AttachmentRef",
       "value": {
-        "kind": "replied",
-        "node_id": "00000000-0000-4000-8000-000000000066"
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "a\u0007.pdf",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "not_nfc",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "é.pdf",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "leading_space",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": " plan.pdf",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "media_type_with_parameters",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "plan.pdf",
+        "media_type": "text/plain; charset=utf-8",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "package_too_large",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000258",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 26214400
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000259",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 26214400
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000025a",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 26214400
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000025b",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 26214400
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000025c",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 26214400
+          }
+        ],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "unknown_kind",
+      "model": "ReceiptBatch",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "replied",
+            "message_id": "00000000-0000-4000-8000-000000000001"
+          }
+        ]
+      }
+    },
+    {
+      "case": "empty",
+      "model": "ReceiptBatch",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": []
+      }
+    },
+    {
+      "case": "too_many",
+      "model": "ReceiptBatch",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002bc"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002bd"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002be"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002bf"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c0"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c1"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c2"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c3"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c4"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c5"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c6"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c7"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c8"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002c9"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ca"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002cb"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002cc"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002cd"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ce"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002cf"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d0"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d1"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d2"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d3"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d4"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d5"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d6"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d7"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d8"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002d9"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002da"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002db"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002dc"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002dd"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002de"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002df"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e0"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e1"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e2"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e3"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e4"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e5"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e6"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e7"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e8"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002e9"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ea"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002eb"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ec"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ed"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ee"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ef"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f0"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f1"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f2"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f3"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f4"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f5"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f6"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f7"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f8"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002f9"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002fa"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002fb"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002fc"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002fd"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002fe"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-0000000002ff"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000300"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000301"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000302"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000303"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000304"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000305"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000306"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000307"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000308"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000309"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030a"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030b"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030c"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030d"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030e"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000030f"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000310"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000311"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000312"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000313"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000314"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000315"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000316"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000317"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000318"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000319"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031a"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031b"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031c"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031d"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031e"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-00000000031f"
+          },
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000320"
+          }
+        ]
+      }
+    },
+    {
+      "case": "claim_with_token",
+      "model": "AnnouncementRequest",
+      "value": {
+        "lease_token": "00000000-0000-4000-8000-00000000012d",
+        "node_id": "00000000-0000-4000-8000-000000000065",
+        "step": "claim"
+      }
+    },
+    {
+      "case": "completed_without_token",
+      "model": "AnnouncementRequest",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000065",
+        "step": "completed"
+      }
+    },
+    {
+      "case": "unknown_state",
+      "model": "AttachmentStatus",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "expires_at": "2026-10-30T12:00:00Z",
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "received_bytes": 48213,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213,
+        "state": "quarantined"
       }
     },
     {
@@ -550,6 +1139,950 @@
       }
     }
   ],
+  "local_valid": {
+    "Draft": {
+      "new_files_only_approved": {
+        "agent_drafted": false,
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "capture_id": 7,
+        "draft_revision": 1,
+        "files": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "bytes_done": 16384,
+            "failure": null,
+            "state": "uploading"
+          }
+        ],
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000006",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "send": {
+          "attempts": 0,
+          "content_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "content_revision": 1,
+          "failure": null,
+          "message_id": "00000000-0000-4000-8000-000000000006",
+          "next_attempt_at": null,
+          "state": "approved"
+        },
+        "subject": "",
+        "text": "",
+        "thread_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "reply_submitting": {
+        "agent_drafted": false,
+        "attachments": [],
+        "capture_id": null,
+        "draft_revision": 4,
+        "files": [],
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
+        "message_id": "00000000-0000-4000-8000-000000000005",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "send": {
+          "attempts": 1,
+          "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "content_revision": 2,
+          "failure": null,
+          "message_id": "00000000-0000-4000-8000-000000000005",
+          "next_attempt_at": null,
+          "state": "submitting"
+        },
+        "subject": "Deploy window",
+        "text": "Friday it is.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    "DraftAction": {
+      "review": {
+        "expected_draft_revision": 4
+      }
+    },
+    "DraftSave": {
+      "new_conversation": {
+        "attachment_ids": [],
+        "expected_draft_revision": null,
+        "in_reply_to_message_id": null,
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "subject": "Deploy window",
+        "text": "Friday?",
+        "thread_id": null
+      },
+      "reply_edit": {
+        "attachment_ids": [],
+        "expected_draft_revision": 3,
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "subject": "Deploy window",
+        "text": "Friday it is.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    "HistoryPage": {
+      "last_page": {
+        "continuation": null,
+        "items": [
+          {
+            "dismiss_blockers": [],
+            "drafts": [],
+            "messages": [
+              {
+                "direction": "outgoing",
+                "files": [],
+                "message": {
+                  "accepted_at": "2026-10-29T12:00:00Z",
+                  "attachments": [],
+                  "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+                  "content_revision": 1,
+                  "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+                  "in_reply_to_message_id": null,
+                  "message_id": "00000000-0000-4000-8000-000000000001",
+                  "recipient_github_id": 1001,
+                  "related_message_ids": [],
+                  "schema_version": 1,
+                  "sender_github_id": 863470,
+                  "server_id": "00000000-0000-4000-8000-0000000000aa",
+                  "source_node_id": "00000000-0000-4000-8000-000000000065",
+                  "subject": "Deploy window",
+                  "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+                  "thread_id": "00000000-0000-4000-8000-000000000001"
+                },
+                "receipts": {
+                  "message_id": "00000000-0000-4000-8000-000000000001",
+                  "nodes": [
+                    {
+                      "node_id": "00000000-0000-4000-8000-000000000066",
+                      "received_at": "2026-10-29T12:01:00Z"
+                    }
+                  ],
+                  "read_at": "2026-10-29T12:03:00Z",
+                  "received_at": "2026-10-29T12:01:00Z",
+                  "recipient_github_id": 1001,
+                  "revision": 3
+                },
+                "self_message": false
+              }
+            ],
+            "pending_command": null,
+            "work_state": {
+              "action_owner_github_id": 1001,
+              "addressed_at": null,
+              "arrival_at": "2026-10-29T12:00:00Z",
+              "correspondent_github_id": 1001,
+              "dismissed_at": "2026-10-29T13:00:00Z",
+              "owner_github_id": 863470,
+              "placement": "inactive",
+              "revision": 2,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "thread_id": "00000000-0000-4000-8000-000000000001",
+              "unread_reminder": false
+            }
+          }
+        ]
+      }
+    },
+    "HumanTransferFrame": {
+      "incoming_reply": {
+        "event": {
+          "direction": "incoming",
+          "event_id": "human:4a7713ff-7c61-5f59-8b44-126e89ac0115",
+          "message_id": "00000000-0000-4000-8000-000000000002",
+          "occurred_at": "2026-10-29T12:05:00Z",
+          "owner_github_id": 863470,
+          "recipient_github_id": 863470,
+          "replay": false,
+          "sender_github_id": 1001,
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "thread_id": "00000000-0000-4000-8000-000000000001"
+        },
+        "type": "human_transfer"
+      }
+    },
+    "LocalFile": {
+      "uploading": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "bytes_done": 16384,
+        "failure": null,
+        "state": "uploading"
+      },
+      "verified": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "bytes_done": 48213,
+        "failure": null,
+        "state": "verified"
+      }
+    },
+    "LocalItem": {
+      "dismissed": {
+        "dismiss_blockers": [],
+        "drafts": [],
+        "messages": [
+          {
+            "direction": "outgoing",
+            "files": [],
+            "message": {
+              "accepted_at": "2026-10-29T12:00:00Z",
+              "attachments": [],
+              "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+              "content_revision": 1,
+              "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+              "in_reply_to_message_id": null,
+              "message_id": "00000000-0000-4000-8000-000000000001",
+              "recipient_github_id": 1001,
+              "related_message_ids": [],
+              "schema_version": 1,
+              "sender_github_id": 863470,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "Deploy window",
+              "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+              "thread_id": "00000000-0000-4000-8000-000000000001"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000001",
+              "nodes": [
+                {
+                  "node_id": "00000000-0000-4000-8000-000000000066",
+                  "received_at": "2026-10-29T12:01:00Z"
+                }
+              ],
+              "read_at": "2026-10-29T12:03:00Z",
+              "received_at": "2026-10-29T12:01:00Z",
+              "recipient_github_id": 1001,
+              "revision": 3
+            },
+            "self_message": false
+          }
+        ],
+        "pending_command": null,
+        "work_state": {
+          "action_owner_github_id": 1001,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:00:00Z",
+          "correspondent_github_id": 1001,
+          "dismissed_at": "2026-10-29T13:00:00Z",
+          "owner_github_id": 863470,
+          "placement": "inactive",
+          "revision": 2,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "unread_reminder": false
+        }
+      },
+      "exchange_your_turn": {
+        "dismiss_blockers": [
+          "send_unresolved"
+        ],
+        "drafts": [
+          {
+            "agent_drafted": false,
+            "attachments": [],
+            "capture_id": null,
+            "draft_revision": 4,
+            "files": [],
+            "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
+            "message_id": "00000000-0000-4000-8000-000000000005",
+            "recipient_github_id": 1001,
+            "related_message_ids": [],
+            "send": {
+              "attempts": 1,
+              "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "content_revision": 2,
+              "failure": null,
+              "message_id": "00000000-0000-4000-8000-000000000005",
+              "next_attempt_at": null,
+              "state": "submitting"
+            },
+            "subject": "Deploy window",
+            "text": "Friday it is.",
+            "thread_id": "00000000-0000-4000-8000-000000000001"
+          }
+        ],
+        "messages": [
+          {
+            "direction": "outgoing",
+            "files": [],
+            "message": {
+              "accepted_at": "2026-10-29T12:00:00Z",
+              "attachments": [],
+              "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+              "content_revision": 1,
+              "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+              "in_reply_to_message_id": null,
+              "message_id": "00000000-0000-4000-8000-000000000001",
+              "recipient_github_id": 1001,
+              "related_message_ids": [],
+              "schema_version": 1,
+              "sender_github_id": 863470,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "Deploy window",
+              "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+              "thread_id": "00000000-0000-4000-8000-000000000001"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000001",
+              "nodes": [
+                {
+                  "node_id": "00000000-0000-4000-8000-000000000066",
+                  "received_at": "2026-10-29T12:01:00Z"
+                }
+              ],
+              "read_at": "2026-10-29T12:03:00Z",
+              "received_at": "2026-10-29T12:01:00Z",
+              "recipient_github_id": 1001,
+              "revision": 3
+            },
+            "self_message": false
+          },
+          {
+            "direction": "incoming",
+            "files": [],
+            "message": {
+              "accepted_at": "2026-10-29T12:05:00Z",
+              "attachments": [],
+              "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+              "content_revision": 2,
+              "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+              "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+              "message_id": "00000000-0000-4000-8000-000000000002",
+              "recipient_github_id": 863470,
+              "related_message_ids": [
+                "00000000-0000-4000-8000-000000000007"
+              ],
+              "schema_version": 1,
+              "sender_github_id": 1001,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "Deploy window",
+              "text": "Friday works.",
+              "thread_id": "00000000-0000-4000-8000-000000000001"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000002",
+              "nodes": [],
+              "read_at": "2026-10-29T12:06:00Z",
+              "received_at": null,
+              "recipient_github_id": 863470,
+              "revision": 2
+            },
+            "self_message": false
+          }
+        ],
+        "pending_command": null,
+        "work_state": {
+          "action_owner_github_id": 863470,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:05:00Z",
+          "correspondent_github_id": 1001,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "active",
+          "revision": 2,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "unread_reminder": true
+        }
+      },
+      "self_one_node": {
+        "dismiss_blockers": [],
+        "drafts": [],
+        "messages": [
+          {
+            "direction": "outgoing",
+            "files": [
+              {
+                "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                "bytes_done": 0,
+                "failure": null,
+                "state": "available"
+              }
+            ],
+            "message": {
+              "accepted_at": "2026-10-29T12:09:00Z",
+              "attachments": [
+                {
+                  "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                  "filename": "plan.pdf",
+                  "media_type": "application/pdf",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size_bytes": 48213
+                }
+              ],
+              "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+              "content_revision": 1,
+              "idempotency_key": "00000000-0000-4000-8000-000000000100",
+              "in_reply_to_message_id": null,
+              "message_id": "00000000-0000-4000-8000-000000000003",
+              "recipient_github_id": 863470,
+              "related_message_ids": [],
+              "schema_version": 1,
+              "sender_github_id": 863470,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "",
+              "text": "",
+              "thread_id": "00000000-0000-4000-8000-000000000003"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000003",
+              "nodes": [
+                {
+                  "node_id": "00000000-0000-4000-8000-000000000065",
+                  "received_at": "2026-10-29T12:10:00Z"
+                }
+              ],
+              "read_at": null,
+              "received_at": "2026-10-29T12:10:00Z",
+              "recipient_github_id": 863470,
+              "revision": 2
+            },
+            "self_message": true
+          }
+        ],
+        "pending_command": null,
+        "work_state": {
+          "action_owner_github_id": 863470,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:09:00Z",
+          "correspondent_github_id": 863470,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "queued",
+          "revision": 1,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000003",
+          "unread_reminder": true
+        }
+      },
+      "self_two_nodes": {
+        "dismiss_blockers": [],
+        "drafts": [],
+        "messages": [
+          {
+            "direction": "outgoing",
+            "files": [
+              {
+                "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                "bytes_done": 0,
+                "failure": null,
+                "state": "available"
+              }
+            ],
+            "message": {
+              "accepted_at": "2026-10-29T12:09:00Z",
+              "attachments": [
+                {
+                  "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                  "filename": "plan.pdf",
+                  "media_type": "application/pdf",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size_bytes": 48213
+                }
+              ],
+              "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+              "content_revision": 1,
+              "idempotency_key": "00000000-0000-4000-8000-000000000100",
+              "in_reply_to_message_id": null,
+              "message_id": "00000000-0000-4000-8000-000000000003",
+              "recipient_github_id": 863470,
+              "related_message_ids": [],
+              "schema_version": 1,
+              "sender_github_id": 863470,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "",
+              "text": "",
+              "thread_id": "00000000-0000-4000-8000-000000000003"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000003",
+              "nodes": [
+                {
+                  "node_id": "00000000-0000-4000-8000-000000000065",
+                  "received_at": "2026-10-29T12:10:00Z"
+                },
+                {
+                  "node_id": "00000000-0000-4000-8000-000000000067",
+                  "received_at": "2026-10-29T12:11:00Z"
+                }
+              ],
+              "read_at": null,
+              "received_at": "2026-10-29T12:10:00Z",
+              "recipient_github_id": 863470,
+              "revision": 3
+            },
+            "self_message": true
+          }
+        ],
+        "pending_command": null,
+        "work_state": {
+          "action_owner_github_id": 863470,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:09:00Z",
+          "correspondent_github_id": 863470,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "queued",
+          "revision": 1,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000003",
+          "unread_reminder": true
+        }
+      }
+    },
+    "LocalMessage": {
+      "incoming_reply": {
+        "direction": "incoming",
+        "files": [],
+        "message": {
+          "accepted_at": "2026-10-29T12:05:00Z",
+          "attachments": [],
+          "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+          "content_revision": 2,
+          "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+          "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+          "message_id": "00000000-0000-4000-8000-000000000002",
+          "recipient_github_id": 863470,
+          "related_message_ids": [
+            "00000000-0000-4000-8000-000000000007"
+          ],
+          "schema_version": 1,
+          "sender_github_id": 1001,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "subject": "Deploy window",
+          "text": "Friday works.",
+          "thread_id": "00000000-0000-4000-8000-000000000001"
+        },
+        "receipts": {
+          "message_id": "00000000-0000-4000-8000-000000000002",
+          "nodes": [],
+          "read_at": "2026-10-29T12:06:00Z",
+          "received_at": null,
+          "recipient_github_id": 863470,
+          "revision": 2
+        },
+        "self_message": false
+      },
+      "self_one_node": {
+        "direction": "outgoing",
+        "files": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "bytes_done": 0,
+            "failure": null,
+            "state": "available"
+          }
+        ],
+        "message": {
+          "accepted_at": "2026-10-29T12:09:00Z",
+          "attachments": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-00000000001f",
+              "filename": "plan.pdf",
+              "media_type": "application/pdf",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size_bytes": 48213
+            }
+          ],
+          "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+          "content_revision": 1,
+          "idempotency_key": "00000000-0000-4000-8000-000000000100",
+          "in_reply_to_message_id": null,
+          "message_id": "00000000-0000-4000-8000-000000000003",
+          "recipient_github_id": 863470,
+          "related_message_ids": [],
+          "schema_version": 1,
+          "sender_github_id": 863470,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "subject": "",
+          "text": "",
+          "thread_id": "00000000-0000-4000-8000-000000000003"
+        },
+        "receipts": {
+          "message_id": "00000000-0000-4000-8000-000000000003",
+          "nodes": [
+            {
+              "node_id": "00000000-0000-4000-8000-000000000065",
+              "received_at": "2026-10-29T12:10:00Z"
+            }
+          ],
+          "read_at": null,
+          "received_at": "2026-10-29T12:10:00Z",
+          "recipient_github_id": 863470,
+          "revision": 2
+        },
+        "self_message": true
+      },
+      "self_two_nodes": {
+        "direction": "outgoing",
+        "files": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "bytes_done": 0,
+            "failure": null,
+            "state": "available"
+          }
+        ],
+        "message": {
+          "accepted_at": "2026-10-29T12:09:00Z",
+          "attachments": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-00000000001f",
+              "filename": "plan.pdf",
+              "media_type": "application/pdf",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size_bytes": 48213
+            }
+          ],
+          "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+          "content_revision": 1,
+          "idempotency_key": "00000000-0000-4000-8000-000000000100",
+          "in_reply_to_message_id": null,
+          "message_id": "00000000-0000-4000-8000-000000000003",
+          "recipient_github_id": 863470,
+          "related_message_ids": [],
+          "schema_version": 1,
+          "sender_github_id": 863470,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "subject": "",
+          "text": "",
+          "thread_id": "00000000-0000-4000-8000-000000000003"
+        },
+        "receipts": {
+          "message_id": "00000000-0000-4000-8000-000000000003",
+          "nodes": [
+            {
+              "node_id": "00000000-0000-4000-8000-000000000065",
+              "received_at": "2026-10-29T12:10:00Z"
+            },
+            {
+              "node_id": "00000000-0000-4000-8000-000000000067",
+              "received_at": "2026-10-29T12:11:00Z"
+            }
+          ],
+          "read_at": null,
+          "received_at": "2026-10-29T12:10:00Z",
+          "recipient_github_id": 863470,
+          "revision": 3
+        },
+        "self_message": true
+      }
+    },
+    "LocalSend": {
+      "failed_transport": {
+        "attempts": 1,
+        "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "content_revision": 2,
+        "failure": "transport",
+        "message_id": "00000000-0000-4000-8000-000000000005",
+        "next_attempt_at": "2026-10-29T12:12:00Z",
+        "state": "failed"
+      },
+      "submitting": {
+        "attempts": 1,
+        "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "content_revision": 2,
+        "failure": null,
+        "message_id": "00000000-0000-4000-8000-000000000005",
+        "next_attempt_at": null,
+        "state": "submitting"
+      }
+    },
+    "QueueSnapshot": {
+      "not_paired": {
+        "availability": "not_paired",
+        "history_count": 0,
+        "items": [],
+        "owner_github_id": null,
+        "server_id": null,
+        "stale": false,
+        "unsent": []
+      },
+      "tim": {
+        "availability": "available",
+        "history_count": 1,
+        "items": [
+          {
+            "dismiss_blockers": [],
+            "drafts": [],
+            "messages": [
+              {
+                "direction": "outgoing",
+                "files": [
+                  {
+                    "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                    "bytes_done": 0,
+                    "failure": null,
+                    "state": "available"
+                  }
+                ],
+                "message": {
+                  "accepted_at": "2026-10-29T12:09:00Z",
+                  "attachments": [
+                    {
+                      "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                      "filename": "plan.pdf",
+                      "media_type": "application/pdf",
+                      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "size_bytes": 48213
+                    }
+                  ],
+                  "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+                  "content_revision": 1,
+                  "idempotency_key": "00000000-0000-4000-8000-000000000100",
+                  "in_reply_to_message_id": null,
+                  "message_id": "00000000-0000-4000-8000-000000000003",
+                  "recipient_github_id": 863470,
+                  "related_message_ids": [],
+                  "schema_version": 1,
+                  "sender_github_id": 863470,
+                  "server_id": "00000000-0000-4000-8000-0000000000aa",
+                  "source_node_id": "00000000-0000-4000-8000-000000000065",
+                  "subject": "",
+                  "text": "",
+                  "thread_id": "00000000-0000-4000-8000-000000000003"
+                },
+                "receipts": {
+                  "message_id": "00000000-0000-4000-8000-000000000003",
+                  "nodes": [
+                    {
+                      "node_id": "00000000-0000-4000-8000-000000000065",
+                      "received_at": "2026-10-29T12:10:00Z"
+                    }
+                  ],
+                  "read_at": null,
+                  "received_at": "2026-10-29T12:10:00Z",
+                  "recipient_github_id": 863470,
+                  "revision": 2
+                },
+                "self_message": true
+              }
+            ],
+            "pending_command": null,
+            "work_state": {
+              "action_owner_github_id": 863470,
+              "addressed_at": null,
+              "arrival_at": "2026-10-29T12:09:00Z",
+              "correspondent_github_id": 863470,
+              "dismissed_at": null,
+              "owner_github_id": 863470,
+              "placement": "queued",
+              "revision": 1,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "thread_id": "00000000-0000-4000-8000-000000000003",
+              "unread_reminder": true
+            }
+          },
+          {
+            "dismiss_blockers": [
+              "send_unresolved"
+            ],
+            "drafts": [
+              {
+                "agent_drafted": false,
+                "attachments": [],
+                "capture_id": null,
+                "draft_revision": 4,
+                "files": [],
+                "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
+                "message_id": "00000000-0000-4000-8000-000000000005",
+                "recipient_github_id": 1001,
+                "related_message_ids": [],
+                "send": {
+                  "attempts": 1,
+                  "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "content_revision": 2,
+                  "failure": null,
+                  "message_id": "00000000-0000-4000-8000-000000000005",
+                  "next_attempt_at": null,
+                  "state": "submitting"
+                },
+                "subject": "Deploy window",
+                "text": "Friday it is.",
+                "thread_id": "00000000-0000-4000-8000-000000000001"
+              }
+            ],
+            "messages": [
+              {
+                "direction": "outgoing",
+                "files": [],
+                "message": {
+                  "accepted_at": "2026-10-29T12:00:00Z",
+                  "attachments": [],
+                  "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+                  "content_revision": 1,
+                  "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+                  "in_reply_to_message_id": null,
+                  "message_id": "00000000-0000-4000-8000-000000000001",
+                  "recipient_github_id": 1001,
+                  "related_message_ids": [],
+                  "schema_version": 1,
+                  "sender_github_id": 863470,
+                  "server_id": "00000000-0000-4000-8000-0000000000aa",
+                  "source_node_id": "00000000-0000-4000-8000-000000000065",
+                  "subject": "Deploy window",
+                  "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+                  "thread_id": "00000000-0000-4000-8000-000000000001"
+                },
+                "receipts": {
+                  "message_id": "00000000-0000-4000-8000-000000000001",
+                  "nodes": [
+                    {
+                      "node_id": "00000000-0000-4000-8000-000000000066",
+                      "received_at": "2026-10-29T12:01:00Z"
+                    }
+                  ],
+                  "read_at": "2026-10-29T12:03:00Z",
+                  "received_at": "2026-10-29T12:01:00Z",
+                  "recipient_github_id": 1001,
+                  "revision": 3
+                },
+                "self_message": false
+              },
+              {
+                "direction": "incoming",
+                "files": [],
+                "message": {
+                  "accepted_at": "2026-10-29T12:05:00Z",
+                  "attachments": [],
+                  "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+                  "content_revision": 2,
+                  "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+                  "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+                  "message_id": "00000000-0000-4000-8000-000000000002",
+                  "recipient_github_id": 863470,
+                  "related_message_ids": [
+                    "00000000-0000-4000-8000-000000000007"
+                  ],
+                  "schema_version": 1,
+                  "sender_github_id": 1001,
+                  "server_id": "00000000-0000-4000-8000-0000000000aa",
+                  "source_node_id": "00000000-0000-4000-8000-000000000065",
+                  "subject": "Deploy window",
+                  "text": "Friday works.",
+                  "thread_id": "00000000-0000-4000-8000-000000000001"
+                },
+                "receipts": {
+                  "message_id": "00000000-0000-4000-8000-000000000002",
+                  "nodes": [],
+                  "read_at": "2026-10-29T12:06:00Z",
+                  "received_at": null,
+                  "recipient_github_id": 863470,
+                  "revision": 2
+                },
+                "self_message": false
+              }
+            ],
+            "pending_command": null,
+            "work_state": {
+              "action_owner_github_id": 863470,
+              "addressed_at": null,
+              "arrival_at": "2026-10-29T12:05:00Z",
+              "correspondent_github_id": 1001,
+              "dismissed_at": null,
+              "owner_github_id": 863470,
+              "placement": "active",
+              "revision": 2,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "thread_id": "00000000-0000-4000-8000-000000000001",
+              "unread_reminder": true
+            }
+          }
+        ],
+        "owner_github_id": 863470,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "stale": false,
+        "unsent": [
+          {
+            "agent_drafted": false,
+            "attachments": [
+              {
+                "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                "filename": "plan.pdf",
+                "media_type": "application/pdf",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size_bytes": 48213
+              }
+            ],
+            "capture_id": 7,
+            "draft_revision": 1,
+            "files": [
+              {
+                "attachment_id": "00000000-0000-4000-8000-00000000001f",
+                "bytes_done": 16384,
+                "failure": null,
+                "state": "uploading"
+              }
+            ],
+            "in_reply_to_message_id": null,
+            "message_id": "00000000-0000-4000-8000-000000000006",
+            "recipient_github_id": 1001,
+            "related_message_ids": [],
+            "send": {
+              "attempts": 0,
+              "content_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "content_revision": 1,
+              "failure": null,
+              "message_id": "00000000-0000-4000-8000-000000000006",
+              "next_attempt_at": null,
+              "state": "approved"
+            },
+            "subject": "",
+            "text": "",
+            "thread_id": "00000000-0000-4000-8000-000000000006"
+          }
+        ]
+      }
+    },
+    "TransferEvent": {
+      "incoming_reply": {
+        "direction": "incoming",
+        "event_id": "human:4a7713ff-7c61-5f59-8b44-126e89ac0115",
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "occurred_at": "2026-10-29T12:05:00Z",
+        "owner_github_id": 863470,
+        "recipient_github_id": 863470,
+        "replay": false,
+        "sender_github_id": 1001,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    "WorkCommandResult": {
+      "pending_offline": {
+        "pending": true,
+        "work_state": {
+          "action_owner_github_id": 863470,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:09:00Z",
+          "correspondent_github_id": 863470,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "queued",
+          "revision": 1,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000003",
+          "unread_reminder": true
+        }
+      }
+    }
+  },
   "server_id": "00000000-0000-4000-8000-0000000000aa",
   "valid": {
     "AcceptedMessage": {
@@ -618,6 +2151,46 @@
         "thread_id": "00000000-0000-4000-8000-000000000003"
       }
     },
+    "AnnouncementLease": {
+      "claimed": {
+        "expires_at": "2026-10-29T12:06:00Z",
+        "lease_token": "00000000-0000-4000-8000-00000000012d",
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "node_id": "00000000-0000-4000-8000-000000000065",
+        "owner_github_id": 863470,
+        "revision": 1,
+        "state": "claimed"
+      },
+      "held_elsewhere": {
+        "expires_at": "2026-10-29T12:06:00Z",
+        "lease_token": null,
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "node_id": "00000000-0000-4000-8000-000000000067",
+        "owner_github_id": 863470,
+        "revision": 2,
+        "state": "attempted"
+      }
+    },
+    "AnnouncementRequest": {
+      "claim": {
+        "lease_token": null,
+        "node_id": "00000000-0000-4000-8000-000000000065",
+        "step": "claim"
+      },
+      "completed": {
+        "lease_token": "00000000-0000-4000-8000-00000000012d",
+        "node_id": "00000000-0000-4000-8000-000000000065",
+        "step": "completed"
+      }
+    },
+    "AttachmentCreate": {
+      "pdf": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
     "AttachmentRef": {
       "pdf": {
         "attachment_id": "00000000-0000-4000-8000-00000000001f",
@@ -625,6 +2198,72 @@
         "media_type": "application/pdf",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "size_bytes": 48213
+      }
+    },
+    "AttachmentStatus": {
+      "pinned": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "expires_at": null,
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "received_bytes": 48213,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213,
+        "state": "pinned"
+      },
+      "uploading": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "expires_at": "2026-10-30T12:00:00Z",
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "received_bytes": 16384,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213,
+        "state": "uploading"
+      },
+      "verified": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "expires_at": "2026-10-30T12:00:00Z",
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "received_bytes": 48213,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213,
+        "state": "verified"
+      }
+    },
+    "ReceiptBatch": {
+      "received_and_read": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "received",
+            "message_id": "00000000-0000-4000-8000-000000000001"
+          },
+          {
+            "kind": "read",
+            "message_id": "00000000-0000-4000-8000-000000000001"
+          }
+        ]
+      }
+    },
+    "ReceiptBatchResult": {
+      "one_settled_one_not_found": {
+        "facts": [
+          {
+            "message_id": "00000000-0000-4000-8000-000000000001",
+            "nodes": [
+              {
+                "node_id": "00000000-0000-4000-8000-000000000066",
+                "received_at": "2026-10-29T12:01:00Z"
+              }
+            ],
+            "read_at": "2026-10-29T12:03:00Z",
+            "received_at": "2026-10-29T12:01:00Z",
+            "recipient_github_id": 1001,
+            "revision": 3
+          }
+        ],
+        "not_found": [
+          "00000000-0000-4000-8000-000000000009"
+        ]
       }
     },
     "ReceiptFacts": {
@@ -658,14 +2297,20 @@
         "revision": 3
       }
     },
-    "ReceiptRequest": {
-      "read": {
-        "kind": "read",
-        "node_id": "00000000-0000-4000-8000-000000000066"
-      },
-      "received": {
-        "kind": "received",
-        "node_id": "00000000-0000-4000-8000-000000000066"
+    "RecipientList": {
+      "roster_with_me": {
+        "members": [
+          {
+            "github_id": 1001,
+            "login": "matt",
+            "name": "Matt"
+          },
+          {
+            "github_id": 863470,
+            "login": "tim",
+            "name": null
+          }
+        ]
       }
     },
     "SendRequest": {
@@ -723,6 +2368,36 @@
         "subject": "",
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "two_files_in_order": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000020",
+            "filename": "notes.txt",
+            "media_type": "text/plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "size_bytes": 0
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_digest": "sha256:b609af3a3d275224c03c05806f02c45271ed561c51161403c5c0b90797dbef6f",
+        "content_revision": 3,
+        "idempotency_key": "00000000-0000-4000-8000-000000000101",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000004",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Files",
+        "text": "Both attached.",
+        "thread_id": "00000000-0000-4000-8000-000000000004"
       }
     },
     "SendResult": {
@@ -745,6 +2420,27 @@
           "subject": "Deploy window",
           "text": "Can we move the deploy to Friday?\nThe staging run is green.",
           "thread_id": "00000000-0000-4000-8000-000000000001"
+        },
+        "receipts": {
+          "message_id": "00000000-0000-4000-8000-000000000001",
+          "nodes": [],
+          "read_at": null,
+          "received_at": null,
+          "recipient_github_id": 1001,
+          "revision": 1
+        },
+        "work_state": {
+          "action_owner_github_id": 1001,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:00:00Z",
+          "correspondent_github_id": 1001,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "active",
+          "revision": 1,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "unread_reminder": false
         }
       },
       "identical_retry": {
@@ -766,6 +2462,32 @@
           "subject": "Deploy window",
           "text": "Can we move the deploy to Friday?\nThe staging run is green.",
           "thread_id": "00000000-0000-4000-8000-000000000001"
+        },
+        "receipts": {
+          "message_id": "00000000-0000-4000-8000-000000000001",
+          "nodes": [
+            {
+              "node_id": "00000000-0000-4000-8000-000000000066",
+              "received_at": "2026-10-29T12:01:00Z"
+            }
+          ],
+          "read_at": "2026-10-29T12:03:00Z",
+          "received_at": "2026-10-29T12:01:00Z",
+          "recipient_github_id": 1001,
+          "revision": 3
+        },
+        "work_state": {
+          "action_owner_github_id": 1001,
+          "addressed_at": null,
+          "arrival_at": "2026-10-29T12:00:00Z",
+          "correspondent_github_id": 1001,
+          "dismissed_at": null,
+          "owner_github_id": 863470,
+          "placement": "active",
+          "revision": 1,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "unread_reminder": false
         }
       }
     },
