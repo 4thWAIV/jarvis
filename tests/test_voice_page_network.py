@@ -14,6 +14,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
@@ -120,9 +121,7 @@ class _Team:
     async def install(self, page):
         async def network(route):
             self.reads += 1
-            # A factory makes its times when it is read, as the backend would.
-            envelope = self.envelope() if callable(self.envelope) else self.envelope
-            await route.fulfill(status=200, content_type="application/json", body=json.dumps(envelope))
+            await route.fulfill(status=200, content_type="application/json", body=await self.body())
 
         async def activity(route):
             self.activity.append({"body": json.loads(route.request.post_data or "{}"),
@@ -136,6 +135,24 @@ class _Team:
         await page.route("**/api/team/**", other)
         await page.route("**/api/team/network", network)
         await page.route("**/api/team/activity", activity)
+
+    async def body(self) -> bytes:
+        # A factory makes its times when it is read, as the backend would.
+        envelope = self.envelope() if callable(self.envelope) else self.envelope
+        return json.dumps(envelope).encode()
+
+
+class _RealRoute(_Team):
+    """/api/team/network answered by JARVIS's own route (team_api.py), over
+    a TeamConnection exchanging with a stand-in team server."""
+
+    async def body(self) -> bytes:
+        from jarvis import server as jarvis_server
+        transport = httpx.ASGITransport(app=jarvis_server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8340") as client:
+            r = await client.get("/api/team/network")
+        assert r.status_code == 200, r.text
+        return r.content
 
 
 class _Sessions:
@@ -508,6 +525,51 @@ async def test_this_machine_shows_the_team_servers_values_and_keeps_them_when_it
         mine = await page.evaluate(NODE, SELF_ID)
         assert mine["figures"][0] == "77%" and mine["human"] == "9m" and mine["figures"][2] == f"{MINUS}2.0%", mine
         assert "Values are stale" in mine["label"]
+        assert team.other == [], "nothing read around the team server"
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_real_route_shows_the_stand_ins_values_and_keeps_them_stale(page_url, monkeypatch):
+    """The same, end to end through the backend: a stand-in team server
+    answers the node update with this machine at CPU 77%, human 9m, pace
+    −2.0, unlike what this Mac's sampler sent; the page shows the stand-in's
+    figures from JARVIS's own GET /api/team/network. Then the stand-in stops
+    answering: the same figures, stale, and no round trip."""
+    from jarvis import team_api, team_client
+    from tests.test_team_client import connect, public
+    from tests.test_team_network import NetworkServer
+
+    stand_in = NetworkServer()
+    snapshot = _envelope(nodes=[_node(SELF_ID, "Tim’s i9", cpu=77.0, human=timedelta(minutes=9),
+                                      pace=-2.0)])["snapshot"]
+    stand_in.answer = lambda: httpx.Response(200, json=snapshot)
+    conn = team_client.TeamConnection(store=team_client.connection.store,
+                                      transport=httpx.MockTransport(stand_in.handler), resolver=public)
+    conn._node_update = team_api.node_update
+    monkeypatch.setattr(team_client, "connection", conn)
+    await connect(conn, stand_in)
+    await conn.exchange_once()
+    assert stand_in.updates[-1]["resources"].get("cpu_percent") != 77.0
+
+    team, sessions = _RealRoute(), _Sessions()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, team, sessions=sessions)
+        await async_api.expect(page.locator("#team-server-tile .readiness-word")).to_have_text("Ready")
+        await _network_tab(page)
+        mine = await page.evaluate(NODE, SELF_ID)
+        assert mine["figures"][0] == "77%" and mine["human"] == "9m" and mine["figures"][2] == f"{MINUS}2.0%", mine
+        assert "THIS MAC" in mine["title"].upper(), mine
+
+        stand_in.down = True
+        await conn.exchange_once()
+        sessions.hint()
+        await page.wait_for_selector(f'.node-tile.stale[data-node="{SELF_ID}"]')
+        mine = await page.evaluate(NODE, SELF_ID)
+        assert mine["figures"][0] == "77%" and mine["human"] == "9m" and mine["figures"][2] == f"{MINUS}2.0%", mine
+        assert "Values are stale" in mine["label"]
+        rows = {r["name"]: r for r in await page.evaluate(SERVER_ROWS)}
+        assert rows["Server"]["state"] == "unknown" and rows["Server"]["figure"] == "—", rows
         assert team.other == [], "nothing read around the team server"
         await browser.close()
 
