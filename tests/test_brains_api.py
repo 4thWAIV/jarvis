@@ -98,6 +98,8 @@ def test_a_change_needs_the_page_s_origin(server):
 
 @pytest.mark.asyncio
 async def test_codex_signs_in_from_the_page_and_the_page_hears_it_finish(server, monkeypatch):
+    from jarvis import brain_accounts
+    monkeypatch.setattr(brain_accounts, "_accounts", {})
     sent = []
 
     async def emit(msg):
@@ -114,6 +116,12 @@ async def test_codex_signs_in_from_the_page_and_the_page_hears_it_finish(server,
                 break
             await asyncio.sleep(0.05)
         assert sent == [{"type": "brain_sign_in", "name": "openai", "ok": True}]
+        for _ in range(100):
+            if "openai" in brain_accounts._accounts:
+                break
+            await asyncio.sleep(0.05)
+        assert brain_accounts._accounts["openai"].email == "never-shown@example.com", (
+            "who signed in is read again for the network's account reference")
         r = await client.post("/api/brains/anthropic/sign-in", headers=ORIGIN)
         assert r.status_code == 400, "Claude signs in on its own"
 

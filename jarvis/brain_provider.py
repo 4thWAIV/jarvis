@@ -135,6 +135,17 @@ class Account:
     signed_in: bool
     plan: str                       # "max", "pro"; "" when unknown
     detail: str                     # said on the card, e.g. "Not signed in"
+    # Who is signed in, for brain_accounts' keyed account reference only:
+    # held in memory, never stored, logged, sent or put on the card (left
+    # out of repr so a logged Account cannot carry them).
+    email: Optional[str] = field(default=None, repr=False)
+    org_id: Optional[str] = field(default=None, repr=False)
+
+
+def identity_text(raw: object) -> Optional[str]:
+    """An email or organisation ID as the provider reported it, or None when
+    it is missing or not text."""
+    return raw if isinstance(raw, str) and raw else None
 
 
 @dataclass(frozen=True)

@@ -106,6 +106,7 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
 from jarvis import voice_diagnostics
@@ -2793,6 +2794,9 @@ async def lifespan(application: FastAPI):
     # is kept in _background so it is not garbage-collected mid-flight.
     _background.add(task := asyncio.create_task(_run_preflight()))
     task.add_done_callback(_background.discard)
+    # Who each brain is signed in as, for the network's account references
+    # (brain_accounts.py); off the startup path for the same reason.
+    _spawn(brain_accounts.refresh())
     if _untrusted_actions_refused():
         log.info(
             "JARVIS_REFUSE_UNTRUSTED_ACTIONS is ON: JARVIS will refuse to act "
@@ -3009,6 +3013,8 @@ async def api_brains_sign_in(name: str):
         ok = await provider.sign_in_finished(started.sign_in_id, SIGN_IN_WAIT_SEC)
         log.info("brains: %s sign-in %s", name, "finished" if ok else "did not finish")
         await _voice_emit({"type": "brain_sign_in", "name": name, "ok": ok})
+        if ok:
+            await brain_accounts.refresh(name)
     _spawn(finish())
     return {"url": started.url, "sign_in_id": started.sign_in_id}
 
