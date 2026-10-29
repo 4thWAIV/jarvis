@@ -477,11 +477,16 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                                      request.app.state.health)
 
     if config and config.test_sessions_enabled:
-        @app.post(staging_sessions.PATH, response_model=DeviceSession,
-                  include_in_schema=False,
-                  dependencies=[Depends(staging_sessions.check_key)])
-        async def test_device_session(request: Request,
-                                      body: staging_sessions.StagingSessionRequest):
+        # Every method, and no body parameter: FastAPI would otherwise answer
+        # 405 or 422 before the key is checked, telling a caller without the
+        # key that the route exists. Without the key, everything is the 404.
+        @app.api_route(staging_sessions.PATH, methods=staging_sessions.METHODS,
+                       response_model=DeviceSession, include_in_schema=False)
+        async def test_device_session(request: Request):
+            staging_sessions.check_key(request)
+            if request.method != "POST":
+                raise staging_sessions.not_found()
+            body = staging_sessions.parse(await request.body())
             token, session, team, member = await staging_sessions.issue(
                 database(request), body.member, body.device_name)
             log.info("staging test session issued for %s", body.member)

@@ -20,7 +20,8 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 
 from teamserver import clock, pairing, sessions, team as team_mod
@@ -30,6 +31,7 @@ from teamserver.github import Identity
 from teamserver.secrets_util import digest, same
 
 PATH = "/api/v1/test/device-sessions"
+METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 StagingLogin = Literal["test-a", "test-b"]
 MEMBERS: dict[str, Identity] = {
     "test-a": Identity(id=-1, login="test-a"),
@@ -48,7 +50,7 @@ def not_found() -> HTTPException:
 
 
 def check_key(request: Request) -> None:
-    """The route's dependency: the bearer must be the test key."""
+    """The route's first step: the bearer must be the test key."""
     config: Config = request.app.state.config
     scheme, _, key = (request.headers.get("authorization") or "").partition(" ")
     key = key.strip()
@@ -56,6 +58,16 @@ def check_key(request: Request) -> None:
         raise not_found()
     if not same(digest(key), config.test_session_key_sha256 or ""):
         raise not_found()
+
+
+def parse(body: bytes) -> StagingSessionRequest:
+    """The request body, read only once the key has been checked. A bad body
+    is the same 422 as any other route's (`app.on_invalid`)."""
+    try:
+        return StagingSessionRequest.model_validate_json(body)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [{**e, "loc": ("body", *e["loc"])} for e in exc.errors(include_url=False)])
 
 
 def _add(identity: Identity) -> team_mod.Change:

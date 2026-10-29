@@ -108,6 +108,41 @@ def test_wrong_key_gets_the_same_404_as_a_missing_route(staging, github):
         assert r.headers["content-type"] == missing.headers["content-type"]
 
 
+@pytest.mark.parametrize("key", [None, "wrong"])
+def test_without_the_key_no_method_or_body_shows_the_route(staging, github, key):
+    """Neither a 422 for a bad body nor a 405 for another method may come
+    before the key is checked: both would show that the route exists."""
+    browser_token(staging, github, ADMIN)
+    headers = {} if key is None else bearer(new_secret())
+    json_headers = {**headers, "Content-Type": "application/json"}
+    missing = staging.post("/api/v1/test/no-such-route", json={})
+    for r in (staging.post(PATH, content=b"{not json", headers=json_headers),
+              staging.post(PATH, json={"member": "nobody"}, headers=headers),
+              staging.get(PATH, headers=headers),
+              staging.put(PATH, json={}, headers=headers),
+              staging.delete(PATH, headers=headers),
+              staging.options(PATH, headers=headers)):
+        assert r.status_code == 404, (r.request.method, r.text)
+        assert r.json() == missing.json()
+    assert staging.head(PATH, headers=headers).status_code == 404
+
+
+def test_with_the_key_only_post_is_the_route(staging, github):
+    browser_token(staging, github, ADMIN)
+    missing = staging.post("/api/v1/test/no-such-route", json={})
+    r = staging.get(PATH, headers=bearer(KEY))
+    assert r.status_code == 404 and r.json() == missing.json()
+
+
+def test_with_the_key_a_bad_body_is_an_ordinary_422(staging, github):
+    browser_token(staging, github, ADMIN)
+    headers = {**bearer(KEY), "Content-Type": "application/json"}
+    bad = staging.post(PATH, content=b"{not json", headers=headers)
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "invalid_request"
+    r = staging.post(PATH, json={"member": "nobody", "device_name": "x"}, headers=bearer(KEY))
+    assert r.status_code == 422 and r.json()["error"]["fields"] == ["member"]
+
+
 def test_issues_an_ordinary_device_session_for_a_test_member(staging, github, dbname):
     browser_token(staging, github, ADMIN)
     r = mint(staging)
