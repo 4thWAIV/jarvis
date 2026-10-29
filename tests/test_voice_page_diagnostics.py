@@ -113,6 +113,8 @@ async def test_ahead_of_the_line_is_a_green_positive_number(page_url):
     assert shown["colour"] == shown["leftColour"] == "rgb(74, 222, 128)"   # both green
     assert shown["gapFill"] == "rgb(34, 197, 94)"            # the gap, solid green
     assert shown["ideal"] and len(shown["actual"].split()) == 3
+    # The reading's age in the page's one short form (timeFormat.shortAgo).
+    assert shown["hover"].endswith("reading 2m ago"), shown["hover"]
 
 
 @pytest.mark.asyncio

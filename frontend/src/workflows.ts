@@ -8,6 +8,7 @@
 
 import { liveRead } from "./liveRead";
 import { createStore } from "./store";
+import { shortAgo } from "./timeFormat";
 
 export type WorkflowState = "running" | "waiting" | "blocked" | "needs_you" | "succeeded"
   | "failed" | "cancelled" | "silent";
@@ -248,11 +249,7 @@ export async function answerDecision(id: string, key: string, answer: string): P
 
 /** "just now", "2m ago", "3h ago", "2d ago", from a server time in seconds. */
 export function ago(seconds: number, now = Date.now() / 1000): string {
-  const s = Math.max(0, now - seconds);
-  if (s < 45) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
+  return shortAgo(Math.max(0, now - seconds) * 1000, 45_000);
 }
 
 /** The phase a workflow is on, as "phase k/n <phase>". */

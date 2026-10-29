@@ -14,9 +14,9 @@
 
 import { useSyncExternalStore, type ReactNode } from "react";
 import {
-  network, openNetwork, serverReading, shortAge, spokenAge, spokenAgo,
-  sinceMs, type RowState, type ServerReading,
+  network, openNetwork, serverReading, sinceMs, type RowState, type ServerReading,
 } from "./network";
+import { shortAge, spokenAge, spokenAgo } from "./timeFormat";
 import { useTick } from "./WorkflowsView";
 
 /** The readiness word as a class name: "ready", "not-ready", … */

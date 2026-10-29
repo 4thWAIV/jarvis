@@ -14,6 +14,7 @@ replaced by Playwright.
 
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -110,6 +111,9 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_u
         await row.click()
         await page.wait_for_selector("#workflow-detail .workflow-detail-name")
         assert await page.text_content(".workflow-detail-name") == "Speech migration"
+        # Ages in the page's one short form (timeFormat.shortAgo): decades are years.
+        assert re.fullmatch(r"started \d\dy ago · heard from just now",
+                            await page.text_content(".workflow-times"))
         overview = await page.evaluate("""() => ({
           orb: document.querySelector('.workflow-detail-head .workflow-orb canvas').getBoundingClientRect().width,
           steps: document.querySelectorAll('.workflow-overview .phase-track .phase-segment').length,

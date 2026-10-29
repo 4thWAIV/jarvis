@@ -11,7 +11,8 @@
 
 import { useSyncExternalStore } from "react";
 import { NetworkTile } from "./NetworkTile";
-import { network, rosterCurrent, selfFirst, shortAge, sinceMs, type NetworkStatus } from "./network";
+import { network, rosterCurrent, selfFirst, sinceMs, type NetworkStatus } from "./network";
+import { shortAge } from "./timeFormat";
 import { useTick } from "./WorkflowsView";
 
 /** What to say when there is no roster to show. */

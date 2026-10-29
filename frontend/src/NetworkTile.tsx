@@ -17,8 +17,9 @@
 import { useSyncExternalStore } from "react";
 import {
   cpuPercent, memoryPercent, openNetwork, paceText, paceWidth, paceWords, PRESENCE_WORDS,
-  shortAge, sinceMs, spokenAgo, type NodeView,
+  sinceMs, type NodeView,
 } from "./network";
+import { shortAge, spokenAgo } from "./timeFormat";
 
 /** Within this, the badge is solid cyan; past it, dashed lavender. */
 const RECENT_MS = 5 * 60_000;

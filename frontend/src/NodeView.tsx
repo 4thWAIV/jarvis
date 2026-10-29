@@ -17,9 +17,10 @@ import { resetDay } from "./WeeklyUsage";
 import { useTick } from "./WorkflowsView";
 import {
   bytesText, cpuPercent, MEASURED_WORDS, memoryPercent, network, openNetwork, paceText, paceWords,
-  PRESENCE_WORDS, rosterCurrent, SOURCE_WORDS, spokenAge, whenText,
+  PRESENCE_WORDS, rosterCurrent, SOURCE_WORDS, whenText,
   type AccountPace, type NodeView as Node, type Resources,
 } from "./network";
+import { spokenAge } from "./timeFormat";
 import { humanReading } from "./NetworkTile";
 
 const ACTIVITY_WORDS: Record<Node["activity_state"], string> = {
