@@ -258,14 +258,15 @@ function healthRow(unreachable: boolean, stale: boolean, value: number | null): 
 }
 
 /** Everything the tile and the detail show about the team server. Values
- *  the team server sent are shown only while this JARVIS is in contact with
- *  it, and while they are stale (the last exchange failed) a row that would
+ *  the team server sent are shown while this JARVIS is signed in, following
+ *  the network exchange as the word does, not the status poll; while they
+ *  are stale (the last exchange failed) a row that would
  *  look healthy is unknown (a dash); a failing row stays failing. The round
  *  trip is already null after any failed exchange but a 503 with health,
  *  which is a current answer, so it is shown as it is. */
 export function serverReading(status: NetworkStatus | null, now: number = Date.now()): ServerReading {
   const word = readiness(status);
-  const health = status?.connection === "connected" ? status.snapshot?.server ?? null : null;
+  const health = word === "Sign in" ? null : status?.snapshot?.server ?? null;
   const roundTrip = health ? status!.round_trip_ms : null;
   const unreachable = health?.database === "unreachable";
   const stale = status?.stale ?? true;
