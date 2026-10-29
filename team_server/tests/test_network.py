@@ -242,6 +242,15 @@ def test_repeated_activity_seq_does_not_move_the_time(node, frozen):
     {"activity": {"activity_seq": 1, "age_ms": -1, "source": "gui"}},
     {"activity": {"activity_seq": -1, "age_ms": 0, "source": "gui"}},
     {"activity": {"activity_seq": 1, "age_ms": 0, "source": "agent"}},
+    # Each passes a bare ge=0 but would overflow a date or a BSON int (a 500).
+    {"seq": 2**63},
+    {"activity": {"activity_seq": 2**63, "age_ms": 0, "source": "gui"}},
+    {"brains": [brain(windows=[week(40.0, age_ms=7 * 86_400_000 + 1)])]},
+    {"brains": [brain(windows=[week(40.0, age_ms=10**15)])]},
+    {"resources": {"state": "measured", "scope": "host", "memory_used_bytes": 2**63,
+                   "memory_total_bytes": 16 << 30, "age_ms": 0}},
+    {"resources": {"state": "measured", "scope": "host", "memory_total_bytes": 2**63,
+                   "age_ms": 0}},
 ])
 def test_out_of_range_payloads_refused(node, over):
     r = node.send(**over)

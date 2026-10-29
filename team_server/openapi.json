@@ -483,6 +483,7 @@
       "HumanActivity": {
         "properties": {
           "activity_seq": {
+            "maximum": 9.223372036854776e+18,
             "minimum": 0.0,
             "title": "Activity Seq",
             "type": "integer"
@@ -849,6 +850,7 @@
             "$ref": "#/components/schemas/Resources"
           },
           "seq": {
+            "maximum": 9.223372036854776e+18,
             "minimum": 0.0,
             "title": "Seq",
             "type": "integer"
@@ -971,6 +973,7 @@
       "QuotaWindow": {
         "properties": {
           "age_ms": {
+            "maximum": 604800000.0,
             "minimum": 0.0,
             "title": "Age Ms",
             "type": "integer"
@@ -1130,6 +1133,7 @@
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
+                "maximum": 9.223372036854776e+18,
                 "type": "integer"
               },
               {
@@ -1141,6 +1145,7 @@
           "memory_used_bytes": {
             "anyOf": [
               {
+                "maximum": 9.223372036854776e+18,
                 "minimum": 0.0,
                 "type": "integer"
               },

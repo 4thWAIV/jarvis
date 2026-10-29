@@ -174,14 +174,16 @@ class LoggedOut(BaseModel):
 
 Provider = Literal["anthropic", "openai"]
 Measured = Literal["measured", "warming_up", "unsupported", "error"]
+INT64_MAX = 2**63 - 1           # the largest integer BSON stores
+WEEK_MS = 7 * 86_400_000        # a quota reading older than a week is useless
 
 
 class Resources(BaseModel):
     state: Measured
     scope: Literal["host", "container"]
     cpu_percent: Optional[float] = Field(default=None, ge=0, le=100)
-    memory_used_bytes: Optional[int] = Field(default=None, ge=0)
-    memory_total_bytes: Optional[int] = Field(default=None, gt=0)
+    memory_used_bytes: Optional[int] = Field(default=None, ge=0, le=INT64_MAX)
+    memory_total_bytes: Optional[int] = Field(default=None, gt=0, le=INT64_MAX)
     age_ms: int = Field(ge=0, le=60_000)
 
 
@@ -190,7 +192,7 @@ class QuotaWindow(BaseModel):
     used_percent: float = Field(ge=0, le=100)
     expected_used_percent: Optional[float] = Field(default=None, ge=0, le=100)
     resets_at: datetime
-    age_ms: int = Field(ge=0)
+    age_ms: int = Field(ge=0, le=WEEK_MS)
 
 
 class BrainAccount(BaseModel):
@@ -202,7 +204,7 @@ class BrainAccount(BaseModel):
 
 
 class HumanActivity(BaseModel):
-    activity_seq: int = Field(ge=0)
+    activity_seq: int = Field(ge=0, le=INT64_MAX)
     age_ms: int = Field(ge=0, le=86_400_000)
     source: Literal["gui", "speech", "typed"]
 
@@ -210,7 +212,7 @@ class HumanActivity(BaseModel):
 class NodeUpdate(BaseModel):
     node_id: UUID
     boot_id: UUID
-    seq: int = Field(ge=0)
+    seq: int = Field(ge=0, le=INT64_MAX)
     label: str = Field(min_length=1, max_length=64)
     jarvis_version: str = Field(max_length=32)
     os: str = Field(max_length=40)
