@@ -2,11 +2,12 @@
 
 Public: GET /version, /health/live, /health/ready; the browser pages
 (/, /device, /static/app.js); GET /auth/github/start and /callback.
-Product API: /api/v1/... (see openapi.json). Pairing start/exchange
-authenticate with their own transaction credentials; everything else needs
-a product session — a Bearer token (a paired JARVIS) or the browser's
-session cookie, whose mutations also need the server's Origin and the
-session's CSRF token.
+Product API: /api/v1/... (see openapi.json); in staging only, the test
+sign-in (`staging_sessions`), which is not in the contract. Pairing
+start/exchange authenticate with their own transaction credentials;
+everything else needs a product session — a Bearer token (a paired JARVIS)
+or the browser's session cookie, whose mutations also need the server's
+Origin and the session's CSRF token.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pymongo.errors import PyMongoError
 
 from teamserver import (build_info, clock, db as dbmod, login, network, pages,
-                        pairing, sessions, team as team_mod)
+                        pairing, sessions, staging_sessions, team as team_mod)
 from teamserver.config import Config, ConfigError, load
 from teamserver.errors import Problem, forbidden, unauthenticated
 from teamserver.github import GitHub, RealGitHub
@@ -62,6 +63,14 @@ def team_view(t: dict) -> Team:
     return Team(name=t["name"], server_id=t["server_id"],
                 member_count=len(t["members"]),
                 member_limit=team_mod.MEMBER_LIMIT)
+
+
+def device_session_view(token: str, session: dict, team: dict,
+                        member: dict) -> DeviceSession:
+    return DeviceSession(status="approved", session_token=token,
+                         session_expires_at=session["expires_at"],
+                         server_id=team["server_id"], team=team_view(team),
+                         me=me_view(member))
 
 
 # -- the app -----------------------------------------------------------------
@@ -454,10 +463,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                                         body.code_verifier)
         if result["status"] == "authorization_pending":
             return JSONResponse(DevicePending(**result).model_dump(), status_code=202)
-        return DeviceSession(status="approved", session_token=result["token"],
-                             session_expires_at=result["session"]["expires_at"],
-                             server_id=result["team"]["server_id"],
-                             team=team_view(result["team"]), me=me_view(result["member"]))
+        return device_session_view(result["token"], result["session"],
+                                   result["team"], result["member"])
 
     @app.post("/api/v1/network/nodes/self", response_model=NetworkSnapshot,
               responses={**ERRORS, 503: {"model": ServerHealth}})
@@ -465,6 +472,17 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                            p: sessions.Principal = Depends(device)):
         return await network.publish(database(request), p.member, p.team, body,
                                      request.app.state.health)
+
+    if config and config.test_sessions_enabled:
+        @app.post(staging_sessions.PATH, response_model=DeviceSession,
+                  include_in_schema=False,
+                  dependencies=[Depends(staging_sessions.check_key)])
+        async def test_device_session(request: Request,
+                                      body: staging_sessions.StagingSessionRequest):
+            token, session, team, member = await staging_sessions.issue(
+                database(request), body.member, body.device_name)
+            log.info("staging test session issued for %s", body.member)
+            return device_session_view(token, session, team, member)
 
     return app
 
