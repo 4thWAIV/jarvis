@@ -239,3 +239,38 @@ def test_every_template_this_project_has_shipped_is_listed(monkeypatch, tmp_path
     assert not missing, (
         "add these to data_paths.KNOWN_TEMPLATE_HASHES: "
         + ", ".join(f"{d} ({c})" for d, c in missing.items()))
+
+
+def test_node_id_is_made_once_and_kept_across_restarts(monkeypatch, tmp_path):
+    import uuid
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    from jarvis import data_paths
+    importlib.reload(data_paths)
+    first = data_paths.node_id()
+    assert uuid.UUID(first)
+    boot = data_paths.BOOT_ID
+    importlib.reload(data_paths)                       # a restart
+    assert data_paths.node_id() == first
+    assert data_paths.BOOT_ID != boot, "a new process is a new boot"
+    assert (tmp_path / "node-id").read_text().strip() == first
+
+
+def test_each_data_directory_is_its_own_node(monkeypatch, tmp_path):
+    from jarvis import data_paths
+    ids = []
+    for name in ("a", "b"):
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / name))
+        importlib.reload(data_paths)
+        ids.append(data_paths.node_id())
+    assert ids[0] != ids[1]
+
+
+def test_a_malformed_node_id_is_replaced_with_a_real_one(monkeypatch, tmp_path):
+    import uuid
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    (tmp_path / "node-id").write_text("not a uuid\n")
+    from jarvis import data_paths
+    importlib.reload(data_paths)
+    made = data_paths.node_id()
+    assert uuid.UUID(made)
+    assert data_paths.node_id() == made
