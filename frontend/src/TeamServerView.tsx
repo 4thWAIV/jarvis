@@ -69,14 +69,21 @@ export function TeamServerView() {
   const r = serverReading(status);
   const h = r.health;
   const unknown = "Unknown from here";
-  const database: [string, string][] = [
-    ["Database connection", !h ? unknown : h.database === "connected" ? "Connected"
+  // Stale values never look healthy: what would is unknown; failures stay.
+  const current = (healthy: boolean, text: string) =>
+    status?.stale && healthy ? "Unknown; values are stale" : text;
+  const database: [string, string][] = !h ? [
+    ["Database connection", unknown], ["Database ping", "—"], ["Last successful write", unknown],
+    ["Last database error", unknown], ["Failures in a row", unknown],
+  ] : [
+    ["Database connection", h.database === "connected" ? current(true, "Connected")
       : `Unreachable${h.last_database_error ? ` · ${h.last_database_error}` : ""}`],
-    ["Database ping", !h || h.database_ping_ms === null ? "—"
-      : `${Math.round(h.database_ping_ms)} ms · checked ${whenText(h.database_checked_at)}`],
-    ["Last successful write", !h ? unknown : h.last_write_ok_at ? whenText(h.last_write_ok_at) : "None on record"],
-    ["Last database error", !h ? unknown : h.last_database_error ?? "None"],
-    ["Failures in a row", !h ? unknown : String(h.database_failures_in_a_row)],
+    ["Database ping", r.database.ms === null ? "—"
+      : `${Math.round(r.database.ms)} ms · checked ${whenText(h.database_checked_at)}`],
+    ["Last successful write", current(r.write.state !== "bad",
+      h.last_write_ok_at ? whenText(h.last_write_ok_at) : "None on record")],
+    ["Last database error", current(h.last_database_error === null, h.last_database_error ?? "None")],
+    ["Failures in a row", current(h.database_failures_in_a_row === 0, String(h.database_failures_in_a_row))],
   ];
   const contact: [string, string][] = [
     ["Round trip", r.server.ms === null ? "—" : `${Math.round(r.server.ms)} ms`],

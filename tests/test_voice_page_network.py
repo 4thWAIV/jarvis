@@ -103,6 +103,9 @@ DATABASE_DOWN = lambda: _envelope(  # noqa: E731
 NO_CONTACT = lambda: _envelope(connection="stale", stale=True, round_trip=None,  # noqa: E731
                                last_error="timed out")
 SIGNED_OUT = lambda: _envelope(connection="signed_out", stale=True, round_trip=None)  # noqa: E731
+# The last exchange timed out but the status poll is recent: the team
+# server's last health says connected, which is stale and so not shown.
+STALE = lambda: _envelope(stale=True, round_trip=None, last_error="timed out")  # noqa: E731
 
 
 class _Team:
@@ -276,6 +279,9 @@ STATES = [
       ("Last write", "bad", r"4[0-3]s ago", "diamond")],
      r"Team server: Not ready\. Round trip 46 milliseconds\. Database down\. Writes failing for 4[0-3] seconds\. "
      r"Open details in the centre\."),
+    ("stale", STALE, "Ready",
+     [("Server", "unknown", "—", "ring"), ("Database", "unknown", "—", "ring"), ("Last write", "unknown", "—", "ring")],
+     "Team server: Ready. Round trip unknown. Database state unknown. Open details in the centre."),
     ("no contact", NO_CONTACT, "No contact",
      [("Server", "unknown", "—", "ring"), ("Database", "unknown", "—", "ring"), ("Last write", "unknown", "—", "ring")],
      "Team server: No contact. Round trip unknown. Database state unknown. Open details in the centre."),
@@ -301,6 +307,30 @@ async def test_every_team_server_state_is_drawn_and_spoken(page_url):
             colour = await page.evaluate(
                 "getComputedStyle(document.querySelector('#team-server-tile .server-beacon')).color")
             assert colour == ("rgb(74, 222, 128)" if word == "Ready" else "rgb(251, 191, 36)"), (name, colour)
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_detail_shows_stale_health_as_unknown_and_failures_as_failures(page_url):
+    team, sessions = _Team(STALE), _Sessions()
+    facts = """() => Object.fromEntries([...document.querySelectorAll('#network-detail dt')]
+                 .map(dt => [dt.textContent, dt.nextElementSibling.textContent]))"""
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, team, sessions=sessions)
+        await page.click("#team-server-tile")
+        await page.wait_for_selector("#network-detail[data-node='server']")
+        shown = await page.evaluate(facts)
+        stale = "Unknown; values are stale"
+        for name in ("Database connection", "Last successful write", "Last database error", "Failures in a row"):
+            assert shown[name] == stale, (name, shown)
+        assert shown["Database ping"] == "—" and shown["Round trip"] == "—", shown
+
+        await _changed(page, sessions, team, DATABASE_DOWN, "Not ready")
+        await async_api.expect(page.locator("#network-detail")).to_contain_text("ServerSelectionTimeoutError")
+        shown = await page.evaluate(facts)
+        assert shown["Database connection"] == "Unreachable · ServerSelectionTimeoutError", shown
+        assert shown["Failures in a row"] == "8" and shown["Round trip"] == "46 ms", shown
+        assert re.fullmatch(r"4[0-3] seconds ago \(.+\)", shown["Last successful write"]), shown
         await browser.close()
 
 
@@ -527,22 +557,72 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
         await page.wait_for_timeout(200)
         assert team.activity == []
 
+        # Movement: the first at once, the rest of the window folded into one.
         await page.mouse.move(700, 400)
-        await page.mouse.move(720, 420)
-        await page.mouse.click(720, 420)
         await page.wait_for_timeout(300)
         assert [a["body"] for a in team.activity] == [{"source": "gui"}], "one report, at once"
         assert team.activity[0]["origin"], "sent from the page itself"
+        await page.mouse.move(720, 420)
+        await page.mouse.wheel(0, 40)
+        await page.wait_for_timeout(300)
+        assert len(team.activity) == 1, "movement and the wheel wait for the window"
 
-        # More within five seconds is one more report, at the end of the window.
+        # A click is deliberate: sent at once, inside the window, and it
+        # takes the movement waiting with it.
+        await page.mouse.click(720, 420)
+        await page.wait_for_timeout(300)
+        assert len(team.activity) == 2, team.activity
+        await page.clock.fast_forward(5000)
+        await page.wait_for_timeout(300)
+        assert len(team.activity) == 2, "nothing was left waiting after the click"
+
+        # Typing is throttled like movement: one report at the end of the window.
         await page.evaluate("""() => { const i = document.createElement('input');
                                        i.id = 'probe'; document.body.append(i); }""")
         await page.focus("#probe")
         await page.keyboard.type("secret words")
         await page.wait_for_timeout(200)
-        assert len(team.activity) == 1
+        assert len(team.activity) == 3, "the first key after a quiet spell, at once"
+        await page.keyboard.type(" more")
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 3
         await page.clock.fast_forward(5000)
         await page.wait_for_timeout(300)
-        assert [a["body"] for a in team.activity] == [{"source": "gui"}, {"source": "typed"}], team.activity
+        assert [a["body"] for a in team.activity] == [
+            {"source": "gui"}, {"source": "gui"}, {"source": "typed"}, {"source": "typed"}], team.activity
+
+        # Keyboard activation is deliberate: Enter in the field (with the
+        # change it makes) and Space on a control are each one report, at once.
+        await page.clock.fast_forward(5000)
+        await page.keyboard.type("x")
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 5
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 6, "Enter at once, as one report"
+        await page.evaluate("""() => { const b = document.createElement('button');
+                                       b.id = 'probe-button'; b.textContent = 'Probe'; document.body.append(b); }""")
+        await page.focus("#probe-button")
+        await page.keyboard.press(" ")
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 7, "Space on a control at once"
+
+        # A chosen file and a changed setting are deliberate too: one report each.
+        await page.evaluate("""() => { const f = document.createElement('input'); f.type = 'file';
+                                       f.id = 'probe-file'; document.body.append(f);
+                                       const c = document.createElement('input'); c.type = 'checkbox';
+                                       c.id = 'probe-box'; document.body.append(c); }""")
+        # Opening the chooser is the trusted click; Playwright's chosen-file
+        # change is synthetic (isTrusted false), so it adds nothing here.
+        async with page.expect_file_chooser() as chooser:
+            await page.click("#probe-file")
+        await (await chooser.value).set_files(files=[
+            {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"private"}])
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 8, "file selection at once"
+        await page.check("#probe-box")
+        await page.wait_for_timeout(200)
+        assert len(team.activity) == 9, "a changed setting at once"
         assert all(set(a["body"]) == {"source"} for a in team.activity), "where it came from, nothing else"
+        assert all(a["body"]["source"] in ("gui", "typed") for a in team.activity)
         await browser.close()

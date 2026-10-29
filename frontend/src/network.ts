@@ -269,27 +269,34 @@ export function readiness(status: NetworkStatus | null): Readiness {
   return status!.snapshot.server.database === "connected" ? "Ready" : "Not ready";
 }
 
+/** A row from the team server's health: failing stays failing, stale or
+ *  missing is unknown, and only a current value is working. */
+function healthRow(unreachable: boolean, stale: boolean, value: number | null): RowState {
+  return unreachable ? "bad" : stale || value === null ? "unknown" : "ok";
+}
+
 /** Everything the tile and the detail show about the team server. Values
  *  the team server sent are shown only while this JARVIS is in contact with
- *  it; otherwise they are unknown (a dash), never last-known values that
- *  look healthy. */
+ *  it, and while they are stale (the last exchange failed) a row that would
+ *  look healthy is unknown (a dash); a failing row stays failing. The round
+ *  trip is already null after any failed exchange but a 503 with health,
+ *  which is a current answer, so it is shown as it is. */
 export function serverReading(status: NetworkStatus | null, now: number = Date.now()): ServerReading {
   const word = readiness(status);
   const health = status?.connection === "connected" ? status.snapshot?.server ?? null : null;
   const roundTrip = health ? status!.round_trip_ms : null;
   const unreachable = health?.database === "unreachable";
+  const stale = status?.stale ?? true;
+  const ping = health?.database_ping_ms ?? null;
   const writeAge = health ? sinceMs(health.last_write_ok_at, now) : null;
+  const database = health ? healthRow(unreachable, stale, ping) : "unknown";
+  const write = health ? healthRow(unreachable, stale, writeAge) : "unknown";
   return {
     readiness: word,
     health,
     server: { state: roundTrip === null ? "unknown" : "ok", ms: roundTrip },
-    database: {
-      state: !health ? "unknown" : unreachable ? "bad" : health.database_ping_ms === null ? "unknown" : "ok",
-      ms: health?.database_ping_ms ?? null,
-    },
-    write: {
-      state: !health ? "unknown" : unreachable ? "bad" : writeAge === null ? "unknown" : "ok",
-      ageMs: writeAge,
-    },
+    database: { state: database, ms: database === "ok" ? ping : null },
+    // A failing write keeps its age: how long writes have been failing.
+    write: { state: write, ageMs: write === "unknown" ? null : writeAge },
   };
 }
