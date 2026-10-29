@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -163,3 +164,116 @@ class DeviceSession(BaseModel):
 
 class LoggedOut(BaseModel):
     revoked: bool
+
+
+# -- the network (POST /api/v1/network/nodes/self) ---------------------------
+
+Provider = Literal["anthropic", "openai"]
+Measured = Literal["measured", "warming_up", "unsupported", "error"]
+
+
+class Resources(BaseModel):
+    state: Measured
+    scope: Literal["host", "container"]
+    cpu_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    memory_used_bytes: Optional[int] = Field(default=None, ge=0)
+    memory_total_bytes: Optional[int] = Field(default=None, gt=0)
+    age_ms: int = Field(ge=0, le=60_000)
+
+
+class QuotaWindow(BaseModel):
+    window: Literal["five_hour", "seven_day"]
+    used_percent: float = Field(ge=0, le=100)
+    expected_used_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    resets_at: datetime
+    age_ms: int = Field(ge=0)
+
+
+class BrainAccount(BaseModel):
+    account_ref: str = Field(pattern=r"^[A-Za-z0-9_-]{16,64}$")  # keyed hash, never an email
+    provider: Provider
+    role: Literal["brain", "standby"]
+    state: Literal["measured", "not_measured", "sign_in_needed"]
+    windows: list[QuotaWindow] = Field(max_length=4)
+
+
+class HumanActivity(BaseModel):
+    activity_seq: int = Field(ge=0)
+    age_ms: int = Field(ge=0, le=86_400_000)
+    source: Literal["gui", "speech", "typed"]
+
+
+class NodeUpdate(BaseModel):
+    node_id: UUID
+    boot_id: UUID
+    seq: int = Field(ge=0)
+    label: str = Field(min_length=1, max_length=64)
+    jarvis_version: str = Field(max_length=32)
+    os: str = Field(max_length=40)
+    resources: Resources
+    brains: list[BrainAccount] = Field(max_length=8)
+    activity: Optional[HumanActivity] = None
+
+
+class AccountPace(BaseModel):
+    account_ref: str
+    provider: Provider
+    role: Literal["brain", "standby"]
+    remaining_percent: Optional[float]
+    pace_points: Optional[float]           # + more left than an even pace, − heading for the limit
+    resets_at: Optional[datetime]
+    left_at_reset_percent: Optional[float]  # at the current rate; None when it runs out first
+    runs_out_hours_before_reset: Optional[float]
+    age_ms: Optional[int]
+
+
+class BrainSummary(BaseModel):
+    configured: int
+    measured: int
+    average_remaining_percent: Optional[float]
+    pace_points: Optional[float]            # the node tile's signed figure
+    accounts: list[AccountPace]
+
+
+class NodeView(BaseModel):
+    node_id: UUID
+    owner_github_id: int
+    owner_login: str
+    label: str
+    jarvis_version: str
+    os: str
+    presence: Literal["online", "delayed", "offline"]
+    last_seen_at: datetime
+    resources: Resources
+    brains: BrainSummary
+    activity_state: Literal["never_observed", "available", "unsupported"]
+    last_human_activity_at: Optional[datetime] = None
+    last_human_activity_source: Optional[Literal["gui", "speech", "typed"]] = None
+
+
+class HealthPoint(BaseModel):
+    at: datetime
+    database_ping_ms: Optional[float]
+    write_ok: Optional[bool]
+
+
+class ServerHealth(BaseModel):
+    database: Literal["connected", "unreachable"]
+    database_ping_ms: Optional[float]
+    database_checked_at: datetime
+    last_write_ok_at: Optional[datetime]
+    last_database_error: Optional[str]      # error class name only
+    database_failures_in_a_row: int
+    uptime_sec: int
+    version: str
+    commit: str
+    resources: Resources
+    history: list[HealthPoint] = Field(max_length=30)
+
+
+class NetworkSnapshot(BaseModel):
+    revision: int
+    server_time: datetime
+    you_node_id: UUID
+    nodes: list[NodeView]
+    server: ServerHealth

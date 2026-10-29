@@ -21,16 +21,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pymongo.errors import PyMongoError
 
-from teamserver import (build_info, clock, db as dbmod, login, pages, pairing,
-                        sessions, team as team_mod)
+from teamserver import (build_info, clock, db as dbmod, login, network, pages,
+                        pairing, sessions, team as team_mod)
 from teamserver.config import Config, ConfigError, load
 from teamserver.errors import Problem, forbidden, unauthenticated
 from teamserver.github import GitHub, RealGitHub
 from teamserver.models import (DeviceDecided, DeviceDecision, DeviceExchange,
                                DevicePending, DeviceSession, DeviceStart,
                                DeviceStarted, ErrorBody, Live, LoggedOut, Me,
-                               Member, MemberChange, MemberChanged, Ready,
-                               Resolved, ResolveRequest, Roster,
+                               Member, MemberChange, MemberChanged,
+                               NetworkSnapshot, NodeUpdate, Ready, Resolved,
+                               ResolveRequest, Roster, ServerHealth,
                                SessionsRevoked, Status, Team, Version)
 from teamserver.ratelimit import RateLimiter
 from teamserver.secrets_util import csrf_token, normalize_user_code, same
@@ -81,16 +82,17 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         st.db = None
         st.server_id = None
         st.initialized = False
-        init_task = None
+        tasks = []
         if problems:
             log.error("configuration invalid: %s", "; ".join(problems))
         else:
             st.client = dbmod.connect(config.mongodb_uri)
             st.db = dbmod.database(st.client, config.mongodb_database)
-            init_task = asyncio.create_task(_init_until_done(app))
+            tasks = [asyncio.create_task(_init_until_done(app)),
+                     asyncio.create_task(network.watch(st.health, st.db))]
         yield
-        if init_task:
-            init_task.cancel()
+        for task in tasks:
+            task.cancel()
         if st.client is not None:
             await st.client.close()
 
@@ -101,6 +103,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     app.state.config_problems = problems
     app.state.github = github or (RealGitHub(config) if config else None)
     app.state.limiter = limiter or RateLimiter()
+    app.state.health = network.HealthMonitor()
     cookie_name = "__Host-ts_session" if (config and config.secure) else "ts_session"
 
     # -- middleware ----------------------------------------------------------
@@ -146,6 +149,11 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         log.error("database error on %s: %s", request.url.path, type(exc).__name__)
         return await on_problem(request, Problem(
             503, "dependency_unavailable", "The team server cannot reach its database."))
+
+    @app.exception_handler(network.DatabaseDown)
+    async def on_network_database(request: Request, exc: network.DatabaseDown):
+        return JSONResponse(request.app.state.health.report().model_dump(mode="json"),
+                            status_code=503)
 
     @app.exception_handler(RequestValidationError)
     async def on_invalid(request: Request, exc: RequestValidationError):
@@ -206,6 +214,21 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
             sessions.SESSION_LIFETIME.total_seconds()), path="/",
             secure=config.secure, httponly=True, samesite="lax")
 
+    async def device(request: Request) -> sessions.Principal:
+        """A paired JARVIS's session, for the network route: a database
+        that is down or not yet initialized answers with the server's health
+        (DatabaseDown), never with an error body."""
+        try:
+            with request.app.state.health.watching():
+                p = await principal(request)
+        except Problem as e:
+            if e.code == "not_ready":
+                raise network.DatabaseDown() from e
+            raise
+        if p.session["kind"] != "device":
+            raise forbidden("device_required", "Only a paired JARVIS publishes a node.")
+        return p
+
     async def optional_principal(request: Request) -> Optional[sessions.Principal]:
         try:
             return await principal(request)
@@ -221,7 +244,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Version(service=build_info.SERVICE, version=build_info.VERSION,
                        commit=build_info.commit(), api_version=build_info.API_VERSION,
                        server_id=request.app.state.server_id,
-                       capabilities=list(build_info.CAPABILITIES))
+                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY])
 
     @app.get("/health/live", response_model=Live)
     async def live():
@@ -236,7 +259,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         if st.config_problems:
             return no("config_invalid")
         try:
-            await asyncio.wait_for(st.db.command("ping"), timeout=3)
+            if not await st.health.connected(st.db):
+                return no("database_unavailable")
             if not st.initialized:
                 await asyncio.wait_for(_init_once(app), timeout=8)
             team = await asyncio.wait_for(team_mod.get(st.db), timeout=3)
@@ -434,6 +458,13 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                              session_expires_at=result["session"]["expires_at"],
                              server_id=result["team"]["server_id"],
                              team=team_view(result["team"]), me=me_view(result["member"]))
+
+    @app.post("/api/v1/network/nodes/self", response_model=NetworkSnapshot,
+              responses={**ERRORS, 503: {"model": ServerHealth}})
+    async def publish_node(request: Request, body: NodeUpdate,
+                           p: sessions.Principal = Depends(device)):
+        return await network.publish(database(request), p.member, p.team, body,
+                                     request.app.state.health)
 
     return app
 

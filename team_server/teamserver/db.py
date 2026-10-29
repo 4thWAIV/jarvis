@@ -8,6 +8,9 @@ Collections
   oauth_states           one-use GitHub login transactions
   device_authorizations  ten-minute device pairing transactions
   audit                  administrative history (kept AUDIT_DAYS)
+  network_nodes          each JARVIS backend's current record, by node ID
+                         (removed network.NODE_PURGE_AFTER after its last update)
+  network_meta           one document, `_id: "network"`: the snapshot revision
 
 TTL indexes only clean up. Every reader compares expiry timestamps itself,
 because TTL deletion runs about once a minute.
@@ -65,6 +68,10 @@ async def init(db: AsyncDatabase) -> str:
     await db.audit.create_index([("at", ASCENDING)],
                                 expireAfterSeconds=AUDIT_DAYS * 86400,
                                 name="ttl_audit")
+    await db.network_nodes.create_index([("owner_github_id", ASCENDING)],
+                                        name="by_owner")
+    await db.network_nodes.create_index([("purge_at", ASCENDING)],
+                                        expireAfterSeconds=0, name="ttl_purge")
     await db.installation.update_one(
         {"_id": INSTALLATION_ID},
         {"$setOnInsert": {"server_id": str(uuid.uuid4()),

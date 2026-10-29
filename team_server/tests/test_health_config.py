@@ -97,7 +97,8 @@ def test_version_reports_build_and_omits_messaging(client):
     assert v["api_version"] == 1
     assert v["version"] == build_info.VERSION
     assert v["server_id"]
-    assert set(v["capabilities"]) == {"github-login", "membership", "device-pairing", "status"}
+    assert set(v["capabilities"]) == {"github-login", "membership", "device-pairing",
+                                      "status", "network"}
     assert not any("messag" in c or "presence" in c for c in v["capabilities"])
 
 
