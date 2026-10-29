@@ -2569,24 +2569,274 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .team-member-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .team-confirm p { margin: 0 0 8px; font-size: 13px; }
 
-/* The left column's team server indicator (TeamIndicator.tsx): a dot and a
-   word under the microphone; a click opens the team server's detail. */
-#team-indicator {
-  align-self: center;
+/* ---------------------------------------------------------------------------
+   The Network view: the Team Server tile in the left column
+   (TeamServerTile.tsx), the Network tab's instance tiles (NetworkPanel.tsx,
+   NetworkTile.tsx) and their centre details (TeamServerView.tsx,
+   NodeView.tsx). The tiles have the brain boxes' footprint: 76px high, two
+   26px rows' rhythm, 16px corners, 1px borders, the panel's width. Each tile
+   is its own size container: below about 205px of content "ago" goes, below
+   about 180px the labels and figures step down a size.
+   --------------------------------------------------------------------------- */
+
+.compact-tile {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 100%;
+  height: 76px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 16px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  container-type: inline-size;
+}
+.compact-tile:hover { border-color: rgba(14, 165, 233, 0.47); }
+.compact-tile:focus-visible { outline: 2px solid #0ea5e9; outline-offset: 3px; }
+.compact-tile.selected { border-color: rgba(14, 165, 233, 0.8); box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35); }
+.compact-tile .tile-title {
+  position: absolute;
+  top: -8px;
+  right: 14px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0 2px;
-  padding: 2px 8px;
-  border: none;
-  background: none;
-  color: rgba(255, 255, 255, 0.55);
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
+  max-width: calc(100% - 28px);
+  padding: 0 6px;
+  background: #050508;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #edf6ff;
+  white-space: nowrap;
 }
-#team-indicator:hover, #team-indicator:focus-visible { color: rgba(255, 255, 255, 0.85); }
-#team-indicator.state-ok .team-indicator-state { color: #34d399; }
-#team-indicator.state-degraded .team-indicator-state { color: #fbbf24; }
+.compact-tile .tile-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.compact-tile .tile-self { flex: none; }
+.compact-tile .tile-body {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 8px 12px;
+}
+
+/* The Team Server tile: a server symbol and its readiness word in a 62px
+   column, beside three rows each led by a status dot. Full width of the
+   left column, under the microphone. */
+#team-server-tile .tile-body {
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 10px 8px 8px;
+}
+.server-beacon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 62px;
+  color: #fbbf24;
+}
+.server-beacon.readiness-ready, .readiness-ready .server-beacon { color: #4ade80; }
+.server-beacon svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+.server-beacon strong { font-size: 11px; font-weight: 700; line-height: 13px; white-space: nowrap; color: currentColor; }
+.health-rows { display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
+.health-row {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  height: 17px;
+  color: #4ade80;
+}
+.health-row > i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.health-row > span { font-size: 11px; color: #dbe7f3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.health-row strong { font: 11px ui-monospace, "SF Mono", Menlo, monospace; color: #c9d6e3; white-space: nowrap; text-align: right; }
+.health-row strong b { font: 600 14px ui-monospace, "SF Mono", Menlo, monospace; color: #fff; }
+.health-row strong small { font: inherit; color: inherit; }
+/* Failing: a red diamond, not a dot, and the word "down". */
+.health-row.bad { color: #f87171; }
+.health-row.bad > i { width: 5px; height: 5px; justify-self: center; border-radius: 1px; transform: rotate(45deg); }
+.health-row.bad strong, .health-row.bad strong b { color: #fca5a5; }
+/* Not known: a hollow amber ring and a dash. */
+.health-row.unknown { color: #fbbf24; }
+.health-row.unknown > i { background: none; border: 1.5px solid currentColor; }
+.health-row.unknown strong b { color: #fde68a; }
+@container (max-width: 222px) {
+  .health-row .ago { display: none; }
+}
+@container (max-width: 197px) {
+  #team-server-tile .health-row { grid-template-columns: 6px minmax(0, 1fr) auto; gap: 3px; }
+  #team-server-tile .health-row > i { width: 6px; height: 6px; }
+  #team-server-tile .health-row.bad > i { width: 4px; height: 4px; }
+  #team-server-tile .health-row > span { font-size: 10px; }
+  #team-server-tile .health-row strong b { font-size: 12.5px; }
+}
+
+/* The Network tab: no side margins, so its tiles are the panel's width. */
+.right-view.network-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: 4px 0 10px;
+  gap: 0;
+  scrollbar-width: thin;
+}
+.network-heading { display: flex; justify-content: space-between; font-size: 13px; color: #e0f2fe; }
+.roster-count { font-size: 11px; color: rgba(255, 255, 255, 0.7); }
+.roster-freshness { margin: 4px 0 2px; font-size: 10px; color: rgba(255, 255, 255, 0.62); }
+.roster-freshness::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #4ade80;
+  vertical-align: 1px;
+}
+.roster-freshness.stale::before { background: none; border: 1px solid #fbbf24; }
+.network-waiting { margin: 8px 0; font-size: 12px; color: rgba(255, 255, 255, 0.62); }
+
+/* An instance: the online marker on the border, filled while online. */
+.online-marker {
+  flex: none;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+.online-marker.delayed { background: none; border: 1px solid #fbbf24; }
+.online-marker.offline { background: none; border: 1px solid rgba(255, 255, 255, 0.6); }
+.online-marker.unknown { background: none; border: 1px solid #fbbf24; }
+.self-tile { border-color: rgba(100, 222, 213, 0.4); background: rgba(100, 222, 213, 0.03); }
+.node-tile.stale.self-tile { border-color: rgba(251, 191, 36, 0.33); background: none; }
+
+/* The last human interaction: a person, a large age and HUMAN, solid cyan
+   within five minutes, dashed lavender older, a bright ? when none. */
+.human-beacon {
+  display: grid;
+  grid-template-columns: 17px 1fr;
+  align-items: center;
+  justify-items: center;
+  column-gap: 3px;
+  height: 54px;
+  padding: 4px 3px;
+  border: 1px solid currentColor;
+  border-radius: 11px;
+  color: #64ded5;
+  background: rgba(100, 222, 213, 0.05);
+}
+.human-beacon svg { width: 17px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.human-beacon strong { font: 23px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -1px; white-space: nowrap; }
+.human-beacon.long strong { font-size: 17px; }
+.human-beacon > span { grid-column: 1 / -1; font-size: 9px; letter-spacing: 1px; font-weight: 650; }
+.human-beacon.away { color: #c4aaff; background: rgba(196, 170, 255, 0.04); border-style: dashed; }
+.human-beacon.unknown { color: #f3f6fa; border-style: dotted; background: none; }
+
+/* CPU, memory and brain pace: a label, a rail and the figure. */
+.metric-stack { display: flex; flex-direction: column; justify-content: center; gap: 5px; min-width: 0; }
+.visual-metric {
+  display: grid;
+  grid-template-columns: 32px minmax(10px, 1fr) 42px;
+  align-items: center;
+  gap: 4px;
+  height: 14px;
+}
+.metric-label { font-size: 9px; font-weight: 600; letter-spacing: 0.3px; color: #e7f1fc; }
+.metric-track { display: block; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.15); }
+.metric-track i { display: block; height: 100%; border-radius: 3px; }
+.visual-metric strong { font: 12px ui-monospace, "SF Mono", Menlo, monospace; text-align: right; color: #f7fbff; white-space: nowrap; }
+.visual-metric strong sup { font-size: 8px; vertical-align: top; }
+.pace-track { position: relative; display: block; height: 7px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); }
+.pace-track::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: #fff; }
+.pace-track i { position: absolute; top: 0; bottom: 0; }
+.pace-track i.ahead { left: 50%; background: #4ade80; border-radius: 0 3px 3px 0; }
+.pace-track i.behind { right: 50%; background: #f87171; border-radius: 3px 0 0 3px; }
+.visual-metric strong.pace-ahead { color: #4ade80; }
+.visual-metric strong.pace-behind { color: #f87171; }
+/* Unknown: a patterned rail, never an empty one that looks healthy. Stale:
+   the figures stay, the rails lose their colour. */
+.visual-metric.unknown .metric-track, .visual-metric.unknown .pace-track,
+.node-tile.stale .metric-track, .node-tile.stale .pace-track {
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.33) 0 2px, transparent 2px 5px);
+}
+.node-tile.stale .metric-track i { visibility: hidden; }
+.node-tile.stale .pace-track i { opacity: 0.35; }
+.node-tile.stale strong.pace-ahead, .node-tile.stale strong.pace-behind { color: #f7fbff; }
+@container (max-width: 182px) {
+  .node-tile .tile-body { gap: 6px; padding: 8px 8px; }
+  .node-tile .visual-metric { gap: 3px; grid-template-columns: 30px minmax(8px, 1fr) 41px; }
+  .node-tile .metric-label { letter-spacing: 0; }
+}
+
+/* The centre details: a head like a subsystem's, then labelled facts. */
+#network-detail {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#network-detail h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+#network-detail h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.85);
+}
+#network-detail .server-beacon { width: auto; }
+#network-detail .server-beacon svg { width: 32px; height: 32px; }
+.subsystem-head-state.readiness-ready { color: #4ade80; }
+.subsystem-head-state.readiness-not-ready,
+.subsystem-head-state.readiness-no-contact,
+.subsystem-head-state.readiness-sign-in { color: #fbbf24; }
+.network-facts { display: grid; grid-template-columns: minmax(140px, 200px) 1fr; gap: 6px 14px; margin: 0 0 12px; }
+.network-facts > div { display: contents; }
+.network-facts dt { color: rgba(255, 255, 255, 0.55); }
+.network-facts dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.network-stale { margin: 0; color: #fbbf24; }
+.network-accounts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.network-account {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 2px 14px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.04);
+}
+.network-account-meta { grid-column: 2; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.health-history {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: 48px;
+  margin-bottom: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+.health-ping { fill: none; stroke: #4ade80; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.health-failed { stroke: #f87171; stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+/* Conversation, kept on the page under another centre view. */
+.centre-kept.hidden { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-tile { transition: none; }
+}

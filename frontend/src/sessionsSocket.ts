@@ -10,11 +10,14 @@
  *   - "subsystems": a subsystem's state moved; the Diagnostics tab's list
  *     reads again (subsystems.ts), which also hears whether this socket is
  *     open, since the page's own connection is one of its items;
+ *   - "network": the team server's network snapshot was stored again; the
+ *     Network panel and the Team Server tile read it again (network.ts);
  *   - "agent_message": JARVIS sent an agent a message; the ray is drawn to
  *     it (RayLane.tsx) and the list brings it into view (`agentMessage`).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
+import { networkChanged } from "./network";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
 import { workflowsChanged } from "./workflows";
@@ -35,6 +38,7 @@ export function startSessionsSocket(): void {
     if (msg.type === "subsystems" || snapshot) bump(subsystemsChanged);
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
+    if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
     }

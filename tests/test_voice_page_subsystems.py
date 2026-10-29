@@ -96,8 +96,6 @@ async def test_communications_down_is_red_in_the_list_and_on_the_tab(page_url):
         assert shown["ids"] == IDS + ["page"], "one row each, communications first, the page last"
         assert all("state-ok" in c for c in shown["classes"]), shown
         assert not shown["tabAlert"]
-        # The left column says the team server is online, from the same row.
-        assert await page.text_content("#team-indicator .team-indicator-state") == "Online"
 
         # Communications go down; the hint makes the page read again.
         server.comms = "down"
