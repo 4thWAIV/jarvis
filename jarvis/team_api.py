@@ -6,17 +6,28 @@ members, which is forwarded to the team server with the session from the
 Keychain. No route ever returns the session credential. The routes sit
 behind web_auth.OriginGuard like every other, and no access-key category
 includes them.
+
+`GET /api/team/network` is the Network view's one source: the last network
+snapshot the team server sent, unchanged, in team_client's envelope.
+`node_update` is what this backend sends it, from the local collectors
+(host_resources, brain_accounts, human_activity), which no route returns.
+The team lifecycle (`start`, `stop`) owns the status poll, the network
+exchange and the host sampler.
 """
 from __future__ import annotations
 
+import asyncio
+import importlib.metadata
+import platform
 import socket
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from jarvis import team_client
+from jarvis import (brain_accounts, data_paths, host_resources, human_activity,
+                    team_client)
 from jarvis.team_client import TeamError
 
 PREFIX = "/api/team"
@@ -41,6 +52,31 @@ def device_name() -> str:
     return f"JARVIS on {host}"[:64]
 
 
+def jarvis_version() -> str:
+    """This JARVIS's package version (NodeUpdate.jarvis_version, max 32)."""
+    try:
+        return importlib.metadata.version("jarvis")[:32]
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def os_name() -> str:
+    """The operating system, as `platform` words it (NodeUpdate.os, max 40)."""
+    return platform.platform(terse=True)[:40]
+
+
+def node_update(account_key: Optional[str]) -> dict:
+    """This backend's NodeUpdate for the team server's network, built from
+    the local collectors; `account_key` is the team's key from the status
+    (none yet: no brains)."""
+    return {"node_id": data_paths.node_id(), "boot_id": data_paths.BOOT_ID,
+            "seq": data_paths.next_update_seq(), "label": device_name(),
+            "jarvis_version": jarvis_version(), "os": os_name(),
+            "resources": host_resources.sampler.current(),
+            "brains": brain_accounts.brains(account_key),
+            "activity": human_activity.recorder.current()}
+
+
 def _refused(e: TeamError, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": {"code": "team", "message": str(e)}}, status_code=status)
 
@@ -55,6 +91,10 @@ async def _forward(method: str, path: str, body=None) -> JSONResponse:
 
 async def get_team():
     return team_client.connection.snapshot()
+
+
+async def get_network():
+    return Response(team_client.connection.network_status(), media_type="application/json")
 
 
 async def connect(body: ConnectBody):
@@ -98,6 +138,7 @@ async def revoke_sessions(github_id: int):
 
 def mount(app: FastAPI) -> None:
     app.add_api_route(PREFIX, get_team, methods=["GET"])
+    app.add_api_route(PREFIX + "/network", get_network, methods=["GET"])
     app.add_api_route(PREFIX + "/connect", connect, methods=["POST"])
     app.add_api_route(PREFIX + "/cancel", cancel, methods=["POST"])
     app.add_api_route(PREFIX + "/disconnect", disconnect, methods=["POST"])
@@ -109,9 +150,20 @@ def mount(app: FastAPI) -> None:
                       methods=["POST"])
 
 
-def start() -> None:
-    team_client.connection.start()
+_sampler: Optional[asyncio.Task] = None
+
+
+def start(on_network: Optional[Callable[[], None]] = None) -> None:
+    """The status poll, the network exchange and the host sampler, each its
+    own task. `on_network` is told each time the network cache changes."""
+    global _sampler
+    if _sampler is None or _sampler.done():
+        _sampler = asyncio.create_task(host_resources.sampler.run())
+    team_client.connection.start(node_update=node_update, on_network=on_network)
 
 
 async def stop() -> None:
+    global _sampler
     await team_client.connection.stop()
+    await team_client.cancel_task(_sampler)
+    _sampler = None

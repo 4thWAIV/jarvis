@@ -2785,9 +2785,11 @@ async def lifespan(application: FastAPI):
     await start_brain_and_speech()
     await start_session_watcher()
     transcription_api.start()
-    # The team server connection (team_client.py): its own task, off every
-    # audio path; a team server that is down changes only its status.
-    team_api.start()
+    # The team server connection (team_client.py): its own tasks, off every
+    # audio path; a team server that is down changes only its status. The
+    # network exchange runs while paired whether or not a page is open, and
+    # each stored snapshot is a `network` hint (network.ts reads it again).
+    team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}))
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
