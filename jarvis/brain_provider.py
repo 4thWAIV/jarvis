@@ -48,6 +48,14 @@ class ToolStarted:
 
 
 @dataclass(frozen=True)
+class ToolFailed:
+    """A tool call that failed inside the provider, before or instead of
+    reaching the tool: nothing on JARVIS's side saw it."""
+    name: str                       # as the provider names it
+    error: str                      # the provider's wording
+
+
+@dataclass(frozen=True)
 class TurnEnded:
     context_tokens: int             # how big the window is now
     output_tokens: int
@@ -64,7 +72,7 @@ class UsageSeen:
     detail: dict                    # the provider's own report, kept with a block
 
 
-ProviderEvent = Union[SessionInfo, TextDelta, ToolStarted, TurnEnded, UsageSeen]
+ProviderEvent = Union[SessionInfo, TextDelta, ToolStarted, ToolFailed, TurnEnded, UsageSeen]
 
 EventSink = Callable[["ProviderSession", ProviderEvent], None]
 ExitSink = Callable[["ProviderSession", Optional[int]], Awaitable[None]]

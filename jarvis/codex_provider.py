@@ -43,7 +43,7 @@ from jarvis import data_paths
 from jarvis import preflight
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
-                            ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
+                            ToolFailed, ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
                             identity_text)
 
 if TYPE_CHECKING:
@@ -117,6 +117,36 @@ def classify_failure(error: Optional[str]) -> Optional[str]:
 
 
 # ── the configuration it starts with ──────────────────────────────────────
+
+# The code-mode host answers every `exec` and `wait` with "Script completed",
+# "Script running ..." or "Script failed" (every one of 3,890 such answers in
+# the brain's transcripts, Codex 0.154 to 0.166). Any other answer is the host
+# itself failing, and then no tool in the script ran at all, as on 29 October
+# 2026 when every call came back "failed to read code-mode host message". It
+# reaches only the transcript, never an app-server notification.
+CODE_MODE_TOOLS = frozenset({"exec", "wait"})
+_CODE_MODE_ANSWERS = ("Script ", "aborted by user")
+
+
+def code_mode_failures(objs: list[dict], names: dict[str, str]) -> list[tuple[str, str]]:
+    """(tool, error) for each code-mode call in these transcript lines that
+    the host itself failed. `names` maps call ids to tool names and is kept
+    up to date across calls, since a call and its answer can be read apart."""
+    found = []
+    for obj in objs:
+        p = obj.get("payload") or {}
+        kind = p.get("type")
+        if kind in ("custom_tool_call", "function_call"):
+            names[str(p.get("call_id"))] = str(p.get("name") or "")
+        elif kind in ("custom_tool_call_output", "function_call_output"):
+            name = names.pop(str(p.get("call_id")), "")
+            out = p.get("output")
+            if name not in CODE_MODE_TOOLS or not isinstance(out, str):
+                continue
+            if not out.startswith(_CODE_MODE_ANSWERS):
+                found.append((name, " ".join(out.split())[:300]))
+    return found
+
 
 def _toml_value(value) -> str:
     if isinstance(value, bool):
@@ -231,6 +261,9 @@ class CodexSession:
         self._pending: dict[int, asyncio.Future] = {}
         self._ids = 0
         self.thread_id: Optional[str] = None
+        self._rollout: Optional[Path] = None      # the thread's transcript
+        self._rollout_read = 0                    # bytes of it already read
+        self._call_names: dict[str, str] = {}
         self._info: Optional[SessionInfo] = None
         self._last_usage: dict = {}
         self.disabled: list[str] = []
@@ -269,6 +302,7 @@ class CodexSession:
             }, timeout=self.config.warmup_timeout)
             thread = started.get("thread") or {}
             self.thread_id = thread.get("id")
+            self._rollout = Path(thread["path"]) if thread.get("path") else None
             status = await self._call("mcpServerStatus/list", {}, timeout=self.config.warmup_timeout)
         except (asyncio.TimeoutError, RuntimeError, OSError) as e:
             self.kill()
@@ -416,6 +450,14 @@ class CodexSession:
                 self._emit(ToolStarted(WEB_SEARCH_TOOL))
             elif kind in ("commandExecution", "fileChange", "dynamicToolCall"):
                 self._emit(ToolStarted(str(kind)))
+        elif method == "item/completed":
+            item = params.get("item") or {}
+            if item.get("type") == "mcpToolCall" and item.get("status") == "failed":
+                err = item.get("error") or {}
+                self._emit(ToolFailed(tool_name(str(item.get("server") or ""),
+                                                str(item.get("tool") or "")),
+                                      str(err.get("message") if isinstance(err, dict) else err)
+                                      or "the tool call failed"))
         elif method == "thread/tokenUsage/updated":
             self._last_usage = ((params.get("tokenUsage") or {}).get("last") or {})
         elif method == "turn/completed":
@@ -425,6 +467,9 @@ class CodexSession:
                 err = turn.get("error") or {}
                 error = str(err.get("message") or err or f"codex turn {turn.get('status')}")
                 log.error(f"codex: turn failed: {error[:300]}")
+            for name, failure in self._code_mode_failures():
+                log.error(f"codex: {name} failed in the code-mode host: {failure}")
+                self._emit(ToolFailed(name, failure))
             u, self._last_usage = self._last_usage, {}
             self._emit(TurnEnded(context_tokens=int(u.get("inputTokens") or 0),
                                  output_tokens=int(u.get("outputTokens") or 0), error=error))
@@ -443,6 +488,27 @@ class CodexSession:
                                  detail=report))
         elif method == "error":
             log.warning(f"codex: {json.dumps(params)[:300]}")
+
+    def _code_mode_failures(self) -> list[tuple[str, str]]:
+        """Code-mode calls the host failed, from the transcript lines written
+        since the last look. Never raises."""
+        if self._rollout is None:
+            return []
+        try:
+            with open(self._rollout, "rb") as fh:
+                fh.seek(self._rollout_read)
+                raw = fh.read()
+        except OSError:
+            return []
+        end = raw.rfind(b"\n") + 1            # a line still being written waits
+        self._rollout_read += end
+        objs = []
+        for line in raw[:end].splitlines():
+            try:
+                objs.append(json.loads(line))
+            except ValueError:
+                continue
+        return code_mode_failures(objs, self._call_names)
 
     async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stderr is not None
