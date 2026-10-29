@@ -105,7 +105,8 @@ NO_CONTACT = lambda: _envelope(connection="stale", stale=True, round_trip=None, 
                                last_error="timed out")
 SIGNED_OUT = lambda: _envelope(connection="signed_out", stale=True, round_trip=None)  # noqa: E731
 # The last exchange timed out but the status poll is recent: the team
-# server's last health says connected, which is stale and so not shown.
+# server's last health says connected, which is stale and so not shown,
+# and not called Ready.
 STALE = lambda: _envelope(stale=True, round_trip=None, last_error="timed out")  # noqa: E731
 
 
@@ -296,9 +297,9 @@ STATES = [
       ("Last write", "bad", r"4[0-3]s ago", "diamond")],
      r"Team server: Not ready\. Round trip 46 milliseconds\. Database down\. Writes failing for 4[0-3] seconds\. "
      r"Open details in the centre\."),
-    ("stale", STALE, "Ready",
+    ("stale", STALE, "No contact",
      [("Server", "unknown", "—", "ring"), ("Database", "unknown", "—", "ring"), ("Last write", "unknown", "—", "ring")],
-     "Team server: Ready. Round trip unknown. Database state unknown. Open details in the centre."),
+     "Team server: No contact. Round trip unknown. Database state unknown. Open details in the centre."),
     ("no contact", NO_CONTACT, "No contact",
      [("Server", "unknown", "—", "ring"), ("Database", "unknown", "—", "ring"), ("Last write", "unknown", "—", "ring")],
      "Team server: No contact. Round trip unknown. Database state unknown. Open details in the centre."),
@@ -324,6 +325,35 @@ async def test_every_team_server_state_is_drawn_and_spoken(page_url):
             colour = await page.evaluate(
                 "getComputedStyle(document.querySelector('#team-server-tile .server-beacon')).color")
             assert colour == ("rgb(74, 222, 128)" if word == "Ready" else "rgb(251, 191, 36)"), (name, colour)
+        await browser.close()
+
+
+# The word follows the network exchange, not the 30-second status poll: as
+# staging found it, the link is cut while the poll still says connected,
+# then the exchange is fresh again while the poll still says stale.
+FOLLOWS_THE_EXCHANGE = [
+    ("link cut, poll behind", lambda: _envelope(stale=True, round_trip=None, last_error="timed out"), "No contact"),
+    ("fresh again, poll behind", lambda: _envelope(connection="stale"), "Ready"),
+    ("fresh, poll not yet in", lambda: _envelope(connection="connecting"), "Ready"),
+    ("fresh, database down", lambda: _envelope(connection="stale", server=_server(database="unreachable")),
+     "Not ready"),
+    ("stale, database down", lambda: _envelope(connection="connected", stale=True,
+                                               server=_server(database="unreachable")), "Not ready"),
+    ("signed out, fresh", lambda: _envelope(connection="signed_out"), "Sign in"),
+]
+
+
+@pytest.mark.asyncio
+async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_url):
+    team, sessions = _Team(), _Sessions()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, team, sessions=sessions)
+        for name, envelope, word in [("healthy", HEALTHY, "Ready"), *FOLLOWS_THE_EXCHANGE]:
+            await _changed(page, sessions, team, envelope, word)
+            tile = await page.evaluate(TILE, "#team-server-tile")
+            assert tile["label"].startswith(f"Team server: {word}. "), (name, tile["label"])
+            beacon = await page.get_attribute("#team-server-tile", "class")
+            assert f"readiness-{word.lower().replace(' ', '-')}" in beacon.split(), (name, beacon)
         await browser.close()
 
 

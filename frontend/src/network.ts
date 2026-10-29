@@ -107,7 +107,8 @@ export interface NetworkSnapshot {
 // ── This JARVIS's envelope around it ─────────────────────────────────────
 
 /** team_client's state: the same value the team server's subsystem row
- *  reads, so that row and the Team Server tile cannot disagree. */
+ *  reads. The tile's word takes Sign in from it; the rest of the word
+ *  follows the network exchange (readiness). */
 export type Connection = "connected" | "stale" | "signed_out" | "connecting" | "pairing" | "disconnected";
 
 export interface NetworkStatus {
@@ -232,16 +233,22 @@ export interface ServerReading {
   write: { state: RowState; ageMs: number | null };
 }
 
-/** The Team Server tile's word, from the connection and the database: the
- *  only two things it is decided by. No snapshot yet means no contact with
- *  the team server's network route, whatever the status poll says. */
+/** The Team Server tile's word, the one place it is decided. Signed out (or
+ *  never paired) is Sign in, from the connection. Otherwise the network
+ *  exchange decides, not the 30-second status poll, so the word moves as
+ *  soon as the exchange does: no snapshot is No contact; a database the
+ *  team server says is down is Not ready, stale or not (a 503 with health
+ *  is a current answer); any other stale snapshot is No contact, never
+ *  Ready; and a fresh one is Ready. */
 export function readiness(status: NetworkStatus | null): Readiness {
   const connection = status?.connection ?? "connecting";
   if (connection === "signed_out" || connection === "disconnected" || connection === "pairing") {
     return "Sign in";
   }
-  if (connection !== "connected" || !status!.snapshot) return "No contact";
-  return status!.snapshot.server.database === "connected" ? "Ready" : "Not ready";
+  const snapshot = status?.snapshot;
+  if (!snapshot) return "No contact";
+  if (snapshot.server.database !== "connected") return "Not ready";
+  return status!.stale ? "No contact" : "Ready";
 }
 
 /** A row from the team server's health: failing stays failing, stale or
