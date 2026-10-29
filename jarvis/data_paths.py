@@ -5,6 +5,7 @@ live database.
 """
 
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -484,6 +485,12 @@ def node_id() -> str:
 # One per process: the team server takes a new boot ID as a restart, and
 # refuses updates from an older one (see node_id).
 BOOT_ID = str(uuid.uuid4())
+_update_seq = itertools.count()
+
+
+def next_update_seq() -> int:
+    """The next node update's `seq`: rising within this boot, from 0."""
+    return next(_update_seq)
 
 
 def human_activity_path() -> Path:

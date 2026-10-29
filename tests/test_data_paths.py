@@ -274,3 +274,10 @@ def test_a_malformed_node_id_is_replaced_with_a_real_one(monkeypatch, tmp_path):
     made = data_paths.node_id()
     assert uuid.UUID(made)
     assert data_paths.node_id() == made
+
+
+def test_update_sequence_rises_within_a_boot(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    from jarvis import data_paths
+    importlib.reload(data_paths)
+    assert [data_paths.next_update_seq() for _ in range(3)] == [0, 1, 2]
