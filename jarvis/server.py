@@ -106,6 +106,7 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import human_activity
 from jarvis import team_api, team_client
 from jarvis import voice_diagnostics
 from jarvis import subsystem_diagnostics
@@ -2834,6 +2835,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 team_api.mount(app)
+human_activity.mount(app)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -9442,6 +9444,10 @@ async def voice_handler(ws: WebSocket):
                 if not text:
                     continue
                 verdict = await speech.user_final(text, typed=typed)
+                if not typed and verdict != "echo":
+                    # Accepted as his words (stop, cancel and "say that
+                    # again" included). Typed words are the page's to report.
+                    human_activity.recorder.observe("speech")
                 if verdict == "replay":
                     # "Say that again": resend what was already synthesized —
                     # no brain turn, so no cost and no risk of coming back
