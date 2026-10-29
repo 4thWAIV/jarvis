@@ -14,9 +14,12 @@
  *
  * Only where it came from is sent: `typed` for typing into a text field,
  * `gui` for anything else. Never the key, the text, the position or the file.
- * At most one report every THROTTLE_MS: the first input after a quiet spell
- * is reported at once, later ones are folded into one report at the end of
- * the window, and one still waiting is sent as the page is hidden or left.
+ * A deliberate action (a click, keyboard activation, a changed setting, a
+ * chosen or dropped file) is reported at once; the events of one action
+ * (a click and the change it makes) go as one report. Movement, the wheel
+ * and typing are reported at most once every THROTTLE_MS: the first after a
+ * quiet spell at once, later ones folded into one report at the end of the
+ * window. One still waiting is sent as the page is hidden or left.
  */
 
 export type PageSource = "gui" | "typed";
@@ -29,12 +32,22 @@ const EVENTS = [
   "compositionstart", "compositionend", "wheel", "touchstart", "touchmove", "change", "drop",
 ];
 const TYPING = new Set(["keydown", "beforeinput", "input", "compositionstart", "compositionend"]);
+/** Clicks (keyboard and assistive activation included), changed settings
+ *  and chosen files (`change`), and dropped files. */
+const DELIBERATE = new Set(["click", "change", "drop"]);
 
 function isTextField(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
   return target instanceof HTMLInputElement
     && !["button", "checkbox", "radio", "range", "file", "color", "submit", "reset", "image"].includes(target.type);
+}
+
+/** Whether an input is a deliberate action, reported at once. A control
+ *  activated by Enter or Space arrives as a click; Enter is counted itself
+ *  too, because in a text field it sends what was typed with no click. */
+function isDeliberate(e: Event): boolean {
+  return DELIBERATE.has(e.type) || (e instanceof KeyboardEvent && e.type === "keydown" && e.key === "Enter");
 }
 
 /** Start collecting; returns the function that stops it. */
@@ -53,12 +66,20 @@ export function startHumanActivity(): () => void {
       .catch(() => {});
   };
 
+  const sendIn = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; send(false); }, ms);
+  };
+
   const observe = (e: Event) => {
     if (!e.isTrusted) return;
     pending = TYPING.has(e.type) && isTextField(e.target) ? "typed" : "gui";
+    // At once, but after the rest of this action's events (one report).
+    if (isDeliberate(e)) return sendIn(0);
+    if (timer) return;                       // a report is already due
     const wait = lastSent + THROTTLE_MS - performance.now();
-    if (wait <= 0) send(false);
-    else if (!timer) timer = setTimeout(() => { timer = null; send(false); }, wait);
+    if (wait > 0) sendIn(wait);
+    else send(false);
   };
 
   const hidden = () => {
