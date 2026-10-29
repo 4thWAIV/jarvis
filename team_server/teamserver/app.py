@@ -367,12 +367,15 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return team_view(p.team)
 
     @app.get("/api/v1/status", response_model=Status, responses=ERRORS)
-    async def get_status(p: sessions.Principal = Depends(principal)):
+    async def get_status(request: Request, p: sessions.Principal = Depends(principal)):
+        account_key = (await team_mod.network_account_key(database(request), p.team)
+                       if p.session["kind"] == "device" else None)
         return Status(server_time=clock.now(), server_id=p.team["server_id"],
                       session_expires_at=p.session["expires_at"],
                       session_kind=p.session["kind"],
                       recent_auth_until=p.session["auth_at"] + sessions.RECENT_AUTH,
-                      team=team_view(p.team), me=me_view(p.member))
+                      team=team_view(p.team), me=me_view(p.member),
+                      network_account_key=account_key)
 
     @app.post("/api/v1/logout", response_model=LoggedOut, responses=ERRORS)
     async def logout(request: Request, p: sessions.Principal = Depends(principal)):

@@ -3,7 +3,8 @@ the installation's stable server ID.
 
 Collections
   installation           one document, `_id: "installation"`: server ID
-  team                   one document, `_id: "team"`: the team and its roster
+  team                   one document, `_id: "team"`: the team and its roster,
+                         and its network account key once made
   sessions               product sessions, by SHA-256 of the credential
   oauth_states           one-use GitHub login transactions
   device_authorizations  ten-minute device pairing transactions

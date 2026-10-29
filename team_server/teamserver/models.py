@@ -76,6 +76,10 @@ class Status(BaseModel):
     recent_auth_until: datetime
     team: Team
     me: Me
+    network_account_key: Optional[str] = Field(
+        default=None,
+        description="The team's key for brain account references, base64url; "
+                    "device sessions only, null for a browser session")
 
 
 class Roster(BaseModel):

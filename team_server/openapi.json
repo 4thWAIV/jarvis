@@ -1319,6 +1319,18 @@
           "me": {
             "$ref": "#/components/schemas/Me"
           },
+          "network_account_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The team's key for brain account references, base64url; device sessions only, null for a browser session",
+            "title": "Network Account Key"
+          },
           "recent_auth_until": {
             "format": "date-time",
             "title": "Recent Auth Until",

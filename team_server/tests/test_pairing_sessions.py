@@ -1,6 +1,8 @@
 """Device pairing, sessions, logout and operator recovery."""
 from __future__ import annotations
 
+import re
+
 from conftest import (ADMIN, ALICE, BASE, SESSION_COOKIE, bearer, browser_post,
                       browser_token, pair, run_db, start_device)
 from teamserver import recover, team as team_mod
@@ -37,6 +39,37 @@ def test_full_pairing_issues_one_device_session(client, github):
     # Replay: never a second session.
     r = exchange(client, started, verifier)
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_grant"
+
+
+def account_key(client, token):
+    return client.get("/api/v1/status", headers=bearer(token)).json()["network_account_key"]
+
+
+def test_device_session_gets_the_teams_stable_network_account_key(client, github, dbname):
+    admin = browser_token(client, github, ADMIN)
+    device = pair(client, admin)
+    first = account_key(client, device)
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", first)
+    assert account_key(client, device) == first
+    stored = run_db(dbname, lambda db: db.team.find_one({"_id": "team"}))
+    assert stored["network_account_key"] == first
+
+
+def test_browser_session_gets_no_network_account_key(client, github, dbname):
+    admin = browser_token(client, github, ADMIN)
+    assert account_key(client, admin) is None
+    # Asking from a browser does not make one.
+    stored = run_db(dbname, lambda db: db.team.find_one({"_id": "team"}))
+    assert "network_account_key" not in stored
+    pair(client, admin)
+    assert account_key(client, admin) is None
+
+
+def test_two_device_sessions_of_one_team_get_the_same_key(client, github):
+    admin = browser_token(client, github, ADMIN)
+    one, two = pair(client, admin), pair(client, admin)
+    assert one != two
+    assert account_key(client, one) == account_key(client, two)
 
 
 def test_device_page_shows_name_and_code_after_login(client, github):

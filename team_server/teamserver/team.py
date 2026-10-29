@@ -10,6 +10,12 @@ Member states
   approved   an administrator added them; they have not signed in yet
   active     they have signed in at least once and are not suspended
   suspended  access withdrawn; their sessions were revoked
+
+The team's `network_account_key` (random, 256 bits, base64url) is made the
+first time a paired JARVIS asks for its status and kept on the team record.
+JARVIS keys its brain account references with it, so one subscription used
+on two machines counts once and no email leaves the machine. It is given
+only to device sessions and is never logged.
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ from teamserver.config import Config
 from teamserver.db import SCHEMA_VERSION, TEAM_ID
 from teamserver.errors import Problem, conflict, forbidden, unavailable
 from teamserver.github import Identity
+from teamserver.secrets_util import new_secret
 
 log = logging.getLogger("teamserver.team")
 
@@ -71,6 +78,20 @@ def new_member(identity: Identity, role: str, state: str,
 
 async def get(db: AsyncDatabase) -> Optional[dict]:
     return await db.team.find_one({"_id": TEAM_ID})
+
+
+async def network_account_key(db: AsyncDatabase, team: dict) -> str:
+    """The team's network account key, made once on first need. When two
+    requests race to make it, the first write wins and both return it."""
+    if team.get("network_account_key"):
+        return team["network_account_key"]
+    await db.team.update_one(
+        {"_id": TEAM_ID, "network_account_key": {"$exists": False}},
+        {"$set": {"network_account_key": new_secret()}})
+    stored = await db.team.find_one({"_id": TEAM_ID}, {"network_account_key": 1})
+    if not stored or not stored.get("network_account_key"):
+        raise unavailable("team_missing", "The team has not been created.")
+    return stored["network_account_key"]
 
 
 async def drain_audit(db: AsyncDatabase) -> int:
