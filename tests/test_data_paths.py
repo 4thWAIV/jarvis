@@ -248,10 +248,8 @@ def test_node_id_is_made_once_and_kept_across_restarts(monkeypatch, tmp_path):
     importlib.reload(data_paths)
     first = data_paths.node_id()
     assert uuid.UUID(first)
-    boot = data_paths.BOOT_ID
     importlib.reload(data_paths)                       # a restart
     assert data_paths.node_id() == first
-    assert data_paths.BOOT_ID != boot, "a new process is a new boot"
     assert (tmp_path / "node-id").read_text().strip() == first
 
 
@@ -276,8 +274,17 @@ def test_a_malformed_node_id_is_replaced_with_a_real_one(monkeypatch, tmp_path):
     assert data_paths.node_id() == made
 
 
-def test_update_sequence_rises_within_a_boot(monkeypatch, tmp_path):
+def test_an_unwritable_node_id_lasts_the_run(monkeypatch, tmp_path):
+    """A data directory that cannot keep the ID must not make a new node on
+    every update: the first ID made is held for the rest of the run."""
+    import uuid
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     from jarvis import data_paths
     importlib.reload(data_paths)
-    assert [data_paths.next_update_seq() for _ in range(3)] == [0, 1, 2]
+    writes = []
+    monkeypatch.setattr(data_paths, "_write_atomically",
+                        lambda path, text: writes.append(path) and False)
+    first = data_paths.node_id()
+    assert uuid.UUID(first)
+    assert data_paths.node_id() == first
+    assert len(writes) == 1 and not (tmp_path / "node-id").exists()

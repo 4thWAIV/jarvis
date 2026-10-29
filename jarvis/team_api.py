@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
+import itertools
 import platform
 import socket
+import uuid
 from typing import Callable, Literal, Optional
 
 from fastapi import FastAPI
@@ -65,12 +67,23 @@ def os_name() -> str:
     return platform.platform(terse=True)[:40]
 
 
+# One per process: the team server takes a new boot ID as a restart, and
+# refuses updates from an older one (data_paths.node_id is the lasting ID).
+BOOT_ID = str(uuid.uuid4())
+_update_seq = itertools.count()
+
+
+def next_update_seq() -> int:
+    """The next node update's `seq`: rising within this boot, from 0."""
+    return next(_update_seq)
+
+
 def node_update(account_key: Optional[str]) -> dict:
     """This backend's NodeUpdate for the team server's network, built from
     the local collectors; `account_key` is the team's key from the status
     (none yet: no brains)."""
-    return {"node_id": data_paths.node_id(), "boot_id": data_paths.BOOT_ID,
-            "seq": data_paths.next_update_seq(), "label": device_name(),
+    return {"node_id": data_paths.node_id(), "boot_id": BOOT_ID,
+            "seq": next_update_seq(), "label": device_name(),
             "jarvis_version": jarvis_version(), "os": os_name(),
             "resources": host_resources.sampler.current(),
             "brains": brain_accounts.brains(account_key),

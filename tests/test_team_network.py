@@ -346,9 +346,18 @@ def test_the_node_update_is_built_from_the_collectors_alone():
     update = team_api.node_update(None)
     assert set(update) == {"node_id", "boot_id", "seq", "label", "jarvis_version", "os",
                            "resources", "brains", "activity"}
-    assert update["node_id"] == data_paths.node_id() and update["boot_id"] == data_paths.BOOT_ID
+    assert update["node_id"] == data_paths.node_id() and update["boot_id"] == team_api.BOOT_ID
     assert update["brains"] == []                            # no key, no brains
     assert team_api.node_update(None)["seq"] > update["seq"]
     assert 1 <= len(update["label"]) <= 64 and len(update["jarvis_version"]) <= 32
     assert len(update["os"]) <= 40
     assert update["resources"]["state"] in ("measured", "warming_up", "unsupported", "error")
+
+
+def test_each_process_is_a_new_boot_counting_from_zero():
+    import importlib
+    import uuid
+    boot = team_api.BOOT_ID
+    importlib.reload(team_api)                               # a restart
+    assert uuid.UUID(team_api.BOOT_ID) and team_api.BOOT_ID != boot
+    assert [team_api.next_update_seq() for _ in range(3)] == [0, 1, 2]

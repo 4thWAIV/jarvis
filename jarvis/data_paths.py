@@ -5,7 +5,6 @@ live database.
 """
 
 import hashlib
-import itertools
 import json
 import logging
 import os
@@ -464,12 +463,26 @@ def node_id_path() -> Path:
     return data_dir() / "node-id"
 
 
+# The node ID once resolved, with the file it came from: one per run per
+# data directory, even when the file cannot be written.
+_node_id: Optional[tuple[Path, str]] = None
+
+
 def node_id() -> str:
     """Who this backend is on the team's network: a random UUID made once per
     data directory and kept, so a restart, a new session or pairing again is
     the same node. Not a secret. An unreadable or malformed file is replaced,
-    which makes a new node rather than a broken one."""
+    which makes a new node rather than a broken one. Read or made once and
+    then held, so a file that cannot be written still gives one ID a run."""
+    global _node_id
     path = node_id_path()
+    if _node_id is not None and _node_id[0] == path:
+        return _node_id[1]
+    _node_id = (path, _read_or_make_node_id(path))
+    return _node_id[1]
+
+
+def _read_or_make_node_id(path: Path) -> str:
     try:
         return str(uuid.UUID(path.read_text().strip()))
     except FileNotFoundError:
@@ -480,17 +493,6 @@ def node_id() -> str:
     if not _write_atomically(path, made + "\n"):
         log.warning("data_paths: the node ID could not be kept; it lasts this run only")
     return made
-
-
-# One per process: the team server takes a new boot ID as a restart, and
-# refuses updates from an older one (see node_id).
-BOOT_ID = str(uuid.uuid4())
-_update_seq = itertools.count()
-
-
-def next_update_seq() -> int:
-    """The next node update's `seq`: rising within this boot, from 0."""
-    return next(_update_seq)
 
 
 def human_activity_path() -> Path:
