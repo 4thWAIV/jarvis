@@ -1,163 +1,181 @@
 /**
- * The rays: when JARVIS sends a message to an agent, a ray like a fibre-optic
- * cable carries it. It runs in right angles: up out of the main orb (upper
+ * The rays: when JARVIS sends a message, a ray like a fibre-optic cable
+ * carries it, to an agent or to a person's queue item alike (transfers.ts).
+ * It runs in right angles (rayGeometry.ts): up out of the main orb (upper
  * left), along the strip above the centre area's tabs, across to the lane at
  * the page's right edge, down the channel in the middle of that lane (the
- * same channel for every ray), and left into that agent's own orb at the
- * right end of its row in the right panel's Agents tab. When another tab is
- * open there, the ray ends at the Agents tab's icon instead, which stays lit
- * until the tab is opened. It is drawn behind the orbs, from the main
- * orb's centre, and the main orb spins up and fills with the ray's colour
- * from the centre outward as it goes. Pulses travel along it, and it fades out
- * after six seconds. When the first pulse reaches the agent, the agent's orb
- * fills with the ray's colour from its edge inward, leaning toward the ray,
- * and rings ripple out from it: the message arriving. Its colour belongs to the transmission, not the agent
+ * same channel for every ray), and left into its end in the right panel: an
+ * agent's own orb at the right end of its row in the Agents tab, or a queue
+ * item's row (transferEndpoints.ts). When that view is not open, the ray ends
+ * at its tab's icon instead; the Agents tab's stays lit until it is opened.
+ * It is drawn behind the orbs, from the main orb's centre. Pulses travel
+ * along it, and it fades out after six seconds.
+ *
+ * Outgoing, the main orb spins up and fills with the ray's colour from the
+ * centre outward as it goes; when the first pulse reaches an agent, the
+ * agent's orb fills with the ray's colour from its edge inward, leaning
+ * toward the ray, and rings ripple out from the end: the message arriving.
+ * Incoming (a person's message come in) is the same ray travelled the other
+ * way: the pulses run toward the main orb, which receives when the first one
+ * gets there, and the rings ripple out from it.
+ *
+ * Its colour belongs to the transmission, not the agent or the person
  * (rayColours.ts): the first ray showing is the primary colour, a second at
- * the same time the next.
+ * the same time the next. At most RAYS_SHOWN_MAX show; more are counted.
  */
 
-import { useEffect, useState } from "react";
-import { isQuiet } from "./voiceHealth";
+import { useEffect, useState, type CSSProperties } from "react";
 import { mainOrb } from "./OrbControl";
 import { takeRayColour } from "./rayColours";
-import { agentMessage, agentReceipt, agentsLaidOut, agentsTabLit, RAY_MS,
-         RAY_TRAVEL_MS } from "./agents";
+import { RAY_MS, RAY_TRAVEL_MS } from "./agents";
+import { rayArrival, rayDirection, rayEnd, rayOrigin } from "./rayGeometry";
+import { LAYOUT_SIGNALS, measure, type Endpoint } from "./transferEndpoints";
+import { onTransfer, RAYS_SHOWN_MAX, transferMotion, type Direction, type Motion,
+         type Transfer } from "./transfers";
 
-const FIND_TRIES = 30;          // frames to wait for the row to come into view
+const FIND_TRIES = 30;          // frames to wait for the end to come into view
 const RECEIPT_RING_R = 10;      // px; a ring grows from about the agent orb's size
 const RECEIPT_RING_GAP_MS = 350;   // between the two rings
 
-interface Ray { n: number; sessionId: string; d: string; colour: string }
-
-/** Where a ray leaves the orb: its centre. The ray is drawn behind the orb
- *  (lower in the page than the left column), so it comes out from inside. */
-export function rayStart(orb: DOMRect): [number, number] {
-  return [orb.left + orb.width / 2, orb.top + orb.height / 2];
+interface Ray {
+  id: string;
+  end: Endpoint;
+  direction: Direction;
+  motion: Motion;
+  d: string;
+  colour: string;
+  words: string;
 }
 
-// How far below the top of the page the ray crosses: above the centre
-// area's tabs (which start at --centre-header-top, 16px).
-const TOP_LANE_PX = 8;
+/** Everything one transfer holds while it shows: its frame callbacks, its
+ *  timers and its colour. `end` cancels and gives back all of them, at
+ *  expiry or when the lane goes, so nothing outlives the ray. */
+class Showing {
+  private frames = new Set<number>();
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+  private releases: (() => void)[] = [];
 
-/** The numbers in a ray's path: start x and y, the top lane's y, the
- *  channel's x, then the end's y and x (rayPath). */
-function rayPoints(d: string): number[] {
-  return (d.match(/-?[\d.]+/g) ?? []).map(Number);
-}
-
-/** Which way the ray leaves the orb, on the screen: from its start to its
- *  first corner (the channel). */
-function rayDirection(d: string): [number, number] {
-  const [, sy, top] = rayPoints(d);
-  return [0, Math.sign(top - sy) || -1];
-}
-
-/** Which way the ray arrives from at the agent's orb: from its end back to
- *  its last corner (the channel). */
-function rayArrival(d: string): [number, number] {
-  const [, , , cx, , ex] = rayPoints(d);
-  return [Math.sign(cx - ex) || 1, 0];
-}
-
-/** Where the ray ends: the agent's orb's centre. */
-function rayEnd(d: string): [number, number] {
-  const [, , , , ey, ex] = rayPoints(d);
-  return [ex, ey];
-}
-
-/** The path, in right angles: up from the orb to the top lane, across it
- *  to the right-hand channel, down the channel, and left into the agent's
- *  orb; or, with the Agents tab closed, into its icon (`toTab`). Null while
- *  the tab is open but the agent's row is not showing yet. */
-function rayPath(sessionId: string): { d: string; toTab: boolean } | null {
-  const orb = document.getElementById("orb-control")?.getBoundingClientRect();
-  const column = document.getElementById("right-column")?.getBoundingClientRect();
-  const list = document.querySelector(".agents-list");
-  const row = list?.querySelector(`li[data-session-id="${CSS.escape(sessionId)}"] .agent-orb`);
-  const target = (list ? row : document.querySelector(".right-tabs [aria-label='Agents']"))
-    ?.getBoundingClientRect();
-  if (!orb || !target || !column) return null;
-  const [sx, sy] = rayStart(orb);
-  const ex = target.left + target.width / 2, ey = target.top + target.height / 2;
-  if (!list) {
-    // Straight down into the tab's icon from the top lane; the last run is
-    // empty, so the path keeps the same six numbers (rayPoints).
-    return { d: `M ${sx} ${sy} V ${TOP_LANE_PX} H ${ex} V ${ey} H ${ex}`, toTab: true };
+  frame(callback: () => void): void {
+    const id = requestAnimationFrame(() => { this.frames.delete(id); callback(); });
+    this.frames.add(id);
   }
-  // The middle of what is left of the right-hand lane beside the menu button
-  // (#controls, in the top right corner), so the ray never runs through it.
-  const menu = document.getElementById("controls")?.getBoundingClientRect();
-  const inner = Math.max(column.right, menu?.right ?? 0);
-  const channel = inner + (window.innerWidth - inner) / 2;
-  return { d: `M ${sx} ${sy} V ${TOP_LANE_PX} H ${channel} V ${ey} H ${ex}`, toTab: false };
+
+  after(ms: number, callback: () => void): void {
+    const id = setTimeout(() => { this.timers.delete(id); callback(); }, ms);
+    this.timers.add(id);
+  }
+
+  hold(release: () => void): void {
+    this.releases.push(release);
+  }
+
+  end(): void {
+    this.frames.forEach(cancelAnimationFrame);
+    this.timers.forEach(clearTimeout);
+    this.releases.splice(0).forEach((release) => release());
+    this.frames.clear();
+    this.timers.clear();
+  }
 }
+
+/** A transfer's ray, as the screen reader hears it: the visually hidden
+ *  status line says what is under way while it shows. */
+const HIDDEN: CSSProperties = {
+  position: "absolute", width: 1, height: 1, margin: -1, padding: 0, overflow: "hidden",
+  clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+};
 
 export function RayLane() {
   const [rays, setRays] = useState<Ray[]>([]);
+  const [overflow, setOverflow] = useState(0);
 
-  // Every message draws, including several sent at once: the store's own
-  // listener is called once per message, where reading it during render
-  // would see only the last.
+  // Every transfer draws, including several sent at once: the sources'
+  // listeners are called once per message, where reading a store during
+  // render would see only the last.
   useEffect(() => {
-    const frames = new Set<number>();
-    const draw = (sessionId: string, n: number) => {
-      if (isQuiet()) return;         // the quiet page draws no rays
+    const showing = new Set<Showing>();
+    let shown = 0;
+
+    const draw = (transfer: Transfer) => {
+      const motion = transferMotion();
+      if (motion === "none") return;          // the quiet page draws no rays
+      const life = new Showing();
+      showing.add(life);
+      const finish = () => { life.end(); showing.delete(life); };
+      if (shown >= RAYS_SHOWN_MAX) {
+        // Counted, not drawn, and only for as long as a ray would show.
+        setOverflow((n) => n + 1);
+        life.after(RAY_MS, () => { setOverflow((n) => n - 1); finish(); });
+        return;
+      }
+      shown++;
+      life.hold(() => { shown--; });
       let tries = 0;
-      // The list may first have to bring the agent into view, so look for
-      // its row over a few frames.
+      // The view may first have to bring the end into view, so look for it
+      // over a few frames.
       const find = () => {
-        const path = rayPath(sessionId);
-        if (path) {
-          const { d } = path;
-          const { colour, release } = takeRayColour();
-          // The orb goes into its transmitting state for as long as the ray
-          // shows, leaning the way the ray leaves it.
-          mainOrb.current?.transmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
-          setRays((now) => [...now, { n, sessionId, d, colour }]);
-          // The agent's orb receives when the first pulse gets there, and
-          // only if its row is still showing: measured again, since the list
-          // may have moved.
-          // The Agents tab's icon lights instead when another tab is open.
-          setTimeout(() => {
-            const there = rayPath(sessionId);
-            if (there?.toTab) agentsTabLit.set(true);
-            else if (there) agentReceipt.set({
-              sessionId, n, colour, direction: rayArrival(there.d),
-              seconds: (RAY_MS - RAY_TRAVEL_MS) / 1000 });
-          }, RAY_TRAVEL_MS);
-          setTimeout(() => {
-            release();
-            setRays((now) => now.filter((r) => r.n !== n));
-          }, RAY_MS);
-        } else if (++tries < FIND_TRIES) {
-          frames.add(requestAnimationFrame(find));
+        const path = measure(transfer.end);
+        if (!path) {
+          if (++tries < FIND_TRIES) life.frame(find);
+          else finish();
+          return;
         }
+        const { d } = path;
+        const { colour, release } = takeRayColour();
+        life.hold(release);
+        const moving = motion === "animate";
+        const outgoing = transfer.direction === "outgoing";
+        // Outgoing, the orb goes into its transmitting state for as long as
+        // the ray shows, leaning the way the ray leaves it.
+        if (moving && outgoing) {
+          mainOrb.current?.transmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
+        }
+        const ray: Ray = { id: transfer.id, end: transfer.end, direction: transfer.direction,
+                           motion, d, colour, words: transfer.words };
+        setRays((now) => [...now, ray]);
+        life.hold(() => setRays((now) => now.filter((r) => r.id !== ray.id)));
+        // When the first pulse gets there: the end receives an outgoing
+        // message, measured again since the view may have moved (its tab's
+        // icon lights instead when another tab is open); the main orb
+        // receives an incoming one.
+        life.after(RAY_TRAVEL_MS, () => {
+          const seconds = (RAY_MS - RAY_TRAVEL_MS) / 1000;
+          if (!outgoing) {
+            if (moving) mainOrb.current?.receive(colour, { direction: rayDirection(d), seconds });
+            return;
+          }
+          const there = measure(transfer.end);
+          if (there?.toTab) transfer.end.reached(true, { colour, direction: [0, 0], seconds });
+          else if (there && moving) {
+            transfer.end.reached(false, { colour, direction: rayArrival(there.d), seconds });
+          }
+        });
+        life.after(RAY_MS, finish);
       };
-      frames.add(requestAnimationFrame(find));
+      life.frame(find);
     };
-    const unsubscribe = agentMessage.subscribe(() => {
-      const message = agentMessage.get();
-      if (message) draw(message.sessionId, message.n);
-    });
+
+    const unsubscribe = onTransfer(draw);
     return () => {
       unsubscribe();
-      frames.forEach(cancelAnimationFrame);
+      showing.forEach((life) => life.end());
+      showing.clear();
     };
   }, []);
 
-  // A ray follows its agent while it shows: the list can reorder (a message
-  // moves its agent up) or cycle under it. If the agent's row is not showing
-  // the ray is not drawn: its last path would end at a row that now holds a
-  // different agent.
-  // It re-measures on every frame, and on every commit of the agents list
-  // before that commit is painted.
+  // A ray follows its end while it shows: a list can reorder (a message
+  // moves its agent up) or cycle under it. An agent's ray whose row is not
+  // showing is not drawn: its last path would end at a row that now holds a
+  // different agent; a queue item's ends at the Queue's icon instead.
+  // It re-measures on every frame, and on every commit of a list before
+  // that commit is painted.
   useEffect(() => {
     if (!rays.length) return;
     let frame = 0;
     const remeasure = () => setRays((now) => {
       let moved = false;
       const next = now.map((ray) => {
-        const d = rayPath(ray.sessionId)?.d ?? "";
+        const d = measure(ray.end)?.d ?? "";
         if (d !== ray.d) { moved = true; return { ...ray, d }; }
         return ray;
       });
@@ -168,33 +186,48 @@ export function RayLane() {
       frame = requestAnimationFrame(follow);
     };
     frame = requestAnimationFrame(follow);
-    const unsubscribe = agentsLaidOut.subscribe(remeasure);
+    const unsubscribe = LAYOUT_SIGNALS.map((signal) => signal.subscribe(remeasure));
     return () => {
       cancelAnimationFrame(frame);
-      unsubscribe();
+      unsubscribe.forEach((u) => u());
     };
   }, [rays.length]);
 
+  const words = rays.map((ray) => ray.words).filter(Boolean);
+  if (overflow) words.push(`and ${overflow} more`);
   return (
-    <svg id="ray-lane" aria-hidden="true">
-      <defs>
-        <filter id="ray-glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="3" />
-        </filter>
-      </defs>
-      {rays.filter((ray) => ray.d).map((ray) => (
-        <g key={ray.n} className="ray" data-ray-to={ray.n}
-           style={{ ["--ray-colour" as string]: ray.colour }}>
-          <path d={ray.d} className="ray-glow" filter="url(#ray-glow)" />
-          <path d={ray.d} className="ray-core" />
-          <path d={ray.d} className="ray-pulse" pathLength={100} />
-          {[0, 1].map((ring) => (
-            <circle key={ring} className="ray-receipt" cx={rayEnd(ray.d)[0]}
-                    cy={rayEnd(ray.d)[1]} r={RECEIPT_RING_R}
-                    style={{ animationDelay: `${RAY_TRAVEL_MS + ring * RECEIPT_RING_GAP_MS}ms` }} />
-          ))}
-        </g>
-      ))}
-    </svg>
+    <>
+      <svg id="ray-lane" aria-hidden="true">
+        <defs>
+          <filter id="ray-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" />
+          </filter>
+        </defs>
+        {rays.filter((ray) => ray.d).map((ray) => {
+          const incoming = ray.direction === "incoming";
+          const [rx, ry] = incoming ? rayOrigin(ray.d) : rayEnd(ray.d);
+          return (
+            <g key={ray.id} className="ray" data-ray-to={ray.id} data-direction={ray.direction}
+               data-motion={ray.motion} style={{ ["--ray-colour" as string]: ray.colour }}>
+              <path d={ray.d} className="ray-glow" filter="url(#ray-glow)" />
+              <path d={ray.d} className="ray-core" />
+              {ray.motion === "animate" && <>
+                <path d={ray.d} className="ray-pulse" pathLength={100}
+                      style={incoming ? { animationDirection: "reverse" } : undefined} />
+                {[0, 1].map((ring) => (
+                  <circle key={ring} className="ray-receipt" cx={rx} cy={ry} r={RECEIPT_RING_R}
+                          style={{ animationDelay: `${RAY_TRAVEL_MS + ring * RECEIPT_RING_GAP_MS}ms` }} />
+                ))}
+              </>}
+            </g>
+          );
+        })}
+        {overflow > 0 && rays[0]?.d && (
+          <text className="ray-overflow" x={rayOrigin(rays[0].d)[0] + 8} y={18}
+                fill="rgba(229, 231, 235, 0.9)" fontSize={11}>+{overflow}</text>
+        )}
+      </svg>
+      <div id="ray-status" role="status" style={HIDDEN}>{words.join(". ")}</div>
+    </>
   );
 }
