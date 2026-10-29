@@ -13,7 +13,7 @@ import pytest
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
-from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
+from tests.test_agents_list_fits import async_api  # noqa: F401
 
 FAKE_MIC = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
 LIT = "document.querySelectorAll('#mic-meter .mic-segment.on').length"

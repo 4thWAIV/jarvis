@@ -17,7 +17,7 @@ import pytest
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
-from tests.test_agents_list_fits import async_api, page_url, show_diagnostics  # noqa: F401
+from tests.test_agents_list_fits import async_api, show_diagnostics  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 
 STAGES = ["mic", "browser", "connection", "recogniser", "jarvis"]

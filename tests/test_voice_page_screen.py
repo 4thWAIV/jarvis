@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
+from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, _silence_wav
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).

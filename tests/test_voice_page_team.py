@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
+from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_settings import _Server, _open, _open_settings
 
 pytestmark = pytest.mark.page
