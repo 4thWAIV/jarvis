@@ -21,6 +21,19 @@ NOT_LIVE = "not_live"
 REFUSED = "refused"
 FAILED = "failed"
 
+
+def failed(reason: str) -> str:
+    """`failed` with the reason the channel gave, as it is recorded in a
+    message's `failure`: "failed: <reason>". Callers still compare against
+    the plain outcomes; `outcome_code` reads one back."""
+    reason = " ".join((reason or "").split())[:300]
+    return f"{FAILED}: {reason}" if reason else FAILED
+
+
+def outcome_code(outcome: str | None) -> str | None:
+    """The outcome without any reason `failed` carries."""
+    return outcome.split(":", 1)[0] if outcome else outcome
+
 # The first line of every message JARVIS sends into a session, whichever
 # provider runs it. Without it the session saw only "another Claude session",
 # answered by messaging whichever session it guessed, and once recorded an
@@ -89,12 +102,12 @@ def post_to_session(socket_path: str | None, prompt: str,
         sock.connect(socket_path)
     except (ConnectionRefusedError, FileNotFoundError):
         return NOT_LIVE           # a stale .sock from a process that has gone
-    except OSError:
-        return FAILED
+    except OSError as e:
+        return failed(f"the inbox socket refused the connection: {e}")
     try:
         sock.sendall(payload)
-    except OSError:
-        return FAILED
+    except OSError as e:
+        return failed(f"the inbox socket did not take the message: {e}")
     finally:
         try:
             sock.close()

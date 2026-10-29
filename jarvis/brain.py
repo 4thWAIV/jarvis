@@ -23,7 +23,7 @@ from typing import Awaitable, Callable, Optional
 
 from jarvis import brain_provider
 from jarvis.brain_provider import (BrainProvider, ProviderEvent, ProviderSession, SessionInfo,
-                            TextDelta, ToolStarted, TurnEnded, UsageSeen)
+                            TextDelta, ToolFailed, ToolStarted, TurnEnded, UsageSeen)
 
 log = logging.getLogger("jarvis.brain")
 
@@ -890,6 +890,11 @@ class Brain:
                     t.on_tool()
                 except Exception as e:
                     log.warning(f"tool listener failed: {e}")
+        elif isinstance(ev, ToolFailed):
+            # It never reached /internal/tool, so it goes on the same record
+            # the Tool channel row reads from there.
+            from jarvis import subsystem_diagnostics
+            subsystem_diagnostics.tool_calls.note(False, f"{ev.name}: {ev.error}")
         elif isinstance(ev, UsageSeen):
             self.usage = dict(ev.summary)
             if ev.blocked:

@@ -140,7 +140,17 @@ def test_one_agent_not_picking_up_is_degraded_not_down():
     c = sd.outgoing_check([message("undelivered", "s1", NOW - 100),
                            message("undelivered", "s1", NOW - 200),
                            message("answered", "s2", NOW - 300)], NOW)
-    assert c.state == sd.DEGRADED and "2 messages to one agent" in c.detail
+    assert c.state == sd.DEGRADED
+    assert c.detail == ("The last 2 messages to hammer did not reach it: "
+                        "it never showed up in the agent's conversation")
+
+
+def test_a_lost_message_says_what_the_channel_said():
+    c = sd.outgoing_check([message("failed", "s1", NOW - 100,
+                                   failure="failed: codex queue exited 1: no such thread"),
+                           message("answered", "s2", NOW - 300)], NOW)
+    assert c.state == sd.DEGRADED
+    assert c.detail == "The last message to hammer did not reach it: codex queue exited 1: no such thread"
 
 
 def test_lost_messages_to_two_agents_in_a_row_is_down():
@@ -148,7 +158,8 @@ def test_lost_messages_to_two_agents_in_a_row_is_down():
                            message("failed", "s2", NOW - 200, failure="not_live"),
                            message("answered", "s3", NOW - 300)], NOW)
     assert c.state == sd.DOWN
-    assert c.detail == "The last 2 messages, to 2 different agents, did not reach them"
+    assert c.detail == ("The last 2 messages, to 2 different agents, did not reach them; "
+                        "the latest: it never showed up in the agent's conversation")
 
 
 def test_a_message_reaching_its_agent_brings_it_back():
@@ -362,10 +373,24 @@ def test_tool_calls_refused_for_their_token_are_down_until_one_is_taken():
     calls.note(True, now=NOW - 30)
     calls.note(False, "the token does not match", now=NOW - 20)
     s = sd.tool_channel(ok, calls, NOW)
-    assert (s.state, s.summary) == (sd.DOWN, "Tool calls are refused: the token does not match")
+    assert (s.state, s.summary) == (sd.DOWN, "Tool calls are failing: the token does not match")
     calls.note(True, now=NOW - 10)
     s = sd.tool_channel(ok, calls, NOW)
     assert s.state == sd.OK and s.checks[1].detail == "Last tool call 10 s ago"
+
+
+def test_tool_calls_failing_inside_the_brain_put_the_brain_down_until_one_is_taken():
+    ok = brain(mcp_servers=[{"name": "jarvis", "status": "connected"}])
+    calls = sd.Outcomes()
+    assert sd.brain(ok, True, NOW, NOW - 600, calls).state == sd.OK
+    calls.note(False, "exec: failed to read code-mode host message", now=NOW - 20)
+    s = sd.brain(ok, True, NOW, NOW - 600, calls)
+    assert (s.state, s.summary) == (sd.DOWN, "Tool calls are failing: exec: failed to read "
+                                             "code-mode host message")
+    assert s.checks[0].state == sd.OK and s.checks[2].state == sd.DOWN
+    assert sd.tool_channel(ok, calls, NOW).state == sd.DOWN
+    calls.note(True, now=NOW - 10)
+    assert sd.brain(ok, True, NOW, NOW - 600, calls).state == sd.OK
 
 
 def test_the_workflow_monitor_s_states():

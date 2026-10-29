@@ -242,3 +242,59 @@ async def test_its_setup_checks_name_the_login_command(monkeypatch):
 def test_features_to_disable_keeps_only_the_kept_ones():
     listing = "shell_tool stable true\ncode_mode_host stable true\nmemories stable false\n"
     assert codex_provider.features_to_disable(listing) == ["shell_tool"]
+
+
+def _call(name, call_id):
+    return {"type": "response_item", "payload": {"type": "custom_tool_call", "name": name,
+                                                 "call_id": call_id, "input": "..."}}
+
+
+def _answer(call_id, output):
+    return {"type": "response_item", "payload": {"type": "custom_tool_call_output",
+                                                 "call_id": call_id, "output": output}}
+
+
+def test_a_code_mode_call_the_host_failed_is_found_in_the_transcript():
+    # As measured on 29 October 2026, Codex 0.166's host against a 0.165 brain.
+    broken = ("failed to read code-mode host message: failed to decode code-mode IPC frame: "
+              "unknown field `result_buffered_for_ns`")
+    names = {}
+    objs = [_call("exec", "a"), _answer("a", [{"type": "input_text", "text": "Script completed"}]),
+            _call("exec", "b"), _answer("b", "Script running with cell ID 4\nWall time 31.0 seconds"),
+            _call("exec", "c"), _answer("c", "Script failed\nTypeError: x is undefined"),
+            _call("exec", "d")]
+    assert codex_provider.code_mode_failures(objs, names) == []
+    # The answer to "d" is read on a later look than its call.
+    assert codex_provider.code_mode_failures([_answer("d", broken)], names) == [("exec", broken)]
+    assert names == {}
+
+
+def test_tool_failures_inside_codex_reach_the_brain(tmp_path):
+    seen = []
+    session = codex_provider.CodexSession(_config(tmp_path), lambda s, ev: seen.append(ev), None)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(json.dumps(_call("exec", "a")) + "\n"
+                       + json.dumps(_answer("a", "failed to read code-mode host message")) + "\n")
+    session._rollout = rollout
+    session._handle({"method": "item/completed", "params": {"item": {
+        "type": "mcpToolCall", "server": "jarvis", "tool": "list_agents", "status": "failed",
+        "error": {"message": "connection closed"}}}})
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    failed = [ev for ev in seen if isinstance(ev, brain_provider.ToolFailed)]
+    assert failed == [brain_provider.ToolFailed("mcp__jarvis__list_agents", "connection closed"),
+                      brain_provider.ToolFailed("exec", "failed to read code-mode host message")]
+    # Each transcript line is read once.
+    session._handle({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+    assert len([ev for ev in seen if isinstance(ev, brain_provider.ToolFailed)]) == 2
+
+
+def test_a_tool_the_provider_failed_is_on_the_tool_channel_s_record(tmp_path, monkeypatch):
+    from jarvis import subsystem_diagnostics as sd
+    calls = sd.Outcomes()
+    monkeypatch.setattr(sd, "tool_calls", calls)
+    b = brain.Brain(_config(tmp_path))
+    session = object()
+    b._session = session
+    b._on_event(session, brain_provider.ToolFailed("exec", "failed to read code-mode host message"))
+    assert [(ok, detail) for _, ok, detail in calls.items] == [
+        (False, "exec: failed to read code-mode host message")]

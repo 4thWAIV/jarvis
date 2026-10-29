@@ -134,9 +134,12 @@ def _threads(home: Path) -> dict[str, dict]:
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
     try:
         con.row_factory = sqlite3.Row
+        columns = {r[1] for r in con.execute("pragma table_info(threads)")}
+        # Codex 0.166 records which threads are subagents a session spawned.
+        source = "thread_source" if "thread_source" in columns else "null"
         rows = con.execute(
-            "select id, rollout_path, cwd, title, git_branch, created_at_ms, updated_at_ms "
-            "from threads where archived = 0").fetchall()
+            "select id, rollout_path, cwd, title, git_branch, created_at_ms, updated_at_ms, "
+            f"{source} as thread_source from threads where archived = 0").fetchall()
     finally:
         con.close()
     return {r["id"]: dict(r) for r in rows}
@@ -146,7 +149,10 @@ def _thread_for(proc: CodexProcess, threads: dict[str, dict]) -> Optional[dict]:
     hint = proc.thread_hint
     if hint and hint in threads:
         return threads[hint]
-    here = [t for t in threads.values() if t["cwd"] == proc.cwd]
+    # A subagent's thread shares its parent's folder and is newer than it, but
+    # no terminal runs it: a session is never one of its own subagents.
+    here = [t for t in threads.values()
+            if t["cwd"] == proc.cwd and t.get("thread_source") != "subagent"]
     if not here:
         return None
     # A new session: the first thread made in its folder after it started.
@@ -460,17 +466,23 @@ class CodexSessions:
             return session_steer.REFUSED
         codex = self._codex or shutil.which("codex")
         if not codex:
-            return session_steer.FAILED
+            return session_steer.failed("the codex command is not on the PATH")
         env = dict(os.environ)
         env["CODEX_HOME"] = str(self.home)
         try:
             done = subprocess.run([*codex.split(), "queue", "--thread", session.session_id,
                                    "--message", text.strip()],
                                   capture_output=True, text=True, timeout=QUEUE_TIMEOUT_SEC, env=env)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            log.warning("codex queue failed: %s", type(e).__name__)
-            return session_steer.FAILED
+        except subprocess.TimeoutExpired:
+            log.warning("codex queue timed out")
+            return session_steer.failed(f"codex queue did not finish in {QUEUE_TIMEOUT_SEC:.0f} s")
+        except OSError as e:
+            log.warning("codex queue could not run: %s", e)
+            return session_steer.failed(f"codex queue could not run: {e}")
         if done.returncode != 0:
-            log.warning("codex queue exited %s", done.returncode)
-            return session_steer.FAILED
+            # Codex's own words are the only account of why; keep them.
+            said = (done.stderr or "").strip() or (done.stdout or "").strip()
+            log.warning("codex queue exited %s: %s", done.returncode, said[-500:])
+            return session_steer.failed(f"codex queue exited {done.returncode}"
+                                        + (f": {said[-280:]}" if said else ""))
         return session_steer.SENT

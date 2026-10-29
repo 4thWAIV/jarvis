@@ -33,7 +33,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from jarvis import data_paths, run_store, session_messages, voice_diagnostics, workflow_store
+from jarvis import (data_paths, run_store, session_messages, session_steer, voice_diagnostics,
+                    workflow_store)
 from jarvis.session_watch import DELIVERY_TIMEOUT_SEC, GONE
 
 OK, DEGRADED, DOWN, IDLE, UNKNOWN = "ok", "degraded", "down", "idle", "unknown"
@@ -168,7 +169,8 @@ class Outcomes:
 
 
 # Each Fish Audio synthesis, and each request on /internal/tool (refused for
-# its token, or taken).
+# its token, or taken), and each tool call the brain's provider failed before
+# it reached /internal/tool.
 voice_output_calls = Outcomes()
 tool_calls = Outcomes()
 
@@ -226,10 +228,20 @@ def message_outcome(m, now: float) -> Optional[str]:
     if status == "undelivered":
         return "lost"
     if status == "failed":
-        return "lost" if m.failure in LOST_FAILURES else None
+        return "lost" if session_steer.outcome_code(m.failure) in LOST_FAILURES else None
     if status == "sent" and now - (m.sent_at or m.staged_at) > UNFOLLOWED_AFTER_SEC:
         return "lost"
     return None
+
+
+def _why_lost(m) -> Optional[str]:
+    """What the channel said when this message was lost, if it said more
+    than the bare outcome."""
+    if str(m.status) == "undelivered":
+        return "it never showed up in the agent's conversation"
+    failure = m.failure or ""
+    reason = failure.split(":", 1)[1].strip() if ":" in failure else ""
+    return reason or None
 
 
 def outgoing_check(messages: list, now: float) -> Check:
@@ -247,14 +259,16 @@ def outgoing_check(messages: list, now: float) -> Check:
         streak.append(m)
     sessions = {m.session_id for m in streak}
     if len(sessions) >= LOST_SESSIONS_DOWN:
+        why = _why_lost(streak[0])
         return Check("outgoing", name, DOWN,
                      f"The last {len(streak)} messages, to {len(sessions)} different agents, "
-                     f"did not reach them")
+                     f"did not reach them" + (f"; the latest: {why}" if why else ""))
     if streak:
         n = len(streak)
+        why = _why_lost(streak[0])
         return Check("outgoing", name, DEGRADED,
-                     f"The last {'message' if n == 1 else f'{n} messages'} to one agent "
-                     f"did not reach it")
+                     f"The last {'message' if n == 1 else f'{n} messages'} to "
+                     f"{streak[0].agent_name} did not reach it" + (f": {why}" if why else ""))
     reached = sum(o == "reached" for _, o in judged)
     lost = len(judged) - reached
     return Check("outgoing", name, OK,
@@ -315,15 +329,23 @@ def voice_input(summary: dict, now: float) -> Subsystem:
     return Subsystem("voice_input", "Voice input", OK, "Hearing you", checks)
 
 
-def brain(b, autostart: bool, now: float, started_at: float) -> Subsystem:
-    """The brain, from the live Brain."""
+def brain(b, autostart: bool, now: float, started_at: float,
+          calls: Optional[Outcomes] = None) -> Subsystem:
+    """The brain, from the live Brain; and its tool calls, since a brain that
+    cannot use a tool cannot do anything he asks of it."""
     def one(state: str, summary: str) -> Subsystem:
         usage = (Check("usage", "Usage limit", DEGRADED, "At the usage limit")
                  if b is not None and b.rate_limited else
                  Check("usage", "Usage limit", OK, "Within the limit"))
         provider = getattr(getattr(b, "provider", None), "name", None)
+        checks = [Check("process", "Process", state, summary), usage]
+        if calls is not None and calls.items and not calls.items[-1][1]:
+            failing = f"Tool calls are failing: {calls.items[-1][2]}"
+            checks.append(Check("tools", "Tool calls", DOWN, failing))
+            if state in (OK, DEGRADED):
+                state, summary = DOWN, failing
         return Subsystem("brain", f"Brain ({provider})" if provider else "Brain", state, summary,
-                         [Check("process", "Process", state, summary), usage])
+                         checks)
     if b is None:
         return one(UNKNOWN, "Not started")
     if b.failed:
@@ -378,7 +400,7 @@ def tool_channel(b, calls: Outcomes, now: float) -> Subsystem:
                          [Check("server", "JARVIS's tools in the brain", state, summary),
                           Check("calls", "Tool calls", OK if taken else IDLE, last.capitalize())])
     if calls.items and not calls.items[-1][1]:
-        return one(DOWN, f"Tool calls are refused: {calls.items[-1][2]}")
+        return one(DOWN, f"Tool calls are failing: {calls.items[-1][2]}")
     if b is None or not b.running:
         return one(UNKNOWN, "The brain is not running")
     server = next((s for s in b.mcp_servers if s.get("name") == TOOL_SERVER), None)
@@ -460,7 +482,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
     return [
         communications(watcher, messages, beats_now, waiting, now, started_at),
         voice_input(voice_diagnostics.summary(now), now),
-        brain(brain_now, autostart, now, started_at),
+        brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),

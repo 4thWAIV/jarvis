@@ -22,19 +22,23 @@ from jarvis import session_watch as sw
 NOW = 2_000_000_000.0
 
 
-def _home(tmp_path, threads):
+def _home(tmp_path, threads, sources=False):
+    """`sources`: the thread table has Codex 0.166's `thread_source` column."""
     home = tmp_path / "codex"
     home.mkdir()
     con = sqlite3.connect(home / "state_5.sqlite")
     con.execute("create table threads (id text, rollout_path text, cwd text, title text, "
-                "git_branch text, created_at_ms integer, updated_at_ms integer, archived integer)")
+                "git_branch text, created_at_ms integer, updated_at_ms integer, archived integer"
+                + (", thread_source text)" if sources else ")"))
     for t in threads:
         rollout = home / f"rollout-{t['id']}.jsonl"
         rollout.write_text("\n".join(json.dumps(x) for x in t.get("lines", [])))
-        con.execute("insert into threads values (?,?,?,?,?,?,?,?)",
-                    (t["id"], str(rollout), t["cwd"], t.get("title", "a title"), "main",
-                     int(t.get("created", NOW - 3600) * 1000), int(t.get("updated", NOW - 60) * 1000),
-                     int(t.get("archived", 0))))
+        row = (t["id"], str(rollout), t["cwd"], t.get("title", "a title"), "main",
+               int(t.get("created", NOW - 3600) * 1000), int(t.get("updated", NOW - 60) * 1000),
+               int(t.get("archived", 0)))
+        if sources:
+            row += (t.get("source", "user"),)
+        con.execute(f"insert into threads values ({','.join('?' * len(row))})", row)
     con.commit()
     con.close()
     return home
@@ -99,6 +103,30 @@ def test_a_session_with_no_transcript_yet_is_fresh_and_an_archived_thread_is_not
         cs.CodexProcess(2, NOW - 10, ["/x/codex", "resume", T2], "/w/b")))
     states = {s.session_id: s.state for s in provider.discover(NOW)}
     assert states == {T1: "fresh"}
+
+
+def test_a_session_is_never_matched_to_a_subagent_it_spawned(tmp_path):
+    # Measured 29 Oct 2026: a resumed session spawned two subagents in its
+    # folder; matched to the newer of them, its messages went to a finished
+    # subagent and every one failed.
+    home = _home(tmp_path, [
+        {"id": T1, "cwd": "/w/a", "created": NOW - 9000, "updated": NOW - 900},
+        {"id": T2, "cwd": "/w/a", "created": NOW - 600, "updated": NOW - 300, "source": "subagent"},
+    ], sources=True)
+    provider = cs.CodexSessions(home=home, processes=_procs(
+        cs.CodexProcess(1, NOW - 10000, ["/x/codex", "resume"], "/w/a")))
+    assert [s.session_id for s in provider.discover(NOW)] == [T1]
+
+
+def test_a_message_codex_refuses_keeps_codex_s_reason(tmp_path):
+    fake = tmp_path / "fake_codex_queue.py"
+    fake.write_text("import sys\nsys.stderr.write('Error: thread not loaded\\n')\nsys.exit(1)\n")
+    home = _home(tmp_path, [{"id": T1, "cwd": "/w/a"}])
+    provider = cs.CodexSessions(home=home, processes=_procs(), codex=f"{sys.executable} {fake}")
+    session = sw.SessionState(session_id=T1, cwd="/w/a", project="a", state="idle", provider="openai")
+    outcome = provider.send(session, "hello")
+    assert outcome == "failed: codex queue exited 1: Error: thread not loaded"
+    assert session_steer.outcome_code(outcome) == session_steer.FAILED
 
 
 def test_the_last_reply_is_the_last_thing_the_session_said(tmp_path):
