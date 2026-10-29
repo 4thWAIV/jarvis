@@ -38,11 +38,11 @@ import hashlib
 import hmac
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Optional
 
 from jarvis import brain_provider, brains_config, data_paths, usage_store
 from jarvis.brain_provider import Account
+from jarvis.team_client import iso_utc
 
 log = logging.getLogger("jarvis.brain_accounts")
 
@@ -93,10 +93,6 @@ def _key_bytes(key: Optional[str]) -> Optional[bytes]:
     return raw or None
 
 
-def _iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def _windows(service: str, week: dict, now: float) -> list[dict]:
     out = []
     for view in usage_store.snapshot(now=now, service=service)["windows"]:
@@ -105,7 +101,7 @@ def _windows(service: str, week: dict, now: float) -> list[dict]:
             continue
         expected = week["expected_used"] if view["key"] == "seven_day" and week["measured"] else None
         out.append({"window": view["key"], "used_percent": view["utilization"],
-                    "expected_used_percent": expected, "resets_at": _iso(view["resets_at"]),
+                    "expected_used_percent": expected, "resets_at": iso_utc(view["resets_at"]),
                     "age_ms": int(view["age_sec"] * 1000)})
     return out[:MAX_WINDOWS]
 

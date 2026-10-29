@@ -121,6 +121,8 @@ async def test_the_cache_is_the_team_servers_answer_byte_for_byte(conn, server):
     assert status["connection"] == "connected"
     assert isinstance(status["round_trip_ms"], int) and status["round_trip_ms"] >= 0
     assert status["received_at"] and status["last_contact_at"]
+    # One formatter for every time JARVIS sends or shows (team_client.iso_utc).
+    assert status["received_at"].endswith("Z") and status["last_contact_at"].endswith("Z")
 
 
 @pytest.mark.asyncio
@@ -218,6 +220,22 @@ async def test_an_old_snapshot_is_stale_even_without_a_failure(conn, server, mon
     await conn.exchange_once()
     clock[0] += team_client.NETWORK_STALE_AFTER_SEC + 1
     assert _status(conn)["stale"] is True
+
+
+def test_one_backoff_rule_for_the_status_poll_and_the_exchange():
+    assert [team_client._backoff(n, 5, 60) for n in range(6)] == [5, 5, 10, 20, 40, 60]
+    status = TeamConnection(store=team_client.connection.store)
+    network = TeamConnection(store=team_client.connection.store)
+    status.failures = network.network.failures = 3
+    assert status.next_delay() == team_client._backoff(
+        3, team_client.STATUS_INTERVAL_SEC, team_client.MAX_BACKOFF_SEC)
+    assert network.network_delay() == team_client._backoff(
+        3, team_client.NETWORK_INTERVAL_SEC, team_client.NETWORK_MAX_BACKOFF_SEC)
+
+
+def test_iso_utc_is_the_z_form_the_team_server_takes():
+    assert team_client.iso_utc(None) is None
+    assert team_client.iso_utc(4_000_000_000) == "2096-10-02T07:06:40Z"
 
 
 @pytest.mark.asyncio

@@ -202,10 +202,19 @@ def _now() -> float:
     return time.time()
 
 
-def _iso(ts: Optional[float]) -> Optional[str]:
+def iso_utc(ts: Optional[float]) -> Optional[str]:
+    """An epoch time as UTC ISO 8601 with a `Z`, the form the team server's
+    models take; the one formatter for times JARVIS sends or shows."""
     if ts is None:
         return None
-    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _backoff(failures: int, interval: float, ceiling: float) -> float:
+    """Doubling from `interval` with each failure in a row, up to `ceiling`."""
+    if failures == 0:
+        return interval
+    return min(ceiling, interval * (2 ** (failures - 1)))
 
 
 def _parse_ts(value: Any) -> Optional[float]:
@@ -565,9 +574,7 @@ class TeamConnection:
             self._network_failed(message)
 
     def next_delay(self) -> float:
-        if self.failures == 0:
-            return STATUS_INTERVAL_SEC
-        return min(MAX_BACKOFF_SEC, STATUS_INTERVAL_SEC * (2 ** (self.failures - 1)))
+        return _backoff(self.failures, STATUS_INTERVAL_SEC, MAX_BACKOFF_SEC)
 
     async def run(self) -> None:
         """The polling loop, for the server's lifespan."""
@@ -694,10 +701,8 @@ class TeamConnection:
     def network_delay(self) -> float:
         """How long after the start of one exchange the next one starts."""
         n = self.network
-        if n.failures == 0:
-            return NETWORK_INTERVAL_SEC
-        backoff = min(NETWORK_MAX_BACKOFF_SEC, NETWORK_INTERVAL_SEC * (2 ** (n.failures - 1)))
-        return max(backoff, n.retry_after)
+        return max(_backoff(n.failures, NETWORK_INTERVAL_SEC, NETWORK_MAX_BACKOFF_SEC),
+                   n.retry_after)
 
     async def run_network(self) -> None:
         """The exchange loop, for the server's lifespan: one at a time,
@@ -724,11 +729,11 @@ class TeamConnection:
             n.failed or n.received_at is None
             or _now() - n.received_at > NETWORK_STALE_AFTER_SEC)
         local = json.dumps({
-            "received_at": _iso(n.received_at),
+            "received_at": iso_utc(n.received_at),
             "stale": stale,
             "last_error": n.last_error,
             "round_trip_ms": n.round_trip_ms,
-            "last_contact_at": _iso((self.saved or {}).get("last_contact_at")),
+            "last_contact_at": iso_utc((self.saved or {}).get("last_contact_at")),
             "connection": self.state(),
         }).encode()
         return b'{"snapshot":' + (n.raw or b"null") + b"," + local[1:]
@@ -816,13 +821,13 @@ class TeamConnection:
             "me": saved.get("me"),
             "session_expires_at": saved.get("session_expires_at"),
             "recent_auth_until": saved.get("recent_auth_until"),
-            "last_contact_at": _iso(saved.get("last_contact_at")),
+            "last_contact_at": iso_utc(saved.get("last_contact_at")),
             "last_error": self.last_error,
             "poll_interval_sec": STATUS_INTERVAL_SEC,
             "pairing": None if p is None else {
                 "user_code": p.user_code,
                 "verification_uri_complete": p.verification_uri_complete,
-                "expires_at": _iso(p.expires_at),
+                "expires_at": iso_utc(p.expires_at),
             },
         }
 
