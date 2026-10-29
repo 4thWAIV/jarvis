@@ -16,47 +16,12 @@ itself when either is missing. Headless, and served from a temporary folder
 on loopback, so it touches neither the network nor the screen.
 """
 
-import functools
-import http.server
 import json
-import shutil
-import subprocess
-import threading
-from pathlib import Path
 
 import pytest
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
-
-FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
-AGENTS = {"agents": [{"session_id": str(i), "name": f"agent {i}", "active": True}
-                     for i in range(30)]}
-
-
-@pytest.fixture(scope="module")
-def page_url(tmp_path_factory):
-    if not shutil.which("npx") or not (FRONTEND / "node_modules").is_dir():
-        pytest.skip("node and the frontend's node_modules are needed to build the page")
-    out = tmp_path_factory.mktemp("voice-page")
-    built = subprocess.run(
-        ["npx", "vite", "build", "--outDir", str(out), "--emptyOutDir", "--logLevel", "error"],
-        cwd=FRONTEND, capture_output=True, text=True, timeout=300)
-    assert built.returncode == 0, built.stderr
-    (out / "api").mkdir()
-    (out / "api" / "agents").write_text(json.dumps(AGENTS))
-
-    handler = functools.partial(_QuietHandler, directory=str(out))
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{httpd.server_address[1]}/index.html"
-    httpd.shutdown()
-
-
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
 
 async def _browser(p):
     try:

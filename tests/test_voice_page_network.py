@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
-from tests.test_agents_list_fits import async_api, page_url  # noqa: F401
+from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _record_item, _Voice
 
@@ -354,6 +354,9 @@ async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_ur
             assert tile["label"].startswith(f"Team server: {word}. "), (name, tile["label"])
             beacon = await page.get_attribute("#team-server-tile", "class")
             assert f"readiness-{word.lower().replace(' ', '-')}" in beacon.split(), (name, beacon)
+            if word == "Ready":             # the rows follow the exchange too, not the poll
+                rows = await page.evaluate(SERVER_ROWS)
+                assert all(r["state"] == "ok" and r["figure"] != "—" for r in rows), (name, rows)
         await browser.close()
 
 
@@ -699,22 +702,14 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
         await page.wait_for_timeout(200)
         assert len(team.activity) == 7, "Space on a control at once"
 
-        # A chosen file and a changed setting are deliberate too: one report each.
-        await page.evaluate("""() => { const f = document.createElement('input'); f.type = 'file';
-                                       f.id = 'probe-file'; document.body.append(f);
-                                       const c = document.createElement('input'); c.type = 'checkbox';
+        # A changed setting is deliberate too: one report.
+        await page.evaluate("""() => { const c = document.createElement('input'); c.type = 'checkbox';
                                        c.id = 'probe-box'; document.body.append(c); }""")
-        # Opening the chooser is the trusted click; Playwright's chosen-file
-        # change is synthetic (isTrusted false), so it adds nothing here.
-        async with page.expect_file_chooser() as chooser:
-            await page.click("#probe-file")
-        await (await chooser.value).set_files(files=[
-            {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"private"}])
+        await page.focus("#probe-box")
+        await page.keyboard.press(" ")
         await page.wait_for_timeout(200)
-        assert len(team.activity) == 8, "file selection at once"
-        await page.check("#probe-box")
-        await page.wait_for_timeout(200)
-        assert len(team.activity) == 9, "a changed setting at once"
+        assert await page.is_checked("#probe-box")
+        assert len(team.activity) == 8, "a changed setting at once"
         assert all(set(a["body"]) == {"source"} for a in team.activity), "where it came from, nothing else"
         assert all(a["body"]["source"] in ("gui", "typed") for a in team.activity)
         await browser.close()

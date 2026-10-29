@@ -17,10 +17,12 @@
 # network: the `browser` tests (a headful browser on live sites) are the one
 # selection left out.
 #
-#   test        the default selection (`pytest`)
-#   page-tests  the voice page and dashboard in headless Chromium (`pytest -m page`)
-#   package     once both pass: the wheel and the sdist, installed into a
-#               clean venv to prove they run, then uploaded as `jarvis-dist`
+# One job, so a run waits for one macOS runner and sets up once:
+#   Test suite   the default selection (`pytest`)
+#   Page tests   the voice page and dashboard in headless Chromium (`pytest -m page`)
+#   Package      on main and by hand only: the wheel and the sdist, installed
+#                into a clean venv to prove they run, then uploaded as
+#                `jarvis-dist`. A pull request does not need the package.
 
 name: ci
 
@@ -39,7 +41,7 @@ concurrency:
 jobs:
   test:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
@@ -47,30 +49,18 @@ jobs:
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
         run: pytest -v -o faulthandler_timeout=300 -p no:cacheprovider
-
-  page-tests:
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
       - name: Page tests
+        if: ${{ !cancelled() }}   # still runs when the test suite fails, as its own job did
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
         run: pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider
-
-  package:
-    needs: [test, page-tests]
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
       - name: Build the wheel and the sdist
+        if: github.event_name != 'pull_request'
         run: |
           pip install build
           python -m build
       - name: The wheel installs and runs
+        if: github.event_name != 'pull_request'
         run: |
           python -m venv /tmp/wheel-check
           /tmp/wheel-check/bin/pip install dist/*.whl
@@ -78,6 +68,7 @@ jobs:
           /tmp/wheel-check/bin/jarvis --help
           /tmp/wheel-check/bin/python -c "import jarvis.server, jarvis.data_paths as p; assert (p.FRONTEND_DIST / 'index.html').is_file(); assert not p.CHECKOUT"
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: jarvis-dist
           path: dist/

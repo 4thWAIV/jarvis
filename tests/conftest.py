@@ -1,6 +1,12 @@
 import asyncio
+import functools
+import http.server
+import json
 import os
+import shutil
+import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -213,3 +219,35 @@ async def _no_run_left_mid_flight():
         task.cancel()
     if pending:
         await asyncio.wait(pending, timeout=5)
+
+
+# The voice page, built once for the whole run and served from a temporary
+# folder on loopback with 30 agents at /api/agents. Every page test module
+# shares it: building it once per module was 16 builds of the same page.
+FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+PAGE_AGENTS = {"agents": [{"session_id": str(i), "name": f"agent {i}", "active": True}
+                          for i in range(30)]}
+
+
+@pytest.fixture(scope="session")
+def page_url(tmp_path_factory):
+    if not shutil.which("npx") or not (FRONTEND / "node_modules").is_dir():
+        pytest.skip("node and the frontend's node_modules are needed to build the page")
+    out = tmp_path_factory.mktemp("voice-page")
+    built = subprocess.run(
+        ["npx", "vite", "build", "--outDir", str(out), "--emptyOutDir", "--logLevel", "error"],
+        cwd=FRONTEND, capture_output=True, text=True, timeout=300)
+    assert built.returncode == 0, built.stderr
+    (out / "api").mkdir()
+    (out / "api" / "agents").write_text(json.dumps(PAGE_AGENTS))
+
+    handler = functools.partial(_QuietHandler, directory=str(out))
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/index.html"
+    httpd.shutdown()
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
