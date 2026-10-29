@@ -1,0 +1,921 @@
+{
+  "digest_vectors": [
+    {
+      "canonical": "{\"attachments\":[],\"content_revision\":1,\"digest_version\":1,\"in_reply_to_message_id\":null,\"message_id\":\"00000000-0000-4000-8000-000000000001\",\"recipient_github_id\":1001,\"related_message_ids\":[],\"schema_version\":1,\"sender_github_id\":863470,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"Deploy window\",\"text\":\"Can we move the deploy to Friday?\\nThe staging run is green.\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\"}",
+      "case": "new_thread",
+      "content": {
+        "attachments": [],
+        "content_revision": 1,
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+      "sender_github_id": 863470,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
+    },
+    {
+      "canonical": "{\"attachments\":[],\"content_revision\":2,\"digest_version\":1,\"in_reply_to_message_id\":\"00000000-0000-4000-8000-000000000001\",\"message_id\":\"00000000-0000-4000-8000-000000000002\",\"recipient_github_id\":863470,\"related_message_ids\":[\"00000000-0000-4000-8000-000000000007\"],\"schema_version\":1,\"sender_github_id\":1001,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"Deploy window\",\"text\":\"Friday works.\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\"}",
+      "case": "reply_with_related",
+      "content": {
+        "attachments": [],
+        "content_revision": 2,
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "recipient_github_id": 863470,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000007"
+        ],
+        "schema_version": 1,
+        "subject": "Deploy window",
+        "text": "Friday works.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+      "sender_github_id": 1001,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
+    },
+    {
+      "canonical": "{\"attachments\":[{\"attachment_id\":\"00000000-0000-4000-8000-00000000001f\",\"filename\":\"plan.pdf\",\"media_type\":\"application/pdf\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size_bytes\":48213}],\"content_revision\":1,\"digest_version\":1,\"in_reply_to_message_id\":null,\"message_id\":\"00000000-0000-4000-8000-000000000003\",\"recipient_github_id\":863470,\"related_message_ids\":[],\"schema_version\":1,\"sender_github_id\":863470,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"\",\"text\":\"\",\"thread_id\":\"00000000-0000-4000-8000-000000000003\"}",
+      "case": "self_files_only",
+      "content": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_revision": 1,
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "recipient_github_id": 863470,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "subject": "",
+        "text": "",
+        "thread_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+      "sender_github_id": 863470,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
+    }
+  ],
+  "interface_revision": "messaging.v1-contract.1",
+  "invalid": [
+    {
+      "case": "unknown_field",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "sender_github_id": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "newer_schema_version",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 2,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "neither_text_nor_files",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "text_not_normalized_crlf",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "a\r\nb",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "text_with_control_character",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "a\u0007b",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "subject_two_lines",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "a\nb",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "subject_too_long",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "text_too_long",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "root_with_parent",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000009",
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "reply_without_parent",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+        "content_revision": 2,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "recipient_github_id": 863470,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000007"
+        ],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Friday works.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "related_to_itself",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000001"
+        ],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "too_many_related",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000190",
+          "00000000-0000-4000-8000-000000000191",
+          "00000000-0000-4000-8000-000000000192",
+          "00000000-0000-4000-8000-000000000193",
+          "00000000-0000-4000-8000-000000000194",
+          "00000000-0000-4000-8000-000000000195",
+          "00000000-0000-4000-8000-000000000196",
+          "00000000-0000-4000-8000-000000000197",
+          "00000000-0000-4000-8000-000000000198",
+          "00000000-0000-4000-8000-000000000199",
+          "00000000-0000-4000-8000-00000000019a"
+        ],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "bad_digest_form",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "md5:00",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "revision_zero",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 0,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "too_many_files",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f4",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f5",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f6",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f7",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f8",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001f9",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001fa",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001fb",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001fc",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001fd",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-0000000001fe",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "case": "path_in_filename",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "../etc/passwd",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "dot_name",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "..",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "file_too_large",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "plan.pdf",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 26214401
+      }
+    },
+    {
+      "case": "upper_case_hash",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "plan.pdf",
+        "media_type": "application/pdf",
+        "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "media_type_not_a_type",
+      "model": "AttachmentRef",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "plan.pdf",
+        "media_type": "pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    {
+      "case": "unknown_kind",
+      "model": "ReceiptRequest",
+      "value": {
+        "kind": "replied",
+        "node_id": "00000000-0000-4000-8000-000000000066"
+      }
+    },
+    {
+      "case": "unknown_command",
+      "model": "WorkCommandRequest",
+      "value": {
+        "change": {
+          "command": "archive",
+          "expected_revision": 1
+        }
+      }
+    },
+    {
+      "case": "no_expected_revision",
+      "model": "WorkCommandRequest",
+      "value": {
+        "change": {
+          "command": "open"
+        }
+      }
+    },
+    {
+      "case": "unknown_placement",
+      "model": "WorkState",
+      "value": {
+        "action_owner_github_id": 863470,
+        "addressed_at": null,
+        "arrival_at": "2026-10-29T12:09:00Z",
+        "correspondent_github_id": 863470,
+        "dismissed_at": null,
+        "owner_github_id": 863470,
+        "placement": "archived",
+        "revision": 1,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "thread_id": "00000000-0000-4000-8000-000000000003",
+        "unread_reminder": true
+      }
+    }
+  ],
+  "server_id": "00000000-0000-4000-8000-0000000000aa",
+  "valid": {
+    "AcceptedMessage": {
+      "new_thread": {
+        "accepted_at": "2026-10-29T12:00:00Z",
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "sender_github_id": 863470,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "reply_with_related": {
+        "accepted_at": "2026-10-29T12:05:00Z",
+        "attachments": [],
+        "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+        "content_revision": 2,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "recipient_github_id": 863470,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000007"
+        ],
+        "schema_version": 1,
+        "sender_github_id": 1001,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Friday works.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "self_files_only": {
+        "accepted_at": "2026-10-29T12:09:00Z",
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000100",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "recipient_github_id": 863470,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "sender_github_id": 863470,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "",
+        "text": "",
+        "thread_id": "00000000-0000-4000-8000-000000000003"
+      }
+    },
+    "AttachmentRef": {
+      "pdf": {
+        "attachment_id": "00000000-0000-4000-8000-00000000001f",
+        "filename": "plan.pdf",
+        "media_type": "application/pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 48213
+      }
+    },
+    "ReceiptFacts": {
+      "none_yet": {
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "nodes": [],
+        "read_at": null,
+        "received_at": null,
+        "recipient_github_id": 1001,
+        "revision": 1
+      },
+      "read_before_received": {
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "nodes": [],
+        "read_at": "2026-10-29T12:06:00Z",
+        "received_at": null,
+        "recipient_github_id": 863470,
+        "revision": 2
+      },
+      "received_and_read": {
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "nodes": [
+          {
+            "node_id": "00000000-0000-4000-8000-000000000066",
+            "received_at": "2026-10-29T12:01:00Z"
+          }
+        ],
+        "read_at": "2026-10-29T12:03:00Z",
+        "received_at": "2026-10-29T12:01:00Z",
+        "recipient_github_id": 1001,
+        "revision": 3
+      }
+    },
+    "ReceiptRequest": {
+      "read": {
+        "kind": "read",
+        "node_id": "00000000-0000-4000-8000-000000000066"
+      },
+      "received": {
+        "kind": "received",
+        "node_id": "00000000-0000-4000-8000-000000000066"
+      }
+    },
+    "SendRequest": {
+      "new_thread": {
+        "attachments": [],
+        "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000001",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "reply_with_related": {
+        "attachments": [],
+        "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+        "content_revision": 2,
+        "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-000000000002",
+        "recipient_github_id": 863470,
+        "related_message_ids": [
+          "00000000-0000-4000-8000-000000000007"
+        ],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Deploy window",
+        "text": "Friday works.",
+        "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "self_files_only": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-00000000001f",
+            "filename": "plan.pdf",
+            "media_type": "application/pdf",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 48213
+          }
+        ],
+        "content_digest": "sha256:872e6074adc1a3e3b229f90273af5ec8f1baae6d0a1b34e0a04c98d1356d958e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000100",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-000000000003",
+        "recipient_github_id": 863470,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "",
+        "text": "",
+        "thread_id": "00000000-0000-4000-8000-000000000003"
+      }
+    },
+    "SendResult": {
+      "first_send": {
+        "duplicate": false,
+        "message": {
+          "accepted_at": "2026-10-29T12:00:00Z",
+          "attachments": [],
+          "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+          "content_revision": 1,
+          "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+          "in_reply_to_message_id": null,
+          "message_id": "00000000-0000-4000-8000-000000000001",
+          "recipient_github_id": 1001,
+          "related_message_ids": [],
+          "schema_version": 1,
+          "sender_github_id": 863470,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "subject": "Deploy window",
+          "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+          "thread_id": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      "identical_retry": {
+        "duplicate": true,
+        "message": {
+          "accepted_at": "2026-10-29T12:00:00Z",
+          "attachments": [],
+          "content_digest": "sha256:23241a4d375c4cf7b45683a73f3771e65df97b5f90f1b322b554abb97bab134e",
+          "content_revision": 1,
+          "idempotency_key": "00000000-0000-4000-8000-0000000000fe",
+          "in_reply_to_message_id": null,
+          "message_id": "00000000-0000-4000-8000-000000000001",
+          "recipient_github_id": 1001,
+          "related_message_ids": [],
+          "schema_version": 1,
+          "sender_github_id": 863470,
+          "server_id": "00000000-0000-4000-8000-0000000000aa",
+          "source_node_id": "00000000-0000-4000-8000-000000000065",
+          "subject": "Deploy window",
+          "text": "Can we move the deploy to Friday?\nThe staging run is green.",
+          "thread_id": "00000000-0000-4000-8000-000000000001"
+        }
+      }
+    },
+    "SyncPage": {
+      "one_entry": {
+        "continuation": "opaque-continuation",
+        "entries": [
+          {
+            "message": {
+              "accepted_at": "2026-10-29T12:05:00Z",
+              "attachments": [],
+              "content_digest": "sha256:c3a3738507aabaf9c72f0b2109f6ed663514f1809ac50002b410c523742bedad",
+              "content_revision": 2,
+              "idempotency_key": "00000000-0000-4000-8000-0000000000ff",
+              "in_reply_to_message_id": "00000000-0000-4000-8000-000000000001",
+              "message_id": "00000000-0000-4000-8000-000000000002",
+              "recipient_github_id": 863470,
+              "related_message_ids": [
+                "00000000-0000-4000-8000-000000000007"
+              ],
+              "schema_version": 1,
+              "sender_github_id": 1001,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "source_node_id": "00000000-0000-4000-8000-000000000065",
+              "subject": "Deploy window",
+              "text": "Friday works.",
+              "thread_id": "00000000-0000-4000-8000-000000000001"
+            },
+            "receipts": {
+              "message_id": "00000000-0000-4000-8000-000000000002",
+              "nodes": [],
+              "read_at": "2026-10-29T12:06:00Z",
+              "received_at": null,
+              "recipient_github_id": 863470,
+              "revision": 2
+            },
+            "work_state": {
+              "action_owner_github_id": 863470,
+              "addressed_at": null,
+              "arrival_at": "2026-10-29T12:05:00Z",
+              "correspondent_github_id": 1001,
+              "dismissed_at": null,
+              "owner_github_id": 863470,
+              "placement": "active",
+              "revision": 2,
+              "server_id": "00000000-0000-4000-8000-0000000000aa",
+              "thread_id": "00000000-0000-4000-8000-000000000001",
+              "unread_reminder": true
+            }
+          }
+        ],
+        "epoch": "e1",
+        "scan_complete": false,
+        "server_time": "2026-10-29T12:10:00Z"
+      },
+      "scan_complete": {
+        "continuation": null,
+        "entries": [],
+        "epoch": "e1",
+        "scan_complete": true,
+        "server_time": "2026-10-29T12:11:00Z"
+      }
+    },
+    "WorkCommandRequest": {
+      "dismiss": {
+        "change": {
+          "command": "dismiss",
+          "expected_revision": 4
+        }
+      },
+      "open": {
+        "change": {
+          "command": "open",
+          "expected_revision": 2
+        }
+      },
+      "put_back": {
+        "change": {
+          "command": "put_back",
+          "expected_revision": 3
+        }
+      },
+      "restore": {
+        "change": {
+          "command": "restore",
+          "expected_revision": 5
+        }
+      },
+      "set_action_owner": {
+        "change": {
+          "action_owner_github_id": 1001,
+          "command": "set_action_owner",
+          "expected_revision": 3
+        }
+      },
+      "set_addressed": {
+        "change": {
+          "addressed": true,
+          "command": "set_addressed",
+          "expected_revision": 3
+        }
+      },
+      "set_unread_reminder": {
+        "change": {
+          "command": "set_unread_reminder",
+          "expected_revision": 3,
+          "unread": false
+        }
+      }
+    },
+    "WorkState": {
+      "outbox_their_turn": {
+        "action_owner_github_id": 1001,
+        "addressed_at": null,
+        "arrival_at": "2026-10-29T12:00:00Z",
+        "correspondent_github_id": 1001,
+        "dismissed_at": null,
+        "owner_github_id": 863470,
+        "placement": "active",
+        "revision": 1,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "thread_id": "00000000-0000-4000-8000-000000000001",
+        "unread_reminder": false
+      },
+      "reply_arrived_your_turn": {
+        "action_owner_github_id": 863470,
+        "addressed_at": null,
+        "arrival_at": "2026-10-29T12:05:00Z",
+        "correspondent_github_id": 1001,
+        "dismissed_at": null,
+        "owner_github_id": 863470,
+        "placement": "active",
+        "revision": 2,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "thread_id": "00000000-0000-4000-8000-000000000001",
+        "unread_reminder": true
+      },
+      "self_message": {
+        "action_owner_github_id": 863470,
+        "addressed_at": null,
+        "arrival_at": "2026-10-29T12:09:00Z",
+        "correspondent_github_id": 863470,
+        "dismissed_at": null,
+        "owner_github_id": 863470,
+        "placement": "queued",
+        "revision": 1,
+        "server_id": "00000000-0000-4000-8000-0000000000aa",
+        "thread_id": "00000000-0000-4000-8000-000000000003",
+        "unread_reminder": true
+      }
+    }
+  }
+}

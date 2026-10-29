@@ -92,6 +92,7 @@ from jarvis import conversation_log
 from jarvis import workflow_store
 from jarvis import run_store
 from jarvis import session_steer
+from jarvis import transmission
 from jarvis import session_watch
 from jarvis import specs
 from jarvis import stream_parser
@@ -4918,7 +4919,7 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if capture is None:
         return None, (f"There is no open capture {wanted}: it was sent, merged "
                       f"or never made. Capture his words again.")
-    if capture["read"] != capture["text"]:
+    if not transmission.accepted(capture):
         return None, (f"Capture {wanted} has not been read back to him in full "
                       f"since it last changed. Call read_capture first; nothing "
                       f"is sent unheard.")
@@ -4983,8 +4984,13 @@ def _clear_captures(numbers: list[int], by: str = "JARVIS") -> list[int]:
     global _staged_steers
     gone = [n for n in numbers if n in _captures]
     for s in _staged_steers:
-        if getattr(s, "capture_id", None) in gone and getattr(s, "message_id", None):
-            run_store.update_message(s.message_id, status=run_store.MessageStatus.CANCELLED)
+        if getattr(s, "capture_id", None) not in gone or isinstance(s, _StagedCommand):
+            continue
+        if isinstance(s, _StagedSteer):
+            if s.message_id:
+                _AgentDestination(s).settle(transmission.CANCELLED)
+        else:
+            s.settle(transmission.CANCELLED)
     _staged_steers = [s for s in _staged_steers
                       if getattr(s, "capture_id", None) not in gone]
     for n in gone:
@@ -5081,7 +5087,7 @@ def _open_capture_or_404(number: int) -> dict:
 
 
 def _capture_accepted(capture: dict) -> None:
-    capture["read"] = capture["text"]
+    transmission.accept(capture)
     _capture_show(capture, capture["state"])
 
 
@@ -5216,10 +5222,10 @@ class _StagedCommand:
 # for them. Drained by _perform_staged_steers() once the turn utterance is
 # done — see the module note on tool_steer_session for why the work cannot
 # happen inside the tool call.
-_staged_steers: list[_StagedSteer | _StagedCommand] = []
+_staged_steers: list[_StagedSteer | _StagedCommand | transmission.Destination] = []
 
 
-def _stage_steer(staged: _StagedSteer | _StagedCommand) -> None:
+def _stage_steer(staged: _StagedSteer | _StagedCommand | transmission.Destination) -> None:
     _staged_steers.append(staged)
 
 
@@ -5257,8 +5263,10 @@ async def _perform_staged_steers() -> None:
         try:
             if isinstance(item, _StagedCommand):
                 await _perform_command(item)
-            else:
+            elif isinstance(item, _StagedSteer):
                 await _perform_steer(item)
+            else:
+                await _transmit(item)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -5361,65 +5369,51 @@ def _message_for(item: _StagedSteer) -> int:
     return item.message_id
 
 
-async def _perform_steer(item: _StagedSteer) -> None:
-    """One staged steer, start to finish. Its message ends this as exactly
-    one of cancelled, sent or failed.
-
-    Nothing is ever sent unheard, and that is decided before this runs:
-    `steer_session` stages only a capture the brain read back to him in full
-    with `read_capture` and that has not changed since, and what is sent is
-    that text exactly. So this says nothing first; it opens the cancel window
-    (the turn's speech is done by now), then sends.
+class _AgentDestination:
+    """A staged steer as `transmission` sends it: an agent session, whose
+    record is its `messages` row, whose hand-over is its provider's inbox,
+    and which takes one message per turn.
 
     Sent is all it says, and only the session's transcript can say more:
     the session watcher follows the message from there (its provider's
     `track`) and he is told "Delivered to X" once it is seen there, or that
-    X hasn't picked it up.
-    """
-    message_id = _message_for(item)
-    settled = False
+    X hasn't picked it up."""
 
-    def settle(status: str, **fields) -> None:
-        nonlocal settled
-        if settled:
-            return
-        settled = True
-        run_store.update_message(message_id, status=status, **fields)
+    def __init__(self, item: _StagedSteer):
+        self.item = item
+        self.capture_id = item.capture_id
+        self.priority = item.priority
 
-    try:
-        if speech is None:
-            # The mouth went away between turns.
-            settle(run_store.MessageStatus.FAILED, failure="no_voice")
-            return
-        if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
-            settle(run_store.MessageStatus.CANCELLED)
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
-            return
+    def record(self) -> int:
+        return _message_for(self.item)
 
-        why = None if item.priority else _why_message_waits(item.session_id, message_id)
-        if why:
-            # One message per turn: sent now, it would be folded into the
-            # turn under way, or answered with another message's reply. It
-            # waits in the queue, on record, and the session watcher sends
-            # it once the session is free (SessionWatcher.send_queued). A
-            # priority message is the one exception: he asked for it now.
-            settle(run_store.MessageStatus.QUEUED)
-            _capture_sent(item.capture_id)
-            await speech.say(f"{_said_name(item)} {why}, sir. Your message waits its "
-                             f"turn and goes as soon as it is free.",
-                             Priority.NORMAL, label="readback-outcome")
-            return
+    def settle(self, status: str, **fields) -> None:
+        run_store.update_message(self.item.message_id, status=run_store.MessageStatus(status),
+                                 **fields)
 
-        _capture_transmitting(item.capture_id)
-        try:
-            outcome = await asyncio.to_thread(_deliver, item, STEER_SIGNATURE + item.prompt)
-        finally:
-            _capture_sent(item.capture_id)
-        if outcome == session_steer.SENT:
-            settle(run_store.MessageStatus.SENT, sent_at=time.time())
-            await _message_went(item.session_id)
-        else:
-            settle(run_store.MessageStatus.FAILED, failure=outcome)
+    def why_wait(self) -> Optional[str]:
+        # One message per turn: sent now, it would be folded into the turn
+        # under way, or answered with another message's reply. It waits in
+        # the queue, on record, and the session watcher sends it once the
+        # session is free (SessionWatcher.send_queued). A priority message
+        # is the one exception: he asked for it now.
+        return _why_message_waits(self.item.session_id, self.item.message_id)
+
+    async def deliver(self) -> str:
+        return await asyncio.to_thread(_deliver, self.item, STEER_SIGNATURE + self.item.prompt)
+
+    def delivered(self, outcome: str) -> bool:
+        return outcome == session_steer.SENT
+
+    async def went(self) -> None:
+        await _message_went(self.item.session_id)
+
+    async def say_queued(self, speech, why: str) -> None:
+        await speech.say(f"{_said_name(self.item)} {why}, sir. Your message waits its "
+                         f"turn and goes as soon as it is free.",
+                         Priority.NORMAL, label="readback-outcome")
+
+    async def say_outcome(self, speech, outcome: str) -> None:
         if outcome == session_steer.SENT:
             # SENT means the bytes left over the socket, or `codex queue`
             # exited 0, nothing more. Whether it arrived is said when the
@@ -5431,24 +5425,41 @@ async def _perform_steer(item: _StagedSteer) -> None:
             # left for him to discover in the other window.
             caveat = _inbound_caveat()
             if caveat:
-                await speech.say(f"Passed to {_said_name(item)}, sir." + caveat,
+                await speech.say(f"Passed to {_said_name(self.item)}, sir." + caveat,
                                  Priority.NORMAL, label="readback-outcome")
         elif outcome == session_steer.NOT_LIVE:
             await speech.say(
-                f"{_said_name(item)} didn't answer its socket, sir — it may "
+                f"{_said_name(self.item)} didn't answer its socket, sir — it may "
                 f"have just exited.", Priority.NORMAL, label="readback-outcome")
         else:
-            await speech.say(f"I couldn't deliver that to {_said_name(item)}, "
+            await speech.say(f"I couldn't deliver that to {_said_name(self.item)}, "
                              f"sir.", Priority.NORMAL, label="readback-outcome")
-    except Exception:
-        # The record must never be left staged.
-        settle(run_store.MessageStatus.FAILED, failure="failed")
-        raise
-    finally:
+
+
+class _CaptureBox:
+    """The capture boxes, as a send moves along (`transmission.CaptureBox`)."""
+
+    def transmitting(self, capture_id: Optional[int]) -> None:
+        _capture_transmitting(capture_id)
+
+    def sent(self, capture_id: Optional[int]) -> None:
+        _capture_sent(capture_id)
+
+    def reopen(self, capture_id: Optional[int]) -> None:
         # Not sent (cancelled, no voice, failed): the capture is his to deal
         # with again, so it counts as open once more.
-        if item.capture_id in _captures:
-            _captures[item.capture_id]["staged"] = False
+        if capture_id in _captures:
+            _captures[capture_id]["staged"] = False
+
+
+async def _transmit(destination: transmission.Destination) -> None:
+    await transmission.perform(destination, speech=speech, cancel_window=STEER_CANCEL_WINDOW,
+                               captures=_CaptureBox())
+
+
+async def _perform_steer(item: _StagedSteer) -> None:
+    """One staged steer, start to finish (`transmission.perform`)."""
+    await _transmit(_AgentDestination(item))
 
 
 # The audit trail's name for "this did not go to a session, it went to a
@@ -5835,57 +5846,69 @@ def _stage_capture(session, capture: dict,
     """Record a capture as a message to `session` and stage it to send:
     (its message id, None), or (None, why it cannot go), recorded as failed.
     steer_session and the capture box's Send button both come through here."""
-    prompt = capture["text"]
+    return transmission.stage(_AgentRecipient(session, capture, priority), capture,
+                              voice=speech, put=_stage_steer)
 
-    def refused(reason: str) -> None:
-        """A message that is never sent, recorded as one: failed, and why."""
-        run_store.create_message(session.session_id, session.provider,
-                                 session.voice_name, session.project,
-                                 STEER_SIGNATURE + prompt, capture_id=capture["id"],
-                                 status=run_store.MessageStatus.FAILED, failure=reason)
 
-    if session.needs_a_human_hand:
-        refused("needs_a_human_hand")
-        # The reason goes through `_phrase_needs` for the same reason it does
-        # in `session_detail`'s header: `waitingFor` is a field in a JSON file
-        # some other process writes, and this sentence has no block around it.
-        return None, (f"{_said_name(session)} is {_phrase_needs(session.needs)}, "
+class _AgentRecipient:
+    """An agent session a capture is for, as `transmission.stage` asks it."""
+
+    def __init__(self, session, capture: dict, priority: bool):
+        self.session, self.prompt, self.priority = session, capture["text"], priority
+        self.capture_id = capture["id"]
+
+    def refusal(self) -> Optional[tuple[str, str]]:
+        session = self.session
+        if session.needs_a_human_hand:
+            # The reason goes through `_phrase_needs` for the same reason it
+            # does in `session_detail`'s header: `waitingFor` is a field in a
+            # JSON file some other process writes, and this sentence has no
+            # block around it.
+            return "needs_a_human_hand", (
+                f"{_said_name(session)} is {_phrase_needs(session.needs)}, "
                 f"which the socket cannot answer. Ask me to answer it instead "
                 f"and I'll send the keystroke, if that permission prompt is in "
                 f"a Terminal window — use answer_dialog, not this tool.")
-    if not session.steerable:
-        # Distinct from session_steer.NOT_LIVE (a dead/missing socket at send
-        # time): this session never had a socket to begin with.
-        refused("not_steerable")
-        return None, (f"I can't send anything to {_said_name(session)} — it has no "
+        if not session.steerable:
+            # Distinct from session_steer.NOT_LIVE (a dead/missing socket at
+            # send time): this session never had a socket to begin with.
+            return "not_steerable", (
+                f"I can't send anything to {_said_name(session)} — it has no "
                 f"inbox socket, so it was started before cross-session "
                 f"messaging or declined to bind one.")
+        return None
 
-    if speech is None:
-        # Sending unheard is never acceptable: with no voice there is no
-        # read-back, and no read-back means no safety gate at all.
-        refused("no_voice")
-        return None, (f"I can't read that back to you right now, sir, so I won't send "
-                f"it to {_said_name(session)} unheard.")
+    def unheard(self) -> str:
+        return (f"I can't read that back to you right now, sir, so I won't send "
+                f"it to {_said_name(self.session)} unheard.")
 
-    # The record is written now, before anything is sent, and the send
-    # (`_perform_steer`) updates it.
-    message_id = run_store.create_message(
-        session.session_id, session.provider, session.voice_name, session.project,
-        STEER_SIGNATURE + prompt, capture_id=capture["id"])
-    _record(conversation_log.ItemKind.TO_AGENT, prompt, agent_session_id=session.session_id,
-            agent_name=session.voice_name, message_id=message_id, capture_id=capture["id"])
-    _stage_steer(_StagedSteer(session_id=session.session_id,
-                              voice_name=session.voice_name,
-                              project=session.project,
-                              prompt=prompt,
-                              socket_path=session.socket_path,
-                              capture_id=capture["id"],
-                              provider=session.provider,
-                              message_id=message_id,
-                              priority=priority))
-    capture["staged"] = True
-    return message_id, None
+    def refuse(self, failure: str) -> None:
+        """A message that is never sent, recorded as one: failed, and why."""
+        session = self.session
+        run_store.create_message(session.session_id, session.provider,
+                                 session.voice_name, session.project,
+                                 STEER_SIGNATURE + self.prompt, capture_id=self.capture_id,
+                                 status=run_store.MessageStatus.FAILED, failure=failure)
+
+    def open(self, capture: dict) -> tuple[int, _StagedSteer]:
+        # The record is written now, before anything is sent, and the send
+        # (`_perform_steer`) updates it.
+        session = self.session
+        message_id = run_store.create_message(
+            session.session_id, session.provider, session.voice_name, session.project,
+            STEER_SIGNATURE + self.prompt, capture_id=self.capture_id)
+        _record(conversation_log.ItemKind.TO_AGENT, self.prompt,
+                agent_session_id=session.session_id, agent_name=session.voice_name,
+                message_id=message_id, capture_id=self.capture_id)
+        return message_id, _StagedSteer(session_id=session.session_id,
+                                        voice_name=session.voice_name,
+                                        project=session.project,
+                                        prompt=self.prompt,
+                                        socket_path=session.socket_path,
+                                        capture_id=self.capture_id,
+                                        provider=session.provider,
+                                        message_id=message_id,
+                                        priority=self.priority)
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
