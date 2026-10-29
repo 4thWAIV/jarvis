@@ -18,7 +18,6 @@ every committed change.
 """
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -31,8 +30,6 @@ from pydantic import BaseModel, ValidationError
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.messaging_client import Delivery, Pairing
-
-log = logging.getLogger("jarvis.messaging")
 
 PREFIX = "/api/team/messages"
 

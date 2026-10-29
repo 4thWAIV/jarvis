@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis import messaging_api
-from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.messaging_client import Delivery
 from jarvis.messaging_store import SqliteMessagingStore

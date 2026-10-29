@@ -3,17 +3,12 @@ idempotency, authorization, sync, receipts, work state, announcement leases
 and the crash points between them (injected `ArmedFaults`, never a route)."""
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import timedelta
 from typing import Optional
 
 import pytest
-from pymongo import MongoClient
 
-from conftest import (ADMIN, ALICE, BOB, SESSION_COOKIE, browser_token, make_config,
-                      mongo_uri, pair, run_db)
-from teamserver import db as dbmod
+from conftest import ADMIN, ALICE, BOB, SESSION_COOKIE, browser_token, pair, run_db
 from teamserver import messaging
 from teamserver import messaging_models as mm
 

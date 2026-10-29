@@ -7,7 +7,6 @@ against the real team server and MongoDB."""
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from uuid import UUID
 
 import pytest
