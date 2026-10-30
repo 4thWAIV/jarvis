@@ -7,6 +7,10 @@
 import { useState, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { NetworkPanel } from "./NetworkPanel";
+import { queue } from "./queue";
+import { QueueIcon } from "./QueueIcons";
+import { QueuePanel } from "./QueuePanel";
+import { attention } from "./queueStore";
 import { agentsTabLit } from "./agents";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { TabRow, type Tab } from "./Tabs";
@@ -82,11 +86,19 @@ const TABS: Tab[] = [
     ),
     view: () => <NetworkPanel />,
   },
+  {
+    id: "queue",
+    title: "Queue",
+    icon: <QueueIcon kind="queue" size={18} />,
+    view: () => <QueuePanel />,
+  },
 ];
 
 export function RightPanel() {
   const [selected, setSelected] = useState(TABS[0].id);
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
+  // Something waiting and unread lights the Queue tab while another is open.
+  const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
   const tab = TABS.find((t) => t.id === selected) ?? TABS[0];
@@ -97,7 +109,7 @@ export function RightPanel() {
   return (
     <div id="right-column">
       <TabRow tabs={TABS} selected={selected} onSelect={select} className="right-tabs"
-              lit={(t) => t.id === "agents" && lit && selected !== "agents"}
+              lit={(t) => t.id !== selected && ((t.id === "agents" && lit) || (t.id === "queue" && unread))}
               alert={(t) => t.id === "diagnostics" && down} />
       <div className="right-panel" role="tabpanel" aria-label={tab.title}>
         {tab.view()}
