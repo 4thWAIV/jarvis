@@ -31,7 +31,9 @@ from tests.fixtures import messaging_fakes as fakes
 from tests.fixtures.memory_secrets import MemorySecrets
 
 MONGO = os.environ.get("TEAM_SERVER_TEST_MONGODB_URI")
-pytestmark = pytest.mark.skipif(not MONGO, reason="TEAM_SERVER_TEST_MONGODB_URI is not set")
+if not MONGO:
+    pytest.skip("needs TEAM_SERVER_TEST_MONGODB_URI and the team server's packages",
+                allow_module_level=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "team_server"))
 from teamserver import clock as ts_clock  # noqa: E402
