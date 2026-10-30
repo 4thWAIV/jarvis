@@ -7,6 +7,24 @@
  */
 
 import * as THREE from "three";
+import { createStore } from "./store";
+
+/** Why the orbs cannot be drawn, or null while they can. Chrome switches
+ *  WebGL off for the whole browser after its graphics process crashes a few
+ *  times (it then runs that process with --use-gl=disabled until Chrome is
+ *  restarted), and it can take a context back at any time. Neither may stop
+ *  the page: the orbs go still and blank, everything else carries on, and
+ *  the Diagnostics tab says so (subsystems.ts). */
+export const graphicsTrouble = createStore<string | null>(null);
+
+export const WEBGL_OFF = "Chrome has switched WebGL off, so the orbs are not drawn. Quit and reopen Chrome to turn it back on.";
+export const WEBGL_LOST = "Chrome took the orbs' graphics away; they come back when it gives them back.";
+
+/** An orb that draws nothing: what the page gets when WebGL is off. */
+const STILL_ORB: Orb = {
+  setState() {}, setGray() {}, setPaused() {}, transmit() {}, receive() {},
+  endTransmission() {}, setAnalyser() {}, destroy() {},
+};
 
 // "compacting": the brain is being swapped for a fresh one behind the scenes
 // (a context rotation). He answers nothing for a few seconds, and silence with
@@ -66,7 +84,19 @@ export function createOrb(canvas: HTMLCanvasElement,
   const width = () => Math.max(1, canvas.clientWidth);
   const height = () => Math.max(1, canvas.clientHeight);
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: transparent });
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: transparent });
+  } catch (e) {
+    console.error("orb: no WebGL context", e);
+    graphicsTrouble.set(WEBGL_OFF);
+    return STILL_ORB;
+  }
+  // three.js keeps the scene and redraws it once the context is restored.
+  const lost = () => graphicsTrouble.set(WEBGL_LOST);
+  const restored = () => { if (graphicsTrouble.get() === WEBGL_LOST) graphicsTrouble.set(null); };
+  canvas.addEventListener("webglcontextlost", lost);
+  canvas.addEventListener("webglcontextrestored", restored);
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(width(), height(), false);
   renderer.setClearColor(0x050508, transparent ? 0 : 1);
@@ -554,6 +584,8 @@ export function createOrb(canvas: HTMLCanvasElement,
     },
     destroy() {
       destroyed = true;
+      canvas.removeEventListener("webglcontextlost", lost);
+      canvas.removeEventListener("webglcontextrestored", restored);
       resizeObserver.disconnect();
       renderer.dispose();
       // Give the WebGL context back now, not when it is garbage collected:

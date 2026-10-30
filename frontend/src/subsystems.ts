@@ -50,23 +50,30 @@ async function getSubsystems(): Promise<{ now: number; subsystems: Subsystem[] }
 
 export const subsystems = liveRead(getSubsystems, [subsystemsChanged]);
 
-/** The page's own connection to JARVIS, as one more subsystem. */
-export function pageSubsystem(readError: string | null, socket: boolean | null): Subsystem {
+/** The page's own connection to JARVIS, and its graphics (orb.ts), as one
+ *  more subsystem. */
+export function pageSubsystem(readError: string | null, socket: boolean | null,
+                              graphics: string | null = null): Subsystem {
   const checks: Check[] = [
     { id: "read", name: "Reading JARVIS", state: readError ? "down" : "ok",
       detail: readError ? `Can't read JARVIS (${readError})` : "Reading" },
     { id: "socket", name: "Live updates", state: socket === null ? "unknown" : socket ? "ok" : "down",
       detail: socket === null ? "Connecting" : socket ? "Connected" : "Disconnected; reconnecting" },
+    { id: "graphics", name: "Graphics", state: graphics ? "degraded" : "ok",
+      detail: graphics ?? "Drawing" },
   ];
   const down = checks.find((c) => c.state === "down");
-  const state: SubsystemState = down ? "down" : checks.some((c) => c.state === "unknown") ? "unknown" : "ok";
-  return { id: "page", name: "This page", state, summary: down ? down.detail : "Connected to JARVIS", checks };
+  const degraded = checks.find((c) => c.state === "degraded");
+  const state: SubsystemState = down ? "down" : checks.some((c) => c.state === "unknown") ? "unknown"
+    : degraded ? "degraded" : "ok";
+  return { id: "page", name: "This page", state,
+           summary: (down ?? degraded)?.detail ?? "Connected to JARVIS", checks };
 }
 
-/** The server's list with this page's connection at the end. */
+/** The server's list with this page's own subsystem at the end. */
 export function withPage(list: Subsystem[] | undefined, readError: string | null,
-                         socket: boolean | null): Subsystem[] {
-  return [...(list ?? []), pageSubsystem(readError, socket)];
+                         socket: boolean | null, graphics: string | null = null): Subsystem[] {
+  return [...(list ?? []), pageSubsystem(readError, socket, graphics)];
 }
 
 /** The subsystem whose detail the centre area shows, or null. Voice input
