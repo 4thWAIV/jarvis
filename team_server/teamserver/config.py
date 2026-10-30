@@ -6,8 +6,9 @@ INITIAL_ADMIN_GITHUB_ID only matter before the team exists (bootstrap).
 TEST_SESSION_KEY_SHA256 turns on the staging test sign-in
 (`staging_sessions`); it is refused unless RAILWAY_ENVIRONMENT_NAME is
 `staging`.
-TEAM_SERVER_MESSAGING (1/true/yes/on) switches human messaging on; off by
-default. The TEAM_SERVER_* file settings (`messaging_ports.ATTACHMENT_SETTINGS`)
+TEAM_SERVER_MESSAGING (1/true/yes/on) only seeds the team's messaging
+switch: started with it on and nothing stored yet, the switch is stored on,
+once. After that an administrator turns messaging on and off. The TEAM_SERVER_* file settings (`messaging_ports.ATTACHMENT_SETTINGS`)
 may only lower the contract's defaults.
 
 Problems are reported by variable NAME only, never with a value, because
@@ -62,6 +63,7 @@ class Config:
     github_web_url: str = "https://github.com"
     environment_name: Optional[str] = None
     test_session_key_sha256: Optional[str] = None
+    # Seeds the stored switch once (messaging.seed_switch); never read after.
     messaging_enabled: bool = False
     # None: the contract's defaults (attachments.DEFAULT_SETTINGS).
     attachment_settings: Optional["AttachmentSettings"] = None

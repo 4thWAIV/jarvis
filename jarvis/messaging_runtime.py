@@ -26,7 +26,9 @@ Who this JARVIS is comes from the paired team connection alone
 (`Delivery.pairing`) and `data_paths.node_id()`. The routes are mounted
 when the app is made (`mount`); the parts are built at startup, so the
 store opens in the data directory in force then. The loops run only while
-JARVIS_MESSAGING is on; switched off, the routes still answer, saying so.
+this JARVIS's switch is on (Settings, Team: `/api/team/messaging/local`,
+stored in the store; JARVIS_MESSAGING forces it on), and start or stop the
+moment it changes; switched off, the routes still answer, saying so.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from jarvis import data_paths
 from jarvis import messaging_api
@@ -93,9 +96,10 @@ class MessagingRuntime:
                  enabled: Callable[[], bool] = ports.messaging_enabled,
                  node_id: Callable[[], str] = data_paths.node_id,
                  clock: ports.Clock = ports.utcnow):
-        self.connection, self.send_frame, self.enabled = connection, send_frame, enabled
+        self.connection, self.send_frame, self.forced = connection, send_frame, enabled
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
+        self._switched_on = self.store.switched_on()
         self.store.forget_captures()
         self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
                                                    on_change=self.hint)
@@ -108,7 +112,7 @@ class MessagingRuntime:
         self.delivery = Delivery(store=self.store, connection=connection, guard=self.approvals,
                                  snapshots=self.files, presentation=presenting,
                                  node_id=lambda: self.node, clock=clock,
-                                 on_change=self.hint, enabled=enabled,
+                                 on_change=self.hint, enabled=self.enabled,
                                  transport_for=self._guarded)
         self.reviews = Reviews(self.approvals, captures, self.members)
         self.local = messaging_api.LocalMessaging(
@@ -127,6 +131,28 @@ class MessagingRuntime:
             labels=lambda: serve_labels(current, network_raw), notify=notify,
             wording=wording, clock=clock)
         self._tasks: list[asyncio.Task] = []
+
+    # -- the switch ----------------------------------------------------------------------
+
+    def enabled(self) -> bool:
+        """This JARVIS's switch, or JARVIS_MESSAGING forcing it on."""
+        return self.forced() or self._switched_on
+
+    def switch(self) -> dict:
+        return {"enabled": self.enabled(), "forced": self.forced()}
+
+    async def set_switch(self, on: bool) -> dict:
+        """Settings, Team: stored, then the loops start or stop at once and
+        every page reads the Queue again. Switching off deletes nothing."""
+        self.store.set_switched_on(on)
+        self._switched_on = on
+        if self.enabled():
+            self.start()
+        else:
+            await self.stop()
+        log.info("messaging: switched %s on this JARVIS", "on" if on else "off")
+        self.hint()
+        return self.switch()
 
     # -- who and through what ------------------------------------------------------------
 
@@ -208,8 +234,8 @@ class MessagingRuntime:
         return self.presentation.replay_frames()
 
     def start(self) -> None:
-        """Only while JARVIS_MESSAGING is on: the delivery loop, the
-        announcer and the housekeeping."""
+        """Only while the switch is on: the delivery loop, the announcer and
+        the housekeeping."""
         if not self.enabled() or self._tasks:
             return
         self.delivery.start()
@@ -242,10 +268,32 @@ class _NotStarted:
         return getattr(runtime.local, name)
 
 
+class SwitchBody(BaseModel):
+    enabled: bool
+
+
+SWITCH_PATH = "/api/team/messaging/local"
+
+
 def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> None:
-    """The page's messaging routes and the files routes beside them, on the
-    app as it is made; each request finds the runtime built at startup."""
+    """The page's messaging routes, this JARVIS's switch and the files
+    routes beside them, on the app as it is made; each request finds the
+    runtime built at startup."""
     messaging_api.mount(app, _NotStarted(runtime))
+
+    def built() -> MessagingRuntime:
+        found = runtime()
+        if found is None:
+            raise messaging_api.Refused("messaging_unavailable", availability="switched_off")
+        return found
+
+    @app.get(SWITCH_PATH)
+    async def messaging_switch():
+        return built().switch()
+
+    @app.put(SWITCH_PATH)
+    async def set_messaging_switch(body: SwitchBody):
+        return await built().set_switch(body.enabled)
 
     def context() -> Optional[messaging_files.FilesContext]:
         found = runtime()

@@ -1,7 +1,8 @@
 """The local record of human messaging: drafts, approved envelopes and their
 sends, the messages this owner has, their receipts, the owner's work items,
 the sync position of this node, receipts and work commands still owed to
-the team server, and which arrivals are due to be announced.
+the team server, which arrivals are due to be announced, and this JARVIS's
+messaging switch (`human_switch`, set from Settings, Team).
 
 SQLite in the main database (`data_paths.db_path()`), every row namespaced
 by the team server's `server_id` and the owner's GitHub id, so a JARVIS
@@ -33,7 +34,7 @@ from jarvis import data_paths, run_store
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Each step takes the schema from the version before it to its own. Only
 # ever appended to; a step never drops a table that holds correspondence.
@@ -83,6 +84,10 @@ _MIGRATIONS: dict[int, str] = {
             server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,
             state TEXT NOT NULL,
             PRIMARY KEY (server_id, owner, message_id));
+    """,
+    2: """
+        CREATE TABLE IF NOT EXISTS human_switch (
+            id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL);
     """,
 }
 
@@ -139,6 +144,20 @@ class SqliteMessagingStore:
     def schema_version(self) -> int:
         with self._tx() as conn:
             return conn.execute("SELECT version FROM human_messaging_schema").fetchone()[0]
+
+    # -- the switch ---------------------------------------------------------------------
+
+    def switched_on(self) -> bool:
+        """This JARVIS's messaging switch; off until it is first set. Not
+        namespaced: it is this JARVIS's, whoever it is paired as."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT enabled FROM human_switch WHERE id = 1").fetchone()
+        return bool(row and row["enabled"])
+
+    def set_switched_on(self, on: bool) -> None:
+        with self._tx() as conn:
+            conn.execute("INSERT OR REPLACE INTO human_switch (id, enabled) VALUES (1, ?)",
+                         (int(on),))
 
     # -- drafts -------------------------------------------------------------------------
 

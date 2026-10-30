@@ -7,6 +7,8 @@ against the real team server and MongoDB."""
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -282,6 +284,63 @@ def test_automatic_retries_stop_after_the_last_attempt_and_stay_unknown(tim, ser
     assert (last.state, last.attempts, last.next_attempt_at) == \
         ("accept_unknown", wire.RETRY_MAX_ATTEMPTS, None), "never 'failed': it may be accepted"
     assert len(serve.messages) == 1
+
+
+class FailingUploads:
+    """Files that never reach the team server."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ensure_uploaded(self, *args) -> None:
+        self.calls += 1
+        raise ports.TransportError("transport")
+
+
+def with_a_file(jarvis) -> FailingUploads:
+    uploads = FailingUploads()
+    jarvis.delivery.snapshots = uploads
+    jarvis.guard.require_approved_revision = lambda *a: SimpleNamespace(
+        request=SimpleNamespace(attachments=[object()]))
+    return uploads
+
+
+def test_a_failing_upload_counts_each_attempt_then_fails_with_retry(tim, serve, clock, caplog):
+    draft = tim.approve(MATT, "With a file.")
+    uploads = with_a_file(tim)
+    caplog.set_level("INFO", logger="jarvis.messaging")
+    for attempt in range(1, wire.RETRY_MAX_ATTEMPTS):
+        tim.tick()
+        held = tim.send_of(draft)
+        assert (held.state, held.attempts, held.failure) == ("approved", attempt, "transport")
+        assert held.next_attempt_at > clock()
+        tim.tick()
+        assert uploads.calls == attempt, "not before its own time"
+        clock.at = held.next_attempt_at
+    tim.tick()
+    last = tim.send_of(draft)
+    assert (last.state, last.attempts, last.failure, last.next_attempt_at) == \
+        ("failed", wire.RETRY_MAX_ATTEMPTS, "transport", None), "failed offers Retry"
+    clock.advance(hours=1)
+    tim.tick()
+    assert uploads.calls == wire.RETRY_MAX_ATTEMPTS and serve.messages == {}
+    holds = [r.getMessage() for r in caplog.records if " held (transport)" in r.getMessage()]
+    assert len(holds) == wire.RETRY_MAX_ATTEMPTS
+    assert all("With a file" not in line for line in holds), "no message content"
+
+
+def test_the_loop_wakes_for_a_retry_due_before_its_backoff(tim, clock):
+    draft = tim.approve(MATT, "With a file.")
+    with_a_file(tim)
+    for _ in range(4):                              # the fourth retry waits 4 s
+        tim.tick()
+        clock.at = tim.send_of(draft).next_attempt_at
+    tim.tick()
+    due = tim.send_of(draft).next_attempt_at
+    tim.delivery.failures = 6                       # a minute of backoff
+    assert tim.delivery.next_delay() == pytest.approx((due - clock()).total_seconds())
+    clock.at = due + timedelta(seconds=30)          # overdue while unavailable
+    assert tim.delivery.next_delay() == 1.0, "never a spin"
 
 
 def test_kept_work_commands_are_replayed_and_a_conflict_keeps_the_latest(tim, matt, serve):

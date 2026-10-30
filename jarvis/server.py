@@ -2852,7 +2852,8 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 # See web_auth.OriginGuard for what replaces it.
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
-team_api.mount(app)
+team_api.mount(app, on_team_messaging=lambda: messaging is not None
+                and messaging.delivery.forget_capabilities())
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
 
@@ -5979,7 +5980,7 @@ async def _say_arrival(line: str, note: str, detail: dict) -> None:
 
 def _start_messaging() -> None:
     """Build human messaging over the team connection and start its loops
-    (only while JARVIS_MESSAGING is on). A failure here leaves messaging
+    (only while this JARVIS's switch is on, Settings, Team). A failure here leaves messaging
     unavailable and everything else running."""
     global messaging
     try:
