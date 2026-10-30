@@ -64,10 +64,10 @@ def healthy_beats():
     return dict(sd.beats)
 
 
-def comms(w=None, messages=(), beats=None, waiting=0, started_ago=600.0):
+def comms(w=None, messages=(), beats=None, waiting=0, started_ago=600.0, queued=()):
     return sd.communications(w if w is not None else watcher(), list(messages),
                              healthy_beats() if beats is None else beats, waiting,
-                             NOW, NOW - started_ago)
+                             NOW, NOW - started_ago, list(queued))
 
 
 # ── the session watcher ───────────────────────────────────────────────────
@@ -195,6 +195,26 @@ def test_a_message_delivered_but_failed_later_reached_its_agent():
     assert sd.message_outcome(m, NOW) == "reached"
 
 
+def test_no_queued_message_is_idle_and_a_young_one_is_ok():
+    assert sd.queued_check([], watcher(), NOW).state == sd.IDLE
+    c = sd.queued_check([message("queued", at=NOW - 60)], watcher(), NOW)
+    assert c.state == sd.OK and "1 message waiting for its turn" in c.detail
+
+
+def test_a_message_held_in_the_queue_says_what_jarvis_takes_its_session_for():
+    """Found live: a session idle for two hours read as mid-turn, so two
+    messages to it waited and nothing said so."""
+    held = message("queued", session="s9", at=NOW - 3000)
+    sessions = [SimpleNamespace(session_id="s9", state="working")]
+    snap = SimpleNamespace(sessions=sessions,
+                           by_id=lambda sid: next((s for s in sessions if s.session_id == sid), None))
+    s = comms(w=watcher(snapshot=snap), queued=[message("queued", at=NOW - 30), held])
+    c = next(c for c in s.checks if c.id == "queued")
+    assert c.state == sd.DEGRADED and s.state == sd.DEGRADED
+    assert c.detail.startswith("A message to hammer has waited ")
+    assert c.detail.endswith("for its turn; JARVIS sees it as working")
+
+
 # ── messages from sessions, the needs board, the loops ────────────────────
 
 def test_a_loop_s_states():
@@ -260,7 +280,7 @@ def test_the_server_s_loops_beat(monkeypatch):
 def test_communications_working_are_ok():
     s = comms(messages=[message("answered")])
     assert s.state == sd.OK and s.summary.startswith("Watching 1 session")
-    assert [c.id for c in s.checks] == ["watcher", "outgoing", "incoming", "needs"]
+    assert [c.id for c in s.checks] == ["watcher", "outgoing", "queued", "incoming", "needs"]
     assert s.messages[0]["outcome"] == "reached"
 
 

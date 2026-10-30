@@ -173,6 +173,13 @@ def read_roster(roots: list[Path] | None = None) -> list[RosterEntry]:
 # 2026-09-03, including a 95 MB one, because `ai-title` and `last-prompt` are
 # rewritten on every turn and therefore always sit near the end.
 TAIL_BYTES = 64 * 1024
+# The turn marker is not rewritten every turn: a compaction appends its
+# summary and attachments after it, measured at 220 KB on 2026-10-29, which
+# pushed it out of the 64 KB tail. With no marker the roster decides, and it
+# said busy while the session's background workflow ran, so JARVIS held two
+# messages for it as if it were mid-turn. The tail is widened, four times
+# over each time, until a marker is in it, up to this much.
+RECAP_TAIL_MAX = 4 * 1024 * 1024
 MAX_RECENT_TOOLS = 5
 MAX_TEXT = 600
 
@@ -792,7 +799,15 @@ def read_recap(root: Path, cwd: str, session_id: str,
     path = transcript_path(root, cwd, session_id)
     if not path.exists():
         return Recap(exists=False)
-    return recap_from(tail_objects(path, nbytes))
+    while True:
+        recap = recap_from(tail_objects(path, nbytes))
+        try:
+            whole = path.stat().st_size <= nbytes
+        except OSError:
+            return recap
+        if recap.turn is not None or whole or nbytes >= RECAP_TAIL_MAX:
+            return recap
+        nbytes *= 4
 
 
 # Derived conversation states: what `session_status` says, and nothing else.

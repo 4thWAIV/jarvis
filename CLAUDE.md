@@ -293,7 +293,7 @@ loop). Communications are down when the session watcher is not running, has
 not finished a poll for a minute or has failed three in a row; when the
 messages sent last, back to the last one that arrived, were lost on their way
 to two or more different sessions; or when the loop taking session messages
-or reading the needs board has stopped. `GET /api/diagnostics/subsystems`
+or reading the needs board has stopped. A message held in the queue for its session's turn over ten minutes makes them degraded, naming the agent and what JARVIS takes its session to be doing. `GET /api/diagnostics/subsystems`
 reads it all; `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and says once
 "Communications with the agents are down, sir." and once that they are back.
