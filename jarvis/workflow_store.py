@@ -59,7 +59,7 @@ class ItemState(str, Enum):
 
 EventKind = Literal[
     "workflow_started", "workflow_finished",
-    "phase_started", "phase_finished",
+    "phase_added", "phase_started", "phase_finished",   # added: one not declared at start
     "task_added", "task_started", "task_progress", "task_finished",
     "wait_started", "wait_ended",              # waiting on what, until when
     "decision_needed", "decision_made",        # question, options, recommendation; answer
@@ -350,10 +350,24 @@ def _set_item(conn, workflow_id: str, slug: str, state: ItemState, **counts) -> 
 
 def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
     wid, kind, slug, detail = event.workflow_id, event.kind, event.item, event.detail
-    if kind.startswith("phase_"):
+    if kind == "phase_added":
+        if _item(conn, wid, slug) is not None:
+            raise WorkflowRefused(f"There is already an item {slug}.")
+        phases = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=? "
+                              "AND kind='phase'", (wid,)).fetchone()[0]
+        if phases >= PHASES_MAX:
+            raise WorkflowRefused(f"A workflow has at most {PHASES_MAX} phases.")
+        position = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=?",
+                                (wid,)).fetchone()[0]
+        conn.execute(
+            "INSERT INTO workflow_items (workflow_id, slug, kind, title, state, position) "
+            "VALUES (?, ?, 'phase', ?, ?, ?)",
+            (wid, slug, _one_line(detail.get("title"), NAME_MAX) or slug,
+             ItemState.pending.value, position))
+    elif kind.startswith("phase_"):
         item = _item(conn, wid, slug)
         if item is None or item["kind"] != "phase":
-            raise WorkflowRefused(f"This workflow has no phase {slug}.")
+            raise WorkflowRefused(f"This workflow has no phase {slug}; add it with phase_added.")
         if kind == "phase_started":
             _set_item(conn, wid, slug, ItemState.running)
             conn.execute("UPDATE workflows SET phase=? WHERE id=?", (slug, wid))
@@ -365,7 +379,7 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
             raise WorkflowRefused(f"There is already an item {slug}.")
         phase = detail.get("phase") or row["phase"]
         if phase is not None and (_item(conn, wid, str(phase)) or {"kind": ""})["kind"] != "phase":
-            raise WorkflowRefused(f"This workflow has no phase {phase}.")
+            raise WorkflowRefused(f"This workflow has no phase {phase}; add it with phase_added.")
         position = conn.execute("SELECT COUNT(*) FROM workflow_items WHERE workflow_id=?",
                                 (wid,)).fetchone()[0]
         conn.execute(
