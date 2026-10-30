@@ -50,6 +50,36 @@ def test_phases_and_tasks_move_on_and_are_counted():
     assert (w.phases_done, w.last_summary) == (1, "Something happened.")
 
 
+def test_a_phase_not_given_at_the_start_is_added_after_the_others():
+    wid = ws.start("Build", "hammer", ["setup"])
+    ws.record(_ev(wid, "phase_finished", item="setup"))
+    ws.record(_ev(wid, "phase_added", item="release", title="Release"))
+    w = ws.record(_ev(wid, "phase_started", item="release"))
+    ws.record(_ev(wid, "task_added", item="open-pr", title="Open the PR"))
+    w = ws.snapshot(wid)
+    assert w.phase == "release" and (w.phases_done, w.phases_total) == (1, 2)
+    assert [(i.slug, i.kind, i.title, i.state.value) for i in w.items] == [
+        ("setup", "phase", "setup", "done"), ("release", "phase", "Release", "running"),
+        ("open-pr", "task", "Open the PR", "pending")]
+
+
+def test_a_phase_is_added_once():
+    wid = ws.start("Build", "hammer", ["setup"])
+    for item in ("setup", "setup"):
+        with pytest.raises(ws.WorkflowRefused, match="already an item setup"):
+            ws.record(_ev(wid, "phase_added", item=item))
+    w = ws.record(_ev(wid, "phase_added", item="review"))
+    assert [i.title for i in w.items] == ["setup", "review"]
+    with pytest.raises(ws.WorkflowRefused, match="already an item review"):
+        ws.record(_ev(wid, "phase_added", item="review"))
+
+
+def test_an_unknown_phase_is_refused_with_how_to_add_it():
+    wid = ws.start("Build", "hammer", ["setup"])
+    with pytest.raises(ws.WorkflowRefused, match="add it with phase_added"):
+        ws.record(_ev(wid, "phase_started", item="release"))
+
+
 @pytest.mark.parametrize("opens, closes, state", [
     ("decision_needed", "decision_made", "needs_you"),
     ("blocker_raised", "blocker_cleared", "blocked"),

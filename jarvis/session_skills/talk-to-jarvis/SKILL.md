@@ -35,10 +35,11 @@ When you run a long piece of work in phases, such as a multi-step build or a wor
 python3 {{workflow_report}} start "<name>" --project <project> --phase <phase> --phase <phase>
 python3 {{workflow_report}} event <id> agent_attached "<who is running it>" --session <your session id>
 python3 {{workflow_report}} event <id> phase_started "<one sentence>" --item <phase>
+python3 {{workflow_report}} event <id> phase_added "<one sentence>" --item <phase> --title "<title>"
 python3 {{workflow_report}} event <id> task_added "<one sentence>" --item <task> --title "<title>"
 python3 {{workflow_report}} event <id> task_progress "<one sentence>" --item <task> --done 3 --total 8
 python3 {{workflow_report}} event <id> decision_needed "<the question>" --key <slug> --option "<a>" --option "<b>" --recommendation "<your pick>"
 python3 {{workflow_report}} answer <id> <slug>
 ```
 
-`start` prints the workflow's id. The kinds are `phase_started`, `phase_finished`, `task_added`, `task_started`, `task_progress`, `task_finished`, `wait_started`, `wait_ended`, `decision_needed`, `decision_made`, `blocker_raised`, `blocker_cleared`, `agent_attached`, `note` and `workflow_finished` (with `--outcome succeeded`, `failed` or `cancelled`). Every event's summary is one plain sentence. Report at least every few minutes: a workflow that reports nothing for ten minutes shows as gone quiet. `answer` prints the user's answer to a decision once they have given it and exits 3 until then.
+`start` prints the workflow's id. The kinds are `phase_added` (a phase not given at `start`, added after the others), `phase_started`, `phase_finished`, `task_added`, `task_started`, `task_progress`, `task_finished`, `wait_started`, `wait_ended`, `decision_needed`, `decision_made`, `blocker_raised`, `blocker_cleared`, `agent_attached`, `note` and `workflow_finished` (with `--outcome succeeded`, `failed` or `cancelled`). Every event's summary is one plain sentence. Report at least every few minutes: a workflow that reports nothing for ten minutes shows as gone quiet. `answer` prints the user's answer to a decision once they have given it and exits 3 until then.
