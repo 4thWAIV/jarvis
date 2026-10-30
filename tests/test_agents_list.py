@@ -1,6 +1,7 @@
 """The agents list: every running session's name and whether the user has
 activated it. A session starts inactive and only the user activates it; a
-session that ends is removed."""
+session that stops is kept, ended, so resuming it brings its name and
+activation back."""
 
 import importlib
 
@@ -57,15 +58,43 @@ def test_activation_survives_a_sync_and_a_rename(wired):
         {"session_id": "s1", "name": "hammer in Desktop", "active": True, "state": "idle"}]
 
 
-def test_an_ended_session_is_removed(wired):
+def test_an_ended_session_leaves_the_list(wired):
     _server, store = wired
     store.sync_agents({"s1": ("hammer", "idle"), "s2": ("anvil", "idle")})
     store.set_agent_active("s1", True)
 
-    store.sync_agents({"s2": ("anvil", "idle")})
+    assert store.sync_agents({"s2": ("anvil", "idle")}) is True
 
     assert [a["session_id"] for a in store.list_agents()] == ["s2"]
     assert store.set_agent_active("s1", True) is None
+
+
+def test_a_resumed_session_gets_its_name_and_activation_back(wired):
+    _server, store = wired
+    store.sync_agents({"s1": ("hammer", "idle")})
+    store.rename_agent("s1", "Forge")
+    store.set_agent_active("s1", True)
+
+    store.sync_agents({})                       # the CLI is stopped
+    assert store.sync_agents({}) is False, "stopped once, not again every poll"
+    store.sync_agents({"s1": ("hammer", "working")})   # resumed: same session id
+
+    assert store.list_agents() == [
+        {"session_id": "s1", "name": "Forge", "active": True, "state": "working"}]
+    assert store.official_names() == {"s1": "Forge"}
+
+
+def test_an_ended_session_is_forgotten_after_the_keep_period(wired):
+    _server, store = wired
+    store.sync_agents({"s1": ("hammer", "idle")}, now=1000.0)
+    store.rename_agent("s1", "Forge")
+    store.sync_agents({}, now=2000.0)
+
+    store.sync_agents({}, now=2000.0 + store.AGENT_ENDED_KEEP_SEC + 1)
+    store.sync_agents({"s1": ("hammer", "idle")}, now=2000.0 + store.AGENT_ENDED_KEEP_SEC + 2)
+
+    assert store.list_agents()[0]["name"] == "hammer"
+    assert store.official_names() == {}
 
 
 def test_the_running_set_leaves_out_ended_sessions_and_uses_agent_name(wired, monkeypatch):

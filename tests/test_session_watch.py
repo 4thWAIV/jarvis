@@ -525,6 +525,30 @@ def test_a_lone_project_is_named_by_its_folder(tmp_path, all_alive):
     assert sw.build_snapshot(roots=[root]).sessions[0].voice_name == "chitauri"
 
 
+def test_a_name_the_user_set_in_claude_code_is_the_agent_s_name(tmp_path, all_alive):
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/Users/e/Desktop/chitauri",
+                 name="Diagnostics", extra={"nameSource": "user"})
+    write_transcript(root, cwd="/Users/e/Desktop/chitauri", session_id="s",
+                     title="T", last_prompt="P")
+
+    s = sw.build_snapshot(roots=[root]).sessions[0]
+    assert (s.given_name, s.voice_name) == ("Diagnostics", "chitauri")
+    assert sw.agent_name(s) == "Diagnostics"
+
+
+def test_a_name_claude_code_derived_is_not_the_agent_s_name(tmp_path, all_alive):
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/Users/e/Desktop/chitauri",
+                 name="chitauri-67")
+    write_transcript(root, cwd="/Users/e/Desktop/chitauri", session_id="s",
+                     title="T", last_prompt="P")
+
+    s = sw.build_snapshot(roots=[root]).sessions[0]
+    assert s.given_name == ""
+    assert sw.agent_name(s) == "chitauri"
+
+
 def test_same_named_projects_in_different_folders_are_named_by_folder(tmp_path, all_alive):
     """Measured: chitauri exists on the Desktop and in Projects."""
     root = tmp_path / ".claude"

@@ -78,7 +78,7 @@ def _blank():
         # moment two conversations share a project, and `_plain_name` (which
         # forbids a space) was erasing every one of them.
         state="needs_you", voice_name="hammer in Projects, the auth flow one",
-        roster_name="hammer",
+        roster_name="hammer", given_name="Hammer",
         needs="input needed", title="a topic", last_prompt="carry on",
         last_text="done", recent_tools=["Bash"], started=0.0, since=0.0,
         steerable=True, socket_path="/tmp/cc-socks/s1.sock",
@@ -2069,6 +2069,9 @@ ALT = {
         agent_id="a1", description="check the schema", agent_type="Explore", background=False,
         depth=1, state="working", started=0.0, written=0.0)],
     "title": "the run pipeline",
+    # The name the user set in Claude Code: agent_name prefers it to the
+    # voice name, so every path that prints an agent's name prints it.
+    "given_name": "Forge",
     "voice_name": "chitauri in Desktop",
 }
 

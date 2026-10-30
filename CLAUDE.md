@@ -394,7 +394,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   through its session's transcript, and reads each session's subagents
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
-  names as they are said (`spoken_key`: hyphens and underscores are spaces)
+  names as they are said (`spoken_key`: hyphens and underscores are spaces).
+  An agent's name is the one set in JARVIS (`rename_agent`), else the one
+  the user set in Claude Code (`session_watch.agent_name`, which survives a
+  resume), else the derived voice name. A stopped session's agent is kept,
+  ended, for `run_store.AGENT_ENDED_KEEP_SEC` (30 days), so resuming the same
+  session brings back its name and activation (`run_store.sync_agents`)
 - `session_steer.py` — Sends a message into a running session's inbox socket;
   holds the signature every message starts with
 - `session_messages.py` — Reads the messages sessions drop for Tim in

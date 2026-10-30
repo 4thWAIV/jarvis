@@ -103,6 +103,9 @@ class RosterEntry:
     status_updated_at: float | None = None
     socket_path: str | None = None
     version: str = ""
+    # The user named the session in Claude Code (`nameSource: "user"`);
+    # Claude Code keeps that name when the session is resumed.
+    user_named: bool = False
 
     @property
     def steerable(self) -> bool:
@@ -132,6 +135,7 @@ def _parse_entry(path: Path, root: Path) -> RosterEntry | None:
         session_id=session_id,
         cwd=cwd,
         name=str(data.get("name") or Path(cwd).name or session_id[:8]),
+        user_named=data.get("nameSource") == "user" and bool(data.get("name")),
         root=root,
         kind=str(data.get("kind") or "interactive"),
         entrypoint=str(data.get("entrypoint") or "cli"),
@@ -927,6 +931,8 @@ class SessionState:
     pids: list[int] = field(default_factory=list)
     primary_pid: int | None = None
     roster_name: str = ""
+    # The name the user gave the session in Claude Code itself, if any.
+    given_name: str = ""
     voice_name: str = ""
     needs: str | None = None
     title: str | None = None
@@ -1699,6 +1705,7 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
             pids=[e.pid for e in group],
             primary_pid=primary.pid,
             roster_name=primary.name,
+            given_name=primary.name if primary.user_named else "",
             needs=status.needs,
             title=recap.title,
             last_prompt=recap.last_prompt,
@@ -2185,9 +2192,11 @@ class SessionWatcher:
 
 def agent_name(s: SessionState) -> str:
     """The one place an agent's name comes from (the agents list, its page
-    control and JARVIS's agent tools all read it from here). Today it is the
-    voice name `_assign_voice_names` gives the session."""
-    return s.voice_name
+    control and JARVIS's agent tools all read it from here): the name the user
+    gave the session in Claude Code, which survives a resume, else the voice
+    name `_assign_voice_names` gives it. A name set in JARVIS (rename_agent)
+    wins over both."""
+    return s.given_name or s.voice_name
 
 
 def message_to_dict(m) -> dict:
