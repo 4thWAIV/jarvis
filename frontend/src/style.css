@@ -2897,13 +2897,15 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
+  /* The person on the right, the side the rays come in from, so a ray
+     never crosses the card to reach them. */
+  grid-template-columns: minmax(0, 1fr) auto 22px;
   grid-template-areas:
-    "who who age"
-    "badge subject subject"
-    "badge side side"
-    "badge strip strip"
-    "badge delivery delivery";
+    "who age age"
+    "subject subject badge"
+    "side side badge"
+    "strip strip badge"
+    "delivery delivery badge";
   column-gap: 7px;
   row-gap: 3px;
   align-items: center;

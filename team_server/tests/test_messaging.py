@@ -204,6 +204,14 @@ def test_switched_off_every_route_says_so_and_nothing_is_offered(make_client, gi
         assert (r.status_code, error(r)) == (503, "messaging_disabled")
 
 
+def test_a_member_reads_the_team_switch_but_only_an_administrator_sets_it(client, alice):
+    r = client.get("/api/v1/team/messaging", headers=bearer(alice.token))
+    assert (r.status_code, r.json()["enabled"]) == (200, True)
+    r = client.put("/api/v1/team/messaging", headers=bearer(alice.token), json={"enabled": False})
+    assert (r.status_code, error(r)) == (403, "admin_required")
+    assert client.get("/api/v1/team/messaging", headers=bearer(alice.token)).json()["enabled"]
+
+
 def test_only_a_paired_jarvis_may_use_messaging(client, github, tim):
     client.cookies.set(SESSION_COOKIE, tim.browser, domain="team.test")
     try:

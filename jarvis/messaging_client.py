@@ -20,8 +20,10 @@ It works on the current pairing's records only.
             request leaves. A lost or transient answer is `accept_unknown`
             and is retried under the same idempotency key (full jitter,
             RETRY_MAX_ATTEMPTS, then only by the owner's Retry); a refusal
-            is `failed`. A restart finds `submitting` and treats it as a
-            lost answer: never as nothing having happened.
+            is `failed`. A file upload that does not go through counts as
+            an attempt too: retried at its own time, then, at the limit,
+            `failed` with Retry. A restart finds `submitting` and treats it
+            as a lost answer: never as nothing having happened.
   sync      the full keyset scan, a bounded number of pages a pass, each
             page stored with its continuation in one transaction; an expired
             continuation starts a new scan. Absence never prunes.
@@ -56,12 +58,17 @@ log = logging.getLogger("jarvis.messaging")
 
 SYNC_INTERVAL_SEC = 5.0
 MAX_BACKOFF_SEC = 60.0
+# The shortest wait between passes, so a retry already due while messaging
+# is unavailable cannot spin the loop.
+MIN_DELAY_SEC = 1.0
 # Pages one pass reads before it yields; the scan resumes from its stored
 # continuation on the next pass, so a long history never blocks the loop.
 SYNC_PAGES_PER_PASS = 20
 # How long a team server's capabilities are trusted before they are read
-# again (also read again whenever the pairing changes).
-CAPABILITIES_TTL_SEC = 300.0
+# again (also read again whenever the pairing changes, and at once after this
+# JARVIS changes the team's switch). Short, so a switch an administrator
+# changed elsewhere reaches this JARVIS within it.
+CAPABILITIES_TTL_SEC = 30.0
 PREFIX = "/api/v1/messages"
 
 
@@ -314,6 +321,12 @@ class Delivery:
         return ports.availability(enabled=self.enabled(), paired=pairing is not None,
                                   capabilities=caps)
 
+    def forget_capabilities(self) -> None:
+        """Ask the team server what it offers on the next look (its
+        messaging switch was just changed from here)."""
+        self._capabilities.clear()
+        self.wake()
+
     async def _capabilities_of(self, pairing: Pairing) -> list[str]:
         known = self._capabilities.get(pairing.server_id)
         now = asyncio.get_running_loop().time()
@@ -407,11 +420,30 @@ class Delivery:
         return changed
 
     def _hold(self, pairing: Pairing, send: ports.LocalSend, code: str,
-              retry_at: Optional[datetime]) -> bool:
+              retry_at: Optional[datetime], **update) -> bool:
         """Keep the send where it is, saying why, until `retry_at` (or the
-        owner acts)."""
+        owner acts). `update` is anything else the hold changes."""
+        log.info("messaging: %s held (%s) until %s", send.message_id, code,
+                 retry_at.isoformat() if retry_at else "the owner acts")
         return self.store.transition_send(*pairing.ns, send, send.model_copy(update={
-            "failure": code, "next_attempt_at": retry_at}))
+            **update, "failure": code, "next_attempt_at": retry_at}))
+
+    def _upload_failed(self, pairing: Pairing, send: ports.LocalSend,
+                       e: ports.TransportError) -> bool:
+        """A file upload that did not go through is an attempt: retried at
+        its own time until RETRY_MAX_ATTEMPTS, then held for the owner's
+        Retry (a send never submitted becomes `failed`, which offers it).
+        One the team server refused, or a session that ended, waits for the
+        owner at once."""
+        if e.session_ended or not (e.retryable or e.code == "transport"):
+            return self._hold(pairing, send, e.code, None)
+        attempts = send.attempts + 1
+        if attempts < wire.RETRY_MAX_ATTEMPTS:
+            return self._hold(pairing, send, e.code, self._retry_at(attempts, e.retry_after),
+                              attempts=attempts)
+        state = ports.next_send_state(send.state, "upload_failed") \
+            if send.state == "approved" else send.state
+        return self._hold(pairing, send, e.code, None, attempts=attempts, state=state)
 
     def _retry_at(self, attempts: int, retry_after: Optional[float]) -> datetime:
         delay = max(wire.retry_delay(attempts, self.rand.random()), retry_after or 0.0)
@@ -430,9 +462,7 @@ class Delivery:
         except ports.SnapshotMissing:
             return self._hold(pairing, send, "snapshot_missing", None)
         except ports.TransportError as e:
-            retry = None if e.session_ended or not (e.retryable or e.code == "transport") \
-                else self._retry_at(send.attempts + 1, e.retry_after)
-            return self._hold(pairing, send, e.code, retry)
+            return self._upload_failed(pairing, send, e)
         event = "submit" if send.state == "approved" else "retry"
         going = send.model_copy(update={"state": ports.next_send_state(send.state, event),
                                         "attempts": send.attempts + 1, "failure": None,
@@ -516,10 +546,25 @@ class Delivery:
     # -- the lifecycle ------------------------------------------------------------------
 
     def next_delay(self) -> float:
+        """Until the next pass: the interval, or the backoff while passes
+        fail, but never past the earliest send due to be retried."""
         if not self.failures:
-            return self.interval
-        backoff = min(MAX_BACKOFF_SEC, self.interval * (2 ** (self.failures - 1)))
-        return backoff * (0.5 + self.rand.random() / 2)
+            delay = self.interval
+        else:
+            backoff = min(MAX_BACKOFF_SEC, self.interval * (2 ** (self.failures - 1)))
+            delay = backoff * (0.5 + self.rand.random() / 2)
+        due = self._next_retry_in()
+        return delay if due is None else min(delay, max(MIN_DELAY_SEC, due))
+
+    def _next_retry_in(self) -> Optional[float]:
+        pairing = self.pairing()
+        if pairing is None:
+            return None
+        times = [s.next_attempt_at for s in self.store.unresolved_sends(*pairing.ns)
+                 if s.next_attempt_at is not None]
+        if not times:
+            return None
+        return (min(times) - self.clock()).total_seconds()
 
     async def run(self) -> None:
         while True:

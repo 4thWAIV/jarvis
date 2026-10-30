@@ -60,14 +60,18 @@ from jarvis import messaging_wire as wire
 
 # -- the switch and availability ------------------------------------------------
 
-# JARVIS's own switch, off unless set to 1/true/yes/on. Off: no messaging
-# route, loop or tool runs and the Queue says it is switched off. Nothing
-# stored (drafts, messages, approved files) is deleted by switching it off.
+# JARVIS's own switch is set in Settings, Team and stored
+# (`SqliteMessagingStore.switched_on`). Off: no messaging route, loop or tool
+# runs and the Queue says it is switched off. Nothing stored (drafts,
+# messages, approved files) is deleted by switching it off. This variable,
+# 1/true/yes/on, only forces it on (tests, a node started for testing);
+# the page then shows the switch as on and not changeable.
 ENABLE_FLAG = "JARVIS_MESSAGING"
 _TRUE = {"1", "true", "yes", "on"}
 
 
 def messaging_enabled(env: Mapping[str, str] = os.environ) -> bool:
+    """Forced on by ENABLE_FLAG."""
     return env.get(ENABLE_FLAG, "").strip().lower() in _TRUE
 
 
@@ -138,7 +142,7 @@ SendState = Literal[
 ]
 SendEvent = Literal[
     "review", "edit", "approve", "submit", "accepted", "answer_lost",
-    "refused", "retry", "cancel",
+    "refused", "retry", "cancel", "upload_failed",
 ]
 
 _SEND_TRANSITIONS: dict[tuple[str, str], str] = {
@@ -151,6 +155,7 @@ _SEND_TRANSITIONS: dict[tuple[str, str], str] = {
     ("approved", "edit"): "superseded",
     ("approved", "submit"): "submitting",
     ("approved", "cancel"): "cancelled",
+    ("approved", "upload_failed"): "failed",   # its files never went, after every retry
     ("submitting", "accepted"): "accepted",
     ("submitting", "answer_lost"): "accept_unknown",
     ("submitting", "refused"): "failed",
