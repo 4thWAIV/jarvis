@@ -64,6 +64,10 @@ REACHED_STATUSES = frozenset({"delivered", "working", "answered"})
 # not one session.
 LOST_SESSIONS_DOWN = 2
 
+# A message queued this long for its session's turn is held: found live, a
+# session idle for two hours that JARVIS read as mid-turn kept two.
+QUEUED_LONG_SEC = 600.0
+
 # A message file a session dropped that has waited this long was not taken.
 FILE_WAITING_SEC = 60.0
 
@@ -276,6 +280,26 @@ def outgoing_check(messages: list, now: float) -> Check:
                  + (f", {lost} did not" if lost else ""))
 
 
+def queued_check(queued: list, watcher, now: float) -> Check:
+    """Messages waiting for their session's turn, oldest first: one held
+    too long names its agent and what JARVIS takes that session to be doing."""
+    name = "Queued messages"
+    if not queued:
+        return Check("queued", name, IDLE, "No message waiting for its turn")
+    oldest = min(queued, key=lambda m: m.staged_at)
+    waited = now - oldest.staged_at
+    if waited <= QUEUED_LONG_SEC:
+        n = len(queued)
+        return Check("queued", name, OK,
+                     f"{n} message{'s' if n != 1 else ''} waiting for {'its' if n == 1 else 'their'} "
+                     f"turn, the oldest {age(waited)}")
+    snapshot = getattr(watcher, "snapshot", None)
+    session = snapshot.by_id(oldest.session_id) if hasattr(snapshot, "by_id") else None
+    seen = f"; JARVIS sees it as {session.state}" if session is not None else ""
+    return Check("queued", name, DEGRADED,
+                 f"A message to {oldest.agent_name} has waited {age(waited)} for its turn{seen}")
+
+
 def incoming_check(b: Optional[Beat], waiting: int, now: float) -> Check:
     """Messages sessions drop for Tim: the loop that takes them, and any file
     left waiting."""
@@ -288,10 +312,11 @@ def incoming_check(b: Optional[Beat], waiting: int, now: float) -> Check:
 
 
 def communications(watcher, messages: list, beats_now: dict, waiting: int,
-                   now: float, started_at: float) -> Subsystem:
+                   now: float, started_at: float, queued: list = ()) -> Subsystem:
     checks = [
         watcher_check(watcher, now, started_at),
         outgoing_check(messages, now),
+        queued_check(list(queued), watcher, now),
         incoming_check(beats_now.get(SESSION_MESSAGES_LOOP), waiting, now),
         Check("needs", "Needs board", *judge_loop(beats_now.get(NEEDS_LOOP), now)),
     ]
@@ -480,7 +505,8 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
     waiting = session_messages.waiting(data_paths.session_messages_dir(), now, FILE_WAITING_SEC)
     beats_now = dict(beats)
     return [
-        communications(watcher, messages, beats_now, waiting, now, started_at),
+        communications(watcher, messages, beats_now, waiting, now, started_at,
+                       run_store.queued_messages()),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
         voice_output(has_fish_key, voice_output_calls, now),

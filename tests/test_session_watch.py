@@ -424,6 +424,31 @@ def test_a_turn_marker_in_the_transcript_beats_the_roster(tmp_path, monkeypatch)
     assert (s.state, s.between_turns) == (sw.IDLE, True)
 
 
+def test_a_turn_marker_far_behind_a_compaction_still_beats_the_roster(tmp_path):
+    """Found live: a compaction wrote 220 KB after the turn ended, the 64 KB
+    tail held no marker, and the roster's busy (its background workflow)
+    held JARVIS's messages for the session for an hour and more."""
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    path = sw.transcript_path(root, "/p", "s")
+    with open(path, "a") as fh:
+        fh.write('{"type":"user","timestamp":"2026-10-25T00:00:00Z","message":{"role":"user","content":"go"}}\n')
+        fh.write('{"type":"system","subtype":"turn_duration","timestamp":"2026-10-25T00:00:05Z"}\n')
+        fh.write('{"type":"system","subtype":"compact_boundary","timestamp":"2026-10-25T01:00:00Z"}\n')
+        fh.write(json.dumps({"type": "user", "isCompactSummary": True,
+                             "isVisibleInTranscriptOnly": True,
+                             "timestamp": "2026-10-25T01:00:00Z",
+                             "message": {"role": "user", "content": "summary " * 1000}}) + "\n")
+        for _ in range(60):
+            fh.write(json.dumps({"type": "attachment", "attachment": {"content": "x" * 6000}}) + "\n")
+    assert path.stat().st_size > 4 * sw.TAIL_BYTES
+
+    assert sw.read_recap(root, "/p", "s").turn == "closed"
+    s, = sw.build_snapshot(roots=[root]).sessions
+    assert (s.state, s.between_turns) == (sw.IDLE, True)
+
+
 def test_a_session_with_no_transcript_is_fresh_whatever_its_status(tmp_path):
     """Live: chitauri-67 was `waiting`/`dialog open` with no transcript — a
     session sitting at a startup dialog nobody has spoken to. Never announced."""
