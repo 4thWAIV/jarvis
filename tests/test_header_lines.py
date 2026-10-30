@@ -379,6 +379,11 @@ EXEMPT = {
         "it reads each message's `session_id` only to count how many different "
         "sessions lost messages; the line it builds carries counts alone and "
         "goes only to the Diagnostics tab"),
+    "subsystem_diagnostics.queued_check": (
+        "it reads the waiting session's `state`, one of the fixed session "
+        "states, and names the message's agent as JARVIS lists it; the line "
+        "goes only to the Diagnostics tab, drawn with React text nodes, and "
+        "never to the brain or the speaker"),
     "subsystem_diagnostics.voice_input": (
         "it reads the voice record's own `state` and the stage states of its "
         "pipeline, fixed words the server classified; the cause it shows is the "
