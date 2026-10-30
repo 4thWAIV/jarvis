@@ -638,6 +638,17 @@ async def test_the_subsystem_row_and_the_tile_agree(page_url):
         await browser.close()
 
 
+async def _reported(page, team, count: int, why: str) -> None:
+    """Wait for the report sent "at once" to arrive. Its round trip to the
+    stand-in team server is real time, and a busy CI runner has taken longer
+    than a fixed 200 ms over it."""
+    for _ in range(50):
+        if len(team.activity) >= count:
+            break
+        await page.wait_for_timeout(100)
+    assert len(team.activity) == count, why
+
+
 @pytest.mark.asyncio
 async def test_activity_is_reported_from_trusted_input_only_without_content(page_url):
     team = _Team()
@@ -654,8 +665,8 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
 
         # Movement: the first at once, the rest of the window folded into one.
         await page.mouse.move(700, 400)
-        await page.wait_for_timeout(300)
-        assert [a["body"] for a in team.activity] == [{"source": "gui"}], "one report, at once"
+        await _reported(page, team, 1, "one report, at once")
+        assert [a["body"] for a in team.activity] == [{"source": "gui"}]
         assert team.activity[0]["origin"], "sent from the page itself"
         await page.mouse.move(720, 420)
         await page.mouse.wheel(0, 40)
@@ -665,8 +676,7 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
         # A click is deliberate: sent at once, inside the window, and it
         # takes the movement waiting with it.
         await page.mouse.click(720, 420)
-        await page.wait_for_timeout(300)
-        assert len(team.activity) == 2, team.activity
+        await _reported(page, team, 2, "a click at once")
         await page.clock.fast_forward(5000)
         await page.wait_for_timeout(300)
         assert len(team.activity) == 2, "nothing was left waiting after the click"
@@ -676,13 +686,12 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
                                        i.id = 'probe'; document.body.append(i); }""")
         await page.focus("#probe")
         await page.keyboard.type("secret words")
-        await page.wait_for_timeout(200)
-        assert len(team.activity) == 3, "the first key after a quiet spell, at once"
+        await _reported(page, team, 3, "the first key after a quiet spell, at once")
         await page.keyboard.type(" more")
         await page.wait_for_timeout(200)
         assert len(team.activity) == 3
         await page.clock.fast_forward(5000)
-        await page.wait_for_timeout(300)
+        await _reported(page, team, 4, "the rest of the typing at the end of the window")
         assert [a["body"] for a in team.activity] == [
             {"source": "gui"}, {"source": "gui"}, {"source": "typed"}, {"source": "typed"}], team.activity
 
@@ -690,26 +699,22 @@ async def test_activity_is_reported_from_trusted_input_only_without_content(page
         # change it makes) and Space on a control are each one report, at once.
         await page.clock.fast_forward(5000)
         await page.keyboard.type("x")
-        await page.wait_for_timeout(200)
-        assert len(team.activity) == 5
+        await _reported(page, team, 5, "a key after a quiet spell, at once")
         await page.keyboard.press("Enter")
-        await page.wait_for_timeout(200)
-        assert len(team.activity) == 6, "Enter at once, as one report"
+        await _reported(page, team, 6, "Enter at once, as one report")
         await page.evaluate("""() => { const b = document.createElement('button');
                                        b.id = 'probe-button'; b.textContent = 'Probe'; document.body.append(b); }""")
         await page.focus("#probe-button")
         await page.keyboard.press(" ")
-        await page.wait_for_timeout(200)
-        assert len(team.activity) == 7, "Space on a control at once"
+        await _reported(page, team, 7, "Space on a control at once")
 
         # A changed setting is deliberate too: one report.
         await page.evaluate("""() => { const c = document.createElement('input'); c.type = 'checkbox';
                                        c.id = 'probe-box'; document.body.append(c); }""")
         await page.focus("#probe-box")
         await page.keyboard.press(" ")
-        await page.wait_for_timeout(200)
+        await _reported(page, team, 8, "a changed setting at once")
         assert await page.is_checked("#probe-box")
-        assert len(team.activity) == 8, "a changed setting at once"
         assert all(set(a["body"]) == {"source"} for a in team.activity), "where it came from, nothing else"
         assert all(a["body"]["source"] in ("gui", "typed") for a in team.activity)
         await browser.close()
