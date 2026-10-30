@@ -2179,7 +2179,8 @@ async def _poll_usage() -> None:
 #
 # Every running Claude Code session, by name, and whether the user has
 # activated it. Kept in jarvis.db (run_store.sync_agents) so his choices
-# survive a restart; a session that ends is removed.
+# survive a restart; a session that stops is kept, ended, so resuming it
+# brings its name and activation back.
 AGENTS_POLL_SEC = 1.0
 _agents_task: Optional[asyncio.Task] = None
 
