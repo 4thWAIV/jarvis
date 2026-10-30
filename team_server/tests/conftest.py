@@ -143,6 +143,8 @@ def make_client(dbname, github):
         client.__enter__()
         opened.append(client)
         wait_initialized(client)
+        if over.get("messaging_enabled"):
+            wait_messaging(client)
         return client
     yield make
     for c in opened:
@@ -161,6 +163,16 @@ def wait_initialized(client: TestClient) -> None:
         client.get("/health/live")
         time.sleep(0.05)
     raise AssertionError("service did not initialize")
+
+
+def wait_messaging(client: TestClient) -> None:
+    """Messaging on: its services are built once the database is ready."""
+    for _ in range(100):
+        if getattr(client.app.state, "attachments", None) is not None:
+            return
+        client.get("/health/live")
+        time.sleep(0.05)
+    raise AssertionError("messaging did not start")
 
 
 SESSION_COOKIE = "__Host-ts_session"

@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from tests.fixtures.local_config import read_local_skips
+from tests.fixtures.memory_secrets import MemorySecrets
 
 # server.py loads its .env the moment it is imported, and test modules import
 # it at collection, before any fixture runs. Pointing JARVIS_ENV_FILE at a file
@@ -131,22 +132,6 @@ def _never_write_to_the_live_dotenv(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_ENV_FILE", str(tmp_path / "dotenv" / ".env"))
 
 
-class _MemorySecrets:
-    """A Keychain stand-in: tests never read or write the user's Keychain."""
-
-    def __init__(self):
-        self.items: dict[str, str] = {}
-
-    def get(self, account):
-        return self.items.get(account)
-
-    def set(self, account, secret):
-        self.items[account] = secret
-
-    def delete(self, account):
-        self.items.pop(account, None)
-
-
 @pytest.fixture(autouse=True)
 def _never_touch_the_real_keychain(monkeypatch):
     """The team connection's credential store is the login Keychain
@@ -154,8 +139,8 @@ def _never_touch_the_real_keychain(monkeypatch):
     connection over an in-memory store instead."""
     from jarvis import team_client
     monkeypatch.setattr(team_client, "connection",
-                        team_client.TeamConnection(store=_MemorySecrets()))
-    monkeypatch.setattr(team_client, "KeychainStore", _MemorySecrets)
+                        team_client.TeamConnection(store=MemorySecrets()))
+    monkeypatch.setattr(team_client, "KeychainStore", MemorySecrets)
 
 
 @pytest.fixture(autouse=True)

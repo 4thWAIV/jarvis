@@ -88,13 +88,13 @@ async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_url):
 
 
 @pytest.mark.asyncio
-async def test_the_right_panel_holds_agents_diagnostics_workflows_and_network(page_url):
+async def test_the_right_panel_holds_agents_diagnostics_workflows_network_and_queue(page_url):
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, [DISPLAY])
         await page.wait_for_selector(".right-tabs .right-tab")
         titles = await page.evaluate(
             "() => [...document.querySelectorAll('.right-tabs .right-tab')].map(t => t.title)")
-        assert titles == ["Agents", "Diagnostics", "Workflows", "Network"]
+        assert titles == ["Agents", "Diagnostics", "Workflows", "Network", "Queue"]
         await browser.close()
 
 

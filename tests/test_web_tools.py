@@ -158,7 +158,7 @@ def test_the_read_back_tools_are_the_ones_the_user_hears_first(wired):
     attacker's words anywhere — see `TAINT_EXEMPT_ACTING`."""
     server = wired
     assert server.READ_BACK_TOOLS == {"steer_session", "answer_dialog",
-                                      "run_command"}
+                                      "run_command", "send_message"}
     assert server.READ_BACK_TOOLS <= server.ACTING_TOOLS
 
 

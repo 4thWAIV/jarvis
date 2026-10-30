@@ -1,6 +1,127 @@
 {
   "components": {
     "schemas": {
+      "AcceptedMessage": {
+        "additionalProperties": false,
+        "description": "The team server's one authoritative record of a message: immutable\nonce inserted. `accepted_at` is the server's clock and, with\n`message_id`, the order of everything.",
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "title": "Accepted At",
+            "type": "string"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "maxItems": 10,
+            "title": "Attachments",
+            "type": "array"
+          },
+          "content_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Content Digest",
+            "type": "string"
+          },
+          "content_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Content Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "in_reply_to_message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To Message Id"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "recipient_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Recipient Github Id",
+            "type": "integer"
+          },
+          "related_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Related Message Ids",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sender_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Sender Github Id",
+            "type": "integer"
+          },
+          "server_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Server Id",
+            "type": "string"
+          },
+          "source_node_id": {
+            "format": "uuid",
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "subject": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Subject",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Text",
+            "type": "string"
+          },
+          "thread_id": {
+            "format": "uuid",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "thread_id",
+          "recipient_github_id",
+          "content_revision",
+          "server_id",
+          "sender_github_id",
+          "source_node_id",
+          "content_digest",
+          "idempotency_key",
+          "accepted_at"
+        ],
+        "title": "AcceptedMessage",
+        "type": "object"
+      },
       "AccountPace": {
         "properties": {
           "account_ref": {
@@ -103,6 +224,252 @@
           "age_ms"
         ],
         "title": "AccountPace",
+        "type": "object"
+      },
+      "AnnouncementLease": {
+        "additionalProperties": false,
+        "description": "`lease_token` only in the answer to the node holding it.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "lease_token": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lease Token"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "owner_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Owner Github Id",
+            "type": "integer"
+          },
+          "revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "attempted",
+              "completed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "owner_github_id",
+          "node_id",
+          "state",
+          "expires_at",
+          "revision"
+        ],
+        "title": "AnnouncementLease",
+        "type": "object"
+      },
+      "AnnouncementRequest": {
+        "additionalProperties": false,
+        "description": "POST /api/v1/messages/{message_id}/announcement, by one of the\nmessage's recipient's own nodes. `claim` carries no token; `attempted`\nand `completed` carry the one their claim returned.",
+        "properties": {
+          "lease_token": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lease Token"
+          },
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "step": {
+            "enum": [
+              "claim",
+              "attempted",
+              "completed"
+            ],
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "step"
+        ],
+        "title": "AnnouncementRequest",
+        "type": "object"
+      },
+      "AttachmentCreate": {
+        "additionalProperties": false,
+        "description": "POST /api/v1/attachments. Owner and server come from the session.\nCreating the same attachment_id again with the same binding returns the\nexisting record; a different binding is `idempotency_conflict`.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "maximum": 26214400.0,
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "message_id",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "AttachmentCreate",
+        "type": "object"
+      },
+      "AttachmentRef": {
+        "additionalProperties": false,
+        "description": "One file in a message's immutable manifest. The bytes are uploaded\nseparately; this binds them by size and SHA-256. The order of the\nmanifest is part of what was approved.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "media_type": {
+            "description": "The sender's hint only; never a safety decision",
+            "maxLength": 127,
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "maximum": 26214400.0,
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "filename",
+          "media_type",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "AttachmentRef",
+        "type": "object"
+      },
+      "AttachmentStatus": {
+        "additionalProperties": false,
+        "description": "The answer to create, an upload attempt, finalize and GET: only ever\nto the record's owner.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "received_bytes": {
+            "minimum": 0.0,
+            "title": "Received Bytes",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "maximum": 26214400.0,
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "uploading",
+              "verified",
+              "pinned",
+              "published",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "message_id",
+          "state",
+          "size_bytes",
+          "sha256",
+          "received_bytes"
+        ],
+        "title": "AttachmentStatus",
         "type": "object"
       },
       "BrainAccount": {
@@ -397,6 +764,29 @@
           "interval"
         ],
         "title": "DeviceStarted",
+        "type": "object"
+      },
+      "Dismiss": {
+        "additionalProperties": false,
+        "description": "JARVIS refuses this locally while the item has unsent text or an\nunresolved send (`dismiss_blockers`); the server cannot see those.",
+        "properties": {
+          "command": {
+            "const": "dismiss",
+            "default": "dismiss",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "Dismiss",
         "type": "object"
       },
       "ErrorBody": {
@@ -800,6 +1190,27 @@
         "title": "NetworkSnapshot",
         "type": "object"
       },
+      "NodeReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "received_at"
+        ],
+        "title": "NodeReceipt",
+        "type": "object"
+      },
       "NodeUpdate": {
         "properties": {
           "activity": {
@@ -970,6 +1381,51 @@
         "title": "NodeView",
         "type": "object"
       },
+      "OpenItem": {
+        "additionalProperties": false,
+        "description": "Activate: Waiting -> Active. Records no read receipt; that is a\nseparate read receipt (ReceiptItem) once a specific body was displayed.",
+        "properties": {
+          "command": {
+            "const": "open",
+            "default": "open",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "OpenItem",
+        "type": "object"
+      },
+      "PutBack": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "put_back",
+            "default": "put_back",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "PutBack",
+        "type": "object"
+      },
       "QuotaWindow": {
         "properties": {
           "age_ms": {
@@ -1042,6 +1498,162 @@
           "ready"
         ],
         "title": "Ready",
+        "type": "object"
+      },
+      "ReceiptBatch": {
+        "additionalProperties": false,
+        "description": "POST /api/v1/messages/receipts, by one of the recipient's own paired\nnodes (`node_id`, checked like `source_node_id`). One receipt is a batch\nof one; a node sends what it owes in batches of at most\nRECEIPT_BATCH_MAX.",
+        "properties": {
+          "node_id": {
+            "format": "uuid",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptItem"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Receipts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "node_id",
+          "receipts"
+        ],
+        "title": "ReceiptBatch",
+        "type": "object"
+      },
+      "ReceiptBatchResult": {
+        "additionalProperties": false,
+        "description": "The facts after the batch, one per message the caller is the\nrecipient of. `not_found` lists the rest: a message that does not exist,\nthat the caller may not see, or that the caller sent (the sender's own\nread is no receipt). It is settled: the node stops owing it.",
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptFacts"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "not_found": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Not Found",
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts"
+        ],
+        "title": "ReceiptBatchResult",
+        "type": "object"
+      },
+      "ReceiptFacts": {
+        "additionalProperties": false,
+        "description": "The recipient's facts about one message. `received_at` is the first\ndurable local storage by any of the recipient's nodes, `read_at` the\nfirst time the owner had the body displayed. Each is set once, by the\nserver's clock, and never moves; a read may arrive before a received\nand is kept (the received fact then stays unset until it comes).",
+        "properties": {
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeReceipt"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
+          "recipient_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Recipient Github Id",
+            "type": "integer"
+          },
+          "revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message_id",
+          "recipient_github_id",
+          "revision"
+        ],
+        "title": "ReceiptFacts",
+        "type": "object"
+      },
+      "ReceiptItem": {
+        "additionalProperties": false,
+        "description": "One receipt. `read` only ever comes from the owner's GUI after the\nbody was displayed (or an explicit mark-read), never from a\nnotification, a summary or the model.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "received",
+              "read"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "kind"
+        ],
+        "title": "ReceiptItem",
+        "type": "object"
+      },
+      "RecipientList": {
+        "additionalProperties": false,
+        "description": "GET /api/v1/messages/recipients: the existing team roster's active\nmembers, readable by every member's paired JARVIS (the roster route\nitself stays administrators' only). It includes the caller, who is\nshown as Me. Not a second directory: it is that roster, read.",
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            },
+            "title": "Members",
+            "type": "array"
+          }
+        },
+        "required": [
+          "members"
+        ],
+        "title": "RecipientList",
         "type": "object"
       },
       "ResolveRequest": {
@@ -1182,6 +1794,28 @@
         "title": "Resources",
         "type": "object"
       },
+      "Restore": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "restore",
+            "default": "restore",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "Restore",
+        "type": "object"
+      },
       "Roster": {
         "properties": {
           "member_limit": {
@@ -1206,6 +1840,33 @@
           "members"
         ],
         "title": "Roster",
+        "type": "object"
+      },
+      "SendResult": {
+        "additionalProperties": false,
+        "description": "The answer to POST /api/v1/messages, the same shape for a first send\nand for an identical retry. `duplicate` says the server had it already.\nIt carries what JARVIS stores in one transaction with the accepted\nmessage: its receipts (none yet) and the sender's own item after it, at\nthe server's revision, so no local copy of `on_message` can diverge.",
+        "properties": {
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "boolean"
+          },
+          "message": {
+            "$ref": "#/components/schemas/AcceptedMessage"
+          },
+          "receipts": {
+            "$ref": "#/components/schemas/ReceiptFacts"
+          },
+          "work_state": {
+            "$ref": "#/components/schemas/WorkState"
+          }
+        },
+        "required": [
+          "message",
+          "receipts",
+          "work_state",
+          "duplicate"
+        ],
+        "title": "SendResult",
         "type": "object"
       },
       "ServerHealth": {
@@ -1319,6 +1980,90 @@
         "title": "SessionsRevoked",
         "type": "object"
       },
+      "SetActionOwner": {
+        "additionalProperties": false,
+        "description": "Move to my side / Waiting on <correspondent>: the owner's cue only.",
+        "properties": {
+          "action_owner_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Action Owner Github Id",
+            "type": "integer"
+          },
+          "command": {
+            "const": "set_action_owner",
+            "default": "set_action_owner",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "action_owner_github_id"
+        ],
+        "title": "SetActionOwner",
+        "type": "object"
+      },
+      "SetAddressed": {
+        "additionalProperties": false,
+        "properties": {
+          "addressed": {
+            "title": "Addressed",
+            "type": "boolean"
+          },
+          "command": {
+            "const": "set_addressed",
+            "default": "set_addressed",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "addressed"
+        ],
+        "title": "SetAddressed",
+        "type": "object"
+      },
+      "SetUnreadReminder": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "set_unread_reminder",
+            "default": "set_unread_reminder",
+            "title": "Command",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "unread"
+        ],
+        "title": "SetUnreadReminder",
+        "type": "object"
+      },
       "Status": {
         "properties": {
           "me": {
@@ -1379,6 +2124,76 @@
         "title": "Status",
         "type": "object"
       },
+      "SyncEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/AcceptedMessage"
+          },
+          "receipts": {
+            "$ref": "#/components/schemas/ReceiptFacts"
+          },
+          "work_state": {
+            "$ref": "#/components/schemas/WorkState"
+          }
+        },
+        "required": [
+          "message",
+          "receipts",
+          "work_state"
+        ],
+        "title": "SyncEntry",
+        "type": "object"
+      },
+      "SyncPage": {
+        "additionalProperties": false,
+        "description": "GET /api/v1/messages/sync?node_id=\u2026&continuation=\u2026&limit=\u2026. `node_id`\nis the caller's own paired node (`source_node_not_owned` otherwise); the\ncontinuation is bound to it, so one node's scan never advances\nanother's.",
+        "properties": {
+          "continuation": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SyncEntry"
+            },
+            "maxItems": 50,
+            "title": "Entries",
+            "type": "array"
+          },
+          "epoch": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Epoch",
+            "type": "string"
+          },
+          "scan_complete": {
+            "title": "Scan Complete",
+            "type": "boolean"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epoch",
+          "entries",
+          "scan_complete",
+          "server_time"
+        ],
+        "title": "SyncPage",
+        "type": "object"
+      },
       "Team": {
         "properties": {
           "member_count": {
@@ -1405,6 +2220,41 @@
           "member_limit"
         ],
         "title": "Team",
+        "type": "object"
+      },
+      "TeamMember": {
+        "additionalProperties": false,
+        "properties": {
+          "github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Github Id",
+            "type": "integer"
+          },
+          "login": {
+            "maxLength": 39,
+            "minLength": 1,
+            "title": "Login",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "github_id",
+          "login"
+        ],
+        "title": "TeamMember",
         "type": "object"
       },
       "ValidationError": {
@@ -1494,6 +2344,150 @@
         ],
         "title": "Version",
         "type": "object"
+      },
+      "WorkCommandRequest": {
+        "additionalProperties": false,
+        "description": "PUT /api/v1/messages/threads/{thread_id}/work-state. (Supersedes the\nhandoff's proposed /messages/{message_id}/work-state: the item is the\nthread.)",
+        "properties": {
+          "change": {
+            "discriminator": {
+              "mapping": {
+                "dismiss": "#/components/schemas/Dismiss",
+                "open": "#/components/schemas/OpenItem",
+                "put_back": "#/components/schemas/PutBack",
+                "restore": "#/components/schemas/Restore",
+                "set_action_owner": "#/components/schemas/SetActionOwner",
+                "set_addressed": "#/components/schemas/SetAddressed",
+                "set_unread_reminder": "#/components/schemas/SetUnreadReminder"
+              },
+              "propertyName": "command"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OpenItem"
+              },
+              {
+                "$ref": "#/components/schemas/PutBack"
+              },
+              {
+                "$ref": "#/components/schemas/SetAddressed"
+              },
+              {
+                "$ref": "#/components/schemas/SetUnreadReminder"
+              },
+              {
+                "$ref": "#/components/schemas/SetActionOwner"
+              },
+              {
+                "$ref": "#/components/schemas/Dismiss"
+              },
+              {
+                "$ref": "#/components/schemas/Restore"
+              }
+            ],
+            "title": "Change"
+          }
+        },
+        "required": [
+          "change"
+        ],
+        "title": "WorkCommandRequest",
+        "type": "object"
+      },
+      "WorkState": {
+        "additionalProperties": false,
+        "properties": {
+          "action_owner_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Action Owner Github Id",
+            "type": "integer"
+          },
+          "addressed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Addressed At"
+          },
+          "arrival_at": {
+            "format": "date-time",
+            "title": "Arrival At",
+            "type": "string"
+          },
+          "correspondent_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Correspondent Github Id",
+            "type": "integer"
+          },
+          "dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dismissed At"
+          },
+          "owner_github_id": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": -2147483648.0,
+            "title": "Owner Github Id",
+            "type": "integer"
+          },
+          "placement": {
+            "enum": [
+              "queued",
+              "active",
+              "inactive"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "server_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Server Id",
+            "type": "string"
+          },
+          "thread_id": {
+            "format": "uuid",
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "unread_reminder": {
+            "title": "Unread Reminder",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "server_id",
+          "owner_github_id",
+          "thread_id",
+          "correspondent_github_id",
+          "placement",
+          "arrival_at",
+          "unread_reminder",
+          "action_owner_github_id",
+          "revision"
+        ],
+        "title": "WorkState",
+        "type": "object"
       }
     }
   },
@@ -1503,6 +2497,164 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/attachments": {
+      "post": {
+        "operationId": "create_attachment_api_v1_attachments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Attachment"
+      }
+    },
+    "/api/v1/attachments/{attachment_id}": {
+      "get": {
+        "operationId": "attachment_status_api_v1_attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attachment Status"
+      }
+    },
+    "/api/v1/attachments/{attachment_id}/bytes": {
+      "put": {
+        "operationId": "upload_attachment_api_v1_attachments__attachment_id__bytes_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Attachment"
+      }
+    },
+    "/api/v1/attachments/{attachment_id}/finalize": {
+      "post": {
+        "operationId": "finalize_attachment_api_v1_attachments__attachment_id__finalize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finalize Attachment"
+      }
+    },
     "/api/v1/device-authorizations": {
       "post": {
         "operationId": "device_start_api_v1_device_authorizations_post",
@@ -1931,6 +3083,988 @@
           }
         },
         "summary": "Get Me"
+      }
+    },
+    "/api/v1/messages": {
+      "post": {
+        "operationId": "send_message_api_v1_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "POST /api/v1/messages. `content_digest` is `content_digest()` over this\ncontent with the session's server and sender; the server recomputes it\nand refuses a mismatch. `idempotency_key` is reserved when the revision\nis approved and kept for every retry of exactly that revision.",
+                "properties": {
+                  "attachments": {
+                    "items": {
+                      "additionalProperties": false,
+                      "description": "One file in a message's immutable manifest. The bytes are uploaded\nseparately; this binds them by size and SHA-256. The order of the\nmanifest is part of what was approved.",
+                      "properties": {
+                        "attachment_id": {
+                          "format": "uuid",
+                          "title": "Attachment Id",
+                          "type": "string"
+                        },
+                        "filename": {
+                          "maxLength": 255,
+                          "minLength": 1,
+                          "title": "Filename",
+                          "type": "string"
+                        },
+                        "media_type": {
+                          "description": "The sender's hint only; never a safety decision",
+                          "maxLength": 127,
+                          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$",
+                          "title": "Media Type",
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[0-9a-f]{64}$",
+                          "title": "Sha256",
+                          "type": "string"
+                        },
+                        "size_bytes": {
+                          "maximum": 26214400.0,
+                          "minimum": 0.0,
+                          "title": "Size Bytes",
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "attachment_id",
+                        "filename",
+                        "media_type",
+                        "size_bytes",
+                        "sha256"
+                      ],
+                      "title": "AttachmentRef",
+                      "type": "object"
+                    },
+                    "maxItems": 10,
+                    "title": "Attachments",
+                    "type": "array"
+                  },
+                  "content_digest": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "title": "Content Digest",
+                    "type": "string"
+                  },
+                  "content_revision": {
+                    "maximum": 9.223372036854776e+18,
+                    "minimum": 1.0,
+                    "title": "Content Revision",
+                    "type": "integer"
+                  },
+                  "idempotency_key": {
+                    "format": "uuid",
+                    "title": "Idempotency Key",
+                    "type": "string"
+                  },
+                  "in_reply_to_message_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "In Reply To Message Id"
+                  },
+                  "message_id": {
+                    "format": "uuid",
+                    "title": "Message Id",
+                    "type": "string"
+                  },
+                  "recipient_github_id": {
+                    "maximum": 9.223372036854776e+18,
+                    "minimum": -2147483648.0,
+                    "title": "Recipient Github Id",
+                    "type": "integer"
+                  },
+                  "related_message_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 10,
+                    "title": "Related Message Ids",
+                    "type": "array"
+                  },
+                  "schema_version": {
+                    "const": 1,
+                    "default": 1,
+                    "title": "Schema Version",
+                    "type": "integer"
+                  },
+                  "source_node_id": {
+                    "format": "uuid",
+                    "title": "Source Node Id",
+                    "type": "string"
+                  },
+                  "subject": {
+                    "default": "",
+                    "maxLength": 200,
+                    "title": "Subject",
+                    "type": "string"
+                  },
+                  "text": {
+                    "default": "",
+                    "maxLength": 20000,
+                    "title": "Text",
+                    "type": "string"
+                  },
+                  "thread_id": {
+                    "format": "uuid",
+                    "title": "Thread Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "message_id",
+                  "thread_id",
+                  "recipient_github_id",
+                  "content_revision",
+                  "source_node_id",
+                  "idempotency_key",
+                  "content_digest"
+                ],
+                "title": "SendRequest",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Send Message"
+      }
+    },
+    "/api/v1/messages/receipts": {
+      "post": {
+        "operationId": "message_receipts_api_v1_messages_receipts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiptBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptBatchResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Message Receipts"
+      }
+    },
+    "/api/v1/messages/recipients": {
+      "get": {
+        "operationId": "message_recipients_api_v1_messages_recipients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipientList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Message Recipients"
+      }
+    },
+    "/api/v1/messages/sync": {
+      "get": {
+        "operationId": "sync_messages_api_v1_messages_sync_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "continuation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continuation"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Sync Messages"
+      }
+    },
+    "/api/v1/messages/threads/{thread_id}/work-state": {
+      "put": {
+        "operationId": "thread_work_state_api_v1_messages_threads__thread_id__work_state_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Thread Work State"
+      }
+    },
+    "/api/v1/messages/{message_id}": {
+      "get": {
+        "operationId": "get_message_api_v1_messages__message_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedMessage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Message"
+      }
+    },
+    "/api/v1/messages/{message_id}/announcement": {
+      "post": {
+        "operationId": "message_announcement_api_v1_messages__message_id__announcement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnouncementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnouncementLease"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Message Announcement"
+      }
+    },
+    "/api/v1/messages/{message_id}/attachments/{attachment_id}/content": {
+      "get": {
+        "operationId": "attachment_content_api_v1_messages__message_id__attachments__attachment_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attachment Content"
       }
     },
     "/api/v1/network/nodes/self": {

@@ -86,11 +86,11 @@ def test_no_route_without_both_conditions(make_client, github, over):
     c = make_client(**over)
     browser_token(c, github, ADMIN)
     assert mint(c).status_code == 404
-    assert PATH not in {r.path for r in c.app.routes}
+    assert PATH not in {getattr(r, "path", None) for r in c.app.routes}
 
 
 def test_route_is_left_out_of_the_contract(staging):
-    assert PATH in {r.path for r in staging.app.routes}
+    assert PATH in {getattr(r, "path", None) for r in staging.app.routes}
     assert PATH not in staging.app.openapi()["paths"]
 
 

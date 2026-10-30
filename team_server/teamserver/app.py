@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -22,11 +24,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pymongo.errors import PyMongoError
 
-from teamserver import (build_info, clock, db as dbmod, login, network, pages,
-                        pairing, sessions, staging_sessions, team as team_mod)
+from teamserver import (attachment_storage, attachments, build_info, clock, db as dbmod,
+                        login, messaging, network, pages, pairing, sessions,
+                        staging_sessions, team as team_mod)
 from teamserver.config import Config, ConfigError, load
 from teamserver.errors import Problem, forbidden, unauthenticated
 from teamserver.github import GitHub, RealGitHub
+from teamserver.messaging_models import MESSAGE_REQUEST_MAX_BYTES
 from teamserver.models import (DeviceDecided, DeviceDecision, DeviceExchange,
                                DevicePending, DeviceSession, DeviceStart,
                                DeviceStarted, ErrorBody, Live, LoggedOut, Me,
@@ -47,6 +51,72 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; "
 ERRORS = {401: {"model": ErrorBody}, 403: {"model": ErrorBody},
           409: {"model": ErrorBody}, 429: {"model": ErrorBody},
           503: {"model": ErrorBody}}
+
+
+# -- the body limit -------------------------------------------------------------
+
+TOO_LARGE = {"error": {"code": "too_large", "message": "Request too large."}}
+
+
+class _TooLarge(Exception):
+    pass
+
+
+def body_limit(method: str, path: str) -> Optional[int]:
+    """The most bytes a request body may carry: the message send has its
+    own larger limit, a file's byte upload (None) counts its own bytes,
+    everything else MAX_BODY."""
+    if attachments.is_upload(method, path):
+        return None
+    if method == "POST" and path == messaging.PREFIX:
+        return MESSAGE_REQUEST_MAX_BYTES
+    return MAX_BODY
+
+
+class BodyLimit:
+    """Refuses a body over `body_limit` with 413 whether it declares its
+    length or not: a Content-Length over the limit (or not a number) before
+    anything is read, and a chunked body as soon as the bytes read pass it,
+    before the route has the whole of it in memory."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        limit = (body_limit(scope["method"], scope["path"])
+                 if scope["type"] == "http" else None)
+        if limit is None:
+            return await self.app(scope, receive, send)
+        refuse = JSONResponse(TOO_LARGE, status_code=413)
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            return await refuse(scope, receive, send)
+        read, over, answered = 0, False, False
+
+        async def counted():
+            nonlocal read, over
+            message = await receive()
+            if message["type"] == "http.request":
+                read += len(message.get("body", b""))
+                if read > limit:
+                    over = True
+                    raise _TooLarge()
+            return message
+
+        async def guarded(message):
+            nonlocal answered
+            if over:
+                return      # whatever the route made of the cut-off body
+            answered = message["type"] == "http.response.start" or answered
+            await send(message)
+
+        try:
+            await self.app(scope, counted, guarded)
+        except Exception:
+            if not over:
+                raise
+        if over and not answered:
+            await refuse(scope, receive, send)
 
 
 # -- views -------------------------------------------------------------------
@@ -99,6 +169,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
             st.db = dbmod.database(st.client, config.mongodb_database)
             tasks = [asyncio.create_task(_init_until_done(app)),
                      asyncio.create_task(network.watch(st.health, st.db))]
+            if config.messaging_enabled:
+                tasks.append(asyncio.create_task(_start_attachments(app)))
         yield
         for task in tasks:
             task.cancel()
@@ -117,17 +189,14 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
 
     # -- middleware ----------------------------------------------------------
 
+    # Added first, so it runs inside guard_and_log and its 413 gets the headers.
+    app.add_middleware(BodyLimit)
+
     @app.middleware("http")
     async def guard_and_log(request: Request, call_next):
         started = time.monotonic()
-        length = request.headers.get("content-length")
-        if length and (not length.isdigit() or int(length) > MAX_BODY):
-            response: Response = JSONResponse(
-                {"error": {"code": "too_large", "message": "Request too large."}},
-                status_code=413)
-        else:
-            response = await call_next(request)
-        response.headers["Content-Security-Policy"] = CSP
+        response: Response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", CSP)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -253,7 +322,9 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Version(service=build_info.SERVICE, version=build_info.VERSION,
                        commit=build_info.commit(), api_version=build_info.API_VERSION,
                        server_id=request.app.state.server_id,
-                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY])
+                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY,
+                                     *messaging.capabilities(bool(
+                                         config and config.messaging_enabled))])
 
     @app.get("/health/live", response_model=Live)
     async def live():
@@ -476,6 +547,14 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return await network.publish(database(request), p.member, p.team, body,
                                      request.app.state.health)
 
+    messaging_on = bool(config and config.messaging_enabled)
+
+    def attachment_service(request: Request) -> attachments.AttachmentService:
+        return messaging.started(request, messaging_on, "attachments")
+
+    messaging.mount(app, device=device, enabled=messaging_on)
+    app.include_router(attachments.router(device=device, service=attachment_service))
+
     if config and config.test_sessions_enabled:
         # Every method, and no body parameter: FastAPI would otherwise answer
         # 405 or 422 before the key is checked, telling a caller without the
@@ -510,6 +589,30 @@ async def _init_once(app: FastAPI) -> None:
         log.warning("INITIAL_ADMIN_GITHUB_ID is still set after bootstrap; it is "
                     "ignored and should be removed")
     st.initialized = True
+
+
+def _file_settings(config: Optional[Config]) -> attachments.AttachmentSettings:
+    return (config and config.attachment_settings) or attachments.DEFAULT_SETTINGS
+
+
+async def _start_attachments(app: FastAPI) -> None:
+    """The messaging service, the file service and its recovery worker, built
+    once the database is initialized (messaging on only); until then their
+    routes answer `not_ready`. Cancelled with the lifespan."""
+    st = app.state
+    while not st.initialized:
+        await asyncio.sleep(0.05)
+    s = _file_settings(st.config)
+    st.attachment_storage = attachment_storage.GridFSAttachmentStorage(
+        st.db, clock=clock.now, expiry_sec=s.staging_expiry_sec,
+        quota_bytes=s.staging_quota_bytes)
+    repository = messaging.MongoMessages(st.db)
+    st.messaging = messaging.Messaging(repository, attachments=st.attachment_storage,
+                                       package_max_bytes=s.package_max_bytes)
+    st.attachments = attachments.AttachmentService(st.attachment_storage, repository,
+                                                   settings=s)
+    await attachments.watch(st.attachment_storage, repository,
+                            worker_id=f"{socket.gethostname()}-{uuid.uuid4()}")
 
 
 async def _init_until_done(app: FastAPI) -> None:

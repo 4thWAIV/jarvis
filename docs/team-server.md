@@ -2,7 +2,7 @@
 
 The team server (`team_server/`) is a small FastAPI service, deployed on its own, that gives one team GitHub sign-in, administrator-managed membership and a way to connect JARVIS to it. It is separate from JARVIS: its own dependencies (`team_server/requirements.txt`), its own image (`team_server/Dockerfile`) and its own tests. JARVIS keeps working, voice and agents included, when the team server is down or was never set up.
 
-The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Team messaging is not in it; `/version` lists exactly what it offers (`network` among its capabilities).
+The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Messages between members (below) are switched off unless `TEAM_SERVER_MESSAGING` is on; `/version` lists exactly what it offers (`network` among its capabilities, and `messaging.v1` only while messaging is on).
 
 ## Configuration
 
@@ -20,6 +20,8 @@ Set in the hosting environment (Railway variables). Never put values in files or
 | `TEAM_SERVER_DEV_INSECURE` | never in hosting | `1` allows a plain-http loopback `PUBLIC_BASE_URL` for local development. |
 | `TEST_SESSION_KEY_SHA256` | staging only | SHA-256 hex digest of the staging test key; turns on the test sign-in (below). Set anywhere but staging, the server refuses to start with `config_invalid`. |
 | `RAILWAY_ENVIRONMENT_NAME` | set by Railway | The Railway environment's name. The test sign-in exists only when it is `staging`. |
+| `TEAM_SERVER_MESSAGING` | no | `1`/`true`/`yes`/`on` switches messages and their files on. Off (the default), `messaging.v1` is not offered and every messaging and file route answers 503 `messaging_disabled`; switching it off deletes nothing. |
+| `TEAM_SERVER_FILE_MAX_BYTES`, `TEAM_SERVER_PACKAGE_MAX_BYTES`, `TEAM_SERVER_STAGING_QUOTA_BYTES`, `TEAM_SERVER_STAGING_EXPIRY_SEC`, `TEAM_SERVER_UPLOAD_STREAMS_MAX`, `TEAM_SERVER_UPLOAD_IDLE_TIMEOUT_SEC` | no | File limits, each only ever lower than its default: 25 MiB per file, 100 MiB per message, 200 MiB of unsent staged files per member, staged files kept 24 h, 2 uploads at once per member, an upload idle for 60 s is ended. A value above the default, zero or not a whole number is `config_invalid`, by name. |
 
 Missing or malformed values are reported by name in the log and `/health/ready` answers 503 `config_invalid`; values are never printed.
 
@@ -41,6 +43,18 @@ Every paired JARVIS sends `POST /api/v1/network/nodes/self` every five seconds w
 - A node that has sent nothing for 30 days is removed.
 - The snapshot also carries the server's own health: a database ping every five seconds, the last node write that succeeded, the last database error by class name only, uptime, CPU and memory, and a short history. When the database cannot be reached the route answers 503 with that health.
 - The team's account key (random, 256 bits) is made the first time a paired JARVIS asks for its status and is kept on the team record. It is given only to device sessions, in `GET /api/v1/status`, and is never logged. JARVIS keys its brain account references with it, so one subscription on two machines counts once.
+
+## Messages
+
+With `TEAM_SERVER_MESSAGING` on, a paired JARVIS sends its owner's approved messages to members (`POST /api/v1/messages`), and each JARVIS reads what its owner may see with a resumable scan (`/api/v1/messages/sync`). Only device sessions use these routes. The server checks the sender's session, that the sending node is the sender's (a node is bound to the member who first used it, for good), that the recipient is an active member, that a reply's parent and any linked message are ones both of them can see, the content digest, and that an idempotency key is not reused for a different message. It does not see or check the owner's approval: each JARVIS is trusted to send only what its owner approved.
+
+- An accepted message is immutable and never deleted in this release; a message nobody may see is answered exactly like one that does not exist (`message_not_found`), administrators included.
+- The send body may be up to 128 KiB, counted as it is read; other JSON routes keep the 16 KiB limit.
+- Receipts (received, read) and each owner's work state on a conversation are their own records. Which of an owner's JARVIS announces an arrival is a 30-second lease per message; a node that dies mid-announcement is taken over when it lapses, so an arrival may be said twice, never lost.
+
+Files go up before the message that names them: each upload is streamed (from byte 0 on every attempt, counted as it arrives whatever `Content-Length` says), verified by size and SHA-256, and pinned to its message when the message is accepted. Downloads go only through an accepted message the viewer may see, as `application/octet-stream` with an `attachment` disposition and a sandboxing CSP.
+
+A recovery worker runs every 60 s under one fenced 120 s lease, so only one replica acts at a time: a pin older than an hour whose message was accepted is marked published; one with no accepted message is released; expired staged files are deleted with their bytes; upload attempts nobody chose are swept after an hour. Nothing an accepted message names is ever deleted. The upload concurrency limit is held in the process, which is right for the one replica `railway.json` runs.
 
 ## Staging test sign-in
 
@@ -130,4 +144,4 @@ Never restore over the shared cluster. Restore into an isolated target (a separa
 
 ## What is stored
 
-One MongoDB database: `installation` (server ID), `team` (the team and its roster, one document), `sessions` (SHA-256 of each session credential, never the credential), `oauth_states` and `device_authorizations` (short-lived, one-use), `audit` (administrative history, kept 90 days), `network_nodes` (each JARVIS backend's current record, removed 30 days after its last update) and `network_meta` (the snapshot's revision). The team record also holds the network account key. No GitHub tokens are kept. Logs record method, path and status only, never query strings, codes or tokens.
+One MongoDB database: `installation` (server ID), `team` (the team and its roster, one document), `sessions` (SHA-256 of each session credential, never the credential), `oauth_states` and `device_authorizations` (short-lived, one-use), `audit` (administrative history, kept 90 days), `network_nodes` (each JARVIS backend's current record, removed 30 days after its last update) and `network_meta` (the snapshot's revision). With messaging: `messages` (accepted messages, immutable), `message_receipts`, `message_work`, `message_announcements`, `messaging_nodes` (node bindings), `message_sync` (scan continuations by digest, expiring), `attachment_staging`, `attachment_attempts`, `attachment_recovery` and the GridFS bucket `attachment_bytes`. Messaging logs carry ids, revisions and codes only, never a message's words, file names or bytes. The team record also holds the network account key. No GitHub tokens are kept. Logs record method, path and status only, never query strings, codes or tokens.

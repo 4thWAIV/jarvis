@@ -34,6 +34,16 @@ def test_data_dir_is_created(monkeypatch, tmp_path):
     assert data_paths.data_dir().exists()
 
 
+def test_messaging_files_are_private_folders_under_data_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    from jarvis import data_paths
+    importlib.reload(data_paths)
+    assert data_paths.messaging_snapshots_dir() == tmp_path / "messaging" / "snapshots"
+    assert data_paths.messaging_downloads_dir() == tmp_path / "messaging" / "downloads"
+    assert data_paths.messaging_snapshots_dir() != data_paths.session_messages_dir()
+    assert not (tmp_path / "messaging").exists(), "the files service creates them, privately"
+
+
 def test_brain_home_is_under_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import importlib

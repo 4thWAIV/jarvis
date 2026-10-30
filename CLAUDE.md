@@ -164,8 +164,9 @@ pinned `requirements.txt`, `Dockerfile`, tests (`team_server/tests`, against a
 real MongoDB) and API contract (`team_server/openapi.json`, checked by its
 tests). It gives one team GitHub sign-in, administrator-managed membership,
 device pairing, status, version and health, and holds the team's network
-inventory and each node's presence (see "The Network view"); messaging is
-not in it. Operating it is `docs/team-server.md`. JARVIS's side is
+inventory and each node's presence (see "The Network view"), and, only
+while `TEAM_SERVER_MESSAGING` is on, messages between members (see
+"Messages between people"). Operating it is `docs/team-server.md`. JARVIS's side is
 `team_client.py` (the connection, its 30-second status poll and the
 Keychain store, through `security` with the secret on stdin) and
 `team_api.py` (`/api/team*`, the Settings Team section's routes). The
@@ -183,6 +184,34 @@ the server refuses to start with that digest anywhere else, a wrong or missing
 key gets the same 404 as no route, and it is not in `openapi.json`. The key
 itself is only in this Mac's Keychain; rotating or removing it is in
 `docs/team-server.md`.
+
+## Messages between people
+Off unless both sides are switched on: `JARVIS_MESSAGING` here and
+`TEAM_SERVER_MESSAGING` (which adds `messaging.v1` to `/version`) on the
+team server; `messaging_ports.availability` fails closed. A message to a
+person goes the agents' way (`transmission.py`): drafted (the page or the
+brain's `draft_message`), reviewed on a capture of its own whose text is
+the read-back (`message_approvals.Reviews`), accepted with Send or after
+the read-back (`send_message`), staged and offered the cancel window; the
+hand-over is the owner's approval (`MessageApprovals.approve`). Nothing
+reaches the team server's send route except through `GuardedTransport`,
+which releases only the stored approved envelope of a send already on
+record as `submitting`; an edit after review makes a new revision that
+must be reviewed again. `messaging_runtime.py` builds the one store
+(`messaging_store.py`), file snapshots (`messaging_files.py`), guard,
+delivery loop (`messaging_client.py`), transfer presentation
+(`transfer_presentation.py`, the `human_transfer` frame) and arrival
+announcer (`arrival_announcer.py`, the ordinary notice path) at startup,
+and mounts `/api/team/messages*` (`messaging_api.py`). The team server's
+side is `team_server/teamserver/messaging.py` and `attachments.py`; the
+page's is the Queue tab (`QueuePanel.tsx`, `QueueItemView.tsx`,
+`queue.ts`, `queueStore.ts`). The wire contract is
+`team_server/teamserver/messaging_models.py`, copied (with a generated
+header) into `jarvis/messaging_wire.py`, and its types generated into
+`frontend/src/messagingContract.ts`, by
+`scripts/generate_messaging_contract.py` (`--check` lists stale copies).
+`tests/test_messaging_integration.py` runs the end-to-end scenarios
+against a real local team server and needs TEAM_SERVER_TEST_MONGODB_URI.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -417,6 +446,30 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
 - `team_server/teamserver/staging_sessions.py` — The staging-only test sign-in
   (see "The team server")
+- `transmission.py` — One message sent on Tim's word, whoever it is for:
+  the sequence every agent steer and every message to a person goes through
+  (read-back, staging, cancel window, hand-over), with each kind of
+  recipient an adapter
+- `messaging_runtime.py` — Human messaging put together once at startup
+  (see "Messages between people"): store, files, guard, delivery,
+  presentation, announcer and the page's routes
+- `messaging_store.py` — The local record of human messaging: drafts,
+  approved envelopes and sends, messages, receipts, work items, sync
+  position, and what is owed to the team server
+- `messaging_client.py` — Delivery: the transport over the paired team
+  connection and the loop that submits approved sends, reconciles messages
+  and settles owed receipts and work commands
+- `message_approvals.py` — The owner's approval of a message to a person and
+  the one gate (`GuardedTransport`) every outgoing human message passes
+- `messaging_api.py` — The page's `/api/team/messages*` routes
+- `messaging_files.py` — A message's files: private snapshots, upload,
+  verified downloads (quarantined, never opened) and their routes
+- `arrival_announcer.py` — Saying that a person's message has come in,
+  through the ordinary notice path
+- `transfer_presentation.py` — The `human_transfer` frames the rays draw,
+  and the announcement lease
+- `frontend/src/QueuePanel.tsx` / `queue.ts` — The Queue tab, and the Queue's
+  live state: its routes read into one record and the owner's commands
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -480,6 +533,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real
   configuration
+
+- `JARVIS_MESSAGING` (optional, default off) — `1`/`true`/`yes`/`on` switches
+  on messages between people (see "Messages between people"); the team
+  server needs `TEAM_SERVER_MESSAGING` too. Switching it off deletes nothing
 
 - `JARVIS_TEAM_DEV_SERVERS` (optional) — comma-separated exact origins
   (e.g. `http://127.0.0.1:18080`) JARVIS may connect to as a team server

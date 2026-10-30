@@ -76,8 +76,9 @@ function CaptureBox({ capture }: { capture: Capture }) {
 }
 
 /** Accept, Delete and Send. Each waits for the server, which changes the box
- *  itself; a refusal is shown until the next press. */
-function CaptureButtons({ capture }: { capture: Capture }) {
+ *  itself; a refusal is shown until the next press. The Queue's inline
+ *  review (MessageReview.tsx) uses these same buttons on its capture. */
+export function CaptureButtons({ capture }: { capture: Capture }) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const sending = capture.state === "transmitting";

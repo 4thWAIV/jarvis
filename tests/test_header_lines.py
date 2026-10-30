@@ -347,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "messaging_files.cleanup": (
+        "the `message_id` and `attachment_id` it reads are columns of its own "
+        "messaging_files table, uuids it wrote itself, used only to find and "
+        "remove private file copies; nothing it reads is spoken, logged or put "
+        "in a note to the brain, and it returns a count"),
     "brain_accounts.refresh": (
         "the `provider` it reads is brain_provider's own function, called to "
         "find a configured brain, not a session's field; its one f-string is a "
@@ -919,7 +924,9 @@ def _drive_capture_send(server, session, monkeypatch):
     box, and the note the brain reads with the next turn when it goes."""
     import asyncio
     from fastapi import HTTPException
+    from starlette.requests import Request
 
+    page = Request({"type": "http", "headers": []})
     monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
     monkeypatch.setattr(server, "_notes_for_brain", [])
     out = []
@@ -932,7 +939,7 @@ def _drive_capture_send(server, session, monkeypatch):
         server._captures[1] = {"id": 1, "text": "carry on", "to": "hammer",
                                "heard": [], "read": None, "state": "capturing"}
         try:
-            out.append(str(asyncio.run(server.api_capture_send(1))))
+            out.append(str(asyncio.run(server.api_capture_send(1, page))))
         except HTTPException as e:
             out.append(str(e.detail))
         out.append(server._with_notes_for_brain(""))
@@ -1005,6 +1012,24 @@ def _drive_perform_steer(server, session, monkeypatch):
     return said
 
 
+def _drive_perform_steer_queued(server, session, monkeypatch):
+    """The sentence said when the message waits its turn
+    (`_AgentDestination.say_queued`, through `transmission.perform`)."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_why_message_waits",
+                        lambda session_id, message_id=None: "is in the middle of a turn")
+    item = server._StagedSteer(session_id=session.session_id,
+                               voice_name=session.voice_name,
+                               project=session.project,
+                               prompt="carry on",
+                               socket_path=session.socket_path)
+    asyncio.run(server._perform_steer(item))
+    return speech.said
+
+
 def _drive_perform_dialog(server, session, monkeypatch):
     import asyncio
 
@@ -1060,6 +1085,12 @@ DRIVERS = {
     "server.api_capture_send": _drive_capture_send,
     "server.tool_answer_dialog": _drive_answer_dialog,
     "server._perform_steer": _drive_perform_steer,
+    # The agent's adapters for `transmission`: `_AgentRecipient` (staging)
+    # and `_AgentDestination` (sending), reached through the same paths.
+    "server.refusal": _drive_steer_session,
+    "server.unheard": _drive_steer_session,
+    "server.say_outcome": _drive_perform_steer,
+    "server.say_queued": _drive_perform_steer_queued,
     "server._perform_dialog": _drive_perform_dialog,
 }
 
