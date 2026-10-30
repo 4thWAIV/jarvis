@@ -261,4 +261,6 @@ def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> No
     def context() -> Optional[messaging_files.FilesContext]:
         found = runtime()
         return found.files_context() if found is not None else None
-    app.include_router(messaging_files.router(context))
+    # Its routes themselves, as every other JARVIS route is registered (an
+    # included router would be one opaque entry among the app's routes).
+    app.router.routes.extend(messaging_files.router(context).routes)
