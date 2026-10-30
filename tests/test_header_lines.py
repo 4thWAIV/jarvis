@@ -347,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "messaging_files.cleanup": (
+        "the `message_id` and `attachment_id` it reads are columns of its own "
+        "messaging_files table, uuids it wrote itself, used only to find and "
+        "remove private file copies; nothing it reads is spoken, logged or put "
+        "in a note to the brain, and it returns a count"),
     "brain_accounts.refresh": (
         "the `provider` it reads is brain_provider's own function, called to "
         "find a configured brain, not a session's field; its one f-string is a "

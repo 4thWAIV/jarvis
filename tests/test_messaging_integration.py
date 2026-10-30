@@ -946,3 +946,52 @@ async def test_an_arrival_never_disturbs_what_he_is_writing_or_reviewing(
     incoming = _item(await tim.snapshot(), draft["thread_id"])
     assert incoming["work_state"]["unread_reminder"] and \
         incoming["messages"][0]["receipts"]["read_at"] is None, "speech is not reading"
+
+
+# -- the page, on the real routes ---------------------------------------------------------
+
+@pytest.mark.page
+@pytest.mark.asyncio
+async def test_the_page_opens_an_item_on_the_real_routes_and_only_then_reads_it(
+        server, team_server, nodes, monkeypatch):
+    """The built page served by a JARVIS process, its Queue on that
+    process's real routes and store: the arrival is listed, opening the item
+    shows the body, and only then is the read receipt made."""
+    from tests.test_agents_list_fits import async_api
+    from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+    if not (ROOT / "jarvis" / "web" / "index.html").is_file():
+        pytest.skip("build the page first (cd frontend && npm run build)")
+    tim = await here(server, team_server, TIM, monkeypatch)
+    desk = await nodes(team_server, TIM, "desk")
+    sent = await tim.approved(TIM, "Read me on the desk.", subject="On the desk")
+    await tim.tick()
+    await desk.until(P, lambda s: _item(s, sent["thread_id"]) is not None, "desk has it")
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        # Not first-run setup: the voice key is said to be there (nothing speaks).
+        await page.route("**/api/settings/status", lambda r: r.fulfill(
+            status=200, content_type="application/json", body=json.dumps({
+                "claude_code_installed": True, "server_port": desk.port, "uptime_seconds": 1,
+                "env_keys_set": {"fish_audio": True, "fish_voice_id": True,
+                                 "user_name": "Tim"}})))
+        reads = []
+        page.on("request", lambda req: reads.append(req.url)
+                if req.method == "POST" and req.url.endswith("/read") else None)
+        await page.goto(desk.url + "/")
+        await page.click(".right-tabs [aria-label='Queue']")
+        row = f'.queue-view li[data-thread-id="{sent["thread_id"]}"] .queue-row'
+        await page.wait_for_selector(row, timeout=20000)
+        assert "On the desk" in await page.locator(row).inner_text()
+        assert reads == [], "listing is not reading"
+        await page.click(row)
+        await page.wait_for_selector(".message-text", timeout=20000)
+        assert "Read me on the desk." in await page.locator(".message-text").first.inner_text()
+        await desk.until(P, lambda s: _item(s, sent["thread_id"])["messages"][0]["receipts"][
+            "read_at"] is not None, "the read receipt, once the body was on screen")
+        assert len(reads) == 1
+        await browser.close()
