@@ -44,6 +44,7 @@ from fastapi.responses import StreamingResponse
 
 from teamserver import clock as clock_mod
 from teamserver.errors import Problem
+from teamserver.messaging import refusal
 from teamserver.messaging_models import (ERRORS, NO_FAULTS, ORPHAN_PIN_AFTER_SEC,
                                          RECOVERY_LEASE_SEC, AcceptedMessage, AttachmentCreate,
                                          AttachmentRef, AttachmentStatus, ContractError, Faults)
@@ -102,11 +103,6 @@ class AttachmentSettings:
 
 
 DEFAULT_SETTINGS = AttachmentSettings.from_env({})
-
-
-def problem(e: ContractError) -> Problem:
-    spec = ERRORS[e.code]
-    return Problem(spec.status, e.code, spec.shown)
 
 
 def status_of(record: StagingRecord) -> AttachmentStatus:
@@ -239,7 +235,7 @@ def router(*, device: Callable[..., Awaitable[Principal]],
         try:
             return await call
         except ContractError as e:
-            raise problem(e) from None
+            raise refusal(e) from None
 
     @routes.post("/api/v1/attachments", response_model=AttachmentStatus)
     async def create_attachment(request: Request, body: AttachmentCreate,

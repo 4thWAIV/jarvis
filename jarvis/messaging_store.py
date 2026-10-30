@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 from uuid import UUID
 
-from jarvis import data_paths
+from jarvis import data_paths, run_store
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 
@@ -108,11 +108,7 @@ class SqliteMessagingStore:
     # -- connection and schema ---------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path))
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        return run_store._connect(self.path)
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -220,6 +216,19 @@ class SqliteMessagingStore:
             draft = draft.model_copy(update={"capture_id": capture_id})
             self._write_draft(conn, server_id, owner_github_id, draft)
         return draft
+
+    def forget_captures(self) -> None:
+        """Every draft's review capture forgotten, at startup: captures live
+        in the server's memory and their numbering starts again with it, so
+        a number kept from before would name some other capture. A draft
+        awaiting approval stays so; reviewing it again opens its capture."""
+        with self._tx() as conn:
+            for row in conn.execute("SELECT server_id, owner, body FROM human_drafts "
+                                    "WHERE json_extract(body, '$.capture_id') IS NOT NULL"
+                                    ).fetchall():
+                draft = ports.Draft.model_validate_json(row["body"])
+                self._write_draft(conn, row["server_id"], row["owner"],
+                                  draft.model_copy(update={"capture_id": None}))
 
     def draft(self, server_id: str, owner_github_id: int,
               message_id: UUID) -> Optional[ports.Draft]:

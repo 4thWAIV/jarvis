@@ -87,14 +87,27 @@ def _ms(at: datetime) -> datetime:
     return at.replace(microsecond=at.microsecond // 1000 * 1000)
 
 
-def _refusal(e: ContractError) -> Problem:
+def refusal(e: ContractError) -> Problem:
+    """The one way a ContractError becomes the problem a route answers."""
     spec = ERRORS[e.code]
     extra = {"latest": e.latest.model_dump(mode="json")} if e.latest is not None else {}
     return Problem(spec.status, e.code, spec.shown, **extra)
 
 
 def refused(code: str) -> Problem:
-    return _refusal(ContractError(code))
+    return refusal(ContractError(code))
+
+
+def started(request: Request, enabled: bool, name: str):
+    """The messaging gate both routers share: the service the app built at
+    startup (`app.state.<name>`), behind the TEAM_SERVER_MESSAGING switch.
+    Off: `messaging_disabled`; not built yet: `not_ready`, never cached."""
+    if not enabled:
+        raise refused("messaging_disabled")
+    service = getattr(request.app.state, name, None)
+    if service is None:
+        raise refused("not_ready")
+    return service
 
 
 # -- indexes ------------------------------------------------------------------
@@ -461,7 +474,7 @@ class Messaging:
                 raise refused("relation_not_allowed")
         for related in req.related_message_ids:
             m = await self.repo.get_visible(server, sender, related)
-            if m is None or not {m.sender_github_id, m.recipient_github_id} <= pair:
+            if m is None or {m.sender_github_id, m.recipient_github_id} != pair:
                 raise refused("relation_not_allowed")
 
     async def _pin(self, server: str, sender: int, req: SendRequest) -> None:
@@ -504,7 +517,7 @@ class Messaging:
         try:
             message, duplicate = await self.repo.insert_accepted(message)
         except ContractError as e:
-            raise _refusal(e) from None
+            raise refusal(e) from None
         self.faults.check("server_after_insert_before_projection")
         await self.repo.derive_projections(message)
         result = await self._result(sender, message, duplicate)
@@ -527,7 +540,7 @@ class Messaging:
                                              continuation, limit, self.now(),
                                              new_epoch=lambda: self.ids.new_id().hex)
         except ContractError as e:
-            raise _refusal(e) from None
+            raise refusal(e) from None
 
     async def receipts(self, p: sessions.Principal, batch: ReceiptBatch) -> ReceiptBatchResult:
         server, me = self._server(p), p.github_id
@@ -551,7 +564,7 @@ class Messaging:
             return await self.repo.change_work_state(self._server(p), p.github_id, thread_id,
                                                      request.change, self.now())
         except ContractError as e:
-            raise _refusal(e) from None
+            raise refusal(e) from None
 
     async def announce(self, p: sessions.Principal, message_id: UUID,
                        request: AnnouncementRequest) -> AnnouncementLease:
@@ -560,7 +573,7 @@ class Messaging:
             return await self.repo.announce(self._server(p), p.github_id, message_id, request,
                                             self.now(), self.ids.new_id(), self.lease_sec)
         except ContractError as e:
-            raise _refusal(e) from None
+            raise refusal(e) from None
 
     @staticmethod
     def recipients(p: sessions.Principal) -> RecipientList:
@@ -600,30 +613,18 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
     return bytes(body)
 
 
-def mount(app: FastAPI, *, device: Callable, enabled: bool,
-          attachments: Optional[AttachmentStorage] = None, now: Optional[Clock] = None,
-          ids: Optional[IdSource] = None, faults: Faults = NO_FAULTS,
-          lease_sec: float = ANNOUNCEMENT_LEASE_SEC,
-          package_max_bytes: int = PACKAGE_MAX_BYTES) -> None:
+def mount(app: FastAPI, *, device: Callable, enabled: bool) -> None:
     """Register the messaging routes on the team server's app. `device` is
     the app's existing device-session dependency; `enabled` the
     TEAM_SERVER_MESSAGING switch (off: every route answers
-    `messaging_disabled`, and nothing is deleted). `attachments` defaults
-    to the app's `state.attachment_storage`, built in its lifespan. The
+    `messaging_disabled`, and nothing is deleted). The service is the one
+    the app builds in its lifespan (`app.state.messaging`, next to its
+    attachment storage); until then every route answers `not_ready`. The
     fixed paths come before `/{message_id}`."""
     responses = {s: {"model": ErrorBody} for s in (401, 403, 404, 409, 410, 413, 422, 503)}
 
     def service(request: Request) -> Messaging:
-        if not enabled:
-            raise refused("messaging_disabled")
-        st = request.app.state
-        if getattr(st, "messaging", None) is None or st.messaging.repo.db is not st.db:
-            st.messaging = Messaging(
-                MongoMessages(st.db),
-                attachments=attachments or getattr(st, "attachment_storage", None),
-                now=now or (lambda: clock_mod.now()), ids=ids, faults=faults,
-                lease_sec=lease_sec, package_max_bytes=package_max_bytes)
-        return st.messaging
+        return started(request, enabled, "messaging")
 
     send_body = {"requestBody": {"required": True, "content": {"application/json": {
         "schema": _inline(SendRequest.model_json_schema())}}}}

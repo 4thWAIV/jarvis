@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import (AsyncIterator, Callable, Literal, Mapping, Optional, Protocol,
                     runtime_checkable)
 from uuid import UUID
@@ -476,6 +476,18 @@ class IdSource(Protocol):
     def new_id(self) -> UUID: ...
 
 
+class RandomIds:
+    """The production IdSource: random (version 4) UUIDs."""
+
+    def new_id(self) -> UUID:
+        return uuid.uuid4()
+
+
+def utcnow() -> datetime:
+    """The production Clock."""
+    return datetime.now(timezone.utc)
+
+
 @runtime_checkable
 class RandomSource(Protocol):
     def random(self) -> float: ...
@@ -580,6 +592,10 @@ class LocalMessagingStore(Protocol):
 
     def save_draft(self, server_id: str, owner_github_id: int, draft: Draft,
                    expected_draft_revision: int) -> Draft: ...
+
+    def set_capture(self, server_id: str, owner_github_id: int, message_id: UUID,
+                    capture_id: Optional[int]) -> Draft:
+        """The capture a review opened (None once it closed); not an edit."""
 
     def draft(self, server_id: str, owner_github_id: int, message_id: UUID) -> Optional[Draft]: ...
 

@@ -11,6 +11,7 @@ import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Optional
 
 from jarvis import session_steer
@@ -40,8 +41,10 @@ _UPDATABLE = frozenset({
 })
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path()))
+def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
+    """A connection to JARVIS's database (`path` for a store given its own
+    file), with the pragmas every one of its users needs."""
+    conn = sqlite3.connect(str(path or db_path()))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

@@ -473,13 +473,37 @@ def token_matches(supplied: Optional[str]) -> bool:
         return False
 
 
+# How a request got past the gate, kept in its ASGI scope under ADMITTED:
+# a page JARVIS serves, the tool token, or an agent's access key.
+ADMITTED = "jarvis.admitted"
+BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY = "origin", "token", "access_key"
+
+
+def admission(origin: Optional[str], authorization: Optional[str],
+              method: str, path: str) -> Optional[str]:
+    """How the request is admitted (BY_ORIGIN, BY_TOKEN, BY_ACCESS_KEY), or
+    None. `method` is the HTTP method, or access_keys.WEBSOCKET for a
+    handshake."""
+    if origin_allowed(origin):
+        return BY_ORIGIN
+    supplied = bearer(authorization)
+    if token_matches(supplied):
+        return BY_TOKEN
+    if access_keys.allows(supplied, method, path):
+        return BY_ACCESS_KEY
+    return None
+
+
 def request_authorized(origin: Optional[str], authorization: Optional[str],
                        method: str, path: str) -> bool:
     """`method` is the HTTP method, or access_keys.WEBSOCKET for a handshake."""
-    if origin_allowed(origin):
-        return True
-    supplied = bearer(authorization)
-    return token_matches(supplied) or access_keys.allows(supplied, method, path)
+    return admission(origin, authorization, method, path) is not None
+
+
+def admitted_by_access_key(scope: dict) -> bool:
+    """The request came in on an agent's access key: what it may reach is
+    its categories' routes, and never a person's yes."""
+    return scope.get(ADMITTED) == BY_ACCESS_KEY
 
 
 def _header(scope: dict, name: bytes) -> Optional[str]:
@@ -490,11 +514,14 @@ def _header(scope: dict, name: bytes) -> Optional[str]:
 
 
 def scope_authorized(scope: dict) -> bool:
+    """Whether the request may pass; how it was admitted is written into
+    the scope (ADMITTED) for the routes that care."""
     method = (access_keys.WEBSOCKET if scope.get("type") == "websocket"
               else scope.get("method", "").upper())
-    return request_authorized(_header(scope, b"origin"),
-                              _header(scope, b"authorization"),
-                              method, scope.get("path", ""))
+    scope[ADMITTED] = admission(_header(scope, b"origin"),
+                                _header(scope, b"authorization"),
+                                method, scope.get("path", ""))
+    return scope[ADMITTED] is not None
 
 
 class OriginGuard:

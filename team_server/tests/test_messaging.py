@@ -265,6 +265,9 @@ def test_two_owner_isolation_holds_for_guessed_ids_and_administrators(client, ti
     assert error(r) == "relation_not_allowed", "a link never grants access"
     r = tim.post(tim.request(BOB.id, "Hijack.", reply_to=m))
     assert error(r) == "relation_not_allowed"
+    note = alice.send(ALICE.id, "Note to self.")
+    r = alice.post(alice.request(BOB.id, "See my note.", related=[note["message_id"]]))
+    assert error(r) == "relation_not_allowed", "a link the recipient could not open"
     assert alice.receipt(m["message_id"], "read").json()["not_found"] == [m["message_id"]], \
         "the sender's own read is no receipt"
     r = tim.sync(node=alice.node)

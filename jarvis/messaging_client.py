@@ -39,7 +39,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Callable, Optional, Protocol
 from urllib.parse import urlencode
 from uuid import UUID
@@ -256,10 +256,6 @@ class TeamTransport:
 
 # -- the delivery loop --------------------------------------------------------------
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def _this_node() -> UUID:
     return UUID(data_paths.node_id())
 
@@ -271,7 +267,7 @@ class Delivery:
     def __init__(self, *, store, connection: TeamCalls, guard: ports.ApprovalGuard,
                  snapshots: Optional[ports.AttachmentSnapshots] = None,
                  presentation: Optional[ports.PresentationDispatcher] = None,
-                 node_id: Callable[[], UUID] = _this_node, clock: ports.Clock = _utcnow,
+                 node_id: Callable[[], UUID] = _this_node, clock: ports.Clock = ports.utcnow,
                  rand: ports.RandomSource = random.Random(), faults: wire.Faults = wire.NO_FAULTS,
                  on_change: Callable[[], None] = lambda: None,
                  enabled: Callable[[], bool] = ports.messaging_enabled,

@@ -24,9 +24,10 @@ there is not sent again. At most `UPLOAD_STREAMS_MAX` go at once.
 Receiving. A file is downloaded only when the owner asks, into a private
 partial file, counted and hashed as it arrives, and moved under
 `data_paths.messaging_downloads_dir()` only when its size and hash are the
-manifest's. JARVIS never opens a received file: the owner's one action on
-a verified download is Reveal in Finder (`open -R`), which shows it without
-running it. A cancelled download keeps the message and is offered again.
+manifest's, and with the macOS quarantine mark a browser download
+carries (`quarantine`). JARVIS never opens a received file: the owner's one
+action on a verified download is Reveal in Finder (`open -R`), which shows
+it without running it. A cancelled download keeps the message and is offered again.
 
 File states (`messaging_ports.FileState`): sending, staged -> uploading ->
 available (verified on the team server), or failed (with a code) or
@@ -108,11 +109,11 @@ _SCHEMA = """
 """
 
 
-def _connect() -> sqlite3.Connection:
-    """The same database as runs and messages, with this module's table."""
-    conn = run_store._connect()
-    conn.executescript(_SCHEMA)
-    return conn
+def init_db() -> None:
+    """This module's table, in the same database as runs and messages; made
+    once, with the FileSnapshots that uses it."""
+    with closing(run_store._connect()) as conn:
+        conn.executescript(_SCHEMA)
 
 
 class Corrupt(Exception):
@@ -176,6 +177,19 @@ def reveal_in_finder(path: Path) -> None:
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
+
+
+def quarantine(path: Path) -> None:
+    """Mark a received file as come from someone else, as a browser marks a
+    download: opened from Finder, macOS asks first (Gatekeeper). Raises if
+    the mark could not be set."""
+    value = f"0081;{int(time.time()):x};JARVIS;"
+    subprocess.run(["/usr/bin/xattr", "-w", QUARANTINE_ATTRIBUTE, value, str(path)],
+                   check=True, timeout=10, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+
+
 def local_files(refs: Iterable[wire.AttachmentRef], known: list[ports.LocalFile],
                 default: ports.FileState) -> list[ports.LocalFile]:
     """A manifest's files as the page shows them, in manifest order: what
@@ -195,18 +209,21 @@ class FileSnapshots:
 
     def __init__(self, store: ports.LocalMessagingStore,
                  transport: Callable[[], ports.ServeTransport], *,
-                 ids: Optional[ports.IdSource] = None,
+                 ids: ports.IdSource = ports.RandomIds(),
                  now: Callable[[], float] = time.time,
                  reveal: Callable[[Path], None] = reveal_in_finder,
+                 quarantine: Callable[[Path], None] = quarantine,
                  on_change: Callable[[], None] = lambda: None,
                  snapshots_dir: Optional[Path] = None, downloads_dir: Optional[Path] = None):
         self.store, self.transport, self.reveal_path = store, transport, reveal
+        self.quarantine = quarantine
         self.ids = ids
         self.now, self.on_change = now, on_change
         self._snapshots = snapshots_dir
         self._downloads = downloads_dir
         self._streams = asyncio.Semaphore(wire.UPLOAD_STREAMS_MAX)
         self._downloading: set[tuple[str, int, UUID]] = set()
+        init_db()
 
     # -- places ----------------------------------------------------------------------
 
@@ -228,7 +245,7 @@ class FileSnapshots:
 
     def _row(self, server_id: str, owner: int, attachment_id: UUID,
              role: str) -> Optional[sqlite3.Row]:
-        with closing(_connect()) as conn:
+        with closing(run_store._connect()) as conn:
             return conn.execute(
                 "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
                 "AND attachment_id=? AND role=?",
@@ -237,7 +254,7 @@ class FileSnapshots:
     def _set(self, server_id: str, owner: int, attachment_id: UUID, role: str, *,
              state: str, bytes_done: Optional[int] = None, failure: Optional[str] = None,
              notify: bool = True) -> None:
-        with closing(_connect()) as conn:
+        with closing(run_store._connect()) as conn:
             conn.execute(
                 "UPDATE messaging_files SET state=?, failure=?, "
                 "bytes_done=COALESCE(?, bytes_done), updated_at=? WHERE server_id=? "
@@ -251,7 +268,7 @@ class FileSnapshots:
     def _insert(self, server_id: str, owner: int, ref: wire.AttachmentRef, message_id: UUID,
                 role: str, state: str) -> None:
         now = self.now()
-        with closing(_connect()) as conn:
+        with closing(run_store._connect()) as conn:
             conn.execute(
                 "INSERT INTO messaging_files (server_id, owner_github_id, attachment_id, role, "
                 "message_id, filename, media_type, size_bytes, sha256, state, bytes_done, "
@@ -282,7 +299,7 @@ class FileSnapshots:
         """Copy, hash and name one chosen file. More than FILE_MAX_BYTES is
         `too_large`, whatever the request said its length was; a failed
         copy leaves nothing behind."""
-        attachment_id = self.ids.new_id() if self.ids else uuid.uuid4()
+        attachment_id = self.ids.new_id()
         folder = self.snapshots_dir()
         partial = folder / f"{PARTIAL}{attachment_id}"
         fd = _open_new(partial)
@@ -432,7 +449,7 @@ class FileSnapshots:
         """What this JARVIS knows of the message's files: a download where
         there is one, else the snapshot (a file this owner sent). Files it
         knows nothing of are not listed; `local_files` fills them in."""
-        with closing(_connect()) as conn:
+        with closing(run_store._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
                 "AND message_id=? ORDER BY created_at, role DESC",
@@ -523,6 +540,13 @@ class FileSnapshots:
             set_state("failed", bytes_done=0, failure="transport")
             raise
         os.close(fd)
+        try:
+            self.quarantine(partial)
+        except (OSError, subprocess.SubprocessError) as e:
+            _unlink(partial)
+            log.warning("received file not marked as downloaded (%s); not kept",
+                        type(e).__name__)
+            return set_state("failed", bytes_done=0, failure="quarantine")
         os.replace(partial, final)
         return set_state("verified", bytes_done=size)
 
@@ -567,7 +591,7 @@ class FileSnapshots:
                 except FileNotFoundError:
                     continue
         needed = self._still_needed(server_id, owner_github_id)
-        with closing(_connect()) as conn:
+        with closing(run_store._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "
                 "AND role=?", (server_id, owner_github_id, SNAPSHOT)).fetchall()
@@ -580,7 +604,7 @@ class FileSnapshots:
                     str(a.attachment_id) == row["attachment_id"] for a in draft.attachments):
                 continue
             _unlink(self.snapshots_dir() / row["attachment_id"])
-            with closing(_connect()) as conn:
+            with closing(run_store._connect()) as conn:
                 conn.execute(
                     "DELETE FROM messaging_files WHERE server_id=? AND owner_github_id=? "
                     "AND attachment_id=? AND role=?",

@@ -27,6 +27,7 @@ from uuid import UUID
 
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis.message_approvals import capture_binding
 from tests.fixtures.messaging_fakes import FakeServe, FixedClock, MemoryStore, SeqIds, TableGuard, T0
 
 SERVER = "00000000-0000-4000-8000-0000000000aa"
@@ -398,7 +399,8 @@ class QueueRoutes:
             if self.voice:
                 self.voice.send({"type": "capture", "id": capture, "state": "capturing",
                                  "text": ports.human_readback(draft, label), "to": label,
-                                 "heard": [], "accepted": False})
+                                 "heard": [], "accepted": False,
+                                 "human": capture_binding(draft)})
             return 200, draft.model_dump(mode="json")
         event = {"cancel": "cancel", "retry": "retry"}[action]
         send = current.send.model_copy(update={"state": ports.next_send_state(current.send.state, event)})

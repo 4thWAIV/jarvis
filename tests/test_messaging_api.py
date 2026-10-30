@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis import message_approvals, messaging_api
+from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.messaging_client import Delivery
 from jarvis.messaging_store import SqliteMessagingStore
@@ -20,24 +21,6 @@ from tests.fixtures import messaging_fakes as fakes
 from tests.test_messaging_client import SERVER, TIM, MATT, Connection, Lossy
 
 P = "/api/team/messages"
-
-
-class Captures:
-    """server.py's capture box as the review uses it."""
-
-    def __init__(self):
-        self.open: dict[int, tuple[UUID, str, str]] = {}
-        self.closed: list[int] = []
-        self.n = 0
-
-    def open_for_review(self, draft, readback, recipient_label):
-        self.n += 1
-        self.open[self.n] = (draft.message_id, readback, recipient_label)
-        return self.n
-
-    def close(self, capture_id):
-        self.closed.append(capture_id)
-        self.open.pop(capture_id, None)
 
 
 class Page:
@@ -48,7 +31,7 @@ class Page:
         self.store = SqliteMessagingStore(tmp_path / "page.db")
         self.guard = message_approvals.MessageApprovals(
             self.store, fakes.StaticSnapshots(), ids=fakes.SeqIds(start=900), clock=self.clock)
-        self.captures = Captures()
+        self.captures = fakes.ReviewCaptures()
         self.enabled = enabled
         self.hints = 0
         self.transport = Lossy(self.serve.pair(TIM, self.node))
@@ -143,7 +126,8 @@ def test_review_opens_the_capture_an_edit_closes_it_and_cancel_holds(page):
     mid = draft["message_id"]
     reviewed = page.act(mid, "review", 1).json()
     assert reviewed["send"]["state"] == "awaiting_approval" and reviewed["capture_id"] == 1
-    (_, readback, label), = page.captures.open.values()
+    (capture,) = page.captures.open.values()
+    readback, label = capture["text"], capture["to"]
     assert label == f"member{MATT}" and readback.startswith(f"To member{MATT}.")
     assert "Can we move the deploy?" in readback
     assert page.act(mid, "review", 1).json() == reviewed, "a second click changes nothing"
@@ -174,6 +158,57 @@ def test_an_accepted_review_goes_out_and_becomes_an_active_item(page):
     r = page.http.post(f"{P}/{draft['message_id']}/read")
     assert r.status_code == 200
     assert page.store.receipts_owed(SERVER, TIM) == [], "the sender's own read is no receipt"
+
+
+def test_cancelling_after_the_yes_stops_its_release_and_an_accepted_one_is_not_recalled(page):
+    draft = page.draft("Never mind.")
+    mid = UUID(draft["message_id"])
+    reviewed = page.act(draft["message_id"], "review", 1).json()
+    page.accept_review(reviewed)
+    cancelled = page.act(draft["message_id"], "cancel", reviewed["draft_revision"]).json()
+    assert cancelled["send"]["state"] == "cancelled"
+    with pytest.raises(ports.NotApproved):
+        page.guard.require_approved_revision(SERVER, TIM, mid, 1)
+    with pytest.raises(ports.NotApproved):
+        page.accept_review(reviewed), "a cancelled revision is not approved again"
+    page.tick()
+    assert page.serve.messages == {}
+
+    sent = page.draft("Ship it.")
+    reviewed = page.act(sent["message_id"], "review", 1).json()
+    page.accept_review(reviewed)
+    page.tick()
+    r = page.act(sent["message_id"], "cancel", reviewed["draft_revision"])
+    assert (r.status_code, code(r)) == (409, "send_refused")
+    assert page.store.send(SERVER, TIM, UUID(sent["message_id"])).state == "accepted"
+
+
+def test_a_restart_forgets_capture_numbers_so_a_review_never_shows_another_s(page):
+    """Captures live in memory and their numbers start again on a restart:
+    a number kept on a draft would name another message's capture."""
+    a = page.draft("Message A")
+    ra = page.act(a["message_id"], "review", 1).json()
+    page.captures = fakes.ReviewCaptures()                 # the restart
+    page.local.reviews.captures = page.captures
+    page.store.forget_captures()
+    assert page.store.draft(SERVER, TIM, UUID(a["message_id"])).capture_id is None
+    b = page.draft("Message B")
+    rb = page.act(b["message_id"], "review", 1).json()
+    again = page.act(a["message_id"], "review", ra["draft_revision"]).json()
+    assert again["capture_id"] != rb["capture_id"]
+    assert page.captures.open[again["capture_id"]]["human"]["message_id"] == a["message_id"]
+    assert again["send"]["state"] == "awaiting_approval"
+
+
+def test_the_brain_s_review_is_the_page_s_review(page):
+    draft = page.draft("From the brain.")
+    mid = UUID(draft["message_id"])
+    reviewed = page.local.reviews.review(SERVER, TIM, mid, 1)
+    assert page.store.draft(SERVER, TIM, mid).capture_id == reviewed.capture_id is not None
+    edited = page.http.put(f"{P}/drafts/{mid}", json={
+        "expected_draft_revision": reviewed.draft_revision, "recipient_github_id": MATT,
+        "text": "Changed."}).json()
+    assert page.captures.closed == [reviewed.capture_id] and edited["capture_id"] is None
 
 
 def test_a_refused_send_is_retried_by_the_owner_under_the_same_revision(page):

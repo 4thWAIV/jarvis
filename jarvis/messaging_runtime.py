@@ -33,8 +33,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
-from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
@@ -62,15 +60,6 @@ CLEANUP_EVERY_SEC = 3600.0
 HOUSEKEEPING_SEC = 60.0
 
 Notify = Callable[[str, str, dict], Awaitable[None]]
-
-
-class _Ids:
-    def new_id(self) -> UUID:
-        return uuid.uuid4()
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class _CurrentTransport:
@@ -103,13 +92,14 @@ class MessagingRuntime:
                  network_raw: Callable[[], Optional[bytes]],
                  enabled: Callable[[], bool] = ports.messaging_enabled,
                  node_id: Callable[[], str] = data_paths.node_id,
-                 clock: ports.Clock = _utcnow):
+                 clock: ports.Clock = ports.utcnow):
         self.connection, self.send_frame, self.enabled = connection, send_frame, enabled
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
+        self.store.forget_captures()
         self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
                                                    on_change=self.hint)
-        self.approvals = MessageApprovals(self.store, self.files, ids=_Ids(), clock=clock)
+        self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(), clock=clock)
         current = _CurrentTransport(self._transport_now)
         self.presentation = ServePresentation(transport=current, node_id=self.node,
                                               send=send_frame, clock=clock)
@@ -241,7 +231,6 @@ class MessagingRuntime:
 class _NotStarted:
     """The page's routes before the runtime is built: messaging is not
     available, and nothing else answers."""
-    files_routes = None
 
     def __init__(self, runtime: Callable[[], Optional[MessagingRuntime]]):
         self._runtime = runtime

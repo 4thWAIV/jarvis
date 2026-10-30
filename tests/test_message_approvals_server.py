@@ -7,6 +7,7 @@ path is pinned on (`test_agent_transmission_pins.py`), for a person."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -83,7 +84,7 @@ def tim(server, monkeypatch):
         approvals=t.approvals, identity=lambda: t.who, availability=lambda: "available",
         recipients=lambda: roster, released=t.released.append)
     t.reviews = message_approvals.Reviews(t.approvals, server.review_captures, lambda: roster)
-    monkeypatch.setattr(server, "human_messaging", t.messaging)
+    monkeypatch.setattr(server, "messaging", SimpleNamespace(human=t.messaging))
     monkeypatch.setattr(server, "speech", t.speech)
     return t
 
@@ -137,6 +138,26 @@ async def test_send_on_screen_during_a_turn_waits_then_approves_through_the_guar
     assert tim.released == [approved] and n not in server._captures
     assert tim.speech.said == ["Approved, sir. It goes to Matt as soon as the team server "
                                "takes it."]
+
+
+@pytest.mark.asyncio
+async def test_an_agent_s_access_key_cannot_approve_a_person_s_message(server, tim):
+    """A `captures` key opens the capture routes for an agent, but Accept and
+    Send on a person's message are his yes alone: 403, and nothing staged,
+    accepted or approved."""
+    from fastapi.testclient import TestClient
+    from jarvis import access_keys
+    key = access_keys.create("some-agent", ["captures"])
+    draft, n = _reviewed(tim)
+    page = TestClient(server.app)
+    for action in ("send", "accept"):
+        r = page.post(f"/api/capture/{n}/{action}", headers={"Authorization": f"Bearer {key}"})
+        assert (r.status_code, r.json()["detail"]) == (
+            403, "Only he can approve a message to a person."), action
+    await server._perform_staged_steers()
+    assert server._captures[n]["read"] is None and not server._captures[n].get("staged")
+    assert tim.store.approved(*NS, draft.message_id, 1) is None
+    assert _state(tim, draft) == "awaiting_approval"
 
 
 @pytest.mark.asyncio
@@ -214,7 +235,7 @@ async def test_delete_while_staged_cancels_it_unapproved(server, tim, monkeypatc
 @pytest.mark.asyncio
 async def test_unwired_messaging_refuses_a_person_s_capture(server, tim, monkeypatch):
     draft, n = _reviewed(tim)
-    monkeypatch.setattr(server, "human_messaging", None)
+    monkeypatch.setattr(server, "messaging", None)
     r = _press_send(server, n)
     assert r.status_code == 409 and "isn't available" in r.json()["detail"]
     assert server._staged_steers == []

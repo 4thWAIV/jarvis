@@ -1,11 +1,9 @@
 /**
  * The page's one way to JARVIS's messaging routes (jarvis/messaging_ports.py
  * lists them; messaging_api.py serves them). Everything the Queue reads or
- * asks for goes through a `MessagingApi`: production uses `httpMessagingApi`,
- * which calls the local routes behind the existing web boundary (the page
- * never holds the team server's credential). A test or a bootstrap may put
- * another adapter in its place with `setMessagingApi`; nothing on the page,
- * no address or setting, can.
+ * asks for goes through `httpMessagingApi`, which calls the local routes
+ * behind the existing web boundary (the page never holds the team server's
+ * credential); no address or setting on the page changes that.
  *
  * A refusal is the team server's error body, `{"error": {"code", "message",
  * "latest"?}}`; it arrives here as a `MessagingError` whose `shown` is the
@@ -138,14 +136,7 @@ export const httpMessagingApi: MessagingApi = {
     call("POST", `/${id(messageId)}/files/${id(attachmentId)}/reveal`),
 };
 
-let current: MessagingApi = httpMessagingApi;
-
-/** The adapter every read and command uses now. */
+/** The adapter every read and command uses. */
 export function messagingApi(): MessagingApi {
-  return current;
-}
-
-/** For a test or a bootstrap only: answer the Queue from another adapter. */
-export function setMessagingApi(api: MessagingApi): void {
-  current = api;
+  return httpMessagingApi;
 }

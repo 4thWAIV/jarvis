@@ -14,8 +14,9 @@
  *     noted as seen, never drawn, so a reconnect replays no animation. A
  *     snapshot or a hint never draws anything.
  *   - motion: one policy for every ray (`transferMotion`). The quiet page
- *     draws none (as it always has); reduced motion draws a still route
- *     with no pulses, rings or orb movement.
+ *     draws none (as it always has); for a person's message, reduced motion
+ *     draws a still route with no pulses, rings or orb movement. An agent's
+ *     ray moves as it always has.
  */
 
 import { agentMessage } from "./agents";
@@ -101,10 +102,16 @@ export function onTransfer(listener: (transfer: Transfer) => void): () => void {
 
 export type Motion = "animate" | "still" | "none";
 
+/** An agent's transfer (`agent:<n>`), as against a person's. */
+export function isAgentTransfer(transfer: Transfer): boolean {
+  return transfer.id.startsWith("agent:");
+}
+
 /** The one suppression policy for every ray. */
-export function transferMotion(): Motion {
+export function transferMotion(transfer: Transfer): Motion {
   if (isQuiet()) return "none";
-  if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (!isAgentTransfer(transfer) && typeof matchMedia === "function"
+      && matchMedia("(prefers-reduced-motion: reduce)").matches) {
     return "still";
   }
   return "animate";

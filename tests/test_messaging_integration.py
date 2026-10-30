@@ -46,6 +46,7 @@ import pytest_asyncio
 
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from tests.fixtures.memory_secrets import MemorySecrets
 
 MONGO = os.environ.get("TEAM_SERVER_TEST_MONGODB_URI")
 if not MONGO:
@@ -550,20 +551,8 @@ class Raw:
         from jarvis import team_client
         from jarvis.messaging_client import TeamTransport, pairing_of
 
-        class Mem:
-            def __init__(self):
-                self.items = {}
-
-            def get(self, a):
-                return self.items.get(a)
-
-            def set(self, a, v):
-                self.items[a] = v
-
-            def delete(self, a):
-                self.items.pop(a, None)
         self.ts, self.who = ts, who
-        self.connection = team_client.TeamConnection(store=Mem())
+        self.connection = team_client.TeamConnection(store=MemorySecrets())
         self.connection.saved = saved_connection(ts, who)
         self.connection.store.set(ts.server_id, token)
         self.node = uuid.uuid4()

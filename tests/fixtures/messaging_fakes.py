@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis.message_approvals import capture_binding
 
 T0 = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 LEASE_SEC = 30.0
@@ -366,6 +367,13 @@ class MemoryStore:
         self.drafts[(server_id, owner_github_id, draft.message_id)] = saved
         return saved
 
+    def set_capture(self, server_id, owner_github_id, message_id, capture_id):
+        key = (server_id, owner_github_id, message_id)
+        if key not in self.drafts:
+            raise wire.ContractError("draft_not_found")
+        self.drafts[key] = self.drafts[key].model_copy(update={"capture_id": capture_id})
+        return self.drafts[key]
+
     def draft(self, server_id, owner_github_id, message_id):
         return self.drafts.get((server_id, owner_github_id, message_id))
 
@@ -631,6 +639,33 @@ class StaticSnapshots:
 
     def reveal(self, server_id, owner_github_id, message_id, attachment_id):
         self.revealed.append(attachment_id)
+
+
+class ReviewCaptures:
+    """`ports.ReviewCaptures`: the capture box as a review uses it, keeping
+    one capture per reviewed revision as server.py's does: the same binding again is the same capture,
+    a new one closes the old."""
+
+    def __init__(self):
+        self.open: dict[int, dict] = {}
+        self.closed: list[int] = []
+        self.n = 0
+
+    def open_for_review(self, draft, readback, recipient_label):
+        binding = capture_binding(draft)
+        for c in list(self.open.values()):
+            if c["human"]["message_id"] == binding["message_id"]:
+                if c["human"] == binding and c["text"] == readback:
+                    return c["id"]
+                self.close(c["id"])
+        self.n += 1
+        self.open[self.n] = {"id": self.n, "text": readback, "to": recipient_label,
+                             "read": None, "human": binding}
+        return self.n
+
+    def close(self, capture_id):
+        if self.open.pop(capture_id, None) is not None:
+            self.closed.append(capture_id)
 
 
 class RecordingPresentation:

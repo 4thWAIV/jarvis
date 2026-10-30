@@ -4763,6 +4763,10 @@ def _capture_message(capture: dict, state: Optional[str]) -> dict:
     if state:
         msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]),
                    accepted=capture["read"] == capture["text"])
+        if capture.get("human"):
+            # The revision a review's capture is for, so the page puts its
+            # buttons only under that revision.
+            msg["human"] = dict(capture["human"])
     return msg
 
 
@@ -5112,10 +5116,20 @@ def _capture_accepted(capture: dict) -> None:
     _capture_show(capture, capture["state"])
 
 
+def _refuse_an_agent_approving(request: Request, capture: dict) -> None:
+    """A message to a person is approved by him alone: an agent admitted on
+    an access key may draft it and ask for the review, never accept or
+    send it (403)."""
+    if capture.get("human") and web_auth.admitted_by_access_key(request.scope):
+        raise HTTPException(status_code=403,
+                            detail="Only he can approve a message to a person.")
+
+
 @app.post("/api/capture/{number}/accept")
-async def api_capture_accept(number: int):
+async def api_capture_accept(number: int, request: Request):
     """He has read it on the screen: it counts as read back in full."""
     capture = _open_capture_or_404(number)
+    _refuse_an_agent_approving(request, capture)
     _capture_accepted(capture)
     _notes_for_brain.append(
         f"He accepted capture {number} on screen: it counts as read back to him "
@@ -5180,11 +5194,12 @@ async def api_capture_restore(number: int, notice: Optional[int] = None):
 
 
 @app.post("/api/capture/{number}/send")
-async def api_capture_send(number: int):
+async def api_capture_send(number: int, request: Request):
     """Accept it, then send it to the agent it is addressed to, as
     steer_session would. A refusal is 409 with the reason, for the page to
     show under the box."""
     capture = _open_capture_or_404(number)
+    _refuse_an_agent_approving(request, capture)
     if capture.get("staged"):
         raise HTTPException(status_code=409, detail="It is already being sent.")
     if capture.get("human"):
@@ -5949,14 +5964,12 @@ class _AgentRecipient:
 # A message to a person is reviewed on a capture of its own, whose text is the
 # read-back of exactly what would go (`messaging_ports.human_readback`) and
 # which carries capture["human"], the reviewed revision. It is accepted and
-# staged as an agent's is, and its hand-over is the owner's approval. Set at
-# startup when messaging is switched on: `human_messaging` (the guard, who
-# this JARVIS is, availability, the roster, the sender's wake-up and the
-# transfer presentation) and `messaging_tools` (the brain's draft and review
-# tools). Left None, every human capture is refused as unavailable.
-human_messaging: Optional[message_approvals.HumanMessaging] = None
-messaging_tools: Optional[message_approvals.MessagingTools] = None
-# The whole of it (messaging_runtime.py), built at startup; None before.
+# staged as an agent's is, and its hand-over is the owner's approval. The
+# whole of it is `messaging` (messaging_runtime.py), built at startup; its
+# `human` is what the capture path needs (the guard, who this JARVIS is,
+# availability, the roster, the sender's wake-up and the transfer
+# presentation) and its `tools` the brain's draft and review tools. Left
+# None, every human capture is refused as unavailable.
 messaging: Optional[messaging_runtime.MessagingRuntime] = None
 
 
@@ -5968,7 +5981,7 @@ def _start_messaging() -> None:
     """Build human messaging over the team connection and start its loops
     (only while JARVIS_MESSAGING is on). A failure here leaves messaging
     unavailable and everything else running."""
-    global messaging, human_messaging, messaging_tools
+    global messaging
     try:
         messaging = messaging_runtime.MessagingRuntime(
             connection=team_client.connection, captures=review_captures,
@@ -5979,15 +5992,14 @@ def _start_messaging() -> None:
     except Exception:
         log.warning("human messaging could not start", exc_info=True)
         return
-    human_messaging, messaging_tools = messaging.human, messaging.tools
     messaging.start()
 
 
 async def _stop_messaging() -> None:
-    global messaging, human_messaging, messaging_tools
+    global messaging
     if messaging is not None:
         await messaging.stop()
-    messaging, human_messaging, messaging_tools = None, None, None
+    messaging = None
 
 
 class _HumanReviewCaptures:
@@ -6021,7 +6033,8 @@ review_captures = _HumanReviewCaptures()
 def _stage_human_capture(capture: dict, via: str) -> tuple[Optional[str], Optional[str]]:
     """Stage a reviewed capture for its person, as `_stage_capture` does for
     an agent: (the message id, None), or (None, why it cannot go)."""
-    return transmission.stage(message_approvals.HumanRecipient(capture, via, human_messaging),
+    human = messaging.human if messaging is not None else None
+    return transmission.stage(message_approvals.HumanRecipient(capture, via, human),
                               capture, voice=speech, put=_stage_steer)
 
 
@@ -6040,9 +6053,9 @@ def tool_send_message(args: dict) -> str:
 
 def _messaging_tool(name: str):
     def handler(args: dict) -> str:
-        if messaging_tools is None:
+        if messaging is None:
             return "Messaging isn't available on this JARVIS."
-        return getattr(messaging_tools, name)(args)
+        return getattr(messaging.tools, name)(args)
     return handler
 
 

@@ -924,7 +924,9 @@ def _drive_capture_send(server, session, monkeypatch):
     box, and the note the brain reads with the next turn when it goes."""
     import asyncio
     from fastapi import HTTPException
+    from starlette.requests import Request
 
+    page = Request({"type": "http", "headers": []})
     monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
     monkeypatch.setattr(server, "_notes_for_brain", [])
     out = []
@@ -937,7 +939,7 @@ def _drive_capture_send(server, session, monkeypatch):
         server._captures[1] = {"id": 1, "text": "carry on", "to": "hammer",
                                "heard": [], "read": None, "state": "capturing"}
         try:
-            out.append(str(asyncio.run(server.api_capture_send(1))))
+            out.append(str(asyncio.run(server.api_capture_send(1, page))))
         except HTTPException as e:
             out.append(str(e.detail))
         out.append(server._with_notes_for_brain(""))

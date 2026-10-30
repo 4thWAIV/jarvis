@@ -81,16 +81,6 @@ class Identity:
         return self.server_id, self.owner_github_id
 
 
-def identity_of(team: dict, node_id: str) -> Optional[Identity]:
-    """The identity from `team_client.connection.snapshot()` and
-    `data_paths.node_id()`, or None when this JARVIS is not paired."""
-    me = team.get("me") or {}
-    server_id, github_id = team.get("server_id"), me.get("github_id")
-    if not server_id or not isinstance(github_id, int) or isinstance(github_id, bool):
-        return None
-    return Identity(str(server_id), github_id, UUID(str(node_id)))
-
-
 def _same_files(found: list[wire.AttachmentRef], approved: list[wire.AttachmentRef]) -> None:
     """The private copies are exactly the files approved, in order, or the
     first that differs is SnapshotMissing: never silently replaced."""
@@ -230,22 +220,6 @@ class MessageApprovals:
                         request.message_id, request.content_revision, send.state)
             raise ports.NotApproved(str(request.message_id))
 
-    def cancel(self, server_id: str, owner_github_id: int, message_id: UUID,
-               expected_draft_revision: int) -> ports.Draft:
-        """Stop the draft's revision before anything is out (`next_send_state`
-        refuses it once an attempt is out, unknown or accepted: no recall)."""
-        draft = self._draft(server_id, owner_github_id, message_id)
-        if draft.draft_revision != expected_draft_revision:
-            raise wire.ContractError("revision_conflict", latest=draft)
-        state = ports.next_send_state(draft.send.state, "cancel")
-        if state != draft.send.state:
-            self.store.set_send(server_id, owner_github_id,
-                                draft.send.model_copy(update={"state": state}))
-            log.info("message cancelled: message=%s revision=%s", message_id,
-                     draft.send.content_revision)
-        return self._draft(server_id, owner_github_id, message_id)
-
-
 class GuardedTransport:
     """A `ServeTransport` whose `send` passes the guard first. Delivery is
     given this one, never the bare transport, so nothing reaches the team
@@ -325,9 +299,10 @@ def recipient_label(members: list[wire.TeamMember], github_id: int, owner_github
 
 
 class Reviews:
-    """Review from the page's route or an agent's tool: the guard freezes
-    the revision, then the capture box opens (or keeps) the capture it is
-    accepted on. Opening it approves nothing."""
+    """Review from the page's route or an agent's tool, one path for both:
+    the guard freezes the revision, the capture box opens (or keeps) the
+    capture it is accepted on, and the draft records that capture. Opening
+    it approves nothing; a repeat opens nothing new."""
 
     def __init__(self, approvals: MessageApprovals, captures: ports.ReviewCaptures,
                  recipients: Callable[[], list[wire.TeamMember]]):
@@ -340,15 +315,8 @@ class Reviews:
         label = recipient_label(self.recipients(), draft.recipient_github_id, owner_github_id)
         capture_id = self.captures.open_for_review(draft, ports.human_readback(draft, label),
                                                    label)
-        return draft.model_copy(update={"capture_id": capture_id})
-
-    def cancel(self, server_id: str, owner_github_id: int, message_id: UUID,
-               expected_draft_revision: int, capture_id: Optional[int]) -> ports.Draft:
-        draft = self.approvals.cancel(server_id, owner_github_id, message_id,
-                                      expected_draft_revision)
-        if capture_id is not None:
-            self.captures.close(capture_id)
-        return draft
+        return self.approvals.store.set_capture(server_id, owner_github_id, message_id,
+                                                capture_id)
 
 
 # -- the capture's recipient and destination ---------------------------------------
@@ -356,7 +324,7 @@ class Reviews:
 @dataclass
 class HumanMessaging:
     """What the capture path needs, wired once at startup (server.py's
-    `human_messaging`). `released` wakes the sender when an approval lands;
+    `messaging.human`). `released` wakes the sender when an approval lands;
     `presentation` draws the transfer (signals)."""
     approvals: MessageApprovals
     identity: Callable[[], Optional[Identity]]

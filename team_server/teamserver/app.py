@@ -53,6 +53,72 @@ ERRORS = {401: {"model": ErrorBody}, 403: {"model": ErrorBody},
           503: {"model": ErrorBody}}
 
 
+# -- the body limit -------------------------------------------------------------
+
+TOO_LARGE = {"error": {"code": "too_large", "message": "Request too large."}}
+
+
+class _TooLarge(Exception):
+    pass
+
+
+def body_limit(method: str, path: str) -> Optional[int]:
+    """The most bytes a request body may carry: the message send has its
+    own larger limit, a file's byte upload (None) counts its own bytes,
+    everything else MAX_BODY."""
+    if attachments.is_upload(method, path):
+        return None
+    if method == "POST" and path == messaging.PREFIX:
+        return MESSAGE_REQUEST_MAX_BYTES
+    return MAX_BODY
+
+
+class BodyLimit:
+    """Refuses a body over `body_limit` with 413 whether it declares its
+    length or not: a Content-Length over the limit (or not a number) before
+    anything is read, and a chunked body as soon as the bytes read pass it,
+    before the route has the whole of it in memory."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        limit = (body_limit(scope["method"], scope["path"])
+                 if scope["type"] == "http" else None)
+        if limit is None:
+            return await self.app(scope, receive, send)
+        refuse = JSONResponse(TOO_LARGE, status_code=413)
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            return await refuse(scope, receive, send)
+        read, over, answered = 0, False, False
+
+        async def counted():
+            nonlocal read, over
+            message = await receive()
+            if message["type"] == "http.request":
+                read += len(message.get("body", b""))
+                if read > limit:
+                    over = True
+                    raise _TooLarge()
+            return message
+
+        async def guarded(message):
+            nonlocal answered
+            if over:
+                return      # whatever the route made of the cut-off body
+            answered = message["type"] == "http.response.start" or answered
+            await send(message)
+
+        try:
+            await self.app(scope, counted, guarded)
+        except Exception:
+            if not over:
+                raise
+        if over and not answered:
+            await refuse(scope, receive, send)
+
+
 # -- views -------------------------------------------------------------------
 
 def member_view(m: dict) -> Member:
@@ -123,22 +189,13 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
 
     # -- middleware ----------------------------------------------------------
 
+    # Added first, so it runs inside guard_and_log and its 413 gets the headers.
+    app.add_middleware(BodyLimit)
+
     @app.middleware("http")
     async def guard_and_log(request: Request, call_next):
         started = time.monotonic()
-        length = request.headers.get("content-length")
-        # The message send and a file's byte upload count the bytes they
-        # read themselves; this gate only refuses what they declare too big.
-        limit = (MESSAGE_REQUEST_MAX_BYTES
-                 if request.method == "POST" and request.url.path == messaging.PREFIX
-                 else MAX_BODY)
-        if length and not attachments.is_upload(request.method, request.url.path) and (
-                not length.isdigit() or int(length) > limit):
-            response: Response = JSONResponse(
-                {"error": {"code": "too_large", "message": "Request too large."}},
-                status_code=413)
-        else:
-            response = await call_next(request)
+        response: Response = await call_next(request)
         response.headers.setdefault("Content-Security-Policy", CSP)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -490,16 +547,12 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return await network.publish(database(request), p.member, p.team, body,
                                      request.app.state.health)
 
-    def attachment_service(request: Request) -> attachments.AttachmentService:
-        st = request.app.state
-        if not (config and config.messaging_enabled):
-            raise messaging.refused("messaging_disabled")
-        if getattr(st, "attachments", None) is None:
-            raise Problem(503, "not_ready", "The team server is starting up.")
-        return st.attachments
+    messaging_on = bool(config and config.messaging_enabled)
 
-    messaging.mount(app, device=device, enabled=bool(config and config.messaging_enabled),
-                    package_max_bytes=_file_settings(config).package_max_bytes)
+    def attachment_service(request: Request) -> attachments.AttachmentService:
+        return messaging.started(request, messaging_on, "attachments")
+
+    messaging.mount(app, device=device, enabled=messaging_on)
     app.include_router(attachments.router(device=device, service=attachment_service))
 
     if config and config.test_sessions_enabled:
@@ -543,8 +596,9 @@ def _file_settings(config: Optional[Config]) -> attachments.AttachmentSettings:
 
 
 async def _start_attachments(app: FastAPI) -> None:
-    """The file service and its recovery worker, once the database is
-    initialized (messaging on only). Cancelled with the lifespan."""
+    """The messaging service, the file service and its recovery worker, built
+    once the database is initialized (messaging on only); until then their
+    routes answer `not_ready`. Cancelled with the lifespan."""
     st = app.state
     while not st.initialized:
         await asyncio.sleep(0.05)
@@ -553,6 +607,8 @@ async def _start_attachments(app: FastAPI) -> None:
         st.db, clock=clock.now, expiry_sec=s.staging_expiry_sec,
         quota_bytes=s.staging_quota_bytes)
     repository = messaging.MongoMessages(st.db)
+    st.messaging = messaging.Messaging(repository, attachments=st.attachment_storage,
+                                       package_max_bytes=s.package_max_bytes)
     st.attachments = attachments.AttachmentService(st.attachment_storage, repository,
                                                    settings=s)
     await attachments.watch(st.attachment_storage, repository,

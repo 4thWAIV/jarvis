@@ -47,33 +47,6 @@ SECRET_FILE = "salaries-2026.xlsx"
 
 # -- a JARVIS for Tim -------------------------------------------------------------------
 
-class Captures:
-    """The capture box as a review uses it, keeping one capture per reviewed
-    revision as server.py's does: the same binding again is the same capture,
-    a new one closes the old."""
-
-    def __init__(self):
-        self.open: dict[int, dict] = {}
-        self.closed: list[int] = []
-        self.n = 0
-
-    def open_for_review(self, draft, readback, recipient_label):
-        binding = approvals_module.capture_binding(draft)
-        for c in list(self.open.values()):
-            if c["human"]["message_id"] == binding["message_id"]:
-                if c["human"] == binding and c["text"] == readback:
-                    return c["id"]
-                self.close(c["id"])
-        self.n += 1
-        self.open[self.n] = {"id": self.n, "text": readback, "to": recipient_label,
-                             "read": None, "human": binding}
-        return self.n
-
-    def close(self, capture_id):
-        if self.open.pop(capture_id, None) is not None:
-            self.closed.append(capture_id)
-
-
 class Speech:
     def __init__(self, cancelled=False):
         self.said, self.cancelled, self.windows = [], cancelled, 0
@@ -116,7 +89,7 @@ class Jarvis:
                                           clock=self.clock)
         self.raw = serve.pair(github_id, node)
         self.transport = GuardedTransport(self.raw, self.approvals, *self.who.ns)
-        self.captures = Captures()
+        self.captures = fakes.ReviewCaptures()
         self.released: list = []
         self.presentation = fakes.RecordingPresentation(self.raw)
         self.available = "available"
@@ -272,14 +245,6 @@ def test_the_guard_and_the_guarded_transport_are_the_contract_s(tim):
     assert isinstance(recipient, transmission.Recipient)
     assert isinstance(approvals_module.HumanDestination(recipient, tim.who),
                       transmission.Destination)
-
-
-def test_identity_is_the_pairing_s_server_and_member_and_this_node():
-    node = "00000000-0000-4000-8000-000000000042"
-    team = {"server_id": SERVER, "me": {"github_id": TIM, "login": "t"}}
-    assert approvals_module.identity_of(team, node) == Identity(SERVER, TIM, UUID(node))
-    for unpaired in ({}, {"server_id": SERVER}, {"server_id": SERVER, "me": {"github_id": True}}):
-        assert approvals_module.identity_of(unpaired, node) is None
 
 
 # -- review ----------------------------------------------------------------------------
@@ -543,41 +508,6 @@ def test_a_lost_answer_and_a_restart_retry_the_same_bytes_and_key(tim, serve):
     result = again.send(released.request)
     assert result.duplicate and len(serve.messages) == 1
     assert serve.messages[draft.message_id].idempotency_key == approved.request.idempotency_key
-
-
-def test_cancelling_before_the_send_stops_its_release(tim, serve):
-    draft, _ = _reviewed(tim)
-    approved = tim.approve(draft)
-    cancelled = tim.reviews.cancel(*NS, draft.message_id, tim.current(draft).draft_revision,
-                                   None)
-    assert cancelled.send.state == "cancelled"
-    with pytest.raises(ports.NotApproved):
-        tim.approvals.require_approved_revision(*NS, draft.message_id, 1)
-    with pytest.raises(ports.NotApproved):
-        tim.send(approved.request)
-    with pytest.raises(ports.NotApproved):
-        tim.approve(draft), "a cancelled revision is not approved again"
-    assert serve.messages == {}
-
-
-def test_cancelling_awaiting_approval_closes_the_review_capture(tim):
-    draft, reviewed = _reviewed(tim)
-    tim.reviews.cancel(*NS, draft.message_id, tim.current(draft).draft_revision,
-                       reviewed.capture_id)
-    assert tim.captures.closed == [reviewed.capture_id]
-    assert tim.current(draft).send.state == "cancelled"
-
-
-def test_an_accepted_send_keeps_its_status_and_is_not_recalled(tim, serve):
-    draft, _ = _reviewed(tim)
-    tim.approve(draft)
-    tim.submit(draft)
-    assert tim.current(draft).send.state == "accepted"
-    with pytest.raises(ports.SendRefused):
-        tim.approvals.cancel(*NS, draft.message_id, tim.current(draft).draft_revision)
-    assert tim.current(draft).send.state == "accepted"
-    with pytest.raises(ports.NotApproved):
-        tim.approvals.require_approved_revision(*NS, draft.message_id, 1)
 
 
 def test_another_owner_s_jarvis_releases_nothing_of_tim_s(tim, serve):

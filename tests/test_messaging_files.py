@@ -49,6 +49,7 @@ class World:
         self.serve = fakes.FakeServe(server_id=SERVER, members={TIM, MATT}, clock=self.clock,
                                      faults=faults)
         self.revealed: list[Path] = []
+        self.quarantined: list[Path] = []
         self.changes = 0
         self.tim = self._node(TIM, TIM_NODE, start=0x1000)
         self.matt = self._node(MATT, MATT_NODE, start=0x2000)
@@ -62,7 +63,7 @@ class World:
         def changed():
             self.changes += 1
         files = FileSnapshots(store, lambda: transport, ids=ids, reveal=self.revealed.append,
-                              on_change=changed)
+                              quarantine=self.quarantined.append, on_change=changed)
         return Node(github_id, node_id, transport, store, guard, files, ids)
 
 
@@ -316,10 +317,41 @@ async def test_a_received_file_is_verified_before_it_can_be_revealed():
     assert path.read_bytes() == data
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert [p.name for p in path.parent.iterdir()] == [ref.filename]
+    assert [p.parent for p in w.quarantined] == [path.parent], "marked before it is kept"
+    assert w.quarantined[0].name.startswith(messaging_files.PARTIAL)
     w.matt.files.reveal(SERVER, MATT, draft.message_id, ref.attachment_id)
     assert w.revealed == [path]
     # Asking again neither fetches nor duplicates anything.
     assert await w.matt.files.download(SERVER, MATT, draft.message_id, ref.attachment_id) == got
+
+
+def test_the_quarantine_mark_is_the_one_a_browser_download_carries(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(messaging_files.subprocess, "run",
+                        lambda argv, **kw: calls.append((argv, kw)))
+    monkeypatch.setattr(messaging_files.time, "time", lambda: 0x6543210F)
+    messaging_files.quarantine(tmp_path / "f")
+    ((argv, kw),) = calls
+    assert argv == ["/usr/bin/xattr", "-w", "com.apple.quarantine", "0081;6543210f;JARVIS;",
+                    str(tmp_path / "f")]
+    assert kw["check"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_cannot_be_marked_is_not_kept():
+    w = World()
+    data = os.urandom(5000)
+    draft = await w.tim.new_message(MATT, [data])
+    await w.tim.send(draft)
+    await w.matt.sync()
+    ref = draft.attachments[0]
+
+    def refuse(path):
+        raise OSError("no xattr")
+    w.matt.files.quarantine = refuse
+    got = await w.matt.files.download(SERVER, MATT, draft.message_id, ref.attachment_id)
+    assert (got.state, got.failure) == ("failed", "quarantine")
+    assert list((data_paths.messaging_downloads_dir() / str(ref.attachment_id)).iterdir()) == []
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,8 @@
  *
  * Its colour belongs to the transmission, not the agent or the person
  * (rayColours.ts): the first ray showing is the primary colour, a second at
- * the same time the next. At most RAYS_SHOWN_MAX show; more are counted.
+ * the same time the next. At most RAYS_SHOWN_MAX show; more are counted,
+ * and an outgoing one counted still lights its tab's icon.
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
@@ -96,8 +97,17 @@ export function RayLane() {
     const showing = new Set<Showing>();
     let shown = 0;
 
+    // An outgoing message whose view is not open lights its tab's icon
+    // when it gets there (the Agents tab's stays lit until it is opened),
+    // drawn or only counted.
+    const reachedTab = (transfer: Transfer, colour: string, seconds: number): boolean => {
+      if (!measure(transfer.end)?.toTab) return false;
+      transfer.end.reached(true, { colour, direction: [0, 0], seconds });
+      return true;
+    };
+
     const draw = (transfer: Transfer) => {
-      const motion = transferMotion();
+      const motion = transferMotion(transfer);
       if (motion === "none") return;          // the quiet page draws no rays
       const life = new Showing();
       showing.add(life);
@@ -105,6 +115,9 @@ export function RayLane() {
       if (shown >= RAYS_SHOWN_MAX) {
         // Counted, not drawn, and only for as long as a ray would show.
         setOverflow((n) => n + 1);
+        if (transfer.direction === "outgoing") {
+          life.after(RAY_TRAVEL_MS, () => { reachedTab(transfer, "", 0); });
+        }
         life.after(RAY_MS, () => { setOverflow((n) => n - 1); finish(); });
         return;
       }
@@ -144,9 +157,9 @@ export function RayLane() {
             if (moving) mainOrb.current?.receive(colour, { direction: rayDirection(d), seconds });
             return;
           }
+          if (reachedTab(transfer, colour, seconds)) return;
           const there = measure(transfer.end);
-          if (there?.toTab) transfer.end.reached(true, { colour, direction: [0, 0], seconds });
-          else if (there && moving) {
+          if (there && moving) {
             transfer.end.reached(false, { colour, direction: rayArrival(there.d), seconds });
           }
         });

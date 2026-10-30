@@ -28,6 +28,7 @@ from jarvis.message_approvals import GuardedTransport, MessageApprovals
 from jarvis.messaging_client import Delivery, TeamTransport
 from jarvis.messaging_store import SqliteMessagingStore
 from tests.fixtures import messaging_fakes as fakes
+from tests.fixtures.memory_secrets import MemorySecrets
 
 MONGO = os.environ.get("TEAM_SERVER_TEST_MONGODB_URI")
 pytestmark = pytest.mark.skipif(not MONGO, reason="TEAM_SERVER_TEST_MONGODB_URI is not set")
@@ -47,25 +48,6 @@ MATT = Identity(id=1001, login="matt", name="Matt")
 BOB = Identity(id=1002, login="bob", name="Bob")
 
 
-class Secrets:
-    def __init__(self):
-        self.items: dict[str, str] = {}
-
-    def get(self, account):
-        return self.items.get(account)
-
-    def set(self, account, secret):
-        self.items[account] = secret
-
-    def delete(self, account):
-        self.items.pop(account, None)
-
-
-class Ids:
-    def new_id(self):
-        return uuid.uuid4()
-
-
 class Recorder:
     def __init__(self):
         self.presented: list[ports.TransferEvent] = []
@@ -83,13 +65,13 @@ class Node:
 
     def __init__(self, server, identity: Identity, token: str, path: Path):
         self.server, self.identity = server, identity
-        self.connection = team_client.TeamConnection(store=Secrets(), transport=server.asgi)
+        self.connection = team_client.TeamConnection(store=MemorySecrets(), transport=server.asgi)
         self.connection.saved = {"server_url": BASE, "server_id": server.server_id,
                                  "me": {"github_id": identity.id}}
         self.connection.store.set(server.server_id, token)
         self.node = uuid.uuid4()
         self.store = SqliteMessagingStore(path)
-        self.guard = MessageApprovals(self.store, fakes.StaticSnapshots(), ids=Ids(), clock=now)
+        self.guard = MessageApprovals(self.store, fakes.StaticSnapshots(), ids=ports.RandomIds(), clock=now)
         self.seen = Recorder()
         self.delivery = Delivery(store=self.store, connection=self.connection, guard=self.guard,
                                  presentation=self.seen, node_id=lambda: self.node, clock=now,
@@ -174,10 +156,10 @@ def run_with_team_server(dbname, scenario, faults=wire.NO_FAULTS):
         app = create_app(config, github=object())
         async with app.router.lifespan_context(app):
             for _ in range(200):
-                if app.state.initialized:
+                if getattr(app.state, "attachments", None) is not None:
                     break
                 await asyncio.sleep(0.05)
-            assert app.state.initialized
+            assert app.state.initialized and app.state.attachments is not None
             app.state.messaging = ts_messaging.Messaging(ts_messaging.MongoMessages(app.state.db),
                                                          faults=faults)
             server = TeamServer(app, faults)

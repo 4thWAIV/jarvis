@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import time
 import uuid
 from datetime import timedelta
 from typing import Optional
@@ -21,7 +20,7 @@ from bson import ObjectId
 from fastapi.testclient import TestClient
 
 from conftest import (ADMIN, ALICE, BASE, BOB, MALLORY, Clock, browser_token, make_config,
-                      mongo_uri, pair, wait_initialized)
+                      mongo_uri, pair, wait_initialized, wait_messaging)
 from teamserver import attachment_storage, attachments, clock as clock_mod, db as dbmod
 from teamserver.app import create_app
 from teamserver.attachment_storage import FenceLost, GridFSAttachmentStorage
@@ -592,11 +591,7 @@ class Served:
         self.client = TestClient(app, base_url=BASE)
         self.client.__enter__()
         wait_initialized(self.client)
-        for _ in range(100):
-            if getattr(app.state, "attachments", None) is not None:
-                break
-            self.client.get("/health/live")
-            time.sleep(0.05)
+        wait_messaging(self.client)
         app.state.attachments = AttachmentService(app.state.attachments.storage, self.visible)
         admin = browser_token(self.client, github, ADMIN)
         roster = self.client.get("/api/v1/team/members", headers=self.auth(admin)).json()

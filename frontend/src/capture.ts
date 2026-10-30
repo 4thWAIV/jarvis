@@ -28,6 +28,14 @@ export interface Capture {
   heard: number[];
   /** Read back to him in full, or accepted on screen, since it last changed. */
   accepted: boolean;
+  /** A review's capture: the message and revision it is for. */
+  human?: CaptureBinding;
+}
+
+/** Which reviewed revision of a message to a person a capture is for. */
+export interface CaptureBinding {
+  message_id: string;
+  content_revision: number;
 }
 
 export interface CaptureMessage {
@@ -38,6 +46,7 @@ export interface CaptureMessage {
   to?: string;
   heard?: number[];
   accepted?: boolean;
+  human?: CaptureBinding;
 }
 
 /** In the order they opened. */
@@ -71,6 +80,7 @@ export function captureChanged(msg: CaptureMessage): void {
     to: msg.to ?? old?.to ?? "",
     heard: msg.heard ?? old?.heard ?? [],
     accepted: msg.accepted ?? old?.accepted ?? false,
+    human: msg.human ?? old?.human,
   };
   captures.set(old ? list.map((c) => (c.id === msg.id ? next : c)) : [...list, next]);
   if (next.heard.length) claimTurns(next.heard, next.id, next.to, next.text);

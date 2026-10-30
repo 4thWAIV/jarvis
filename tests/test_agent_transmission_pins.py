@@ -23,11 +23,14 @@ and the staged-send drain), with the provider faked at `_deliver`:
 import asyncio
 
 import pytest
+from starlette.requests import Request
 
 from jarvis import session_steer
 from jarvis import session_watch as sw
 
 SID = "11111111-2222-3333-4444-555555555555"
+# A click on the page: admitted by its Origin, not an access key.
+PAGE = Request({"type": "http", "headers": []})
 
 
 class _Utterance:
@@ -195,7 +198,7 @@ async def test_the_same_text_restated_keeps_its_read_back(server, wire):
 @pytest.mark.asyncio
 async def test_accept_on_screen_counts_as_read_back_for_the_voice_path(server, wire):
     n = _capture(server, "Add a health check.")
-    assert await server.api_capture_accept(n) == {"capture": n, "accepted": True}
+    assert await server.api_capture_accept(n, PAGE) == {"capture": n, "accepted": True}
     assert server._captures[n]["read"] == "Add a health check."
     assert "accepted capture" in server._with_notes_for_brain("")
 
@@ -211,7 +214,7 @@ async def test_send_on_screen_accepts_stages_and_sends_now_outside_a_turn(server
     n = _capture(server, "Add a health check.")
     assert server._turn_utt is None
 
-    r = await server.api_capture_send(n)
+    r = await server.api_capture_send(n, PAGE)
     for _ in range(100):
         if wire.sent:
             break
@@ -229,13 +232,13 @@ async def test_send_on_screen_refuses_with_409_and_stages_nothing(server, wire):
     from fastapi import HTTPException
     n = _capture(server, "Who is this for?", to="")
     with pytest.raises(HTTPException) as e:
-        await server.api_capture_send(n)
+        await server.api_capture_send(n, PAGE)
     assert e.value.status_code == 409 and "isn't addressed to anyone" in e.value.detail
 
     server._captures[n]["to"] = "guard"
     server._captures[n]["staged"] = True
     with pytest.raises(HTTPException) as e:
-        await server.api_capture_send(n)
+        await server.api_capture_send(n, PAGE)
     assert e.value.status_code == 409 and "already being sent" in e.value.detail
     assert _messages(server) == [] and wire.sent == []
 
@@ -246,7 +249,7 @@ async def test_send_on_screen_refuses_with_409_and_stages_nothing(server, wire):
 async def test_stop_in_the_cancel_window_cancels_and_reopens_the_capture(server, wire):
     wire.speech.cancelled = True
     n = _capture(server, "Drop the table.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
 
@@ -261,7 +264,7 @@ async def test_stop_in_the_cancel_window_cancels_and_reopens_the_capture(server,
 @pytest.mark.asyncio
 async def test_delete_while_staged_cancels_the_send(server, wire):
     n = _capture(server, "Drop the table.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
 
     await server.api_capture_delete(n)
@@ -278,7 +281,7 @@ async def test_a_send_pressed_during_a_turn_waits_for_the_turn_to_end(server, wi
     monkeypatch.setattr(server, "_turn_utt", object())
     n = _capture(server, "Add a health check.")
 
-    await server.api_capture_send(n)
+    await server.api_capture_send(n, PAGE)
     for _ in range(5):
         await asyncio.sleep(0)
 
@@ -293,7 +296,7 @@ async def test_a_send_pressed_during_a_turn_waits_for_the_turn_to_end(server, wi
 @pytest.mark.asyncio
 async def test_the_tool_only_stages_and_says_nothing(server, wire):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
     assert wire.sent == [] and wire.speech.said == [] and wire.speech.windows == 0
 
@@ -305,7 +308,7 @@ async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeyp
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: sw.Snapshot(sessions=[_guard(state="working")]))
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
 
@@ -322,7 +325,7 @@ async def test_priority_skips_the_queue(server, wire, monkeypatch):
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: sw.Snapshot(sessions=[_guard(state="working")]))
     n = _capture(server, "Stop everything.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n, "priority": True})
     await server._perform_staged_steers()
 
@@ -335,7 +338,7 @@ async def test_priority_skips_the_queue(server, wire, monkeypatch):
 
 async def _send_one(server, text="Add a health check."):
     n = _capture(server, text)
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
     (m,) = _messages(server)
@@ -379,7 +382,7 @@ async def test_sent_to_a_session_that_will_ask_first_says_so(server, wire, monke
 @pytest.mark.asyncio
 async def test_no_voice_at_send_time_fails_without_sending(server, wire, monkeypatch):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     await server.tool_steer_session({"name": "guard", "capture": n})
     monkeypatch.setattr(server, "speech", None)
     await server._perform_staged_steers()
@@ -391,7 +394,7 @@ async def test_no_voice_at_send_time_fails_without_sending(server, wire, monkeyp
 @pytest.mark.asyncio
 async def test_no_voice_at_staging_refuses_and_records_it_failed(server, wire, monkeypatch):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     monkeypatch.setattr(server, "speech", None)
     refused = await server.tool_steer_session({"name": "guard", "capture": n})
     assert "won't send it to guard unheard" in refused
@@ -404,7 +407,7 @@ async def test_a_session_that_cannot_take_it_is_refused_and_recorded(server, wir
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_guard(steerable=False), None, None))
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n)
+    await server.api_capture_accept(n, PAGE)
     refused = await server.tool_steer_session({"name": "guard", "capture": n})
     assert "has no inbox socket" in refused
     (m,) = _messages(server)
@@ -416,7 +419,7 @@ async def test_a_session_that_cannot_take_it_is_refused_and_recorded(server, wir
 async def test_two_staged_in_one_turn_go_in_order(server, wire):
     for text in ("first", "second"):
         n = _capture(server, text)
-        await server.api_capture_accept(n)
+        await server.api_capture_accept(n, PAGE)
         await server.tool_steer_session({"name": "guard", "capture": n, "priority": True})
     await server._perform_staged_steers()
     assert [t for _, t, _ in wire.sent] == [server.STEER_SIGNATURE + "first",

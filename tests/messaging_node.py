@@ -20,17 +20,18 @@ from __future__ import annotations
 import os
 import sys
 
+from tests.fixtures.memory_secrets import MemorySecrets
 
-class _Secrets:
+
+class _Secrets(MemorySecrets):
+    """The credential given on stdin, in memory only."""
+
     def __init__(self, secret: str):
-        self.items: dict[str, str] = {}
+        super().__init__()
         self.secret = secret
 
     def get(self, account):
         return self.items.get(account, self.secret)
-
-    def set(self, account, secret):
-        self.items[account] = secret
 
     def delete(self, account):
         self.items[account] = ""

@@ -260,3 +260,36 @@ async def test_reduced_motion_draws_a_still_route_with_its_words(page_url):
         assert group["motion"] == "still" and group["pulses"] == 0 and group["rings"] == []
         assert await page.evaluate(STATUS) == "A message from matt is arriving"
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_reduced_motion_stills_a_person_s_ray_and_never_an_agent_s(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, [(0.5, _to("s1")), (0.0, _event("outgoing"))],
+                                    reduced=True)
+        await page.wait_for_function(
+            "document.querySelectorAll('#ray-lane .ray').length === 2", timeout=10000)
+        motion = {g["id"].split(":")[0]: (g["motion"], g["pulses"])
+                  for g in await page.evaluate(GROUPS)}
+        assert motion == {"agent": ("animate", 1), "human": ("still", 0)}, motion
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_an_agent_s_message_past_the_ray_limit_still_lights_the_agents_tab(page_url):
+    """Five rays show; an agent's message counted past them draws nothing
+    but still lights the Agents tab while another tab is open."""
+    other_tab_open = asyncio.Event()
+    burst = [(other_tab_open if i == 0 else 0.0, _event("incoming", sender=MATT, recipient=TIM))
+             for i in range(5)] + [(0.0, _to("s1"))]
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, burst)
+        await page.click(".right-tabs [aria-label='Diagnostics']")
+        other_tab_open.set()
+        await page.wait_for_function(
+            "document.querySelector('#ray-lane .ray-overflow')", timeout=10000)
+        assert all(g["id"].startswith("human:") for g in await page.evaluate(GROUPS))
+        await page.wait_for_function(
+            "document.querySelector(\".right-tabs [aria-label='Agents']\").classList.contains('lit')",
+            timeout=5000)
+        await browser.close()

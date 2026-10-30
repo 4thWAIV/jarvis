@@ -18,9 +18,7 @@ every committed change.
 """
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Request
@@ -72,15 +70,6 @@ def refused_by(e: Exception) -> Refused:
     raise e
 
 
-class _Ids:
-    def new_id(self) -> UUID:
-        return uuid.uuid4()
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 class LocalMessaging:
     """The routes' work. `reviews` is the approval stream's review (the
     guard freezes the revision, server.py's capture box opens the capture it
@@ -90,11 +79,10 @@ class LocalMessaging:
     def __init__(self, *, store, delivery: Delivery, guard: ports.ApprovalGuard,
                  reviews: Optional[Reviews] = None,
                  snapshots: Optional[ports.AttachmentSnapshots] = None,
-                 ids: Optional[ports.IdSource] = None, clock: ports.Clock = _utcnow,
-                 files_routes: Optional[Callable[[FastAPI], None]] = None):
+                 ids: Optional[ports.IdSource] = None, clock: ports.Clock = ports.utcnow):
         self.store, self.delivery, self.guard = store, delivery, guard
         self.reviews, self.snapshots = reviews, snapshots
-        self.ids, self.clock, self.files_routes = ids or _Ids(), clock, files_routes
+        self.ids, self.clock = ids or ports.RandomIds(), clock
         self._roster: dict[tuple[str, int], wire.RecipientList] = {}
 
     # -- whose records ------------------------------------------------------------------
@@ -348,13 +336,10 @@ class LocalMessaging:
         pairing = self.pairing()
         ns = pairing.ns
         draft = self._action_draft(ns, message_id, action)
-        if draft.send.state == "awaiting_approval" and draft.capture_id is not None:
-            return self._draft_view(ns, draft)
         if self.reviews is None:
             raise Refused("messaging_unavailable", availability="unsupported")
         await self._on_roster(pairing, draft.recipient_github_id)
         reviewed = self.reviews.review(*ns, message_id, action.expected_draft_revision)
-        reviewed = self.store.set_capture(*ns, message_id, reviewed.capture_id)
         self.delivery.changed()
         return self._draft_view(ns, reviewed)
 
@@ -405,7 +390,8 @@ class LocalMessaging:
 
 
 def mount(app: FastAPI, messaging: LocalMessaging) -> None:
-    """The page's messaging routes, and the files stream's beside them."""
+    """The page's messaging routes (the files routes are `messaging_files.router`,
+    added beside them by `messaging_runtime.mount`)."""
 
     @app.exception_handler(Refused)
     async def on_refused(request: Request, exc: Refused):
@@ -483,9 +469,6 @@ def mount(app: FastAPI, messaging: LocalMessaging) -> None:
             return draft_action
         app.add_api_route(f"{PREFIX}/drafts/{{message_id}}/{action}", make(action),
                           methods=["POST"])
-
-    if messaging.files_routes is not None:
-        messaging.files_routes(app)
 
     @app.post(PREFIX + "/{message_id}/read")
     async def message_read(message_id: UUID):

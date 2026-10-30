@@ -62,3 +62,34 @@ def test_body_gate_lets_the_send_declare_up_to_its_own_limit(make_client):
     r = c.put("/api/v1/attachments/00000000-0000-4000-8000-000000000000/bytes",
               content=between)
     assert r.status_code == 401                     # the upload counts its own bytes
+
+
+def test_body_gate_counts_a_chunked_body_it_cannot_see_declared(make_client):
+    c = make_client(messaging_enabled=True)
+
+    def chunks(total: int):
+        for _ in range(total // 4096):
+            yield b"x" * 4096
+
+    # (The send reads its body only after the session, counting it itself.)
+    for path, size in (("/api/v1/messages/receipts", 2 * 1024 * 1024),
+                       ("/api/v1/attachments", MAX_BODY + 8192)):
+        r = c.post(path, content=chunks(size), headers={"Content-Type": "application/json"})
+        assert (r.status_code, r.json()["error"]["code"]) == (413, "too_large"), path
+        assert r.headers["X-Content-Type-Options"] == "nosniff"
+    r = c.post("/api/v1/messages/receipts", content=chunks(8192),
+               headers={"Content-Type": "application/json"})
+    assert r.status_code == 422                     # under the limit: read and judged
+
+
+
+def test_the_service_is_built_once_at_startup_with_its_file_storage(make_client):
+    c = make_client(messaging_enabled=True)
+    st = c.app.state
+    assert st.messaging.attachments is st.attachment_storage
+    built, st.messaging = st.messaging, None        # as before startup has built it
+    r = c.get(messaging.PREFIX + "/recipients", headers={"Authorization": "Bearer nothing"})
+    assert (r.status_code, r.json()["error"]["code"]) == (503, "not_ready")
+    assert st.messaging is None, "a request never builds or caches a service"
+    st.messaging = built
+    assert c.get(messaging.PREFIX + "/recipients").status_code == 401

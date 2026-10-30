@@ -155,7 +155,8 @@ async def chunks(data: bytes, size: int = 65536):
 
 
 def jarvis(store, transport) -> FileSnapshots:
-    return FileSnapshots(store, lambda: transport, reveal=lambda path: None)
+    return FileSnapshots(store, lambda: transport, reveal=lambda path: None,
+                         quarantine=lambda path: None)
 
 
 async def publish(db, visible: Accepted, approved: ports.ApprovedSend) -> wire.AcceptedMessage:

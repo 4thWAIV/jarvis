@@ -21,7 +21,11 @@ import { recipientLabel, sizeText } from "./queueStore";
 export function MessageReview({ draft }: { draft: Draft }) {
   const dir = useSyncExternalStore(directory.subscribe, directory.get);
   const open = useSyncExternalStore(captures.subscribe, captures.get);
-  const capture = open.find((c) => c.id === draft.capture_id);
+  // Its buttons only on the capture bound to this message's revision: a
+  // number alone could name another message's capture.
+  const capture = open.find((c) => c.id === draft.capture_id
+    && c.human?.message_id === draft.message_id
+    && c.human?.content_revision === draft.send.content_revision);
   const total = draft.attachments.reduce((n, a) => n + a.size_bytes, 0);
   return (
     <section className="message-review" aria-label="Review before sending"
