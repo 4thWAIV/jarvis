@@ -22,6 +22,10 @@
  *   - Team server (TeamServerView.tsx) or one JARVIS instance (NodeView.tsx),
  *     named after it, the same way: offered while open, which clicking the
  *     Team Server tile or an instance's tile in the Network tab does.
+ *   - One Queue item (QueueItemView.tsx), named by its subject, the same
+ *     way: offered while one is open, which clicking its row in the Queue
+ *     does. One view however many messages there are; opening another item
+ *     replaces it.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -44,6 +48,8 @@ import { TeamServerView } from "./TeamServerView";
 import { useSubsystems } from "./SubsystemList";
 import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
+import { directory, openQueue, queue } from "./queue";
+import { QueueItemView, queueViewTitle } from "./QueueItemView";
 
 function MainView() {
   return (
@@ -112,6 +118,13 @@ const NETWORK_VIEW: Tab = {
   view: () => null,
 };
 
+const QUEUE_VIEW: Tab = {
+  id: "queue",
+  title: "Message",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -134,6 +147,9 @@ export function CentreArea() {
   const subsystemName = useSubsystems().list.find((s) => s.id === subsystem)?.name;
   const networkOpen = useSyncExternalStore(openNetwork.subscribe, openNetwork.get);
   const nodes = useSyncExternalStore(network.subscribe, network.get).value?.snapshot?.nodes;
+  const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
+  const queueState = useSyncExternalStore(queue.subscribe, queue.get);
+  const people = useSyncExternalStore(directory.subscribe, directory.get);
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -151,6 +167,9 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (networkOpen ? "network" : now === "network" ? VIEWS[0].id : now));
   }, [networkOpen]);
+  useEffect(() => {
+    setSelected((now) => (queueOpen ? "queue" : now === "queue" ? VIEWS[0].id : now));
+  }, [queueOpen]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
@@ -163,6 +182,8 @@ export function CentreArea() {
       ? { ...NETWORK_VIEW, title: "Team server", view: () => <TeamServerView /> }
       : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? "Instance",
           view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
+    ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
+                       view: () => <QueueItemView thread={queueOpen} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];

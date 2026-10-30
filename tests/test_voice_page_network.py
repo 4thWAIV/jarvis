@@ -130,7 +130,10 @@ class _Team:
             await route.fulfill(status=204, body="")
 
         async def other(route):
-            self.other.append(route.request.url)
+            # The Queue's own route (/api/team/messages) is the Queue's
+            # business, not the Network view's.
+            if "/api/team/messages" not in route.request.url:
+                self.other.append(route.request.url)
             await route.fulfill(status=404, body="")
 
         await page.route("**/api/team/**", other)
@@ -270,7 +273,7 @@ async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first
 
         tabs = await page.evaluate("""() => [...document.querySelectorAll('.right-tabs [role=tab]')]
                                          .map(t => t.getAttribute('aria-label'))""")
-        assert tabs == ["Agents", "Diagnostics", "Workflows", "Network"], tabs
+        assert tabs == ["Agents", "Diagnostics", "Workflows", "Network", "Queue"], tabs
         await _network_tab(page)
         tiles = await page.evaluate("""() => [...document.querySelectorAll('.node-tile')].map(t => ({
             id: t.dataset.node, h: t.getBoundingClientRect().height, self: t.classList.contains('self-tile')}))""")

@@ -2844,3 +2844,329 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }
 }
+
+/* ── The Queue (QueuePanel.tsx) ──────────────────────────────────────────
+   One owner's work in the right panel: Waiting, then Active / Outbox, then
+   the dismissed items behind Show dismissed. The owner's turn is cyan and a
+   solid person badge; the correspondent's is amber and an outlined arrow:
+   shape and words say it, colour only adds to it. Nothing here animates. */
+.right-view.queue-view {
+  height: 100%;
+  overflow-y: auto;
+  gap: 12px;
+  font-size: 11px;
+}
+.queue-notice { margin: 0; font-size: 11px; line-height: 16px; color: rgba(255, 255, 255, 0.6); }
+.queue-notice.stale { color: rgba(251, 191, 36, 0.85); }
+.queue-head { display: flex; justify-content: flex-end; }
+.queue-new, .queue-history-toggle, .queue-history-more, .queue-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 99px;
+  cursor: pointer;
+}
+.queue-new:disabled { opacity: 0.4; cursor: not-allowed; }
+.queue-history-toggle { align-self: flex-start; border-color: transparent; background: none;
+  color: rgba(255, 255, 255, 0.5); padding: 0; }
+.queue-section { display: flex; flex-direction: column; gap: 6px; }
+.queue-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+.queue-count { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
+.queue-empty { margin: 0; color: rgba(255, 255, 255, 0.35); }
+.queue-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.queue-list.done { gap: 3px; }
+.queue-item { position: relative; min-width: 0; }
+.queue-row {
+  --side: 14, 165, 233;      /* the owner's turn */
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "who who age"
+    "badge subject subject"
+    "badge side side"
+    "badge strip strip"
+    "badge delivery delivery";
+  column-gap: 7px;
+  row-gap: 3px;
+  align-items: center;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(var(--side), 0.05);
+  border: 1px solid rgba(var(--side), 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.queue-row.turn-theirs { --side: 245, 158, 11; }
+.queue-row.unsent { --side: 255, 255, 255; border-style: dashed; }
+.queue-row:hover { background: rgba(var(--side), 0.12); }
+.queue-row.current { border-color: rgba(var(--side), 0.95); box-shadow: 0 0 0 1px rgba(var(--side), 0.45); }
+.queue-row.pending { opacity: 0.7; }
+.queue-row.unread .row-person { font-weight: 700; color: #fff; }
+.queue-row:focus-visible, .queue-done-row:focus-visible, .queue-view button:focus-visible,
+.queue-item-view button:focus-visible, .queue-item-view input:focus-visible,
+.queue-item-view textarea:focus-visible, .queue-item-view select:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.95);
+  outline-offset: 2px;
+}
+/* The person: also where a transfer's ray ends. */
+.queue-endpoint {
+  grid-area: badge;
+  align-self: start;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(var(--side), 0.25);
+  border: 1px solid rgba(var(--side), 0.7);
+}
+.row-who { grid-area: who; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-person { font-size: 12px; font-weight: 600; }
+.row-via { color: rgba(255, 255, 255, 0.5); }
+.row-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.45); white-space: nowrap; }
+.row-subject {
+  grid-area: subject;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.75);
+}
+.row-side { grid-area: side; min-width: 0; }
+.row-strip { grid-area: strip; display: flex; flex-wrap: wrap; gap: 3px 8px; min-width: 0; }
+.row-strip:empty { display: none; }
+.row-delivery { grid-area: delivery; min-width: 0; padding-top: 2px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.queue-row.unsent { grid-template-areas: "badge who who" "badge subject subject" "badge delivery delivery"; }
+
+/* A cue: its icon and its words, always both. */
+.queue-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 14px;
+  color: rgba(255, 255, 255, 0.7);
+}
+.queue-cue .cue-words { min-width: 0; overflow-wrap: anywhere; }
+.queue-icon { flex: none; }
+.cue-your-turn, .cue-their-turn {
+  padding: 1px 7px 1px 5px;
+  border-radius: 99px;
+  font-weight: 600;
+}
+.cue-your-turn { color: #e0f2fe; background: rgba(14, 165, 233, 0.85); border: 1px solid rgba(14, 165, 233, 1); }
+.cue-their-turn { color: #fcd34d; background: transparent; border: 1px solid rgba(245, 158, 11, 0.85); }
+.cue-unread { color: #7dd3fc; font-weight: 600; }
+.cue-awaiting, .cue-received, .cue-read-by-them { color: rgba(255, 255, 255, 0.75); }
+.cue-read-by-them { color: #86efac; }
+.cue-dismissed { color: rgba(255, 255, 255, 0.45); }
+.queue-sending { font-size: 10px; color: rgba(251, 191, 36, 0.9); }
+
+/* Dismissed: small and dimmed, each with Restore beside it. */
+.queue-history { display: flex; flex-direction: column; gap: 6px; }
+.queue-list.done .queue-item { display: flex; gap: 4px; align-items: stretch; }
+.queue-done-row {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.queue-done-row .row-subject { grid-column: 1 / -1; }
+.queue-done-row.current { border-color: rgba(14, 165, 233, 0.6); }
+.queue-restore { flex: none; border-radius: 6px; }
+
+/* ── One item, in the centre (QueueItemView.tsx) ────────────────────────── */
+#queue-item-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+}
+.item-head { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.item-subject { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; overflow-wrap: anywhere; }
+.item-who { margin: 0; color: rgba(255, 255, 255, 0.75); overflow-wrap: anywhere; }
+.item-person { font-weight: 600; color: #fff; }
+.item-handle, .item-via { color: rgba(255, 255, 255, 0.5); }
+.item-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.item-cues .queue-cue { font-size: 11px; }
+.item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.item-actions button, .item-turn, .item-back, .composer-actions button, .composer-conflict button,
+.file-action, .message-reply {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.item-actions button:hover, .item-turn:hover, .composer-actions button:hover { border-color: rgba(14, 165, 233, 0.7); }
+.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.item-actions button[aria-pressed="true"] { border-color: rgba(52, 211, 153, 0.7); }
+.item-back { align-self: flex-start; }
+.item-turn { font-size: 11px; padding: 2px 8px; }
+.item-note { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.item-note.warn { color: #fca5a5; }
+.item-blockers {
+  padding: 8px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.6);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.item-blockers p, .item-blockers ul { margin: 0; }
+.item-blockers ul { padding-left: 18px; }
+.item-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+  padding-right: 4px; }
+.item-exchange { list-style: none; display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; }
+
+.queue-message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+.queue-message.incoming { border-left: 3px solid rgba(245, 158, 11, 0.75); }
+.queue-message.outgoing { border-left: 3px solid rgba(14, 165, 233, 0.75); }
+.queue-message.on-its-way { border-style: dashed; }
+.message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; }
+.message-person { font-weight: 600; color: #fff; }
+.message-handle, .message-via, .message-to { color: rgba(255, 255, 255, 0.5); }
+.message-time { margin-left: auto; color: rgba(255, 255, 255, 0.45); font-size: 11px; }
+.message-subject { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+/* Text as text: line breaks kept, long words broken, nothing interpreted. */
+.message-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.message-link { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.message-files, .review-files, .composer-files { display: flex; flex-direction: column; gap: 4px; }
+.message-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.message-foot .queue-cue { font-size: 11px; }
+.message-replies, .message-related { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.message-reply { margin-left: auto; font-size: 11px; padding: 2px 8px; }
+.link-button {
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: #7dd3fc;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.link-missing { font-size: 12px; color: rgba(255, 255, 255, 0.4); }
+
+.queue-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.file-name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.file-meta, .file-state { color: rgba(255, 255, 255, 0.55); }
+.queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
+.queue-file.state-verified .file-state { color: #86efac; }
+.file-action { font-size: 11px; padding: 2px 8px; }
+
+/* The response being written, and its inline review (MessageComposer.tsx,
+   MessageReview.tsx). */
+.message-composer, .message-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  background: rgba(14, 165, 233, 0.04);
+}
+.message-review { border-color: rgba(245, 158, 11, 0.75); background: rgba(245, 158, 11, 0.05); }
+.review-heading { margin: 0; font-size: 13px; font-weight: 600; color: #fcd34d; }
+.review-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.review-fields dt { color: rgba(255, 255, 255, 0.5); }
+.review-fields dd { margin: 0; overflow-wrap: anywhere; }
+.review-total, .review-no-text, .review-waiting { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.review-capture { display: flex; flex-direction: column; gap: 6px; }
+.review-capture .capture-buttons { position: static; justify-content: flex-end; }
+.composer-agent { margin: 0; font-size: 12px; color: #fcd34d; }
+.composer-to { display: flex; flex-direction: column; gap: 2px; }
+.composer-to select, .composer-field input, .composer-text {
+  font: inherit;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+.composer-to select { max-width: 100%; }
+.composer-inbox, .composer-limits, .composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
+.composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.composer-text { width: 100%; resize: vertical; min-height: 96px; line-height: 1.45; }
+.composer-text:disabled, .composer-field input:disabled { opacity: 0.6; }
+.composer-attach { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+.composer-attach input { margin-left: 8px; font-size: 11px; }
+.composer-adding { margin: 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
+.composer-error { margin: 0; font-size: 12px; color: #fca5a5; }
+.composer-conflict { display: flex; gap: 6px; flex-wrap: wrap; }
+.composer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.composer-status { margin-right: auto; font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+.composer-confirm { font-size: 12px; color: #fca5a5; }
+.composer-review { border-color: rgba(245, 158, 11, 0.8) !important; }
+
+/* High contrast: the badges keep their outlines and their words. */
+@media (forced-colors: active) {
+  .cue-your-turn, .cue-their-turn, .queue-row, .queue-endpoint { forced-color-adjust: auto; border: 1px solid CanvasText; }
+}
