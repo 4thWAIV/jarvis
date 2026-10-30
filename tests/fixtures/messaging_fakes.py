@@ -606,6 +606,17 @@ class StaticSnapshots:
                 raise ports.SnapshotMissing(ref.attachment_id)
         return refs
 
+    def refs(self, server_id, owner_github_id, message_id, attachment_ids):
+        known = {r.attachment_id: r for (m, _), refs in self.table.items() if m == message_id
+                 for r in refs}
+        for attachment_id in attachment_ids:
+            if attachment_id not in known or attachment_id in self.missing:
+                raise ports.SnapshotMissing(attachment_id)
+        return [known[a] for a in attachment_ids]
+
+    def cleanup(self, server_id, owner_github_id):
+        return 0
+
     async def ensure_uploaded(self, server_id, owner_github_id, message_id, content_revision):
         return self.verified_attachment_manifest(server_id, owner_github_id, message_id,
                                                  content_revision)

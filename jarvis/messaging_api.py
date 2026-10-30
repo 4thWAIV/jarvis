@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis.message_approvals import Reviews
 from jarvis.messaging_client import Delivery, Pairing
 
 PREFIX = "/api/team/messages"
@@ -81,17 +82,18 @@ def _utcnow() -> datetime:
 
 
 class LocalMessaging:
-    """The routes' work. `captures` is server.py's capture box (the review's
-    capture), `snapshots` the files stream's private copies, `guard` the
-    approval stream's one guard; each is injected."""
+    """The routes' work. `reviews` is the approval stream's review (the
+    guard freezes the revision, server.py's capture box opens the capture it
+    is accepted on), `snapshots` the files stream's private copies, `guard`
+    the approval stream's one guard; each is injected."""
 
     def __init__(self, *, store, delivery: Delivery, guard: ports.ApprovalGuard,
-                 captures: Optional[ports.ReviewCaptures] = None,
+                 reviews: Optional[Reviews] = None,
                  snapshots: Optional[ports.AttachmentSnapshots] = None,
                  ids: Optional[ports.IdSource] = None, clock: ports.Clock = _utcnow,
                  files_routes: Optional[Callable[[FastAPI], None]] = None):
         self.store, self.delivery, self.guard = store, delivery, guard
-        self.captures, self.snapshots = captures, snapshots
+        self.reviews, self.snapshots = reviews, snapshots
         self.ids, self.clock, self.files_routes = ids or _Ids(), clock, files_routes
         self._roster: dict[tuple[str, int], wire.RecipientList] = {}
 
@@ -141,19 +143,14 @@ class LocalMessaging:
                 send_states=[d.send.state for d in drafts],
                 uploads_pending=any(ports.uploads_pending(d.files) for d in drafts))})
 
-    def _attachments(self, ns, message_id: UUID, content_revision: int,
+    def _attachments(self, ns, message_id: UUID,
                      attachment_ids: list[UUID]) -> list[wire.AttachmentRef]:
         """The chosen files, in the chosen order, from their private copies."""
         if not attachment_ids:
             return []
         if self.snapshots is None:
             raise ports.SnapshotMissing(attachment_ids[0])
-        refs = {r.attachment_id: r for r in self.snapshots.verified_attachment_manifest(
-            *ns, message_id, content_revision)}
-        for attachment_id in attachment_ids:
-            if attachment_id not in refs:
-                raise ports.SnapshotMissing(attachment_id)
-        return [refs[a] for a in attachment_ids]
+        return self.snapshots.refs(*ns, message_id, attachment_ids)
 
     # -- reads ------------------------------------------------------------------------------
 
@@ -186,16 +183,20 @@ class LocalMessaging:
         self._roster[pairing.ns] = roster
         return roster
 
-    async def _label(self, pairing: Pairing, github_id: int) -> str:
-        """How the read-back names the recipient: the roster's name, else
-        the login. Read once per pairing and again if they are not on it."""
+    def members(self) -> list[wire.TeamMember]:
+        """The roster last read for the current pairing (none read yet: [])."""
+        pairing = self.delivery.pairing()
+        roster = self._roster.get(pairing.ns) if pairing else None
+        return list(roster.members) if roster else []
+
+    async def _on_roster(self, pairing: Pairing, github_id: int) -> None:
+        """A recipient must be on the roster (the owner is): read once per
+        pairing and again if they are not on it."""
         roster = self._roster.get(pairing.ns)
         if roster is None or all(m.github_id != github_id for m in roster.members):
             roster = await self.recipients()
-        member = next((m for m in roster.members if m.github_id == github_id), None)
-        if member is None:
+        if all(m.github_id != github_id for m in roster.members):
             raise Refused("recipient_not_allowed")
-        return member.name or member.login
 
     # -- work state ------------------------------------------------------------------------
 
@@ -236,7 +237,7 @@ class LocalMessaging:
         return next((d for d in (item.drafts if item else [])
                      if d.send.state in ("draft", "awaiting_approval")), None)
 
-    def create_draft(self, save: ports.DraftSave) -> ports.Draft:
+    def create_draft(self, save: ports.DraftSave, agent_drafted: bool = False) -> ports.Draft:
         ns = self.pairing().ns
         if save.expected_draft_revision is not None:
             raise Refused("invalid_request")
@@ -260,8 +261,8 @@ class LocalMessaging:
             in_reply_to_message_id=save.in_reply_to_message_id,
             related_message_ids=list(save.related_message_ids),
             recipient_github_id=save.recipient_github_id, draft_revision=1,
-            attachments=self._attachments(ns, message_id, 1, list(save.attachment_ids)),
-            send=send, **self._normalized(save))
+            attachments=self._attachments(ns, message_id, list(save.attachment_ids)),
+            send=send, agent_drafted=agent_drafted, **self._normalized(save))
         created = self.store.create_draft(*ns, draft)
         self.delivery.changed()
         return self._draft_view(ns, created)
@@ -275,7 +276,8 @@ class LocalMessaging:
             raise Refused("invalid_request")
         return {"subject": subject, "text": text}
 
-    def save_draft(self, message_id: UUID, save: ports.DraftSave) -> ports.Draft:
+    def save_draft(self, message_id: UUID, save: ports.DraftSave,
+                   agent_drafted: bool = False) -> ports.Draft:
         ns = self.pairing().ns
         current = self.store.draft(*ns, message_id)
         if current is None:
@@ -293,11 +295,12 @@ class LocalMessaging:
                 [a.attachment_id for a in current.attachments] == attachment_ids:
             return self._draft_view(ns, current)          # nothing changed: nothing revised
         send = ports.revise(current)
-        attachments = self._attachments(ns, message_id, send.content_revision, attachment_ids)
+        attachments = self._attachments(ns, message_id, attachment_ids)
         if send.content_revision != current.send.content_revision:
             self._close_capture(current)
         updated = current.model_copy(update={
             **fields, "attachments": attachments, "send": send,
+            "agent_drafted": current.agent_drafted or agent_drafted,
             "capture_id": current.capture_id
             if send.content_revision == current.send.content_revision else None})
         saved = self.store.save_draft(*ns, ports.Draft.model_validate(updated.model_dump()),
@@ -314,9 +317,22 @@ class LocalMessaging:
         self._close_capture(current)
         self.delivery.changed()
 
+    def write_draft(self, message_id: Optional[UUID], save: ports.DraftSave,
+                    agent_drafted: bool) -> ports.Draft:
+        """The one draft writer, for the page's routes and the brain's
+        `draft_message` (message_approvals.DraftWriter): a new draft when
+        `message_id` is None, else an edit of that one. A refusal is the
+        contract's error, with the current draft as `latest`."""
+        try:
+            if message_id is None:
+                return self.create_draft(save, agent_drafted)
+            return self.save_draft(message_id, save, agent_drafted)
+        except Refused as e:
+            raise wire.ContractError(e.code, e.latest) from None
+
     def _close_capture(self, draft: ports.Draft) -> None:
-        if draft.capture_id is not None and self.captures is not None:
-            self.captures.close(draft.capture_id)
+        if draft.capture_id is not None and self.reviews is not None:
+            self.reviews.captures.close(draft.capture_id)
 
     def _action_draft(self, ns, message_id: UUID, action: ports.DraftAction) -> ports.Draft:
         draft = self.store.draft(*ns, message_id)
@@ -334,12 +350,11 @@ class LocalMessaging:
         draft = self._action_draft(ns, message_id, action)
         if draft.send.state == "awaiting_approval" and draft.capture_id is not None:
             return self._draft_view(ns, draft)
-        label = await self._label(pairing, draft.recipient_github_id)
-        reviewed = self.guard.request_review(*ns, message_id, action.expected_draft_revision)
-        if self.captures is not None:
-            capture_id = self.captures.open_for_review(
-                reviewed, ports.human_readback(reviewed, label), label)
-            reviewed = self.store.set_capture(*ns, message_id, capture_id)
+        if self.reviews is None:
+            raise Refused("messaging_unavailable", availability="unsupported")
+        await self._on_roster(pairing, draft.recipient_github_id)
+        reviewed = self.reviews.review(*ns, message_id, action.expected_draft_revision)
+        reviewed = self.store.set_capture(*ns, message_id, reviewed.capture_id)
         self.delivery.changed()
         return self._draft_view(ns, reviewed)
 

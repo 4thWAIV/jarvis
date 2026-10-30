@@ -1060,6 +1060,64 @@ TOOL_SPECS = [
             "required": ["text"],
         },
     },
+    {
+        "name": "draft_message",
+        "description": (
+            "Write or rewrite a draft message to a person on the user's team (or to "
+            "himself, as Me), on his say-so. It is only a draft: it shows on its item "
+            "as one you wrote, and nothing is sent. To revise one, pass its `message` "
+            "id and the `draft_revision` you last saw. To reply, pass the exact "
+            "`reply_to` message id instead of `to`. Then request_message_review."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string",
+                       "description": "The person as he named them, or Me. Not for a reply."},
+                "reply_to": {"type": "string",
+                             "description": "The id of the exact message being answered."},
+                "subject": {"type": "string", "maxLength": 200},
+                "text": {"type": "string", "maxLength": 20000},
+                "message": {"type": "string",
+                            "description": "The draft being revised. Omit for a new one."},
+                "draft_revision": {"type": "integer",
+                                   "description": "With `message`: the revision last seen."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "request_message_review",
+        "description": (
+            "Ask the user to review a draft message exactly as it would go: it opens "
+            "a capture box holding the recipient, subject, text and every file with "
+            "its size. It approves nothing. Offer to read it back (read_capture); "
+            "once he has heard it in full or accepted it on screen and says to send "
+            "it, call send_message with that capture."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The draft's message id."},
+                "draft_revision": {"type": "integer",
+                                   "description": "The draft's revision last seen."},
+            },
+            "required": ["message", "draft_revision"],
+        },
+    },
+    {
+        "name": "send_message",
+        "description": (
+            "Send a reviewed message to a person: pass the capture request_message_review "
+            "opened, once the user has heard it read back in full (or accepted it on "
+            "screen) since it last changed and has said to send it. Returns as soon as "
+            "it is staged: when your turn ends it is approved and goes out, after a "
+            "moment in which he can stop it. Approved is not delivered. Agents' "
+            "messages go with steer_session, never this."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"capture": {"type": "integer"}},
+            "required": ["capture"],
+        },
+    },
 ]
 
 

@@ -53,9 +53,10 @@ import secrets
 import socket
 import subprocess
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, AsyncIterator, Callable, Optional, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -66,6 +67,9 @@ log = logging.getLogger("jarvis.team")
 
 STATUS_INTERVAL_SEC = 30
 REQUEST_TIMEOUT_SEC = 10
+# A streamed request's limit on each read and write, not on the whole
+# transfer: a large file keeps going while bytes keep moving.
+STREAM_TIMEOUT_SEC = 60
 MAX_BACKOFF_SEC = 300
 # Shown as stale after this long without a successful contact.
 STALE_AFTER_SEC = 2 * STATUS_INTERVAL_SEC + REQUEST_TIMEOUT_SEC
@@ -313,6 +317,10 @@ class TeamConnection:
         self._transport = transport
         self._resolver = resolver
         self.saved: Optional[dict] = None
+        # Moves whenever the pairing changes (a new server or owner, or a
+        # disconnect), so an answer to a request made under the old one is
+        # discarded (messaging_client.TeamTransport). Signing out keeps it.
+        self.generation = 0
         self.pairing: Optional[Pairing] = None
         self.last_error: Optional[str] = None
         # The address last paired with or disconnected from, so the Team
@@ -499,6 +507,7 @@ class TeamConnection:
             await self._remote_logout(old["server_url"], old_token)  # superseded session
         self.saved = {"server_url": p.server_url, "server_id": p.server_id,
                       "connected_at": _now(), "last_contact_at": _now()}
+        self.generation += 1
         self.signed_out = False
         self.failures = 0
         self.last_error = None
@@ -759,6 +768,7 @@ class TeamConnection:
         token = await self._secret()
         await self._forget_secret(saved["server_id"])
         self.saved = None
+        self.generation += 1
         self.signed_out = False
         self._account_key = None
         self._clear_network()
@@ -775,25 +785,63 @@ class TeamConnection:
 
     # -- administrator actions -----------------------------------------------------------
 
-    async def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
-        """Forward one member-management call. Returns (status, JSON body)."""
+    async def _session(self) -> tuple[str, str]:
+        """The saved server's URL and this session's credential."""
         if not self.saved or self.signed_out:
             raise TeamError("JARVIS isn't connected to a team server.")
         token = await self._secret()
         if not token:
             raise TeamError("JARVIS has no saved session for this server; sign in again.")
-        resp = await self._request(method, self.saved["server_url"] + path, token=token,
-                                   json_body=body)
+        return self.saved["server_url"], token
+
+    async def _ended(self, resp: httpx.Response) -> None:
+        """A 401 ends the session: the credential goes and the Team section
+        asks to sign in again."""
+        if resp.status_code == 401:
+            await self._forget_secret(self.saved["server_id"])
+            code, message = _error_body(resp)
+            self._sign_out(message or "The team server ended this session; sign in again.")
+
+    async def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        """Forward one member-management call. Returns (status, JSON body)."""
+        server_url, token = await self._session()
+        resp = await self._request(method, server_url + path, token=token, json_body=body)
         try:
             payload = resp.json()
         except ValueError:
             payload = {"error": {"code": "bad_response",
                                  "message": f"The team server answered {resp.status_code}."}}
-        if resp.status_code == 401:
-            await self._forget_secret(self.saved["server_id"])
-            code, message = _error_body(resp)
-            self._sign_out(message or "The team server ended this session; sign in again.")
+        await self._ended(resp)
         return resp.status_code, payload
+
+    @asynccontextmanager
+    async def stream(self, method: str, path: str, *,
+                     content: Optional[AsyncIterator[bytes]] = None,
+                     timeout: float = STREAM_TIMEOUT_SEC) -> AsyncIterator[httpx.Response]:
+        """One streamed request on the session, for attachment bytes: an
+        upload's `content` is sent as it is read and a download's body is
+        read as it arrives (`resp.aiter_bytes()`), so neither is ever held
+        whole. Same rules as `call`: no redirect is followed, no answer is a
+        TeamError(unreachable=True), and a 401 ends the session (its body
+        is read first, so the error is known)."""
+        server_url, token = await self._session()
+        headers = {"Authorization": f"Bearer {token}"}
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        try:
+            async with self._client(timeout) as client:
+                async with client.stream(method, server_url + path, content=content,
+                                         headers=headers) as resp:
+                    if 300 <= resp.status_code < 400:
+                        raise TeamError("The team server tried to redirect JARVIS elsewhere; "
+                                        "JARVIS doesn't follow team-server redirects.")
+                    if resp.status_code == 401:
+                        await resp.aread()
+                        await self._ended(resp)
+                    yield resp
+        except httpx.HTTPError as e:
+            raise TeamError(f"The team server didn't answer ({type(e).__name__}).",
+                            unreachable=True) from None
 
     # -- what the page sees ---------------------------------------------------------------
 

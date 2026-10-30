@@ -1,7 +1,6 @@
-"""The page's messaging routes over the real local store and delivery loop
-(the team server is the contract's FakeServe; approval is the contract's
-TableGuard standing in for the approval stream's guard, which integration
-swaps in): drafts and their conflicts, review opening the capture the owner
+"""The page's messaging routes over the real local store, delivery loop and
+approval guard (`message_approvals.MessageApprovals` and its `Reviews`; the
+team server is the contract's FakeServe): drafts and their conflicts, review opening the capture the owner
 accepts, cancel and retry, the dismissal guard, kept work commands, read
 receipts only from a displayed incoming body, and the switch."""
 from __future__ import annotations
@@ -13,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis import messaging_api
+from jarvis import message_approvals, messaging_api
 from jarvis import messaging_wire as wire
 from jarvis.messaging_client import Delivery
 from jarvis.messaging_store import SqliteMessagingStore
@@ -47,7 +46,8 @@ class Page:
         self.serve = fakes.FakeServe(server_id=SERVER, members={TIM, MATT}, clock=self.clock)
         self.node = UUID(int=1)
         self.store = SqliteMessagingStore(tmp_path / "page.db")
-        self.guard = fakes.TableGuard(self.store, ids=fakes.SeqIds(start=900), clock=self.clock)
+        self.guard = message_approvals.MessageApprovals(
+            self.store, fakes.StaticSnapshots(), ids=fakes.SeqIds(start=900), clock=self.clock)
         self.captures = Captures()
         self.enabled = enabled
         self.hints = 0
@@ -58,7 +58,9 @@ class Page:
             on_change=self._hint, enabled=lambda: self.enabled,
             transport_for=lambda c, p: self.transport)
         self.local = messaging_api.LocalMessaging(
-            store=self.store, delivery=self.delivery, guard=self.guard, captures=self.captures,
+            store=self.store, delivery=self.delivery, guard=self.guard,
+            reviews=message_approvals.Reviews(self.guard, self.captures,
+                                              lambda: self.local.members()),
             ids=fakes.SeqIds(start=100), clock=self.clock)
         app = FastAPI()
         messaging_api.mount(app, self.local)

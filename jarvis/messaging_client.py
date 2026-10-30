@@ -50,6 +50,7 @@ from jarvis import data_paths
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.team_client import TeamError
+from jarvis.transfer_presentation import transfer_event
 
 log = logging.getLogger("jarvis.messaging")
 
@@ -68,13 +69,17 @@ PREFIX = "/api/v1/messages"
 
 class TeamCalls(Protocol):
     """What delivery needs of `team_client.TeamConnection`: its saved
-    connection, whether it is signed out, its JSON call, and a generation
-    that moves whenever the session or the server it speaks for changes."""
+    connection, whether it is signed out, its JSON call, its one streamed
+    request (attachment bytes), and a generation that moves whenever the
+    session or the server it speaks for changes."""
     saved: Optional[dict]
     signed_out: bool
     generation: int
 
     async def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]: ...
+
+    def stream(self, method: str, path: str, *,
+               content: Optional[AsyncIterator[bytes]] = None) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -121,23 +126,33 @@ def _refusal(status: int, payload: Any) -> ports.TransportError:
                                 if isinstance(retry_after, (int, float)) else None)
 
 
+def _unanswered(e: TeamError) -> ports.TransportError:
+    if e.unreachable:
+        return ports.TransportError("transport")
+    return ports.TransportError("session_missing", status=401)
+
+
+async def _json_of(resp) -> Any:
+    await resp.aread()
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
 class TeamTransport:
-    """`ServeTransport` over the paired team connection, for one pairing.
-    The attachment byte streams are the files stream's one streamed request
-    (`streams`, given at wiring); everything else is the JSON call."""
+    """`ServeTransport` over the paired team connection, for one pairing:
+    the JSON call, and the connection's one streamed request for attachment
+    bytes (never held whole)."""
 
-    def __init__(self, connection: TeamCalls, pairing: Pairing, streams: Any = None):
-        self.connection, self.pairing, self.streams = connection, pairing, streams
+    def __init__(self, connection: TeamCalls, pairing: Pairing):
+        self.connection, self.pairing = connection, pairing
 
-    async def _call(self, method: str, path: str, body: Any = None) -> Any:
+    def _require_pairing(self) -> None:
         if pairing_of(self.connection) != self.pairing:
             raise ports.TransportError("session_missing", status=401)
-        try:
-            status, payload = await self.connection.call(method, path, body)
-        except TeamError as e:
-            if e.unreachable:
-                raise ports.TransportError("transport") from None
-            raise ports.TransportError("session_missing", status=401) from None
+
+    def _checked(self, status: int, payload: Any) -> Any:
         if status == 401:
             raise _refusal(status, payload)
         if self.connection.generation != self.pairing.generation:
@@ -146,16 +161,27 @@ class TeamTransport:
             raise _refusal(status, payload)
         return payload
 
-    async def _model(self, model: type[BaseModel], method: str, path: str,
-                     body: Optional[BaseModel] = None):
-        payload = await self._call(method, path,
-                                   body.model_dump(mode="json") if body is not None else None)
+    async def _call(self, method: str, path: str, body: Any = None) -> Any:
+        self._require_pairing()
+        try:
+            status, payload = await self.connection.call(method, path, body)
+        except TeamError as e:
+            raise _unanswered(e) from None
+        return self._checked(status, payload)
+
+    def _parsed(self, model: type[BaseModel], payload: Any):
         try:
             return model.model_validate(payload)
         except ValidationError:
             # An answer this JARVIS cannot read is no answer: a send stays
             # unknown and is retried under its key.
             raise ports.TransportError("transport") from None
+
+    async def _model(self, model: type[BaseModel], method: str, path: str,
+                     body: Optional[BaseModel] = None):
+        payload = await self._call(method, path,
+                                   body.model_dump(mode="json") if body is not None else None)
+        return self._parsed(model, payload)
 
     async def capabilities(self) -> list[str]:
         payload = await self._call("GET", "/version")
@@ -204,15 +230,28 @@ class TeamTransport:
 
     async def upload_attachment(self, attachment_id: UUID,
                                 chunks: AsyncIterator[bytes]) -> wire.AttachmentStatus:
-        if self.streams is None:
-            raise ports.TransportError("transport")
-        return await self.streams.upload(self, attachment_id, chunks)
+        self._require_pairing()
+        try:
+            async with self.connection.stream(
+                    "PUT", f"/api/v1/attachments/{attachment_id}/bytes", content=chunks) as r:
+                status, payload = r.status_code, await _json_of(r)
+        except TeamError as e:
+            raise _unanswered(e) from None
+        return self._parsed(wire.AttachmentStatus, self._checked(status, payload))
 
-    def download_attachment(self, message_id: UUID,
-                            attachment_id: UUID) -> AsyncIterator[bytes]:
-        if self.streams is None:
-            raise ports.TransportError("transport")
-        return self.streams.download(self, message_id, attachment_id)
+    async def download_attachment(self, message_id: UUID,
+                                  attachment_id: UUID) -> AsyncIterator[bytes]:
+        self._require_pairing()
+        try:
+            async with self.connection.stream(
+                    "GET", f"{PREFIX}/{message_id}/attachments/{attachment_id}/content") as r:
+                if not 200 <= r.status_code < 300:
+                    self._checked(r.status_code, await _json_of(r))
+                self._checked(r.status_code, None)
+                async for chunk in r.aiter_bytes(wire.UPLOAD_CHUNK_BYTES):
+                    yield chunk
+        except TeamError as e:
+            raise _unanswered(e) from None
 
 
 # -- the delivery loop --------------------------------------------------------------
@@ -267,6 +306,15 @@ class Delivery:
         caps: list[str] = []
         if self.enabled() and pairing is not None:
             caps = await self._capabilities_of(pairing)
+        return ports.availability(enabled=self.enabled(), paired=pairing is not None,
+                                  capabilities=caps)
+
+    def known_availability(self) -> ports.Availability:
+        """`availability` from what is already known, without asking the
+        team server: for callers that cannot wait (the capture path)."""
+        pairing = self.pairing()
+        known = self._capabilities.get(pairing.server_id) if pairing else None
+        caps = known[2] if known and known[0] == pairing.generation else []
         return ports.availability(enabled=self.enabled(), paired=pairing is not None,
                                   capabilities=caps)
 
@@ -463,15 +511,9 @@ class Delivery:
         announcer (signals) to claim."""
         if self.presentation is None:
             return
-        event = ports.TransferEvent(
-            event_id=ports.transfer_event_id(message.message_id, "incoming"),
-            message_id=message.message_id, thread_id=message.thread_id, direction="incoming",
-            owner_github_id=pairing.owner_github_id, source_node_id=message.source_node_id,
-            sender_github_id=message.sender_github_id,
-            recipient_github_id=message.recipient_github_id, occurred_at=self.clock(),
-            replay=False)
         try:
-            self.presentation.present(event)
+            self.presentation.present(transfer_event(pairing.owner_github_id, message,
+                                                     "incoming", self.clock()))
         except Exception as e:  # drawing must never undo delivery
             log.warning("messaging: presentation failed (%s)", type(e).__name__)
 

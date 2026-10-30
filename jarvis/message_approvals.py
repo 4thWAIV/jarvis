@@ -53,6 +53,7 @@ from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis import transmission
 from jarvis.speech import Priority
+from jarvis.transfer_presentation import transfer_event
 
 log = logging.getLogger(__name__)
 
@@ -459,15 +460,9 @@ class HumanDestination:
         presentation, a = self.messaging.presentation, self.approved
         if presentation is None or a is None:
             return
-        request = a.request
         try:
-            presentation.present(ports.TransferEvent(
-                event_id=ports.transfer_event_id(request.message_id, "outgoing"),
-                message_id=request.message_id, thread_id=request.thread_id,
-                direction="outgoing", owner_github_id=a.owner_github_id,
-                source_node_id=request.source_node_id, sender_github_id=a.owner_github_id,
-                recipient_github_id=request.recipient_github_id, occurred_at=a.approved_at,
-                replay=False))
+            presentation.present(transfer_event(a.owner_github_id, a.request, "outgoing",
+                                                a.approved_at))
         except Exception:
             log.warning("could not draw message %s going", self.message_id, exc_info=True)
 

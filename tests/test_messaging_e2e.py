@@ -1,9 +1,9 @@
 """Delivery end to end, with nothing faked between the two sides: the real
 team server app (its own device sessions, routes and MongoDB repository, in
 this process and event loop), the real `team_client.TeamConnection` over
-it, the real transport and delivery loop, and each JARVIS node's own SQLite
-store. Approval is the contract's TableGuard here (the approval stream's
-guard replaces it at integration).
+it, the real transport and delivery loop behind the approval guard
+(`message_approvals.MessageApprovals`, with `GuardedTransport` as the
+sender's transport), and each JARVIS node's own SQLite store.
 
 Needs the test MongoDB: set TEAM_SERVER_TEST_MONGODB_URI (an unreachable
 one fails). Without it the module skips, as the team server's suite does.
@@ -24,7 +24,8 @@ import pytest
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis import team_client
-from jarvis.messaging_client import Delivery
+from jarvis.message_approvals import GuardedTransport, MessageApprovals
+from jarvis.messaging_client import Delivery, TeamTransport
 from jarvis.messaging_store import SqliteMessagingStore
 from tests.fixtures import messaging_fakes as fakes
 
@@ -32,7 +33,6 @@ MONGO = os.environ.get("TEAM_SERVER_TEST_MONGODB_URI")
 pytestmark = pytest.mark.skipif(not MONGO, reason="TEAM_SERVER_TEST_MONGODB_URI is not set")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "team_server"))
-from teamserver import build_info as ts_build_info  # noqa: E402
 from teamserver import clock as ts_clock  # noqa: E402
 from teamserver import messaging as ts_messaging  # noqa: E402
 from teamserver import sessions as ts_sessions  # noqa: E402
@@ -61,12 +61,6 @@ class Secrets:
         self.items.pop(account, None)
 
 
-class Connection(team_client.TeamConnection):
-    """The real connection, with the generation counter the integrator's
-    team_client patch adds (see the delivery handoff's wiring)."""
-    generation = 1
-
-
 class Ids:
     def new_id(self):
         return uuid.uuid4()
@@ -89,17 +83,20 @@ class Node:
 
     def __init__(self, server, identity: Identity, token: str, path: Path):
         self.server, self.identity = server, identity
-        self.connection = Connection(store=Secrets(), transport=server.asgi)
+        self.connection = team_client.TeamConnection(store=Secrets(), transport=server.asgi)
         self.connection.saved = {"server_url": BASE, "server_id": server.server_id,
                                  "me": {"github_id": identity.id}}
         self.connection.store.set(server.server_id, token)
         self.node = uuid.uuid4()
         self.store = SqliteMessagingStore(path)
-        self.guard = fakes.TableGuard(self.store, ids=Ids(), clock=now)
+        self.guard = MessageApprovals(self.store, fakes.StaticSnapshots(), ids=Ids(), clock=now)
         self.seen = Recorder()
         self.delivery = Delivery(store=self.store, connection=self.connection, guard=self.guard,
                                  presentation=self.seen, node_id=lambda: self.node, clock=now,
-                                 enabled=lambda: True)
+                                 enabled=lambda: True,
+                                 transport_for=lambda c, p: GuardedTransport(
+                                     TeamTransport(c, p), self.guard, p.server_id,
+                                     p.owner_github_id))
 
     @property
     def ns(self):
@@ -151,19 +148,6 @@ class TeamServer:
         return node
 
 
-def device_dependency(app):
-    route = next(r for r in app.routes if getattr(r, "path", "") == "/api/v1/network/nodes/self")
-    return next(d.call for d in route.dependant.dependencies if d.call.__name__ == "device")
-
-
-@pytest.fixture(autouse=True)
-def _version_offers_messaging(monkeypatch):
-    """What app.py's /version wiring adds while TEAM_SERVER_MESSAGING is on
-    (`messaging.capabilities(enabled)`); a stand-in until it is wired."""
-    monkeypatch.setattr(ts_build_info, "CAPABILITIES",
-                        (*ts_build_info.CAPABILITIES, *ts_messaging.capabilities(True)))
-
-
 @pytest.fixture
 def dbname():
     from pymongo import MongoClient
@@ -178,23 +162,24 @@ def dbname():
 
 
 def run_with_team_server(dbname, scenario, faults=wire.NO_FAULTS):
-    """`scenario(server)` with a started team server whose messaging
-    routes are mounted as app.py's wiring will mount them."""
+    """`scenario(server)` with a started team server, messaging switched
+    on (TEAM_SERVER_MESSAGING) and mounted by the app's own wiring; the
+    service is given the test's faults (the production app gets none)."""
     config = Config(port=8080, public_base_url=BASE, mongodb_uri=MONGO,
                     mongodb_database=dbname, github_client_id="cid",
                     github_client_secret="not-a-secret", team_name="Test Team",
-                    initial_admin_github_id=TIM.id)
+                    initial_admin_github_id=TIM.id, messaging_enabled=True)
 
     async def go():
         app = create_app(config, github=object())
-        ts_messaging.mount(app, device=device_dependency(app), enabled=True, faults=faults)
         async with app.router.lifespan_context(app):
             for _ in range(200):
                 if app.state.initialized:
                     break
                 await asyncio.sleep(0.05)
             assert app.state.initialized
-            await ts_messaging.ensure_indexes(app.state.db)
+            app.state.messaging = ts_messaging.Messaging(ts_messaging.MongoMessages(app.state.db),
+                                                         faults=faults)
             server = TeamServer(app, faults)
             server.server_id = app.state.server_id
             await scenario(server)

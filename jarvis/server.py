@@ -93,6 +93,9 @@ from jarvis import workflow_store
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
+from jarvis import message_approvals
+from jarvis import messaging_runtime
+from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
 from jarvis import specs
 from jarvis import stream_parser
@@ -1613,14 +1616,11 @@ def _message_number(message: dict) -> int:
         return 0
 
 
-async def _say_about_message(line: str, note: str, what: str,
-                             event: Optional[dict] = None) -> None:
+async def _say_notice(line: str, note: str, what: str, **links) -> None:
     """Say `line`, and tell the brain at its next turn that it was said. The
-    line goes in the conversation as a notice, under the agent `event` is
-    about, if any (a notice never claims a message's place: no message id)."""
+    line goes in the conversation as a notice with `links`. The one notice
+    path for agents' messages and people's arrivals alike."""
     _notes_for_brain.append(note)
-    links = _agent_links(event) if event else {}
-    links.pop("message_id", None)
     _record(conversation_log.ItemKind.NOTICE, line, **links)
     if speech is None:
         return
@@ -1628,6 +1628,15 @@ async def _say_about_message(line: str, note: str, what: str,
         await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
         log.warning(f"{what} announcement failed: {e}")
+
+
+async def _say_about_message(line: str, note: str, what: str,
+                             event: Optional[dict] = None) -> None:
+    """`_say_notice`, under the agent `event` is about, if any (a notice
+    never claims a message's place: no message id)."""
+    links = _agent_links(event) if event else {}
+    links.pop("message_id", None)
+    await _say_notice(line, note, what, **links)
 
 
 async def _announce_delivered(event: dict) -> None:
@@ -2791,6 +2800,7 @@ async def lifespan(application: FastAPI):
     # network exchange runs while paired whether or not a page is open, and
     # each stored snapshot is a `network` hint (network.ts reads it again).
     team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}))
+    _start_messaging()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
@@ -2811,6 +2821,7 @@ async def lifespan(application: FastAPI):
 
     yield
 
+    await _stop_messaging()
     await team_api.stop()
     await transcription_api.stop()
     await stop_session_watcher()
@@ -2842,6 +2853,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 team_api.mount(app)
+messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
 
 
@@ -4799,6 +4811,9 @@ def tool_capture(args: dict) -> str:
         _captures[number] = {"id": number, "text": "", "to": "", "heard": [],
                              "read": None, "state": "capturing"}
     capture = _captures[number]
+    if capture.get("human"):
+        return (f"Capture {number} is the review of a message to a person: change it "
+                f"with draft_message and review it again. Nothing was changed.")
     changed = capture["text"] != text
     if changed:
         capture["read"] = None          # changed: it has to be heard again
@@ -4891,6 +4906,9 @@ def tool_merge_captures(args: dict) -> str:
     if len(numbers) < 2 or missing:
         return ("Give at least two open captures to merge"
                 + (f"; these are not open: {missing}." if missing else "."))
+    if any(_captures[n].get("human") for n in numbers):
+        return ("A review of a message to a person is never merged: change its draft "
+                "with draft_message instead. Nothing was merged.")
     text = str(args.get("text") or "").strip()[:CAPTURE_MAX_CHARS]
     if not text:
         return "Give the merged restatement."
@@ -4972,6 +4990,7 @@ def tool_list_captures(args: dict) -> str:
     for c in _captures.values():
         heard = "read back in full" if c["read"] == c["text"] else "not read back since it changed"
         going = ", staged to send" if c.get("staged") else ""
+        going += ", a message to a person: send_message sends it" if c.get("human") else ""
         lines.append(f"Capture {c['id']} ({c['state']}, {heard}{going})"
                      f"{' for ' + c['to'] if c['to'] else ''}: {c['text']}")
     return "\n".join(lines) + cleared_note
@@ -4995,7 +5014,9 @@ def _clear_captures(numbers: list[int], by: str = "JARVIS") -> list[int]:
                       if getattr(s, "capture_id", None) not in gone]
     for n in gone:
         capture = _captures.pop(n)
-        _record_capture_cleared(capture, by, "deleted on the screen" if by == "you" else "cleared")
+        if not capture.get("human"):
+            _record_capture_cleared(capture, by,
+                                    "deleted on the screen" if by == "you" else "cleared")
         _capture_show(capture, None)
     return gone
 
@@ -5166,18 +5187,25 @@ async def api_capture_send(number: int):
     capture = _open_capture_or_404(number)
     if capture.get("staged"):
         raise HTTPException(status_code=409, detail="It is already being sent.")
-    if not capture["to"]:
-        raise HTTPException(status_code=409,
-                            detail="It isn't addressed to anyone yet: tell me who it is for.")
-    session, problem, _reason = _resolve_or_explain(capture["to"])
-    if problem:
-        raise HTTPException(status_code=409, detail=problem)
-    _capture_accepted(capture)
-    message_id, problem = _stage_capture(session, capture)
+    if capture.get("human"):
+        # A reviewed message to a person: Send is his yes to that revision.
+        _capture_accepted(capture)
+        message_id, problem = _stage_human_capture(capture, "gui")
+        to = capture["to"]
+    else:
+        if not capture["to"]:
+            raise HTTPException(status_code=409,
+                                detail="It isn't addressed to anyone yet: tell me who it is for.")
+        session, problem, _reason = _resolve_or_explain(capture["to"])
+        if problem:
+            raise HTTPException(status_code=409, detail=problem)
+        _capture_accepted(capture)
+        message_id, problem = _stage_capture(session, capture)
+        to = _said_name(session)
     if problem:
         raise HTTPException(status_code=409, detail=problem)
     _notes_for_brain.append(
-        f"He sent capture {number} to {_said_name(session)} from the screen, as "
+        f"He sent capture {number} to {to} from the screen, as "
         f"message {message_id}; do not send it again.")
     if _turn_utt is None:
         # No turn is under way to send it when it ends, so it goes now.
@@ -5270,7 +5298,9 @@ async def _perform_staged_steers() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            what = getattr(item, "voice_name", None) or item.project
+            what = getattr(item, "voice_name", None) or (
+                item.project if isinstance(item, (_StagedSteer, _StagedCommand))
+                else "a message")
             log.error(f"staged action for {what} failed: {e}", exc_info=True)
 
 
@@ -5806,6 +5836,9 @@ async def tool_steer_session(args: dict) -> str:
         run_store.record_steer(session.session_id, session.voice_name,
                                session.project, "", "no_capture")
         return problem
+    if capture.get("human"):
+        return (f"Capture {capture['id']} is a message to a person, not to a session: "
+                f"send it with send_message. Nothing was sent.")
 
     global last_mentioned_session
     last_mentioned_session = session.session_id
@@ -5909,6 +5942,122 @@ class _AgentRecipient:
                                         provider=session.provider,
                                         message_id=message_id,
                                         priority=self.priority)
+
+
+# --- Messages to people (message_approvals.py) ------------------------------
+#
+# A message to a person is reviewed on a capture of its own, whose text is the
+# read-back of exactly what would go (`messaging_ports.human_readback`) and
+# which carries capture["human"], the reviewed revision. It is accepted and
+# staged as an agent's is, and its hand-over is the owner's approval. Set at
+# startup when messaging is switched on: `human_messaging` (the guard, who
+# this JARVIS is, availability, the roster, the sender's wake-up and the
+# transfer presentation) and `messaging_tools` (the brain's draft and review
+# tools). Left None, every human capture is refused as unavailable.
+human_messaging: Optional[message_approvals.HumanMessaging] = None
+messaging_tools: Optional[message_approvals.MessagingTools] = None
+# The whole of it (messaging_runtime.py), built at startup; None before.
+messaging: Optional[messaging_runtime.MessagingRuntime] = None
+
+
+async def _say_arrival(line: str, note: str, detail: dict) -> None:
+    await _say_notice(line, note, "arrival", detail=detail)
+
+
+def _start_messaging() -> None:
+    """Build human messaging over the team connection and start its loops
+    (only while JARVIS_MESSAGING is on). A failure here leaves messaging
+    unavailable and everything else running."""
+    global messaging, human_messaging, messaging_tools
+    try:
+        messaging = messaging_runtime.MessagingRuntime(
+            connection=team_client.connection, captures=review_captures,
+            send_frame=_send_to_session_clients, notify=_say_arrival,
+            wording=Wording(join=_join_natural, number=_say_number,
+                            gist=lambda subject: _message_gist({"body": subject})),
+            network_raw=lambda: team_client.connection.network.raw)
+    except Exception:
+        log.warning("human messaging could not start", exc_info=True)
+        return
+    human_messaging, messaging_tools = messaging.human, messaging.tools
+    messaging.start()
+
+
+async def _stop_messaging() -> None:
+    global messaging, human_messaging, messaging_tools
+    if messaging is not None:
+        await messaging.stop()
+    messaging, human_messaging, messaging_tools = None, None, None
+
+
+class _HumanReviewCaptures:
+    """The capture boxes as a review opens and closes them
+    (`messaging_ports.ReviewCaptures`). One capture per reviewed revision: the
+    same review again is the same capture; a new revision closes the old."""
+
+    def open_for_review(self, draft, readback: str, recipient_label: str) -> int:
+        binding = message_approvals.capture_binding(draft)
+        for capture in list(_captures.values()):
+            bound = capture.get("human")
+            if not bound or bound["message_id"] != binding["message_id"]:
+                continue
+            if bound == binding and capture["text"] == readback:
+                return capture["id"]
+            _clear_captures([capture["id"]])
+        number = next(_capture_ids)
+        capture = {"id": number, "text": readback, "to": recipient_label, "heard": [],
+                   "read": None, "state": "capturing", "human": binding}
+        _captures[number] = capture
+        _capture_show(capture, "capturing")
+        return number
+
+    def close(self, capture_id: int) -> None:
+        _clear_captures([capture_id])
+
+
+review_captures = _HumanReviewCaptures()
+
+
+def _stage_human_capture(capture: dict, via: str) -> tuple[Optional[str], Optional[str]]:
+    """Stage a reviewed capture for its person, as `_stage_capture` does for
+    an agent: (the message id, None), or (None, why it cannot go)."""
+    return transmission.stage(message_approvals.HumanRecipient(capture, via, human_messaging),
+                              capture, voice=speech, put=_stage_steer)
+
+
+def tool_send_message(args: dict) -> str:
+    """Send a reviewed message to a person, on his yes after its read-back."""
+    number = _capture_number(args.get("capture"))
+    capture, problem = _capture_to_send(number)
+    if problem:
+        return problem
+    if not capture.get("human"):
+        return (f"Capture {number} is not a reviewed message to a person; "
+                f"steer_session sends to agents. Nothing was sent.")
+    record, problem = _stage_human_capture(capture, "voice")
+    return message_approvals.staged_note(record, problem, number, capture.get("to") or "them")
+
+
+def _messaging_tool(name: str):
+    def handler(args: dict) -> str:
+        if messaging_tools is None:
+            return "Messaging isn't available on this JARVIS."
+        return getattr(messaging_tools, name)(args)
+    return handler
+
+
+TOOL_HANDLERS.update({
+    "send_message": tool_send_message,
+    "draft_message": _messaging_tool("draft_message"),
+    "request_message_review": _messaging_tool("request_message_review"),
+})
+ACTING_TOOLS.update({"send_message", "draft_message", "request_message_review"})
+READ_BACK_TOOLS.add("send_message")
+TAINT_EXEMPT_TOOLS.update({
+    "send_message": "it sends a reviewed message, it does not read",
+    "draft_message": "it writes a draft, it does not read",
+    "request_message_review": "it opens a draft's read-back for review, it does not read",
+})
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
@@ -9118,6 +9267,10 @@ async def ws_sessions(websocket: WebSocket):
             "type": "snapshot",
             "sessions": [session_watch.session_to_dict(s)
                          for s in _snapshot_or_empty().sessions]})
+        # People's messages drawn in the last few seconds, marked replay: a
+        # page that has just (re)connected reconciles them, never animates.
+        for frame in (messaging.replay_frames() if messaging is not None else []):
+            await websocket.send_json(frame)
         while True:
             await websocket.receive_text()      # clients send nothing; this parks
     except Exception:
