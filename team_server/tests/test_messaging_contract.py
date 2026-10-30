@@ -350,7 +350,8 @@ def test_work_commands_are_a_closed_set_by_their_name():
 
 def test_every_error_has_a_status_and_only_transient_ones_retry():
     assert {c for c, s in mm.ERRORS.items() if s.retryable} == \
-        {"sync_restart", "rate_limited", "dependency_unavailable", "not_ready", "internal"}
+        {"sync_restart", "rate_limited", "dependency_unavailable", "not_ready", "internal",
+             "upload_idle"}
     for code, spec in mm.ERRORS.items():
         assert 400 <= spec.status < 600 and spec.shown and code == code.lower()
     # The team server's existing codes keep their meaning.

@@ -11,23 +11,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import time
 import uuid
 from datetime import timedelta
 from typing import Optional
 
 import pytest
 from bson import ObjectId
-from fastapi import Request
 from fastapi.testclient import TestClient
 
 from conftest import (ADMIN, ALICE, BASE, BOB, MALLORY, Clock, browser_token, make_config,
                       mongo_uri, pair, wait_initialized)
-from teamserver import attachment_storage, attachments, clock as clock_mod, db as dbmod, sessions
+from teamserver import attachment_storage, attachments, clock as clock_mod, db as dbmod
 from teamserver.app import create_app
 from teamserver.attachment_storage import FenceLost, GridFSAttachmentStorage
 from teamserver.attachments import (ATTEMPT_SWEEP_AFTER_SEC, AttachmentService,
                                     AttachmentSettings, recover_once)
-from teamserver.errors import Problem, forbidden, unauthenticated
+from teamserver.errors import Problem
 from teamserver.messaging_models import (ORPHAN_PIN_AFTER_SEC, RECOVERY_LEASE_SEC,
                                          STAGING_EXPIRY_SEC, AcceptedMessage, ArmedFaults,
                                          AttachmentCreate, AttachmentRef, ContractError,
@@ -580,38 +580,24 @@ def test_downloads_need_an_accepted_message_the_viewer_may_see(dbname):
 
 # -- the routes, through the real app -----------------------------------------------------
 
-async def _device(request: Request) -> sessions.Principal:
-    """A paired JARVIS's session, as the app's own `device` dependency
-    admits it (the integrator mounts the router with that one)."""
-    auth = request.headers.get("authorization") or ""
-    scheme, _, token = auth.partition(" ")
-    if scheme.lower() != "bearer":
-        raise unauthenticated("session_missing", "Use a Bearer session token.")
-    p = await sessions.authenticate(request.app.state.db, token.strip())
-    if p.session["kind"] != "device":
-        raise forbidden("device_required", "Only a paired JARVIS can do that.")
-    return p
-
-
 class Served:
-    """The real app with the attachment routes mounted, Alice and Bob each
-    with a paired device session, and Mallory a member too."""
+    """The real app with messaging switched on, so its own wiring mounts the
+    attachment routes behind its device dependency; Alice and Bob each with
+    a paired device session, and Mallory a member too. Accepted messages
+    come from the `Accepted` stand-in, given to the app's file service."""
 
     def __init__(self, dbname: str, github):
-        app = create_app(make_config(dbname), github=github)
+        app = create_app(make_config(dbname, messaging_enabled=True), github=github)
         self.visible = Accepted()
-
-        def service(request) -> AttachmentService:
-            st = request.app.state
-            if getattr(st, "attachments", None) is None:
-                st.attachments = AttachmentService(
-                    GridFSAttachmentStorage(st.db, clock=clock_mod.now), self.visible)
-            return st.attachments
-        app.include_router(attachments.router(device=_device, service=service))
         self.client = TestClient(app, base_url=BASE)
         self.client.__enter__()
         wait_initialized(self.client)
-        self.client.portal.call(attachment_storage.init, app.state.db)
+        for _ in range(100):
+            if getattr(app.state, "attachments", None) is not None:
+                break
+            self.client.get("/health/live")
+            time.sleep(0.05)
+        app.state.attachments = AttachmentService(app.state.attachments.storage, self.visible)
         admin = browser_token(self.client, github, ADMIN)
         roster = self.client.get("/api/v1/team/members", headers=self.auth(admin)).json()
         for who in (ALICE, BOB, MALLORY):
@@ -692,14 +678,15 @@ def test_routes_upload_publish_and_download_with_inert_headers(served: Served, m
     assert r.headers["content-disposition"] == (
         "attachment; filename=\"Gr__e _draft_.svg\"; "
         "filename*=UTF-8''Gr%C3%BC%C3%9Fe%20%22draft%22.svg")
-    assert "default-src 'none'" in r.headers["content-security-policy"]
+    assert r.headers["content-security-policy"] == attachments.DOWNLOAD_CSP
     for who in (MALLORY.id, ADMIN.id):
         r = served.client.get(path, headers=served.as_(who))
         assert (r.status_code, r.json()["error"]["code"]) == (404, "attachment_not_found")
     # A browser session is not a device session.
     served.client.cookies.set("__Host-ts_session", served.browser, domain="team.test")
     try:
-        assert served.client.get(path).status_code == 401
+        r = served.client.get(path)
+        assert (r.status_code, r.json()["error"]["code"]) == (403, "device_required")
     finally:
         served.client.cookies.clear()
     # Nothing on disk says where it came from: GridFS holds one file, by attempt.

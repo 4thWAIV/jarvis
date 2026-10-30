@@ -52,6 +52,7 @@ from teamserver import sessions
 from teamserver import team as team_mod
 from teamserver.errors import Problem
 from teamserver.messaging_models import (CAPABILITY, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
+                                         PACKAGE_MAX_BYTES,
                                          SYNC_CONTINUATION_TTL_SEC, SYNC_PAGE_DEFAULT,
                                          SYNC_PAGE_MAX, ERRORS, AcceptedMessage,
                                          AnnouncementLease, AnnouncementRequest,
@@ -63,16 +64,13 @@ from teamserver.messaging_models import (CAPABILITY, MESSAGE_REQUEST_MAX_BYTES, 
                                          apply_work_command, content_digest, content_of,
                                          merge_receipt, new_work_state, on_message,
                                          subject_problem, text_problem)
-from teamserver.messaging_ports import AttachmentStorage, Clock, IdSource
+from teamserver.messaging_ports import (ANNOUNCEMENT_LEASE_SEC, AttachmentStorage, Clock,
+                                        IdSource)
 from teamserver.models import ErrorBody
 from teamserver.secrets_util import digest
 
 log = logging.getLogger("teamserver.messaging")
 
-# How long one node's announcement claim holds before another of the
-# owner's nodes may claim it. The signals stream's setting (decision 23);
-# it replaces this default through `mount(lease_sec=...)`.
-ANNOUNCEMENT_LEASE_SEC = 30.0
 # A compare-and-set that keeps losing to concurrent writers gives up.
 CAS_RETRIES = 16
 PREFIX = "/api/v1/messages"
@@ -433,9 +431,11 @@ class Messaging:
 
     def __init__(self, repo: MongoMessages, *, attachments: Optional[AttachmentStorage] = None,
                  now: Clock = lambda: clock_mod.now(), ids: Optional[IdSource] = None,
-                 faults: Faults = NO_FAULTS, lease_sec: float = ANNOUNCEMENT_LEASE_SEC):
+                 faults: Faults = NO_FAULTS, lease_sec: float = ANNOUNCEMENT_LEASE_SEC,
+                 package_max_bytes: int = PACKAGE_MAX_BYTES):
         self.repo, self.attachments, self.now = repo, attachments, now
         self.ids, self.faults, self.lease_sec = ids or _UuidIds(), faults, lease_sec
+        self.package_max_bytes = package_max_bytes
 
     @staticmethod
     def _server(p: sessions.Principal) -> str:
@@ -483,6 +483,8 @@ class Messaging:
         if req.content_digest != content_digest(content_of(req), server_id=server,
                                                 sender_github_id=sender):
             raise refused("digest_mismatch")
+        if sum(a.size_bytes for a in req.attachments) > self.package_max_bytes:
+            raise refused("too_large")
         earlier = await self.repo.find_by_idempotency(server, sender, req.idempotency_key)
         if earlier is not None:
             if (earlier.message_id, earlier.content_digest) != (req.message_id,
@@ -601,12 +603,14 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
 def mount(app: FastAPI, *, device: Callable, enabled: bool,
           attachments: Optional[AttachmentStorage] = None, now: Optional[Clock] = None,
           ids: Optional[IdSource] = None, faults: Faults = NO_FAULTS,
-          lease_sec: float = ANNOUNCEMENT_LEASE_SEC) -> None:
+          lease_sec: float = ANNOUNCEMENT_LEASE_SEC,
+          package_max_bytes: int = PACKAGE_MAX_BYTES) -> None:
     """Register the messaging routes on the team server's app. `device` is
     the app's existing device-session dependency; `enabled` the
     TEAM_SERVER_MESSAGING switch (off: every route answers
-    `messaging_disabled`, and nothing is deleted). The fixed paths come
-    before `/{message_id}`."""
+    `messaging_disabled`, and nothing is deleted). `attachments` defaults
+    to the app's `state.attachment_storage`, built in its lifespan. The
+    fixed paths come before `/{message_id}`."""
     responses = {s: {"model": ErrorBody} for s in (401, 403, 404, 409, 410, 413, 422, 503)}
 
     def service(request: Request) -> Messaging:
@@ -614,9 +618,11 @@ def mount(app: FastAPI, *, device: Callable, enabled: bool,
             raise refused("messaging_disabled")
         st = request.app.state
         if getattr(st, "messaging", None) is None or st.messaging.repo.db is not st.db:
-            st.messaging = Messaging(MongoMessages(st.db), attachments=attachments,
-                                     now=now or (lambda: clock_mod.now()), ids=ids,
-                                     faults=faults, lease_sec=lease_sec)
+            st.messaging = Messaging(
+                MongoMessages(st.db),
+                attachments=attachments or getattr(st, "attachment_storage", None),
+                now=now or (lambda: clock_mod.now()), ids=ids, faults=faults,
+                lease_sec=lease_sec, package_max_bytes=package_max_bytes)
         return st.messaging
 
     send_body = {"requestBody": {"required": True, "content": {"application/json": {

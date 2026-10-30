@@ -792,6 +792,7 @@ ERRORS: dict[str, ErrorSpec] = {
                                                  "prepare it again."),
     "announcement_claimed": ErrorSpec(409, False, "Another of your JARVIS instances is "
                                                   "announcing this."),
+    "upload_idle": ErrorSpec(408, True, "The upload stopped sending; JARVIS sends it again."),
     "sync_restart": ErrorSpec(410, True, "Catching up from the beginning."),
     "rate_limited": ErrorSpec(429, True, "The team server asked JARVIS to slow down."),
     "messaging_disabled": ErrorSpec(503, False, "Messaging is switched off on the team "

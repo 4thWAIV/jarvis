@@ -6,6 +6,9 @@ INITIAL_ADMIN_GITHUB_ID only matter before the team exists (bootstrap).
 TEST_SESSION_KEY_SHA256 turns on the staging test sign-in
 (`staging_sessions`); it is refused unless RAILWAY_ENVIRONMENT_NAME is
 `staging`.
+TEAM_SERVER_MESSAGING (1/true/yes/on) switches human messaging on; off by
+default. The TEAM_SERVER_* file settings (`messaging_ports.ATTACHMENT_SETTINGS`)
+may only lower the contract's defaults.
 
 Problems are reported by variable NAME only, never with a value, because
 several of these values are credentials.
@@ -16,8 +19,13 @@ import ipaddress
 import os
 import re
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import TYPE_CHECKING, Mapping, Optional
 from urllib.parse import urlsplit
+
+from teamserver.messaging_ports import MESSAGING_FLAG
+
+if TYPE_CHECKING:
+    from teamserver.attachments import AttachmentSettings
 
 REQUIRED = ("PORT", "PUBLIC_BASE_URL", "MONGODB_URI", "MONGODB_DATABASE",
             "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET")
@@ -54,6 +62,9 @@ class Config:
     github_web_url: str = "https://github.com"
     environment_name: Optional[str] = None
     test_session_key_sha256: Optional[str] = None
+    messaging_enabled: bool = False
+    # None: the contract's defaults (attachments.DEFAULT_SETTINGS).
+    attachment_settings: Optional["AttachmentSettings"] = None
 
     @property
     def secure(self) -> bool:
@@ -155,6 +166,13 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         problems.append(f"{TEST_KEY_DIGEST} is set outside the {STAGING} environment")
     elif test_digest and not _SHA256_HEX.match(test_digest):
         problems.append(f"{TEST_KEY_DIGEST} must be a SHA-256 hex digest")
+    # Imported here: attachments -> sessions -> team imports this module.
+    from teamserver.attachments import AttachmentSettings
+    attachment_settings = None
+    try:
+        attachment_settings = AttachmentSettings.from_env(env)
+    except ValueError as e:
+        problems.extend(str(e).split("; "))
     if problems:
         raise ConfigError(problems)
     return Config(
@@ -165,4 +183,6 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         github_api_url=get("GITHUB_API_URL") or "https://api.github.com",
         github_web_url=get("GITHUB_WEB_URL") or "https://github.com",
         environment_name=environment, test_session_key_sha256=test_digest,
+        messaging_enabled=get(MESSAGING_FLAG).lower() in ("1", "true", "yes", "on"),
+        attachment_settings=attachment_settings,
     )

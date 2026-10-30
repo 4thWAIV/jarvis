@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -22,11 +24,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pymongo.errors import PyMongoError
 
-from teamserver import (build_info, clock, db as dbmod, login, network, pages,
-                        pairing, sessions, staging_sessions, team as team_mod)
+from teamserver import (attachment_storage, attachments, build_info, clock, db as dbmod,
+                        login, messaging, network, pages, pairing, sessions,
+                        staging_sessions, team as team_mod)
 from teamserver.config import Config, ConfigError, load
 from teamserver.errors import Problem, forbidden, unauthenticated
 from teamserver.github import GitHub, RealGitHub
+from teamserver.messaging_models import MESSAGE_REQUEST_MAX_BYTES
 from teamserver.models import (DeviceDecided, DeviceDecision, DeviceExchange,
                                DevicePending, DeviceSession, DeviceStart,
                                DeviceStarted, ErrorBody, Live, LoggedOut, Me,
@@ -99,6 +103,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
             st.db = dbmod.database(st.client, config.mongodb_database)
             tasks = [asyncio.create_task(_init_until_done(app)),
                      asyncio.create_task(network.watch(st.health, st.db))]
+            if config.messaging_enabled:
+                tasks.append(asyncio.create_task(_start_attachments(app)))
         yield
         for task in tasks:
             task.cancel()
@@ -121,13 +127,19 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     async def guard_and_log(request: Request, call_next):
         started = time.monotonic()
         length = request.headers.get("content-length")
-        if length and (not length.isdigit() or int(length) > MAX_BODY):
+        # The message send and a file's byte upload count the bytes they
+        # read themselves; this gate only refuses what they declare too big.
+        limit = (MESSAGE_REQUEST_MAX_BYTES
+                 if request.method == "POST" and request.url.path == messaging.PREFIX
+                 else MAX_BODY)
+        if length and not attachments.is_upload(request.method, request.url.path) and (
+                not length.isdigit() or int(length) > limit):
             response: Response = JSONResponse(
                 {"error": {"code": "too_large", "message": "Request too large."}},
                 status_code=413)
         else:
             response = await call_next(request)
-        response.headers["Content-Security-Policy"] = CSP
+        response.headers.setdefault("Content-Security-Policy", CSP)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -253,7 +265,9 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Version(service=build_info.SERVICE, version=build_info.VERSION,
                        commit=build_info.commit(), api_version=build_info.API_VERSION,
                        server_id=request.app.state.server_id,
-                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY])
+                       capabilities=[*build_info.CAPABILITIES, network.CAPABILITY,
+                                     *messaging.capabilities(bool(
+                                         config and config.messaging_enabled))])
 
     @app.get("/health/live", response_model=Live)
     async def live():
@@ -476,6 +490,18 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return await network.publish(database(request), p.member, p.team, body,
                                      request.app.state.health)
 
+    def attachment_service(request: Request) -> attachments.AttachmentService:
+        st = request.app.state
+        if not (config and config.messaging_enabled):
+            raise messaging.refused("messaging_disabled")
+        if getattr(st, "attachments", None) is None:
+            raise Problem(503, "not_ready", "The team server is starting up.")
+        return st.attachments
+
+    messaging.mount(app, device=device, enabled=bool(config and config.messaging_enabled),
+                    package_max_bytes=_file_settings(config).package_max_bytes)
+    app.include_router(attachments.router(device=device, service=attachment_service))
+
     if config and config.test_sessions_enabled:
         # Every method, and no body parameter: FastAPI would otherwise answer
         # 405 or 422 before the key is checked, telling a caller without the
@@ -510,6 +536,27 @@ async def _init_once(app: FastAPI) -> None:
         log.warning("INITIAL_ADMIN_GITHUB_ID is still set after bootstrap; it is "
                     "ignored and should be removed")
     st.initialized = True
+
+
+def _file_settings(config: Optional[Config]) -> attachments.AttachmentSettings:
+    return (config and config.attachment_settings) or attachments.DEFAULT_SETTINGS
+
+
+async def _start_attachments(app: FastAPI) -> None:
+    """The file service and its recovery worker, once the database is
+    initialized (messaging on only). Cancelled with the lifespan."""
+    st = app.state
+    while not st.initialized:
+        await asyncio.sleep(0.05)
+    s = _file_settings(st.config)
+    st.attachment_storage = attachment_storage.GridFSAttachmentStorage(
+        st.db, clock=clock.now, expiry_sec=s.staging_expiry_sec,
+        quota_bytes=s.staging_quota_bytes)
+    repository = messaging.MongoMessages(st.db)
+    st.attachments = attachments.AttachmentService(st.attachment_storage, repository,
+                                                   settings=s)
+    await attachments.watch(st.attachment_storage, repository,
+                            worker_id=f"{socket.gethostname()}-{uuid.uuid4()}")
 
 
 async def _init_until_done(app: FastAPI) -> None:

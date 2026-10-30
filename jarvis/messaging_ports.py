@@ -734,6 +734,15 @@ class AttachmentSnapshots(Protocol):
         every file staged, uploaded and verified on the team server
         (SnapshotMissing, or TransportError)."""
 
+    def refs(self, server_id: str, owner_github_id: int, message_id: UUID,
+             attachment_ids: list[UUID]) -> list[wire.AttachmentRef]:
+        """A draft save's `attachment_ids` as manifest entries, in order
+        (SnapshotMissing for a file with no private copy for this draft)."""
+
+    def cleanup(self, server_id: str, owner_github_id: int) -> int:
+        """Remove abandoned partial files and snapshots nothing still names;
+        how many were removed."""
+
     def files(self, server_id: str, owner_github_id: int, message_id: UUID) -> list[LocalFile]: ...
 
     async def download(self, server_id: str, owner_github_id: int, message_id: UUID,

@@ -30,6 +30,10 @@ from .messaging_models import (FILE_MAX_BYTES, OWNER_STAGING_QUOTA_BYTES, PACKAG
 # Switching it off deletes nothing.
 MESSAGING_FLAG = "TEAM_SERVER_MESSAGING"
 
+# How long one node's announcement claim holds before another of the
+# owner's nodes may claim it (decision 23; the signals stream's setting).
+ANNOUNCEMENT_LEASE_SEC = 30.0
+
 # The file settings' names and defaults. A deployment may set any of them
 # lower than the contract's default, never higher. Wired into config.py at
 # files integration.
@@ -155,6 +159,11 @@ class AttachmentStorage(Protocol):
 
     async def staging(self, server_id: str, owner_github_id: int,
                       attachment_id: UUID) -> Optional[StagingRecord]: ...
+
+    async def latest_attempt(self, server_id: str, owner_github_id: int,
+                             attachment_id: UUID) -> Optional[str]:
+        """The attempt that last finished writing: the finalize route names
+        no attempt, so the service asks which one to check."""
 
     async def write_attempt(self, server_id: str, owner_github_id: int, attachment_id: UUID,
                             chunks: AsyncIterator[bytes], max_bytes: int) -> Attempt:

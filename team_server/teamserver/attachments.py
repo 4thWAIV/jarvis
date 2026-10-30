@@ -134,8 +134,7 @@ async def _within(chunks: AsyncIterator[bytes], idle_sec: float) -> AsyncIterato
         except StopAsyncIteration:
             return
         except asyncio.TimeoutError:
-            raise Problem(408, "upload_idle", "The upload stopped sending; send it again.") \
-                from None
+            raise Problem(408, "upload_idle", ERRORS["upload_idle"].shown) from None
         if chunk:
             yield chunk
 

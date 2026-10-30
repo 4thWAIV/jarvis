@@ -12,6 +12,16 @@ Collections
   network_nodes          each JARVIS backend's current record, by node ID
                          (removed network.NODE_PURGE_AFTER after its last update)
   network_meta           one document, `_id: "network"`: the snapshot revision
+  messages               accepted human messages, immutable (messaging.py)
+  message_receipts       each recipient's received/read facts per message
+  message_work           each owner's work state per conversation
+  message_announcements  the announcement lease per recipient and message
+  messaging_nodes        node ids bound to their member for good
+  message_sync           sync continuations, by digest (TTL)
+  attachment_staging     file staging records (attachment_storage.py)
+  attachment_attempts    each upload attempt of a file
+  attachment_recovery    the fenced lease of the recovery worker
+  attachment_bytes.*     the files' bytes (GridFS)
 
 TTL indexes only clean up. Every reader compares expiry timestamps itself,
 because TTL deletion runs about once a minute.
@@ -24,7 +34,7 @@ from datetime import timedelta
 from pymongo import ASCENDING, AsyncMongoClient, WriteConcern
 from pymongo.asynchronous.database import AsyncDatabase
 
-from teamserver import clock
+from teamserver import attachment_storage, clock, messaging
 
 SCHEMA_VERSION = 1
 AUDIT_DAYS = 90
@@ -73,6 +83,8 @@ async def init(db: AsyncDatabase) -> str:
                                         name="by_owner")
     await db.network_nodes.create_index([("purge_at", ASCENDING)],
                                         expireAfterSeconds=0, name="ttl_purge")
+    await messaging.ensure_indexes(db)
+    await attachment_storage.init(db)
     await db.installation.update_one(
         {"_id": INSTALLATION_ID},
         {"$setOnInsert": {"server_id": str(uuid.uuid4()),

@@ -17,13 +17,6 @@ PREFIX = "/api/v1/messages"
 
 # -- the harness ------------------------------------------------------------------
 
-def device_dependency(app):
-    """The app's own device-session dependency, as app.py's wiring passes it
-    to `messaging.mount`."""
-    route = next(r for r in app.routes if getattr(r, "path", "") == "/api/v1/network/nodes/self")
-    return next(d.call for d in route.dependant.dependencies if d.call.__name__ == "device")
-
-
 class Pins:
     """An AttachmentStorage stand-in for the two calls acceptance makes; the
     real GridFS storage is the files stream's and has its own tests."""
@@ -56,9 +49,12 @@ def pins():
 
 @pytest.fixture
 def client(make_client, faults, pins):
-    c = make_client()
-    messaging.mount(c.app, device=device_dependency(c.app), enabled=True, attachments=pins,
-                    faults=faults)
+    """The app with messaging switched on, mounted by its own wiring; the
+    service is given the test's faults and attachment stand-in, as the app
+    builds it for its database (the production app gets NO_FAULTS)."""
+    c = make_client(messaging_enabled=True)
+    c.app.state.messaging = messaging.Messaging(messaging.MongoMessages(c.app.state.db),
+                                                attachments=pins, faults=faults)
     return c
 
 
@@ -200,8 +196,7 @@ def test_indexes_are_made_twice_on_a_fresh_namespace_and_nothing_is_purged(deliv
 
 
 def test_switched_off_every_route_says_so_and_nothing_is_offered(make_client, github):
-    c = make_client()
-    messaging.mount(c.app, device=device_dependency(c.app), enabled=False)
+    c = make_client()                    # TEAM_SERVER_MESSAGING unset: off
     assert messaging.capabilities(False) == [] and messaging.capabilities(True) == [mm.CAPABILITY]
     for method, path in (("GET", PREFIX + "/recipients"), ("POST", PREFIX),
                          ("GET", f"{PREFIX}/{uuid.uuid4()}")):

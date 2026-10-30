@@ -156,9 +156,7 @@ class GridFSAttachmentStorage:
 
     async def latest_attempt(self, server_id: str, owner_github_id: int,
                              attachment_id: UUID) -> Optional[str]:
-        """The attempt that last finished writing, which finalize checks.
-        (Not in the contract's Protocol: the finalize route names no
-        attempt, so the service asks the storage which one.)"""
+        """The attempt that last finished writing, which finalize checks."""
         doc = await self._doc(server_id, owner_github_id, attachment_id)
         return doc.get("latest_attempt") if doc else None
 

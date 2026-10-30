@@ -32,7 +32,7 @@ export type Availability = "available" | "switched_off" | "not_paired" | "unsupp
 export type Direction = "incoming" | "outgoing";
 export type FileState = "staged" | "uploading" | "available" | "downloading" | "verified" | "failed" | "missing";
 export type DismissBlocker = "unsent_text" | "upload_pending" | "send_unresolved";
-export type ErrorCode = "invalid_request" | "unsupported_schema_version" | "content_not_normalized" | "digest_mismatch" | "too_large" | "quota_exceeded" | "session_invalid" | "session_missing" | "session_expired" | "session_revoked" | "membership_suspended" | "device_required" | "recipient_not_allowed" | "relation_not_allowed" | "source_node_not_owned" | "message_not_found" | "attachment_not_found" | "idempotency_conflict" | "revision_conflict" | "attachment_not_ready" | "attachment_mismatch" | "announcement_claimed" | "sync_restart" | "rate_limited" | "messaging_disabled" | "dependency_unavailable" | "not_ready" | "internal";
+export type ErrorCode = "invalid_request" | "unsupported_schema_version" | "content_not_normalized" | "digest_mismatch" | "too_large" | "quota_exceeded" | "session_invalid" | "session_missing" | "session_expired" | "session_revoked" | "membership_suspended" | "device_required" | "recipient_not_allowed" | "relation_not_allowed" | "source_node_not_owned" | "message_not_found" | "attachment_not_found" | "idempotency_conflict" | "revision_conflict" | "attachment_not_ready" | "attachment_mismatch" | "announcement_claimed" | "upload_idle" | "sync_restart" | "rate_limited" | "messaging_disabled" | "dependency_unavailable" | "not_ready" | "internal";
 export type LocalErrorCode = "messaging_unavailable" | "draft_not_found" | "send_refused" | "not_approved" | "snapshot_missing" | "transport";
 
 export const ERRORS: Record<ErrorCode, { status: number; retryable: boolean; shown: string }> = {
@@ -58,6 +58,7 @@ export const ERRORS: Record<ErrorCode, { status: number; retryable: boolean; sho
   attachment_not_ready: { status: 409, retryable: false, shown: "A file is not uploaded and verified; upload it again." },
   attachment_mismatch: { status: 422, retryable: false, shown: "A file's bytes are not the ones approved; prepare it again." },
   announcement_claimed: { status: 409, retryable: false, shown: "Another of your JARVIS instances is announcing this." },
+  upload_idle: { status: 408, retryable: true, shown: "The upload stopped sending; JARVIS sends it again." },
   sync_restart: { status: 410, retryable: true, shown: "Catching up from the beginning." },
   rate_limited: { status: 429, retryable: true, shown: "The team server asked JARVIS to slow down." },
   messaging_disabled: { status: 503, retryable: false, shown: "Messaging is switched off on the team server." },

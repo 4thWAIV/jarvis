@@ -15,6 +15,15 @@ ROUTES = {
     ("post", "/api/v1/device-authorizations/approve"),
     ("post", "/api/v1/device-authorizations/exchange"),
     ("post", "/api/v1/network/nodes/self"),
+    ("post", "/api/v1/messages"), ("get", "/api/v1/messages/sync"),
+    ("get", "/api/v1/messages/recipients"), ("post", "/api/v1/messages/receipts"),
+    ("put", "/api/v1/messages/threads/{thread_id}/work-state"),
+    ("get", "/api/v1/messages/{message_id}"),
+    ("post", "/api/v1/messages/{message_id}/announcement"),
+    ("post", "/api/v1/attachments"), ("get", "/api/v1/attachments/{attachment_id}"),
+    ("put", "/api/v1/attachments/{attachment_id}/bytes"),
+    ("post", "/api/v1/attachments/{attachment_id}/finalize"),
+    ("get", "/api/v1/messages/{message_id}/attachments/{attachment_id}/content"),
 }
 
 
