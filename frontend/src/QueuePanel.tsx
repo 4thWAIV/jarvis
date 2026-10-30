@@ -12,9 +12,10 @@
  * Clicking a row opens the item in the centre; a waiting one becomes
  * Active. Nothing here moves focus or scrolls when something arrives.
  *
- * Each row carries its thread id (`data-thread-id`) and an endpoint
- * element, the person badge (`.queue-endpoint`), for a transfer's ray;
- * `queueTarget` finds it, or the Queue tab when the row is not in view.
+ * Each row carries its thread id (`data-thread-id`), and its person badge
+ * (`.queue-endpoint`) is where a transfer's ray ends: it carries
+ * `data-transfer-endpoint`, which transferEndpoints.ts looks up, and the
+ * list moves `queueLaidOut` on every commit so a ray re-measures.
  */
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
@@ -31,24 +32,8 @@ import {
 } from "./queueStore";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
+import { queueLaidOut, TRANSFER_ENDPOINT_ATTR } from "./transferEndpoints";
 import { useTick } from "./WorkflowsView";
-
-/** Counts the Queue's commits to the page: a ray re-measures its row on it. */
-export const queueLaidOut = createStore(0);
-
-/** Where a transfer on this item should end: its row's person badge while
- *  the row is in view, otherwise the Queue tab. Never another item's row,
- *  and the list is never scrolled to find it. */
-export function queueTarget(thread: string): Element | null {
-  const list = document.querySelector(".queue-view");
-  const row = list?.querySelector(`li[data-thread-id="${CSS.escape(thread)}"] .queue-endpoint`);
-  if (list && row) {
-    const r = row.getBoundingClientRect();
-    const v = list.getBoundingClientRect();
-    if (r.height > 0 && r.bottom > v.top && r.top < v.bottom) return row;
-  }
-  return document.querySelector(".right-tabs [aria-label='Queue']");
-}
 
 const JUST_NOW_MS = 60_000;
 
@@ -149,7 +134,8 @@ function Row({ item, state, dir, current }: {
               className={`queue-row turn-${c.turn}${current ? " current" : ""}${c.unread ? " unread" : ""}${
                 pending ? " pending" : ""}`}
               aria-current={current ? "true" : undefined} aria-busy={pending ? true : undefined}>
-        <span className="queue-endpoint" data-github-id={work.correspondent_github_id} aria-hidden="true">
+        <span className="queue-endpoint" data-github-id={work.correspondent_github_id}
+              {...{ [TRANSFER_ENDPOINT_ATTR]: thread }} aria-hidden="true">
           {who.slice(0, 1).toUpperCase()}
         </span>
         <span className="row-who">
@@ -201,7 +187,8 @@ function UnsentRow({ draft, dir, current }: { draft: Draft; dir: Directory; curr
       <button type="button" onClick={() => followLink(draft.thread_id)}
               className={`queue-row unsent${current ? " current" : ""}`}
               aria-current={current ? "true" : undefined}>
-        <span className="queue-endpoint" data-github-id={draft.recipient_github_id} aria-hidden="true">
+        <span className="queue-endpoint" data-github-id={draft.recipient_github_id}
+              {...{ [TRANSFER_ENDPOINT_ATTR]: draft.thread_id }} aria-hidden="true">
           {who.slice(0, 1).toUpperCase()}
         </span>
         <span className="row-who"><span className="row-person">To {who}</span></span>

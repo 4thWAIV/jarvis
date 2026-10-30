@@ -13,12 +13,19 @@
  *   - "network": the team server's network snapshot was stored again; the
  *     Network panel and the Team Server tile read it again (network.ts);
  *   - "agent_message": JARVIS sent an agent a message; the ray is drawn to
- *     it (RayLane.tsx) and the list brings it into view (`agentMessage`).
+ *     it (RayLane.tsx) and the list brings it into view (`agentMessage`);
+ *   - "messages" (and every (re)connect): the queue reads
+ *     /api/team/messages again (queue.ts);
+ *   - "human_transfer": a person's message went or came; its ray is drawn
+ *     once (transfers.ts), and a replayed one only reconciles.
  */
 
 import { agentMessage, agentsChanged } from "./agents";
+import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { networkChanged } from "./network";
+import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
+import { presentHumanTransfer } from "./transfers";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
@@ -39,8 +46,10 @@ export function startSessionsSocket(): void {
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
     if (msg.type === "network" || snapshot) bump(networkChanged);
+    if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
     }
+    if (msg.type === TRANSFER_FRAME && msg.event) presentHumanTransfer(msg.event as TransferEvent);
   });
 }
