@@ -258,10 +258,11 @@ shows one line under its tabs (`TeamSignInReminder.tsx`): "Sign in to your
 team server: messages between people and the Network view need it", with
 Sign in and Later. It sets `--centre-notice-height` to its own height and
 every centre view starts at `--centre-view-top`, below it, so it covers
-nothing. Sign in (`teamSignIn.ts`) reads `GET /api/team`: with a
-`last_server_url` it runs Settings, Team's flow (`POST /api/team/connect`,
-the approval page in a new tab) and opens Settings at Team, where the code
-is; part way through pairing, or with no address, it only opens Settings at
+nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
+(`TeamSection.tsx`) and the reminder both call (`connectTeam`: `POST
+/api/team/connect`, the approval page in a new tab). The reminder's Sign in
+(`signInAgain`) reads `GET /api/team`: with a `last_server_url` it signs in
+there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
 Team (`openSettings("team")`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
 itself once signed in. Spoken, once per process: `team_reminder.remind_once`,

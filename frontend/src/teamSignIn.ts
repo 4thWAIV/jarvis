@@ -1,28 +1,18 @@
 /**
- * Signing this JARVIS in to its team server from outside Settings (the
- * reminder at the top of the centre area, TeamSignInReminder.tsx).
+ * Signing this JARVIS in to its team server: the one path Settings, Team
+ * (TeamSection.tsx) and the reminder at the top of the centre area
+ * (TeamSignInReminder.tsx) both take, and the request helper the Team
+ * section's other calls use.
  *
- * With an address saved (`last_server_url` on GET /api/team, team_client's
- * snapshot), it is Settings, Team's own flow: POST /api/team/connect with
- * that address, the team server's approval page opened in a new tab, and
- * Settings opened at Team, where the code to check against that page is
- * shown and followed. Part way through signing in already, or with no
- * address saved, it only opens Settings at Team: the code, or the address
- * field.
+ * Signing in is POST /api/team/connect with the team server's address
+ * (team_api.py starts the pairing), then the team server's approval page in
+ * a new tab, where the code JARVIS shows is checked and this Mac approved.
  */
 
 import type { Connection } from "./network";
-import { openSettings } from "./Settings";
 
-/** The part of GET /api/team (team_client.snapshot) signing in needs. */
-interface TeamStart {
-  state: Connection;
-  last_server_url: string | null;
-  pairing: { verification_uri_complete: string } | null;
-}
-
-/** One /api/team request; a refusal is thrown with the backend's words. */
-async function team(method: "GET" | "POST", url: string, body?: unknown): Promise<TeamStart> {
+/** One /api/team* request; a refusal is thrown with the backend's words. */
+export async function teamCall<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method, headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -33,17 +23,34 @@ async function team(method: "GET" | "POST", url: string, body?: unknown): Promis
     const err = (payload as { error?: { message?: string } } | null)?.error;
     throw new Error(err?.message || `The request failed (${res.status}).`);
   }
-  return payload as TeamStart;
+  return payload as T;
 }
 
-export async function signIn(): Promise<void> {
-  const status = await team("GET", "/api/team");
-  const address = status.last_server_url;
-  if (status.state !== "pairing" && address) {
-    const started = await team("POST", "/api/team/connect", { server_url: address });
-    if (started.pairing) {
-      window.open(started.pairing.verification_uri_complete, "_blank", "noopener,noreferrer");
-    }
+/** The team server's approval page, in a new tab. */
+export function openApproval(url: string): void {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/** The part of team_client's snapshot (GET /api/team) signing in needs. */
+interface TeamStart {
+  state: Connection;
+  last_server_url: string | null;
+  pairing: { verification_uri_complete: string } | null;
+}
+
+/** Sign in to the team server at `serverUrl`: start the pairing and open
+ *  its approval page. */
+export async function connectTeam(serverUrl: string): Promise<void> {
+  const started = await teamCall<TeamStart>("POST", "/api/team/connect", { server_url: serverUrl });
+  if (started.pairing) openApproval(started.pairing.verification_uri_complete);
+}
+
+/** Sign in again with the address last used (`last_server_url`), unless a
+ *  pairing is already under way or no address is saved; then there is
+ *  nothing to start here, and the Team section is where to go on. */
+export async function signInAgain(): Promise<void> {
+  const status = await teamCall<TeamStart>("GET", "/api/team");
+  if (status.state !== "pairing" && status.last_server_url) {
+    await connectTeam(status.last_server_url);
   }
-  openSettings("team");
 }

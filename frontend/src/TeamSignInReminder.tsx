@@ -5,8 +5,10 @@
  * and gone by itself once it is. JARVIS works as before without one; this
  * only reminds.
  *
- * Sign in runs teamSignIn.ts (Settings, Team's flow with the saved address,
- * or Settings at Team without one). Later hides it until the page is loaded
+ * Sign in takes Settings, Team's own path (teamSignIn.ts) with the address
+ * last used, then opens Settings at Team, where the code to check against
+ * the approval page is shown; part way through signing in, or with no
+ * address saved, it only opens Settings at Team. Later hides it until the page is loaded
  * again or its connection to JARVIS starts again (a JARVIS restart); never
  * for good.
  *
@@ -20,7 +22,8 @@ import { reconnected } from "./liveRead";
 import { needsSignIn, network } from "./network";
 import { createStore } from "./store";
 import { ServerIcon } from "./TeamServerTile";
-import { signIn } from "./teamSignIn";
+import { openSettings } from "./Settings";
+import { signInAgain } from "./teamSignIn";
 
 export const REMINDER_TEXT =
   "Sign in to your team server: messages between people and the Network view need it";
@@ -55,7 +58,10 @@ export function TeamSignInReminder() {
   const start = async () => {
     setBusy(true);
     setProblem(null);
-    try { await signIn(); } catch (e) { setProblem((e as Error).message); }
+    try {
+      await signInAgain();
+      openSettings("team");             // the code to check, or the address to give
+    } catch (e) { setProblem((e as Error).message); }
     setBusy(false);
   };
   return (
