@@ -47,7 +47,7 @@ from jarvis.folder_policy import Policy
 from jarvis.folder_store import Folder, FolderStore, NewLocation
 
 NAME_MAX = 120
-_SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 _MESSAGES = {Reader.CLAUDE_HISTORY: ClaudeTranscripts().message,
              Reader.CODEX_HISTORY: CodexTranscripts().message}
 
