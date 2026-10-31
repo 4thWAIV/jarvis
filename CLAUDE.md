@@ -43,7 +43,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
-- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; voice controls and brain usage are on the left; Agents, Diagnostics and Workflows are on the right. The Three.js orb is one control within that workspace.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; voice controls and brain usage are on the left; Folders, Agents, Queue, Workflows, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
 - **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
@@ -287,7 +287,8 @@ is written under the orb any more: it goes to that view's Messages
 ## Subsystem diagnostics
 The Diagnostics tab lists each major part of JARVIS, one row each:
 communications with the agents first, then voice input, the brain, voice
-output, the tool channel, the workflow monitor and the team server connection
+output, the tool channel, the workflow monitor, the folder catalog and the team
+server connection
 (`subsystem_diagnostics.py`), and last this page's own connection and graphics,
 which only the page can judge (`frontend/src/subsystems.ts`). Without WebGL
 (Chrome switches it off after its graphics process crashes) the orbs go still
@@ -310,6 +311,59 @@ reads it all; `_watch_subsystems` looks every five seconds, sends a
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view).
+
+## The folder catalog
+A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
+where they are and nothing here creates, moves, edits or deletes one. The
+record is in the existing database (`data_paths.db_path()`) under its own
+schema version (`folder_schema`, migrated with `run_store.migrate`, the
+helper human messaging uses too): `folders` (label, role, active or removed,
+a revision), `folder_locations` (node from `data_paths.node_id()`, path as
+given and canonical, filesystem identity as evidence, availability; one
+current location per folder, a reconnect retires it and adds the next
+location revision), `folder_access_scopes` (the reader and policy version;
+discovery never writes one), `folder_candidates` and `folder_observations`
+(what discovery found and why, kept after a session ends),
+`folder_location_events`, `folder_registrations` (request keys) and
+discovery's progress. There are no project tables yet: projects come in a
+later migration and refer to these IDs. `folder_store.py` is the only writer,
+one transaction per change, the revision moved inside it; it reads no
+transcript and checks no permission.
+
+Which reader may read a folder is decided by where it is, never by its role
+or by the caller (`folder_policy.py`): a Claude Code `projects/<folder>` under
+`history_read.claude_roots` is CLAUDE_HISTORY (transcripts and memory notes
+only), the user's Codex `sessions` is CODEX_HISTORY, the brain's journal,
+memory and project notes are NOTES (Markdown only), the rest of JARVIS's own
+data and of each provider home is refused, and anything else is FILES. A
+folder the user names may itself be hidden (`repo_read.sensitive_reason(...,
+named_dotfiles=True)`), but `.ssh`, `.env`, keys and credentials never; inside
+any folder every entry gets the full rule, so a parent never opens what a
+narrower folder or the rule closes. `folder_readers.py` reads from the
+canonical root one component at a time with `openat(O_NOFOLLOW)`, so a link
+is listed and never followed, and a swap between check and read fails
+closed; a page is 100 entries out of at most 10,000 looked at within 2 s, a
+window 200 lines and 64 KiB by `pread`, however large the file, and a
+transcript is shown as what was said (`history_read.said_lines`).
+
+Discovery (`folder_discovery.py`) reads only the providers' structured
+records: the Claude roster, the `cwd` each transcript records (the encoded
+folder name is never decoded), each Codex thread's cwd and rollout, and the
+session watcher's live sessions. A session's cwd and its history folder are
+separate candidates. A pass reads at most 200 transcript heads, newest first,
+and records what is left; one caught mid-write is read again when it grows.
+The server runs it every `DISCOVERY_EVERY_SEC` and after a Refresh, off the
+event loop (`_watch_folders`), and checks every folder's availability
+(Available, Missing, Access denied, Unavailable node). `folder_service.py` is
+the one service the page's routes (`folders_api.py`, `/api/folders*`; changes
+need the page's origin or the tool token, and no access-key category covers
+them) and the brain's tools (`list_folders`, `find_folder`, `browse_folder`,
+`read_folder_file`, and the acting `register_folder` and `unregister_folder`)
+both call; tool results come back in an untrusted block. Every committed
+change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
+(one store for both views), `FoldersView.tsx` and `FolderDetail.tsx` in the
+centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
+routes and tools off and keeps the records.
 
 ## Turn-taking
 JARVIS waits for Tim to finish. The server gathers what he says
@@ -485,6 +539,16 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   and the announcement lease
 - `frontend/src/QueuePanel.tsx` / `queue.ts` — The Queue tab, and the Queue's
   live state: its routes read into one record and the owner's commands
+- `folder_contract.py` — The folder catalog's words, budgets and one
+  refusal (see "The folder catalog")
+- `folder_store.py` / `folder_policy.py` / `folder_readers.py` /
+  `folder_discovery.py` / `folder_service.py` — Its record, which reader may
+  read where, the bounded race-resistant readers, discovery from the
+  providers' records, and the one service over them
+- `folders_api.py` — The page's `/api/folders*` routes
+- `frontend/src/folders.ts` / `FoldersView.tsx` / `FolderDetail.tsx` /
+  `FoldersPanel.tsx` — The Folders store, the centre's Folders view and one
+  folder in full, and the right panel's Folders tab
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -559,6 +623,11 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   despite being plain http or on a private address. For running a team
   server locally only
 
+- `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
+  the folder catalog's routes and tools off; its records are kept
+- `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
+  background discovery and availability look (every test sets this)
+
 ## Testing
 The team server has its own suite: `cd team_server/tests && pytest` with its
 own environment (`pip install -r team_server/requirements-test.txt`) and a
@@ -586,7 +655,7 @@ marker there.
 
 The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
-`test_voice_page_rays.py`) are marked `page` and deselected too: they build
+`test_voice_page_rays.py`, `test_voice_page_folders.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

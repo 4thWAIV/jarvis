@@ -1118,6 +1118,100 @@ TOOL_SPECS = [
             "required": ["capture"],
         },
     },
+    {
+        "name": "list_folders",
+        "description": (
+            "The folders registered in JARVIS's folder catalog on this Mac: each one's "
+            "ID, name, role, availability and path. Optional 'query' filters by name or "
+            "path. Read-only. Use the ID with browse_folder and read_folder_file."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Optional: part of a name or path."},
+            },
+        },
+    },
+    {
+        "name": "find_folder",
+        "description": (
+            "Find registered folders by name or path, to get the ID the other folder "
+            "tools take. Several matches come back as a list to choose from; never "
+            "guess between them. Read-only."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The folder as the user refers to it."},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "browse_folder",
+        "description": (
+            "One page of one directory inside a registered folder, through that folder's "
+            "reader: hidden, credential and key files are never listed. 'path' is "
+            "relative to the folder (omit it for the top); pass 'cursor' from the "
+            "previous page for the next. Read-only."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder_id": {"type": "string", "description": "The folder's ID."},
+                "path": {"type": "string", "description": "Optional: a directory inside it."},
+                "cursor": {"type": "string", "description": "Optional: the next page's cursor."},
+            },
+            "required": ["folder_id"],
+        },
+    },
+    {
+        "name": "read_folder_file",
+        "description": (
+            "A bounded window of one file inside a registered folder, through that "
+            "folder's reader (a session history is shown as what was said). 'path' is "
+            "relative to the folder; 'around' is a line number or a phrase to centre on; "
+            "'cursor' continues a long file. Never the whole of a large file. Read-only."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder_id": {"type": "string", "description": "The folder's ID."},
+                "path": {"type": "string", "description": "The file, relative to the folder."},
+                "around": {"type": "string",
+                           "description": "Optional: a line number, or a phrase to centre on."},
+                "cursor": {"type": "string", "description": "Optional: where to continue."},
+            },
+            "required": ["folder_id", "path"],
+        },
+    },
+    {
+        "name": "register_folder",
+        "description": (
+            "Add an existing directory to JARVIS's folder catalog, only when the user "
+            "asks you to. 'path' is absolute or starts with ~/. It records the folder "
+            "and lets JARVIS read it through the reader its location allows; it does "
+            "not create, move or change any file. A path already registered returns "
+            "that folder."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute, or starting with ~/."},
+                "display_name": {"type": "string", "description": "Optional: its label."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "unregister_folder",
+        "description": (
+            "Remove one folder from JARVIS's folder catalog by its ID, only when the "
+            "user asks you to. JARVIS stops reading it; its files, its sessions and "
+            "their histories are left exactly as they are. Nothing is deleted."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder_id": {"type": "string", "description": "The folder's ID."},
+            },
+            "required": ["folder_id"],
+        },
+    },
 ]
 
 

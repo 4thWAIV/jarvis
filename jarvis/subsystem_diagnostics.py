@@ -18,6 +18,8 @@ heartbeats and outcomes kept here).
   - Voice input: voice_diagnostics.summary, judged, not repeated.
   - Brain, voice output (Fish Audio), the tool channel (the brain's MCP child
     to /internal/tool) and the workflow monitor.
+  - The folder catalog: its folders' availability and how far discovery
+    has read, never worse than degraded.
   - The team server: team_client's own status, never worse than degraded,
     since JARVIS works without it.
 
@@ -87,6 +89,7 @@ TOOL_SERVER = "jarvis"
 NEEDS_LOOP = "needs board"
 SESSION_MESSAGES_LOOP = "session messages"
 WORKFLOW_LOOP = "workflow silence"
+FOLDERS_LOOP = "folder discovery"
 
 
 @dataclass(frozen=True)
@@ -459,6 +462,50 @@ def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     return s
 
 
+def folder_catalog(health: Optional[dict], b: Optional[Beat], now: float) -> Subsystem:
+    """The folder catalog (folder_service.health): whether its folders are
+    there, and how far discovery has read the sessions' records. Never
+    worse than degraded: nothing JARVIS says or sends waits on it."""
+    if health is None:
+        return Subsystem("folders", "Folder catalog", IDLE, "Not running")
+    counts = health.get("counts") or {}
+    total = sum(counts.values())
+    unavailable = {k: n for k, n in counts.items() if k != "available" and n}
+    if unavailable:
+        words = ", ".join(f"{n} {k.replace('_', ' ')}" for k, n in sorted(unavailable.items()))
+        shown = (DEGRADED, f"{sum(unavailable.values())} of {total} not available ({words})")
+    elif total:
+        shown = (OK, f"{total} folder{'s' if total != 1 else ''}, all available")
+    else:
+        shown = (IDLE, "No folders registered")
+    checks = [Check("folders", "Folders", *shown)]
+    coverage = health.get("coverage") or {}
+    failed = [x for x in coverage.get("sources", []) if x.get("error")]
+    pending = sum(x.get("pending") or 0 for x in coverage.get("sources", []))
+    last_ok = max((x.get("last_ok_at") or 0 for x in coverage.get("sources", [])), default=0)
+    since = f"; last full look {age(now - last_ok)} ago" if last_ok else ""
+    if not health.get("discovery", True):
+        found = (IDLE, "Discovery is switched off")
+    elif failed:
+        found = (DEGRADED, f"Could not read {failed[0]['source']}: {failed[0]['error']}")
+    elif pending:
+        found = (OK, f"{pending} history files still to read{since}")
+    elif last_ok:
+        found = (OK, f"Up to date{since}")
+    else:
+        found = (UNKNOWN, "Not yet looked")
+    checks.append(Check("discovery", "Discovery", *found))
+    if health.get("discovery", True):
+        loop_state, loop_detail = judge_loop(b, now)
+        checks.append(Check("watch", "Discovery loop", loop_state, loop_detail))
+    s = from_checks("folders", "Folder catalog", checks, shown[1])
+    if s.state == DOWN:
+        s.state = DEGRADED
+    if s.state == OK and shown[0] == IDLE:
+        s.state = IDLE
+    return s
+
+
 def team_server(team: dict, now: float) -> Subsystem:
     """The team server connection, from team_client's snapshot. Optional,
     so at worst degraded: a team server that is gone never turns the
@@ -497,7 +544,8 @@ def team_server(team: dict, now: float) -> Subsystem:
 # ── all of them ──────────────────────────────────────────────────────────
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
-           team: Optional[dict] = None, now: Optional[float] = None) -> list[Subsystem]:
+           team: Optional[dict] = None, folders: Optional[dict] = None,
+           now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
     now = time.time() if now is None else now
@@ -512,6 +560,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
         voice_output(has_fish_key, voice_output_calls, now),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
+        folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),
         team_server(team or {}, now),
     ]
 

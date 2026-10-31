@@ -12,6 +12,8 @@
  *     open, since the page's own connection is one of its items;
  *   - "network": the team server's network snapshot was stored again; the
  *     Network panel and the Team Server tile read it again (network.ts);
+ *   - "folders": the folder catalog or what discovery found changed; both
+ *     Folders views read it again (folders.ts);
  *   - "agent_message": JARVIS sent an agent a message; the ray is drawn to
  *     it (RayLane.tsx) and the list brings it into view (`agentMessage`);
  *   - "messages" (and every (re)connect): the queue reads
@@ -21,6 +23,7 @@
  */
 
 import { agentMessage, agentsChanged } from "./agents";
+import { foldersChanged } from "./folders";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { networkChanged } from "./network";
 import { messagesChanged } from "./queue";
@@ -46,6 +49,7 @@ export function startSessionsSocket(): void {
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
     if (msg.type === "network" || snapshot) bump(networkChanged);
+    if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });

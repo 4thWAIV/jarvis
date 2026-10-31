@@ -6,7 +6,13 @@ Updated 2026-10-29. This guide describes functionality present in the checkout. 
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.
 
-The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has Agents, Diagnostics, Workflows and Network tabs. Detailed views open in the centre while the surrounding controls remain available.
+The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
+
+## Folders
+
+The centre's Folders view is a catalog of the folders JARVIS knows on this Mac. Add existing folder takes an absolute path or one starting with ~/, shows where it resolves and how JARVIS will read it, and registers it only when you say so; nothing is created, moved or changed on disk. Each folder keeps its ID through restarts and moves: if it disappears it stays listed as Missing, and Reconnect location points the same folder at its new place (a different directory has to be confirmed). Remove from catalog stops JARVIS reading it and deletes nothing.
+
+Selecting a folder shows its location, whether it is there now, how it is read, its contents a page at a time with a preview of each file a window at a time, the Claude Code and Codex sessions whose records name it (kept after they stop) and its location history. Hidden, credential and key files are never shown; a session history folder is read as its transcripts and memory notes, shown as what was said. The Discovered list offers folders found in your sessions' own records, with Register and Ignore; seeing one grants nothing. The right panel's Folders tab is a compact list of the same folders; choosing one opens it in the centre. JARVIS can list, browse and read registered folders when you ask, and register or remove one only on your word. Projects that use these folders come in a later release.
 
 ![Conversation and agents in the current interface, using fictional sample data.](images/workspace-conversation.png)
 

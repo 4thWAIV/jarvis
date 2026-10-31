@@ -51,6 +51,33 @@ def _connect(path: Optional[Path] = None) -> sqlite3.Connection:
     return conn
 
 
+def migrate(conn: sqlite3.Connection, schema_table: str,
+            migrations: dict[int, str], what: str) -> int:
+    """Bring one module's own tables forward to the last of `migrations`,
+    inside the caller's open transaction, and return that version.
+
+    For a store that keeps its tables in this database under a schema
+    version of its own (`schema_table`, one row): each step takes the schema
+    from the version before it to its own, in order, and a step is only ever
+    appended, never changed. A database already newer than this JARVIS is
+    left exactly as it is (RuntimeError), so a rollback never meets tables it
+    does not know."""
+    latest = max(migrations)
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {schema_table} (version INTEGER NOT NULL)")
+    row = conn.execute(f"SELECT version FROM {schema_table}").fetchone()
+    version = row[0] if row else 0
+    if version > latest:
+        raise RuntimeError(f"{what} schema {version} is newer than this "
+                           f"JARVIS ({latest}); it is left as it is")
+    for step in range(version + 1, latest + 1):
+        conn.executescript(migrations[step])
+    if row is None:
+        conn.execute(f"INSERT INTO {schema_table} (version) VALUES (?)", (latest,))
+    else:
+        conn.execute(f"UPDATE {schema_table} SET version = ?", (latest,))
+    return latest
+
+
 def init_db() -> None:
     with closing(_connect()) as conn:
         conn.executescript("""
