@@ -77,7 +77,6 @@ class Node:
         self.seen = Recorder()
         self.delivery = Delivery(store=self.store, connection=self.connection, guard=self.guard,
                                  presentation=self.seen, node_id=lambda: self.node, clock=now,
-                                 enabled=lambda: True,
                                  transport_for=lambda c, p: GuardedTransport(
                                      TeamTransport(c, p), self.guard, p.server_id,
                                      p.owner_github_id))
@@ -146,13 +145,13 @@ def dbname():
 
 
 def run_with_team_server(dbname, scenario, faults=wire.NO_FAULTS):
-    """`scenario(server)` with a started team server, messaging switched
-    on (TEAM_SERVER_MESSAGING) and mounted by the app's own wiring; the
+    """`scenario(server)` with a started team server, its messaging
+    mounted by the app's own wiring; the
     service is given the test's faults (the production app gets none)."""
     config = Config(port=8080, public_base_url=BASE, mongodb_uri=MONGO,
                     mongodb_database=dbname, github_client_id="cid",
                     github_client_secret="not-a-secret", team_name="Test Team",
-                    initial_admin_github_id=TIM.id, messaging_enabled=True)
+                    initial_admin_github_id=TIM.id)
 
     async def go():
         app = create_app(config, github=object())

@@ -134,14 +134,10 @@ def test_unknown_github_id_cannot_be_added(client, admin):
     assert r.status_code == 404
 
 
-def test_admin_changes_need_recent_github_sign_in(client, github, admin, frozen):
+def test_admin_changes_need_no_recent_github_sign_in(client, admin, frozen):
     frozen.advance(minutes=16)
     r = put(client, admin, ALICE.id)
-    assert r.status_code == 403 and r.json()["error"]["code"] == "reauth_required"
-    # Reading is still allowed for the whole session.
-    assert client.get("/api/v1/team/members", headers=bearer(admin)).status_code == 200
-    fresh = browser_token(client, github, ADMIN)
-    assert put(client, fresh, ALICE.id).status_code == 200
+    assert r.status_code == 200 and r.json()["member"]["state"] == "approved"
 
 
 def test_member_limit(client, admin, dbname):

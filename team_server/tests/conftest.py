@@ -143,8 +143,7 @@ def make_client(dbname, github):
         client.__enter__()
         opened.append(client)
         wait_initialized(client)
-        if over.get("messaging_enabled"):
-            wait_messaging(client)
+        wait_messaging(client)
         return client
     yield make
     for c in opened:
@@ -166,7 +165,7 @@ def wait_initialized(client: TestClient) -> None:
 
 
 def wait_messaging(client: TestClient) -> None:
-    """Messaging on: its services are built once the database is ready."""
+    """Messaging's services are built once the database is ready."""
     for _ in range(100):
         if getattr(client.app.state, "attachments", None) is not None:
             return

@@ -144,8 +144,9 @@ class Harness:
         check("version matches deployed commit",
               not self.expect_commit or v["commit"] == self.expect_commit,
               f"commit={v['commit']} api={v['api_version']} capabilities={v['capabilities']}")
-        check("capabilities omit messaging and presence",
-              not any("messag" in c or "presence" in c for c in v["capabilities"]),
+        check("capabilities offer messaging and omit presence",
+              "messaging.v1" in v["capabilities"]
+              and not any("presence" in c for c in v["capabilities"]),
               ",".join(v["capabilities"]))
         self.server_id = v["server_id"]
         r = self.http.get("/health/ready")
@@ -304,10 +305,9 @@ class Harness:
         await self.mint("a2", A2)
         await self.db.sessions.update_one({"_id": digest(self.tokens["a1"])},
                                           {"$set": {"auth_at": clock.now() - timedelta(minutes=20)}})
-        r = self.put("a1", M.id, role="admin")
-        check("membership changes need a GitHub sign-in within 15 minutes",
-              r.status_code == 403 and code_of(r) == "reauth_required", f"{r.status_code} {code_of(r)}")
-        await self.mint("a1", A1)
+        r = self.http.post(f"/api/v1/team/members/{M.id}/revoke-sessions", headers=self.bearer("a1"))
+        check("membership changes need no recent GitHub sign-in", r.status_code == 200,
+              f"{r.status_code} {code_of(r)}")
         r = self.put("a1", A1.id, role="member")
         check("an administrator can step down while another remains", r.status_code == 200, str(r.status_code))
         r = self.put("a2", A2.id, role="member")

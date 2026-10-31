@@ -99,22 +99,14 @@ def test_jarvis_computes_the_digest_the_team_server_checks(vector):
                                sender_github_id=vector["sender_github_id"]) == vector["digest"]
 
 
-# -- the switch and availability ------------------------------------------------------
-
-@pytest.mark.parametrize("value, on", [("", False), ("0", False), ("no", False), ("1", True),
-                                       ("TRUE", True), (" on ", True), ("yes", True)])
-def test_messaging_is_off_unless_switched_on(value, on):
-    assert ports.messaging_enabled({ports.ENABLE_FLAG: value}) is on
-    assert ports.messaging_enabled({}) is False
-
+# -- availability ----------------------------------------------------------------------
 
 def test_availability_fails_closed_in_order():
     ok = [wire.CAPABILITY]
-    assert ports.availability(enabled=False, paired=True, capabilities=ok) == "switched_off"
-    assert ports.availability(enabled=True, paired=False, capabilities=ok) == "not_paired"
-    assert ports.availability(enabled=True, paired=True,
+    assert ports.availability(paired=False, capabilities=ok) == "not_paired"
+    assert ports.availability(paired=True,
                               capabilities=["github-login", "network"]) == "unsupported"
-    assert ports.availability(enabled=True, paired=True, capabilities=ok) == "available"
+    assert ports.availability(paired=True, capabilities=ok) == "available"
     assert set(ports.AVAILABILITY_SHOWN) == set(ports.Availability.__args__)
 
 

@@ -91,15 +91,15 @@ def test_database_unavailable_is_503_and_fails_closed(github, dbname):
         assert r.status_code == 503
 
 
-def test_version_reports_build_and_omits_messaging(client):
+def test_version_reports_build_and_always_offers_messaging(client):
     v = client.get("/version").json()
     assert v["service"] == "jarvis-team-server"
     assert v["api_version"] == 1
     assert v["version"] == build_info.VERSION
     assert v["server_id"]
     assert set(v["capabilities"]) == {"github-login", "membership", "device-pairing",
-                                      "status", "network"}
-    assert not any("messag" in c or "presence" in c for c in v["capabilities"])
+                                      "status", "network", "messaging.v1"}
+    assert not any("presence" in c for c in v["capabilities"])
 
 
 def test_server_id_is_stable_across_restarts(make_client):

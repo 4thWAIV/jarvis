@@ -73,7 +73,6 @@ class Status(BaseModel):
     server_id: str
     session_expires_at: datetime
     session_kind: Literal["browser", "device"]
-    recent_auth_until: datetime
     team: Team
     me: Me
     network_account_key: Optional[str] = Field(
@@ -119,19 +118,6 @@ class MemberChanged(BaseModel):
 class SessionsRevoked(BaseModel):
     revision: int
     session_generation: int
-
-
-class MessagingSwitch(BaseModel):
-    enabled: bool = Field(description="Messages between the team's members are on. "
-                                      "Switching it off deletes nothing.")
-    changed_at: Optional[datetime] = None
-    changed_by_github_id: Optional[int] = Field(
-        default=None, description="The administrator who last set it; none when it was "
-                                  "seeded from TEAM_SERVER_MESSAGING.")
-
-
-class MessagingSwitchChange(BaseModel):
-    enabled: bool
 
 
 class DeviceStart(BaseModel):

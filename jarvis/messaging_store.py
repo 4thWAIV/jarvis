@@ -1,8 +1,9 @@
 """The local record of human messaging: drafts, approved envelopes and their
 sends, the messages this owner has, their receipts, the owner's work items,
 the sync position of this node, receipts and work commands still owed to
-the team server, which arrivals are due to be announced, and this JARVIS's
-messaging switch (`human_switch`, set from Settings, Team).
+the team server and which arrivals are due to be announced. The
+`human_switch` table (schema 2) held the messaging switch there used to be;
+it is kept, and nothing reads it.
 
 SQLite in the main database (`data_paths.db_path()`), every row namespaced
 by the team server's `server_id` and the owner's GitHub id, so a JARVIS
@@ -131,20 +132,6 @@ class SqliteMessagingStore:
     def schema_version(self) -> int:
         with self._tx() as conn:
             return conn.execute("SELECT version FROM human_messaging_schema").fetchone()[0]
-
-    # -- the switch ---------------------------------------------------------------------
-
-    def switched_on(self) -> bool:
-        """This JARVIS's messaging switch; off until it is first set. Not
-        namespaced: it is this JARVIS's, whoever it is paired as."""
-        with self._tx() as conn:
-            row = conn.execute("SELECT enabled FROM human_switch WHERE id = 1").fetchone()
-        return bool(row and row["enabled"])
-
-    def set_switched_on(self, on: bool) -> None:
-        with self._tx() as conn:
-            conn.execute("INSERT OR REPLACE INTO human_switch (id, enabled) VALUES (1, ?)",
-                         (int(on),))
 
     # -- drafts -------------------------------------------------------------------------
 

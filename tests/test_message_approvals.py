@@ -465,7 +465,7 @@ def test_the_draft_tool_names_the_team_when_it_does_not_know_the_person(tim):
     tools = MessagingTools(tim.messaging, tim.reviews, lambda *a: pytest.fail("saved"))
     assert "no one called Bob" in tools.draft_message({"to": "Bob", "text": "hi"})
     assert "Say who it is for" in tools.draft_message({"text": "hi"})
-    tim.available = "switched_off"
+    tim.available = "not_paired"
     assert "isn't available" in tools.draft_message({"to": "Matt", "text": "hi"})
 
 
@@ -617,7 +617,7 @@ def test_with_no_voice_nothing_is_staged_unheard(tim):
     assert tim.current(draft).send.state == "awaiting_approval"
 
 
-@pytest.mark.parametrize("availability", ["switched_off", "not_paired", "unsupported"])
+@pytest.mark.parametrize("availability", ["not_started", "not_paired", "unsupported"])
 def test_without_messaging_nothing_is_staged(tim, availability):
     draft, reviewed = _reviewed(tim)
     tim.available = availability

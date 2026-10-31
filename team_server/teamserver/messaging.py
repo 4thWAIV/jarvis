@@ -30,17 +30,13 @@ Collections (all additive; nothing here deletes a message):
                          (the network record is purged; this is not)
   message_sync           sync continuations, by SHA-256 of the token,
                          purged after they expire
-  team_settings          `_id` "messaging": the team's messaging switch,
-                         which an administrator turns on and off
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import secrets
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 from uuid import UUID
@@ -102,83 +98,9 @@ def refused(code: str) -> Problem:
     return refusal(ContractError(code))
 
 
-# -- the team's switch -----------------------------------------------------------
-
-SWITCH_ID = "messaging"
-# How often each instance reads the stored switch again; the instance that
-# changed it holds the new value at once.
-SWITCH_REFRESH_SEC = 5.0
-
-
-@dataclass(frozen=True)
-class Switch:
-    """The team's messaging switch as last read. Off until it has been read,
-    so a server that cannot reach its database offers no messaging."""
-    enabled: bool = False
-    changed_at: Optional[datetime] = None
-    changed_by_github_id: Optional[int] = None
-
-
-def _switch_of(doc: Optional[dict]) -> Switch:
-    if doc is None:
-        return Switch()
-    return Switch(enabled=bool(doc.get("enabled")), changed_at=doc.get("changed_at"),
-                  changed_by_github_id=doc.get("changed_by_github_id"))
-
-
-async def read_switch(db: AsyncDatabase) -> Switch:
-    return _switch_of(await db.team_settings.find_one({"_id": SWITCH_ID}))
-
-
-async def seed_switch(db: AsyncDatabase, initial: bool) -> None:
-    """Once: a server first started with TEAM_SERVER_MESSAGING on stores the
-    switch on. Anything already stored is left as it is, so the variable
-    never overrides an administrator's choice."""
-    if initial:
-        await db.team_settings.update_one(
-            {"_id": SWITCH_ID},
-            {"$setOnInsert": {"enabled": True, "changed_at": clock_mod.now(),
-                              "changed_by_github_id": None}},
-            upsert=True)
-
-
-async def set_switch(db: AsyncDatabase, actor: int, enabled: bool) -> Switch:
-    """An administrator turns messaging on or off for the team, audited.
-    Switching it off deletes nothing."""
-    now = clock_mod.now()
-    await db.team_settings.update_one(
-        {"_id": SWITCH_ID},
-        {"$set": {"enabled": enabled, "changed_at": now, "changed_by_github_id": actor}},
-        upsert=True)
-    await db.audit.insert_one(team_mod.audit_event("messaging_switched", actor, None,
-                                                   enabled=enabled))
-    log.info("messaging switched %s by %d", "on" if enabled else "off", actor)
-    return await read_switch(db)
-
-
-async def watch_switch(state) -> None:
-    """Keep `state.messaging_switch` current with what is stored, so a
-    change made through another instance takes effect here too."""
-    while True:
-        try:
-            state.messaging_switch = await read_switch(state.db)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # the last value read stands until the next
-            log.warning("messaging switch not read (%s)", type(e).__name__)
-        await asyncio.sleep(SWITCH_REFRESH_SEC)
-
-
-def switched_on(request: Request) -> bool:
-    return getattr(request.app.state, "messaging_switch", Switch()).enabled
-
-
 def started(request: Request, name: str):
     """The messaging gate both routers share: the service the app built at
-    startup (`app.state.<name>`), behind the team's switch.
-    Off: `messaging_disabled`; not built yet: `not_ready`, never cached."""
-    if not switched_on(request):
-        raise refused("messaging_disabled")
+    startup (`app.state.<name>`); not built yet: `not_ready`, never cached."""
     service = getattr(request.app.state, name, None)
     if service is None:
         raise refused("not_ready")
@@ -212,10 +134,9 @@ async def ensure_indexes(db: AsyncDatabase) -> None:
                                        name="ttl_purge")
 
 
-def capabilities(enabled: bool) -> list[str]:
-    """What /version adds to its `capabilities`: `messaging.v1` only while
-    the team's switch is on."""
-    return [CAPABILITY] if enabled else []
+def capabilities() -> list[str]:
+    """What /version adds to its `capabilities`: messaging is always on."""
+    return [CAPABILITY]
 
 
 # -- the repository -------------------------------------------------------------
@@ -690,9 +611,7 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
 
 def mount(app: FastAPI, *, device: Callable) -> None:
     """Register the messaging routes on the team server's app. `device` is
-    the app's existing device-session dependency. The team's switch is read
-    on every request (off: every route answers `messaging_disabled`, and
-    nothing is deleted). The service is the one
+    the app's existing device-session dependency. The service is the one
     the app builds in its lifespan (`app.state.messaging`, next to its
     attachment storage); until then every route answers `not_ready`. The
     fixed paths come before `/{message_id}`."""

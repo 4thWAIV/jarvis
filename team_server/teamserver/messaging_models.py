@@ -70,7 +70,7 @@ SCHEMA_VERSION = 1                   # every envelope carries it
 # Changes when any wire shape, rule or fixture changes. Workers build
 # against one revision; a breaking change bumps the number and regenerates
 # every consumer in the same batch.
-INTERFACE_REVISION = "messaging.v1-contract.2"
+INTERFACE_REVISION = "messaging.v1-contract.3"
 DIGEST_VERSION = 1
 
 
@@ -795,8 +795,6 @@ ERRORS: dict[str, ErrorSpec] = {
     "upload_idle": ErrorSpec(408, True, "The upload stopped sending; JARVIS sends it again."),
     "sync_restart": ErrorSpec(410, True, "Catching up from the beginning."),
     "rate_limited": ErrorSpec(429, True, "The team server asked JARVIS to slow down."),
-    "messaging_disabled": ErrorSpec(503, False, "Messaging is switched off on the team "
-                                                "server."),
     "dependency_unavailable": ErrorSpec(503, True, "The team server cannot reach its "
                                                    "database."),
     "not_ready": ErrorSpec(503, True, "The team server is starting up."),

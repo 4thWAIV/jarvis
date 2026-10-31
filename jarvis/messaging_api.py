@@ -88,8 +88,6 @@ class LocalMessaging:
     # -- whose records ------------------------------------------------------------------
 
     def pairing(self) -> Pairing:
-        if not self.delivery.enabled():
-            raise Refused("messaging_unavailable", availability="switched_off")
         pairing = self.delivery.pairing()
         if pairing is None:
             raise Refused("messaging_unavailable", availability="not_paired")
@@ -144,7 +142,7 @@ class LocalMessaging:
 
     async def snapshot(self) -> ports.QueueSnapshot:
         availability = await self.delivery.availability()
-        pairing = self.delivery.pairing() if self.delivery.enabled() else None
+        pairing = self.delivery.pairing()
         if pairing is None:
             return ports.QueueSnapshot(availability=availability, items=[])
         snap = self.store.snapshot(*pairing.ns, availability=availability,

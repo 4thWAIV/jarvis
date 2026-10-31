@@ -11,7 +11,6 @@ ROUTES = {
     ("post", "/api/v1/logout"), ("get", "/api/v1/team/members"),
     ("post", "/api/v1/team/members/resolve"), ("put", "/api/v1/team/members/{github_id}"),
     ("post", "/api/v1/team/members/{github_id}/revoke-sessions"),
-    ("get", "/api/v1/team/messaging"), ("put", "/api/v1/team/messaging"),
     ("post", "/api/v1/device-authorizations"),
     ("post", "/api/v1/device-authorizations/approve"),
     ("post", "/api/v1/device-authorizations/exchange"),

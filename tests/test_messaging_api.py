@@ -24,7 +24,7 @@ P = "/api/team/messages"
 
 
 class Page:
-    def __init__(self, tmp_path, enabled=True):
+    def __init__(self, tmp_path, signed_in=True):
         self.clock = fakes.FixedClock()
         self.serve = fakes.FakeServe(server_id=SERVER, members={TIM, MATT}, clock=self.clock)
         self.node = UUID(int=1)
@@ -32,14 +32,14 @@ class Page:
         self.guard = message_approvals.MessageApprovals(
             self.store, fakes.StaticSnapshots(), ids=fakes.SeqIds(start=900), clock=self.clock)
         self.captures = fakes.ReviewCaptures()
-        self.enabled = enabled
         self.hints = 0
         self.transport = Lossy(self.serve.pair(TIM, self.node))
+        connection = Connection(TIM)
+        connection.signed_out = not signed_in
         self.delivery = Delivery(
-            store=self.store, connection=Connection(TIM), guard=self.guard,
+            store=self.store, connection=connection, guard=self.guard,
             node_id=lambda: self.node, clock=self.clock, rand=fakes.SeqRandom(),
-            on_change=self._hint, enabled=lambda: self.enabled,
-            transport_for=lambda c, p: self.transport)
+            on_change=self._hint, transport_for=lambda c, p: self.transport)
         self.local = messaging_api.LocalMessaging(
             store=self.store, delivery=self.delivery, guard=self.guard,
             reviews=message_approvals.Reviews(self.guard, self.captures,
@@ -92,13 +92,13 @@ def code(r):
     return r.json()["error"]["code"]
 
 
-def test_switched_off_the_queue_says_so_and_nothing_else_runs(tmp_path):
-    page = Page(tmp_path, enabled=False)
+def test_signed_out_the_queue_says_so_and_nothing_else_runs(tmp_path):
+    page = Page(tmp_path, signed_in=False)
     snap = page.http.get(P).json()
-    assert (snap["availability"], snap["items"]) == ("switched_off", [])
+    assert (snap["availability"], snap["items"]) == ("not_paired", [])
     r = page.http.post(P + "/drafts", json={"recipient_github_id": MATT, "text": "x"})
     assert (r.status_code, code(r)) == (503, "messaging_unavailable")
-    assert r.json()["error"]["availability"] == "switched_off"
+    assert r.json()["error"]["availability"] == "not_paired"
 
 
 def test_a_draft_is_normalized_once_and_a_stale_save_shows_the_latest(page):
