@@ -6,7 +6,7 @@ its messaging, paired to a local team server, in its own data directory.
 
 Its environment names the data directory, the env file and the team
 server and its own loopback port (JARVIS_DATA_DIR, JARVIS_ENV_FILE,
-JARVIS_TEAM_DEV_SERVERS, JARVIS_PORT, JARVIS_MESSAGING=1,
+JARVIS_TEAM_DEV_SERVERS, JARVIS_PORT,
 JARVIS_BRAIN_AUTOSTART=0); the saved team connection is already in the data
 directory. The device session's credential arrives as one line on stdin
 and is kept in memory only (never the Keychain, never an argument).

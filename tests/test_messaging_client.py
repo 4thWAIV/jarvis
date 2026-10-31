@@ -73,7 +73,7 @@ class Jarvis:
         self.delivery = Delivery(
             store=self.store, connection=self.connection, guard=self.guard,
             presentation=self.presentation, node_id=lambda: self.node, clock=self.clock,
-            rand=fakes.SeqRandom(), faults=self.faults, on_change=hint, enabled=lambda: True,
+            rand=fakes.SeqRandom(), faults=self.faults, on_change=hint,
             transport_for=lambda connection, pairing: self.transport)
         return self.delivery
 
@@ -372,12 +372,13 @@ def test_an_expired_continuation_starts_a_new_scan(tim, matt, serve):
     assert len(matt.incoming()) == 3 and matt.delivery.stale is False
 
 
-def test_switched_off_or_unsupported_does_nothing_and_keeps_the_outbox(tim, serve):
+def test_signed_out_or_unsupported_does_nothing_and_keeps_the_outbox(tim, serve):
     draft = tim.approve(MATT, "Wait.")
-    tim.delivery.enabled = lambda: False
+    tim.connection.signed_out = True
     tim.tick()
-    assert asyncio.run(tim.delivery.availability()) == "switched_off"
-    tim.delivery.enabled = lambda: True
+    assert asyncio.run(tim.delivery.availability()) == "not_paired"
+    assert tim.send_of(draft).state == "approved" and serve.messages == {}
+    tim.connection.signed_out = False
     serve.capabilities = []
     tim.restart()
     tim.tick()

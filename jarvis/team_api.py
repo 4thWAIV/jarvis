@@ -1,9 +1,8 @@
 """team_api.py — the Team section's routes, /api/team*, over team_client.
 
 The page reads status (`GET /api/team`, polled while Settings is open),
-starts and cancels pairing, disconnects, reads the team's messaging switch
-and — for administrators — sets it and manages members, which is forwarded
-to the team server with the session from the Keychain. No route ever returns the session credential. The routes sit
+starts and cancels pairing, disconnects and — for administrators — manages
+members, which is forwarded to the team server with the session from the Keychain. No route ever returns the session credential. The routes sit
 behind web_auth.OriginGuard like every other, and no access-key category
 includes them.
 
@@ -41,10 +40,6 @@ class ConnectBody(BaseModel):
 
 class ResolveBody(BaseModel):
     login: str = Field(min_length=1, max_length=39)
-
-
-class TeamSwitchBody(BaseModel):
-    enabled: bool
 
 
 class MemberBody(BaseModel):
@@ -153,29 +148,13 @@ async def revoke_sessions(github_id: int):
     return await _forward("POST", f"/api/v1/team/members/{int(github_id)}/revoke-sessions")
 
 
-async def get_team_messaging():
-    return await _forward("GET", "/api/v1/team/messaging")
-
-
-def mount(app: FastAPI, on_team_messaging: Callable[[], None] = lambda: None) -> None:
-    """`on_team_messaging` runs after an administrator's change to the
-    team's messaging switch was accepted, so this JARVIS asks the team
-    server what it offers again instead of waiting for its cached answer."""
-
-    async def set_team_messaging(body: TeamSwitchBody):
-        answer = await _forward("PUT", "/api/v1/team/messaging", body.model_dump())
-        if answer.status_code == 200:
-            on_team_messaging()
-        return answer
-
+def mount(app: FastAPI) -> None:
     app.add_api_route(PREFIX, get_team, methods=["GET"])
     app.add_api_route(PREFIX + "/network", get_network, methods=["GET"])
     app.add_api_route(PREFIX + "/connect", connect, methods=["POST"])
     app.add_api_route(PREFIX + "/cancel", cancel, methods=["POST"])
     app.add_api_route(PREFIX + "/disconnect", disconnect, methods=["POST"])
     app.add_api_route(PREFIX + "/refresh", refresh, methods=["POST"])
-    app.add_api_route(PREFIX + "/messaging/team", get_team_messaging, methods=["GET"])
-    app.add_api_route(PREFIX + "/messaging/team", set_team_messaging, methods=["PUT"])
     app.add_api_route(PREFIX + "/members", list_members, methods=["GET"])
     app.add_api_route(PREFIX + "/members/resolve", resolve_member, methods=["POST"])
     app.add_api_route(PREFIX + "/members/{github_id}", change_member, methods=["PUT"])

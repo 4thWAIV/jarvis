@@ -164,13 +164,11 @@ pinned `requirements.txt`, `Dockerfile`, tests (`team_server/tests`, against a
 real MongoDB) and API contract (`team_server/openapi.json`, checked by its
 tests). It gives one team GitHub sign-in, administrator-managed membership,
 device pairing, status, version and health, and holds the team's network
-inventory and each node's presence (see "The Network view"), and, only
-while the team's messaging switch is on, messages between members (see
-"Messages between people"). That switch is stored in MongoDB
-(`team_settings`, `messaging.read_switch`); an administrator sets it with
-`PUT /api/v1/team/messaging` (Settings, Team), every instance reads it again
-every `SWITCH_REFRESH_SEC`, and `TEAM_SERVER_MESSAGING` only seeds it on,
-once, when nothing is stored. Operating it is `docs/team-server.md`. JARVIS's side is
+inventory and each node's presence (see "The Network view"), and messages
+between members (see "Messages between people"), which are always on: its
+`/version` always offers `messaging.v1` and there is no switch (a
+`team_settings` document left from the old switch is not read). Operating
+it is `docs/team-server.md`. JARVIS's side is
 `team_client.py` (the connection, its 30-second status poll and the
 Keychain store, through `security` with the secret on stdin) and
 `team_api.py` (`/api/team*`, the Settings Team section's routes). The
@@ -190,15 +188,15 @@ itself is only in this Mac's Keychain; rotating or removing it is in
 `docs/team-server.md`.
 
 ## Messages between people
-Off unless both switches are on, and both are in Settings, Team and take
-effect at once: this JARVIS's (`/api/team/messaging/local`, stored in
-`human_switch` by `SqliteMessagingStore.set_switched_on`; the runtime starts
-or stops its loops the moment it changes, and `JARVIS_MESSAGING` only forces
-it on, for tests) and the team's, which an administrator sets through
-`/api/team/messaging/team` and which adds `messaging.v1` to the team
-server's `/version`; `messaging_ports.availability` fails closed. A JARVIS
-trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s) and reads
-them again at once after changing the team's switch itself. A message to a
+There is no switch: messages between people work whenever this JARVIS is
+signed in to a team server that offers `messaging.v1`
+(`messaging_ports.availability` fails closed: not signed in, then a server
+that does not offer it). The runtime follows the team connection
+(`MessagingRuntime.follow_once`, every `FOLLOW_EVERY_SEC`): it starts its
+loops once signed in to such a server and stops them once signed out.
+Signed out, Settings, Team says in one line that signing in turns messaging
+on. The old `human_switch` table is kept and nothing reads it. A JARVIS
+trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s). A message to a
 person goes the agents' way (`transmission.py`): drafted (the page or the
 brain's `draft_message`), reviewed on a capture of its own whose text is
 the read-back (`message_approvals.Reviews`), accepted with Send or after
@@ -639,11 +637,6 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real
   configuration
-
-- `JARVIS_MESSAGING` (optional, default off) — `1`/`true`/`yes`/`on` forces
-  messages between people on, whatever the switch in Settings, Team says
-  (see "Messages between people"); for tests and test nodes. Unset, the
-  Settings switch decides
 
 - `JARVIS_TEAM_DEV_SERVERS` (optional) — comma-separated exact origins
   (e.g. `http://127.0.0.1:18080`) JARVIS may connect to as a team server

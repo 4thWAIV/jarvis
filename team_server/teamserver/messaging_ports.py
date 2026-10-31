@@ -25,13 +25,6 @@ from .messaging_models import (FILE_MAX_BYTES, OWNER_STAGING_QUOTA_BYTES, PACKAG
                                AnnouncementRequest, AttachmentRef, ReceiptFacts, ReceiptKind,
                                StagingState, SyncPage, WorkCommand, WorkState)
 
-# The team's switch is stored (`messaging.SWITCH_ID`) and set by an
-# administrator; off, `messaging.v1` is not advertised and every messaging
-# route answers `messaging_disabled`. Switching it off deletes nothing.
-# This variable only seeds it: a server first started with it on stores the
-# switch on, once.
-MESSAGING_FLAG = "TEAM_SERVER_MESSAGING"
-
 # How long one node's announcement claim holds before another of the
 # owner's nodes may claim it (decision 23; the signals stream's setting).
 ANNOUNCEMENT_LEASE_SEC = 30.0

@@ -528,7 +528,7 @@ class TeamConnection:
     # -- status polling ---------------------------------------------------------------
 
     def _apply_status(self, status: dict) -> None:
-        for key in ("team", "me", "session_expires_at", "recent_auth_until"):
+        for key in ("team", "me", "session_expires_at"):
             if status.get(key) is not None:
                 self.saved[key] = status[key]
 
@@ -878,7 +878,6 @@ class TeamConnection:
             "team": saved.get("team"),
             "me": saved.get("me"),
             "session_expires_at": saved.get("session_expires_at"),
-            "recent_auth_until": saved.get("recent_auth_until"),
             "last_contact_at": iso_utc(saved.get("last_contact_at")),
             "last_error": self.last_error,
             "poll_interval_sec": STATUS_INTERVAL_SEC,

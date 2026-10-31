@@ -47,10 +47,9 @@ Approving is not among them: the inline review's Send is the existing
 """
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timezone
-from typing import (AsyncIterator, Callable, Literal, Mapping, Optional, Protocol,
+from typing import (AsyncIterator, Callable, Literal, Optional, Protocol,
                     runtime_checkable)
 from uuid import UUID
 
@@ -58,38 +57,24 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis import messaging_wire as wire
 
-# -- the switch and availability ------------------------------------------------
+# -- availability -----------------------------------------------------------------
 
-# JARVIS's own switch is set in Settings, Team and stored
-# (`SqliteMessagingStore.switched_on`). Off: no messaging route, loop or tool
-# runs and the Queue says it is switched off. Nothing stored (drafts,
-# messages, approved files) is deleted by switching it off. This variable,
-# 1/true/yes/on, only forces it on (tests, a node started for testing);
-# the page then shows the switch as on and not changeable.
-ENABLE_FLAG = "JARVIS_MESSAGING"
-_TRUE = {"1", "true", "yes", "on"}
-
-
-def messaging_enabled(env: Mapping[str, str] = os.environ) -> bool:
-    """Forced on by ENABLE_FLAG."""
-    return env.get(ENABLE_FLAG, "").strip().lower() in _TRUE
-
-
-Availability = Literal["available", "switched_off", "not_paired", "unsupported"]
+# There is no switch: messages between people work whenever this JARVIS is
+# signed in to a team server that offers messaging.v1. `not_started` is only
+# a JARVIS whose messaging could not be built at startup (its log says why).
+Availability = Literal["available", "not_started", "not_paired", "unsupported"]
 
 AVAILABILITY_SHOWN: dict[str, str] = {
     "available": "Messaging is available.",
-    "switched_off": "Messaging is switched off on this JARVIS.",
+    "not_started": "Messaging could not start on this JARVIS; its log says why.",
     "not_paired": "Pair this JARVIS with the team server to send and receive messages.",
     "unsupported": "The team server does not offer messaging yet; your drafts are kept here.",
 }
 
 
-def availability(*, enabled: bool, paired: bool, capabilities: list[str]) -> Availability:
+def availability(*, paired: bool, capabilities: list[str]) -> Availability:
     """Fail closed, in this order. Voice, agents and the network view do not
     depend on any of it."""
-    if not enabled:
-        return "switched_off"
     if not paired:
         return "not_paired"
     if not wire.messaging_offered(capabilities):

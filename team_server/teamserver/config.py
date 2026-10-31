@@ -6,9 +6,7 @@ INITIAL_ADMIN_GITHUB_ID only matter before the team exists (bootstrap).
 TEST_SESSION_KEY_SHA256 turns on the staging test sign-in
 (`staging_sessions`); it is refused unless RAILWAY_ENVIRONMENT_NAME is
 `staging`.
-TEAM_SERVER_MESSAGING (1/true/yes/on) only seeds the team's messaging
-switch: started with it on and nothing stored yet, the switch is stored on,
-once. After that an administrator turns messaging on and off. The TEAM_SERVER_* file settings (`messaging_ports.ATTACHMENT_SETTINGS`)
+Messages between members are always on. The TEAM_SERVER_* file settings (`messaging_ports.ATTACHMENT_SETTINGS`)
 may only lower the contract's defaults.
 
 Problems are reported by variable NAME only, never with a value, because
@@ -23,7 +21,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Optional
 from urllib.parse import urlsplit
 
-from teamserver.messaging_ports import MESSAGING_FLAG
 
 if TYPE_CHECKING:
     from teamserver.attachments import AttachmentSettings
@@ -63,8 +60,6 @@ class Config:
     github_web_url: str = "https://github.com"
     environment_name: Optional[str] = None
     test_session_key_sha256: Optional[str] = None
-    # Seeds the stored switch once (messaging.seed_switch); never read after.
-    messaging_enabled: bool = False
     # None: the contract's defaults (attachments.DEFAULT_SETTINGS).
     attachment_settings: Optional["AttachmentSettings"] = None
 
@@ -185,6 +180,5 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         github_api_url=get("GITHUB_API_URL") or "https://api.github.com",
         github_web_url=get("GITHUB_WEB_URL") or "https://github.com",
         environment_name=environment, test_session_key_sha256=test_digest,
-        messaging_enabled=get(MESSAGING_FLAG).lower() in ("1", "true", "yes", "on"),
         attachment_settings=attachment_settings,
     )

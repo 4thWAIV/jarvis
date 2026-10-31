@@ -23,7 +23,6 @@ from teamserver.errors import forbidden, unauthenticated
 from teamserver.secrets_util import digest, new_secret
 
 SESSION_LIFETIME = timedelta(hours=12)
-RECENT_AUTH = timedelta(minutes=15)
 
 
 @dataclass
@@ -40,10 +39,6 @@ class Principal:
     @property
     def is_admin(self) -> bool:
         return self.member["role"] == "admin" and self.member["state"] == "active"
-
-    @property
-    def recently_authenticated(self) -> bool:
-        return clock.now() - self.session["auth_at"] <= RECENT_AUTH
 
 
 async def issue(db: AsyncDatabase, team: dict, member: dict, kind: str,

@@ -35,7 +35,6 @@ from teamserver.models import (DeviceDecided, DeviceDecision, DeviceExchange,
                                DevicePending, DeviceSession, DeviceStart,
                                DeviceStarted, ErrorBody, Live, LoggedOut, Me,
                                Member, MemberChange, MemberChanged,
-                               MessagingSwitch, MessagingSwitchChange,
                                NetworkSnapshot, NodeUpdate, Ready, Resolved,
                                ResolveRequest, Roster, ServerHealth,
                                SessionsRevoked, Status, Team, Version)
@@ -170,8 +169,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
             st.db = dbmod.database(st.client, config.mongodb_database)
             tasks = [asyncio.create_task(_init_until_done(app)),
                      asyncio.create_task(network.watch(st.health, st.db)),
-                     asyncio.create_task(_start_attachments(app)),
-                     asyncio.create_task(_watch_switch(app))]
+                     asyncio.create_task(_start_attachments(app))]
         yield
         for task in tasks:
             task.cancel()
@@ -281,13 +279,6 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         request.app.state.limiter.hit("admin", request)
         return p
 
-    async def recent_admin(p: sessions.Principal = Depends(admin)) -> sessions.Principal:
-        if not p.recently_authenticated:
-            raise forbidden("reauth_required",
-                            "Confirm with GitHub again: membership changes need a "
-                            "sign-in from the last 15 minutes.")
-        return p
-
     def set_session_cookie(response: Response, token: str) -> None:
         response.set_cookie(cookie_name, token, max_age=int(
             sessions.SESSION_LIFETIME.total_seconds()), path="/",
@@ -324,7 +315,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                        commit=build_info.commit(), api_version=build_info.API_VERSION,
                        server_id=request.app.state.server_id,
                        capabilities=[*build_info.CAPABILITIES, network.CAPABILITY,
-                                     *messaging.capabilities(messaging.switched_on(request))])
+                                     *messaging.capabilities()])
 
     @app.get("/health/live", response_model=Live)
     async def live():
@@ -444,7 +435,6 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Status(server_time=clock.now(), server_id=p.team["server_id"],
                       session_expires_at=p.session["expires_at"],
                       session_kind=p.session["kind"],
-                      recent_auth_until=p.session["auth_at"] + sessions.RECENT_AUTH,
                       team=team_view(p.team), me=me_view(p.member),
                       network_account_key=account_key)
 
@@ -477,7 +467,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     @app.put("/api/v1/team/members/{github_id}", response_model=MemberChanged,
              responses=ERRORS)
     async def change_member(request: Request, github_id: int, body: MemberChange,
-                            p: sessions.Principal = Depends(recent_admin)):
+                            p: sessions.Principal = Depends(admin)):
         if github_id <= 0:
             raise Problem(422, "invalid_request", "Invalid GitHub ID.")
         identity = None
@@ -494,28 +484,12 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     @app.post("/api/v1/team/members/{github_id}/revoke-sessions",
               response_model=SessionsRevoked, responses=ERRORS)
     async def revoke_member_sessions(request: Request, github_id: int,
-                                     p: sessions.Principal = Depends(recent_admin)):
+                                     p: sessions.Principal = Depends(admin)):
         team = await team_mod.mutate(database(request),
                                      team_mod.revoke_member_sessions(p.github_id, github_id))
         m = team["members"][team_mod.key(github_id)]
         return SessionsRevoked(revision=team["revision"],
                                session_generation=m["session_generation"])
-
-    def switch_view(switch: messaging.Switch) -> MessagingSwitch:
-        return MessagingSwitch(enabled=switch.enabled, changed_at=switch.changed_at,
-                               changed_by_github_id=switch.changed_by_github_id)
-
-    @app.get("/api/v1/team/messaging", response_model=MessagingSwitch, responses=ERRORS)
-    async def get_messaging_switch(request: Request,
-                                   p: sessions.Principal = Depends(principal)):
-        return switch_view(await messaging.read_switch(database(request)))
-
-    @app.put("/api/v1/team/messaging", response_model=MessagingSwitch, responses=ERRORS)
-    async def set_messaging_switch(request: Request, body: MessagingSwitchChange,
-                                   p: sessions.Principal = Depends(admin)):
-        switch = await messaging.set_switch(database(request), p.github_id, body.enabled)
-        request.app.state.messaging_switch = switch
-        return switch_view(switch)
 
     @app.post("/api/v1/device-authorizations", response_model=DeviceStarted,
               responses=ERRORS)
@@ -594,8 +568,6 @@ async def _init_once(app: FastAPI) -> None:
     st = app.state
     st.server_id = await dbmod.init(st.db)
     await team_mod.drain_audit(st.db)
-    await messaging.seed_switch(st.db, st.config.messaging_enabled)
-    st.messaging_switch = await messaging.read_switch(st.db)
     team = await team_mod.get(st.db)
     cfg = st.config
     if team is None and not cfg.bootstrap_configured:
@@ -609,14 +581,6 @@ async def _init_once(app: FastAPI) -> None:
 
 def _file_settings(config: Optional[Config]) -> attachments.AttachmentSettings:
     return (config and config.attachment_settings) or attachments.DEFAULT_SETTINGS
-
-
-async def _watch_switch(app: FastAPI) -> None:
-    """The team's messaging switch, read again from the database every few
-    seconds once it is initialized. Cancelled with the lifespan."""
-    while not app.state.initialized:
-        await asyncio.sleep(0.05)
-    await messaging.watch_switch(app.state)
 
 
 async def _start_attachments(app: FastAPI) -> None:

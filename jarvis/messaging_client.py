@@ -277,13 +277,12 @@ class Delivery:
                  node_id: Callable[[], UUID] = _this_node, clock: ports.Clock = ports.utcnow,
                  rand: ports.RandomSource = random.Random(), faults: wire.Faults = wire.NO_FAULTS,
                  on_change: Callable[[], None] = lambda: None,
-                 enabled: Callable[[], bool] = ports.messaging_enabled,
                  transport_for: Callable[[TeamCalls, Pairing], Any] = TeamTransport,
                  interval: float = SYNC_INTERVAL_SEC):
         self.store, self.connection, self.guard = store, connection, guard
         self.snapshots, self.presentation = snapshots, presentation
         self.node_id, self.clock, self.rand, self.faults = node_id, clock, rand, faults
-        self.on_change, self.enabled = on_change, enabled
+        self.on_change = on_change
         self.transport_for, self.interval = transport_for, interval
         self.stale = False
         self.last_error: Optional[str] = None
@@ -302,15 +301,14 @@ class Delivery:
         return self.transport_for(self.connection, pairing)
 
     async def availability(self) -> ports.Availability:
-        """Fail closed: switched off, not paired, or a team server that does
-        not offer messaging.v1 (the last capabilities it answered with; none
-        known yet is unsupported, and stale)."""
+        """Fail closed: not signed in, or a team server that does not offer
+        messaging.v1 (the last capabilities it answered with; none known yet
+        is unsupported, and stale)."""
         pairing = self.pairing()
         caps: list[str] = []
-        if self.enabled() and pairing is not None:
+        if pairing is not None:
             caps = await self._capabilities_of(pairing)
-        return ports.availability(enabled=self.enabled(), paired=pairing is not None,
-                                  capabilities=caps)
+        return ports.availability(paired=pairing is not None, capabilities=caps)
 
     def known_availability(self) -> ports.Availability:
         """`availability` from what is already known, without asking the
@@ -318,14 +316,7 @@ class Delivery:
         pairing = self.pairing()
         known = self._capabilities.get(pairing.server_id) if pairing else None
         caps = known[2] if known and known[0] == pairing.generation else []
-        return ports.availability(enabled=self.enabled(), paired=pairing is not None,
-                                  capabilities=caps)
-
-    def forget_capabilities(self) -> None:
-        """Ask the team server what it offers on the next look (its
-        messaging switch was just changed from here)."""
-        self._capabilities.clear()
-        self.wake()
+        return ports.availability(paired=pairing is not None, capabilities=caps)
 
     async def _capabilities_of(self, pairing: Pairing) -> list[str]:
         known = self._capabilities.get(pairing.server_id)

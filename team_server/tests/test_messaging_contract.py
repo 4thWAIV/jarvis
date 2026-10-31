@@ -65,7 +65,6 @@ def test_messaging_is_offered_only_by_its_capability():
     assert mm.messaging_offered(["github-login", "network", "messaging.v1"])
     assert not mm.messaging_offered(["github-login", "membership", "device-pairing",
                                      "status", "network"])
-    assert messaging_ports.MESSAGING_FLAG == "TEAM_SERVER_MESSAGING"
 
 
 # -- normalization -------------------------------------------------------------------

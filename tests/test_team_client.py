@@ -76,7 +76,6 @@ class FakeServer:
             return httpx.Response(200, json={
                 "server_time": "2099-01-01T00:00:00+00:00", "server_id": self.server_id,
                 "session_expires_at": "2099-01-01T00:00:00+00:00", "session_kind": "device",
-                "recent_auth_until": "2099-01-01T00:00:00+00:00",
                 "team": {"name": "Tokens", "server_id": self.server_id, "member_count": 3,
                          "member_limit": 100},
                 "me": {"github_id": 1, "login": "tistocks", "role": "admin", "state": "active"}})
