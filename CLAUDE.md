@@ -249,6 +249,30 @@ otherwise the network exchange decides, not the 30-second status poll, so
 no snapshot or a stale one is No contact (never Ready), a database the team
 server says is down is Not ready, and a fresh snapshot is Ready.
 
+## The sign-in reminder
+A JARVIS that is not signed in to a team server works as before and reminds
+Tim to sign in. Not signed in is `team_client.NOT_SIGNED_IN` (disconnected
+or never paired, signed out, or part way through pairing;
+`TeamConnection.signed_in`), and the page's side of the same set is
+`network.needsSignIn`, which the Team Server tile's Sign in also comes from,
+so the tile and the reminder always agree. While it holds, the centre area
+shows one line under its tabs (`TeamSignInReminder.tsx`): "Sign in to your
+team server: messages between people and the Network view need it", with
+Sign in and Later. It sets `--centre-notice-height` to its own height and
+every centre view starts at `--centre-view-top`, below it, so it covers
+nothing. Sign in (`teamSignIn.ts`) reads `GET /api/team`: with a
+`last_server_url` it runs Settings, Team's flow (`POST /api/team/connect`,
+the approval page in a new tab) and opens Settings at Team, where the code
+is; part way through pairing, or with no address, it only opens Settings at
+Team (`openSettings("team")`). Later hides it until the page loads again or
+the voice socket reconnects (a JARVIS restart), never for good; it goes by
+itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
+started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
+once `SETTLE_SEC` (30 s) after startup and, not signed in, says
+"You're not signed in to the team server, sir; messages between people are
+off until you are." through `_say_notice` (the ordinary notice path and its
+turn-taking); signed in then, nothing is said in that process.
+
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
 `session_watch.read_subagents`, the one reader (the counts on the snapshot
@@ -513,6 +537,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `frontend/src/TeamSignInReminder.tsx` / `teamSignIn.ts` / `team_reminder.py`
+  — The sign-in reminder at the top of the centre area, its Sign in, and the
+  one spoken reminder per start (see "The sign-in reminder")
 - `team_server/teamserver/staging_sessions.py` — The staging-only test sign-in
   (see "The team server")
 - `transmission.py` — One message sent on Tim's word, whoever it is for:

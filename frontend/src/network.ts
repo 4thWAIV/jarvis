@@ -233,6 +233,16 @@ export interface ServerReading {
   write: { state: RowState; ageMs: number | null };
 }
 
+/** Whether this JARVIS is not signed in to a team server: never paired (or
+ *  disconnected), signed out, or part way through signing in
+ *  (team_client.NOT_SIGNED_IN). Not known yet is not "not signed in". The
+ *  tile's Sign in and the reminder at the top of the centre area
+ *  (TeamSignInReminder.tsx) both come from this. */
+export function needsSignIn(status: NetworkStatus | null): boolean {
+  const connection = status?.connection;
+  return connection === "signed_out" || connection === "disconnected" || connection === "pairing";
+}
+
 /** The Team Server tile's word, the one place it is decided. Signed out (or
  *  never paired) is Sign in, from the connection. Otherwise the network
  *  exchange decides, not the 30-second status poll, so the word moves as
@@ -241,10 +251,7 @@ export interface ServerReading {
  *  is a current answer); any other stale snapshot is No contact, never
  *  Ready; and a fresh one is Ready. */
 export function readiness(status: NetworkStatus | null): Readiness {
-  const connection = status?.connection ?? "connecting";
-  if (connection === "signed_out" || connection === "disconnected" || connection === "pairing") {
-    return "Sign in";
-  }
+  if (needsSignIn(status)) return "Sign in";
   const snapshot = status?.snapshot;
   if (!snapshot) return "No contact";
   if (snapshot.server.database !== "connected") return "Not ready";
