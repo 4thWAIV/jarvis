@@ -7,7 +7,9 @@
  * Everything goes through JARVIS's own backend (/api/team*, team_api.py),
  * which holds the session in the Keychain; this page only ever sees status.
  * Connecting opens the team server's approval page in a new tab, where you
- * sign in with GitHub and approve this Mac with the code shown here.
+ * sign in with GitHub and approve this Mac with the code shown here. The
+ * requests and the sign-in are teamSignIn.ts's, the one path the reminder
+ * at the top of the centre area (TeamSignInReminder.tsx) takes too.
  *
  * The backend reads the server's status every 30 seconds whether or not this
  * view is open; while it is open, this view re-reads the backend's copy.
@@ -16,6 +18,7 @@
 import { useEffect, useState } from "react";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
+import { connectTeam, openApproval, teamCall as call } from "./teamSignIn";
 
 interface Me { github_id: number; login: string; name?: string | null; role: "admin" | "member";
                state: string }
@@ -36,20 +39,6 @@ interface Roster { revision: number; member_limit: number; members: Member[] }
 interface Resolved { github_id: number; login: string; name?: string | null; html_url: string;
                      on_roster: boolean }
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method, headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  let payload: unknown = null;
-  try { payload = await res.json(); } catch { /* not JSON */ }
-  if (!res.ok) {
-    const err = (payload as { error?: { message?: string } } | null)?.error;
-    throw new Error(err?.message || `The request failed (${res.status}).`);
-  }
-  return payload as T;
-}
-
 const readStatus = () => call<TeamStatus>("GET", "/api/team");
 
 const STATE_TEXT: Record<TeamStatus["state"], [Dot, string]> = {
@@ -65,10 +54,6 @@ function when(iso: string | null): string {
   if (!iso) return "never";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "unknown" : d.toLocaleString();
-}
-
-function openApproval(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export function TeamSection() {
@@ -102,10 +87,7 @@ export function TeamSection() {
     refresh();
   };
 
-  const connect = (serverUrl: string) => act(async () => {
-    const s = await call<TeamStatus>("POST", "/api/team/connect", { server_url: serverUrl });
-    if (s.pairing) openApproval(s.pairing.verification_uri_complete);
-  });
+  const connect = (serverUrl: string) => act(() => connectTeam(serverUrl));
   const disconnect = () => act(async () => {
     const r = await call<{ message: string }>("POST", "/api/team/disconnect");
     setNote(r.message);

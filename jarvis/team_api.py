@@ -11,7 +11,7 @@ snapshot the team server sent, unchanged, in team_client's envelope.
 `node_update` is what this backend sends it, from the local collectors
 (host_resources, brain_accounts, human_activity), which no route returns.
 The team lifecycle (`start`, `stop`) owns the status poll, the network
-exchange and the host sampler.
+exchange, the host sampler and the spoken sign-in reminder.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from jarvis import (brain_accounts, data_paths, host_resources, human_activity,
-                    team_client)
+                    team_client, team_reminder)
 from jarvis.team_client import TeamError
 
 PREFIX = "/api/team"
@@ -163,19 +163,27 @@ def mount(app: FastAPI) -> None:
 
 
 _sampler: Optional[asyncio.Task] = None
+_reminder: Optional[asyncio.Task] = None
 
 
-def start(on_network: Optional[Callable[[], None]] = None) -> None:
+def start(on_network: Optional[Callable[[], None]] = None,
+          say: Optional[team_reminder.Say] = None) -> None:
     """The status poll, the network exchange and the host sampler, each its
-    own task. `on_network` is told each time the network cache changes."""
-    global _sampler
+    own task. `on_network` is told each time the network cache changes.
+    Given `say` (the notice path), the spoken sign-in reminder too
+    (team_reminder.py)."""
+    global _sampler, _reminder
     if _sampler is None or _sampler.done():
         _sampler = asyncio.create_task(host_resources.sampler.run())
     team_client.connection.start(node_update=node_update, on_network=on_network)
+    if say is not None and (_reminder is None or _reminder.done()):
+        _reminder = asyncio.create_task(
+            team_reminder.remind_once(say, team_client.connection.signed_in))
 
 
 async def stop() -> None:
-    global _sampler
+    global _sampler, _reminder
     await team_client.connection.stop()
-    await team_client.cancel_task(_sampler)
-    _sampler = None
+    for task in (_sampler, _reminder):
+        await team_client.cancel_task(task)
+    _sampler = _reminder = None

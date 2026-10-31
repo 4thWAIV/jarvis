@@ -91,6 +91,13 @@ NETWORK_STALE_AFTER_SEC = 15.0
 # do not all publish in the same instant.
 NETWORK_STARTUP_JITTER_SEC = 1.0
 
+# The states in which this JARVIS is not signed in to a team server: never
+# paired (or disconnected), signed out, or part way through signing in. The
+# Team Server tile says Sign in, the page shows its reminder and JARVIS says
+# so once a start (team_reminder.py); network.ts's needsSignIn is the page's
+# side of the same set.
+NOT_SIGNED_IN = frozenset({"disconnected", "signed_out", "pairing"})
+
 # Builds the node update from the local collectors, given the team's key
 # (or None, and then no brains).
 NodeUpdateBuilder = Callable[[Optional[str]], dict]
@@ -856,6 +863,9 @@ class TeamConnection:
         if last is None or _now() - last > STALE_AFTER_SEC:
             return "stale" if self.failures else "connecting"
         return "connected"
+
+    def signed_in(self) -> bool:
+        return self.state() not in NOT_SIGNED_IN
 
     def snapshot(self) -> dict:
         saved = self.saved or {}

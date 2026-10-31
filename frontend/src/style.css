@@ -21,6 +21,12 @@
   /* The centre area's header row of view tabs: where it sits, how tall it is. */
   --centre-header-top: 16px;
   --centre-header-height: 36px;
+  /* Where the centre area's notice (the sign-in reminder) sits, under the
+     tabs, and the height it takes while shown (TeamSignInReminder.tsx sets
+     it); every centre view starts below both, so the notice covers nothing. */
+  --centre-notice-top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  --centre-notice-height: 0px;
+  --centre-view-top: calc(var(--centre-notice-top) + var(--centre-notice-height));
   /* The footer's height. Everything else on the page stops above it, so it
      always runs the full width of the page beneath them. */
   --footer-height: 40px;
@@ -399,7 +405,7 @@ html, body {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -1786,7 +1792,7 @@ html, body {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -2116,7 +2122,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -2243,7 +2249,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -2393,7 +2399,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -2798,7 +2804,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -2852,6 +2858,33 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* Conversation, kept on the page under another centre view. */
 .centre-kept.hidden { visibility: hidden; }
+
+/* The sign-in reminder: one line under the centre tabs, in the amber the
+   Team Server tile says Sign in with, with its two buttons on the right. */
+#team-reminder {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-notice-top);
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.07);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  text-align: left;
+}
+#team-reminder svg {
+  flex: none; width: 20px; height: 20px;
+  fill: none; stroke: #fbbf24; stroke-width: 1.6; stroke-linecap: round;
+}
+#team-reminder p { flex: 1 1 240px; margin: 0; }
+#team-reminder .team-reminder-problem { flex-basis: 100%; color: #fca5a5; font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }
@@ -3029,7 +3062,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
   flex-direction: column;
@@ -3225,7 +3258,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: grid;
   grid-template-columns: minmax(240px, 2fr) minmax(0, 3fr);

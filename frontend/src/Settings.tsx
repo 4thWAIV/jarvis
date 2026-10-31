@@ -18,8 +18,13 @@ import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
 
 export const settingsOpen = createStore(false);
+// The section to scroll to once Settings is open, when one was asked for.
+const settingsSection = createStore<SectionId | null>(null);
 
-export function openSettings(): void {
+/** Open Settings, at `section` if one is given (the sign-in reminder opens
+ *  it at Team). */
+export function openSettings(section: SectionId | null = null): void {
+  settingsSection.set(section);
   settingsOpen.set(true);
 }
 
@@ -37,6 +42,7 @@ const SECTIONS = [
   { id: "team", title: "Team" },
   { id: "system", title: "System" },
 ] as const;
+export type SectionId = (typeof SECTIONS)[number]["id"];
 
 const SETUP_STEPS = ["voice", "you"] as const;
 const SETUP_DELAY_MS = 2000;
@@ -104,10 +110,19 @@ export function Settings() {
     setSetup(null);
   };
 
-  if (!open) return null;
-  const shown = (id: string) => setup === null || SETUP_STEPS[setup] === id;
   const goTo = (id: string) =>
     body.current?.querySelector(`#settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Opened at a section: go to it once the sections are drawn.
+  const asked = useSyncExternalStore(settingsSection.subscribe, settingsSection.get);
+  useEffect(() => {
+    if (!open || !asked) return;
+    goTo(asked);
+    settingsSection.set(null);
+  }, [open, asked]);
+
+  if (!open) return null;
+  const shown = (id: string) => setup === null || SETUP_STEPS[setup] === id;
 
   return (
     <div id="settings-container" className="open">

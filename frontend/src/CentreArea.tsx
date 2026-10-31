@@ -33,6 +33,10 @@
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
+ *
+ * Above whichever view is shown, under the tabs, the sign-in reminder
+ * (TeamSignInReminder.tsx) while this JARVIS is not signed in to a team
+ * server; the views move down to make room for it, so it covers nothing.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -56,6 +60,7 @@ import { directory, openQueue, queue } from "./queue";
 import { showFolders } from "./folders";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
+import { TeamSignInReminder } from "./TeamSignInReminder";
 
 function MainView() {
   return (
@@ -215,6 +220,7 @@ export function CentreArea() {
   return (
     <>
       <TabRow tabs={views} selected={view.id} onSelect={setSelected} className="centre-tabs" words />
+      <TeamSignInReminder />
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}
              inert={view.id !== conversation.id}>

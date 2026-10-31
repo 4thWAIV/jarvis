@@ -2883,7 +2883,9 @@ async def lifespan(application: FastAPI):
     # audio path; a team server that is down changes only its status. The
     # network exchange runs while paired whether or not a page is open, and
     # each stored snapshot is a `network` hint (network.ts reads it again).
-    team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}))
+    # Not signed in once startup settles, JARVIS says so once (team_reminder.py).
+    team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}),
+                   say=_say_notice)
     _start_messaging()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
