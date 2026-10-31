@@ -2,8 +2,8 @@
 
 Nothing between the parts is faked. The team server is the real app,
 served over HTTP by uvicorn on an ephemeral loopback port against the test
-MongoDB (each test its own `hm_int_*` database, dropped afterwards), with
-TEAM_SERVER_MESSAGING on. Each JARVIS is the real server app with its
+MongoDB (each test its own `hm_int_*` database, dropped afterwards), where
+messaging is always on. Each JARVIS is the real server app with its
 messaging wired as startup wires it (`messaging_runtime`), reaching the
 team server through `team_client.TeamConnection` over HTTP, which
 JARVIS_TEAM_DEV_SERVERS allows for that loopback origin:
@@ -96,7 +96,7 @@ class LocalTeamServer:
                              mongodb_database=dbname, github_client_id="cid",
                              github_client_secret="not-a-secret",
                              team_name="Integration Team", initial_admin_github_id=TIM.id,
-                             dev_insecure=True, messaging_enabled=True)
+                             dev_insecure=True)
         self.app = create_app(self.config, github=object())
         self.server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1",
                                                     port=self.port, log_level="warning"))
@@ -242,9 +242,8 @@ class Here:
 @pytest.fixture
 def server(monkeypatch, tmp_path):
     """The server module, reloaded over this test's data directory, with
-    messaging switched on and its loops left to the test."""
+    its messaging loops left to the test."""
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("JARVIS_MESSAGING", "1")
     import importlib
     from jarvis import messaging_runtime
     from jarvis import server as server_module
@@ -305,7 +304,7 @@ class Node:
         self.port = _free_port()
         self.log = open(root / "node.log", "w")
         env = {**os.environ, "JARVIS_DATA_DIR": str(data), "JARVIS_ENV_FILE": str(root / ".env"),
-               "JARVIS_PORT": str(self.port), "JARVIS_MESSAGING": "1",
+               "JARVIS_PORT": str(self.port),
                "JARVIS_BRAIN_AUTOSTART": "0", "JARVIS_TEAM_DEV_SERVERS": ts.url}
         self.proc = subprocess.Popen([sys.executable, "-m", "tests.messaging_node"],
                                      cwd=ROOT, env=env, stdin=subprocess.PIPE,

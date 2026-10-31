@@ -144,8 +144,9 @@ class Harness:
         check("version matches deployed commit",
               not self.expect_commit or v["commit"] == self.expect_commit,
               f"commit={v['commit']} api={v['api_version']} capabilities={v['capabilities']}")
-        check("capabilities omit messaging and presence",
-              not any("messag" in c or "presence" in c for c in v["capabilities"]),
+        check("capabilities offer messaging and omit presence",
+              "messaging.v1" in v["capabilities"]
+              and not any("presence" in c for c in v["capabilities"]),
               ",".join(v["capabilities"]))
         self.server_id = v["server_id"]
         r = self.http.get("/health/ready")

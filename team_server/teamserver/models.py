@@ -120,19 +120,6 @@ class SessionsRevoked(BaseModel):
     session_generation: int
 
 
-class MessagingSwitch(BaseModel):
-    enabled: bool = Field(description="Messages between the team's members are on. "
-                                      "Switching it off deletes nothing.")
-    changed_at: Optional[datetime] = None
-    changed_by_github_id: Optional[int] = Field(
-        default=None, description="The administrator who last set it; none when it was "
-                                  "seeded from TEAM_SERVER_MESSAGING.")
-
-
-class MessagingSwitchChange(BaseModel):
-    enabled: bool
-
-
 class DeviceStart(BaseModel):
     device_name: str = Field(min_length=1, max_length=64)
     code_challenge: str = Field(min_length=43, max_length=43,

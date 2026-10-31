@@ -580,13 +580,13 @@ def test_downloads_need_an_accepted_message_the_viewer_may_see(dbname):
 # -- the routes, through the real app -----------------------------------------------------
 
 class Served:
-    """The real app with messaging switched on, so its own wiring mounts the
+    """The real app, whose own wiring mounts the
     attachment routes behind its device dependency; Alice and Bob each with
     a paired device session, and Mallory a member too. Accepted messages
     come from the `Accepted` stand-in, given to the app's file service."""
 
     def __init__(self, dbname: str, github):
-        app = create_app(make_config(dbname, messaging_enabled=True), github=github)
+        app = create_app(make_config(dbname), github=github)
         self.visible = Accepted()
         self.client = TestClient(app, base_url=BASE)
         self.client.__enter__()

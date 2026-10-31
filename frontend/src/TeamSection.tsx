@@ -2,8 +2,7 @@
  * The Settings view's Team section: connect JARVIS to a team server
  * (team_server/), see who you are there and whether JARVIS can reach it, and
  * — for an administrator — manage the team's members. Messages between
- * people are switched on here too: this JARVIS's own switch, and the team's,
- * which an administrator sets and every member sees.
+ * people have no switch: they work whenever this JARVIS is signed in.
  *
  * Everything goes through JARVIS's own backend (/api/team*, team_api.py),
  * which holds the session in the Keychain; this page only ever sees status.
@@ -34,8 +33,6 @@ interface TeamStatus {
 interface Member { github_id: number; login: string; name?: string | null;
                    role: "admin" | "member"; state: "approved" | "active" | "suspended" }
 interface Roster { revision: number; member_limit: number; members: Member[] }
-interface LocalSwitch { enabled: boolean; forced: boolean }
-interface TeamSwitch { enabled: boolean; changed_at: string | null }
 interface Resolved { github_id: number; login: string; name?: string | null; html_url: string;
                      on_roster: boolean }
 
@@ -126,7 +123,8 @@ export function TeamSection() {
   const signedIn = connected && status.state !== "signed_out";
   return (
     <div className="team">
-      <MessagingSwitches admin={signedIn && status.me?.role === "admin"} signedIn={signedIn} />
+      {!signedIn && <p className="settings-hint">Signing in to your team server turns on
+        messages between people.</p>}
       <div className="status-row">
         <StatusDot status={dot} /><span>{text}</span>
         {connected && <span className="status-detail">last contact {when(status.last_contact_at)}</span>}
@@ -182,60 +180,6 @@ export function TeamSection() {
             <MembersPanel me={status.me} />)}
         </>
       )}
-    </div>
-  );
-}
-
-/** The two switches messages between people need: this JARVIS's, and the
- *  team server's (set by an administrator; a member sees it). Each takes
- *  effect at once; switching either off deletes nothing. */
-function MessagingSwitches({ admin, signedIn }: { admin: boolean; signedIn: boolean }) {
-  const [local, setLocal] = useState<LocalSwitch | null>(null);
-  const [team, setTeam] = useState<TeamSwitch | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-
-  const read = () => {
-    call<LocalSwitch>("GET", "/api/team/messaging/local").then(setLocal,
-      (e: Error) => setProblem(e.message));
-    if (signedIn) {
-      call<TeamSwitch>("GET", "/api/team/messaging/team").then(setTeam,
-        (e: Error) => setProblem(e.message));
-    } else {
-      setTeam(null);
-    }
-  };
-  useEffect(read, [signedIn]);
-
-  const set = (url: string, enabled: boolean) => {
-    setBusy(true);
-    setProblem(null);
-    call("PUT", url, { enabled })
-      .catch((e: Error) => setProblem(e.message))
-      .finally(() => { setBusy(false); read(); });
-  };
-
-  return (
-    <div className="settings-field team-messaging">
-      <label className="brain-default">
-        <input type="checkbox" checked={local?.enabled ?? false}
-               disabled={busy || !local || local.forced}
-               onChange={(e) => set("/api/team/messaging/local", e.target.checked)} />
-        Messages between people on this JARVIS
-      </label>
-      {local?.forced && <p className="settings-hint">Switched on by JARVIS_MESSAGING, so it
-        cannot be switched off here.</p>}
-      {signedIn && team && (admin ? (
-        <label className="brain-default">
-          <input type="checkbox" checked={team.enabled} disabled={busy}
-                 onChange={(e) => set("/api/team/messaging/team", e.target.checked)} />
-          Messages between people for the whole team
-        </label>
-      ) : (
-        <p className="settings-hint">Messages between people are {team.enabled ? "on" : "off"} for
-          the team{team.enabled ? "" : "; an administrator can switch them on"}.</p>
-      ))}
-      {problem && <p className="settings-hint">{problem}</p>}
     </div>
   );
 }

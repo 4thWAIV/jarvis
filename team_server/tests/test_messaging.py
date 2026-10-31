@@ -49,10 +49,10 @@ def pins():
 
 @pytest.fixture
 def client(make_client, faults, pins):
-    """The app with messaging switched on, mounted by its own wiring; the
+    """The app with messaging mounted by its own wiring; the
     service is given the test's faults and attachment stand-in, as the app
     builds it for its database (the production app gets NO_FAULTS)."""
-    c = make_client(messaging_enabled=True)
+    c = make_client()
     c.app.state.messaging = messaging.Messaging(messaging.MongoMessages(c.app.state.db),
                                                 attachments=pins, faults=faults)
     return c
@@ -195,21 +195,15 @@ def test_indexes_are_made_twice_on_a_fresh_namespace_and_nothing_is_purged(deliv
     assert "by_owner" in db.messaging_nodes.index_information()
 
 
-def test_switched_off_every_route_says_so_and_nothing_is_offered(make_client, github):
-    c = make_client()                    # TEAM_SERVER_MESSAGING unset: off
-    assert messaging.capabilities(False) == [] and messaging.capabilities(True) == [mm.CAPABILITY]
+def test_messaging_is_always_on_and_there_is_no_switch(client, alice):
+    assert messaging.capabilities() == [mm.CAPABILITY]
     for method, path in (("GET", PREFIX + "/recipients"), ("POST", PREFIX),
                          ("GET", f"{PREFIX}/{uuid.uuid4()}")):
-        r = c.request(method, path, json={} if method == "POST" else None)
-        assert (r.status_code, error(r)) == (503, "messaging_disabled")
-
-
-def test_a_member_reads_the_team_switch_but_only_an_administrator_sets_it(client, alice):
-    r = client.get("/api/v1/team/messaging", headers=bearer(alice.token))
-    assert (r.status_code, r.json()["enabled"]) == (200, True)
+        r = client.request(method, path, json={} if method == "POST" else None)
+        assert r.status_code == 401, (method, path)     # the session is what is checked
+    assert client.get("/api/v1/team/messaging", headers=bearer(alice.token)).status_code == 404
     r = client.put("/api/v1/team/messaging", headers=bearer(alice.token), json={"enabled": False})
-    assert (r.status_code, error(r)) == (403, "admin_required")
-    assert client.get("/api/v1/team/messaging", headers=bearer(alice.token)).json()["enabled"]
+    assert r.status_code in (404, 405)
 
 
 def test_only_a_paired_jarvis_may_use_messaging(client, github, tim):

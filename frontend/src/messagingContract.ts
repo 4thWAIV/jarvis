@@ -5,7 +5,7 @@
 // count Unicode code points (`[...text].length`), not UTF-16 units.
 
 export const CAPABILITY = "messaging.v1";
-export const INTERFACE_REVISION = "messaging.v1-contract.2";
+export const INTERFACE_REVISION = "messaging.v1-contract.3";
 export const SCHEMA_VERSION = 1;
 export const MESSAGES_HINT = "messages";
 export const TRANSFER_FRAME = "human_transfer";
@@ -28,11 +28,11 @@ export type StagingState = "uploading" | "verified" | "pinned" | "published" | "
 export type AnnouncementStep = "claim" | "attempted" | "completed";
 export type AnnouncementState = "claimed" | "attempted" | "completed";
 export type SendState = "draft" | "awaiting_approval" | "approved" | "submitting" | "accept_unknown" | "accepted" | "failed" | "cancelled" | "superseded";
-export type Availability = "available" | "switched_off" | "not_paired" | "unsupported";
+export type Availability = "available" | "not_started" | "not_paired" | "unsupported";
 export type Direction = "incoming" | "outgoing";
 export type FileState = "staged" | "uploading" | "available" | "downloading" | "verified" | "failed" | "missing";
 export type DismissBlocker = "unsent_text" | "upload_pending" | "send_unresolved";
-export type ErrorCode = "invalid_request" | "unsupported_schema_version" | "content_not_normalized" | "digest_mismatch" | "too_large" | "quota_exceeded" | "session_invalid" | "session_missing" | "session_expired" | "session_revoked" | "membership_suspended" | "device_required" | "recipient_not_allowed" | "relation_not_allowed" | "source_node_not_owned" | "message_not_found" | "attachment_not_found" | "idempotency_conflict" | "revision_conflict" | "attachment_not_ready" | "attachment_mismatch" | "announcement_claimed" | "upload_idle" | "sync_restart" | "rate_limited" | "messaging_disabled" | "dependency_unavailable" | "not_ready" | "internal";
+export type ErrorCode = "invalid_request" | "unsupported_schema_version" | "content_not_normalized" | "digest_mismatch" | "too_large" | "quota_exceeded" | "session_invalid" | "session_missing" | "session_expired" | "session_revoked" | "membership_suspended" | "device_required" | "recipient_not_allowed" | "relation_not_allowed" | "source_node_not_owned" | "message_not_found" | "attachment_not_found" | "idempotency_conflict" | "revision_conflict" | "attachment_not_ready" | "attachment_mismatch" | "announcement_claimed" | "upload_idle" | "sync_restart" | "rate_limited" | "dependency_unavailable" | "not_ready" | "internal";
 export type LocalErrorCode = "messaging_unavailable" | "draft_not_found" | "send_refused" | "not_approved" | "snapshot_missing" | "transport";
 
 export const ERRORS: Record<ErrorCode, { status: number; retryable: boolean; shown: string }> = {
@@ -61,7 +61,6 @@ export const ERRORS: Record<ErrorCode, { status: number; retryable: boolean; sho
   upload_idle: { status: 408, retryable: true, shown: "The upload stopped sending; JARVIS sends it again." },
   sync_restart: { status: 410, retryable: true, shown: "Catching up from the beginning." },
   rate_limited: { status: 429, retryable: true, shown: "The team server asked JARVIS to slow down." },
-  messaging_disabled: { status: 503, retryable: false, shown: "Messaging is switched off on the team server." },
   dependency_unavailable: { status: 503, retryable: true, shown: "The team server cannot reach its database." },
   not_ready: { status: 503, retryable: true, shown: "The team server is starting up." },
   internal: { status: 500, retryable: true, shown: "The team server had an internal error." },
@@ -78,7 +77,7 @@ export const LOCAL_ERRORS: Record<LocalErrorCode, { status: number; retryable: b
 
 export const AVAILABILITY_SHOWN: Record<Availability, string> = {
   available: "Messaging is available.",
-  switched_off: "Messaging is switched off on this JARVIS.",
+  not_started: "Messaging could not start on this JARVIS; its log says why.",
   not_paired: "Pair this JARVIS with the team server to send and receive messages.",
   unsupported: "The team server does not offer messaging yet; your drafts are kept here.",
 };
@@ -275,7 +274,7 @@ export interface PutBack {
 export interface QueueSnapshot {
   server_id: string | null;
   owner_github_id: number | null;
-  availability: "available" | "switched_off" | "not_paired" | "unsupported";
+  availability: "available" | "not_started" | "not_paired" | "unsupported";
   items: LocalItem[];
   unsent: Draft[];
   history_count: number;

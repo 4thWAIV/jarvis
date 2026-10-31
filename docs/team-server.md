@@ -2,7 +2,7 @@
 
 The team server (`team_server/`) is a small FastAPI service, deployed on its own, that gives one team GitHub sign-in, administrator-managed membership and a way to connect JARVIS to it. It is separate from JARVIS: its own dependencies (`team_server/requirements.txt`), its own image (`team_server/Dockerfile`) and its own tests. JARVIS keeps working, voice and agents included, when the team server is down or was never set up.
 
-The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Messages between members (below) are off until an administrator switches them on in JARVIS's Settings, Team; `/version` lists exactly what it offers (`network` among its capabilities, and `messaging.v1` only while messaging is on).
+The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Messages between members (below) are always on; `/version` lists exactly what it offers (`network` and `messaging.v1` among its capabilities).
 
 ## Configuration
 
@@ -20,7 +20,6 @@ Set in the hosting environment (Railway variables). Never put values in files or
 | `TEAM_SERVER_DEV_INSECURE` | never in hosting | `1` allows a plain-http loopback `PUBLIC_BASE_URL` for local development. |
 | `TEST_SESSION_KEY_SHA256` | staging only | SHA-256 hex digest of the staging test key; turns on the test sign-in (below). Set anywhere but staging, the server refuses to start with `config_invalid`. |
 | `RAILWAY_ENVIRONMENT_NAME` | set by Railway | The Railway environment's name. The test sign-in exists only when it is `staging`. |
-| `TEAM_SERVER_MESSAGING` | no | Only seeds the team's messaging switch: `1`/`true`/`yes`/`on` at a start when nothing is stored stores the switch on, once. After that an administrator decides (see "Messages"), and this variable changes nothing. |
 | `TEAM_SERVER_FILE_MAX_BYTES`, `TEAM_SERVER_PACKAGE_MAX_BYTES`, `TEAM_SERVER_STAGING_QUOTA_BYTES`, `TEAM_SERVER_STAGING_EXPIRY_SEC`, `TEAM_SERVER_UPLOAD_STREAMS_MAX`, `TEAM_SERVER_UPLOAD_IDLE_TIMEOUT_SEC` | no | File limits, each only ever lower than its default: 25 MiB per file, 100 MiB per message, 200 MiB of unsent staged files per member, staged files kept 24 h, 2 uploads at once per member, an upload idle for 60 s is ended. A value above the default, zero or not a whole number is `config_invalid`, by name. |
 
 Missing or malformed values are reported by name in the log and `/health/ready` answers 503 `config_invalid`; values are never printed.
@@ -46,9 +45,9 @@ Every paired JARVIS sends `POST /api/v1/network/nodes/self` every five seconds w
 
 ## Messages
 
-The team's messaging switch is kept in MongoDB (`team_settings`). Any member reads it with `GET /api/v1/team/messaging`; an administrator sets it with `PUT /api/v1/team/messaging` (`{"enabled": true}`), which JARVIS's Settings, Team offers, and each change is in the audit history as `messaging_switched`. It takes effect at once on the instance that took it and within five seconds on any other, with no restart. Off, `messaging.v1` is not offered and every messaging and file route answers 503 `messaging_disabled`; switching it off deletes nothing.
+Messaging is always on; there is no switch and no variable for it. A `team_settings` document left from the switch there used to be is not read, and `TEAM_SERVER_MESSAGING` is ignored.
 
-With the switch on, a paired JARVIS sends its owner's approved messages to members (`POST /api/v1/messages`), and each JARVIS reads what its owner may see with a resumable scan (`/api/v1/messages/sync`). Only device sessions use these routes. The server checks the sender's session, that the sending node is the sender's (a node is bound to the member who first used it, for good), that the recipient is an active member, that a reply's parent and any linked message are ones both of them can see, the content digest, and that an idempotency key is not reused for a different message. It does not see or check the owner's approval: each JARVIS is trusted to send only what its owner approved.
+A paired JARVIS sends its owner's approved messages to members (`POST /api/v1/messages`), and each JARVIS reads what its owner may see with a resumable scan (`/api/v1/messages/sync`). Only device sessions use these routes. The server checks the sender's session, that the sending node is the sender's (a node is bound to the member who first used it, for good), that the recipient is an active member, that a reply's parent and any linked message are ones both of them can see, the content digest, and that an idempotency key is not reused for a different message. It does not see or check the owner's approval: each JARVIS is trusted to send only what its owner approved.
 
 - An accepted message is immutable and never deleted in this release; a message nobody may see is answered exactly like one that does not exist (`message_not_found`), administrators included.
 - The send body may be up to 128 KiB, counted as it is read; other JSON routes keep the 16 KiB limit.

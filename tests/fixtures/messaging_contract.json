@@ -102,7 +102,7 @@
       "server_id": "00000000-0000-4000-8000-0000000000aa"
     }
   ],
-  "interface_revision": "messaging.v1-contract.2",
+  "interface_revision": "messaging.v1-contract.3",
   "invalid": [
     {
       "case": "unknown_field",

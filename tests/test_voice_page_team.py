@@ -1,8 +1,9 @@
 """The Settings view's Team section (TeamSection.tsx), by what the user sees:
 connecting shows the pairing code and opens the approval page; connected
 shows the team, who you are and the last contact; an administrator's member
-list draws names as text, never markup; Disconnect says what happened; the
-messaging switches set this JARVIS's and, for an administrator, the team's.
+list draws names as text, never markup; Disconnect says what happened.
+Messages between people have no switch: signed out, one line says signing
+in turns them on.
 
 Headless Chromium on the built page, with /api/team* answered by the test.
 """
@@ -39,8 +40,6 @@ class _TeamServer(_Server):
         self.revision = 4
         self.members = [dict(m) for m in MEMBERS]
         self.accepts = False    # until then every member change is refused
-        self.switches = {"/messaging/local": {"enabled": False, "forced": False},
-                         "/messaging/team": {"enabled": False, "changed_at": None}}
 
     async def install(self, page):
         await super().install(page)
@@ -51,12 +50,6 @@ class _TeamServer(_Server):
             body = json.loads(req.post_data or "{}") if req.method != "GET" else {}
             if req.method != "GET":
                 self.team_posts.append((req.method + " " + path, body))
-            if path in self.switches:
-                if req.method == "PUT":
-                    self.switches[path] = dict(self.switches[path], enabled=body["enabled"])
-                await route.fulfill(status=200, content_type="application/json",
-                                    body=json.dumps(self.switches[path]))
-                return
             if path == "/connect":
                 self.team = dict(BASE, state="pairing", server_url=body["server_url"], pairing=PAIRING)
             elif path == "/disconnect":
@@ -153,42 +146,33 @@ async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page
         await browser.close()
 
 
+SIGN_IN_LINE = "Signing in to your team server turns on messages between people."
+
+
 @pytest.mark.asyncio
-async def test_the_messaging_switches_take_effect_from_the_page(page_url):
+async def test_signed_out_one_line_says_signing_in_turns_messaging_on(page_url):
     server = _TeamServer()
-    server.team = CONNECTED
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")
-        here = team.get_by_label("Messages between people on this JARVIS")
-        everyone = team.get_by_label("Messages between people for the whole team")
-        await async_api.expect(here).not_to_be_checked()
-        await here.click()                       # shown checked once JARVIS stored it
-        await async_api.expect(here).to_be_checked()
-        await everyone.click()
-        await async_api.expect(everyone).to_be_checked()
-        assert [post for post in server.team_posts if "/messaging/" in post[0]] == [
-            ("PUT /messaging/local", {"enabled": True}), ("PUT /messaging/team", {"enabled": True})]
+        await async_api.expect(team).to_contain_text(SIGN_IN_LINE)
+        assert await team.get_by_role("checkbox").count() == 0
         await browser.close()
 
 
 @pytest.mark.asyncio
-async def test_a_member_sees_the_team_switch_and_a_forced_switch_is_fixed(page_url):
+async def test_signed_in_there_is_no_messaging_switch(page_url):
     server = _TeamServer()
     server.team = dict(CONNECTED, me=dict(CONNECTED["me"], role="member"))
-    server.switches["/messaging/local"] = {"enabled": True, "forced": True}
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")
-        await async_api.expect(team).to_contain_text(
-            "Messages between people are off for the team; an administrator can switch them on.")
-        assert await team.get_by_label("Messages between people for the whole team").count() == 0
-        here = team.get_by_label("Messages between people on this JARVIS")
-        await async_api.expect(here).to_be_checked()
-        await async_api.expect(here).to_be_disabled()
-        await async_api.expect(team).to_contain_text("Switched on by JARVIS_MESSAGING")
+        await async_api.expect(team).to_contain_text("Connected")
+        await async_api.expect(team).not_to_contain_text(SIGN_IN_LINE)
+        assert await team.get_by_role("checkbox").count() == 0
+        assert not [post for post in server.team_posts if "/messaging" in post[0]]
         await browser.close()
 
 

@@ -25,10 +25,10 @@ exactly one instance and one source for who this JARVIS is:
 Who this JARVIS is comes from the paired team connection alone
 (`Delivery.pairing`) and `data_paths.node_id()`. The routes are mounted
 when the app is made (`mount`); the parts are built at startup, so the
-store opens in the data directory in force then. The loops run only while
-this JARVIS's switch is on (Settings, Team: `/api/team/messaging/local`,
-stored in the store; JARVIS_MESSAGING forces it on), and start or stop the
-moment it changes; switched off, the routes still answer, saying so.
+store opens in the data directory in force then. There is no switch: the
+loops run while this JARVIS is signed in to a team server that offers
+messaging.v1, and stop when it is signed out (`_follow`, every
+FOLLOW_EVERY_SEC); signed out, the routes still answer, saying so.
 """
 from __future__ import annotations
 
@@ -39,7 +39,6 @@ from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI
-from pydantic import BaseModel
 
 from jarvis import data_paths
 from jarvis import messaging_api
@@ -61,6 +60,8 @@ ANNOUNCE_POLL_SEC = 5.0
 ROSTER_EVERY_SEC = 300.0
 CLEANUP_EVERY_SEC = 3600.0
 HOUSEKEEPING_SEC = 60.0
+# How often the team connection is looked at to start or stop the loops.
+FOLLOW_EVERY_SEC = 5.0
 
 Notify = Callable[[str, str, dict], Awaitable[None]]
 
@@ -93,13 +94,11 @@ class MessagingRuntime:
     def __init__(self, *, connection: TeamCalls, captures: ports.ReviewCaptures,
                  send_frame: Callable[[dict], None], notify: Notify, wording: Wording,
                  network_raw: Callable[[], Optional[bytes]],
-                 enabled: Callable[[], bool] = ports.messaging_enabled,
                  node_id: Callable[[], str] = data_paths.node_id,
                  clock: ports.Clock = ports.utcnow):
-        self.connection, self.send_frame, self.forced = connection, send_frame, enabled
+        self.connection, self.send_frame = connection, send_frame
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
-        self._switched_on = self.store.switched_on()
         self.store.forget_captures()
         self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
                                                    on_change=self.hint)
@@ -112,8 +111,7 @@ class MessagingRuntime:
         self.delivery = Delivery(store=self.store, connection=connection, guard=self.approvals,
                                  snapshots=self.files, presentation=presenting,
                                  node_id=lambda: self.node, clock=clock,
-                                 on_change=self.hint, enabled=self.enabled,
-                                 transport_for=self._guarded)
+                                 on_change=self.hint, transport_for=self._guarded)
         self.reviews = Reviews(self.approvals, captures, self.members)
         self.local = messaging_api.LocalMessaging(
             store=self.store, delivery=self.delivery, guard=self.approvals,
@@ -131,28 +129,7 @@ class MessagingRuntime:
             labels=lambda: serve_labels(current, network_raw), notify=notify,
             wording=wording, clock=clock)
         self._tasks: list[asyncio.Task] = []
-
-    # -- the switch ----------------------------------------------------------------------
-
-    def enabled(self) -> bool:
-        """This JARVIS's switch, or JARVIS_MESSAGING forcing it on."""
-        return self.forced() or self._switched_on
-
-    def switch(self) -> dict:
-        return {"enabled": self.enabled(), "forced": self.forced()}
-
-    async def set_switch(self, on: bool) -> dict:
-        """Settings, Team: stored, then the loops start or stop at once and
-        every page reads the Queue again. Switching off deletes nothing."""
-        self.store.set_switched_on(on)
-        self._switched_on = on
-        if self.enabled():
-            self.start()
-        else:
-            await self.stop()
-        log.info("messaging: switched %s on this JARVIS", "on" if on else "off")
-        self.hint()
-        return self.switch()
+        self._follower: Optional[asyncio.Task] = None
 
     # -- who and through what ------------------------------------------------------------
 
@@ -183,7 +160,7 @@ class MessagingRuntime:
 
     def files_context(self) -> Optional[messaging_files.FilesContext]:
         who = self.identity()
-        if who is None or not self.enabled():
+        if who is None:
             return None
         return messaging_files.FilesContext(self.files, who.server_id, who.owner_github_id)
 
@@ -233,16 +210,59 @@ class MessagingRuntime:
     def replay_frames(self) -> list[dict]:
         return self.presentation.replay_frames()
 
+    def running(self) -> bool:
+        """Whether the loops (delivery, announcer, housekeeping) are running."""
+        return bool(self._tasks)
+
+    async def follow_once(self) -> None:
+        """Start the loops once this JARVIS is signed in to a team server
+        that offers messaging.v1; stop them once it is signed out. Every
+        page reads the Queue again when they start or stop."""
+        if self.delivery.pairing() is None:
+            if self.running():
+                await self._stop_loops()
+                log.info("messaging: stopped (signed out of the team server)")
+                self.hint()
+        elif not self.running() and await self.delivery.availability() == "available":
+            self._start_loops()
+            log.info("messaging: started (signed in to the team server)")
+            self.hint()
+
+    async def _follow(self) -> None:
+        while True:
+            try:
+                await self.follow_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("messaging: following the team connection failed (%s)",
+                            type(e).__name__)
+            await asyncio.sleep(FOLLOW_EVERY_SEC)
+
     def start(self) -> None:
-        """Only while the switch is on: the delivery loop, the announcer and
-        the housekeeping."""
-        if not self.enabled() or self._tasks:
+        """Follow the team connection: the loops run while it is signed in
+        (`follow_once`)."""
+        if self._follower is None:
+            self._follower = asyncio.create_task(self._follow())
+
+    def _start_loops(self) -> None:
+        if self._tasks:
             return
         self.delivery.start()
         self._tasks = [asyncio.create_task(self._announce()),
                        asyncio.create_task(self._housekeeping())]
 
     async def stop(self) -> None:
+        follower, self._follower = self._follower, None
+        if follower is not None:
+            follower.cancel()
+            try:
+                await follower
+            except (asyncio.CancelledError, Exception):
+                pass
+        await self._stop_loops()
+
+    async def _stop_loops(self) -> None:
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             task.cancel()
@@ -264,36 +284,14 @@ class _NotStarted:
     def __getattr__(self, name: str):
         runtime = self._runtime()
         if runtime is None:
-            raise messaging_api.Refused("messaging_unavailable", availability="switched_off")
+            raise messaging_api.Refused("messaging_unavailable", availability="not_started")
         return getattr(runtime.local, name)
 
 
-class SwitchBody(BaseModel):
-    enabled: bool
-
-
-SWITCH_PATH = "/api/team/messaging/local"
-
-
 def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> None:
-    """The page's messaging routes, this JARVIS's switch and the files
-    routes beside them, on the app as it is made; each request finds the
-    runtime built at startup."""
+    """The page's messaging routes and the files routes beside them, on the
+    app as it is made; each request finds the runtime built at startup."""
     messaging_api.mount(app, _NotStarted(runtime))
-
-    def built() -> MessagingRuntime:
-        found = runtime()
-        if found is None:
-            raise messaging_api.Refused("messaging_unavailable", availability="switched_off")
-        return found
-
-    @app.get(SWITCH_PATH)
-    async def messaging_switch():
-        return built().switch()
-
-    @app.put(SWITCH_PATH)
-    async def set_messaging_switch(body: SwitchBody):
-        return await built().set_switch(body.enabled)
 
     def context() -> Optional[messaging_files.FilesContext]:
         found = runtime()
