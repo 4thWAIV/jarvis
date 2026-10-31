@@ -2132,11 +2132,6 @@
             "description": "The team's key for brain account references, base64url; device sessions only, null for a browser session",
             "title": "Network Account Key"
           },
-          "recent_auth_until": {
-            "format": "date-time",
-            "title": "Recent Auth Until",
-            "type": "string"
-          },
           "server_id": {
             "title": "Server Id",
             "type": "string"
@@ -2168,7 +2163,6 @@
           "server_id",
           "session_expires_at",
           "session_kind",
-          "recent_auth_until",
           "team",
           "me"
         ],

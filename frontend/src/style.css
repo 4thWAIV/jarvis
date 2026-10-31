@@ -2568,6 +2568,18 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .team-member-meta { color: rgba(255, 255, 255, 0.5); font-size: 12px; }
 .team-member-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .team-confirm p { margin: 0 0 8px; font-size: 13px; }
+/* The roster by state: signed in, pending (added, not signed in yet), suspended. */
+.team-member-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.team-member-group h5 {
+  margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+.team-member-group.state-approved h5 { color: #fcd34d; }
+.team-member-group.state-suspended h5 { color: #fca5a5; }
+/* What a member change did, or plainly that it did not happen, where it was asked for. */
+.team-refused, .team-done { margin: 0; font-size: 12px; flex-basis: 100%; }
+.team-refused { color: #fca5a5; }
+.team-done { color: #86efac; }
 
 /* ---------------------------------------------------------------------------
    The Network view: the Team Server tile in the left column

@@ -29,7 +29,6 @@ interface TeamStatus {
   me: Me | null;
   last_contact_at: string | null;
   last_error: string | null;
-  recent_auth_until: string | null;
   pairing: { user_code: string; verification_uri_complete: string; expires_at: string } | null;
 }
 interface Member { github_id: number; login: string; name?: string | null;
@@ -40,10 +39,6 @@ interface TeamSwitch { enabled: boolean; changed_at: string | null }
 interface Resolved { github_id: number; login: string; name?: string | null; html_url: string;
                      on_roster: boolean }
 
-class TeamCallError extends Error {
-  constructor(message: string, readonly code: string, readonly status: number) { super(message); }
-}
-
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method, headers: body === undefined ? undefined : { "Content-Type": "application/json" },
@@ -52,9 +47,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   let payload: unknown = null;
   try { payload = await res.json(); } catch { /* not JSON */ }
   if (!res.ok) {
-    const err = (payload as { error?: { code?: string; message?: string } } | null)?.error;
-    throw new TeamCallError(err?.message || `The request failed (${res.status}).`,
-                            err?.code || "", res.status);
+    const err = (payload as { error?: { message?: string } } | null)?.error;
+    throw new Error(err?.message || `The request failed (${res.status}).`);
   }
   return payload as T;
 }
@@ -185,7 +179,7 @@ export function TeamSection() {
             <button className="settings-btn" disabled={busy} onClick={disconnect}>Disconnect</button>
           </div>
           {status.me?.role === "admin" && status.state !== "signed_out" && (
-            <MembersPanel me={status.me} reconfirm={() => connect(status.server_url!)} />)}
+            <MembersPanel me={status.me} />)}
         </>
       )}
     </div>
@@ -246,95 +240,137 @@ function MessagingSwitches({ admin, signedIn }: { admin: boolean; signedIn: bool
   );
 }
 
-function MembersPanel({ me, reconfirm }: { me: Me; reconfirm: () => void }) {
-  const [open, setOpen] = useState(false);
+/** The roster's groups, by membership state (team_server/teamserver/team.py):
+ *  `approved` is someone added who has not signed in yet. */
+const GROUPS: [Member["state"], string][] = [
+  ["active", "Signed in"],
+  ["approved", "Pending (not signed in yet)"],
+  ["suspended", "Suspended"],
+];
+
+/** Where an outcome is said: beside the Add controls, or in one member's row. */
+type Where = "add" | number;
+interface Outcome { where: Where; refused: boolean; text: string }
+
+/** One member change's outcome, said where it was asked for. A refusal says
+ *  first what did not happen, then the team server's reason. */
+function Said({ outcome }: { outcome: Outcome }) {
+  return outcome.refused
+    ? <p className="team-refused" role="alert">{outcome.text}</p>
+    : <p className="team-done">{outcome.text}</p>;
+}
+
+function MembersPanel({ me }: { me: Me }) {
   const [roster, setRoster] = useState<Roster | null>(null);
-  const [problem, setProblem] = useState<TeamCallError | Error | null>(null);
+  const [unread, setUnread] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [login, setLogin] = useState("");
   const [found, setFound] = useState<Resolved | null>(null);
   const [role, setRole] = useState<"member" | "admin">("member");
   const [busy, setBusy] = useState(false);
 
-  // Reading the roster after an action keeps that action's problem shown.
   const load = async () => {
-    try { setRoster(await call<Roster>("GET", "/api/team/members")); }
-    catch (e) { setProblem(e as Error); }
+    try { setRoster(await call<Roster>("GET", "/api/team/members")); setUnread(null); }
+    catch (e) { setUnread((e as Error).message); }
   };
-  useEffect(() => { if (open) { setProblem(null); load(); } }, [open]);
+  useEffect(() => { load(); }, []);
 
-  const run = async (work: () => Promise<unknown>) => {
+  /** Make one change. `notDone` is what to say beside `where` if the team
+   *  server refuses it; the work returns what to say once it is done, if
+   *  anything. The roster is read again either way. */
+  const run = async (where: Where, notDone: string, work: () => Promise<string | void>) => {
     setBusy(true);
-    setProblem(null);
-    try { await work(); }
-    catch (e) { setProblem(e as Error); }
+    setOutcome(null);
+    try {
+      const done = await work();
+      if (done) setOutcome({ where, refused: false, text: done });
+    } catch (e) {
+      setOutcome({ where, refused: true, text: `${notDone} ${(e as Error).message}` });
+    }
     setBusy(false);
     await load();
   };
-  const change = (m: Member, body: { role?: string; status?: string }) => run(() =>
-    call("PUT", `/api/team/members/${m.github_id}`, { expected_revision: roster!.revision, ...body }));
-  const endSessions = (m: Member) => run(() =>
-    call("POST", `/api/team/members/${m.github_id}/revoke-sessions`));
-  const resolve = () => run(async () => {
+  const change = (m: Member, body: { role?: string; status?: string }, notDone: string) =>
+    run(m.github_id, notDone, async () => {
+      await call("PUT", `/api/team/members/${m.github_id}`,
+                 { expected_revision: roster!.revision, ...body });
+    });
+  const endSessions = (m: Member) => run(m.github_id, `${m.login}'s sessions were not ended.`,
+    async () => { await call("POST", `/api/team/members/${m.github_id}/revoke-sessions`); });
+  const resolve = () => run("add", `${login.trim()} could not be looked up.`, async () => {
     setFound(null);
     setFound(await call<Resolved>("POST", "/api/team/members/resolve", { login: login.trim() }));
   });
-  const add = () => run(async () => {
-    await call("PUT", `/api/team/members/${found!.github_id}`,
+  // A refused Add keeps the person and the role, so Add can be pressed again.
+  const add = (who: Resolved) => run("add", `${who.login} was not added.`, async () => {
+    await call("PUT", `/api/team/members/${who.github_id}`,
                { expected_revision: roster!.revision, role });
     setFound(null);
     setLogin("");
     setRole("member");
+    return `${who.login} added; pending until they sign in.`;
   });
+  const said = (where: Where) => outcome?.where === where
+    && <Said outcome={outcome} />;
+  const addRefused = outcome?.where === "add" && outcome.refused;
 
-  if (!open) {
-    return <div className="settings-actions">
-      <button className="settings-btn" onClick={() => setOpen(true)}>Manage members</button></div>;
-  }
-  const code = problem instanceof TeamCallError ? problem.code : "";
+  const row = (m: Member) => (
+    <li key={m.github_id} className="team-member">
+      <span className="team-member-name">{m.login}{m.name ? ` — ${m.name}` : ""}</span>
+      <span className="team-member-meta">{m.role === "admin" ? "administrator" : "member"}</span>
+      <span className="team-member-actions">
+        {m.role === "member"
+          ? <button className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { role: "admin" },
+                                          `${m.login} was not made an administrator.`)}>
+              Make administrator</button>
+          : <button className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { role: "member" },
+                                          `${m.login} was not made a member.`)}>
+              Make member</button>}
+        {m.state === "suspended"
+          ? <button className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { status: "approved" },
+                                          `${m.login} was not re-enabled.`)}>Re-enable</button>
+          : <button className="settings-btn" disabled={busy || m.github_id === me.github_id}
+                    onClick={() => change(m, { status: "suspended" },
+                                          `${m.login} was not suspended.`)}>Suspend</button>}
+        {m.state === "approved" &&
+          <button className="settings-btn" disabled={busy}
+                  onClick={() => change(m, { status: "removed" },
+                                        `${m.login} was not removed.`)}>Remove</button>}
+        {m.state === "active" && m.github_id !== me.github_id &&
+          <button className="settings-btn" disabled={busy}
+                  onClick={() => endSessions(m)}>End sessions</button>}
+      </span>
+      {said(m.github_id)}
+    </li>
+  );
+
   return (
     <div className="team-members">
       <h4>Members</h4>
-      {problem && <p className="settings-hint">{problem.message}
-        {code === "reauth_required" && <> <button className="settings-btn" onClick={reconfirm}>
-          Confirm with GitHub</button></>}</p>}
-      {!roster ? <p className="settings-hint">Reading the members…</p> : (
-        <ul className="team-member-list">
-          {roster.members.map((m) => (
-            <li key={m.github_id} className="team-member">
-              <span className="team-member-name">{m.login}{m.name ? ` — ${m.name}` : ""}</span>
-              <span className="team-member-meta">
-                {m.role === "admin" ? "administrator" : "member"}, {m.state === "approved"
-                  ? "approved, not signed in yet" : m.state}</span>
-              <span className="team-member-actions">
-                {m.role === "member"
-                  ? <button className="settings-btn" disabled={busy}
-                            onClick={() => change(m, { role: "admin" })}>Make administrator</button>
-                  : <button className="settings-btn" disabled={busy}
-                            onClick={() => change(m, { role: "member" })}>Make member</button>}
-                {m.state === "suspended"
-                  ? <button className="settings-btn" disabled={busy}
-                            onClick={() => change(m, { status: "approved" })}>Re-enable</button>
-                  : <button className="settings-btn" disabled={busy || m.github_id === me.github_id}
-                            onClick={() => change(m, { status: "suspended" })}>Suspend</button>}
-                {m.state === "approved" &&
-                  <button className="settings-btn" disabled={busy}
-                          onClick={() => change(m, { status: "removed" })}>Remove</button>}
-                {m.state === "active" && m.github_id !== me.github_id &&
-                  <button className="settings-btn" disabled={busy}
-                          onClick={() => endSessions(m)}>End sessions</button>}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {roster && <p className="settings-hint">{roster.members.length} of {roster.member_limit} members.
-        Suspending someone ends their sessions at once; re-enabling them does not bring the old
-        sessions back.</p>}
+      {unread && <p className="settings-hint read-failure">
+        The members could not be read ({unread}).</p>}
+      {!roster ? (!unread && <p className="settings-hint">Reading the members…</p>) : <>
+        {GROUPS.map(([state, title]) => {
+          const members = roster.members.filter((m) => m.state === state);
+          return members.length > 0 && (
+            <section key={state} className={`team-member-group state-${state}`}>
+              <h5>{title} ({members.length})</h5>
+              <ul className="team-member-list">{members.map(row)}</ul>
+            </section>
+          );
+        })}
+        <p className="settings-hint">{roster.members.length} of {roster.member_limit} members.
+          Suspending someone ends their sessions at once; re-enabling them does not bring the old
+          sessions back.</p>
+      </>}
       <div className="settings-field">
         <label htmlFor="team-add">Add someone by GitHub username</label>
         <div className="settings-input-row">
           <input id="team-add" type="text" placeholder="github-username" value={login}
-                 onChange={(e) => { setLogin(e.target.value); setFound(null); }} />
+                 onChange={(e) => { setLogin(e.target.value); setFound(null); setOutcome(null); }} />
           <button className="settings-btn" disabled={busy || !login.trim()} onClick={resolve}>
             Look up</button>
         </div>
@@ -345,18 +381,21 @@ function MembersPanel({ me, reconfirm }: { me: Me; reconfirm: () => void }) {
             ? <p>{found.login} is already on the team.</p>
             : <>
                 <p>Add <strong>{found.login}</strong>{found.name ? ` (${found.name})` : ""}, GitHub
-                  account #{found.github_id}? They can sign in once added.</p>
+                  account #{found.github_id}?{addRefused ? "" : " They can sign in once added."}</p>
                 <div className="settings-input-row">
                   <select value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
                     <option value="member">Member</option>
                     <option value="admin">Administrator</option>
                   </select>
-                  <button className="settings-btn primary" disabled={busy} onClick={add}>Add</button>
-                  <button className="settings-btn" onClick={() => setFound(null)}>Cancel</button>
+                  <button className="settings-btn primary" disabled={busy || !roster}
+                          onClick={() => add(found)}>Add</button>
+                  <button className="settings-btn"
+                          onClick={() => { setFound(null); setOutcome(null); }}>Cancel</button>
                 </div>
               </>}
         </div>
       )}
+      {said("add")}
     </div>
   );
 }

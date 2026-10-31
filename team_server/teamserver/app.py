@@ -281,13 +281,6 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         request.app.state.limiter.hit("admin", request)
         return p
 
-    async def recent_admin(p: sessions.Principal = Depends(admin)) -> sessions.Principal:
-        if not p.recently_authenticated:
-            raise forbidden("reauth_required",
-                            "Confirm with GitHub again: membership changes need a "
-                            "sign-in from the last 15 minutes.")
-        return p
-
     def set_session_cookie(response: Response, token: str) -> None:
         response.set_cookie(cookie_name, token, max_age=int(
             sessions.SESSION_LIFETIME.total_seconds()), path="/",
@@ -444,7 +437,6 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Status(server_time=clock.now(), server_id=p.team["server_id"],
                       session_expires_at=p.session["expires_at"],
                       session_kind=p.session["kind"],
-                      recent_auth_until=p.session["auth_at"] + sessions.RECENT_AUTH,
                       team=team_view(p.team), me=me_view(p.member),
                       network_account_key=account_key)
 
@@ -477,7 +469,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     @app.put("/api/v1/team/members/{github_id}", response_model=MemberChanged,
              responses=ERRORS)
     async def change_member(request: Request, github_id: int, body: MemberChange,
-                            p: sessions.Principal = Depends(recent_admin)):
+                            p: sessions.Principal = Depends(admin)):
         if github_id <= 0:
             raise Problem(422, "invalid_request", "Invalid GitHub ID.")
         identity = None
@@ -494,7 +486,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     @app.post("/api/v1/team/members/{github_id}/revoke-sessions",
               response_model=SessionsRevoked, responses=ERRORS)
     async def revoke_member_sessions(request: Request, github_id: int,
-                                     p: sessions.Principal = Depends(recent_admin)):
+                                     p: sessions.Principal = Depends(admin)):
         team = await team_mod.mutate(database(request),
                                      team_mod.revoke_member_sessions(p.github_id, github_id))
         m = team["members"][team_mod.key(github_id)]

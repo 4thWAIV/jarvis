@@ -73,7 +73,6 @@ class Status(BaseModel):
     server_id: str
     session_expires_at: datetime
     session_kind: Literal["browser", "device"]
-    recent_auth_until: datetime
     team: Team
     me: Me
     network_account_key: Optional[str] = Field(

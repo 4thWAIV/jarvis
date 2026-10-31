@@ -111,7 +111,7 @@ Railway keeps earlier deployments. To go back: in the Railway dashboard, open th
 
 Administrators manage members from JARVIS (Settings → Team → Manage members): look up a GitHub username, confirm the account and role, and add it. The person can then sign in. There is no open registration and no invitation link; the server address is not a secret and grants nothing by itself.
 
-Membership changes need a GitHub sign-in from the last 15 minutes (JARVIS shows **Confirm with GitHub**). Suspending someone ends all their sessions at once; re-enabling them does not revive those sessions. The team always keeps at least one active administrator; a change that would leave none is refused. At most 100 members.
+Suspending someone ends all their sessions at once; re-enabling them does not revive those sessions. The team always keeps at least one active administrator; a change that would leave none is refused. At most 100 members.
 
 ## Sessions
 
