@@ -80,7 +80,9 @@ async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_url, siz
         await browser.close()
 
 
-ROWS_1440, ROWS_1920 = 10, 12
+# At 1440x900 the right panel's second row of tabs (six labelled tabs in two
+# rows, since Folders) takes the height of one agent row.
+ROWS_1440, ROWS_1920 = 9, 12
 
 
 @pytest.mark.asyncio

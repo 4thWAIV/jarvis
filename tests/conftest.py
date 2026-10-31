@@ -86,6 +86,14 @@ def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _never_discover_the_user_s_folders(monkeypatch):
+    """The folder catalog's discovery loop reads the user's Claude Code
+    histories (folder_discovery.py). Under test it never runs on its own; a
+    test drives `discover` against synthetic homes instead."""
+    monkeypatch.setenv("JARVIS_FOLDER_DISCOVERY", "0")
+
+
+@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 

@@ -1,0 +1,9 @@
+Implement the local-folder increment in an isolated worktree.
+
+Start by reading docs/planning/local-folders/implementation.md in the original JARVIS checkout at /Users/timothystockstill/code/macos/4thWAIV/jarvis. If this document has not yet been committed, it will not appear automatically in a new worktree; copy the handoff and this prompt into your worktree and include them with the implementation.
+
+Build persistent local folder registration, metadata discovery, scoped browsing/previews, and main/right Folders views. Use only each node's existing SQLite database via data_paths.db_path(). Keep current agents running and their messaging intact. Projects and many-to-many folder links follow in the next increment; do not implement projects, new agent launching, compute redesign, remote files, or indexing in this build.
+
+Use the handoff's code map, service boundaries, migration/API contracts, phased build order and acceptance matrix. Work against temporary JARVIS_DATA_DIR and synthetic provider data. Preserve unrelated work. Validate provider-reader policies and uninterrupted agent operation before any live rollout. Do not send progress to another agent/session unless separately instructed.
+
+Finish with a reviewable implementation and report changed files, actual tests, sanitized UI screenshots, migration/recovery behavior, and any remaining rollout blocker. Follow the repository's release authorization rather than restarting or deploying the live service automatically.

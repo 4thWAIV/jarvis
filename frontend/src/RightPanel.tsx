@@ -1,11 +1,13 @@
 /**
- * The right-hand display, mirroring the left column: a row of icons along
- * the top, one per thing Tim can see, running from the right edge leftward
- * (the first is furthest right), and the view for the selected one below.
+ * The right-hand display, mirroring the left column: six labelled tabs
+ * along the top in two rows of three, one per thing Tim can see (Folders,
+ * Agents, Queue; Workflows, Network, Diagnostics), and the view for the
+ * selected one below. Agents is selected to begin with.
  */
 
 import { useState, useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
+import { FoldersPanel } from "./FoldersPanel";
 import { NetworkPanel } from "./NetworkPanel";
 import { queue } from "./queue";
 import { QueueIcon } from "./QueueIcons";
@@ -29,8 +31,21 @@ function DiagnosticsView() {
   );
 }
 
-// In order from the right edge leftward; the first is selected to begin with.
+const FOLDERS_TAB: Tab = {
+  id: "folders",
+  title: "Folders",
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  ),
+  view: () => <FoldersPanel />,
+};
+
+// Defined in no particular order; ORDER below is how they are laid out.
 const TABS: Tab[] = [
+  FOLDERS_TAB,
   {
     id: "agents",
     title: "Agents",
@@ -94,21 +109,26 @@ const TABS: Tab[] = [
   },
 ];
 
+// Left to right, top row first: two rows of three.
+const ORDER = ["folders", "agents", "queue", "workflows", "network", "diagnostics"];
+const LAID_OUT = ORDER.map((id) => TABS.find((t) => t.id === id)!);
+const FIRST = "agents";
+
 export function RightPanel() {
-  const [selected, setSelected] = useState(TABS[0].id);
+  const [selected, setSelected] = useState(FIRST);
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
   // Something waiting and unread lights the Queue tab while another is open.
   const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
-  const tab = TABS.find((t) => t.id === selected) ?? TABS[0];
+  const tab = TABS.find((t) => t.id === selected) ?? TABS.find((t) => t.id === FIRST)!;
   const select = (id: string) => {
     setSelected(id);
     if (id === "agents") agentsTabLit.set(false);   // its message is seen now
   };
   return (
     <div id="right-column">
-      <TabRow tabs={TABS} selected={selected} onSelect={select} className="right-tabs"
+      <TabRow tabs={LAID_OUT} selected={selected} onSelect={select} className="right-tabs" labelled
               lit={(t) => t.id !== selected && ((t.id === "agents" && lit) || (t.id === "queue" && unread))}
               alert={(t) => t.id === "diagnostics" && down} />
       <div className="right-panel" role="tabpanel" aria-label={tab.title}>

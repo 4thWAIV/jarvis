@@ -126,20 +126,7 @@ class SqliteMessagingStore:
     def _migrate(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._tx() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS human_messaging_schema "
-                         "(version INTEGER NOT NULL)")
-            row = conn.execute("SELECT version FROM human_messaging_schema").fetchone()
-            version = row["version"] if row else 0
-            if version > SCHEMA_VERSION:
-                raise RuntimeError(f"human messaging schema {version} is newer than this "
-                                   f"JARVIS ({SCHEMA_VERSION}); it is left as it is")
-            for step in range(version + 1, SCHEMA_VERSION + 1):
-                conn.executescript(_MIGRATIONS[step])
-            if row is None:
-                conn.execute("INSERT INTO human_messaging_schema (version) VALUES (?)",
-                             (SCHEMA_VERSION,))
-            else:
-                conn.execute("UPDATE human_messaging_schema SET version = ?", (SCHEMA_VERSION,))
+            run_store.migrate(conn, "human_messaging_schema", _MIGRATIONS, "human messaging")
 
     def schema_version(self) -> int:
         with self._tx() as conn:

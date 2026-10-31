@@ -145,6 +145,11 @@ def _threads(home: Path) -> dict[str, dict]:
     return {r["id"]: dict(r) for r in rows}
 
 
+# Read by the folder catalog's discovery too (folder_discovery.py): each
+# thread's cwd and rollout file are the structured record of where it ran.
+threads = _threads
+
+
 def _thread_for(proc: CodexProcess, threads: dict[str, dict]) -> Optional[dict]:
     hint = proc.thread_hint
     if hint and hint in threads:

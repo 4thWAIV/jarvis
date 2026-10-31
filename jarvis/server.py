@@ -23,6 +23,7 @@ import sys
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 
 # Before the .env is loaded, which is found through it. It reads nothing
@@ -115,6 +116,8 @@ from jarvis import human_activity
 from jarvis import team_api, team_client
 from jarvis import voice_diagnostics
 from jarvis import subsystem_diagnostics
+from jarvis import folder_contract, folder_service, folder_store, folders_api
+from jarvis.folder_contract import FolderError
 from jarvis import tts
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
@@ -2296,6 +2299,85 @@ def _session_provider_named(name: str):
     return next((p for p in providers if p.name == name), None)
 
 
+# --- The folder catalog ---------------------------------------------------------
+#
+# Registered folders and what discovery found, in the existing database
+# (folder_store.py), through one service (folder_service.py) that the page's
+# /api/folders routes (folders_api.py) and the brain's folder tools both
+# call. Started after the session watcher, whose sessions discovery reads as
+# the live ones; nothing on a voice or agent path waits for it.
+# `JARVIS_FOLDERS=0` switches the routes and tools off and leaves the records
+# as they are; `JARVIS_FOLDER_DISCOVERY=0` stops only the background look.
+
+# How often the discovery loop wakes: a full pass runs every
+# folder_contract.DISCOVERY_EVERY_SEC, or at once after a Refresh.
+FOLDER_LOOK_SEC = 5.0
+folder_catalog: "folder_service.FolderService | None" = None
+_folders_task: Optional[asyncio.Task] = None
+_folders_wanted = threading.Event()
+
+
+def _switched_on(name: str) -> bool:
+    return os.getenv(name, "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _folder_owner() -> Optional[str]:
+    """The local owner's identity, where this JARVIS is paired as someone."""
+    me = (team_client.connection.snapshot() or {}).get("me") or {}
+    github_id = me.get("github_id") if isinstance(me, dict) else None
+    return f"github:{github_id}" if isinstance(github_id, int) else None
+
+
+def _live_sessions() -> list:
+    watcher = session_watcher
+    return list(watcher.snapshot.sessions) if watcher is not None else []
+
+
+def _hint_folders() -> None:
+    _send_to_session_clients({"type": "folders"})
+
+
+async def _watch_folders() -> None:
+    """Discover and check availability off the event loop: at start, every
+    DISCOVERY_EVERY_SEC, and soon after a Refresh asks. A change is a
+    `folders` hint. Never raises out."""
+    last: Optional[float] = None
+
+    async def look() -> None:
+        nonlocal last
+        due = last is None or time.monotonic() - last >= folder_contract.DISCOVERY_EVERY_SEC
+        if not (due or _folders_wanted.is_set()) or folder_catalog is None:
+            return
+        _folders_wanted.clear()
+        last = time.monotonic()
+        changed, moved = await asyncio.to_thread(folder_catalog.discover)
+        if changed or moved:
+            _hint_folders()
+
+    await _every(FOLDER_LOOK_SEC, subsystem_diagnostics.FOLDERS_LOOP, look)
+
+
+def start_folders() -> None:
+    global folder_catalog, _folders_task
+    if not _switched_on("JARVIS_FOLDERS"):
+        log.info("the folder catalog is switched off (JARVIS_FOLDERS)")
+        return
+    folder_catalog = folder_service.FolderService(
+        folder_store.FolderStore(), data_paths.node_id, owner=_folder_owner,
+        live_sessions=_live_sessions, wake=_folders_wanted.set)
+    if _switched_on("JARVIS_FOLDER_DISCOVERY"):
+        _folders_task = _spawn(_watch_folders())
+
+
+async def stop_folders() -> None:
+    global folder_catalog, _folders_task
+    if _folders_task is not None:
+        _folders_task.cancel()
+        await asyncio.gather(_folders_task, return_exceptions=True)
+    _folders_task = None
+    folder_catalog = None
+
+
 async def start_session_watcher() -> None:
     global session_watcher
     session_watcher = session_watch.SessionWatcher(
@@ -2795,6 +2877,7 @@ async def lifespan(application: FastAPI):
 
     await start_brain_and_speech()
     await start_session_watcher()
+    start_folders()
     transcription_api.start()
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -2825,6 +2908,7 @@ async def lifespan(application: FastAPI):
     await _stop_messaging()
     await team_api.stop()
     await transcription_api.stop()
+    await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
 
@@ -2857,6 +2941,7 @@ team_api.mount(app, on_team_messaging=lambda: messaging is not None
                 and messaging.delivery.forget_capabilities())
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
+folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -6698,7 +6783,9 @@ def _subsystems() -> list:
     return subsystem_diagnostics.gather(
         watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
         has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at,
-        team=team_client.connection.snapshot())
+        team=team_client.connection.snapshot(),
+        folders=(folder_catalog.health(_folders_task is not None)
+                 if folder_catalog is not None else None))
 
 
 @app.get("/api/diagnostics/subsystems")
@@ -8540,6 +8627,172 @@ TOOL_HANDLERS.update({
 # same reasoning as open_in_browser. The three readers are deliberately NOT
 # here: they read and say, and nothing more.
 ACTING_TOOLS.add("open_in_editor")
+
+
+# --- The folder catalog, for the brain ------------------------------------
+#
+# The same service as the page's /api/folders routes (folder_service.py), so
+# the brain reads exactly what the page may, through the same reader and
+# budgets, and never a raw path: a folder is named by its ID. Names and
+# paths are other sessions' records or a directory's own name, so every
+# listing comes back inside an untrusted block, and so does every file.
+# Registering and removing change the catalog only, never a file, and only
+# when the user asks (ACTING_TOOLS).
+
+_FOLDER_WRAP_NAME = "folder"
+FOLDERS_OFF = "The folder catalog is switched off, sir."
+_FOLDER_ID_RE = _action_re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _folder_line(f: dict) -> str:
+    loc = f["location"]
+    return (f"{f['id']} · {f['display_name']} · {f['role']} · "
+            f"{loc['availability'].replace('_', ' ')} · {loc['canonical_path']}")
+
+
+def _folder_refusal(e: FolderError) -> str:
+    """A refusal in the contract's own fixed words: nothing in it is from a
+    file or a path."""
+    return f"{e.message} ({e.code})"
+
+
+async def _folder_call(work):
+    """Run one service call off the event loop: (result, None), or (None,
+    what to say) when the catalog is off or refuses."""
+    if folder_catalog is None:
+        return None, FOLDERS_OFF
+    try:
+        return await asyncio.to_thread(work, folder_catalog), None
+    except FolderError as e:
+        return None, _folder_refusal(e)
+
+
+def _folder_id(args: dict) -> Optional[str]:
+    raw = str(args.get("folder_id") or "").strip().lower()
+    return raw if _FOLDER_ID_RE.fullmatch(raw) else None
+
+
+async def tool_list_folders(args: dict) -> str:
+    query = str(args.get("query") or "")
+    got, said = await _folder_call(lambda s: s.list_folders(query=query))
+    if said:
+        return said
+    found = got["folders"]
+    if not found:
+        return "No folders in the catalog match that, sir." if query else \
+            "There are no folders in the catalog yet, sir."
+    more = " — there are more; narrow it with a query." if got["next_cursor"] else "."
+    return (f"{len(found)} folder{'s' if len(found) != 1 else ''} in the catalog{more}\n"
+            + _wrap_untrusted(_FOLDER_WRAP_NAME, "\n".join(_folder_line(f) for f in found)))
+
+
+async def tool_find_folder(args: dict) -> str:
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return "Which folder, sir?"
+    got, said = await _folder_call(lambda s: [s.folder_json(f) for f in s.find(name)])
+    if said:
+        return said
+    if not got:
+        return "No registered folder matches that, sir."
+    head = ("One folder matches." if len(got) == 1 else
+            f"{len(got)} folders match; ask which one before using any of them.")
+    return head + "\n" + _wrap_untrusted(_FOLDER_WRAP_NAME, "\n".join(_folder_line(f) for f in got))
+
+
+async def tool_browse_folder(args: dict) -> str:
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return "Which folder, sir? Give me its ID from list_folders or find_folder."
+    got, said = await _folder_call(lambda s: s.entries(
+        folder_id, path=str(args.get("path") or ""), cursor=args.get("cursor") or None))
+    if said:
+        return said
+    lines = [f"{'dir ' if e['kind'] == 'dir' else e['kind']:4} {e['path']}"
+             + ("/" if e["kind"] == "dir" else f" ({e['size']} bytes)" if e["size"] is not None else "")
+             for e in got["entries"]]
+    head = f"{len(lines)} entr{'ies' if len(lines) != 1 else 'y'} in that folder"
+    if got["withheld"]:
+        head += f", {got['withheld']} not shown (hidden, credential or not this reader's)"
+    if got["partial"]:
+        head += "; the directory is too large to look at in full, so this is part of it"
+    head += (f". More: pass cursor {got['next_cursor']}." if got["next_cursor"] else ".")
+    if not lines:
+        return head
+    return head + "\n" + _wrap_untrusted(_FOLDER_WRAP_NAME, "\n".join(lines))
+
+
+async def tool_read_folder_file(args: dict) -> str:
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return "Which folder, sir? Give me its ID from list_folders or find_folder."
+    path = str(args.get("path") or "").strip()
+    if not path:
+        return "Which file, sir?"
+    got, said = await _folder_call(lambda s: s.preview(
+        folder_id, path=path, cursor=args.get("cursor") or None))
+    if said:
+        return said
+    if got["kind"] == "binary":
+        return f"That is a binary file of {got['size']} bytes, sir; I only read text."
+    window = repo_read.window_of_lines(got["lines"], args.get("around"))
+    header, named = _window_parts(got["path"], "That file", window)
+    if got["next_cursor"]:
+        header += f" The file goes on: pass cursor {got['next_cursor']} for more."
+    if named is None:
+        return header
+    body = window.text if named else f"{got['path']}\n\n{window.text}"
+    return f"{header}\n{_wrap_untrusted(_FOLDER_WRAP_NAME, body)}"
+
+
+async def tool_register_folder(args: dict) -> str:
+    path = str(args.get("path") or "").strip()
+    if not path:
+        return "Which folder, sir? Give me its full path."
+    got, said = await _folder_call(lambda s: s.register(
+        request_key=str(uuid.uuid4()), path=path, display_name=args.get("display_name")))
+    if said:
+        return said
+    f = got["folder"]
+    _hint_folders()
+    done = {"created": "Registered", "existing": "Already registered",
+            "replayed": "Already registered", "reactivated": "Registered again"}[got["outcome"]]
+    return (f"{done}, sir: folder {f['id']}, read as {f['access']['description'].lower()}. "
+            f"No file was created, moved or changed.\n"
+            + _wrap_untrusted(_FOLDER_WRAP_NAME, _folder_line(f)))
+
+
+async def tool_unregister_folder(args: dict) -> str:
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return "Which folder, sir? Give me its ID from list_folders or find_folder."
+    got, said = await _folder_call(lambda s: s.unregister(folder_id))
+    if said:
+        return said
+    _hint_folders()
+    return (f"Removed folder {got['folder']['id']} from the catalog, sir. I no longer read it; "
+            f"its files and its sessions' histories are untouched.")
+
+
+TOOL_HANDLERS.update({
+    "list_folders": tool_list_folders,
+    "find_folder": tool_find_folder,
+    "browse_folder": tool_browse_folder,
+    "read_folder_file": tool_read_folder_file,
+    "register_folder": tool_register_folder,
+    "unregister_folder": tool_unregister_folder,
+})
+ACTING_TOOLS.update({"register_folder", "unregister_folder"})
+TAINTING_TOOLS.update({
+    "list_folders": "a list of folder names and paths that sessions' records named",
+    "find_folder": "a list of folder names and paths that sessions' records named",
+    "browse_folder": "a folder's file names",
+    "read_folder_file": "a file in one of your folders",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "register_folder": "it adds a folder to the catalog, it does not read its contents",
+    "unregister_folder": "it removes a folder from the catalog, it does not read",
+})
 # ---------------------------------------------------------------------------
 # Reading a web page, and seeing one
 # ---------------------------------------------------------------------------

@@ -4,6 +4,10 @@
  * below.
  *
  *   - Conversation (ConversationView.tsx), shown to begin with.
+ *   - Folders (FoldersView.tsx): the folder catalog and the selected folder
+ *     in full. Always offered; choosing a folder in the right panel's
+ *     Folders tab selects it. Once opened it stays on the page, hidden, as
+ *     Conversation does.
  *   - Main: the centre as it was before views (the capture boxes above the
  *     four-line captions), unchanged. Hidden from the header for now; the
  *     page opens on it at `?view=main`, so it keeps working and stays tested.
@@ -49,6 +53,8 @@ import { useSubsystems } from "./SubsystemList";
 import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 import { directory, openQueue, queue } from "./queue";
+import { showFolders } from "./folders";
+import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
 
 function MainView() {
@@ -75,6 +81,12 @@ const VIEWS: Tab[] = [
       </svg>
     ),
     view: () => <ConversationView />,
+  },
+  {
+    id: "folders",
+    title: "Folders",
+    icon: null,
+    view: () => <FoldersView />,
   },
   {
     id: "main",
@@ -170,6 +182,9 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (queueOpen ? "queue" : now === "queue" ? VIEWS[0].id : now));
   }, [queueOpen]);
+  // Choosing a folder in the right panel shows the Folders view.
+  const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
+  useEffect(() => { if (foldersAsked) setSelected("folders"); }, [foldersAsked]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
@@ -189,6 +204,11 @@ export function CentreArea() {
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
   const conversation = VIEWS[0];
+  const folders = VIEWS[1];
+  // Once opened, Folders is kept too, so its filters, selection and scroll
+  // are where they were left.
+  const [foldersKept, setFoldersKept] = useState(view.id === folders.id);
+  useEffect(() => { if (view.id === folders.id) setFoldersKept(true); }, [view.id, folders.id]);
   // Kept, hidden, under every view but Main (which is the centre as it was
   // before views, without it).
   const kept = view.id !== "main";
@@ -201,7 +221,13 @@ export function CentreArea() {
           {conversation.view()}
         </div>
       )}
-      {view.id !== conversation.id && view.view()}
+      {(foldersKept || view.id === folders.id) && (
+        <div className={`centre-kept${view.id === folders.id ? "" : " hidden"}`}
+             inert={view.id !== folders.id}>
+          {folders.view()}
+        </div>
+      )}
+      {view.id !== conversation.id && view.id !== folders.id && view.view()}
     </>
   );
 }

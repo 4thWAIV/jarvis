@@ -83,10 +83,10 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
     async with async_api.async_playwright() as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         tabs = await page.evaluate("() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.title)")
-        assert tabs == ["Agents", "Diagnostics", "Workflows", "Network", "Queue"], tabs
+        assert tabs == ["Folders", "Agents", "Queue", "Workflows", "Network", "Diagnostics"], tabs
         # Something unread is waiting: the tab is lit while another is open.
         await async_api.expect(page.locator(".right-tabs [aria-label='Queue']")).to_have_class(
-            "control-button right-tab lit")
+            "control-button right-tab labelled-tab lit")
         await _queue_tab(page)
         assert await _rows(page, world, "waiting") == ["newest", "creds", "long", "former", "self-file", "note-self"]
         assert await _rows(page, world, "active") == ["release", "budget", "deploy", "ana-numbers"]
