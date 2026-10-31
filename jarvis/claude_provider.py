@@ -87,6 +87,14 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__recall",
     "mcp__jarvis__project_note",
     "mcp__jarvis__write_journal",
+    # The folder catalog (server.py's folder tools): reads come back in an
+    # untrusted block, and registering and removing are ACTING_TOOLS.
+    "mcp__jarvis__list_folders",
+    "mcp__jarvis__find_folder",
+    "mcp__jarvis__browse_folder",
+    "mcp__jarvis__read_folder_file",
+    "mcp__jarvis__register_folder",
+    "mcp__jarvis__unregister_folder",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had
     # no answer at all. Both were verified inside this exact flag set

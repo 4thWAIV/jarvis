@@ -382,8 +382,19 @@ the one service the page's routes (`folders_api.py`, `/api/folders*`; changes
 need the page's origin or the tool token, and no access-key category covers
 them) and the brain's tools (`list_folders`, `find_folder`, `browse_folder`,
 `read_folder_file`, and the acting `register_folder` and `unregister_folder`)
-both call; tool results come back in an untrusted block. Every committed
-change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
+both call; tool results come back in an untrusted block. All six are in
+`claude_provider.ALLOWED_TOOLS`, and the brain's instructions
+(`jarvis_home/CLAUDE.md`, "Folders") tell it a registered folder from a
+project and to look in both before saying it cannot find one. Work runs in
+a folder through `spawn_run`'s `folder_id` (never together with `project`):
+`FolderService.work_location` gives the folder's current canonical location
+under the same checks as a read (active, enabled, this node's, available,
+the reader the policy still gives it) and only for a FILES reader, never a
+history or notes one. The run records it in `runs.folder_id` (added by
+`run_store.init_db`'s column backfill), and a retry goes through
+`work_location` again. `start_build` takes projects only: `build_status`,
+`review_document` and `approve_document` find a build by its project. Every
+committed change is a `folders` hint on `/ws/sessions`. The page's side is `folders.ts`
 (one store for both views), `FoldersView.tsx` and `FolderDetail.tsx` in the
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.

@@ -74,6 +74,9 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__read_history,mcp__jarvis__open_in_editor,"
         "mcp__jarvis__remember,mcp__jarvis__recall,"
         "mcp__jarvis__project_note,mcp__jarvis__write_journal,"
+        "mcp__jarvis__list_folders,mcp__jarvis__find_folder,"
+        "mcp__jarvis__browse_folder,mcp__jarvis__read_folder_file,"
+        "mcp__jarvis__register_folder,mcp__jarvis__unregister_folder,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch,Skill")

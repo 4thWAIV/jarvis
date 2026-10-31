@@ -221,3 +221,56 @@ def test_the_tools_use_the_same_service_and_the_same_walls(wired):
     assert folder.joinpath("plan.md").read_text().startswith("# Plan")
     after = _call(server, client, "read_folder_file", folder_id=fid, path="plan.md")
     assert "removed" in after["text"]
+
+
+def test_the_brain_is_granted_every_folder_tool(wired):
+    """Defined in jarvis_mcp and handled in server.py is not enough: the
+    brain is launched with ALLOWED_TOOLS, and without them it answered
+    "which folder?" with list_projects and could not find a registered one.
+    The reads keep their untrusted handling; the two that change the
+    catalog stay acting tools."""
+    from jarvis import claude_provider
+    server = wired[0]
+    reads = ("list_folders", "find_folder", "browse_folder", "read_folder_file")
+    acts = ("register_folder", "unregister_folder")
+    for name in reads + acts:
+        assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
+        assert name in server.TOOL_HANDLERS
+    assert set(reads) <= set(server.TAINTING_TOOLS)
+    assert set(acts) <= server.ACTING_TOOLS
+
+
+def test_a_folder_run_is_retried_only_while_the_folder_can_take_it(wired, monkeypatch):
+    """A retry goes back through the folder service: a folder removed since
+    the run is refused, not worked in at its old path."""
+    server, client, folder, _hints = wired
+    from jarvis import run_store
+    fid = server.folder_catalog.register(request_key="k", path=str(folder))["folder"]["id"]
+    spawned = []
+
+    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None):
+        spawned.append((path, folder_id))
+        return "new-run"
+
+    monkeypatch.setattr(server.run_executor_instance, "spawn", fake_spawn)
+    run_id = run_store.create_run("go", "notes", str(folder), "voice", folder_id=fid)
+    run_store.update_run(run_id, status=run_store.RunStatus.SUCCEEDED)
+
+    assert client.post(f"/api/runs/{run_id}/retry", headers=BROWSER).status_code == 200
+    assert spawned == [(str(folder.resolve()), fid)]
+    server.folder_catalog.unregister(fid)
+    refused = client.post(f"/api/runs/{run_id}/retry", headers=BROWSER)
+    assert refused.status_code == 409 and len(spawned) == 1
+
+
+def test_the_brain_is_told_folders_are_not_projects():
+    """Asked to store research in a registered folder, the brain looked in
+    list_projects alone and said it could not find the folder system."""
+    from pathlib import Path
+    persona = (Path(__file__).resolve().parents[1] / "jarvis" / "jarvis_home"
+               / "CLAUDE.md").read_text()
+    for name in ("list_folders", "find_folder", "browse_folder", "read_folder_file",
+                 "`folder_id`"):
+        assert name in persona, name
+    assert "## Folders" in persona
+    assert "before you say you cannot find it" in persona
