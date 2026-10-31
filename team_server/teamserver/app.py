@@ -51,6 +51,13 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; "
 ERRORS = {401: {"model": ErrorBody}, 403: {"model": ErrorBody},
           409: {"model": ErrorBody}, 429: {"model": ErrorBody},
           503: {"model": ErrorBody}}
+# A GitHub lookup's 503 is `github_rate_limited` (with Retry-After) or
+# `github_unavailable`.
+LOOKUP_ERRORS = {**ERRORS, 503: {
+    "model": ErrorBody,
+    "description": "`github_rate_limited`: GitHub is limiting the team server's "
+                   "requests; Retry-After says when to try again. "
+                   "`github_unavailable`: GitHub did not answer."}}
 
 
 # -- the body limit -------------------------------------------------------------
@@ -214,7 +221,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
     @app.exception_handler(Problem)
     async def on_problem(request: Request, exc: Problem):
         headers = {}
-        if exc.status == 429 and "retry_after" in exc.extra:
+        if exc.status in (429, 503) and "retry_after" in exc.extra:
             headers["Retry-After"] = str(exc.extra["retry_after"])
         if wants_html(request):
             return HTMLResponse(pages.message("Team server", exc.message),
@@ -453,7 +460,8 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
         return Roster(revision=p.team["revision"], member_limit=team_mod.MEMBER_LIMIT,
                       members=[member_view(m) for m in members])
 
-    @app.post("/api/v1/team/members/resolve", response_model=Resolved, responses=ERRORS)
+    @app.post("/api/v1/team/members/resolve", response_model=Resolved,
+              responses=LOOKUP_ERRORS)
     async def resolve_member(request: Request, body: ResolveRequest,
                              p: sessions.Principal = Depends(admin)):
         identity = await request.app.state.github.user_by_login(body.login)
@@ -465,7 +473,7 @@ def create_app(config: Optional[Config] = None, github: Optional[GitHub] = None,
                         on_roster=team_mod.key(identity.id) in p.team["members"])
 
     @app.put("/api/v1/team/members/{github_id}", response_model=MemberChanged,
-             responses=ERRORS)
+             responses=LOOKUP_ERRORS)
     async def change_member(request: Request, github_id: int, body: MemberChange,
                             p: sessions.Principal = Depends(admin)):
         if github_id <= 0:
