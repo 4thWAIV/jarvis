@@ -449,7 +449,7 @@ def test_the_route_lists_every_subsystem(server):
     body = r.json()
     ids = [s["id"] for s in body["subsystems"]]
     assert ids == ["communications", "voice_input", "brain", "voice_output", "tool_channel",
-                   "workflows", "team_server"]
+                   "workflows", "folders", "team_server"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
         assert all(set(c) == {"id", "name", "state", "detail"} for c in s["checks"])

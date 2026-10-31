@@ -3172,3 +3172,256 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 @media (forced-colors: active) {
   .cue-your-turn, .cue-their-turn, .queue-row, .queue-endpoint { forced-color-adjust: auto; border: 1px solid CanvasText; }
 }
+
+/* ── Folders (FoldersView.tsx, FolderDetail.tsx, FoldersPanel.tsx) ────────
+   The right panel's six tabs in two rows of three, each its icon with its
+   word beneath; the centre's Folders view as the catalog beside the
+   selected folder. Every state is a word; colour only supports it. */
+.right-tabs:has(.labelled-tab) {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.control-button.labelled-tab {
+  width: auto;
+  height: 40px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+.labelled-tab svg { width: 16px; height: 16px; flex: none; }
+.tab-label {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+#folders-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) minmax(0, 3fr);
+  gap: 14px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: left;
+}
+.folders-catalog, .folders-detail {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.folders-detail { padding-left: 14px; border-left: 1px solid rgba(14, 165, 233, 0.15); }
+.folders-toolbar { display: flex; gap: 6px; align-items: flex-end; }
+.folders-toolbar .folder-search { flex: 1; }
+.folders-tabs { display: flex; gap: 4px; }
+.folder-tab, .folder-button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.08);
+  color: rgba(186, 230, 253, 0.95);
+  cursor: pointer;
+}
+.folder-tab.selected { background: rgba(14, 165, 233, 0.22); border-color: rgba(14, 165, 233, 0.7); }
+.folder-button.quiet { background: transparent; }
+.folder-button.danger { border-color: rgba(239, 68, 68, 0.6); color: #fca5a5; background: rgba(239, 68, 68, 0.08); }
+.folder-button:disabled { opacity: 0.45; cursor: default; }
+.folder-tab:focus-visible, .folder-button:focus-visible, .folder-row:focus-visible,
+.folders-panel-row:focus-visible, .folder-entry:focus-visible, .folder-crumb:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.9);
+  outline-offset: 1px;
+}
+.folders-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.folder-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.6); }
+.folder-field input, .folder-field select {
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-width: 0;
+}
+.folder-check { display: flex; gap: 5px; align-items: center; font-size: 11px; color: rgba(255, 255, 255, 0.7); }
+.folder-note { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); line-height: 1.4; }
+.folder-error { margin: 0; font-size: 12px; color: #fca5a5; }
+.folder-empty { margin-top: 24px; }
+.folder-rows, .folder-entries, .folders-panel-list, .folder-sessions ul, .folder-events ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.folder-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "role name avail" "role node seen";
+  gap: 2px 8px;
+  align-items: center;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(14, 165, 233, 0.04);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.folder-row:hover { background: rgba(14, 165, 233, 0.1); }
+.folder-row.selected, .folders-panel-row.selected { border-color: rgba(14, 165, 233, 0.85); box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35); }
+.folder-row .folder-role { grid-area: role; }
+.folder-row-name { grid-area: name; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-row .folder-availability { grid-area: avail; justify-self: end; }
+.folder-row-node { grid-area: node; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.folder-row-seen { grid-area: seen; justify-self: end; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.folder-role { font-size: 11px; color: rgba(186, 230, 253, 0.85); white-space: nowrap; }
+.folder-availability { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.folder-availability-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.4); }
+.availability-available .folder-availability-dot { background: #4ade80; }
+.availability-missing .folder-availability-dot { background: #fbbf24; }
+.availability-access_denied .folder-availability-dot { background: #f87171; }
+.availability-unavailable_node .folder-availability-dot { background: #a1a1aa; }
+.availability-missing, .availability-access_denied { color: #fde68a; }
+.candidate-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(14, 165, 233, 0.3);
+  border-radius: 8px;
+}
+.candidate-head, .candidate-meta, .candidate-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.candidate-meta { font-size: 11px; color: rgba(255, 255, 255, 0.6); }
+.candidate-path, .folder-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; word-break: break-all; }
+.folder-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.05);
+}
+.folder-add-actions { display: flex; gap: 6px; }
+.folder-add-checked { display: flex; flex-direction: column; gap: 6px; }
+.folder-facts { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
+.folder-facts dt { color: rgba(255, 255, 255, 0.55); }
+.folder-facts dd { margin: 0; }
+.folder-detail { display: flex; flex-direction: column; gap: 12px; }
+.folder-detail-head { display: flex; align-items: flex-start; gap: 12px; }
+.folder-detail-head h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; word-break: break-word; }
+.folder-detail-marks { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
+.folder-detail h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.85);
+}
+.folder-removed { font-size: 11px; color: #fca5a5; }
+.folder-actions, .folder-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
+.folder-confirm { padding: 8px; border: 1px solid rgba(239, 68, 68, 0.5); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.folder-confirm .folder-button { align-self: flex-start; }
+.folder-crumbs { font-size: 12px; margin-bottom: 6px; color: rgba(255, 255, 255, 0.75); word-break: break-all; }
+.folder-crumb { font: inherit; background: none; border: none; padding: 0; color: rgba(125, 211, 252, 0.95); cursor: pointer; text-decoration: underline; }
+.folder-contents-body { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
+.folder-entry {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.folder-entry:hover:not(:disabled) { background: rgba(14, 165, 233, 0.08); }
+.folder-entry.selected { border-color: rgba(14, 165, 233, 0.6); }
+.folder-entry:disabled { cursor: default; opacity: 0.6; }
+.folder-entry-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(186, 230, 253, 0.6); }
+.folder-entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-entry-size { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+.folder-preview { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.folder-preview h4 { margin: 0; color: #e0f2fe; }
+.folder-text {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  scrollbar-width: thin;
+}
+.folder-session { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.folder-session-name { font-weight: 600; color: #e0f2fe; }
+.folder-events li { font-size: 11px; color: rgba(255, 255, 255, 0.65); }
+
+.right-view.folders-panel { height: 100%; overflow-y: auto; padding: 4px 0 10px; gap: 6px; scrollbar-width: thin; }
+.folders-panel-heading { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: #e0f2fe; }
+.folders-panel-count { font-size: 11px; color: rgba(255, 255, 255, 0.65); }
+.folders-panel-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-areas: "role name" "role meta";
+  gap: 2px 6px;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.88);
+  background: rgba(14, 165, 233, 0.04);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.folders-panel-row:hover { background: rgba(14, 165, 233, 0.1); }
+.folders-panel-row .folder-role { grid-area: role; }
+.folders-panel-name { grid-area: name; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folders-panel-meta { grid-area: meta; display: flex; justify-content: space-between; gap: 6px; color: rgba(255, 255, 255, 0.6); }
+.folders-panel-open { align-self: flex-start; }
+
+@media (forced-colors: active) {
+  .folder-row, .folders-panel-row, .candidate-row, .folder-availability-dot { forced-color-adjust: auto; border: 1px solid CanvasText; }
+}

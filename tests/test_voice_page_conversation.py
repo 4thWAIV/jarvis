@@ -67,12 +67,13 @@ BOXES = """() => {
 
 
 @pytest.mark.asyncio
-async def test_conversation_is_the_only_tab_offered_and_main_opens_by_address(page_url):
+async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_address(page_url):
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url)
         tabs = await page.evaluate(
             "() => [...document.querySelectorAll('.centre-tabs [role=tab]')].map(t => [t.textContent, t.ariaSelected])")
-        assert tabs == [["Conversation", "true"]], tabs       # the word, not an icon
+        # The words, not icons; Conversation selected to begin with.
+        assert tabs == [["Conversation", "true"], ["Folders", "false"]], tabs
         fits = await page.evaluate("""() => { const t = document.querySelector('.centre-tabs [role=tab]');
           return {fits: t.scrollWidth <= t.clientWidth, wider: t.clientWidth > 36,
                   caps: getComputedStyle(t).textTransform}; }""")

@@ -243,6 +243,12 @@ def _render(when: str, role: str, text: str) -> list[str]:
     return lines
 
 
+def said_lines(obj: dict, role: str, text: str, fallback: str) -> list[str]:
+    """One message of a transcript as display lines, the way read_history
+    shows it; for any reader of a transcript (folder_readers.py)."""
+    return _render(_when(obj, fallback), role, text)
+
+
 def _messages(path: Path):
     """(first display line, when, role, text) per message, streamed."""
     fallback = _day(path)

@@ -186,12 +186,18 @@ class Refused(Exception):
 
 # --- paths ----------------------------------------------------------------
 
-def sensitive_reason(relative: Path) -> str | None:
+def sensitive_reason(relative: Path, named_dotfiles: bool = False) -> str | None:
     """Why this path (relative to the project root) must not be read.
 
     None means it is fine. Anything else is a sentence fragment for the log;
     the spoken refusal is fixed, because telling a caller precisely which
     rule it tripped is a probing oracle.
+
+    `named_dotfiles` is for a path the user named outright, a folder he
+    registered (folder_policy.py): a dot directory JARVIS does not know is
+    then his to open. Every other rule stands, so `.ssh`, `.env` and a key
+    stay closed however they are named, and inside such a folder the walk
+    still applies this rule in full.
     """
     parts = [p for p in relative.parts if p not in ("", ".")]
     for i, raw in enumerate(parts):
@@ -209,7 +215,7 @@ def sensitive_reason(relative: Path) -> str | None:
                 return f"{raw} is an environment file"
             continue
         if part.startswith("."):
-            if part in SAFE_DOT_NAMES or part.startswith(SAFE_DOT_PREFIXES):
+            if part in SAFE_DOT_NAMES or part.startswith(SAFE_DOT_PREFIXES) or named_dotfiles:
                 continue
             return f"{raw} is a dotfile JARVIS does not know"
     return None

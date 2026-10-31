@@ -347,6 +347,42 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "folder_discovery.claude_history": (
+        "it reads a transcript record's `cwd` and `sessionId` only to store them "
+        "as an observation in the folder catalog; its one f-string is the "
+        "source label `claude:<config root>`, a path JARVIS chose, recorded as "
+        "discovery progress and never spoken or put in a note to the brain"),
+    "folder_discovery.codex_history": (
+        "it reads a Codex thread's `cwd` and id only to store them as an "
+        "observation in the folder catalog; its one f-string is the source "
+        "label `codex:<Codex home>`, a path JARVIS chose, recorded as discovery "
+        "progress and never spoken or put in a note to the brain"),
+    "folder_store._refresh_fingerprint": (
+        "it joins the `provider` and evidence columns of the catalog's own "
+        "observations into a fingerprint compared only for equality, to tell "
+        "whether an ignored candidate's evidence changed; the string is "
+        "stored, never shown, spoken or sent to the brain"),
+    "folder_store.related_sessions": (
+        "its only built string is a SQL LIKE pattern from the folder's own "
+        "canonical path, passed as a bound parameter; the rows it returns go "
+        "to the page as JSON, rendered as text, and nothing is spoken"),
+    "server._folder_line": (
+        "the folder name and path it formats are used only as the BODY of "
+        "`_wrap_untrusted` by list_folders, find_folder and register_folder, "
+        "never in a header line the brain reads as JARVIS's own words"),
+    "server.tool_register_folder": (
+        "its header holds only the folder's uuid from the catalog, the "
+        "reader's fixed policy description and fixed words; the folder's name "
+        "and path go inside the untrusted block through `_folder_line`"),
+    "server.tool_unregister_folder": (
+        "its reply holds only the folder's uuid, which the catalog made, and "
+        "fixed words; no name, path or file content of the folder is in it, "
+        "so nothing another session wrote reaches the line"),
+    "subsystem_diagnostics.folder_catalog": (
+        "the discovery source label it may show is `claude:`/`codex:` and a "
+        "config root JARVIS chose, with an exception's class name; the row is "
+        "drawn on the Diagnostics tab as text and only communications rows "
+        "are ever spoken by `_watch_subsystems`"),
     "messaging_files.cleanup": (
         "the `message_id` and `attachment_id` it reads are columns of its own "
         "messaging_files table, uuids it wrote itself, used only to find and "

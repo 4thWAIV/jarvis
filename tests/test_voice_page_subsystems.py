@@ -20,7 +20,7 @@ from tests.test_voice_page_conversation import _Voice
 pytestmark = pytest.mark.page
 
 IDS = ["communications", "voice_input", "brain", "voice_output", "tool_channel", "workflows",
-       "team_server"]
+       "folders", "team_server"]
 
 
 def _record(comms="ok"):
