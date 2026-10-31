@@ -31,7 +31,8 @@ class RecoveryError(Exception):
 
 
 def _public_github() -> RealGitHub:
-    # Public lookups need no OAuth credentials.
+    # Public lookups need no OAuth credentials; without them they are
+    # unauthenticated (60 an hour per IP), enough for one recovery.
     return RealGitHub(Config(port=0, public_base_url="", mongodb_uri="",
                              mongodb_database="", github_client_id="",
                              github_client_secret="", team_name=None,

@@ -110,6 +110,8 @@ Railway keeps earlier deployments. To go back: in the Railway dashboard, open th
 
 Administrators manage members from JARVIS (Settings → Team → Manage members): look up a GitHub username, confirm the account and role, and add it. The person can then sign in. There is no open registration and no invitation link; the server address is not a secret and grants nothing by itself.
 
+The lookup (`/api/v1/team/members/resolve`, and adding someone not yet on the roster) asks GitHub's public API as the OAuth App, with `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` as HTTP Basic credentials: 5,000 requests an hour for the app instead of 60 an hour shared by everyone on Railway's outbound IP. When GitHub limits it (403 or 429 with no allowance left, or a `Retry-After`), the route answers 503 `github_rate_limited` with a `Retry-After` header and a message giving the UTC time to try again, which JARVIS shows beside **Look up**; any other failure is 503 `github_unavailable`. Every GitHub answer but 200 or 404, from a lookup or from sign-in's `/user`, is logged in one line: `github lookup answered 403: limit= remaining= used= resource= reset=<UTC> retry_after= request_id= message='…'` (GitHub's own message, cut to 200 characters). It never carries the login looked up or any credential. Successful calls log the allowance left at debug level. `recover-admin` has no credentials and looks up unauthenticated.
+
 Suspending someone ends all their sessions at once; re-enabling them does not revive those sessions. The team always keeps at least one active administrator; a change that would leave none is refused. At most 100 members.
 
 ## Sessions
