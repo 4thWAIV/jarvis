@@ -154,10 +154,18 @@ def test_an_english_sentence_ending_in_a_letter_still_ends():
 @pytest.mark.parametrize("said, heard", [
     ("Por supuesto, señor, ya está.", "señor, ya está."),
     ("¡Claro que sí! Hecho, señor.", "Hecho, señor."),
+    ("¡Claro que si! Hecho, señor.", "Hecho, señor."),
+    ("Claro que si, lo envío.", "lo envío."),
     ("Con mucho gusto, lo envío.", "lo envío."),
 ])
 def test_spanish_banned_phrases_are_stripped(server, said, heard):
     assert server.strip_markdown_for_tts(said) == heard
+
+
+def test_a_banned_phrase_is_matched_only_as_whole_words(server):
+    """"claro que si" folded is not the start of "claro que siempre"."""
+    said = "Claro que siempre lo reviso, señor."
+    assert server.strip_markdown_for_tts(said) == said
 
 
 def test_english_banned_phrases_are_stripped_as_before(server):

@@ -392,10 +392,36 @@ def apply_speech_corrections(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 # The English list's Spanish counterparts. No English sentence contains them,
-# so they are always stripped, whichever language is in force.
+# so they are always stripped, whichever language is in force. Matched with
+# accents folded ("claro que si" is "claro que sí") and as whole words
+# ("claro que siempre" is not "claro que si"); see `_banned_match`.
 _BANNED_SPANISH = ["por supuesto", "claro que sí", "con mucho gusto",
                    "excelente pregunta", "buena pregunta", "mis disculpas",
                    "le pido disculpas", "no dudes en", "no dude en"]
+_BANNED = ["my apologies", "i apologize", "absolutely", "great question",
+           "i'd be happy to", "of course", "how can i help",
+           "is there anything else", "i should clarify", "let me know if",
+           "feel free to"] + _BANNED_SPANISH
+_BANNED_PATTERNS = [re.compile(r"(?<!\w)" + re.escape(spoken_words.fold(p).lower())
+                               + r"(?!\w)")
+                    for p in _BANNED]
+
+
+def _match_form(text: str) -> str:
+    """`text` lowercased with its accents folded, one character for one, so a
+    match in it is at the same place in `text`."""
+    out = []
+    for c in text:
+        f = spoken_words.fold(c).lower()
+        out.append(f if len(f) == 1 else c)
+    return "".join(out)
+
+
+def _banned_match(text: str):
+    """The first banned phrase in `text`, as a match in `_match_form(text)`."""
+    form = _match_form(text)
+    found = [m for m in (p.search(form) for p in _BANNED_PATTERNS) if m]
+    return min(found, key=lambda m: m.start()) if found else None
 
 
 def strip_markdown_for_tts(text: str) -> str:
@@ -427,28 +453,19 @@ def strip_markdown_for_tts(text: str) -> str:
     result = _md_re.sub(r"\s{2,}", " ", result)
 
     # Strip banned phrases
-    banned = ["my apologies", "i apologize", "absolutely", "great question",
-              "i'd be happy to", "of course", "how can i help",
-              "is there anything else", "i should clarify", "let me know if",
-              "feel free to"] + _BANNED_SPANISH
-    result_lower = result.lower()
-    for phrase in banned:
-        idx = result_lower.find(phrase)
-        while idx != -1:
-            # Remove the phrase and any trailing comma/dash
-            end = idx + len(phrase)
-            if end < len(result) and result[end] in " ,—-":
+    while (match := _banned_match(result)) is not None:
+        idx, end = match.span()
+        # Remove the phrase and any trailing comma/dash
+        if end < len(result) and result[end] in " ,—-":
+            end += 1
+        if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
+            closer = "!" if result[idx - 1] == "¡" else "?"
+            idx -= 1
+            if result[end:end + 1] == closer:
                 end += 1
-            if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
-                closer = "!" if result[idx - 1] == "¡" else "?"
-                idx -= 1
-                if result[end:end + 1] == closer:
+                if result[end:end + 1] == " ":
                     end += 1
-                    if result[end:end + 1] == " ":
-                        end += 1
-            result = result[:idx] + result[end:]
-            result_lower = result.lower()
-            idx = result_lower.find(phrase)
+        result = result[:idx] + result[end:]
 
     return result.strip().strip(",").strip("—").strip("-").strip()
 
