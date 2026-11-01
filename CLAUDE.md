@@ -494,6 +494,22 @@ a pause mid-sentence does not send the brain half a sentence; typed words go
 at once. Nothing JARVIS says starts while he has spoken more recently than
 that, replies included, and announcements never start at once.
 
+## Speaking Spanish
+The language in force is `spoken_words.active_language()`, the one place it
+is decided (English until the language setting exists); callers reach it
+through the module so there is one answer. Every Fish request body is built
+by `tts.request_body`: the speech path (`_synth_for_speech`, which
+`synthesize_speech` and `/api/tts-test` go through too) and the key check.
+It adds Fish's `language` from `tts.FISH_LANGUAGES` (`es-MX` for Spanish;
+English sends none, as before). The splitter knows Spanish abbreviations
+(`speech._ABBREVIATIONS`) and keeps the spaced "p. m." / "a. m." in one
+piece. `strip_markdown_for_tts` also strips the Spanish banned phrases
+(`server._BANNED_SPANISH`) with their ¡ ¿ marks. For Spanish the brain's
+`launch_prompt` adds `brain.LANGUAGE_RULES`: answer in Latin American
+Spanish, "señor", English tool results said in Spanish, memory searched in
+both languages. It is in the launch prompt because an edited persona never
+receives template changes; the persona's "Language" section says the same.
+
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 
@@ -520,7 +536,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Fish Audio synthesis, one request per sentence chunk
+- `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
+  request body (`request_body`) with its language
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Audio playback; re-exports voice input
 - `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,

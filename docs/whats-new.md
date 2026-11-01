@@ -50,6 +50,10 @@ A teammate can send you work to run as a .zip in an ordinary message. When a mes
 
 JARVIS now reads accented words whole. Before, "sí" was heard as the letter "s" and "espérate" as two fragments, so no Spanish yes, no or cancel could ever count. The Spanish words are in place: sí, claro, adelante, hazlo, dale or "de acuerdo" to say yes; no, espera, luego, después, nunca, negativo or todavía to say no; espera, espérate, cancela, alto or detente to stop him; repite or otra vez to hear the last answer again; and exactly "empezar de cero" to clear the conversation, still confirmed with a yes. They take effect once JARVIS can be set to Spanish, which comes in a later release; until then English works exactly as before. Agent names and memories with accents are now found with or without them.
 
+## Getting ready to speak Spanish
+
+JARVIS's speaking side is ready for Spanish, though nothing changes yet: English stays in force until the language setting arrives in a later release. In Spanish, Fish Audio is told the text is Latin American Spanish, so it reads numbers, dates and units the Spanish way in the same JARVIS voice. Spanish abbreviations such as Sra., Dra., Ud. and pág., and times written "3 p. m.", no longer split a sentence into separately spoken pieces. "Por supuesto", "Claro que sí" and the other Spanish counterparts of JARVIS's banned phrases are never spoken. The brain answers in Spanish, calls you "señor", says English tool results in Spanish and searches its memory in both languages before saying it doesn't have something. Messages you send agents stay in the words and language you used.
+
 ## Agents and workflows stay in context
 
 The agent interface covers Claude Code and Codex sessions. Threads bring messages and replies together instead of requiring the user to reconstruct an exchange from separate announcements.
