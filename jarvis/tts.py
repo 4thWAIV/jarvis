@@ -13,6 +13,8 @@ from typing import Optional
 
 import httpx
 
+from jarvis import spoken_words
+
 log = logging.getLogger("jarvis.tts")
 
 FISH_TTS_URL = "https://api.fish.audio/v1/tts"
@@ -21,10 +23,10 @@ FISH_TTS_URL = "https://api.fish.audio/v1/tts"
 # only sets how Fish reads numbers, dates and units, not the voice. English
 # sends none, exactly as before; Spanish is Latin American (decision
 # `spanish-variety`).
-FISH_LANGUAGES = {"en": None, "es": "es-MX"}
+FISH_LANGUAGES = {spoken_words.ENGLISH: None, spoken_words.SPANISH: "es-MX"}
 
 
-def request_body(text: str, voice_id: str, *, language: str = "en",
+def request_body(text: str, voice_id: str, *, language: str = spoken_words.ENGLISH,
                  latency: str = "balanced") -> dict:
     """The one Fish request body: every synthesis and the key check use it."""
     body = {"text": text, "reference_id": voice_id, "format": "mp3",
@@ -44,7 +46,7 @@ class SynthResult:
 
 async def synthesize_chunk(text: str, *, api_key: str, voice_id: str,
                            client: Optional[httpx.AsyncClient] = None,
-                           latency: str = "balanced", language: str = "en",
+                           latency: str = "balanced", language: str = spoken_words.ENGLISH,
                            timeout: float = 15.0) -> Optional[SynthResult]:
     text = (text or "").strip()
     if not text or not api_key:

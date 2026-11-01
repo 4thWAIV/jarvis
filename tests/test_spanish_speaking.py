@@ -41,7 +41,7 @@ def test_english_sends_no_language_field():
 def test_spanish_sends_latin_american_spanish():
     from jarvis import tts
     assert tts.request_body("Buenas noches, señor.", "v",
-                            language="es")["language"] == "es-MX"
+                            language=spoken_words.SPANISH)["language"] == "es-MX"
 
 
 def test_every_language_has_a_fish_entry():
@@ -60,7 +60,7 @@ async def test_synthesis_carries_the_language_to_fish():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
         await tts.synthesize_chunk("Hola, señor.", api_key="k", voice_id="v",
-                                   client=c, language="es")
+                                   client=c, language=spoken_words.SPANISH)
     assert seen["body"]["language"] == "es-MX"
 
 
@@ -101,7 +101,7 @@ def test_the_audio_test_goes_through_the_same_synthesis(server, monkeypatch):
     calls = _capture_synth(server, monkeypatch)
     _spanish(monkeypatch)
     asyncio.run(server.synthesize_speech("Testing audio, sir."))
-    assert calls and calls[0]["language"] == "es"
+    assert calls and calls[0]["language"] == spoken_words.SPANISH
 
 
 def test_no_fish_request_is_built_anywhere_but_tts():
