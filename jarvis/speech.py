@@ -791,9 +791,11 @@ class SpeechScheduler:
         """Is every one of these words just a clipped form of something he is
         currently saying?
 
-        Deliberately narrow. Four characters is the minimum stem — "no"
-        against "nothing" is two characters of evidence, far too little to
-        override a deliberate one-word interruption — and the two words may
+        Deliberately narrow. Four characters of the SHORTER word is the
+        minimum stem — "no" against "nothing" is two characters of evidence,
+        far too little to override a deliberate one-word interruption, and so
+        is "es" or "a" he is saying against "espera" or "alto" heard (or "can"
+        against "cancel") — and the two words may
         differ by at most four characters, which covers the endings ASR
         actually drops (-s, -ed, -ing, -ping, -led) and not much else. Used
         ONLY by the one-word cancel branch above.
@@ -802,7 +804,7 @@ class SpeechScheduler:
         if not recent:
             return False
         return all(
-            any(len(t) >= 4 and abs(len(r) - len(t)) <= 4
+            any(min(len(t), len(r)) >= 4 and abs(len(r) - len(t)) <= 4
                 and (r.startswith(t) or t.startswith(r))
                 for r in recent)
             for t in toks)
