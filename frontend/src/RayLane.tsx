@@ -26,7 +26,7 @@
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
-import { mainOrb } from "./OrbControl";
+import { transferReceive, transferTransmit } from "./orbSource";
 import { takeRayColour } from "./rayColours";
 import { RAY_MS, RAY_TRAVEL_MS } from "./agents";
 import { rayArrival, rayDirection, rayEnd, rayOrigin } from "./rayGeometry";
@@ -141,7 +141,7 @@ export function RayLane() {
         // Outgoing, the orb goes into its transmitting state for as long as
         // the ray shows, leaning the way the ray leaves it.
         if (moving && outgoing) {
-          mainOrb.current?.transmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
+          transferTransmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
         }
         const ray: Ray = { id: transfer.id, end: transfer.end, direction: transfer.direction,
                            motion, d, colour, words: transfer.words };
@@ -154,7 +154,7 @@ export function RayLane() {
         life.after(RAY_TRAVEL_MS, () => {
           const seconds = (RAY_MS - RAY_TRAVEL_MS) / 1000;
           if (!outgoing) {
-            if (moving) mainOrb.current?.receive(colour, { direction: rayDirection(d), seconds });
+            if (moving) transferReceive(colour, { direction: rayDirection(d), seconds });
             return;
           }
           if (reachedTab(transfer, colour, seconds)) return;

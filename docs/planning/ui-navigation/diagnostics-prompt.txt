@@ -1,0 +1,10 @@
+Diagnostics: Tim has requested that you own and execute the UI navigation and white pipeline build as a full background workflow, through implementation, integration, tests, review and a working local candidate for his validation. Do not merge or deploy production.
+
+Source checkout: /Users/timothystockstill/code/macos/4thWAIV/jarvis
+Read docs/planning/ui-navigation/implementation.md and the latest docs/design/ui-map/design.html. Adopt the workflow in docs/planning/ui-navigation/dispatch.json when present. These files are untracked and must be copied explicitly into your isolated worktree; do not assume they arrive with git.
+
+The defining behavior is a persistent background pipeline map. A white signal leaves the actual brain orb, follows the top backbone, takes a registered regional rail, branches through the object's socket to the exact part, arrives with rings/contour, holds, then resets. No free routes across content and no outline-only substitute. Human and brain navigation share the same registered handlers; cover the entire current component map, nested views and meaningful parts, with enforcement for future controls.
+
+Start a background implementation owner with parallel workers after the shared contract, within available capacity. Preserve unrelated background work. Use a separate worktree, ports and data; leave the live JARVIS untouched. Report progress through the native workflow monitor. Do not return only another plan or a standalone mockup.
+
+Acknowledge ownership and report the workflow/worktree/background worker. At completion, leave the actual application running locally, open it using macOS open, and return its URL plus validation instructions and evidence to Tim through JARVIS. Leave the workflow waiting for his validation. No merge before explicit local acceptance and subsequent release authorization.

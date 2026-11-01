@@ -14,6 +14,7 @@
  * the centre (NodeView.tsx).
  */
 
+import { byHand, useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore } from "react";
 import {
   cpuPercent, memoryPercent, openNetwork, paceText, paceWidth, paceWords, PRESENCE_WORDS,
@@ -67,9 +68,13 @@ function spoken(node: NodeView, self: boolean, current: boolean, human: string):
   ].filter(Boolean).join(" ");
 }
 
-function Rail({ label, percent, colour }: { label: string; percent: number | null; colour: string }) {
+type PartRef = (el: Element | null) => void;
+
+function Rail({ label, percent, colour, partRef }: {
+  label: string; percent: number | null; colour: string; partRef?: PartRef;
+}) {
   return (
-    <span className={`visual-metric${percent === null ? " unknown" : ""}`}>
+    <span ref={partRef} className={`visual-metric${percent === null ? " unknown" : ""}`}>
       <span className="metric-label">{label}</span>
       <span className="metric-track">
         {percent !== null && <i style={{ width: `${Math.min(100, percent)}%`, background: colour }} />}
@@ -79,10 +84,10 @@ function Rail({ label, percent, colour }: { label: string; percent: number | nul
   );
 }
 
-function PaceRail({ points }: { points: number | null }) {
+function PaceRail({ points, partRef }: { points: number | null; partRef?: PartRef }) {
   const ahead = points !== null && paceText(points).startsWith("+");
   return (
-    <span className={`visual-metric pace-metric${points === null ? " unknown" : ""}`}
+    <span ref={partRef} className={`visual-metric pace-metric${points === null ? " unknown" : ""}`}
           title={points === null ? "Brain pace not measured"
             : ahead ? `Brains ${paceWords(points)}: more left than expected at this point in the week`
             : `Brains ${paceWords(points)}`}>
@@ -102,28 +107,32 @@ export function NetworkTile({ node, self, current }: { node: NodeView; self: boo
   const selected = open?.kind === "node" && open.nodeId === node.node_id;
   const human = humanReading(node);
   const marker = current ? node.presence : "unknown";
+  // This presentation of the node, for the brain to point at: the tile,
+  // entered from the right-hand lane, and each reading on it.
+  const ui = useUiTarget({ ref: { region: "right", view: "right.network", kind: "node", key: node.node_id },
+                           label: node.label, socket: { rail: "rail.right", side: "right" } });
   return (
-    <button type="button" data-node={node.node_id}
+    <button type="button" data-node={node.node_id} ref={ui.whole}
             className={`compact-tile node-tile${self ? " self-tile" : ""}${
               current ? "" : " stale"}${selected ? " selected" : ""}`}
             aria-label={spoken(node, self, current, human.words)} aria-pressed={selected}
-            onClick={() => openNetwork.set({ kind: "node", nodeId: node.node_id })}>
+            onClick={() => byHand("network.open", { kind: "node", nodeId: node.node_id })}>
       <span className="tile-title" aria-hidden="true">
-        <i className={`online-marker ${marker}`} />
-        <span className="tile-name">{node.label.toUpperCase()}</span>
+        <i ref={ui.part("presence")} className={`online-marker ${marker}`} />
+        <span ref={ui.part("name")} className="tile-name">{node.label.toUpperCase()}</span>
         {self && <span className="tile-self">&nbsp;· THIS MAC</span>}
       </span>
       <span className="tile-body">
-        <span className={`human-beacon ${human.kind}${human.figure.length > 2 ? " long" : ""}`} aria-hidden="true"
+        <span ref={ui.part("human")} className={`human-beacon ${human.kind}${human.figure.length > 2 ? " long" : ""}`} aria-hidden="true"
               title={human.ageMs === null ? human.words : `${human.words} (${node.last_human_activity_at})`}>
           <PersonIcon />
           <strong>{human.figure}</strong>
           <span>HUMAN</span>
         </span>
         <span className="metric-stack" aria-hidden="true">
-          <Rail label="CPU" percent={cpuPercent(node.resources)} colour="#64ded5" />
-          <Rail label="MEM" percent={memoryPercent(node.resources)} colour="#b8a0f4" />
-          <PaceRail points={node.brains.pace_points} />
+          <Rail label="CPU" percent={cpuPercent(node.resources)} colour="#64ded5" partRef={ui.part("cpu")} />
+          <Rail label="MEM" percent={memoryPercent(node.resources)} colour="#b8a0f4" partRef={ui.part("memory")} />
+          <PaceRail points={node.brains.pace_points} partRef={ui.part("pace")} />
         </span>
       </span>
     </button>

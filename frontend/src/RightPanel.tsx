@@ -5,7 +5,7 @@
  * selected one below. Agents is selected to begin with.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { FoldersPanel } from "./FoldersPanel";
 import { NetworkPanel } from "./NetworkPanel";
@@ -14,6 +14,8 @@ import { QueueIcon } from "./QueueIcons";
 import { QueuePanel } from "./QueuePanel";
 import { attention } from "./queueStore";
 import { agentsTabLit } from "./agents";
+import { byHand } from "./uiRegistry";
+import { rightTab, type RightTab } from "./uiNavigation";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { TabRow, type Tab } from "./Tabs";
 import { VoiceSummary } from "./VoiceSummary";
@@ -112,20 +114,18 @@ const TABS: Tab[] = [
 // Left to right, top row first: two rows of three.
 const ORDER = ["folders", "agents", "queue", "workflows", "network", "diagnostics"];
 const LAID_OUT = ORDER.map((id) => TABS.find((t) => t.id === id)!);
-const FIRST = "agents";
 
 export function RightPanel() {
-  const [selected, setSelected] = useState(FIRST);
+  const selected = useSyncExternalStore(rightTab.subscribe, rightTab.get);
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
   // Something waiting and unread lights the Queue tab while another is open.
   const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
-  const tab = TABS.find((t) => t.id === selected) ?? TABS.find((t) => t.id === FIRST)!;
-  const select = (id: string) => {
-    setSelected(id);
-    if (id === "agents") agentsTabLit.set(false);   // its message is seen now
-  };
+  const tab = TABS.find((t) => t.id === selected)!;
+  // Selecting Agents clears its lit mark: in right.tab.select's handler
+  // (uiNavigation.ts), which the brain's request runs too.
+  const select = (id: string) => byHand("right.tab.select", { tab: id as RightTab });
   return (
     <div id="right-column">
       <TabRow tabs={LAID_OUT} selected={selected} onSelect={select} className="right-tabs" labelled

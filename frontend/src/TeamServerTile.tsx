@@ -12,6 +12,7 @@
  * A click opens the full health detail in the centre (TeamServerView.tsx).
  */
 
+import { byHand } from "./uiRegistry";
 import { useSyncExternalStore, type ReactNode } from "react";
 import {
   network, openNetwork, serverReading, sinceMs, type RowState, type ServerReading,
@@ -75,7 +76,7 @@ export function TeamServerTile() {
             className={`compact-tile server-tile readiness-${readinessClass(r.readiness)}${
               open?.kind === "server" ? " selected" : ""}`}
             aria-label={spoken(r)} aria-pressed={open?.kind === "server"}
-            onClick={() => openNetwork.set({ kind: "server" })}>
+            onClick={() => byHand("network.open", { kind: "server" })}>
       <span className="tile-title" aria-hidden="true">TEAM SERVER</span>
       <span className="tile-body">
         <span className="server-beacon" aria-hidden="true">

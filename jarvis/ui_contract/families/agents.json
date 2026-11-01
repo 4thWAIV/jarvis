@@ -1,0 +1,12 @@
+{
+  "family": "agents",
+  "owner": "coverage-right",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "agent", "entity": "session", "label": "Agent", "parts": ["row", "name", "state", "orb"],
+     "presentations": [{"view": "right.agents", "reveal": {"command": "right.tab.select", "args": {"tab": "agents"}}}]},
+    {"kind": "agentsList", "entity": null, "label": "Agents list", "parts": ["filter", "previous", "next"],
+     "presentations": [{"view": "right.agents", "reveal": {"command": "right.tab.select", "args": {"tab": "agents"}}}]}
+  ]
+}

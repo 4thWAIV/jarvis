@@ -21,6 +21,7 @@ import { inputStatus, micLevel, micMuted, micOff } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startSessionsSocket } from "./sessionsSocket";
+import { startUiClient } from "./uiClient";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -51,6 +52,8 @@ export function startJarvis(orb: Orb): void {
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
   startSessionsSocket();
+  // The brain's UI requests come to this page on the same socket.
+  startUiClient(socket);
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());

@@ -1,0 +1,21 @@
+{
+  "family": "folders",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "foldersList", "entity": null, "label": "Folder catalog",
+     "parts": ["search", "open", "role", "availability", "registered", "discovered", "ignored", "removed", "add"],
+     "presentations": [{"view": "right.folders", "parts": ["search", "open"], "reveal": {"command": "right.tab.select", "args": {"tab": "folders"}}},
+                       {"view": "main.folders", "parts": ["search", "role", "availability", "registered", "discovered",
+                                                         "ignored", "removed", "add"]}]},
+    {"kind": "folder", "entity": "folder", "label": "Folder",
+     "parts": ["row", "name", "availability", "detail", "location", "contents", "close"],
+     "presentations": [{"view": "right.folders", "parts": ["row", "name", "availability"], "reveal": {"command": "right.tab.select", "args": {"tab": "folders"}}},
+                       {"view": "main.folders", "parts": ["row", "detail", "location", "contents", "close"]}]},
+    {"kind": "folderEntry", "entity": null, "keyOf": ["folder", "folderEntry"], "label": "Folder entry",
+     "parts": ["row", "crumb", "preview"], "presentations": [{"view": "main.folders"}]},
+    {"kind": "folderCandidate", "entity": "candidate", "label": "Discovered folder", "parts": ["row"],
+     "presentations": [{"view": "main.folders"}]}
+  ]
+}

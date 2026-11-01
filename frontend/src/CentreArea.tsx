@@ -40,6 +40,8 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { byHand } from "./uiRegistry";
+import { mainView, openDetails, type MainTab } from "./uiNavigation";
 import { AgentThread } from "./AgentThread";
 import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
@@ -149,14 +151,12 @@ const WORKFLOW_VIEW: Tab = {
   view: () => null,
 };
 
-/** The view the page opens on: `?view=<id>` names any view, hidden or not. */
-function firstView(): string {
-  const asked = new URLSearchParams(window.location.search).get("view");
-  return VIEWS.some((v) => v.id === asked) ? asked! : VIEWS[0].id;
-}
+/** The selected view lives in the shared route state (uiNavigation.ts);
+ *  these effects still follow an item opening or closing. */
+const setSelected = (next: (now: MainTab) => MainTab) => mainView.set(next(mainView.get()));
 
 export function CentreArea() {
-  const [selected, setSelected] = useState(firstView);
+  const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
@@ -170,26 +170,26 @@ export function CentreArea() {
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
-    setSelected((now) => (workflow ? "workflow" : now === "workflow" ? VIEWS[0].id : now));
+    setSelected((now) => (workflow ? "workflow" : now === "workflow" ? "conversation" : now));
   }, [workflow]);
   useEffect(() => {
-    setSelected((now) => (thread ? "thread" : now === "thread" ? VIEWS[0].id : now));
+    setSelected((now) => (thread ? "thread" : now === "thread" ? "conversation" : now));
   }, [thread]);
   useEffect(() => {
-    setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? VIEWS[0].id : now));
+    setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? "conversation" : now));
   }, [diagnostics]);
   useEffect(() => {
-    setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? VIEWS[0].id : now));
+    setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? "conversation" : now));
   }, [subsystem]);
   useEffect(() => {
-    setSelected((now) => (networkOpen ? "network" : now === "network" ? VIEWS[0].id : now));
+    setSelected((now) => (networkOpen ? "network" : now === "network" ? "conversation" : now));
   }, [networkOpen]);
   useEffect(() => {
-    setSelected((now) => (queueOpen ? "queue" : now === "queue" ? VIEWS[0].id : now));
+    setSelected((now) => (queueOpen ? "queue" : now === "queue" ? "conversation" : now));
   }, [queueOpen]);
   // Choosing a folder in the right panel shows the Folders view.
   const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
-  useEffect(() => { if (foldersAsked) setSelected("folders"); }, [foldersAsked]);
+  useEffect(() => { if (foldersAsked) mainView.set("folders"); }, [foldersAsked]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
@@ -208,6 +208,9 @@ export function CentreArea() {
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
+  // Which detail tabs have an item open: main.tab.select offers only these.
+  const open = views.map((v) => v.id).join(" ");
+  useEffect(() => { openDetails.set(new Set(open.split(" ") as MainTab[])); }, [open]);
   const conversation = VIEWS[0];
   const folders = VIEWS[1];
   // Once opened, Folders is kept too, so its filters, selection and scroll
@@ -219,7 +222,8 @@ export function CentreArea() {
   const kept = view.id !== "main";
   return (
     <>
-      <TabRow tabs={views} selected={view.id} onSelect={setSelected} className="centre-tabs" words />
+      <TabRow tabs={views} selected={view.id} onSelect={(tab) => byHand("main.tab.select", { tab: tab as MainTab })}
+              className="centre-tabs" words />
       <TeamSignInReminder />
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}

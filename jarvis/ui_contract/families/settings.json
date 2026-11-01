@@ -1,0 +1,19 @@
+{
+  "family": "settings",
+  "owner": "coverage-left-settings",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "menu", "entity": null, "label": "Menu", "parts": ["toggle", "settings", "updates", "restart"],
+     "presentations": [{"view": "overlay.controls", "parts": ["toggle"]},
+                       {"view": "overlay.menu", "parts": ["settings", "updates", "restart"]}]},
+    {"kind": "settings", "entity": null, "label": "Settings", "parts": ["close", "nav"],
+     "presentations": [{"view": "overlay.settings"}]},
+    {"kind": "settingsSection", "entity": "settingsSection", "label": "Settings section", "parts": ["heading", "body"],
+     "presentations": [{"view": "overlay.settings"}]},
+    {"kind": "teamReminder", "entity": null, "label": "Sign-in reminder", "parts": ["text", "signIn", "later"],
+     "presentations": [{"view": "main.notice"}]},
+    {"kind": "footer", "entity": null, "label": "Footer", "parts": ["label"],
+     "presentations": [{"view": "footer.fixed"}]}
+  ]
+}

@@ -12,6 +12,7 @@ import { MenuControl } from "./MenuControl";
 import { BrainUsage } from "./BrainUsage";
 import { MicControl } from "./MicControl";
 import { RayLane } from "./RayLane";
+import { UiPipelineLayer } from "./UiPipelineLayer";
 import { RightPanel } from "./RightPanel";
 import { Settings } from "./Settings";
 import { OrbControl } from "./OrbControl";
@@ -42,6 +43,9 @@ export function App() {
       <MenuControl />
       <Settings />
 
+      {/* The pipeline map and white attention (uiAttention.ts), under the
+          rays: the brain's pointing never covers a message's transmission. */}
+      <UiPipelineLayer />
       <RayLane />
       {/* Between the two columns: the view tabs and the selected view. */}
       <CentreArea />

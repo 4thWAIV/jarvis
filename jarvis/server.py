@@ -87,6 +87,7 @@ from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
 from jarvis import session_messages
+from jarvis import ui_control
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -10834,9 +10835,22 @@ async def voice_handler(ws: WebSocket):
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            kind = msg.get("type")
+            # The page's UI frames (ui_control.py): who it is, and its answers
+            # to the brain's requests. Never speech, so before the mouth.
+            if kind == "ui_hello":
+                welcome = ui_clients.hello(ws, msg)
+                if welcome is not None:
+                    _enqueue(queue, welcome)
+                continue
+            if kind == "ui_result":
+                ui_clients.result(ws, msg)
+                continue
+            if kind == "ui_event":
+                ui_clients.event(ws, msg)
+                continue
             if speech is None:
                 continue
-            kind = msg.get("type")
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
                 # whose failures were invisible from here: it can go deaf with
@@ -10912,6 +10926,9 @@ async def voice_handler(ws: WebSocket):
                         else "with nothing of his played yet"
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
+                # His words came from this page: the brain's UI requests in
+                # the turn they start go to it and no other.
+                ui_clients.note_turn(ws)
                 if typed:
                     await utterance.now()
                     await take_utterance(text, _transcript_id(msg), typed=True)
@@ -10924,6 +10941,7 @@ async def voice_handler(ws: WebSocket):
     finally:
         # Words still being gathered when the page went are sent, not lost.
         _spawn(utterance.now())
+        ui_clients.gone(ws)
         _drop_voice_client(ws)
 
 
@@ -11268,6 +11286,118 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.add("update_jarvis")
 TAINTING_TOOLS["update_status"] = "the new commits' messages, written by the team"
 TAINT_EXEMPT_TOOLS["update_jarvis"] = "it updates and restarts JARVIS, it does not read"
+
+
+# ---------------------------------------------------------------------------
+# The page's navigation and white attention, for the brain (ui_control.py)
+# ---------------------------------------------------------------------------
+#
+# The brain asks; the one page of this turn does it with the same registered
+# handlers Tim's own clicks run, and answers when it has (an indication at
+# arrival). The contract (jarvis/ui_contract/) validates every request here
+# and again on the page. Never broadcast: a request goes to one page.
+
+def _send_ui_frame(ws, frame: dict) -> bool:
+    queue = _voice_queues.get(ws)
+    return queue is not None and _enqueue(queue, frame)
+
+
+ui_clients = ui_control.UiClients(_send_ui_frame)
+
+
+def _ui_origin() -> str | None:
+    return brain_instance.current_origin if brain_instance else None
+
+
+UI_SAID_MAX = 1200
+
+
+def _ui_pair(key: str, value) -> str:
+    if isinstance(value, dict):
+        value = " ".join(f"{k}:{v}" for k, v in value.items())
+    elif isinstance(value, list):
+        value = "+".join(str(v) for v in value)
+    return f"{key}: {value}"
+
+
+def _ui_said(result: dict, *, map_wrapped: bool = False) -> str:
+    """A UI result for the brain, as `field: value` pairs: its status,
+    reason, effects and the page's ids. A map's labels (agents', folders',
+    instances' names) come back in an untrusted block."""
+    lines = [_ui_pair(k, result[k]) for k in ("status", "arrival", "reason", "effects", "cueId",
+                                           "resolvedTarget", "navigationRevision", "delivery", "events")
+             if result.get(k) not in (None, [], "")]
+    for n, step in enumerate(result.get("steps") or [], 1):
+        lines.append(_ui_pair(f"step {n}", {k: step.get(k) for k in ("status", "arrival", "reason") if step.get(k)}))
+    if map_wrapped and result.get("map") is not None:
+        # Labels on the page are other people's words: the whole map in
+        # the untrusted block.
+        return _wrap_untrusted("ui_map", "\n".join(lines) + "\n" + json.dumps(result["map"], separators=(",", ":")))
+    # A reason can quote what was asked for: walled like any echo.
+    return _safe_label(" / ".join(lines), UI_SAID_MAX)
+
+
+def _ui_client_arg(args: dict) -> tuple[str | None, str | None]:
+    """The page a request names, checked against this turn's page: on his
+    turn only his own page may be named."""
+    client = args.get("client")
+    if client is not None and not isinstance(client, str):
+        return None, "client must be a page's client ID"
+    origin = _ui_origin()
+    if client and origin == "user":
+        bound, _ = ui_clients.target_page(None, origin)
+        if bound is not None and bound.client_id != client:
+            return None, "only the page you are speaking from can be changed on your turn"
+    return client, None
+
+
+async def _ui_request(operation: dict, args: dict) -> dict:
+    client, problem = _ui_client_arg(args)
+    if problem:
+        return {"status": "invalid", "reason": problem}
+    return await ui_clients.request(operation, client=client, origin=_ui_origin(),
+                                    turn=getattr(_turn_utt, "id", None) if _turn_utt else None)
+
+
+async def tool_ui_map(args: dict) -> str:
+    """What the page shows, its commands and its targets (bounded)."""
+    op = {"kind": "map", **{k: args[k] for k in ("region", "view") if k in args}}
+    return _ui_said(await _ui_request(op, args), map_wrapped=True)
+
+
+async def tool_ui_navigate(args: dict) -> str:
+    """Run one registered navigation command on the page of this turn."""
+    op = {"kind": "navigate", "commandId": args.get("command"), "args": args.get("args") or {}}
+    return _ui_said(await _ui_request(op, args))
+
+
+async def tool_ui_indicate(args: dict) -> str:
+    """Point at one exact target with the white signal; answered at arrival."""
+    op = {"kind": "indicate", "target": args.get("target"),
+          **{k: args[k] for k in ("reveal", "style", "holdMs", "label") if k in args}}
+    return _ui_said(await _ui_request(op, args))
+
+
+async def tool_ui_clear(args: dict) -> str:
+    """Clear one of the brain's cues, or all of them."""
+    op = {"kind": "clear", **({"cueId": args["cueId"]} if args.get("cueId") else {})}
+    return _ui_said(await _ui_request(op, args))
+
+
+TOOL_HANDLERS.update({
+    "ui_map": tool_ui_map,
+    "ui_navigate": tool_ui_navigate,
+    "ui_indicate": tool_ui_indicate,
+    "ui_clear": tool_ui_clear,
+})
+# Changing what he is looking at is his to ask for: only on his turn.
+ACTING_TOOLS.update({"ui_navigate", "ui_indicate"})
+TAINTING_TOOLS["ui_map"] = "what is on your screen"
+TAINT_EXEMPT_TOOLS.update({
+    "ui_navigate": "it changes the view through a registered command; it returns ids and effects, no text",
+    "ui_indicate": "it points at a target; it returns ids, a status and effects, no text",
+    "ui_clear": "it clears the brain's own pointing; it reads nothing",
+})
 
 
 # ---------------------------------------------------------------------------

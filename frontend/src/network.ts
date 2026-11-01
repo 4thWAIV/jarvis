@@ -20,6 +20,8 @@ import { liveRead } from "./liveRead";
 import { createStore } from "./store";
 import { spokenAgo } from "./timeFormat";
 import { sign } from "./WeeklyUsage";
+import { registerCommand } from "./uiRegistry";
+import { mainView } from "./uiNavigation";
 
 // ── The team server's snapshot ───────────────────────────────────────────
 
@@ -137,6 +139,35 @@ export const network = liveRead(getNetwork, [networkChanged]);
  *  health, or one node. */
 export type NetworkOpen = { kind: "server" } | { kind: "node"; nodeId: string };
 export const openNetwork = createStore<NetworkOpen | null>(null);
+
+// Opening and closing that detail: the registered commands every control
+// (the Team Server tile, an instance's tile, Close) and the brain run.
+registerCommand("network.open", {
+  availability: (args) => {
+    if (args.kind === "server") return { available: true };
+    const nodes = network.get().value?.snapshot?.nodes;
+    if (!nodes) return { available: false, reason: "not-loaded" };
+    return args.nodeId && nodes.some((n) => n.node_id === args.nodeId)
+      ? { available: true } : { available: false, reason: "no-entity" };
+  },
+  execute(args) {
+    const was = openNetwork.get();
+    const next: NetworkOpen = args.kind === "server" ? { kind: "server" } : { kind: "node", nodeId: args.nodeId! };
+    const replaced = was !== null && JSON.stringify(was) !== JSON.stringify(next);
+    openNetwork.set(next);
+    mainView.set("network");
+    return { status: "completed",
+             effects: replaced ? ["centre.view-shown", "centre.detail-replaced"] : ["centre.view-shown"] };
+  },
+});
+
+registerCommand("network.close", {
+  availability: () => openNetwork.get() ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    openNetwork.set(null);
+    return { status: "completed", effects: ["centre.detail-closed"] };
+  },
+});
 
 // ── Read out of it, the same way everywhere ──────────────────────────────
 

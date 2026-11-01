@@ -1,0 +1,21 @@
+{
+  "family": "conversation",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "conversation", "entity": null, "label": "Conversation", "parts": ["history", "earlier", "input"],
+     "presentations": [{"view": "main.conversation"}]},
+    {"kind": "conversationRecord", "entity": "record", "label": "Conversation record",
+     "parts": ["record", "user", "answer", "agent", "expand"],
+     "presentations": [{"view": "main.conversation"}]},
+    {"kind": "capture", "entity": "capture", "label": "Capture", "parts": ["box", "body", "recipient", "actions"],
+     "presentations": [{"view": "main.conversation"}, {"view": "main.main"}]},
+    {"kind": "sources", "entity": "record", "label": "Sources", "parts": ["chip", "items"],
+     "presentations": [{"view": "main.conversation"}]},
+    {"kind": "agentThread", "entity": "session", "label": "Agent thread", "parts": ["header", "close", "earlier"],
+     "presentations": [{"view": "main.thread"}]},
+    {"kind": "threadRecord", "entity": null, "keyOf": ["session", "record"], "label": "Thread record", "parts": ["record"],
+     "presentations": [{"view": "main.thread"}]}
+  ]
+}

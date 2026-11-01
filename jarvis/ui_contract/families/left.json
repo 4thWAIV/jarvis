@@ -1,0 +1,17 @@
+{
+  "family": "left",
+  "owner": "coverage-left-settings",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "orb", "entity": null, "label": "The main orb", "parts": ["canvas", "logo"],
+     "presentations": [{"view": "left.fixed"}]},
+    {"kind": "status", "entity": null, "label": "Status", "parts": ["text", "stop"],
+     "presentations": [{"view": "left.fixed"}]},
+    {"kind": "mic", "entity": null, "label": "Microphone", "parts": ["meter", "health", "mute", "off"],
+     "presentations": [{"view": "left.fixed"}]},
+    {"kind": "brainAccount", "entity": "provider", "label": "Brain account",
+     "parts": ["name", "remaining", "pace", "reset"],
+     "presentations": [{"view": "left.fixed"}]}
+  ]
+}

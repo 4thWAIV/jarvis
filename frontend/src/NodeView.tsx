@@ -11,6 +11,7 @@
  * called human presence.
  */
 
+import { byHand, useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { PROVIDERS } from "./providers";
 import { resetDay } from "./WeeklyUsage";
@@ -87,16 +88,23 @@ export function DetailHead({ title, state, className = "", icon }: {
         <p className={`subsystem-head-state ${className}`}>{state}</p>
       </div>
       <button type="button" className="workflow-close" title="Close" aria-label="Close"
-              onClick={() => openNetwork.set(null)}>×</button>
+              onClick={() => byHand("network.close", {})}>×</button>
     </section>
   );
 }
 
-/** Labelled facts, one per line: the centre details' one layout. */
-export function Facts({ rows }: { rows: [string, string][] }) {
+/** Labelled facts, one per line: the centre details' one layout. A row
+ *  naming a part registers its value's own extent (`partRef`), so the
+ *  brain points at the value, not the whole line. */
+export function Facts({ rows, partRef }: {
+  rows: [string, string, string?][];
+  partRef?: (part: string) => (el: Element | null) => void;
+}) {
   return (
     <dl className="network-facts">
-      {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+      {rows.map(([k, v, part]) => (
+        <div key={k}><dt>{k}</dt><dd>{part && partRef ? <span ref={partRef(part)}>{v}</span> : v}</dd></div>
+      ))}
     </dl>
   );
 }
@@ -124,34 +132,36 @@ export function NodeView({ nodeId }: { nodeId: string }) {
   const self = node !== null && node.node_id === snapshot!.you_node_id;
   const current = status !== null && rosterCurrent(status);
   const human = node ? humanReading(node) : null;
-  const rows: [string, string][] = node ? [
-    ["Owner", node.owner_login],
+  const ui = useUiTarget(node ? { ref: { region: "main", view: "main.network", kind: "node", key: node.node_id },
+                                    label: node.label, socket: { rail: "rail.main", side: "right" } } : null);
+  const rows: [string, string, string?][] = node ? [
+    ["Owner", node.owner_login, "owner"],
     ["Instance", node.node_id],
-    ["Version / OS", `JARVIS ${node.jarvis_version} · ${node.os}`],
+    ["Version / OS", `JARVIS ${node.jarvis_version} · ${node.os}`, "version"],
     ["Presence", current ? PRESENCE_WORDS[node.presence] : "Inventory stale; current presence unknown"],
-    ["Last server update", whenText(node.last_seen_at)],
+    ["Last server update", whenText(node.last_seen_at), "lastUpdate"],
     ["Last human interaction", human!.ageMs === null ? (node.activity_state === "unsupported"
       ? "Activity unavailable" : "No activity observed")
       : `${whenText(node.last_human_activity_at)}${node.last_human_activity_source
         ? ` · ${SOURCE_WORDS[node.last_human_activity_source]}` : ""}`],
     ["Activity data", ACTIVITY_WORDS[node.activity_state]],
-    ["CPU", cpuText(node.resources)],
-    ["Memory", memoryText(node.resources)],
-    ["Brain pace", brainPace(node)],
-    ["Quota coverage", coverage(node)],
+    ["CPU", cpuText(node.resources), "cpu"],
+    ["Memory", memoryText(node.resources), "memory"],
+    ["Brain pace", brainPace(node), "pace"],
+    ["Quota coverage", coverage(node), "coverage"],
     ["Average remaining", node.brains.average_remaining_percent === null ? "—"
       : `${Math.round(node.brains.average_remaining_percent)}%${
         node.brains.measured < node.brains.configured ? " · partial" : ""}`],
   ] : [];
   return (
-    <div id="network-detail" className="network-detail" data-node={nodeId}>
+    <div id="network-detail" className="network-detail" data-node={nodeId} ref={ui.whole}>
       <DetailHead title={`${node ? node.label : "Instance"}${self ? " · This Mac" : ""}`}
                   state="Values from Team Server" />
       {!current && node && (
         <p className="network-stale">Values are stale: the last arrived {whenText(status!.received_at)}.</p>
       )}
       {!node && <p className="network-waiting">The team server no longer lists this instance.</p>}
-      {node && <Facts rows={rows} />}
+      {node && <Facts rows={rows} partRef={ui.part} />}
       {node && node.brains.accounts.length > 0 && (
         <section aria-label="Brain accounts">
           <h3>Brain accounts</h3>
