@@ -208,7 +208,8 @@ async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
         assert got["hearing"] == "", got
         assert got["history"] == ["something half heard", "check the build\nand the tests"], got
 
-        # Heard words start a new turn after the typed one.
+        # Leave typing mode; heard words then show in the microphone caption.
+        await page.keyboard.press("Tab")
         await page.evaluate("window.__hear('and deploy', false)")
         got = await page.evaluate(BOXES)
         assert got["hearing"] == "and deploy", got
