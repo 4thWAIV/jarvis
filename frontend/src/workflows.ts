@@ -7,6 +7,7 @@
  */
 
 import { liveRead } from "./liveRead";
+import { t } from "./locale";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
@@ -95,9 +96,19 @@ export const SUBAGENT_LOOK: Record<SubagentState, WorkflowState> = {
   working: "running", finished: "succeeded", stale: "silent",
 };
 
-export const SUBAGENT_WORDS: Record<SubagentState, string> = {
-  working: "Working", finished: "Finished", stale: "Gone quiet",
-};
+/** Words by a record's own code, in the language in force whenever one is
+ *  read: `WORDS[state]` stays the one way to say a state, and a component
+ *  that renders it with `useT()` is drawn again when the language changes.
+ *  The right panel's modules (workflows.ts, subsystems.ts, network.ts) say
+ *  their codes this way. */
+export function wordsOf<C extends string>(codes: readonly C[], say: (code: C) => string): Readonly<Record<C, string>> {
+  const words = {} as Record<C, string>;
+  for (const code of codes) Object.defineProperty(words, code, { get: () => say(code), enumerable: true });
+  return words;
+}
+
+export const SUBAGENT_WORDS = wordsOf<SubagentState>(["working", "finished", "stale"],
+  (s) => t(`right.workflows.subagentState.${s}`));
 
 /** The session and subagent a `SubagentRow.key` names, or null for a
  *  workflow's id. */
@@ -214,10 +225,9 @@ registerClose("workflow.close", workflowSlot);
 export const FINISHED: ReadonlySet<WorkflowState> = new Set(["succeeded", "failed", "cancelled"]);
 
 /** What the page calls each state. */
-export const STATE_WORDS: Record<WorkflowState, string> = {
-  running: "Running", waiting: "Waiting", blocked: "Blocked", needs_you: "Needs you",
-  succeeded: "Finished", failed: "Failed", cancelled: "Cancelled", silent: "Gone quiet",
-};
+export const STATE_WORDS = wordsOf<WorkflowState>(
+  ["running", "waiting", "blocked", "needs_you", "succeeded", "failed", "cancelled", "silent"],
+  (s) => t(`right.workflows.state.${s}`));
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -277,7 +287,7 @@ export async function dismissWorkflow(id: string): Promise<string | null> {
   left.delete(id);
   dismissedHere.set(left);
   const body = res ? (await res.json().catch(() => ({}))) as { error?: string; detail?: string } : {};
-  return body.error || body.detail || "the server did not answer";
+  return body.error || body.detail || t("right.workflows.noAnswer");
 }
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
@@ -292,7 +302,7 @@ export async function answerDecision(id: string, key: string, answer: string): P
     return null;
   }
   const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
-  return body.error || body.detail || `the server refused it (${res.status})`;
+  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
 }
 
 /** "just now", "2m ago", "3h ago", "2d ago", from a server time in seconds. */
@@ -304,5 +314,6 @@ export function ago(seconds: number, now = Date.now() / 1000): string {
 export function phaseText(w: Workflow): string {
   if (!w.phases_total) return w.phase ?? "";
   const k = Math.min(w.phases_done + (FINISHED.has(w.state) ? 0 : 1), w.phases_total);
-  return `phase ${k}/${w.phases_total}${w.phase ? ` ${w.phase}` : ""}`;
+  return w.phase ? t("right.workflows.phaseNamed", { current: k, total: w.phases_total, phase: w.phase })
+    : t("right.workflows.phase", { current: k, total: w.phases_total });
 }

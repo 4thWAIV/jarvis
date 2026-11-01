@@ -18,14 +18,18 @@ page tests), and /ws/voice is the pipeline test's stand-in backend.
 
 import asyncio
 import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
+from jarvis import subsystem_diagnostics as sd
 from tests import messaging_queue_scenario as sc
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_folders import FOLDERS, _Api as _Folders
-from tests.test_voice_page_network import _Sessions
+from tests.test_voice_page_network import MINI_ID, _Sessions, _Team
 from tests.test_voice_page_pipeline import _UiServer
 from tests.test_voice_page_subsystems import _Server as _Subsystems
 from tests.test_voice_page_workflows import _Server as _Workflows
@@ -53,19 +57,26 @@ class _Ui(_UiServer):
         return await self.run({"kind": "indicate", "target": target, **extra})
 
 
-async def _open(p, url, queue_world=None):
+async def _open(p, url, queue_world=None, *, language=None, team=None, subsystems=None, width=1440):
+    """The page with every right tab's fakes; `language` is what the server
+    says is in force, `team` the Network view's team server fake."""
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
-    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    page = await browser.new_page(viewport={"width": width, "height": 900})
     await page.add_init_script(FAKE_TRANSCRIPTION)
     ui = _Ui()
     await page.route_web_socket("**/ws/voice", ui)
     await page.route_web_socket("**/ws/sessions", _Sessions())
+    if team is not None:
+        await team.install(page)
+    if language is not None:
+        await page.route("**/api/settings/language", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps({"language": language})))
     await page.route("**/api/workflows**", _Workflows())
     await page.route("**/api/folders**", _Folders())
-    await page.route("**/api/diagnostics/subsystems", _Subsystems())
+    await page.route("**/api/diagnostics/subsystems", subsystems or _Subsystems())
     routes = None
     if queue_world is not None:
         routes = sc.QueueRoutes(queue_world, ui)
@@ -266,3 +277,114 @@ async def test_pointing_at_a_queue_row_never_opens_activates_or_reads_it(page_ur
             assert await page.inner_text(".queue-history") == hidden
         finally:
             await browser.close()
+
+
+# ── the same panel in Spanish ─────────────────────────────────────────────
+
+def _subsystems_said():
+    """/api/diagnostics/subsystems as the real probes say it: every name and
+    line with its code, so the page can say it in Spanish."""
+    now = 1_000_000.0
+    voiced = sd.Outcomes()
+    voiced.note(True, now=now - 10)
+    contact = datetime.fromtimestamp(now - 20, timezone.utc).isoformat()
+    rows = [
+        sd.communications(None, [], {}, 2, now, now - 600),
+        sd.voice_input({"state": "healthy", "pipeline": {"mic": {"state": "ok", "value": 0.4}}}, now),
+        sd.brain(None, True, now, now - 600),
+        sd.voice_output(True, voiced, now),
+        sd.tool_channel(None, sd.Outcomes(), now),
+        sd.workflows([], None, now),
+        sd.folder_catalog({"counts": {"available": 3, "missing": 1}, "coverage": {"sources": []}}, None, now),
+        sd.team_server({"state": "connected", "team": {"name": "Tokens"}, "me": {"login": "tistocks"},
+                        "last_contact_at": contact}, now),
+    ]
+    body = json.dumps(sd.to_json(rows, now))
+
+    async def answer(route):
+        await route.fulfill(content_type="application/json", body=body)
+    return answer
+
+
+# Each right tab, by its registered id, with a target on it the brain can
+# point at: its branch must still reach it once the words reflow.
+RIGHT_TABS = [
+    ("agents", ".agents-list li", {"kind": "agentsList"}),
+    ("folders", ".folders-panel-row", {"kind": "folder", "key": FOLDERS[0]["id"], "part": "availability"}),
+    ("queue", ".queue-list > li", {"kind": "queuePanel"}),
+    ("workflows", ".workflow-row", {"kind": "workflow", "key": "wf-1", "part": "tasks"}),
+    ("network", ".node-tile", {"kind": "node", "key": MINI_ID}),
+    ("diagnostics", ".subsystem-row", {"kind": "subsystem", "key": "folders", "part": "status"}),
+]
+
+# What of the panel sticks out of it, or is cut short inside its box: by
+# element (its tag and classes), so the two languages can be compared.
+SPILL = """() => {
+  const panel = document.querySelector('#right-column').getBoundingClientRect();
+  const name = (el) => el.tagName.toLowerCase() + [...el.classList].map(c => '.' + c).join('');
+  const out = [], cut = [];
+  for (const el of document.querySelectorAll('#right-column *')) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || getComputedStyle(el).visibility === 'hidden') continue;
+    if (r.left < panel.left - 1 || r.right > panel.right + 1) out.push(name(el));
+    const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+    if (own && el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflow !== 'visible') cut.push(name(el));
+  }
+  return {out: [...new Set(out)].sort(), cut: [...new Set(cut)].sort()};
+}"""
+
+TEXT = "() => document.querySelector('#right-column').innerText"
+
+# Words of the panel's own that must not be left in English once it is
+# Spanish (names, paths and people's words are not here).
+ENGLISH_LEFT = ["Show agents", "registered", "Open Folders", "Nothing waiting", "Active / Outbox",
+                "Show dismissed", "No workflows", "Done (", " online", "From Team Server", "THIS MAC",
+                "Working", "Communications", "Hearing you", "heard", "speed", "Last sentence voiced"]
+
+
+async def _right_tabs(page_url, language, world):
+    """Each right tab in `language`: what spills, what is said, and each
+    target's branch; a screenshot of each when JARVIS_UI_EVIDENCE names a
+    folder."""
+    evidence = os.environ.get("JARVIS_UI_EVIDENCE")
+    seen = {}
+    async with async_api.async_playwright() as p:
+        browser, page, ui, _ = await _open(p, page_url, queue_world=world, language=language,
+                                           team=_Team(), subsystems=_subsystems_said())
+        try:
+            await page.wait_for_function("(lang) => document.documentElement.lang.startsWith(lang)",
+                                         arg=language)
+            for tab, rows, target in RIGHT_TABS:
+                await page.click(f".right-tabs [data-ui-tab='{tab}']")
+                await page.wait_for_selector(rows)
+                await page.wait_for_timeout(300)
+                spill = await page.evaluate(SPILL)
+                result = await ui.indicate({"region": "right", "view": f"right.{tab}", **target})
+                assert result["status"] == "completed", json.dumps([language, tab, result])
+                if evidence:
+                    Path(evidence).mkdir(parents=True, exist_ok=True)
+                    await page.screenshot(path=str(Path(evidence) / f"{language}-{tab}.png"))
+                seen[tab] = {**spill, "text": await page.evaluate(TEXT)}
+        finally:
+            await browser.close()
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_the_right_tabs_in_spanish_reflow_without_spilling_or_losing_a_branch(page_url):
+    """Spanish words are longer: every tab still fits its panel as the
+    English does (nothing sticks out or is cut short that was not already),
+    every target's branch still arrives, and none of the panel's own words
+    is left in English."""
+    world = await sc.build()
+    english = await _right_tabs(page_url, "en", world)
+    spanish = await _right_tabs(page_url, "es", world)
+    for tab, _, _ in RIGHT_TABS:
+        assert set(spanish[tab]["out"]) <= set(english[tab]["out"]), (tab, spanish[tab]["out"])
+        assert set(spanish[tab]["cut"]) <= set(english[tab]["cut"]), (tab, spanish[tab]["cut"])
+        left = [w for w in ENGLISH_LEFT if w in spanish[tab]["text"]]
+        assert not left, (tab, left, spanish[tab]["text"])
+    assert "registradas" in spanish["folders"]["text"] and "HUMANO" in spanish["network"]["text"]
+    assert "Vigilante de sesiones" in spanish["diagnostics"]["text"]
+    assert "Última frase dicha hace 10 s" in spanish["diagnostics"]["text"]
+    assert "En línea: Tokens como tistocks" in spanish["diagnostics"]["text"]

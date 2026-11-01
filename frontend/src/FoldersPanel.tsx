@@ -17,6 +17,7 @@ import { useLayoutEffect, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import { candidates, catalog, matches, nodeWords, selectedFolder, type Folder } from "./folders";
+import { useT } from "./locale";
 import { createStore } from "./store";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
@@ -44,6 +45,7 @@ registerRevealer("right.folders", "folder", async (ref) => {
 });
 
 export function FoldersPanel() {
+  const t = useT();
   const live = useSyncExternalStore(catalog.subscribe, catalog.get);
   const found = useSyncExternalStore(candidates.subscribe, candidates.get);
   const selected = useSyncExternalStore(selectedFolder.subscribe, selectedFolder.get);
@@ -57,37 +59,38 @@ export function FoldersPanel() {
   return (
     <div className="right-view folders-panel" ref={ui.whole}>
       <div className="folders-panel-heading">
-        <span>Folders</span>
+        <span>{t("tabs.right.folders")}</span>
         {live.value && (
           <span className="folders-panel-count">
-            {live.value.folders.length} registered{unavailable ? ` · ${unavailable} unavailable` : ""}
+            {t("right.folders.count", { count: live.value.folders.length })}
+            {unavailable ? <> · {t("right.folders.unavailable", { count: unavailable })}</> : null}
           </span>
         )}
       </div>
       <label className="folder-field folder-search" ref={ui.part("search")}>
-        <span className="visually-hidden">Filter folders</span>
-        <input type="search" placeholder="Filter" value={text} data-ui-command="folders.panel.search"
+        <span className="visually-hidden">{t("right.folders.filterLabel")}</span>
+        <input type="search" placeholder={t("right.folders.filterPlaceholder")} value={text} data-ui-command="folders.panel.search"
                onChange={(e) => runBinding(e.target.value ? bind("folders.panel.search", { text: e.target.value })
                                                           : bind("folders.panel.search", {}))} />
       </label>
       {!live.value && (
         <p className="folder-note" role="status">
-          {live.error ? `Couldn't read the folders (${live.error}); trying again.` : "Reading the folders…"}
+          {live.error ? t("right.folders.readFailed", { error: live.error }) : t("right.folders.reading")}
         </p>
       )}
       {live.value && !live.value.folders.length && (
-        <p className="folder-note">No folders registered. Open Folders to add one.</p>
+        <p className="folder-note">{t("right.folders.none")}</p>
       )}
       {live.value && live.value.folders.length > 0 && !folders.length && (
-        <p className="folder-note" role="status">No folders match.</p>
+        <p className="folder-note" role="status">{t("right.folders.noMatch")}</p>
       )}
-      <ul className="folders-panel-list" aria-label="Registered folders">
+      <ul className="folders-panel-list" aria-label={t("right.folders.listLabel")}>
         {folders.map((f) => <FolderRow key={f.id} folder={f} selected={f.id === selected} />)}
       </ul>
       <button type="button" className="folder-button quiet folders-panel-open" ref={ui.part("open")}
               {...bindingProps(selected !== null ? bind("folders.open", { folderId: selected })
                                                  : bind("main.tab.select", { tab: "folders" }))}>
-        Open Folders{discovered ? ` · ${discovered} discovered` : ""}
+        {discovered ? t("right.folders.openDiscovered", { count: discovered }) : t("right.folders.open")}
       </button>
     </div>
   );
