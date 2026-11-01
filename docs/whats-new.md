@@ -40,11 +40,19 @@ What the page shows or does, JARVIS can now do by voice. He can say who is on yo
 
 ## Update from GitHub
 
-A JARVIS running from a checkout of the GitHub repository can update itself. Settings has an Updates section, which the ⋮ menu's Check for updates opens: it says "Up to date at" this commit, or lists the new commits on main and whether their CI passed, with Update and restart. JARVIS updates only to a commit whose CI passed, installs the Python requirements or the page's packages when they changed, rebuilds the page when it is served from built files, and restarts; the page reloads itself as it does after Restart Server. If the page's packages changed while you run `npm run dev`, it says to restart that. It refuses, and says why, when the checkout is not on main, has changes or commits of its own, or has untracked files the update would overwrite. Ask JARVIS "is there an update?" or tell him to update himself: he says he is updating, and is back on the new code a few seconds later. From a terminal, `.venv/bin/python -m jarvis.update` does the same (`--check` only reports); with JARVIS stopped it only updates. An installed copy is not offered the update and says so.
+A JARVIS running from a checkout of the GitHub repository can update itself. Settings has an Updates section, which the ⋮ menu's Check for updates opens: it says "Up to date at" this commit, or lists the new commits on main and whether their CI passed, with Update and restart. JARVIS updates only to a commit whose CI passed, installs the Python requirements or the page's packages when they changed, rebuilds the page when it is served from built files, and restarts; the page reloads itself as it does after Restart Server. If the page's packages changed while you run `npm run dev`, it says to restart that. It refuses, and says why, when the checkout is not on main, has changes or commits of its own, or has untracked files the update would overwrite. Ask JARVIS "is there an update?" or tell him to update himself: he says he is updating, and is back on the new code a few seconds later. From a terminal, `.venv/bin/python -m jarvis.update` does the same (`--check` only reports); with JARVIS stopped it only updates. It finds the running JARVIS on whatever address and port it was started with, and if that JARVIS is running but cannot be reached, it stops without updating. An installed copy is not offered the update and says so.
 
 ## Work packages
 
 A teammate can send you work to run as a .zip in an ordinary message. When a message has one, JARVIS offers to open it. On your yes, he downloads it, unpacks it into its own folder and follows its instructions with you, running each step only when you say to. A step that needs you, such as recording your voice, opens in a Terminal window. At the end he drafts a reply with the results attached and asks you to review it, as for any other message. You can also ask him to attach a file you name to a message. The format and an example, a Spanish speech test, are in [work packages](work-packages.md).
+
+## Speak Spanish to JARVIS
+
+Settings, Voice now has a Language control: English or Español. Español can be chosen once the Spanish speech model is installed; until then the row below it offers "Download (124 MB)" and shows how the download is going, and the download is checked against the SHA-256 the sherpa-onnx release publishes before anything is unpacked. Changing the language reloads the speech model, which takes a few seconds, and JARVIS then says so in the new language: "Ahora hablo en español, señor." The choice is kept by JARVIS itself, not in your .env, and holds after a restart. By voice, say exactly "switch to Spanish" while he is in English, or "cambia a inglés" while he is in Spanish; only the whole phrase counts, and Settings always works, so a misheard phrase cannot leave you stuck. You can also ask JARVIS to change the language or to download the model. The Honorific setting in Settings, You is now used, and has Señor as a choice: Sir means "sir" in English and "señor" in Spanish, and None means no form of address. English stays the default and works as before.
+
+JARVIS reads accented words whole. Before, "sí" was heard as the letter "s" and "espérate" as two fragments, so no Spanish yes, no or cancel could ever count. In Spanish: sí, claro, adelante, hazlo, dale or "de acuerdo" to say yes; no, espera, luego, después, nunca, negativo or todavía to say no; espera, espérate, cancela, alto or detente to stop him; repite or otra vez to hear the last answer again; and exactly "empezar de cero" to clear the conversation, still confirmed with a yes. Agent names and memories with accents are found with or without them.
+
+In Spanish, Fish Audio is told the text is Latin American Spanish, so it reads numbers, dates and units the Spanish way in the same JARVIS voice. Spanish abbreviations such as Sra., Dra., Ud. and pág., and times written "3 p. m.", no longer split a sentence into separately spoken pieces. "Por supuesto", "Claro que sí" and the other Spanish counterparts of JARVIS's banned phrases are never spoken. The brain answers in Spanish, calls you "señor", says English tool results in Spanish and searches its memory in both languages before saying it doesn't have something. Messages you send agents stay in the words and language you used.
 
 ## Agents and workflows stay in context
 
@@ -71,6 +79,10 @@ Speech input currently uses local Kroko streaming recognition through sherpa-onn
 ![Voice diagnostics in the current interface, using fictional sample data.](images/workspace-diagnostics.png)
 
 These captures render the real frontend with sample records; they are not production measurements.
+
+## Two speech models, one at a time
+
+Speech input knows two models, English and Spanish, and holds one in memory at a time. Besides Settings, the Spanish model (124 MB) can be installed with `.venv/bin/python scripts/setup_speech_input.py --language es`. When the language changes, whatever was being said at that moment is not heard, the page says speech recognition is switching and listens again once the model has loaded, and the voice record notes the switch and how long it took. `JARVIS_STT_MODEL_DIR`, if you set it, now names the folder that holds one folder per model.
 
 ## More than one conversational provider
 

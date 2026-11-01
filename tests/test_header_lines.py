@@ -352,6 +352,18 @@ EXEMPT = {
         "in the UI contract, so the id it prints is the contract's own; the "
         "page's labels it prints go back only inside the server's untrusted "
         "`ui_map` block (`_ui_said`), never into a header or a spoken line"),
+    "server._speech_model_line": (
+        "its `state` is a download's own step, one of speech_models' fixed words, "
+        "and every other value is from transcriber.MODELS or the installer's own "
+        "refusal; no session, run or person writes any of it"),
+    "server.tool_speech_models": (
+        "its `state` is the transcription service's own status word and its labels "
+        "come from transcriber.MODELS; the failure is the loader's own sentence; no "
+        "session, run or person writes any of it"),
+    "speech_models._install": (
+        "its `state` is the download's own step, set from the installer's fixed "
+        "progress words, and its f-string is a log line naming a model from "
+        "transcriber.MODELS; nothing a session wrote reaches it"),
     "self_update.ci_state": (
         "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
         "to compare them with fixed values, and returns one of five fixed CI "

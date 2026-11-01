@@ -453,3 +453,14 @@ def test_journal_entries_are_ordered_by_the_filename_stamp(home):
 def test_an_empty_journal_folder_carries_nothing(home):
     assert jm.journal_entries() == []
     assert jm.latest_journal() is None
+
+
+def test_search_keeps_accented_words_whole_and_ignores_the_accents(home):
+    """Spanish memories: "después" is one word, and found with or without
+    its accent; the slug is the title's words, accents off."""
+    jm.write_memory("Llamar a Núñez después", "Mañana, después de la reunión.")
+
+    for query in ("después", "despues", "Núñez"):
+        hits = jm.search(query)
+        assert hits and hits[0]["name"] == "llamar-a-nunez-despues", query
+        assert "Mañana" in hits[0]["excerpt"] or "Núñez" in hits[0]["excerpt"], query

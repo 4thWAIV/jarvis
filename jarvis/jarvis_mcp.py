@@ -1541,6 +1541,47 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "speech_models",
+        "description": (
+            "JARVIS's language (set_language), which language speech input hears (one model "
+            "is loaded at a time), and each "
+            "language's speech model: installed, downloading and how far, or not installed "
+            "and its download size."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "install_speech_model",
+        "description": (
+            "Download and install one language's speech model in the background, only when he "
+            "asks; it is checked against the release's SHA-256 before it is installed. "
+            "speech_models says how the download is going."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "enum": ["en", "es"],
+                             "description": "en for English, es for Spanish."},
+            },
+            "required": ["language"],
+        },
+    },
+    {
+        "name": "set_language",
+        "description": (
+            "Change the language JARVIS hears and speaks (Settings, Voice, Language), only "
+            "when he asks: speech input loads that language's model in place of the current "
+            "one, which takes a few seconds, and the choice is kept. The language's speech "
+            "model must be installed first (install_speech_model). Then tell him in the new "
+            "language."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "enum": ["en", "es"],
+                             "description": "en for English, es for Spanish."},
+            },
+            "required": ["language"],
+        },
+    },
+    {
         "name": "answer_workflow_decision",
         "description": (
             "Record his answer to a workflow's open decision, only when he gives it: the "

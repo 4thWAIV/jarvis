@@ -158,12 +158,17 @@ def _with_hostile_user_name(brain_module, b):
     b.config.user_name = HOSTILE
 
 
+def _with_hostile_honorific(brain_module, b):
+    b.config.honorific = HOSTILE
+
+
 HOSTILE_INPUTS = {
     "active_projects": _with_hostile_projects,
     "_handover": _with_hostile_handover,
     "_boot_handover": _with_hostile_journal,
     "_handover_untrusted": _with_hostile_taint_label,
     "user_name": _with_hostile_user_name,
+    "honorific": _with_hostile_honorific,
 }
 
 

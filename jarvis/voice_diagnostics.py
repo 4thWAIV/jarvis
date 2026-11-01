@@ -9,7 +9,8 @@ machine's load, and what the page reported over /ws/transcribe that second
 (frames captured and sent, audio held, long browser stalls, notifications
 shown). Each sample is classified into one health state with one cause
 (`classify`). Every capture start and end, every failure and every line of
-text the page showed is one row of `voice_events`; a failure also carries
+text the page showed, and every switch of speech model, is one row of
+`voice_events`; a failure also carries
 the cause in force and the busiest processes on the machine at that moment.
 
 Counts and timings only: no audio, and no words except the text the page
@@ -59,7 +60,9 @@ STATES = ("healthy", "no-frames", "browser-behind", "connection-behind",
 # The events that are a failure, which get the cause and the busiest processes.
 INCIDENT_KINDS = frozenset({"overload", "decoder-failed", "interrupted", "busy",
                             "model-unavailable"})
-EVENT_KINDS = INCIDENT_KINDS | {"ready", "finish", "reconnect", "message"}
+# "model-load" is speech input loading another language's model in place of
+# the one it had (speech_models.switch), with how long it took.
+EVENT_KINDS = INCIDENT_KINDS | {"ready", "finish", "reconnect", "message", "model-load"}
 NOTICE_SOURCES_MAX = 20
 MESSAGE_TEXT_MAX = 1000
 MESSAGES_PER_TELEMETRY = 20
@@ -583,16 +586,19 @@ class CaptureMonitor:
 listeners: list[Callable[[Event], None]] = []
 
 
+async def record(event: Event) -> None:
+    """Record off the event loop and tell the listeners; never raises."""
+    try:
+        await asyncio.to_thread(record_event, event)
+    except Exception:
+        log.exception("voice event not recorded")
+        return
+    _tell(event)
+
+
 def _record_later(event: Event) -> None:
     """Record off the event loop, without making the caller wait."""
-    async def write() -> None:
-        try:
-            await asyncio.to_thread(record_event, event)
-        except Exception:
-            log.exception("voice event not recorded")
-            return
-        _tell(event)
-    asyncio.get_running_loop().create_task(write())
+    asyncio.get_running_loop().create_task(record(event))
 
 
 def _tell(event: Event) -> None:

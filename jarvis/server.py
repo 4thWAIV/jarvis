@@ -87,6 +87,8 @@ from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
 from jarvis import session_messages
+from jarvis import server_address
+from jarvis import spoken_words
 from jarvis import ui_control
 from jarvis import session_needs
 from jarvis import agent_directory
@@ -115,6 +117,8 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import speech_models
+from jarvis import language_setting
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -123,6 +127,7 @@ from jarvis import subsystem_diagnostics
 from jarvis import folder_contract, folder_service, folder_store, folders_api
 from jarvis.folder_contract import FolderError
 from jarvis import tts
+from jarvis import spoken_words
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
 
@@ -135,7 +140,6 @@ log = logging.getLogger("jarvis")
 
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-FISH_API_URL = "https://api.fish.audio/v1/tts"
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -390,6 +394,39 @@ def apply_speech_corrections(text: str) -> str:
 # Markdown Stripping for TTS
 # ---------------------------------------------------------------------------
 
+# The English list's Spanish counterparts. No English sentence contains them,
+# so they are always stripped, whichever language is in force. Matched with
+# accents folded ("claro que si" is "claro que sí") and as whole words
+# ("claro que siempre" is not "claro que si"); see `_banned_match`.
+_BANNED_SPANISH = ["por supuesto", "claro que sí", "con mucho gusto",
+                   "excelente pregunta", "buena pregunta", "mis disculpas",
+                   "le pido disculpas", "no dudes en", "no dude en"]
+_BANNED = ["my apologies", "i apologize", "absolutely", "great question",
+           "i'd be happy to", "of course", "how can i help",
+           "is there anything else", "i should clarify", "let me know if",
+           "feel free to"] + _BANNED_SPANISH
+_BANNED_PATTERNS = [re.compile(r"(?<!\w)" + re.escape(spoken_words.fold(p).lower())
+                               + r"(?!\w)")
+                    for p in _BANNED]
+
+
+def _match_form(text: str) -> str:
+    """`text` lowercased with its accents folded, one character for one, so a
+    match in it is at the same place in `text`."""
+    out = []
+    for c in text:
+        f = spoken_words.fold(c).lower()
+        out.append(f if len(f) == 1 else c)
+    return "".join(out)
+
+
+def _banned_match(text: str):
+    """The first banned phrase in `text`, as a match in `_match_form(text)`."""
+    form = _match_form(text)
+    found = [m for m in (p.search(form) for p in _BANNED_PATTERNS) if m]
+    return min(found, key=lambda m: m.start()) if found else None
+
+
 def strip_markdown_for_tts(text: str) -> str:
     """Strip ALL markdown from text before sending to TTS."""
     import re as _md_re
@@ -419,21 +456,19 @@ def strip_markdown_for_tts(text: str) -> str:
     result = _md_re.sub(r"\s{2,}", " ", result)
 
     # Strip banned phrases
-    banned = ["my apologies", "i apologize", "absolutely", "great question",
-              "i'd be happy to", "of course", "how can i help",
-              "is there anything else", "i should clarify", "let me know if",
-              "feel free to"]
-    result_lower = result.lower()
-    for phrase in banned:
-        idx = result_lower.find(phrase)
-        while idx != -1:
-            # Remove the phrase and any trailing comma/dash
-            end = idx + len(phrase)
-            if end < len(result) and result[end] in " ,—-":
+    while (match := _banned_match(result)) is not None:
+        idx, end = match.span()
+        # Remove the phrase and any trailing comma/dash
+        if end < len(result) and result[end] in " ,—-":
+            end += 1
+        if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
+            closer = "!" if result[idx - 1] == "¡" else "?"
+            idx -= 1
+            if result[end:end + 1] == closer:
                 end += 1
-            result = result[:idx] + result[end:]
-            result_lower = result.lower()
-            idx = result_lower.find(phrase)
+                if result[end:end + 1] == " ":
+                    end += 1
+        result = result[:idx] + result[end:]
 
     return result.strip().strip(",").strip("—").strip("-").strip()
 
@@ -502,35 +537,12 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
+    """Generate speech audio from text using Fish Audio TTS: the same
+    synthesis everything JARVIS says goes through (`_synth_for_speech`)."""
     if not FISH_API_KEY:
         log.warning("FISH_API_KEY not set, skipping TTS")
         return None
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
-    except Exception as e:
-        log.error(f"TTS error: {e}")
-        return None
+    return await _synth_for_speech(text)
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +708,8 @@ async def _voice_emit(msg: dict) -> None:
 
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
-    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client,
+                                   language=spoken_words.active_language())
     if FISH_API_KEY and (text or "").strip():
         subsystem_diagnostics.voice_output_calls.note(r is not None)
     if r is None:
@@ -764,7 +777,6 @@ ROTATION_BUSY_LINE = "Gathering my thoughts — one moment, sir."
 # This is that fresh conversation. It discards the tainted generation rather
 # than carrying anything across, which is the whole point — he restates the
 # fact in his own words to a brain that has read nothing.
-FRESH_START_COMMAND = "start fresh"
 FRESH_START_LINE = "Cleared, sir — nothing of that conversation left. Go ahead."
 # Clearing takes TWO turns. The command alone only asks; the very next
 # utterance must be an unambiguous yes (`_rotation_answer`) or nothing is
@@ -777,20 +789,48 @@ FRESH_START_CONFIRM_TIMEOUT = 20.0      # seconds he has to say yes
 def _is_fresh_start(text: str) -> bool:
     """Whether the ENTIRE utterance is the one command that clears the context.
 
-    Lowercased, punctuation stripped, one optional leading "jarvis" dropped,
-    and what is left must equal "start fresh" exactly. A longer sentence that
-    merely contains the words never counts: a misheard "start over" once
-    wiped a live conversation, and nothing may do that again.
+    Lowercased, punctuation and accents stripped, one optional leading
+    "jarvis" dropped, and what is left must equal the active language's clear
+    command ("start fresh"; in Spanish "empezar de cero") exactly. A longer
+    sentence that merely contains the words never counts: a misheard "start
+    over" once wiped a live conversation, and nothing may do that again.
     """
+    return _whole_command(text) == spoken_words.vocabulary().clear_command
+
+
+def _whole_command(text: str) -> str:
+    """The utterance as a whole command is compared: lowercased, punctuation
+    and accents stripped, one optional leading "jarvis" dropped."""
     words = _action_words(text)
     if words and words[0] == "jarvis":
         words = words[1:]
-    return " ".join(words) == FRESH_START_COMMAND
+    return " ".join(words)
+
+
+def _language_switch_asked(text: str) -> Optional[str]:
+    """The language the ENTIRE utterance asks for, when it is the active
+    language's one switch phrase ("switch to Spanish"; in Spanish "cambia a
+    inglés"), matched as the clear command is; otherwise None. Settings
+    always works too, so a misheard phrase cannot strand him."""
+    vocabulary = spoken_words.vocabulary()
+    return vocabulary.switch_to if _whole_command(text) == vocabulary.switch_command else None
+
+
+async def _switch_language_by_voice(language: str) -> None:
+    """The spoken switch: what the Settings control does, confirmed in the
+    new language (language_setting.choose); a refusal is said."""
+    try:
+        await language_setting.choose(language)
+    except speech_models.Refused as refused:
+        log.info(f"spoken language switch refused: {refused.message}")
+        if speech is not None:
+            await speech.say(f"The language was not changed, sir. {refused.message}",
+                             Priority.NORMAL, label="system")
 
 
 def _action_words(text: str) -> list[str]:
-    import re as _re
-    return _re.findall(r"[a-z]+", text.lower())
+    """Letters only, accents folded: "Don't" is "don", "t"; "Sí." is "si"."""
+    return spoken_words.folded_words(text, digits=False)
 
 
 # The brain states the page shows (which brain runs, on the orb and in
@@ -829,21 +869,6 @@ def _greeting() -> str:
     if hour < 17:
         return "Good afternoon, sir."
     return "Good evening, sir."
-
-
-def _tool_connect_host(bind_host: str) -> str:
-    """Map the server's bind host to a host the MCP child can actually dial.
-
-    `0.0.0.0` and `::` bind every interface but are not themselves dialable;
-    connect over loopback instead. An IPv6 literal must be bracketed to be a
-    valid URL host. Anything else (a real hostname or IPv4 literal) is used
-    as-is.
-    """
-    if bind_host == "0.0.0.0":
-        return "127.0.0.1"
-    if bind_host in ("::", "::1"):
-        return "[::1]"
-    return bind_host
 
 
 # --- the doorway: MCP servers the user declared themselves ----------------
@@ -961,11 +986,6 @@ def _write_mcp_config(home: Path) -> Path:
     HTTPS via a self-signed cert (CLAUDE.md's own quick-start setup).
     """
     global LAST_CONNECTIONS
-    scheme = os.getenv("JARVIS_SCHEME", "http")
-    port = int(os.getenv("JARVIS_PORT", "8340"))
-    bind_host = os.getenv("JARVIS_BIND_HOST", "127.0.0.1")
-    connect_host = _tool_connect_host(bind_host)
-
     LAST_CONNECTIONS = declared_connections()
     for problem in LAST_CONNECTIONS.problems:
         log.warning("connections: %s", problem)
@@ -982,7 +1002,7 @@ def _write_mcp_config(home: Path) -> Path:
             # The brain's cwd is its home, so a checkout's package is only
             # importable with its parent on the path.
             "PYTHONPATH": str(data_paths.PACKAGE_DIR.parent),
-            "JARVIS_TOOL_URL": f"{scheme}://{connect_host}:{port}/internal/tool",
+            "JARVIS_TOOL_URL": f"{server_address.own().url}/internal/tool",
             "JARVIS_TOOL_TOKEN_FILE": str(data_paths.tool_token_path()),
         },
     }
@@ -1302,17 +1322,8 @@ async def _start_fresh(utterance: str = "") -> None:
 ROTATION_ASK_AGAIN_AFTER_TURNS = 10
 ROTATION_DECLINED_LINE = "Very good, sir. I'll carry on as I am."
 
-ROTATION_YES_WORDS = frozenset({
-    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "certainly",
-    "absolutely", "affirmative", "proceed", "compact", "rotate",
-})
+# The yes and no words are the active language's (`spoken_words`).
 ROTATION_YES_MAX_WORDS = 4
-ROTATION_YES_PHRASES = ("go ahead", "do it", "go for it", "sounds good")
-ROTATION_NO_WORDS = frozenset({
-    # `_action_words` splits "don't" into "don" and "t".
-    "no", "nope", "nah", "not", "don", "dont", "wait", "later", "hold", "stop",
-    "never", "negative",
-})
 
 # Whether the question is waiting on his answer, the brain's
 # `turns_since_rotation` when it was last asked (None: never asked), and
@@ -1338,15 +1349,16 @@ def _rotation_answer(text: str) -> Optional[bool]:
     words = _action_words(text)
     if not words:
         return None
-    if any(w in ROTATION_NO_WORDS for w in words):
+    vocabulary = spoken_words.vocabulary()
+    if any(w in vocabulary.no_words for w in words):
         return False
     joined = " ".join(words)
     # A short reply only: a long sentence that happens to open with "okay" is
     # not a yes to a question about wiping his context.
     if len(words) > ROTATION_YES_MAX_WORDS:
         return None
-    if words[0] in ROTATION_YES_WORDS or any(joined.startswith(p)
-                                            for p in ROTATION_YES_PHRASES):
+    if words[0] in vocabulary.yes_words or any(joined.startswith(p)
+                                              for p in vocabulary.yes_phrases):
         return True
     return None
 
@@ -2866,6 +2878,8 @@ async def lifespan(application: FastAPI):
     # guard, and the `--host 0.0.0.0` warning — printed only from
     # `__main__` — was never seen by the launch that most needed it.
     _announce_bind(web_auth.detect_bind())
+    # Where this server is, for `python -m jarvis.update` (server_address.py).
+    server_address.record()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
 
@@ -2881,10 +2895,14 @@ async def lifespan(application: FastAPI):
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
 
+    # The language chosen in Settings, and its speech model
+    # (language_setting.py). Put in force before the brain starts: its launch
+    # prompt carries the language rule, and the brain is spawned below.
+    speech_model = language_setting.load()
     await start_brain_and_speech()
     await start_session_watcher()
     start_folders()
-    transcription_api.start()
+    transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
     # network exchange runs while paired whether or not a page is open, and
@@ -2919,6 +2937,7 @@ async def lifespan(application: FastAPI):
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    server_address.forget()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route
@@ -2945,6 +2964,8 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 # See web_auth.OriginGuard for what replaces it.
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
+speech_models.mount(app)
+language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")))
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
@@ -7397,6 +7418,84 @@ def _hint_voice(_event=None) -> None:
 voice_diagnostics.listeners.append(_hint_voice)
 
 
+# --- Speech models (speech_models.py) -------------------------------------
+#
+# The brain's side of /api/speech/models*: the same service functions the
+# routes call. Every word here is JARVIS's own (model names, sizes, states
+# and the installer's fixed refusals), so none of them taints a turn.
+
+def _megabytes(n: int) -> str:
+    return f"{round(n / 1_000_000)} MB"
+
+
+def _speech_model_line(m: dict) -> str:
+    install = m.get("install") or {}
+    if m["installed"]:
+        return f"{m['label']}: installed."
+    if install.get("state") in speech_models.RUNNING:
+        return (f"{m['label']}: {install['state']}, {_megabytes(install['doneBytes'])} "
+                f"of {_megabytes(install['totalBytes'])}.")
+    if install.get("state") == "failed":
+        return f"{m['label']}: the last install failed. {install.get('error') or ''}".strip()
+    return f"{m['label']}: not installed, {_megabytes(m['archiveBytes'])} to download."
+
+
+async def tool_speech_models(args: dict) -> str:
+    """JARVIS's language, which language speech input hears, and each
+    model's install state: what the Settings language route reads."""
+    setting = language_setting.status()
+    status = setting["speech"]
+    labels = {m["language"]: m["label"] for m in status["models"]}
+    head = (f"JARVIS's language is {language_setting.NAMES[setting['language']]}. "
+            f"Speech input hears {labels.get(status['language'], 'nothing yet')} "
+            f"({status['state']}).")
+    if status.get("failure"):
+        head += f" {status['failure']}"
+    return "\n".join([head] + [_speech_model_line(m) for m in status["models"]])
+
+
+async def tool_install_speech_model(args: dict) -> str:
+    """Download and install one language's speech model: the install route's
+    `start_install`. An ACTING tool: it downloads."""
+    try:
+        m = speech_models.start_install(str(args.get("language") or ""))
+    except speech_models.Refused as refused:
+        return f"Nothing was downloaded, sir: {refused.message}"
+    if m["installed"]:
+        return f"The {m['label']} speech model is already installed, sir."
+    return (f"Installing the {m['label']} speech model, sir; it is checked against the "
+            f"release's SHA-256 first. {_speech_model_line(m)}")
+
+
+async def tool_set_language(args: dict) -> str:
+    """Change the language JARVIS hears and speaks: the Settings language
+    route's `language_setting.change`, without its spoken confirmation, which
+    the brain gives. An ACTING tool: it reloads the speech model."""
+    try:
+        changed = await language_setting.change(str(args.get("language") or ""))
+    except speech_models.Refused as refused:
+        return f"The language was not changed, sir: {refused.message}"
+    language = spoken_words.active_language()
+    name = language_setting.NAMES[language]
+    if not changed:
+        return f"JARVIS's language is already {name}, sir."
+    return (f"JARVIS's language is {name} now, sir: speech input hears it and you speak "
+            f"it. Tell him so in {name}. {language_setting.brain_rule(language)}")
+
+
+TOOL_HANDLERS.update({
+    "speech_models": tool_speech_models,
+    "install_speech_model": tool_install_speech_model,
+    "set_language": tool_set_language,
+})
+ACTING_TOOLS.update({"install_speech_model", "set_language"})
+TAINT_EXEMPT_TOOLS.update({
+    "speech_models": "it reads JARVIS's own speech models: fixed names, sizes and states",
+    "install_speech_model": "it starts a download of a fixed model, it does not read",
+    "set_language": "it changes JARVIS's language to a fixed one, it does not read",
+})
+
+
 # --- Subagents in the Workflows area ------------------------------------------
 #
 # The subagents sessions dispatch are shown with the workflows, worked out
@@ -10809,6 +10908,10 @@ async def voice_handler(ws: WebSocket):
         if cleared is None and _is_fresh_start(text):
             _spawn(_ask_to_clear(text))
             return
+        switch_to = _language_switch_asked(text) if cleared is None else None
+        if switch_to:
+            _spawn(_switch_language_by_voice(switch_to))
+            return
         if cleared is False and _rotation_answer(text) is False:
             return                  # a plain no: consumed, not a request
         if _take_rotation_answer(text):
@@ -11106,10 +11209,12 @@ async def api_test_fish(body: KeyTest):
         return {"valid": False, "error": "No key provided"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Not `synthesize_chunk`: this check needs the status code, to
+            # tell a refused key (401) from any other failure.
             resp = await client.post(
-                "https://api.fish.audio/v1/tts",
+                tts.FISH_TTS_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"text": "test", "reference_id": FISH_VOICE_ID},
+                json=tts.request_body("test", FISH_VOICE_ID),
             )
             if resp.status_code in (200, 201):
                 return {"valid": True}

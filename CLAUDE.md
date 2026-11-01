@@ -21,7 +21,8 @@ When a user clones this repo and starts Claude Code, help them:
 5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
 5a. Install the current local Kroko speech model:
-   `.venv/bin/python scripts/setup_speech_input.py`
+   `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
+   adds the Spanish model, `--language all` both)
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
@@ -87,6 +88,26 @@ cancels and says nothing was cleared. Context rotation likewise waits for a
 yes to its own question. Every clear or rotation is logged with its trigger
 and the exact utterance. The one involuntary replacement is the crash/stall
 restart in `brain.py`, which is recovery, not a decision, and is logged.
+In Spanish the one clear command is exactly `empezar de cero`, under the
+same rules.
+
+## Spoken words
+Every matcher of what the user said against fixed words splits and folds it
+with `spoken_words.py`: the yes and no to clearing and compaction
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+command, the cancel and replay words and echo rejection (`speech._tokens`),
+agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
+(`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
+"s") and `fold` takes accents off before comparing; on ASCII text both give
+exactly what the old `[a-z0-9]` splitters gave. Each language's word lists
+are one `Vocabulary` there, English and Latin American Spanish (yes: sí, si,
+claro, adelante, hazlo, dale, "de acuerdo"; no: no, espera, luego, después,
+nunca, negativo, todavía; cancel: espera, espérate, cancela, alto, detente,
+never "para"; replay: repite, otra vez). Which list counts is
+`spoken_words.active_language()`, the one place the language is decided;
+only `language_setting` sets it (see "The language setting"). Every test
+starts in English (`conftest._english_until_a_test_chooses`) and switches
+with the `spanish` fixture.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -325,7 +346,8 @@ How voice input is doing is one durable record, `voice_diagnostics.py`:
 `voice_samples` (one a second while a page listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
 start and end, reconnects, every failure with the cause in force and the
-busiest processes, and every line of text the page showed). `classify` gives
+busiest processes, every line of text the page showed, and each switch of
+speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
@@ -456,10 +478,17 @@ restart (page origin or tool token; no access-key category). The restart is
 one function, `server._restart_server`, shared with `/api/restart`. The
 command `python -m jarvis.update` (`update.py`) asks a running server to do
 it, so it restarts itself, and with the server stopped only updates;
-`--check` only reports. It looks at `JARVIS_URL`, else `JARVIS_TOOL_URL`'s
-address, else 127.0.0.1:8340; only a refused connection there counts as
-stopped, and an answer that is not an update outcome (a 403, a 404) stops
-it without updating. The page's side is Settings, Updates, which the ⋮
+`--check` only reports. It finds the server by the one reader,
+`server_address.running()`: at startup the server writes its scheme, host,
+port and pid to `data_paths.server_address_path()` (`server-address.json`
+in its data folder; the same address the brain's tool channel dials,
+`server_address.own()`) and removes it on a clean shutdown; a record whose
+pid is dead is stale and ignored. With a live record the command asks that
+address with the tool token, and a refused connection there stops it
+without updating. With none it looks at `JARVIS_URL`, else
+`JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
+there counts as stopped. An answer that is not an update outcome (a 403, a
+404) stops it without updating. The page's side is Settings, Updates, which the ⋮
 menu's Check for updates opens; the brain's is `update_status` and the
 acting `update_jarvis`, which says it is updating, updates after the turn
 and restarts once that has been heard (`_update_by_voice`). Tests point
@@ -472,6 +501,64 @@ JARVIS waits for Tim to finish. The server gathers what he says
 a pause mid-sentence does not send the brain half a sentence; typed words go
 at once. Nothing JARVIS says starts while he has spoken more recently than
 that, replies included, and announcements never start at once.
+
+## Speaking Spanish
+The language in force is `spoken_words.active_language()`, the one place it
+is decided (see "The language setting"); callers reach it through the
+module so there is one answer. Every Fish request body is built
+by `tts.request_body`: the speech path (`_synth_for_speech`, which
+`synthesize_speech` and `/api/tts-test` go through too) and the key check.
+It adds Fish's `language` from `tts.FISH_LANGUAGES` (`es-MX` for Spanish;
+English sends none, as before). The splitter knows Spanish abbreviations
+(`speech._ABBREVIATIONS`) and keeps the spaced "p. m." / "a. m." in one
+piece. `strip_markdown_for_tts` also strips the Spanish banned phrases
+(`server._BANNED_SPANISH`) with their ¡ ¿ marks; every banned phrase is
+matched with accents folded (`spoken_words.fold`) and as whole words
+(`server._banned_match`), so "claro que si" goes as "claro que sí" does and
+"claro que siempre" stays. For Spanish the brain's
+`launch_prompt` adds `brain.language_rule`: `LANGUAGE_RULES` (answer in
+Latin American Spanish, English tool results said in Spanish, memory
+searched in both languages) and how he is addressed ("señor" by default,
+"señora" under Ma'am). It
+is in the launch prompt because an edited persona never receives template
+changes; the persona's "Language" section says the same.
+
+## The language setting
+JARVIS hears and speaks one language at a time, English or Spanish, chosen
+in Settings, Voice, Language (`LanguageControl.tsx`), by the brain's acting
+`set_language`, or by one exact spoken phrase: "switch to Spanish" while in
+English, "cambia a inglés" while in Spanish (`Vocabulary.switch_command`,
+matched like the clear command: the whole utterance, optional leading
+"jarvis"; `server._language_switch_asked`). All three go through
+`language_setting.change`: it loads the language's speech model first
+(`speech_models.switch`, a few seconds) and only then saves the choice in
+JARVIS's own store (`data_paths.language_path()`, never .env) and puts it in
+force (`spoken_words.set_active_language`), so a model that is not installed
+or fails to load changes nothing (after a failed load the language in
+force's model is loaded again, so he is still heard). Speech input's model is
+switched only this way: there is no `POST /api/speech/model` route and no
+`switch_speech_model` tool; the language route and `set_language` replaced
+them, so what JARVIS hears and what it speaks can never differ. The page and the phrase are confirmed aloud in the new language
+(`language_setting.choose`: "Speaking English now, sir." / "Ahora hablo en
+español, señor.") through `_say_notice`, whose note tells the brain to answer
+in that language from its next turn; the brain's tool returns the same rule
+and the brain says it. Español is disabled until the Spanish model is
+installed; "Download (124 MB)" is the install route, its progress read every
+second while it runs. At startup, before the brain is spawned (its launch
+prompt carries the language rule), `language_setting.load` puts the saved
+language in force and gives speech input its model, or English for that run
+when the saved one's model is missing (preflight checks the same model,
+`startup_model`). `GET`/`POST /api/settings/language` are the routes; the
+brain's `speech_models` read starts with the language.
+
+The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
+in .env) is now used: `spoken_words.address` turns it into a fixed word
+from one table, `spoken_words._ADDRESS`, each honorific's word in each
+language (sir is señor in Spanish, ma'am is señora), and any value not on
+that list counting as the default, sir, so nothing typed into .env reaches
+the prompt. `brain.address_rule` adds a launch-prompt line only when
+the address is not plain "sir", so the English prompt is unchanged by
+default; the confirmations use it too.
 
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
@@ -499,15 +586,30 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Fish Audio synthesis, one request per sentence chunk
+- `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
+  request body (`request_body`) with its language
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Audio playback; re-exports voice input
 - `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,
   an AudioWorklet (`pcm-worklet.ts`, `pcm.ts`) making 16 kHz PCM16, streamed
   to `/ws/transcribe`; its finals go to `/ws/voice` as before
-- `transcriber.py` — Local speech recognition: the model's identity and
-  where it lives, the sherpa-onnx engine, and the worker that owns it
-  (one capture at a time, overload refused rather than trimmed)
+- `transcriber.py` — Local speech recognition: the model list (`MODELS`,
+  English and Spanish Kroko, each with its digest) and where each lives, the
+  sherpa-onnx engine, and the worker that owns it (one model loaded at a
+  time, `switch` loads another in its place; one capture at a time, overload
+  refused rather than trimmed)
+- `speech_models.py` — Installing a speech model (`install`: download,
+  SHA-256 check, safe extract, one rename; `scripts/setup_speech_input.py`
+  is a thin command over it) and the service the page's
+  `/api/speech/models*` routes and the brain's `speech_models`,
+  `install_speech_model` share, and `switch`, which only
+  `language_setting.change` calls. A switch ends the
+  open capture with a non-incident `interrupted` (the page reconnects and
+  waits while it loads) and is a `model-load` event in the voice record
+- `language_setting.py` — The language JARVIS hears and speaks: the stored
+  choice, `change` (model first, then saved and in force), the spoken
+  confirmation and `/api/settings/language` (see "The language setting");
+  `frontend/src/LanguageControl.tsx` is the page's side
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
@@ -689,6 +791,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   and attention alike)
 - `frontend/src/orbSource.ts` — Who holds the orb's overlay (`mainOrb`):
   a real transmission always, attention waits then answers busy
+- `server_address.py` — This server's own address (`own`), recorded with
+  its pid at startup and removed on shutdown, and the one reader of that
+  record (`running`) that `python -m jarvis.update` uses (see "Self-update")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -724,7 +829,8 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
-  database, memory Markdown, usage.json, the tool token. Defaults to `data/`
+  database, memory Markdown, usage.json, the tool token, the running
+  server's address (`server-address.json`). Defaults to `data/`
   (`data_paths.py`). Set it to run an isolated instance without touching live
   data — the test suite gives every test a fresh one this way.
 - `JARVIS_SKIP_PERMISSIONS` (optional) — Defaults to true; passes
@@ -745,9 +851,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   text may not act, and memory writers are refused for the rest of that
   generation. Off by default, so JARVIS keeps acting after reading foreign
   content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
-- `JARVIS_STT_MODEL_DIR` (optional) — where the local speech model is.
-  Defaults to `<data>/models/<model>`; `scripts/setup_speech_input.py`
-  installs it there, checked against the release's SHA-256
+- `JARVIS_STT_MODEL_DIR` (optional) — the folder holding the local speech
+  models, one folder per model (`<root>/<model name>`). Defaults to
+  `<data>/models`; `scripts/setup_speech_input.py` and the install route
+  install there, checked against the release's SHA-256
 - `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real

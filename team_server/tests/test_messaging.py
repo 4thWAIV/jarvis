@@ -8,7 +8,8 @@ from typing import Optional
 
 import pytest
 
-from conftest import ADMIN, ALICE, BOB, SESSION_COOKIE, browser_token, pair, run_db
+from conftest import (ADMIN, ALICE, BOB, SESSION_COOKIE, browser_token, change_member,
+                      pair, run_db)
 from teamserver import messaging
 from teamserver import messaging_models as mm
 
@@ -333,6 +334,32 @@ def test_a_suspended_sender_is_refused_before_anything_is_read(client, github, a
     assert r.status_code == 200, r.text
     r = alice.post(alice.request(ADMIN.id))
     assert r.status_code == 401, "suspension ends the session's generation"
+
+
+def test_a_reenabled_member_is_a_recipient_again_and_can_send_and_receive(
+        client, github, admin, tim, alice):
+    def recipients(member):
+        r = client.get(PREFIX + "/recipients", headers=bearer(member.token))
+        assert r.status_code == 200, r.text
+        return [m["github_id"] for m in r.json()["members"]]
+
+    change_member(client, admin, ALICE.id, status="suspended")
+    assert recipients(tim) == [ADMIN.id]
+    assert error(tim.post(tim.request(ALICE.id))) == "recipient_not_allowed"
+
+    change_member(client, admin, ALICE.id, status="approved")
+    assert ALICE.id in recipients(tim)
+    assert alice.post(alice.request(ADMIN.id)).status_code == 401, \
+        "re-enabling never revives the old session"
+    alice.browser = browser_token(client, github, ALICE)
+    alice.token = pair(client, alice.browser)
+    alice.node = alice.publish_node()
+    assert recipients(alice) == [ALICE.id, ADMIN.id]
+
+    to_alice = tim.send(ALICE.id, "Welcome back.")
+    assert to_alice["message_id"] in [e["message"]["message_id"] for e in alice.scan()]
+    to_tim = alice.send(ADMIN.id, "Thanks.")
+    assert to_tim["message_id"] in [e["message"]["message_id"] for e in tim.scan()]
 
 
 # -- replies, relations and work state ----------------------------------------------------

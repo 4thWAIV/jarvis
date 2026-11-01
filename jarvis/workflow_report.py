@@ -4,8 +4,15 @@ The session running a long workflow calls this at every step, so the one
 durable record (workflow_store.py) always has the latest state and JARVIS
 can say it. It needs an access key in the `workflows` category in
 JARVIS_ACCESS_KEY (`python -m jarvis.access_keys create <label> workflows`), and
-reaches JARVIS at JARVIS_URL (default https://localhost:8340), trusting the
-certificate given with --cert (the talk-to-jarvis skill gives JARVIS's own).
+trusts the certificate given with --cert (the talk-to-jarvis skill gives
+JARVIS's own). It reaches JARVIS at JARVIS_URL when that is set (a reporter
+that runs outside this data folder says where JARVIS is), else at the address
+the running server recorded (`server_address.running()`), else at
+https://localhost:8340. A recorded loopback address (127.0.0.1 or ::1) is
+dialled as localhost on the recorded scheme and port, because the certificate
+names localhost and not the address. It runs as a plain script, under
+whichever Python the session has, so it imports nothing outside the standard
+library and the package's own `server_address`.
 
     python workflow_report.py [--cert <cert.pem>] start <name> --project <project> [--phase <phase> ...]
     python workflow_report.py event <id> <kind> <summary> [--item <slug>] [--key <slug>]
@@ -30,7 +37,16 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+if not __package__:
+    # Run as a script (`python3 .../jarvis/workflow_report.py`): put the
+    # package's parent on the path so this copy's own package is imported.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from jarvis import server_address  # noqa: E402
+
 DEFAULT_URL = "https://localhost:8340"
+# Hosts the certificate does not name; a server recorded on one is dialled as localhost.
+LOOPBACK_ADDRESSES = ("127.0.0.1", "::1")
 NOT_ANSWERED = 3
 
 
@@ -84,7 +100,22 @@ def _client(cert: Path | None) -> _Client:
     key = os.environ.get("JARVIS_ACCESS_KEY", "").strip()
     if not key:
         raise SystemExit("Set JARVIS_ACCESS_KEY to an access key in the workflows category.")
-    return _Client(os.environ.get("JARVIS_URL", DEFAULT_URL).rstrip("/"), key, cert)
+    return _Client(base_url(), key, cert)
+
+
+def base_url() -> str:
+    """JARVIS_URL when set, else the running server's recorded address (a
+    loopback one as localhost), else DEFAULT_URL."""
+    explicit = os.environ.get("JARVIS_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    found = server_address.running()
+    if found is None:
+        return DEFAULT_URL
+    address = found.address
+    if address.host in LOOPBACK_ADDRESSES:
+        address = address._replace(host="localhost")
+    return address.url
 
 
 def _detail(args) -> dict:
