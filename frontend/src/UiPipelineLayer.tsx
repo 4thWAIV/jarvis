@@ -19,6 +19,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import "./uiPipeline.css";
 import { EffectLife, onGeometryChange, VISUALLY_HIDDEN } from "./effectLife";
+import { useT, type Translate } from "./locale";
 import { orbSource } from "./orbSource";
 import { cues, type CueFrame } from "./uiAttention";
 import { visibilityOf } from "./uiRegistry";
@@ -135,14 +136,17 @@ function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
   );
 }
 
-function spoken(showing: CueFrame[], waiting: number): string {
-  const words = showing.map((c) => c.queued ? `Waiting for the orb to point at ${c.label}`
-    : c.box ? `JARVIS is pointing from the orb to ${c.label}` : "").filter(Boolean);
-  if (waiting && !showing.some((c) => c.queued)) words.push("Waiting for the orb");
-  return words.join(". ");
+/** The attention status line, one sentence per cue: what a screen reader
+ *  hears while the pipeline points. A target's name is its own. */
+function spoken(t: Translate, showing: CueFrame[], waiting: number): string {
+  const words = showing.map((c) => c.queued ? t("main.attention.queued", { target: c.label })
+    : c.box ? t("main.attention.pointing", { target: c.label }) : "").filter(Boolean);
+  if (waiting && !showing.some((c) => c.queued)) words.push(t("main.attention.waiting"));
+  return words.join(" ");
 }
 
 export function UiPipelineLayer() {
+  const t = useT();
   const map = useMap();
   const showing = useSyncExternalStore(cues.subscribe, cues.get);
   const source = useSyncExternalStore(orbSource.subscribe, orbSource.get);
@@ -162,7 +166,7 @@ export function UiPipelineLayer() {
           {showing.map((cue) => <CueInLayer key={cue.cueId} cue={cue} layer={layer} />)}
         </svg>
       ))}
-      <div id="ui-pipeline-status" role="status" style={VISUALLY_HIDDEN}>{spoken(showing, source.waiting)}</div>
+      <div id="ui-pipeline-status" role="status" style={VISUALLY_HIDDEN}>{spoken(t, showing, source.waiting)}</div>
     </>
   );
 }

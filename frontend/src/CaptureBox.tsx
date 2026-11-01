@@ -18,7 +18,9 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { heardText } from "./captions";
 import { captureAction, captures, reading, type Capture, type CaptureAction } from "./capture";
 import { SpokenWords } from "./SpokenWords";
-import { CENTRE_SOCKET } from "./ConversationView";
+import { CENTRE_SOCKET, SaidText } from "./ConversationView";
+import type { Said } from "./conversation";
+import { useT } from "./locale";
 import { useUiTarget } from "./uiRegistry";
 
 const FADE_MS = 250;
@@ -39,8 +41,10 @@ export function CaptureList({ view = "main.main" }: { view?: CaptureView }) {
 }
 
 function CaptureBox({ capture, view }: { capture: Capture; view: CaptureView }) {
+  const t = useT();
   const ui = useUiTarget({ ref: { region: "main", view, kind: "capture", key: String(capture.id) },
-                           label: capture.to ? `Message to ${capture.to}` : `Capture ${capture.id}`,
+                           label: capture.to ? t("main.capture.messageTo", { to: capture.to })
+                             : t("main.capture.numbered", { id: String(capture.id) }),
                            socket: CENTRE_SOCKET });
   // Opened from his words as heard, so the first thing seen is them turning
   // into the restatement.
@@ -72,8 +76,8 @@ function CaptureBox({ capture, view }: { capture: Capture; view: CaptureView }) 
   return (
     <div className={`capture-box ${capture.state}${message}`} data-capture={capture.id}
          aria-live="polite" ref={ui.whole}>
-      <span className="capture-state">{capture.state}</span>
-      {capture.to && <span className="capture-to" ref={ui.part("recipient")}>Send to: {capture.to}</span>}
+      <span className="capture-state">{t(`main.capture.state.${capture.state}`)}</span>
+      {capture.to && <span className="capture-to" ref={ui.part("recipient")}>{t("main.capture.sendTo", { to: capture.to })}</span>}
       <div className="capture-body" style={px === null ? undefined : { height: px }}
            ref={(el) => { height.current = el; ui.part("body")(el); }}>
         <CaptureText key={`in-${shown.text}`} capture={capture} text={shown.text} />
@@ -92,8 +96,9 @@ function CaptureBox({ capture, view }: { capture: Capture; view: CaptureView }) 
  *  at them (`actionsRef`) but not press them. */
 export function CaptureButtons({ capture, actionsRef }: {
   capture: Capture; actionsRef?: (el: Element | null) => void }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
-  const [refused, setRefused] = useState<string | null>(null);
+  const [refused, setRefused] = useState<Said | null>(null);
   const sending = capture.state === "transmitting";
   const beingRead = capture.state === "reading";
   const act = (action: CaptureAction) => {
@@ -106,24 +111,24 @@ export function CaptureButtons({ capture, actionsRef }: {
   };
   return (
     <>
-      {refused && <div className="capture-refused" role="alert">{refused}</div>}
+      {refused && <SaidText said={refused} as="div" className="capture-refused" role="alert" />}
       <div className="capture-buttons" ref={actionsRef}>
         {/* Read aloud; heard to the end, it counts as read back. */}
         <button type="button" className="capture-read" disabled={busy || sending || beingRead}
-                title="Read it aloud" onClick={() => act("read")}>
-          {beingRead ? "Reading" : "Read"}
+                title={t("main.capture.readAloud")} onClick={() => act("read")}>
+          {beingRead ? t("main.capture.reading") : t("main.capture.read")}
         </button>
         <button type="button" className={`capture-accept${capture.accepted ? " done" : ""}`}
                 disabled={busy || sending || capture.accepted}
-                title={capture.accepted ? "Accepted: counts as read" : "Accept: counts as read"}
+                title={capture.accepted ? t("main.capture.acceptedTitle") : t("main.capture.acceptTitle")}
                 onClick={() => act("accept")}>
-          {capture.accepted ? "✓ Accepted" : "✓ Accept"}
+          {capture.accepted ? t("main.capture.accepted") : t("main.capture.accept")}
         </button>
         <button type="button" className="capture-delete" disabled={busy || sending}
-                onClick={() => act("delete")}>Delete</button>
+                onClick={() => act("delete")}>{t("main.capture.delete")}</button>
         <button type="button" className="capture-send" disabled={busy || sending || !capture.to}
-                title={capture.to ? `Send to ${capture.to}` : "Not addressed to anyone yet"}
-                onClick={() => act("send")}>Send</button>
+                title={capture.to ? t("main.capture.sendTitle", { to: capture.to }) : t("main.capture.unaddressed")}
+                onClick={() => act("send")}>{t("main.capture.send")}</button>
       </div>
     </>
   );

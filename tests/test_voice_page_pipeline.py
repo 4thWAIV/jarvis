@@ -95,7 +95,7 @@ async def _open(p, url, *, reduced=False, sessions=None):
             break
         await asyncio.sleep(0.05)
     assert ui.client, "the page never said ui_hello"
-    await page.click(".right-tabs [aria-label='Network']")
+    await page.click(".right-tabs [data-ui-tab=network]")
     await page.wait_for_selector(f".node-tile[data-node='{MINI_ID}']")
     return browser, page, ui
 
@@ -234,6 +234,65 @@ async def test_the_detail_branch_keeps_clear_of_its_close_button(page_url):
         info = await page.evaluate(LEAF_AND_CLOSE)
         pts = _clear_of(info)
         assert pts[0][1] > info["close"][3], (pts[0], info["close"])
+        await browser.close()
+
+
+class _LanguageSessions(_Sessions):
+    """The sessions socket, its opening snapshot saying which language is in force."""
+
+    def __init__(self, language):
+        super().__init__()
+        self.language = language
+
+    def __call__(self, ws):
+        super().__call__(ws)
+        ws.send(json.dumps({"type": "snapshot", "sessions": [], "language": self.language}))
+
+
+ARRIVAL = """() => {
+  const contour = document.querySelector('#ui-pipeline-over .ui-contour, #ui-pipeline .ui-contour');
+  const box = contour && contour.getBBox();
+  const detail = document.querySelector('#network-detail').getBoundingClientRect();
+  return {contour: box && [box.x, box.y, box.x + box.width, box.y + box.height],
+          detail: [detail.left, detail.top, detail.right, detail.bottom],
+          head: document.querySelector('#network-detail .subsystem-head-state').textContent};
+}"""
+
+
+SAID = {"en": ("Values from Team Server", "JARVIS is pointing from the orb to"),
+        "es": ("Valores del servidor del equipo", "JARVIS está señalando desde el orbe")}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "es"])
+async def test_in_either_language_a_cue_reaches_its_part_of_the_reflowed_detail(page_url, language):
+    """Spanish words are longer. Once they have reflowed the node's centre
+    detail, a cue to one of its parts still leaves the orb along the fixed
+    map, its leaf ends at that part and keeps clear of Close, the part lies
+    inside the detail, and the status line says it in the language in
+    force: the same in English and in Spanish."""
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, sessions=_LanguageSessions(language))
+        await page.wait_for_function(f"document.documentElement.lang === '{'es-419' if language == 'es' else 'en-US'}'")
+        rid, _ = ui.indicate(DETAIL_CPU, reveal="navigate")
+        result = await ui.result(rid)
+        assert result["status"] == "completed", result
+        arrival = await page.evaluate(ARRIVAL)
+        head, status = SAID[language]
+        assert arrival["head"] == head, arrival
+        lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
+        drawn = await page.evaluate(DRAWN)
+        # Up the rise, along the top pipeline and down the main rail: the
+        # last turn, into the detail's own socket, is the branch.
+        for seg in _segments(drawn["route"][0])[:-1]:
+            assert _on(seg, lines), (seg, drawn["route"][0])
+        assert status in drawn["status"], drawn
+        leaf = _clear_of(await page.evaluate(LEAF_AND_CLOSE))
+        x0, y0, x1, y1 = arrival["contour"]
+        left, top, right, bottom = arrival["detail"]
+        assert left <= x0 and x1 <= right and top <= y0 and y1 <= bottom, arrival   # the part is in its detail
+        end_x, end_y = leaf[-1]
+        assert x0 - 1 <= end_x <= x1 + 1 and y0 - 1 <= end_y <= y1 + 1, (leaf[-1], arrival)
         await browser.close()
 
 

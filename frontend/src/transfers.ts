@@ -22,6 +22,7 @@
 import { agentMessage } from "./agents";
 import type { TransferEvent } from "./messagingContract";
 import { network } from "./network";
+import { t } from "./locale";
 import { createStore } from "./store";
 import { agentEndpoint, queueEndpoint, type Endpoint } from "./transferEndpoints";
 import { isQuiet } from "./voiceHealth";
@@ -60,21 +61,23 @@ export function presentHumanTransfer(event: TransferEvent): void {
 }
 
 /** Who a person is, as the page knows them: their login from the team's
- *  network snapshot; "a teammate" when it does not say. */
-function personWords(githubId: number): string {
+ *  network snapshot, or null when it does not say. */
+function personLogin(githubId: number): string | null {
   const nodes = network.get().value?.snapshot?.nodes ?? [];
-  return nodes.find((n) => n.owner_github_id === githubId)?.owner_login ?? "a teammate";
+  return nodes.find((n) => n.owner_github_id === githubId)?.owner_login ?? null;
 }
 
-/** What a person's transfer is, in words: direction, and who. */
+/** What a person's transfer is, in words, in the language in force when
+ *  it is drawn: direction, and who ("a teammate" when the page does not
+ *  know). */
 export function humanWords(event: TransferEvent): string {
   if (event.sender_github_id === event.recipient_github_id) {
-    return event.direction === "outgoing" ? "Sending a message to yourself"
-                                          : "Your message to yourself is arriving";
+    return event.direction === "outgoing" ? t("main.transfer.toSelf") : t("main.transfer.fromSelf");
   }
-  return event.direction === "outgoing"
-    ? `Sending a message to ${personWords(event.recipient_github_id)}`
-    : `A message from ${personWords(event.sender_github_id)} is arriving`;
+  const outgoing = event.direction === "outgoing";
+  const login = personLogin(outgoing ? event.recipient_github_id : event.sender_github_id);
+  if (login === null) return outgoing ? t("main.transfer.toTeammate") : t("main.transfer.fromTeammate");
+  return outgoing ? t("main.transfer.to", { person: login }) : t("main.transfer.from", { person: login });
 }
 
 function humanToTransfer(event: TransferEvent): Transfer {

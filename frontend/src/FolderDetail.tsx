@@ -14,14 +14,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { CENTRE_SOCKET } from "./ConversationView";
+import { CENTRE_SOCKET, SaidText } from "./ConversationView";
+import { codeWords, type Said } from "./conversation";
+import { formatDateTime, t as tNow, useT } from "./locale";
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome } from "./uiRegistry";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
-  catalog, editFolder, foldersChanged, FolderError, nodeWords, PROVIDER_WORDS, readDetail,
-  readEntries, readPreview, reconnectFolder, refreshFolder, ROLE_WORDS, sizeWords,
+  catalog, editFolder, foldersChanged, FolderError, folderRefusal, nodeWords, PROVIDER_WORDS, readDetail,
+  readEntries, readerWords, readPreview, reconnectFolder, refreshFolder, ROLES, roleWords, sizeWords,
   unregisterFolder, type Entries, type Entry, type Folder, type FolderDetail as Detail,
   type Preview, type Role,
 } from "./folders";
@@ -31,24 +33,17 @@ import { shortAgo } from "./timeFormat";
 type PartRef = (part: string) => (el: Element | null) => void;
 
 function when(at: number | null): string {
-  if (at === null) return "never";
-  return `${new Date(at * 1000).toLocaleString()} (${shortAgo(Date.now() - at * 1000, 10_000)})`;
+  if (at === null) return tNow("main.folders.never");
+  return `${formatDateTime(at * 1000, { dateStyle: "short", timeStyle: "medium" })} (${
+    shortAgo(Date.now() - at * 1000, 10_000)})`;
 }
 
+/** An availability a location event recorded, in words. */
+const availabilityOf = (value: unknown): string =>
+  codeWords("main.folders.availability", String(value ?? "")) ?? String(value ?? "");
+
 /** What a refusal means to the person looking at the folder. */
-function refusalWords(e: unknown): string {
-  if (!(e instanceof FolderError)) return (e as Error)?.message ?? "Something went wrong.";
-  switch (e.code) {
-    case "missing": return "Nothing is at this location now.";
-    case "access_denied": return "macOS does not let JARVIS read this location.";
-    case "forbidden": return "JARVIS does not read this: it is hidden, a credential, a link, or outside the folder.";
-    case "unsupported": return "This cannot be previewed.";
-    case "removed": return "This folder was removed from the catalog; it is not read.";
-    case "unavailable": return "This folder is on another node; it is not read from here.";
-    case "stale_cursor": return "The folder's location changed; showing it again from the top.";
-    default: return e.message;
-  }
-}
+const refusalWords = (e: unknown): Said => folderRefusal(e, "detail");
 
 /** A read that a newer one for the same view replaces: the older is
  *  aborted, and its answer, if it still arrives, is dropped. */
@@ -72,8 +67,8 @@ function useLatest() {
 // links, hidden files and credentials stay its refusals), and a refusal is
 // shown in its words. Opening the folder reads its top directory.
 
-interface Listing { page: Entries | null; rows: Entry[]; error: string | null; loading: boolean }
-interface Showing { windows: Preview[]; error: string | null; loading: boolean }
+interface Listing { page: Entries | null; rows: Entry[]; error: Said | null; loading: boolean }
+interface Showing { windows: Preview[]; error: Said | null; loading: boolean }
 interface Contents {
   folderId: string;
   revision: number;
@@ -231,22 +226,24 @@ function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
   const c = now && now.folderId === folder.id && now.revision === revision ? now : null;
   const { page, rows, error, loading } = c?.dir ?? NO_LISTING;
   const file = c?.file ?? null;
+  const t = useT();
 
   return (
-    <section className="folder-contents" aria-label="Contents" ref={partRef("contents")}>
-      <h3>Contents</h3>
-      <nav className="folder-crumbs" aria-label="Path in folder">
+    <section className="folder-contents" aria-label={t("main.folder.contents")} ref={partRef("contents")}>
+      <h3>{t("main.folder.contents")}</h3>
+      <nav className="folder-crumbs" aria-label={t("main.folder.pathInFolder")}>
         {(page?.breadcrumbs ?? [{ name: folder.display_name, path: "" }]).map((b, i, all) => (
           <Crumb key={b.path} folderId={folder.id} crumb={b} last={i === all.length - 1} />
         ))}
       </nav>
-      {loading && !rows.length && <p className="folder-note" role="status">Reading…</p>}
-      {error && <p className="folder-error" role="alert">{error}</p>}
-      {page && !rows.length && !loading && <p className="folder-note">This folder is empty{page.withheld ? " of anything JARVIS shows" : ""}.</p>}
+      {loading && !rows.length && <p className="folder-note" role="status">{t("main.folder.reading")}</p>}
+      {error && <SaidText said={error} as="p" className="folder-error" role="alert" />}
+      {page && !rows.length && !loading && <p className="folder-note">{page.withheld ? t("main.folder.emptyShown") : t("main.folder.empty")}</p>}
       {page && (page.withheld > 0 || page.partial) && (
         <p className="folder-note" role="status">
-          {page.withheld > 0 && `${page.withheld} item${page.withheld === 1 ? " is" : "s are"} not shown (hidden, credentials, or not this reader's). `}
-          {page.partial && `This directory is too large to look at in full; only the first ${page.scanned} entries were sorted.`}
+          {page.withheld > 0 && t("main.folder.withheld", { count: page.withheld })}
+          {page.withheld > 0 && page.partial && " "}
+          {page.partial && t("main.folder.partial", { count: page.scanned })}
         </p>
       )}
       <div className="folder-contents-body">
@@ -255,7 +252,7 @@ function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
         </ul>
         {page?.next_cursor && (
           <button type="button" className="folder-button quiet" disabled={loading}
-                  {...bindingProps(bind("folder.more", { folderId: folder.id, list: "entries" }))}>Load more</button>
+                  {...bindingProps(bind("folder.more", { folderId: folder.id, list: "entries" }))}>{t("main.folder.loadMore")}</button>
         )}
       </div>
       {c && file && <FilePreview folder={folder} path={file} preview={c.preview} previewRef={partRef("preview")} />}
@@ -277,7 +274,14 @@ function Crumb({ folderId, crumb: b, last }: { folderId: string; crumb: { name: 
   );
 }
 
+/** What an entry is, in a word. */
+function entryKind(e: Entry): string {
+  if (e.kind === "file") return tNow(e.transcript ? "main.folder.entry.transcript" : "main.folder.entry.file");
+  return tNow(`main.folder.entry.${e.kind}`);
+}
+
 function EntryRow({ folderId, entry: e, selected }: { folderId: string; entry: Entry; selected: boolean }) {
+  const t = useT();
   const ui = useEntryTarget(folderId, e.path, e.name);
   const opens = e.kind === "dir" ? browseTo(folderId, e.path)
     : e.kind === "file" ? bind("folder.preview", { folderId, path: e.path }) : null;
@@ -286,9 +290,9 @@ function EntryRow({ folderId, entry: e, selected }: { folderId: string; entry: E
       <button type="button" className={`folder-entry kind-${e.kind}${selected ? " selected" : ""}`}
               ref={(el) => { ui.whole(el); ui.part("row")(el); }}
               disabled={!opens}
-              title={e.kind === "link" ? "A link: JARVIS does not follow links" : e.name}
+              title={e.kind === "link" ? t("main.folder.linkTitle") : e.name}
               {...(opens ? bindingProps(opens) : {})}>
-        <span className="folder-entry-kind">{e.kind === "dir" ? "Folder" : e.kind === "file" ? (e.transcript ? "Transcript" : "File") : e.kind === "link" ? "Link" : "Other"}</span>
+        <span className="folder-entry-kind">{entryKind(e)}</span>
         <span className="folder-entry-name">{e.name}{e.kind === "dir" ? "/" : ""}</span>
         <span className="folder-entry-size">{sizeWords(e.size)}</span>
       </button>
@@ -301,43 +305,46 @@ function FilePreview({ folder, path, preview, previewRef }: {
   const { windows, error, loading } = preview;
   const first = windows[0];
   const last = windows[windows.length - 1];
+  const t = useT();
   return (
-    <section className="folder-preview" aria-label={`Preview of ${path}`} ref={previewRef}>
+    <section className="folder-preview" aria-label={t("main.folder.previewOf", { path })} ref={previewRef}>
       <h4 className="folder-path">{path}</h4>
-      {loading && !first && <p className="folder-note" role="status">Reading…</p>}
-      {error && <p className="folder-error" role="alert">{error}</p>}
+      {loading && !first && <p className="folder-note" role="status">{t("main.folder.reading")}</p>}
+      {error && <SaidText said={error} as="p" className="folder-error" role="alert" />}
       {first && (
         <p className="folder-note">
-          {first.kind === "transcript" ? "A session transcript, shown as what was said" : first.kind === "binary" ? "A binary file" : "Text"}
-          {" · "}{sizeWords(first.size)} · modified {when(first.modified)}
-          {first.sessions[0]?.session_id && ` · session ${first.sessions[0].session_id}`}
+          {t(`main.folder.preview.${first.kind}`)}
+          {" · "}{sizeWords(first.size)} · {t("main.folder.modified", { when: when(first.modified) })}
+          {first.sessions[0]?.session_id && <> · {t("main.folder.session", { id: first.sessions[0].session_id })}</>}
         </p>
       )}
-      {first?.kind === "binary" && <p className="folder-note">Binary and media files are shown as their details only.</p>}
+      {first?.kind === "binary" && <p className="folder-note">{t("main.folder.binaryNote")}</p>}
       {first && first.kind !== "binary" && (
         <pre className="folder-text" tabIndex={0}>
-          {windows.flatMap((w) => w.lines).join("\n") || "(nothing to show)"}
+          {windows.flatMap((w) => w.lines).join("\n") || t("main.folder.nothingToShow")}
         </pre>
       )}
       {last && (last.clipped_lines > 0 || last.skipped_records > 0) && (
         <p className="folder-note">
-          {last.clipped_lines > 0 && "Very long lines are cut short. "}
-          {last.skipped_records > 0 && `${last.skipped_records} record${last.skipped_records === 1 ? "" : "s"} could not be read.`}
+          {last.clipped_lines > 0 && t("main.folder.clipped")}
+          {last.clipped_lines > 0 && last.skipped_records > 0 && " "}
+          {last.skipped_records > 0 && t("main.folder.skipped", { count: last.skipped_records })}
         </p>
       )}
       {last?.next_cursor && (
         <button type="button" className="folder-button quiet" disabled={loading}
-                {...bindingProps(bind("folder.more", { folderId: folder.id, list: "preview" }))}>Show more</button>
+                {...bindingProps(bind("folder.more", { folderId: folder.id, list: "preview" }))}>{t("main.folder.showMore")}</button>
       )}
-      {last && !last.next_cursor && windows.length > 0 && first?.kind !== "binary" && <p className="folder-note">End of file.</p>}
+      {last && !last.next_cursor && windows.length > 0 && first?.kind !== "binary" && <p className="folder-note">{t("main.folder.endOfFile")}</p>}
     </section>
   );
 }
 
 function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
+  const t = useT();
   const [path, setPath] = useState("");
   const [mismatch, setMismatch] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
   const go = async (replace: boolean) => {
     setBusy(true);
@@ -357,35 +364,35 @@ function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
   };
   return (
     <form className="folder-add" onSubmit={(e) => { e.preventDefault(); void go(false); }}
-          aria-label="Reconnect location">
+          aria-label={t("main.folder.reconnectLocation")}>
       <label className="folder-field">
-        <span>New location (absolute, or starting with ~/)</span>
+        <span>{t("main.folder.newLocation")}</span>
         <input type="text" value={path} spellCheck={false} autoFocus
                onChange={(e) => { setPath(e.target.value); setMismatch(null); }} />
       </label>
       {mismatch ? (
         <div role="alert">
-          <p className="folder-note">{mismatch} is a different directory from the one recorded. Use it
-            as this folder's location from now on? The folder keeps its ID; no file moves.</p>
-          <button type="button" className="folder-button" disabled={busy} onClick={() => void go(true)}>Replace location</button>
+          <p className="folder-note">{t("main.folder.mismatch", { path: mismatch })}</p>
+          <button type="button" className="folder-button" disabled={busy} onClick={() => void go(true)}>{t("main.folder.replaceLocation")}</button>
         </div>
       ) : (
-        <button type="submit" className="folder-button" disabled={busy || !path.trim()}>Reconnect</button>
+        <button type="submit" className="folder-button" disabled={busy || !path.trim()}>{t("main.folder.reconnect")}</button>
       )}
-      <button type="button" className="folder-button quiet" onClick={onDone}>Cancel</button>
-      {error && <p className="folder-error" role="alert">{error}</p>}
+      <button type="button" className="folder-button quiet" onClick={onDone}>{t("main.common.cancel")}</button>
+      {error && <SaidText said={error} as="p" className="folder-error" role="alert" />}
     </form>
   );
 }
 
 export function FolderDetail({ id }: { id: string }) {
+  const t = useT();
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Said | null>(null);
   const [mode, setMode] = useState<"view" | "edit" | "reconnect" | "remove">("view");
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("data");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Said | null>(null);
   const hint = useSyncExternalStore(foldersChanged.subscribe, foldersChanged.get);
   const reconnects = useSyncExternalStore(catalog.subscribe, catalog.get).value;
   const latest = useLatest();
@@ -396,23 +403,23 @@ export function FolderDetail({ id }: { id: string }) {
       .catch((e) => { if (!ctl.signal.aborted) setError(refusalWords(e)); });
   }, [id, hint, reconnects, latest]);
   const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "folder", key: id },
-                           label: detail?.folder.display_name ?? "Folder", socket: CENTRE_SOCKET });
+                           label: detail?.folder.display_name ?? t("main.folder.folder"), socket: CENTRE_SOCKET });
 
-  if (error && !detail) return <p className="folder-error" role="alert">{error}</p>;
-  if (!detail) return <p className="folder-note" role="status">Reading the folder…</p>;
+  if (error && !detail) return <SaidText said={error} as="p" className="folder-error" role="alert" />;
+  if (!detail) return <p className="folder-note" role="status">{t("main.folder.readingFolder")}</p>;
   const f = detail.folder;
   const removed = f.lifecycle === "removed";
 
-  const act = async (work: () => Promise<unknown>, done?: string) => {
+  const act = async (work: () => Promise<unknown>, done?: () => string) => {
     setBusy(true);
     setNotice(null);
     try {
       await work();
       setMode("view");
-      if (done) setNotice(done);
+      if (done) setNotice({ words: done });
     } catch (e) {
-      setNotice(refusalWords(e) + (e instanceof FolderError && e.code === "stale_revision"
-        ? " It changed elsewhere; the latest is shown." : ""));
+      setNotice(e instanceof FolderError && e.code === "stale_revision"
+        ? { words: () => tNow("main.folder.changedElsewhere") } : refusalWords(e));
     } finally {
       setBusy(false);
     }
@@ -422,16 +429,16 @@ export function FolderDetail({ id }: { id: string }) {
     <div className="folder-detail" data-folder={f.id} ref={(el) => { ui.whole(el); ui.part("detail")(el); }}>
       <header className="folder-detail-head">
         {mode === "edit" ? (
-          <form className="folder-edit" aria-label="Edit label"
-                onSubmit={(e) => { e.preventDefault(); void act(() => editFolder(f, { display_name: name, role }), "Saved."); }}>
-            <label className="folder-field"><span>Name</span>
+          <form className="folder-edit" aria-label={t("main.folder.editLabel")}
+                onSubmit={(e) => { e.preventDefault(); void act(() => editFolder(f, { display_name: name, role }), () => tNow("main.folder.saved")); }}>
+            <label className="folder-field"><span>{t("main.folders.nameLabel")}</span>
               <input type="text" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
-            <label className="folder-field"><span>Role</span>
+            <label className="folder-field"><span>{t("main.folders.roleLabel")}</span>
               <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                {(Object.keys(ROLE_WORDS) as Role[]).map((r) => <option key={r} value={r}>{ROLE_WORDS[r]}</option>)}
+                {ROLES.map((r) => <option key={r} value={r}>{roleWords(r)}</option>)}
               </select></label>
-            <button type="submit" className="folder-button" disabled={busy || !name.trim()}>Save</button>
-            <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>Cancel</button>
+            <button type="submit" className="folder-button" disabled={busy || !name.trim()}>{t("main.folder.save")}</button>
+            <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>{t("main.common.cancel")}</button>
           </form>
         ) : (
           <>
@@ -439,85 +446,83 @@ export function FolderDetail({ id }: { id: string }) {
             <div className="folder-detail-marks">
               <RoleMark role={f.role} />
               <AvailabilityMark availability={f.location.availability} ref={ui.part("availability")} />
-              {removed && <span className="folder-removed">Removed from catalog</span>}
+              {removed && <span className="folder-removed">{t("main.folder.removedMark")}</span>}
             </div>
           </>
         )}
-        <button type="button" className="workflow-close" title="Close" aria-label="Close folder"
+        <button type="button" className="workflow-close" title={t("main.common.close")} aria-label={t("main.folder.close")}
                 ref={ui.part("close")} {...bindingProps(bind("folders.close", {}))}>×</button>
       </header>
 
       {mode === "view" && !removed && (
         <div className="folder-actions">
           <button type="button" className="folder-button" disabled={busy}
-                  onClick={() => void act(() => refreshFolder(f), "Checked now; discovery will look again shortly.")}>Refresh</button>
+                  onClick={() => void act(() => refreshFolder(f), () => tNow("main.folder.refreshed"))}>{t("main.folder.refresh")}</button>
           <button type="button" className="folder-button quiet" disabled={busy}
-                  onClick={() => { setName(f.display_name); setRole(f.role); setMode("edit"); }}>Edit label</button>
-          <button type="button" className="folder-button quiet" disabled={busy} onClick={() => setMode("reconnect")}>Reconnect location</button>
-          <button type="button" className="folder-button danger" disabled={busy} onClick={() => setMode("remove")}>Remove from catalog</button>
+                  onClick={() => { setName(f.display_name); setRole(f.role); setMode("edit"); }}>{t("main.folder.editLabel")}</button>
+          <button type="button" className="folder-button quiet" disabled={busy} onClick={() => setMode("reconnect")}>{t("main.folder.reconnectLocation")}</button>
+          <button type="button" className="folder-button danger" disabled={busy} onClick={() => setMode("remove")}>{t("main.folder.remove")}</button>
         </div>
       )}
       {mode === "remove" && (
-        <div className="folder-confirm" role="alertdialog" aria-label="Remove from catalog">
-          <p>Remove “{f.display_name}” from JARVIS's catalog? JARVIS stops reading it. <strong>No file is
-            deleted</strong>: the folder, its files and its sessions' histories stay exactly where they are.</p>
+        <div className="folder-confirm" role="alertdialog" aria-label={t("main.folder.remove")}>
+          <p>{t("main.folder.removeQuestion", { name: f.display_name })} <strong>{t("main.folder.noFileDeleted")}</strong>{" "}
+            {t("main.folder.filesStay")}</p>
           <button type="button" className="folder-button danger" disabled={busy}
-                  onClick={() => void act(() => unregisterFolder(f), "Removed from the catalog. No files were touched.")}>Remove from catalog</button>
-          <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>Keep it</button>
+                  onClick={() => void act(() => unregisterFolder(f), () => tNow("main.folder.removed"))}>{t("main.folder.remove")}</button>
+          <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>{t("main.common.keepIt")}</button>
         </div>
       )}
       {mode === "reconnect" && <Reconnect folder={f} onDone={() => setMode("view")} />}
-      {notice && <p className="folder-note" role="status">{notice}</p>}
+      {notice && <SaidText said={notice} as="p" className="folder-note" role="status" />}
 
       <dl className="folder-facts">
-        <dt>Location</dt><dd className="folder-path" ref={ui.part("location")}>{f.location.canonical_path}</dd>
+        <dt>{t("main.folder.location")}</dt><dd className="folder-path" ref={ui.part("location")}>{f.location.canonical_path}</dd>
         {f.location.supplied_path !== f.location.canonical_path && (
-          <><dt>Registered as</dt><dd className="folder-path">{f.location.supplied_path}</dd></>
+          <><dt>{t("main.folder.registeredAs")}</dt><dd className="folder-path">{f.location.supplied_path}</dd></>
         )}
-        <dt>Node</dt><dd>{nodeWords(f)}</dd>
-        <dt>Last checked</dt><dd>{when(f.location.last_checked_at)}</dd>
-        <dt>Last seen there</dt><dd>{when(f.location.last_seen_at)}</dd>
-        <dt>Read as</dt><dd>{f.access.enabled ? f.access.description : "Not read (removed from the catalog)"}</dd>
-        <dt>Location revision</dt><dd>{f.location.revision}</dd>
+        <dt>{t("main.folder.node")}</dt><dd>{nodeWords(f)}</dd>
+        <dt>{t("main.folder.lastChecked")}</dt><dd>{when(f.location.last_checked_at)}</dd>
+        <dt>{t("main.folder.lastSeen")}</dt><dd>{when(f.location.last_seen_at)}</dd>
+        <dt>{t("main.folders.readAs")}</dt><dd>{f.access.enabled ? readerWords(f.access) : t("main.folder.notRead")}</dd>
+        <dt>{t("main.folder.locationRevision")}</dt><dd>{f.location.revision}</dd>
       </dl>
 
       {!removed && f.location.availability === "available" && <Contents folder={f} partRef={ui.part} />}
       {!removed && f.location.availability !== "available" && (
         <p className="folder-note" role="status">
-          {f.location.availability === "missing" && "Nothing is at this location now. Its record and sessions are kept; reconnect it if it moved."}
-          {f.location.availability === "access_denied" && "macOS does not let JARVIS read this location. Grant access, then Refresh."}
-          {f.location.availability === "unavailable_node" && "This folder is on another node and is not read from here."}
-          {f.location.availability === "unknown" && "Not checked yet. Refresh to check it now."}
+          {t(`main.folder.unavailable.${f.location.availability}`)}
         </p>
       )}
 
-      <section className="folder-sessions" aria-label="Related sessions">
-        <h3>Related sessions</h3>
-        {!detail.sessions.length && <p className="folder-note">No session's records name this folder yet.</p>}
+      <section className="folder-sessions" aria-label={t("main.folder.relatedSessions")}>
+        <h3>{t("main.folder.relatedSessions")}</h3>
+        {!detail.sessions.length && <p className="folder-note">{t("main.folder.noSessions")}</p>}
         <ul>
           {detail.sessions.map((s) => (
             <li key={`${s.provider}:${s.profile_root}:${s.session_id}`} className="folder-session">
               <span className="folder-session-name">{s.agent_name ?? s.session_id}</span>
               <span>{PROVIDER_WORDS[s.provider] ?? s.provider}</span>
-              <span>{s.live ? "Live" : "Not running"}</span>
-              <span>{s.relation === "history" ? "history kept here" : s.relation === "cwd" ? "worked here" : `worked in ${s.cwd}`}</span>
-              {s.associated.subagents ? <span>{s.associated.subagents} subagent transcript{s.associated.subagents === 1 ? "" : "s"}</span> : null}
-              {s.associated.memory ? <span>memory notes</span> : null}
-              <span>seen {shortAgo(Date.now() - s.observed_at * 1000, 10_000)}</span>
+              <span>{s.live ? t("main.folder.live") : t("main.folder.notRunning")}</span>
+              <span>{s.relation === "inside" ? t("main.folder.relation.inside", { path: s.cwd }) : t(`main.folder.relation.${s.relation}`)}</span>
+              {s.associated.subagents ? <span>{t("main.folder.subagentTranscripts", { count: s.associated.subagents })}</span> : null}
+              {s.associated.memory ? <span>{t("main.folder.memoryNotes")}</span> : null}
+              <span>{t("main.folders.seen", { when: shortAgo(Date.now() - s.observed_at * 1000, 10_000) })}</span>
             </li>
           ))}
         </ul>
       </section>
 
-      <section className="folder-events" aria-label="Location history">
-        <h3>Location history</h3>
+      <section className="folder-events" aria-label={t("main.folder.locationHistory")}>
+        <h3>{t("main.folder.locationHistory")}</h3>
         <ul>
           {detail.events.map((e) => (
             <li key={e.id}>
               <span>{when(e.at)}</span>{" "}
               <span>{e.event === "availability"
-                ? `${String(e.prior.availability ?? "").replace("_", " ")} → ${String(e.new.availability ?? "").replace("_", " ")}`
-                : e.event === "reconnected" ? `reconnected from ${String(e.prior.canonical_path ?? "")}` : e.event}</span>
+                ? `${availabilityOf(e.prior.availability)} → ${availabilityOf(e.new.availability)}`
+                : e.event === "reconnected" ? t("main.folder.reconnectedFrom", { path: String(e.prior.canonical_path ?? "") })
+                : codeWords("main.folder.event", e.event) ?? e.event}</span>
             </li>
           ))}
         </ul>

@@ -13,11 +13,13 @@
  */
 
 import { turnKey, useRecordOpen, type Turn } from "./captions";
-import { captureKind, KIND_LABEL } from "./capture";
+import { captureKind, kindLabel } from "./capture";
+import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 
 export function CaptureChip({ turn, partRef }: { turn: Turn;
                                                  partRef?: (part: string) => (el: Element | null) => void }) {
+  const t = useT();
   const recordId = turnKey(turn);
   const open = useRecordOpen(recordId, true);
   const capture = turn.capture!;
@@ -26,7 +28,7 @@ export function CaptureChip({ turn, partRef }: { turn: Turn;
     <span className={`capture-chip${kind ? ` kind-${kind}` : ""}${open ? " open" : ""}`}>
       <button type="button" className="capture-chip-head" aria-expanded={open} ref={partRef?.("expand")}
               {...bindingProps(bind("conversation.record.expand", { recordId, open: !open }))}>
-        {kind ? KIND_LABEL[kind](capture) : `Capture ${capture.id}`}
+        {kind ? kindLabel(kind, capture) : t("main.capture.numbered", { id: String(capture.id) })}
       </button>
       {open && (
         <span className="capture-chip-body" ref={partRef?.("answer")}>

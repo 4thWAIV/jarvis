@@ -25,7 +25,9 @@
  */
 
 import { captures } from "./capture";
+import { codeWords, saidShown, type Said } from "./conversation";
 import { liveRead, type LiveStore } from "./liveRead";
+import { formatNumber, t } from "./locale";
 import { messagingApi, MessagingError } from "./messagingApi";
 import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkCommand } from "./messagingContract";
 import { network } from "./network";
@@ -38,9 +40,21 @@ import type { SideEffect } from "./uiContract";
 import { bind, bindingAvailable, detailSlot, runBinding } from "./uiNavigation";
 import { registerCommand, type Availability, type CommandOutcome } from "./uiRegistry";
 
-/** A refusal in the contract's words. */
 const asError = (e: unknown) => (e instanceof MessagingError ? e : new MessagingError("transport", 0, String(e)));
-const shown = (e: unknown) => asError(e).shown;
+
+/** What a messaging refusal code means, in the language in force: the
+ *  catalog's words for the contract's code, else `fallback` (the server's
+ *  own words, shown as they came). */
+export function messagingSaid(code: string, fallback: Said): Said {
+  return codeWords("main.messaging.error", code) !== null
+    ? { words: () => codeWords("main.messaging.error", code)! } : fallback;
+}
+
+/** A refusal in words: its contract code's, or the message it came with. */
+const said = (e: unknown): Said => {
+  const err = asError(e);
+  return messagingSaid(err.code, { original: err.message });
+};
 
 /** Moves on every "messages" hint on /ws/sessions, and on its every
  *  (re)connect (sessionsSocket.ts). */
@@ -131,8 +145,8 @@ export const openQueue = queueSlot.value;
 
 /** Something to tell the owner about one item (a refusal, a kept command),
  *  by thread. */
-export const itemNotes = createStore<Record<string, string>>({});
-function note(thread: string, words: string | null): void {
+export const itemNotes = createStore<Record<string, Said>>({});
+function note(thread: string, words: Said | null): void {
   const notes = { ...itemNotes.get() };
   if (words) notes[thread] = words; else delete notes[thread];
   itemNotes.set(notes);
@@ -261,14 +275,14 @@ async function command(thread: string, change: WorkCommand): Promise<boolean> {
   try {
     const result = await messagingApi().workCommand(thread, change);
     record((s) => applyWorkState(s, result.work_state));
-    if (result.pending) note(thread, "Kept on this JARVIS until the team server answers.");
+    if (result.pending) note(thread, { words: () => t("main.queue.kept") });
     return true;
   } catch (e) {
     const err = asError(e);
     if (err.code === "revision_conflict" && err.latest) {
       record((s) => applyWorkState(s, err.latest as QueueState["items"][string]["work_state"]));
     }
-    note(thread, err.shown);
+    note(thread, said(err));
     return false;
   } finally {
     const pending = { ...pendingCommands.get() };
@@ -315,6 +329,8 @@ export async function dismiss(thread: string): Promise<boolean> {
 
 // ── Dismissed items ──────────────────────────────────────────────────────
 
+/** Why the last read of dismissed items failed, in the words of the
+ *  language in force when it failed (QueuePanel.tsx shows it). */
 export const historyError = createStore<string | null>(null);
 
 /** Read the first page of dismissed items, or the next one. Never more
@@ -327,7 +343,7 @@ export async function readHistory(first: boolean): Promise<void> {
     historyError.set(null);
     record((s) => applyHistory(s, page, first));
   } catch (e) {
-    historyError.set(shown(e));
+    historyError.set(saidShown(said(e)).text);
   }
 }
 
@@ -408,7 +424,7 @@ export interface Editor {
   saving: boolean;
   /** Files being copied to JARVIS now. */
   adding: number;
-  error: string | null;
+  error: Said | null;
   /** The draft as it is on JARVIS, after it changed under this editor. */
   conflict: Draft | null;
 }
@@ -508,7 +524,7 @@ async function save(key: string): Promise<boolean> {
   if (!ed || !ed.dirty) return true;
   if (!ed.messageId && !hasContent(ed)) return true;          // nothing to keep yet
   if (ed.recipient === null) {
-    setEditor(key, { ...ed, error: "Choose who it is for, and it will be kept as a draft." });
+    setEditor(key, { ...ed, error: { words: () => t("main.queue.chooseRecipient") } });
     return false;
   }
   const body: DraftSave = {
@@ -546,9 +562,11 @@ async function save(key: string): Promise<boolean> {
         const latest = err.latest as Draft;
         record((s) => applyDraft(s, latest));
         setEditor(key, { ...now, saving: false, conflict: latest,
-                         error: "This draft was changed elsewhere. Your text is kept here." });
+                         error: { words: () => t("main.queue.changedElsewhere") } });
       } else {
-        setEditor(key, { ...now, saving: false, error: `Not saved: ${err.shown} Your text is kept here.` });
+        const why = said(err);
+        setEditor(key, { ...now, saving: false,
+                         error: { words: () => t("main.queue.notSaved", { reason: saidShown(why).text }) } });
       }
       return false;
     } finally {
@@ -584,10 +602,11 @@ export async function addFiles(key: string, files: File[]): Promise<void> {
   const known = ed.messageId ? queueRecord.get().drafts[ed.messageId]?.attachments ?? [] : [];
   const total = known.reduce((n, a) => n + a.size_bytes, 0) + files.reduce((n, f) => n + f.size, 0);
   const tooBig = files.find((f) => f.size > LIMITS.FILE_MAX_BYTES);
-  const refusal = ed.attachmentIds.length + files.length > LIMITS.ATTACHMENTS_MAX
-    ? `At most ${LIMITS.ATTACHMENTS_MAX} files.`
-    : tooBig ? `${tooBig.name} is larger than ${LIMITS.FILE_MAX_BYTES / MB} MB.`
-    : total > LIMITS.PACKAGE_MAX_BYTES ? `The files come to more than ${LIMITS.PACKAGE_MAX_BYTES / MB} MB.`
+  const megabytes = (bytes: number) => formatNumber(bytes / MB);
+  const refusal: Said | null = ed.attachmentIds.length + files.length > LIMITS.ATTACHMENTS_MAX
+    ? { words: () => t("main.queue.tooManyFiles", { count: LIMITS.ATTACHMENTS_MAX }) }
+    : tooBig ? { words: () => t("main.queue.fileTooLarge", { name: tooBig.name, size: megabytes(LIMITS.FILE_MAX_BYTES) }) }
+    : total > LIMITS.PACKAGE_MAX_BYTES ? { words: () => t("main.queue.filesTooLarge", { size: megabytes(LIMITS.PACKAGE_MAX_BYTES) }) }
     : null;
   if (refusal) { setEditor(key, { ...ed, error: refusal }); return; }
   if (!ed.messageId) {
@@ -600,12 +619,13 @@ export async function addFiles(key: string, files: File[]): Promise<void> {
   const messageId = ed.messageId!;
   setEditor(key, { ...ed, adding: ed.adding + files.length, error: null });
   const added: string[] = [];
-  let failure: string | null = null;
+  let failure: Said | null = null;
   for (const file of files) {
     try {
       added.push((await messagingApi().addFile(messageId, file)).attachment_id);
     } catch (e) {
-      failure = `${file.name} was not added: ${shown(e)}`;
+      const why = said(e);
+      failure = { words: () => t("main.queue.fileNotAdded", { name: file.name, reason: saidShown(why).text }) };
     }
   }
   const now = editors.get()[key];
@@ -634,7 +654,7 @@ async function onDraft(key: string, act: (messageId: string, revision: number) =
     if (now) setEditor(key, { ...now, savedRevision: after.draft_revision, error: null });
   } catch (e) {
     const now = editors.get()[key] ?? ed;
-    setEditor(key, { ...now, error: shown(e) });
+    setEditor(key, { ...now, error: said(e) });
   }
 }
 
@@ -653,7 +673,7 @@ export async function retrySend(draft: Draft): Promise<void> {
     const after = await messagingApi().retry(draft.message_id, draft.draft_revision);
     record((s) => applyDraft(s, after));
   } catch (e) {
-    note(draft.thread_id, shown(e));
+    note(draft.thread_id, said(e));
   }
 }
 
@@ -663,7 +683,7 @@ export async function cancelSend(draft: Draft): Promise<void> {
     const after = await messagingApi().cancel(draft.message_id, draft.draft_revision);
     record((s) => applyDraft(s, after));
   } catch (e) {
-    note(draft.thread_id, shown(e));
+    note(draft.thread_id, said(e));
   }
 }
 
@@ -677,8 +697,8 @@ export async function discard(key: string): Promise<boolean> {
     try {
       await messagingApi().discardDraft(draft.message_id, draft.draft_revision);
     } catch (e) {
-      if (ed) setEditor(key, { ...ed, error: shown(e) });
-      else note(key, shown(e));
+      if (ed) setEditor(key, { ...ed, error: said(e) });
+      else note(key, said(e));
       return false;
     }
     record((s) => removeDraft(s, draft.message_id));
@@ -716,7 +736,7 @@ export async function downloadFile(messageId: string, attachmentId: string): Pro
     const file = await messagingApi().download(messageId, attachmentId);
     record((s) => applyFile(s, messageId, file));
   } catch (e) {
-    if (thread) note(thread, shown(e));
+    if (thread) note(thread, said(e));
   }
 }
 
@@ -725,6 +745,6 @@ export async function revealFile(messageId: string, attachmentId: string): Promi
   try {
     await messagingApi().reveal(messageId, attachmentId);
   } catch (e) {
-    if (thread) note(thread, shown(e));
+    if (thread) note(thread, said(e));
   }
 }

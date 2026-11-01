@@ -15,8 +15,9 @@
 
 import { useLayoutEffect, useRef } from "react";
 import { CENTRE_SOCKET, earlierPages, historyRows, RecordItem } from "./ConversationView";
-import { conversationChanged, getThread, openThread } from "./conversation";
+import { agentStateWords, conversationChanged, getThread, openThread } from "./conversation";
 import { useLiveRead } from "./liveRead";
+import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget } from "./uiRegistry";
@@ -45,6 +46,7 @@ registerRevealer("main.thread", "threadRecord", async (ref, { signal }) => {
 });
 
 export function AgentThread({ sessionId, name }: { sessionId: string; name: string | null }) {
+  const t = useT();
   const live = useLiveRead(() => getThread(sessionId), [conversationChanged]);
   const { older, earlier } = threadPages.use(sessionId, live.value ? live.value.earlier : undefined);
   const ref = useRef<HTMLDivElement>(null);
@@ -54,7 +56,7 @@ export function AgentThread({ sessionId, name }: { sessionId: string; name: stri
   const items = [...older.filter((i) => !ids.has(i.id)), ...latest];
   const rows = historyRows([], items, true);
   const agent = live.value?.agent;
-  const title = agent?.name ?? name ?? "Agent";
+  const title = agent?.name ?? name ?? t("main.thread.agent");
   const ui = useUiTarget({ ref: { region: "main", view: "main.thread", kind: "agentThread", key: sessionId },
                            label: title, socket: CENTRE_SOCKET });
   useLayoutEffect(() => {
@@ -65,15 +67,15 @@ export function AgentThread({ sessionId, name }: { sessionId: string; name: stri
       <div className="thread-header" ref={ui.part("header")}>
         <h3>{title}</h3>
         {agent && <span className={`thread-state state-${agent.state}`} ref={ui.part("state")}>
-          {agent.state.replace("_", " ")}</span>}
-        <button type="button" className="thread-close" aria-label="Close" ref={ui.part("close")}
+          {agentStateWords(agent.state)}</span>}
+        <button type="button" className="thread-close" aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("thread.close", {}))}>×</button>
       </div>
-      {live.error && <p className="read-failure">Couldn't read the thread ({live.error}); trying again.</p>}
+      {live.error && <p className="read-failure">{t("main.thread.unreadable", { error: live.error })}</p>}
       <div className="thread-items" ref={ref}>
         {earlier != null && <button type="button" className="history-earlier" ref={ui.part("earlier")}
-                                    {...bindingProps(bind("thread.earlier", {}))}>Earlier</button>}
-        {live.value && rows.length === 0 && <p className="workflow-empty">Nothing to or from this agent yet</p>}
+                                    {...bindingProps(bind("thread.earlier", {}))}>{t("main.conversation.earlier")}</button>}
+        {live.value && rows.length === 0 && <p className="workflow-empty">{t("main.thread.empty")}</p>}
         {rows.map((r) => <RecordItem key={r.key} item={r.item!} answer={r.answer} restorable={r.restorable}
                                      place={{ region: "main", view: "main.thread", kind: "threadRecord",
                                               key: `${sessionId}/${r.key}` }} />)}
