@@ -98,6 +98,9 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(team_client, "connection", team)
     hints: list[dict] = []
     monkeypatch.setattr(server_module, "_send_to_session_clients", hints.append)
+    # `_call` puts a stand-in brain here; monkeypatch puts the real one back,
+    # so no later test finds a brain without a provider.
+    monkeypatch.setattr(server_module, "brain_instance", server_module.brain_instance)
     yield SimpleNamespace(server=server_module, client=TestClient(server_module.app),
                           team=team, hints=hints, tmp=tmp_path)
     server_module.messaging = None
