@@ -20,7 +20,28 @@ log = logging.getLogger("jarvis.speech")
 _ABBREVIATIONS = {
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "inc", "ltd",
     "co", "no", "approx", "fig", "dept", "e.g", "i.e", "a.m", "p.m", "u.s", "u.k",
+    # Spanish ("sr", "dr" are above). None is an English word.
+    "sra", "srta", "dra", "ud", "uds", "pág", "núm", "aprox",
 }
+# Spanish writes the time of day spaced: "las 3 p. m.". Neither dot ends a
+# sentence, as "p.m." does not.
+_SPACED_MERIDIEM = ("a. m.", "p. m.")
+
+
+def _in_spaced_meridiem(text: str, i: int) -> Optional[bool]:
+    """Whether the dot at `i` is one of "a. m." / "p. m.": True, False, or
+    None when the text so far ends part way into one and the rest decides."""
+    for form in _SPACED_MERIDIEM:
+        for dot in (1, 4):                       # the two dots in the form
+            start = i - dot
+            if start < 0 or (start > 0 and text[start - 1].isalnum()):
+                continue
+            seen = text[start:start + len(form)].lower()
+            if seen == form:
+                return True
+            if len(seen) < len(form) and form.startswith(seen):
+                return None
+    return False
 _CLOSERS = '"\')]'
 _CLAUSE_BREAKS = (", ", "; ", " — ", " – ", ": ")
 _STRONG_BREAKS = (" — ", " – ", "; ", ": ")   # a pause a listener already expects
@@ -102,6 +123,12 @@ class SentenceSplitter:
                     i = k                            # "3.5", "server.py"
                     continue
                 if text[i] == "." and j - i == 1:
+                    meridiem = _in_spaced_meridiem(text, i)
+                    if meridiem is None:
+                        return None                  # "3 p." may be "3 p. m."
+                    if meridiem:
+                        i = k
+                        continue
                     word = _word_before(text, i)
                     if (word.lower() in _ABBREVIATIONS or (len(word) == 1 and word.isupper())
                             or word.isdigit()):      # "Mr.", initials "J.", list markers "1."

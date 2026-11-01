@@ -174,6 +174,8 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "df337fd9c8313b23ea2b1d12fc521f39274338ca5debb55561223417f9dbeb52",  # work packages: open, run, send results back
     "7151dd997fe89a1cfbc2aa2eb04a8bf7277e856e6da7744f42dcaaeeddc96004",  # attach_message_files: files onto a saved draft
     "9cf23b8d034d94dc4494f5f6d3a445c1fdc198f19798a87c89fd001bcd45861a",  # Spanish clear command: empezar de cero, then sí
+    "d4ed710d0af5dd10e7c7b66088a7f84b40a61763c5f588edff6e661f2a1a60c7",  # Spanish: señor, results in his language, memory in both
+    "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
