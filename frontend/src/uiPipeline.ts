@@ -206,10 +206,12 @@ function boxOf(el: Element | null): DOMRect | null {
   return r.width === 0 && r.height === 0 ? null : r;
 }
 
-/** The controls inside `el` a route keeps clear of, on show. */
-function reservedIn(el: Element): DOMRect[] {
+/** The controls inside `el` a route keeps clear of, on show; never the
+ *  addressed part `except` itself or a control inside it. */
+function reservedIn(el: Element, except?: Element): DOMRect[] {
   const out: DOMRect[] = [];
   el.querySelectorAll(RESERVED).forEach((c) => {
+    if (except && except.contains(c)) return;
     const r = boxOf(c);
     if (r) out.push(r);
   });
@@ -286,7 +288,7 @@ function crossesAnotherObject(edge: RouteEdge, target: VisualTarget): boolean {
   for (const other of mountedTargets()) {
     if (other === target) continue;
     const el = other.element();
-    if (!el || el.contains(own) || own?.contains(el)) continue;
+    if (!el || el.contains(own) || own?.contains(el) || visibilityOf(el) === "hidden") continue;
     const r = boxOf(el);
     if (r) others.push(r);
   }
@@ -308,7 +310,7 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
   const leaf: RouteEdge = { id: `leaf:${presentationId(target.ref)}:${part}`, layer: "leaf", host: hostOf(target),
                             points: [entry, [margin, entry[1]], [margin, y], [edge, y]] };
   const whole = target.element();
-  const kept: DOMRect[] = whole ? reservedIn(whole) : [];
+  const kept: DOMRect[] = whole ? reservedIn(whole, el) : [];
   const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
   for (const other of decl) {
     if (other === part) continue;

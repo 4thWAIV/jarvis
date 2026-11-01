@@ -137,7 +137,10 @@ export const getHistory = (from: number, to: number) =>
   getJson<{ samples: Sample[]; events: VoiceEvent[] }>(
     `/api/voice/diagnostics/samples?from=${from}&to=${to}`);
 
-/** The centre's voice diagnostics detail: open or not (it has no item). */
+/** The centre's voice diagnostics detail: open or not (it has no item).
+ *  subsystems.ts writes it too: opening a subsystem closes it, and the
+ *  reverse.
+ *  @routeStateAlso subsystems.ts */
 export const diagnosticsSlot = detailSlot<true>("diagnostics");
 
 /** Whether the centre area offers the Diagnostics view. Writing it runs

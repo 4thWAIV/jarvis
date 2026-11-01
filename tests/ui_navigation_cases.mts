@@ -8,6 +8,7 @@
 // Run with: node --experimental-transform-types --no-warnings
 //   --import ./tests/ui_ts_loader.mjs tests/ui_navigation_cases.mts
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 
 // ── a page's globals, as little as these modules touch ─────────────────
 
@@ -65,6 +66,8 @@ const voice = await import("../frontend/src/voiceHealth.ts");
 const subsystems = await import("../frontend/src/subsystems.ts");
 const folders = await import("../frontend/src/folders.ts");
 const agents = await import("../frontend/src/agents.ts");
+await import("../frontend/src/uiRight.ts");
+await import("../frontend/src/captions.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
@@ -429,8 +432,8 @@ function registerFolderRow(el: unknown) {
 {
   // Nothing declared to reveal it, and hidden: not visible, no navigation.
   await reset();
-  const ref = { region: "main", view: "main.folders", kind: "folder", key: "f-1" } as const;
-  const off = registry.registerTarget({ ref, label: "f-1", socket: { rail: "rail.main", side: "left" } as never,
+  const ref = { region: "main", view: "main.folders", kind: "folderEntry", key: "f-1/notes.md" } as const;
+  const off = registry.registerTarget({ ref, label: "notes.md", socket: { rail: "rail.main", side: "left" } as never,
                                         element: () => element(() => false) as never, part: () => null });
   const before = navigationRevision.get();
   const o = await reveal.reveal(ref as never, ctx());
@@ -441,8 +444,12 @@ function registerFolderRow(el: unknown) {
 }
 
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so
-// node cannot load them; the page tests cover their commands.
-assert.deepEqual(registry.missingHandlers().filter((id) => !/^(network|queue)\./.test(id)), [],
+// node cannot load them; nor can it load a component (.tsx), so a command
+// whose handler a component registers is left to the page tests too.
+const src = new URL("../frontend/src/", import.meta.url);
+const inComponents = new Set(readdirSync(src).filter((f) => f.endsWith(".tsx")).flatMap(
+  (f) => [...readFileSync(new URL(f, src), "utf8").matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1])));
+assert.deepEqual(registry.missingHandlers().filter((id) => !/^(network|queue)\./.test(id) && !inComponents.has(id)), [],
                  "every declared navigation command loaded here has a handler");
 passed.push("no declared command without a handler");
 

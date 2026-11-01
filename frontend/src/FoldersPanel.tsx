@@ -18,12 +18,18 @@ import { RIGHT_SOCKET, row } from "./uiRight";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import { candidates, catalog, matches, nodeWords, selectedFolder, type Folder } from "./folders";
 import { createStore } from "./store";
-import { bind, bindingProps } from "./uiNavigation";
+import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
-import { useUiTarget } from "./uiRegistry";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 
-/** The filter's words: emptied each time the tab leaves the page. */
+/** The filter's words: emptied each time the tab leaves the page, and
+ *  changed only by `folders.panel.search`, the box and the brain alike. */
 const search = createStore("");
+
+registerCommand("folders.panel.search", {
+  availability: () => ({ available: true }),
+  execute({ text }) { search.set(text ?? ""); return { status: "completed", effects: ["list.filtered"] }; },
+});
 
 const shownBy = (text: string, f: Folder) => matches(text, f.display_name, f.location.canonical_path);
 
@@ -60,7 +66,9 @@ export function FoldersPanel() {
       </div>
       <label className="folder-field folder-search" ref={ui.part("search")}>
         <span className="visually-hidden">Filter folders</span>
-        <input type="search" placeholder="Filter" value={text} onChange={(e) => search.set(e.target.value)} />
+        <input type="search" placeholder="Filter" value={text} data-ui-command="folders.panel.search"
+               onChange={(e) => runBinding(e.target.value ? bind("folders.panel.search", { text: e.target.value })
+                                                          : bind("folders.panel.search", {}))} />
       </label>
       {!live.value && (
         <p className="folder-note" role="status">

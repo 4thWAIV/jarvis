@@ -29,27 +29,32 @@ import { RIGHT_SOCKET, row } from "./uiRight";
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
-import { useUiTarget } from "./uiRegistry";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 import { ago, dismissals, dismissWorkflow, FINISHED, isGone, openWorkflow, STATE_WORDS,
          SUBAGENT_LOOK, SUBAGENT_WORDS, workflows, type SubagentRow as Subagent,
          type Workflow } from "./workflows";
 import { OpenIcons, PhaseTrack, WorkflowOrb } from "./WorkflowVisuals";
 
 /** Whether the dismissed workflows under "Done" are shown; collapsed each
- *  time the tab leaves the page. Its toggle is the one control here not yet
- *  a registered command: `workflows.showDone` is to be declared in
- *  workflows.json (see coverage.md). */
+ *  time the tab leaves the page. Changed only by `workflows.showDone`, its
+ *  toggle and the brain alike. */
 const showDone = createStore(false);
 
+registerCommand("workflows.showDone", {
+  availability: () => ({ available: true }),
+  execute({ shown }) { showDone.set(shown); return { status: "completed", effects: ["list.filtered"] }; },
+});
+
 // Pointing at a workflow whose row is not on the page once the tab shows:
-// why not. A dismissed one under a collapsed "Done" is not shown by
-// opening it until that is a registered command.
+// a finished one under a collapsed "Done" is shown by opening Done, as
+// workflows.showDone does.
 registerRevealer("right.workflows", "workflow", async (ref) => {
   const now = workflows.get().value;
   if (!now) return "not-loaded";
   const w = now.workflows.find((x) => x.id === ref.key);
   if (!w) return "entity-gone";
-  return isGone(w, Date.now() / 1000) && !showDone.get() ? "hidden" : true;
+  if (isGone(w, Date.now() / 1000)) showDone.set(true);
+  return true;
 });
 
 /** A row's part drawn by a component of its own (the orb), found in that
@@ -108,7 +113,7 @@ export function WorkflowsView() {
       {done.length > 0 && (
         <div className="workflows-done">
           <button type="button" className="workflows-done-toggle" aria-expanded={doneShown}
-                  ref={ui.part("showDone")} onClick={() => showDone.set(!doneShown)}>
+                  ref={ui.part("showDone")} {...bindingProps(bind("workflows.showDone", { shown: !doneShown }))}>
             {doneShown ? "▾" : "▸"} Done ({done.length})
           </button>
           {doneShown && (

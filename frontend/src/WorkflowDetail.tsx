@@ -526,8 +526,10 @@ const ROLE_LABELS: Record<TranscriptEntry["role"], string> = {
 /** How an agent's transcript is registered: an attached agent's in its
  *  workflow (`workflowAgent`), a subagent's on its own (`subagent`), or
  *  through the parts of the subagent detail it sits in (`partRef`). */
+type TranscriptPart = "section" | "transcript" | "entries" | "earlier";
+
 function useTranscriptTarget(sessionId: string, name: string, workflowId?: string, subagent?: string,
-                             partRef?: PartRef): PartRef {
+                             partRef?: PartRef): (part: TranscriptPart) => (el: Element | null) => void {
   const own = useUiTarget(partRef ? null : {
     ref: subagent
       ? { region: "main", view: "main.workflow", kind: "subagent", key: transcriptKey(sessionId, subagent) }
@@ -536,7 +538,7 @@ function useTranscriptTarget(sessionId: string, name: string, workflowId?: strin
   });
   if (partRef) return partRef;
   // An attached agent's section is its whole; a subagent's is its transcript.
-  return (part) => (part === "section" || part === "transcript"
+  return (part: TranscriptPart) => (part === "section" || part === "transcript"
     ? (el) => { own.whole(el); own.part(part)(el); } : own.part(part));
 }
 

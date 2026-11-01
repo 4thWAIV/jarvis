@@ -20,12 +20,16 @@
 //                         `@routeStateAlso <file>`; a cast does not get round
 //                         it.
 //   undeclared-target     `useUiTarget` names a kind the contract does not
-//                         present in that view.
+//                         present in that view. A view or kind is a literal,
+//                         or typed as a union of literals (each is checked),
+//                         and a reference built elsewhere is read from its
+//                         type, member by member.
 //   undeclared-part       `.part("x")` on a registration names a part the
 //                         contract does not present for it, or a name that
-//                         is not a literal.
+//                         is neither a literal nor typed as literals.
 //   index-key             A target's key is made from a number (an array
-//                         position), not the record's own identity.
+//                         position), not the record's own identity; a
+//                         record's numeric field (`item.id`) is its identity.
 //
 // Run: node --experimental-transform-types --no-warnings
 //        --import ./tests/ui_ts_loader.mjs tests/ui_coverage_rules.mts <dir>...
@@ -190,7 +194,9 @@ function literals(e: ts.Expression): ts.ObjectLiteralExpression[] {
   if (ts.isObjectLiteralExpression(e)) return [e];
   if (ts.isConditionalExpression(e)) return [...literals(e.whenTrue), ...literals(e.whenFalse)];
   if (ts.isIdentifier(e)) {
-    const d = symbolOf(e)?.declarations?.[0];
+    const s = ts.isShorthandPropertyAssignment(e.parent) && e.parent.name === e
+      ? checker.getShorthandAssignmentValueSymbol(e.parent) : symbolOf(e);
+    const d = s?.declarations?.[0];
     if (d && ts.isVariableDeclaration(d) && d.initializer) return literals(d.initializer);
   }
   return [];
@@ -208,11 +214,47 @@ function hasNumber(e: ts.Node): boolean {
   let found = false;
   const visit = (n: ts.Node) => {
     if (found) return;
-    if (ts.isIdentifier(n) && checker.getTypeAtLocation(n).flags & ts.TypeFlags.NumberLike) found = true;
+    const field = ts.isPropertyAccessExpression(n.parent) && n.parent.name === n;
+    if (ts.isIdentifier(n) && !field && checker.getTypeAtLocation(n).flags & ts.TypeFlags.NumberLike) found = true;
     else ts.forEachChild(n, visit);
   };
   visit(e);
   return found;
+}
+
+/** The strings a type can only be: its literal, or each member of a union
+ *  of literals; null for anything wider. */
+function literalTexts(t: ts.Type): string[] | null {
+  const members = t.isUnion() ? t.types : [t];
+  return members.every((m) => m.isStringLiteral()) ? members.map((m) => (m as ts.StringLiteralType).value) : null;
+}
+
+/** The strings an expression can only be: a literal, or typed as literals. */
+function textsOf(e: ts.Expression): string[] | null {
+  const b = bare(e);
+  return ts.isStringLiteral(b) ? [b.text] : literalTexts(checker.getTypeAtLocation(b));
+}
+
+/** The (view, kind) pairs a reference can be: from its literal's view and
+ *  kind, or, for one built elsewhere, from its type, member by member. No
+ *  pairs when a view or kind is not known to be literals. */
+function refPairs(refExpr: ts.Expression): { node: ts.Node; pairs: [string, string][]; key?: ts.Expression }[] {
+  const lits = literals(refExpr);
+  const cross = (vs: string[] | null, ks: string[] | null) =>
+    vs && ks ? vs.flatMap((v) => ks.map((k): [string, string] => [v, k])) : null;
+  if (lits.length) {
+    return lits.map((ref) => {
+      const view = prop(ref, "view"), kind = prop(ref, "kind");
+      return { node: ref, key: prop(ref, "key"),
+               pairs: cross(view ? textsOf(view) : null, kind ? textsOf(kind) : null) ?? [] };
+    });
+  }
+  const t = checker.getTypeAtLocation(bare(refExpr));
+  const field = (m: ts.Type, name: string) => {
+    const s = m.getProperty(name);
+    return s ? literalTexts(checker.getTypeOfSymbolAtLocation(s, refExpr)) : null;
+  };
+  return (t.isUnion() ? t.types : [t]).map((m) => ({ node: refExpr, pairs: cross(field(m, "view"), field(m, "kind")) ?? [] }));
 }
 
 function checkTarget(call: ts.CallExpression): void {
@@ -220,22 +262,21 @@ function checkTarget(call: ts.CallExpression): void {
   const allowed = new Set<string>();
   for (const spec of call.arguments.length ? literals(call.arguments[0]) : []) {
     const refExpr = prop(spec, "ref");
-    const refs = refExpr ? literals(refExpr) : [];
-    for (const ref of refs) {
-      const view = prop(ref, "view"), kind = prop(ref, "kind"), key = prop(ref, "key");
-      if (!view || !kind || !ts.isStringLiteral(bare(view)) || !ts.isStringLiteral(bare(kind))) {
-        report("undeclared-target", ref, "a target's view and kind are literals");
+    for (const { node, pairs, key } of refExpr ? refPairs(refExpr) : []) {
+      if (!pairs.length) {
+        report("undeclared-target", node, "a target's view and kind are literals");
         continue;
       }
-      const v = (bare(view) as ts.StringLiteral).text, k = (bare(kind) as ts.StringLiteral).text;
-      const decl = UI_CONTRACT.kinds.find((x) => x.kind === k);
-      const pres = decl?.presentations.find((p) => p.view === v) as { parts?: readonly string[] } | undefined;
-      if (!decl || !pres) {
-        report("undeclared-target", ref, `${k} is not presented in ${v}`);
-        continue;
+      for (const [v, k] of pairs) {
+        const decl = UI_CONTRACT.kinds.find((x) => x.kind === k);
+        const pres = decl?.presentations.find((p) => p.view === v) as { parts?: readonly string[] } | undefined;
+        if (!decl || !pres) {
+          report("undeclared-target", node, `${k} is not presented in ${v}`);
+          continue;
+        }
+        (pres.parts ?? decl.parts).forEach((p) => allowed.add(p));
+        if (key && hasNumber(key)) report("index-key", key, `${k} keyed by ${key.getText()}`);
       }
-      (pres.parts ?? decl.parts).forEach((p) => allowed.add(p));
-      if (key && hasNumber(key)) report("index-key", key, `${k} keyed by ${key.getText()}`);
     }
   }
   // The registration's parts: `<name>.part("x")` wherever its result goes.
@@ -246,9 +287,11 @@ function checkTarget(call: ts.CallExpression): void {
   const visit = (n: ts.Node) => {
     if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "part"
         && ts.isIdentifier(n.expression.expression) && symbolOf(n.expression.expression) === owner) {
-      const arg = n.arguments[0];
-      if (!arg || !ts.isStringLiteral(arg)) report("undeclared-part", n, "a part's name is a literal");
-      else if (!allowed.has(arg.text)) report("undeclared-part", n, `part ${arg.text} is not declared for it`);
+      const names = n.arguments[0] ? textsOf(n.arguments[0]) : null;
+      if (!names) report("undeclared-part", n, "a part's name is a literal");
+      else for (const name of names) {
+        if (!allowed.has(name)) report("undeclared-part", n, `part ${name} is not declared for it`);
+      }
     }
     ts.forEachChild(n, visit);
   };

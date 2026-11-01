@@ -69,7 +69,7 @@ Queue row never opened).
 
 | Source / control | Command | Target / parts | Current handler / state | Availability | Side effects | Reveal | Socket | State |
 |---|---|---|---|---|---|---|---|---|
-| FoldersPanel.tsx filter | proposed `folders.panel.search {text}`: **not declared** (folders.json is coverage-main's; declaration requested) | `foldersList` in `right.folders`: whole, search, open (registered) | module store `search` in FoldersPanel.tsx, emptied when the tab leaves the page (as before); typing still sets it directly | always | `list.filtered` | `right.tab.select folders` | rail.right, right | target done; command contract (declaration requested) |
+| FoldersPanel.tsx filter | `folders.panel.search {text?}` (no text clears it, as `folders.search` does), bound to the box (integration) | `foldersList` in `right.folders`: whole, search, open (registered) | module store `search` in FoldersPanel.tsx, emptied when the tab leaves the page (as before); changed only by the command | always | `list.filtered` | `right.tab.select folders` | rail.right, right | done |
 | FoldersPanel.tsx row | `folders.open {folderId}` (navigation's handler), bound with `bindingProps` | `folder` keyed folder in `right.folders`: whole and row = the row button, name, availability | `folders.open` | folder in the catalog | `centre.view-shown` | tab select, then the right.folders revealer: catalog not read → `not-loaded`, not listed → `entity-gone`, hidden by his filter → `hidden` (his filter is never cleared) | rail.right, right | done |
 | FoldersPanel.tsx Open Folders | `folders.open {folderId: selected}`, or `main.tab.select {tab: folders}` with none selected | `foldersList` part open | bound | always | `centre.view-shown` | tab select | rail.right, right | done |
 | AgentsControl.tsx Active / All | `agents.filter {show}` (agents.json), handler in `uiRight.ts` | `agentsList` in `right.agents`: whole, filter, previous, next | `agentsShow` store (remembered as before), back to the top | always (also while the tab is hidden: the choice is remembered) | `list.filtered` | tab select | rail.right, right | done; the `filter` part is refused `no-route` until the pipeline's leaf stops counting the part's own buttons (requested) |
@@ -80,8 +80,8 @@ Queue row never opened).
 | QueuePanel.tsx unsent and dismissed rows | `queue.follow {threadId}`, bound | `queueThread` as above (an unsent draft whose item has come registers once, as the item) | `queue.follow` (keeps placement) | thread listed | `centre.view-shown`, `queue.read-marked`, `queue.draft-saved` | tab select, then the right.queue revealer: a dismissed item opens Show dismissed and reads pages until it is listed, within `revealWaitMs`; never opened | rail.right, right | done |
 | QueuePanel.tsx Show / Hide dismissed, Show more | `queue.history {shown}`, `queue.history.more` (queue.json), handlers in QueuePanel.tsx (`showHistory` shared with the revealer) | `queuePanel` in `right.queue`: whole, waiting, active, history, more, new | `historyOpen` store (kept while the tab is switched, as before) | messaging offered, else `not-signed-in`; more only while shown with a next page | `list.paged` | tab select | rail.right, right | done |
 | QueuePanel.tsx New, Restore | — (domain: drafts, restore) | `queuePanel` new | `startNew`, `restore` | — | creates a draft / restores | — | rail.right | classify |
-| WorkflowsView.tsx Done (show finished) | proposed `workflows.showDone {shown}`: **not declared** (workflows.json is coverage-main's; declaration requested) | `workflowsList` in `right.workflows`: whole, showDone | `showDone` store in WorkflowsView.tsx, collapsed when the tab leaves (as before); the toggle still sets it directly | while something is done | `list.filtered` | tab select | rail.right, right | target done; command contract (declaration requested) |
-| WorkflowsView.tsx workflow and Done rows | `workflow.open {workflowId}` (navigation's handler), bound | `workflow` keyed workflow in `right.workflows`: whole and row = the row button, state = its orb (a Done row: the outcome dot), tasks | `workflow.open` | listed, or read first | `centre.view-shown`, `centre.detail-replaced` | tab select, then the right.workflows revealer: not read → `not-loaded`, not listed → `entity-gone`, under a collapsed Done → `hidden` until `workflows.showDone` exists | rail.right, right | done; `dismiss` part not registered (the × sits beside the row's whole; needs a pipeline leaf to a part beside its whole) |
+| WorkflowsView.tsx Done (show finished) | `workflows.showDone {shown}`, bound to the toggle (integration) | `workflowsList` in `right.workflows`: whole, showDone | `showDone` store in WorkflowsView.tsx, collapsed when the tab leaves (as before); changed only by the command | while something is done | `list.filtered` | tab select | rail.right, right | done |
+| WorkflowsView.tsx workflow and Done rows | `workflow.open {workflowId}` (navigation's handler), bound | `workflow` keyed workflow in `right.workflows`: whole and row = the row button, state = its orb (a Done row: the outcome dot), tasks | `workflow.open` | listed, or read first | `centre.view-shown`, `centre.detail-replaced` | tab select, then the right.workflows revealer: not read → `not-loaded`, not listed → `entity-gone`, under a collapsed Done → Done is opened, as `workflows.showDone` does (integration) | rail.right, right | done; `dismiss` part not registered (the × sits beside the row's whole; needs a pipeline leaf to a part beside its whole) |
 | WorkflowsView.tsx subagent row | `subagent.open {sessionId, agentId}`, bound | `subagent`: **not registered** — its key `agent:<session>/<id>` fails the `subagent` key pattern; needs the kind keyed `keyOf [session, subagent]` (workflows.json, coverage-main) | `subagent.open` | while listed (LINGER_SEC) | as workflow.open | — | rail.right, right | command done; target contract |
 | WorkflowsView.tsx Dismiss × | — (domain: `dismissWorkflow`) | — | `dismissWorkflow` | — | records a dismissal | — | — | classify |
 | NetworkPanel.tsx / NetworkTile.tsx tile | `network.open {kind: node, nodeId}`, now bound with `bindingProps` | `node` keyed node in `right.network`; name, presence, human, cpu, memory, pace | `network.open` | node in snapshot, else `not-loaded`/`no-entity` | `centre.view-shown`, `centre.detail-replaced` | `right.tab.select network` | rail.right, right | done |
@@ -195,6 +195,24 @@ effects; the overlay map; pointing inside Settings blocked).
   workers' files, exact counts that may only shrink).
 - Human/brain parity: the page tests above for menu, Settings, reminder and
   the Team Server tile.
+
+## Gaps left after the coverage merge (integrator)
+
+- Unclassified controls (73, held in `PENDING` in
+  `tests/test_ui_coverage_rules.py`): most are domain or form input and need
+  only a reviewed `data-ui-action`; these look like navigation and need a
+  command: FolderDetail's mode switches (Reconnect, Remove, Cancel, Keep
+  it), FoldersView's Add form Cancel, QueueItemView's related-message links
+  (`jump`) and Reply/Respond, VoiceDiagnosticsView's range and the spark
+  marks' zoom (VoiceVisuals), WorkflowDetail's transcript scroll.
+- Parts a leaf cannot reach past a sibling (`blocked / no-route`): workflow
+  Decisions tab and other tabs left of the last, phase steps, Folders tabs,
+  microphone mute and off, Team Server last write, reminder text and Sign
+  in, workflow Dismiss × beside its row. Blocker `leaf-sibling-routing`.
+- No reveal for phases, tasks, open items and the workflow subagent detail
+  (composite keys); no target on the task card's progress bar (`TaskBar`).
+- Subagent rows in the right panel are not targets yet.
+- Health dot pointing is not page-tested (needs a voice fault fixture).
 
 ## Transmission layer (pipeline-animation)
 

@@ -82,8 +82,7 @@ def test_only_a_slots_owner_moves_it():
 
 
 def test_tab_rows_run_registered_commands():
-    # The right panel's and the centre's rows bind a command; only
-    # WorkflowDetail's subtabs still select by hand until their command is
-    # registered (coverage-main).
+    # The right panel's, the centre's and the workflow detail's rows bind a
+    # command; none selects by hand.
     unbound = [p.name for p in _sources() if re.search(r"<TabRow\b[^>]*\bonSelect=", p.read_text(), re.S)]
-    assert unbound == ["WorkflowDetail.tsx"]
+    assert unbound == []

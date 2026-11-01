@@ -24,30 +24,21 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # (file, rule) -> how many violations it still has, until its owner's
 # coverage lands; each count must be exact so a fix shrinks it here too.
 # The right panel's files are coverage-right's, the centre views'
-# coverage-main's; subsystems.ts closes voice diagnostics on purpose and
-# waits for voiceHealth.ts to name it with `@routeStateAlso subsystems.ts`.
+# coverage-main's.
 PENDING = {
-    ("AgentThread.tsx", "control-unclassified"): 2,
-    ("AgentsControl.tsx", "control-unclassified"): 3,
+    ("AgentsControl.tsx", "control-unclassified"): 1,
     ("CaptureBox.tsx", "control-unclassified"): 4,
-    ("CaptureChip.tsx", "control-unclassified"): 1,
-    ("ConversationView.tsx", "control-unclassified"): 7,
-    ("FolderDetail.tsx", "control-unclassified"): 19,
-    ("FoldersPanel.tsx", "control-unclassified"): 3,
-    ("FoldersView.tsx", "control-unclassified"): 16,
+    ("ConversationView.tsx", "control-unclassified"): 3,
+    ("FolderDetail.tsx", "control-unclassified"): 14,
+    ("FoldersView.tsx", "control-unclassified"): 7,
     ("MessageComposer.tsx", "control-unclassified"): 10,
     ("QueueFiles.tsx", "control-unclassified"): 3,
-    ("QueueItemView.tsx", "control-unclassified"): 25,
-    ("QueuePanel.tsx", "control-unclassified"): 7,
-    ("SourcesChip.tsx", "control-unclassified"): 1,
-    ("SubsystemList.tsx", "control-unclassified"): 1,
-    ("SubsystemView.tsx", "control-unclassified"): 1,
-    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 4,
-    ("VoiceSummary.tsx", "control-unclassified"): 1,
+    ("QueueItemView.tsx", "control-unclassified"): 19,
+    ("QueuePanel.tsx", "control-unclassified"): 2,
+    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 3,
     ("VoiceVisuals.tsx", "control-unclassified"): 1,
-    ("WorkflowDetail.tsx", "control-unclassified"): 10,
-    ("WorkflowsView.tsx", "control-unclassified"): 5,
-    ("subsystems.ts", "route-state-write"): 2,
+    ("WorkflowDetail.tsx", "control-unclassified"): 5,
+    ("WorkflowsView.tsx", "control-unclassified"): 1,
 }
 
 

@@ -1165,6 +1165,29 @@ export const UI_CONTRACT = {
       "family": "queue"
     },
     {
+      "id": "workflows.showDone",
+      "label": "Show or hide the finished workflows under Done in the right panel's Workflows tab",
+      "view": "right.workflows",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "workflows"
+    },
+    {
       "id": "workflow.tab.select",
       "label": "Show one of the open workflow's tabs",
       "view": "main.workflow",
@@ -1286,6 +1309,28 @@ export const UI_CONTRACT = {
       "id": "folders.search",
       "label": "Search the centre's folder list by name or path; without text the search is cleared",
       "view": "main.folders",
+      "args": {
+        "text": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "folders.panel.search",
+      "label": "Filter the right panel's folder list by name or path; without text the filter is cleared",
+      "view": "right.folders",
       "args": {
         "text": {
           "type": "string",
@@ -2887,6 +2932,7 @@ export interface CommandArgs {
   "folders.filter": { role?: "any" | "data" | "source" | "history"; availability?: "any" | "available" | "missing" | "access_denied" | "unavailable_node"; removed?: boolean; ignored?: boolean; };
   "folders.list": { view: "registered" | "discovered"; };
   "folders.open": { folderId: string; };
+  "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue"; };
   "menu.toggle": { open: boolean; };
@@ -2917,4 +2963,5 @@ export interface CommandArgs {
   "workflow.open": { workflowId: string; };
   "workflow.tab.select": { workflowId: string; tab: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };
   "workflow.transcript.earlier": { sessionId: string; agentId?: string; };
+  "workflows.showDone": { shown: boolean; };
 }

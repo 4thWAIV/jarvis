@@ -163,7 +163,8 @@ registerCommand("conversation.earlier", {
 registerRevealer("main.conversation", "conversationRecord", async (ref, { signal }) =>
   ref.key?.startsWith("r") ? historyPages.seek(HISTORY, (i) => `r${i.id}` === ref.key, signal) : "entity-gone");
 
-const conversationRef = (kind: "conversation" | "conversationRecord" | "sources", key?: string): TargetRef =>
+const conversationRef = <K extends "conversation" | "conversationRecord" | "sources">(kind: K, key?: string)
+  : TargetRef & { view: "main.conversation"; kind: K } =>
   ({ region: "main", view: "main.conversation", kind, ...(key === undefined ? {} : { key }) });
 
 export function ConversationView() {
@@ -278,7 +279,8 @@ function recordLabel(item: ConversationItem): string {
 }
 
 /** Where a record is shown: the history's or a thread's presentation of it. */
-export type RecordPlace = TargetRef & { kind: "conversationRecord" | "threadRecord"; key: string };
+export type RecordPlace = TargetRef & { key: string } & (
+  { view: "main.conversation"; kind: "conversationRecord" } | { view: "main.thread"; kind: "threadRecord" });
 
 /** A record's open state and the control that opens and closes it. */
 function useOpener(recordId: string, opens: boolean) {

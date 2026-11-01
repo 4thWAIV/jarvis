@@ -25,7 +25,7 @@
     {"ref": {"region": "right", "view": "right.tabs", "kind": "rightTab", "key": "settings"}, "ok": false},
     {"ref": {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/task-a", "part": "row"}, "ok": true},
     {"ref": {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1", "part": "row"}, "ok": false},
-    {"ref": {"region": "main", "view": "main.folders", "kind": "folderEntry", "key": "f-1/src/deep/file.ts", "part": "preview"}, "ok": true},
+    {"ref": {"region": "main", "view": "main.folders", "kind": "folderEntry", "key": "f-1/src/deep/file.ts", "part": "row"}, "ok": true},
     {"ref": {"region": "main", "view": "main.network", "kind": "node", "key": "a", "selector": "#x"}, "ok": false},
     {"ref": {"region": "main", "view": "main.nowhere", "kind": "node", "key": "a"}, "ok": false},
     {"ref": {"region": "main", "view": "main.network", "kind": "button", "key": "a"}, "ok": false}

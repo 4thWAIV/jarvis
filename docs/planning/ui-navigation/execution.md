@@ -34,8 +34,8 @@ navigation, and no command or UI-control infrastructure on the base.
 | `navigation` | finished | `ui-nav-navigation` 6a55a37, merged c8149cd |
 | `pipeline-animation` | finished | `ui-nav-pipeline-animation` c198962, merged 9cdfe1e |
 | `brain-transport` | finished | `ui-nav-brain-transport` 043b35a, merged afdb36c; its pending items 1–3 applied in the integration commit |
-| `component-coverage` | next: the shared APIs have landed (see "For the coverage workers") | |
-| `integration-review` | core merge done (see "Core integration"); one blocker open (corridor centring); independent review still to run after coverage | |
+| `component-coverage` | finished | `ui-nav-coverage-right` 45f7fd9, `ui-nav-coverage-main` b51ba75, `ui-nav-coverage-left-settings` e0eed32; merged (see "Coverage integration") |
+| `integration-review` | started: coverage merged and shared changes applied (see "Coverage integration"); blockers open: corridor centring, leaf sibling routing; localization and the independent review still to run | |
 | `local-validation-ready`, `human-validation` | later | |
 
 ## The contract (what workers build against)
@@ -440,11 +440,92 @@ Shared changes requested (not made by this worker):
    fails its pattern, which would take the page down; a warning and no
    target would be safer for data-derived keys.
 
+## Coverage integration
+
+Merged into `feature/ui-navigation-pipeline` (from b624a8d):
+`ui-nav-coverage-right` (no conflict), `ui-nav-coverage-main` (06b845e;
+conflict only in the generated `uiContract.ts`, regenerated) and
+`ui-nav-coverage-left-settings` (c2cd70a; same, regenerated). Then the
+shared changes the workers asked for, in one integration commit:
+
+- `uiPipeline.ts`: an object inside a hidden view (the kept Conversation
+  and Folders views) is no obstacle to a socket branch (coverage-main 1);
+  a part's own controls, or the part itself, are no obstacle to its leaf
+  (coverage-right 4a: the Agents list's filter, previous and next).
+- `workflows.showDone {shown}` declared (right.workflows, `list.filtered`),
+  handler beside its store in `WorkflowsView.tsx`, bound to the Done toggle;
+  the right.workflows revealer now opens Done for a finished workflow
+  instead of answering `hidden` (coverage-right 2). The subagent kind was
+  already `keyOf [session, subagent]` on coverage-main.
+- `folders.panel.search {text?}` declared (right.folders, `list.filtered`);
+  no text clears it, as `folders.search` does, so the string type is
+  unchanged; handler in `FoldersPanel.tsx`, the box runs it (coverage-right 3).
+- `Tabs.tsx`: the deprecated `onSelect` is gone; `binding` is required
+  (coverage-main 5). No `tabRef` (optional).
+- `voiceHealth.ts`: `diagnosticsSlot` names `@routeStateAlso subsystems.ts`
+  (left-settings 3).
+- `tests/ui_navigation_cases.mts`: loads `uiRight.ts` and `captions.ts`
+  (whose handlers node can load); the handler check leaves out the commands
+  a component (`.tsx`) registers, read from the sources rather than a
+  hand-kept prefix list; the "nothing declared" reveal case uses
+  `folderEntry` (coverage-right 1, coverage-main 3, left-settings 1).
+- `tests/test_ui_navigation.py`: no TabRow selects by hand (coverage-main 2).
+- `tests/fixtures/ui_contract_cases.json`: the folderEntry case uses part
+  `row` (coverage-main 4).
+- `tests/ui_coverage_rules.mts` read views, kinds and part names only as
+  literals, so the merged centre views tripped it (19 new violations, all
+  valid code). It now reads them from their types too (a union of literals
+  is checked member by member; a reference built elsewhere is read from its
+  type), resolves a shorthand `ref` to its variable, and counts a record's
+  numeric field (`item.id`) as its identity, not a position. To be typed
+  that way: `conversationRef` and `RecordPlace` (ConversationView.tsx) and
+  the transcript's part names (WorkflowDetail.tsx). `PENDING` shrunk to
+  what is left: 73 unclassified controls in 13 files, no other rule.
+
+Not applied, and why:
+
+- Leaf routing around a sibling part, and a leaf to a part beside its
+  whole (coverage-right 4b, left-settings 2, coverage-main's row-of-controls
+  note): changes the pipeline's geometry, not covered by the plan or the
+  design. Blocker `leaf-sibling-routing` raised; waiting for Tim.
+- `useUiTarget` warning instead of throwing on a bad key (optional;
+  the contract says such keys fail clearly).
+- `TaskBar` ref and a target on the task card's progress (coverage-main 6),
+  composite-key reveals and `workflow.open {tab?}` (coverage-main 7): new
+  contract shape; left as coverage gaps.
+- `missingHandlers()` in the map answer, `visibilityOf` and
+  `pointer-events: none` (left-settings optional).
+
+### Coverage integration test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+- `pytest tests/test_ui_contract.py tests/test_ui_control.py
+  tests/test_ui_tools.py tests/test_ui_navigation.py tests/test_ui_pipeline.py
+  tests/test_ui_right.py tests/test_ui_coverage_rules.py
+  tests/test_brain_page_parity.py tests/test_jarvis_mcp.py
+  tests/test_header_lines.py tests/test_dead_code_removed.py
+  tests/test_anchored_patterns.py tests/test_internal_tool.py
+  tests/test_untrusted_turn.py tests/test_tool_handlers.py
+  tests/test_mcp_config.py tests/test_voice_ws.py
+  tests/test_tool_argument_echo.py tests/test_show_on_screen.py`: 573 passed,
+  2 skipped, 1 failed (the handler check, `conversation.record.expand`;
+  fixed by loading `captions.ts`); then `tests/test_ui_navigation.py`: 4 passed.
+- `pytest -m page` on navigation, pipeline, rays, human_rays, right,
+  centre_nav, left_settings, network, queue, folders, workflows, subagents,
+  subsystems, voice_health, diagnostics, conversation, captions, settings,
+  team_reminder, team, mute, agents_list_fits and layout: 179 passed,
+  3 failed, all `test_voice_page_layout.py::...footer...[sizeN-]`, the known
+  corridor-centring blocker (12 vs 22). The rays test coverage-main saw fail
+  on 2a9f718 passed here.
+
+Gates left for CI: the full `pytest` selection, the rest of `pytest -m
+page` (refresh, screen, speech_input), the wheel build.
+
 ## Next action
 
-Start the coverage workers (right, main, left-settings) from the
-integration commit with the ownership above and the notes in "For the
-coverage workers"; resolve the corridor-centring blocker with Tim.
+Localization phase (merge origin/main's Spanish PRs, then catalogs and
+per-region localization), then the independent review. Tim to decide the
+two open blockers: corridor centring and leaf sibling routing.
 
 ## Scope update: Spanish interface (2026-11-01)
 

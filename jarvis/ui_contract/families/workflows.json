@@ -3,6 +3,10 @@
   "owner": "coverage-main",
   "views": [],
   "commands": [
+    {"id": "workflows.showDone", "label": "Show or hide the finished workflows under Done in the right panel's Workflows tab",
+     "view": "right.workflows",
+     "args": {"shown": {"type": "boolean"}},
+     "required": ["shown"], "actors": ["human", "brain"], "effects": [{"effect": "list.filtered"}]},
     {"id": "workflow.tab.select", "label": "Show one of the open workflow's tabs",
      "view": "main.workflow",
      "args": {"workflowId": {"type": "key", "entity": "workflow"},

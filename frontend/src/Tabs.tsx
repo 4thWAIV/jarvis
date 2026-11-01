@@ -20,18 +20,11 @@ export interface Tab {
   hidden?: boolean;
 }
 
-/** What selecting a tab runs: a registered command (`binding`), or, until
- *  its family registers one, a view's own `onSelect`.
- *  @deprecated `onSelect` is for WorkflowDetail's subtabs only, until
- *  `workflow.tab.select` is registered (coverage-main). */
-type Selects = { binding: (tab: Tab) => Binding; onSelect?: never }
-  | { binding?: never; onSelect: (id: string) => void };
-
 /** The row of tabs. `lit` marks a tab that has something new without
  *  selecting it; `alert` one whose view shows something down, in red.
  *  `words` shows each tab's title instead of its icon; `labelled` shows
  *  its icon with its title beneath. */
-export function TabRow({ tabs, selected, className, lit, alert, words, labelled, ...selects }: {
+export function TabRow({ tabs, selected, className, lit, alert, words, labelled, binding }: {
   tabs: Tab[];
   selected: string;
   className: string;
@@ -39,7 +32,9 @@ export function TabRow({ tabs, selected, className, lit, alert, words, labelled,
   alert?: (tab: Tab) => boolean;
   words?: boolean;
   labelled?: boolean;
-} & Selects) {
+  /** What selecting a tab runs: a registered command. */
+  binding: (tab: Tab) => Binding;
+}) {
   return (
     <div className={className} role="tablist">
       {tabs.filter((t) => !t.hidden).map((t) => (
@@ -49,7 +44,7 @@ export function TabRow({ tabs, selected, className, lit, alert, words, labelled,
                   labelled ? " labelled-tab" : ""}${
                   t.id === selected ? " selected" : ""}${lit?.(t) ? " lit" : ""}${
                   alert?.(t) ? " alert" : ""}`}
-                {...(selects.binding ? bindingProps(selects.binding(t)) : { onClick: () => selects.onSelect!(t.id) })}>
+                {...bindingProps(binding(t))}>
           {words ? t.title : labelled ? <>{t.icon}<span className="tab-label">{t.title}</span></> : t.icon}
         </button>
       ))}
