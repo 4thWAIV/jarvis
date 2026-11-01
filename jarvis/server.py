@@ -87,6 +87,7 @@ from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
 from jarvis import session_messages
+from jarvis import server_address
 from jarvis import spoken_words
 from jarvis import session_needs
 from jarvis import agent_directory
@@ -869,21 +870,6 @@ def _greeting() -> str:
     return "Good evening, sir."
 
 
-def _tool_connect_host(bind_host: str) -> str:
-    """Map the server's bind host to a host the MCP child can actually dial.
-
-    `0.0.0.0` and `::` bind every interface but are not themselves dialable;
-    connect over loopback instead. An IPv6 literal must be bracketed to be a
-    valid URL host. Anything else (a real hostname or IPv4 literal) is used
-    as-is.
-    """
-    if bind_host == "0.0.0.0":
-        return "127.0.0.1"
-    if bind_host in ("::", "::1"):
-        return "[::1]"
-    return bind_host
-
-
 # --- the doorway: MCP servers the user declared themselves ----------------
 #
 # JARVIS ships connected to nothing. `--strict-mcp-config` means the brain
@@ -999,11 +985,6 @@ def _write_mcp_config(home: Path) -> Path:
     HTTPS via a self-signed cert (CLAUDE.md's own quick-start setup).
     """
     global LAST_CONNECTIONS
-    scheme = os.getenv("JARVIS_SCHEME", "http")
-    port = int(os.getenv("JARVIS_PORT", "8340"))
-    bind_host = os.getenv("JARVIS_BIND_HOST", "127.0.0.1")
-    connect_host = _tool_connect_host(bind_host)
-
     LAST_CONNECTIONS = declared_connections()
     for problem in LAST_CONNECTIONS.problems:
         log.warning("connections: %s", problem)
@@ -1020,7 +1001,7 @@ def _write_mcp_config(home: Path) -> Path:
             # The brain's cwd is its home, so a checkout's package is only
             # importable with its parent on the path.
             "PYTHONPATH": str(data_paths.PACKAGE_DIR.parent),
-            "JARVIS_TOOL_URL": f"{scheme}://{connect_host}:{port}/internal/tool",
+            "JARVIS_TOOL_URL": f"{server_address.own().url}/internal/tool",
             "JARVIS_TOOL_TOKEN_FILE": str(data_paths.tool_token_path()),
         },
     }
@@ -2896,6 +2877,8 @@ async def lifespan(application: FastAPI):
     # guard, and the `--host 0.0.0.0` warning — printed only from
     # `__main__` — was never seen by the launch that most needed it.
     _announce_bind(web_auth.detect_bind())
+    # Where this server is, for `python -m jarvis.update` (server_address.py).
+    server_address.record()
     global _main_loop
     _main_loop = asyncio.get_running_loop()
 
@@ -2953,6 +2936,7 @@ async def lifespan(application: FastAPI):
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
+    server_address.forget()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route

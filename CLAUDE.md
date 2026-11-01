@@ -478,10 +478,17 @@ restart (page origin or tool token; no access-key category). The restart is
 one function, `server._restart_server`, shared with `/api/restart`. The
 command `python -m jarvis.update` (`update.py`) asks a running server to do
 it, so it restarts itself, and with the server stopped only updates;
-`--check` only reports. It looks at `JARVIS_URL`, else `JARVIS_TOOL_URL`'s
-address, else 127.0.0.1:8340; only a refused connection there counts as
-stopped, and an answer that is not an update outcome (a 403, a 404) stops
-it without updating. The page's side is Settings, Updates, which the ⋮
+`--check` only reports. It finds the server by the one reader,
+`server_address.running()`: at startup the server writes its scheme, host,
+port and pid to `data_paths.server_address_path()` (`server-address.json`
+in its data folder; the same address the brain's tool channel dials,
+`server_address.own()`) and removes it on a clean shutdown; a record whose
+pid is dead is stale and ignored. With a live record the command asks that
+address with the tool token, and a refused connection there stops it
+without updating. With none it looks at `JARVIS_URL`, else
+`JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
+there counts as stopped. An answer that is not an update outcome (a 403, a
+404) stops it without updating. The page's side is Settings, Updates, which the ⋮
 menu's Check for updates opens; the brain's is `update_status` and the
 acting `update_jarvis`, which says it is updating, updates after the turn
 and restarts once that has been heard (`_update_by_voice`). Tests point
@@ -761,6 +768,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   folder in full, and the right panel's Folders tab
 - `self_update.py` / `update.py` — Updating a checkout from GitHub, and the
   `python -m jarvis.update` command (see "Self-update")
+- `server_address.py` — This server's own address (`own`), recorded with
+  its pid at startup and removed on shutdown, and the one reader of that
+  record (`running`) that `python -m jarvis.update` uses (see "Self-update")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -796,7 +806,8 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
-  database, memory Markdown, usage.json, the tool token. Defaults to `data/`
+  database, memory Markdown, usage.json, the tool token, the running
+  server's address (`server-address.json`). Defaults to `data/`
   (`data_paths.py`). Set it to run an isolated instance without touching live
   data — the test suite gives every test a fresh one this way.
 - `JARVIS_SKIP_PERMISSIONS` (optional) — Defaults to true; passes
