@@ -37,14 +37,23 @@ transmissions and are not used for attention.
 
 ## Left column (coverage-left-settings)
 
+Tested by `tests/test_voice_page_left_settings.py` (every left part pointed
+at with reduced motion, the database row animated, the map, and human/brain
+parity for the tile). `no-route` below means the page answers
+`blocked / no-route` truthfully: the part sits beside another part on the
+side its leaf comes from, and `uiPipeline.ts` `leafEdge` only runs straight
+in from the facing edge (requested from pipeline-animation: leaf routing
+round sibling parts along the object's inner margin).
+
 | Source / control | Command | Target / parts | Current handler / state | Availability | Side effects | Reveal | Socket | State |
 |---|---|---|---|---|---|---|---|---|
-| OrbControl.tsx canvas, BrainLogo | — (display) | `orb` in `left.fixed`; canvas, logo | none | always; canvas internals need a projection adapter (none: whole canvas only) | — | none | rail.left, left | contract |
-| StatusControl.tsx status text, Stop | — Stop is `stopSpeaking` (domain: hush) | `status`; text, stop | `stopSpeaking.current()` | stop only while speaking | hush stays its own action | none | rail.left, left | classify (Stop) / contract (target) |
-| MicControl.tsx health dot | proposed `voice.diagnostics.open` | `mic`; meter, health, mute, off | `openDiagnostics.set(true)` | always | `centre.view-shown` | none | rail.left, left | contract |
-| MuteButton.tsx, MicOffButton.tsx | — (microphone permission/state) | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify |
-| TeamServerTile.tsx tile | `network.open {kind: server}` (declared) | `teamServer` in `left.fixed`; readiness, server, database, lastWrite (`data-row`) | `byHand("network.open")` | always | `centre.view-shown`, `centre.detail-replaced` | none | rail.left, left | done (command); part adapters: contract |
-| BrainUsage.tsx → WeeklyUsage.tsx each account | — (display only) | `brainAccount` keyed provider; name, remaining, pace, reset | none | while the provider is configured | — | none | rail.left, left | contract |
+| OrbControl.tsx `#orb-control`, canvas, BrainLogo | — (display) | `orb` in `left.fixed`; canvas (the orb's box: the canvas fills it, whole-canvas only), logo | `useUiTarget` | always; logo while a brain with a logo runs | — | none | rail.left, left | done |
+| StatusControl.tsx status text, Stop | — Stop: `data-ui-action="speech"` (hush) | `status`; text, stop | `useUiTarget`; Stop `stopSpeaking.current()` | text while there is one; stop only while speaking | hush stays its own action | none | rail.left, left | done (whole tested; text/stop parts live while shown) |
+| MicControl.tsx health dot | `voice.diagnostics.open` (declared, navigation) via `bindingProps` | `mic`; meter, health, mute, off | was `openDiagnostics.set(true)` | dot only while input has a problem | `centre.view-shown` | none | rail.left, left | done (binding, target); health dot pointing not page-tested (needs an input fault fixture) |
+| MicMeter.tsx / `#mic-silenced` | — (display) | `mic` part meter | `partRef` | always | — | none | rail.left | done |
+| MuteButton.tsx, MicOffButton.tsx | — `data-ui-action="microphone"` | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify; parts `no-route` (beside the meter) |
+| TeamServerTile.tsx tile | `network.open {kind: server}` via `bindingProps` | `teamServer` in `left.fixed`; readiness (the word), server, database, lastWrite | was `byHand("network.open")` | always | `centre.view-shown`, `centre.detail-replaced` | none | rail.left, left | done; lastWrite `no-route` (level with the readiness word) |
+| BrainUsage.tsx → WeeklyUsage.tsx each account | — (display only) | `brainAccount` keyed provider (the one named, else the figures', else the running brain); name (logo), remaining, pace, reset (burn-down) | `useAccountTarget` | while its provider is known (no target before) | — | none | rail.left, left | done |
 
 ## Right panel (coverage-right)
 
@@ -111,19 +120,44 @@ transmissions and are not used for attention.
 
 ## Menu, Settings, reminder, footer (coverage-left-settings)
 
+Commands in `families/settings.json`, handlers next to their state in
+`MenuControl.tsx`, `Settings.tsx`, `TeamSignInReminder.tsx`. Tested by
+`tests/test_voice_page_left_settings.py` (parity: click versus the brain's
+`ui_request` for the same command leaves the same page, with the declared
+effects; the overlay map; pointing inside Settings blocked).
+
 | Source / control | Command | Target / parts | Current handler / state | Availability | Side effects | Reveal | Socket | State |
 |---|---|---|---|---|---|---|---|---|
-| MenuControl.tsx ⋮ toggle | proposed `menu.toggle {open}` | `menu` in `overlay.controls`; toggle | local `open` | always | `menu.opened` | none | rail.overlay, left | contract |
-| MenuControl.tsx Settings, Updates | proposed `settings.open {section?}` | `menu` in `overlay.menu`; settings, updates | `openSettings()`, `openSettings("updates")` | always | `settings.opened` | menu.toggle | rail.overlay | contract |
-| MenuControl.tsx Restart Server | — (domain: `/api/restart`, excluded from the brain) | `menu` part restart | `restart` | — | restarts | — | — | classify |
-| Settings.tsx nav buttons `goTo(section)` | proposed `settings.section {section}` | `settingsSection` keyed brains, voice, you, team, updates, system; heading, body | `goTo` scroll | settings open | — | settings.open | rail.overlay | contract |
-| Settings.tsx close, backdrop | proposed `settings.close` | `settings` close, nav | `close` | open | — | — | rail.overlay | contract |
-| Settings.tsx first-time setup steps | — (setup flow) | `settings` | `setup` state | no Fish key | — | — | — | classify |
-| Settings.tsx Voice keys, Test, Save; You Save; Updates Check, Update | — (secrets and domain; excluded from the brain where they hold secrets) | `settingsSection` body | section handlers | — | saves settings / updates | — | — | classify |
-| BrainsSection.tsx add, model, sign in, default, remove | — (provider configuration) | `settingsSection` brains body | `act(...)` | — | changes brains | — | — | classify |
-| TeamSection.tsx connect, approval, cancel, disconnect, members, look up, add | — (sign-in and membership: existing authorisation paths) | `settingsSection` team body | `connect`, `change`, `resolve`, `add` | — | membership / sign-in | — | — | classify |
-| TeamSignInReminder.tsx Sign in, Later | Later: proposed `reminder.later`; Sign in: — (browser approval flow) | `teamReminder` in `main.notice`; text, signIn, later | `signInAgain`, `later.set(true)` | while not signed in | Sign in opens Settings/approval | none | rail.main, right | contract / classify |
-| Footer.tsx label | — (display) | `footer` in `footer.fixed`; label | none | always | — | none | rail.footer | contract |
+| MenuControl.tsx ⋮ toggle, any click elsewhere | `menu.toggle {open}` | `menu` in `overlay.controls`; toggle (the button is the whole) | `menuOpen` (route state, read-only export) | always | `menu.opened` (when opening) | none | rail.right, right | done |
+| MenuControl.tsx Settings, Check for updates | `settings.open {section?}` (`{}`, `{section: updates}`) | `menu` in `overlay.menu`; settings, updates, restart | handler closes the menu, opens Settings | always (a section hidden by first-time setup: `hidden`) | `settings.opened` | `menu.toggle {open: true}` | rail.right, right | done (dropdown keeps its corridor clear, ui-left.css) |
+| MenuControl.tsx Restart Server | — `data-ui-action="restart"` (excluded from the brain) | `menu` part restart | `restart` | — | restarts | — | — | classify |
+| Settings.tsx nav buttons | `settings.section {section}` | `settingsSection` keyed brains, voice, you, team, updates, system; heading, body | `goTo` (smooth scroll) | Settings open (`not-mounted`), section shown (`hidden` in setup) | — | `settings.open {section: $key}` | rail.overlay, left | done; pointing `blocked / occluded` while Settings covers the orb (by design) |
+| Settings.tsx ×, backdrop, Finish Setup | `settings.close` | `settings` in `overlay.settings`; close, nav | ends setup too | open (`no-entity`) | — | `settings.open {}` | rail.overlay, left | done |
+| Settings.tsx first-time setup open, Next | — page-initiated open; Next `data-ui-action="setup"` | `settings` | `setup` route state | no Fish key | — | — | — | classify (no actor navigated; revision not moved) |
+| Settings.tsx Voice key/Test/Save, You fields/Save, Updates Check/Update | — `input`, `domain`, `refresh`, `restart` | `settingsSection` body | section handlers | — | saves settings / updates | — | — | classify |
+| BrainsSection.tsx add, model, sign in, default, remove | — `domain`, `sign-in` | `settingsSection` brains body | `act(...)` | — | changes brains | — | — | classify |
+| TeamSection.tsx connect, approval, cancel, disconnect, members, look up, add | — `sign-in`, `domain`, `input` | `settingsSection` team body | `connect`, `change`, `resolve`, `add` | — | membership / sign-in | — | — | classify |
+| TeamSignInReminder.tsx Later | `reminder.later` | `teamReminder` in `main.notice`; text, signIn, later | `later` route state | while not signed in and not hidden (`no-entity`) | — | none | rail.main, right | done; text and signIn `no-route` (left of Later) |
+| TeamSignInReminder.tsx Sign in | — `data-ui-action="sign-in"`; then `settings.open {section: team}` by hand | `teamReminder` part signIn | `signInAgain` | while shown | starts sign-in, opens Settings | none | rail.main | classify |
+| Footer.tsx label | — (display) | `footer` in `footer.fixed`; label (the label is the whole: the footer box has no socket edge) | `useUiTarget`; `#footer #jarvis-label` takes the pointer so it can be seen at its point | always | — | none | rail.footer, left | done |
+
+### Prevention of future coverage gaps (coverage-left-settings)
+
+- `tests/ui_coverage_rules.mts` (TypeScript compiler API and type checker)
+  run by `tests/test_ui_coverage_rules.py`: controls must run a registered
+  command (`bindingProps`, `data-ui-command`, `byHand`/`runBinding`) or carry
+  a reviewed `data-ui-action` class; route state (`@routeState`,
+  `detailSlot`, or initialised from one; co-owners by `@routeStateAlso`) is
+  written only by its owner, casts included; `useUiTarget` kinds, views and
+  parts are declared, part names literal, keys never from numbers.
+- Negative fixtures `tests/fixtures/ui_coverage/rejected` (unregistered tab,
+  keyboard handler, conditional control, unreviewed class, cast writes to
+  Settings' and the menu's state, undeclared target and part, run-time part
+  name, index key); accepted fixture `tests/fixtures/ui_coverage/accepted`.
+- The page itself passes except the `PENDING` ratchet in the test (other
+  workers' files, exact counts that may only shrink).
+- Human/brain parity: the page tests above for menu, Settings, reminder and
+  the Team Server tile.
 
 ## Transmission layer (pipeline-animation)
 

@@ -98,11 +98,13 @@ SHOWN = """() => ({
 # whether the section named is then in view there.
 SCROLLED = """async (id) => {
   const body = document.querySelector('.settings-body');
-  await new Promise(r => setTimeout(r, 250));
-  let last = -1;
-  for (let i = 0; i < 100 && body.scrollTop !== last; i++) {
+  // A smooth scroll can take a few frames to start: settled is the same
+  // reading six times running, 100 ms apart.
+  let last = -1, same = 0;
+  for (let i = 0; i < 100 && same < 6; i++) {
+    same = body.scrollTop === last ? same + 1 : 0;
     last = body.scrollTop;
-    await new Promise(r => setTimeout(r, 80));
+    await new Promise(r => setTimeout(r, 100));
   }
   const b = body.getBoundingClientRect(), s = document.getElementById(id).getBoundingClientRect();
   return {top: Math.round(body.scrollTop), inView: s.top >= b.top - 1 && s.top < b.bottom};

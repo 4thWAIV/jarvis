@@ -276,22 +276,22 @@ function VoiceSection({ status, statusFailed, reload }: {
       <div className="settings-field">
         <label>Fish Audio API Key</label>
         <div className="settings-input-row">
-          <input type="password" placeholder="Fish Audio key..." value={key}
+          <input data-ui-action="input" type="password" placeholder="Fish Audio key..." value={key}
                  onChange={(e) => setKey(e.target.value)} />
-          <button className="settings-btn" onClick={test}>Test</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={test}>Test</button>
           <StatusDot status={tested ?? known} />
         </div>
       </div>
       <div className="settings-field">
         <label>Fish Voice ID</label>
         <div className="settings-input-row">
-          <input type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
+          <input data-ui-action="input" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
                  onChange={(e) => setVoiceId(e.target.value)} />
-          <button className="settings-btn" onClick={saveVoice}>Save</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={saveVoice}>Save</button>
         </div>
       </div>
       <div className="settings-actions">
-        <button className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
       </div>
       {savedKey && (
         <p className="settings-restart-notice">
@@ -329,11 +329,11 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
     <>
       <div className="settings-field">
         <label>Your Name</label>
-        <input type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input data-ui-action="input" type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="settings-field">
         <label>Honorific</label>
-        <select value={honorific} onChange={(e) => setHonorific(e.target.value)}>
+        <select data-ui-action="input" value={honorific} onChange={(e) => setHonorific(e.target.value)}>
           <option value="sir">Sir</option>
           <option value="ma'am">Ma'am</option>
           <option value="none">None</option>
@@ -346,7 +346,7 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
         </p>
       )}
       <div className="settings-actions">
-        <button className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
       </div>
     </>
   );
@@ -455,10 +455,10 @@ function UpdatesSection() {
       ))}
       {result && <p className="settings-restart-notice">{result}</p>}
       <div className="settings-actions">
-        <button className="settings-btn" onClick={check} disabled={checking || updating}>
+        <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}>
           Check again</button>
         {status?.can_update && (
-          <button className="settings-btn primary" onClick={update} disabled={updating || checking}>
+          <button data-ui-action="restart" className="settings-btn primary" onClick={update} disabled={updating || checking}>
             {updating ? "Updating…" : "Update and restart"}</button>
         )}
       </div>
