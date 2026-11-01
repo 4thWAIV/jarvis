@@ -20,15 +20,23 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { RIGHT_SOCKET } from "./uiRight";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
 import { ago } from "./workflows";
 import { HeadroomBar, HeardRing, PipelineTrack, SpeedRing } from "./VoiceVisuals";
-import { audioStatus, health, heardShare, openDiagnostics, summary } from "./voiceHealth";
+import { audioStatus, health, heardShare, summary } from "./voiceHealth";
 
+/** Opening runs `voice.diagnostics.open`, as the brain's request does. The
+ *  summary is one button, and that button is the target the brain points at
+ *  (`voice`: the whole, its summary and its open control). */
 export function VoiceSummary() {
   useTick(1000);
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get);
+  const ui = useUiTarget({ ref: { region: "right", view: "right.diagnostics", kind: "voice" },
+                           label: "Voice health", socket: RIGHT_SOCKET });
   const s = record.value;
   const status = audioStatus(live?.state ?? s?.state ?? "idle", s?.lastDropAt ?? null);
   const pipeline = live?.pipeline ?? s?.pipeline;
@@ -36,7 +44,8 @@ export function VoiceSummary() {
 
   return (
     <section className="voice-summary" aria-label="Voice health">
-      <button type="button" className="voice-summary-open" onClick={() => openDiagnostics.set(true)}
+      <button type="button" className="voice-summary-open" ref={(el) => { ui.whole(el); ui.part("summary")(el); ui.part("open")(el); }}
+              {...bindingProps(bind("voice.diagnostics.open", {}))}
               title="Open the Diagnostics view">
         {/* A grid: the rings and the status word on one line, centred on the
             same middle; the captions and the status's details under them. */}

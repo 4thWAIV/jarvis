@@ -934,6 +934,127 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "navigation"
+    },
+    {
+      "id": "agents.filter",
+      "label": "Show only the active agents, or all of them, in the Agents list (remembered)",
+      "view": "right.agents",
+      "args": {
+        "show": {
+          "type": "enum",
+          "values": [
+            "active",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "show"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "agents"
+    },
+    {
+      "id": "agents.page",
+      "label": "Move the Agents list one agent back or on, while more are listed than fit",
+      "view": "right.agents",
+      "args": {
+        "direction": {
+          "type": "enum",
+          "values": [
+            "previous",
+            "next"
+          ]
+        }
+      },
+      "required": [
+        "direction"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "agents"
+    },
+    {
+      "id": "agents.reveal",
+      "label": "Move the Agents list until one listed agent's row shows",
+      "view": "right.agents",
+      "args": {
+        "sessionId": {
+          "type": "key",
+          "entity": "session"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "agents"
+    },
+    {
+      "id": "queue.history",
+      "label": "Show or hide the Queue's dismissed items; showing reads their first page",
+      "view": "right.queue",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged",
+          "when": {
+            "shown": true
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "queue.history.more",
+      "label": "Read the next page of the Queue's dismissed items",
+      "view": "right.queue",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "queue"
     }
   ],
   "kinds": [
@@ -1320,6 +1441,7 @@ export const UI_CONTRACT = {
         "waiting",
         "active",
         "history",
+        "more",
         "new"
       ],
       "presentations": [
@@ -1377,7 +1499,13 @@ export const UI_CONTRACT = {
             "close",
             "composer",
             "turn"
-          ]
+          ],
+          "reveal": {
+            "command": "queue.open",
+            "args": {
+              "threadId": "$key"
+            }
+          }
         }
       ],
       "family": "queue"
@@ -1683,7 +1811,13 @@ export const UI_CONTRACT = {
             "close",
             "checks",
             "messages"
-          ]
+          ],
+          "reveal": {
+            "command": "subsystem.open",
+            "args": {
+              "subsystemId": "$key"
+            }
+          }
         }
       ],
       "family": "diagnostics"
@@ -1747,7 +1881,11 @@ export const UI_CONTRACT = {
             "notifications",
             "messages",
             "close"
-          ]
+          ],
+          "reveal": {
+            "command": "voice.diagnostics.open",
+            "args": {}
+          }
         }
       ],
       "family": "diagnostics"
@@ -2141,6 +2279,9 @@ export interface UIHello {
 export interface UIWelcome { type: "ui_welcome"; clientId: string; epoch: number }
 
 export interface CommandArgs {
+  "agents.filter": { show: "active" | "all"; };
+  "agents.page": { direction: "previous" | "next"; };
+  "agents.reveal": { sessionId: string; };
   "folders.close": { };
   "folders.open": { folderId: string; };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue"; };
@@ -2149,6 +2290,8 @@ export interface CommandArgs {
   "queue.back": { };
   "queue.close": { };
   "queue.follow": { threadId: string; };
+  "queue.history": { shown: boolean; };
+  "queue.history.more": { };
   "queue.next": { };
   "queue.open": { threadId: string; };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
