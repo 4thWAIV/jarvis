@@ -18,6 +18,8 @@ a reader chosen and a read bounded in exactly one place.
                           through the folder's reader, with containment,
                           policy and the location revision checked again on
                           every request
+  work_location           where a run may work in a folder: the same checks,
+                          and an ordinary (files) folder only
   candidates / candidate_action / discover
                           what discovery found, and Ignore and Restore
 
@@ -391,6 +393,16 @@ class FolderService:
         if policy.reader.value != f.scope.reader_kind:
             raise FolderError("reader_changed", reader=policy.reader.value)
         return f, policy, root
+
+    def work_location(self, folder_id) -> tuple[Folder, Path]:
+        """The folder and its root, for work to run in (the brain's
+        `spawn_run`): checked exactly as a read is, and only for an ordinary
+        folder. A history or notes reader is read-only, so work never runs
+        there."""
+        f, policy, root = self._readable(folder_id, None)
+        if policy.reader != Reader.FILES:
+            raise FolderError("unsupported")
+        return f, root
 
     @staticmethod
     def _check_visible(policy: Policy, root: Path, rel: Path, is_dir: bool) -> None:

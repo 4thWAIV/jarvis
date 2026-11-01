@@ -51,7 +51,8 @@ class _Executor:
         return self.answer
 
     async def spawn(self, prompt, project_name, project_path, origin,
-                    resume_from=None, timeout_sec=0, model=None):
+                    resume_from=None, timeout_sec=0, model=None,
+                    folder_id=None):
         return self.store.create_run(prompt, project_name, project_path,
                                      origin, resume_from)
 

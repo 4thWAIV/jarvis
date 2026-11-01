@@ -6424,11 +6424,20 @@ async def tool_spawn_run(args: dict) -> str:
     if not prompt:
         return "There was nothing to start."
     reference = str(args.get("project") or "").strip()
-    if not reference:
+    in_folder = bool(str(args.get("folder_id") or "").strip())
+    if reference and in_folder:
+        return ("A project or a registered folder, sir, not both. "
+                "Which should it run in?")
+    if not (reference or in_folder):
         return "Which project should I start that in, sir?"
     model = _normalise_model(str(args.get("model") or ""))
 
-    name, path, problem = _resolve_project_or_explain(reference)
+    # A registered folder is resolved by the folder service alone, so where
+    # a run may work is decided by the same checks as what may be read.
+    if in_folder:
+        name, path, folder_id, problem = await _folder_work_target(args)
+    else:
+        (name, path, problem), folder_id = _resolve_project_or_explain(reference), None
     if problem:
         return problem
     redirect = _live_session_redirect(name, path, args, "spawn_run")
@@ -6451,9 +6460,9 @@ async def tool_spawn_run(args: dict) -> str:
     composed = compose_run_prompt(prompt)
 
     try:
-        run_id = await run_executor_instance.spawn(composed, name, path, "voice",
-                                                   resume_from=resume_from,
-                                                   model=model)
+        run_id = await run_executor_instance.spawn(
+            composed, name, path, "voice", resume_from=resume_from, model=model,
+            folder_id=folder_id)
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
@@ -8673,6 +8682,22 @@ def _folder_id(args: dict) -> Optional[str]:
     return raw if _FOLDER_ID_RE.fullmatch(raw) else None
 
 
+async def _folder_work_target(args: dict):
+    """(name, path, folder_id, None) for a run in a registered folder, or
+    (None, None, None, what to say). Where is the folder service's alone
+    (`work_location`): active, on this Mac, there now, and an ordinary
+    folder. The name is the folder's label behind the voice-name wall: it
+    may be a directory's own name."""
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return None, None, None, "Which folder, sir? Give me its ID from list_folders or find_folder."
+    got, said = await _folder_call(lambda s: s.work_location(folder_id))
+    if said:
+        return None, None, None, said
+    f, root = got
+    return _said_name({"voice_name": f.display_name}, "that folder"), str(root), f.id, None
+
+
 async def tool_list_folders(args: dict) -> str:
     query = str(args.get("query") or "")
     got, said = await _folder_call(lambda s: s.list_folders(query=query))
@@ -9615,9 +9640,16 @@ async def api_retry_run(run_id: str):
         return JSONResponse(
             status_code=409,
             content={"error": "Run is still active — cancel it first"})
+    # A run in a registered folder is checked again: the folder may have
+    # been removed, moved or made unavailable since it ran.
+    path, folder_id = original["project_path"], original.get("folder_id")
+    if folder_id:
+        _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
+        if problem:
+            return JSONResponse(status_code=409, content={"error": problem})
     new_id = await run_executor_instance.spawn(
-        original["prompt"], original["project_name"],
-        original["project_path"], "api", resume_from=run_id)
+        original["prompt"], original["project_name"], path, "api",
+        resume_from=run_id, folder_id=folder_id)
     return {"run_id": new_id, "status": "spawned"}
 
 

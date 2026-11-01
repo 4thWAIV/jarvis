@@ -440,7 +440,12 @@ TOOL_SPECS = [
             "To redirect a session that already exists, use steer_session. "
             "Name the project as the user named it — if that is ambiguous, or the "
             "project is unknown, this comes back with a question to ask rather than "
-            "starting anything. Write the prompt as a complete instruction: the run "
+            "starting anything. To run it in one of the user's registered folders "
+            "instead (research to keep there, say), pass `folder_id` from "
+            "list_folders or find_folder and no `project`: it runs in that "
+            "folder's location, and only in an ordinary folder that is "
+            "available, never a session history or notes folder. "
+            "Write the prompt as a complete instruction: the run "
             "is unattended and cannot ask a follow-up. NEVER ASK WHICH MODEL: "
             "omit `model` and it runs on Sonnet; pass one only if the user named "
             "it, or Opus with a short reason stated up front. Returns as soon as the run has started; the user is "
@@ -456,7 +461,13 @@ TOOL_SPECS = [
                                              "work for a project with a live "
                                              "session goes to that session.")},
                 "project": {"type": "string",
-                            "description": "The project as the user refers to it."},
+                            "description": ("The project as the user refers to it. "
+                                            "Omit it when passing folder_id.")},
+                "folder_id": {"type": "string",
+                              "description": ("A registered folder's ID, from "
+                                              "list_folders or find_folder, to run "
+                                              "in instead of a project. Never "
+                                              "together with project.")},
                 "prompt": {"type": "string",
                            "description": ("The complete instruction for the run, "
                                            "already written out.")},
@@ -476,7 +487,7 @@ TOOL_SPECS = [
                                            "starting from nothing. False, or "
                                            "omitted, for something new.")},
             },
-            "required": ["project", "prompt"],
+            "required": ["prompt"],
         },
     },
     {

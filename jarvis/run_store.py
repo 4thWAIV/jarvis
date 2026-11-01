@@ -103,6 +103,9 @@ def init_db() -> None:
                 model         TEXT DEFAULT '',
                 requested_model TEXT DEFAULT '',
                 is_error      INTEGER DEFAULT 0,
+                -- The registered folder it ran in (folder_store), when the
+                -- brain started it in one rather than in a project.
+                folder_id     TEXT,
                 created_at    REAL NOT NULL,
                 started_at    REAL,
                 ended_at      REAL
@@ -209,6 +212,9 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE runs ADD COLUMN is_error INTEGER DEFAULT 0")
             conn.commit()
+        if "folder_id" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN folder_id TEXT")
+            conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:
             conn.execute(
@@ -227,14 +233,15 @@ def init_db() -> None:
 
 
 def create_run(prompt: str, project_name: str, project_path: str,
-               origin: str, resume_from: str | None = None) -> str:
+               origin: str, resume_from: str | None = None,
+               folder_id: str | None = None) -> str:
     run_id = str(uuid.uuid4())
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-            "status, resume_from, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            "status, resume_from, folder_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
             (run_id, project_name, project_path, prompt, origin,
-             RunStatus.QUEUED, resume_from, time.time()),
+             RunStatus.QUEUED, resume_from, folder_id, time.time()),
         )
         conn.commit()
     log.info("run %s created (%s, origin=%s)", run_id, project_name, origin)

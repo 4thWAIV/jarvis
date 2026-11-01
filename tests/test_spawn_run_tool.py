@@ -40,16 +40,17 @@ class _Executor:
         self.spawned: list[dict] = []
 
     async def spawn(self, prompt, project_name, project_path, origin,
-                    resume_from=None, timeout_sec=0, model=None):
+                    resume_from=None, timeout_sec=0, model=None,
+                    folder_id=None):
         if self.boom:
             raise RuntimeError("no slots")
         run_id = self.store.create_run(prompt, project_name, project_path,
-                                       origin, resume_from)
+                                       origin, resume_from, folder_id)
         self.store.update_run(run_id, requested_model=model or self.model)
         self.spawned.append({"run_id": run_id, "prompt": prompt,
                              "project_name": project_name,
                              "project_path": project_path, "origin": origin,
-                             "model": model})
+                             "model": model, "folder_id": folder_id})
         return run_id
 
 
@@ -430,3 +431,93 @@ async def test_a_run_in_another_directory_is_never_resumed(ready, tmp_path,
                                  "resume": True})
 
     assert store.get_run(ex.spawned[0]["run_id"])["resume_from"] is None
+
+
+# --- In a registered folder (folder_id) -----------------------------------
+#
+# Where the run works is the folder service's alone: the folder's current
+# location, only while it is active and there, and only an ordinary (files)
+# folder. Never a session history or the brain's notes.
+
+@pytest.fixture
+def folders(ready, monkeypatch, tmp_path_factory):
+    from jarvis import data_paths, folder_service, folder_store, history_read
+    server, store, ex = ready
+    # Outside JARVIS_DATA_DIR (this file's tmp_path), which no folder may be.
+    mac = tmp_path_factory.mktemp("mac")
+    claude = mac / "claude-home"
+    (claude / "projects").mkdir(parents=True)
+    monkeypatch.setattr(history_read, "claude_roots", lambda: [claude])
+    svc = folder_service.FolderService(folder_store.FolderStore(), data_paths.node_id)
+    monkeypatch.setattr(server, "folder_catalog", svc)
+
+    def register(path):
+        path.mkdir(parents=True, exist_ok=True)
+        return svc.register(request_key=f"k-{path}", path=str(path))["folder"]
+
+    return server, store, ex, svc, register, claude, mac
+
+
+@pytest.mark.asyncio
+async def test_a_run_in_a_registered_folder_works_in_its_location(folders):
+    import os
+    server, store, ex, _svc, register, _claude, mac = folders
+    f = register(mac / "research" / "denice")
+
+    out = await server.tool_spawn_run({"folder_id": f["id"], "prompt": "store the research"})
+
+    assert len(ex.spawned) == 1, out
+    run = ex.spawned[0]
+    assert run["project_path"] == os.path.realpath(mac / "research" / "denice")
+    assert run["folder_id"] == f["id"]
+    assert store.get_run(run["run_id"])["folder_id"] == f["id"]
+    assert "denice" in out
+
+
+@pytest.mark.asyncio
+async def test_project_and_folder_together_start_nothing(folders):
+    server, _store, ex, _svc, register, _claude, mac = folders
+    f = register(mac / "denice")
+    out = await server.tool_spawn_run({"project": "chitauri", "folder_id": f["id"],
+                                       "prompt": "go"})
+    assert "not both" in out and ex.spawned == []
+
+
+@pytest.mark.asyncio
+async def test_a_removed_or_missing_folder_starts_nothing(folders):
+    server, _store, ex, svc, register, _claude, mac = folders
+    removed = register(mac / "old")
+    svc.unregister(removed["id"])
+    out = await server.tool_spawn_run({"folder_id": removed["id"], "prompt": "go"})
+    assert "removed" in out
+
+    gone = register(mac / "gone")
+    (mac / "gone").rmdir()
+    out = await server.tool_spawn_run({"folder_id": gone["id"], "prompt": "go"})
+    assert "Nothing is at that location" in out
+
+    out = await server.tool_spawn_run({"folder_id": str(mac / "old"), "prompt": "go"})
+    assert "Give me its ID" in out
+    assert ex.spawned == []
+
+
+@pytest.mark.asyncio
+async def test_a_history_or_notes_folder_is_never_worked_in(folders):
+    from jarvis import data_paths
+    server, _store, ex, _svc, register, claude, _mac = folders
+    history = register(claude / "projects" / "-tmp-denice")
+    notes = register(data_paths.brain_home() / "journal")
+    for f in (history, notes):
+        assert f["access"]["reader"] != "files"
+        out = await server.tool_spawn_run({"folder_id": f["id"], "prompt": "go"})
+        assert "cannot be done with this folder" in out, out
+    assert ex.spawned == []
+
+
+@pytest.mark.asyncio
+async def test_with_the_catalog_off_a_folder_run_starts_nothing(ready, monkeypatch):
+    server, _store, ex = ready
+    monkeypatch.setattr(server, "folder_catalog", None)
+    out = await server.tool_spawn_run({"folder_id": "0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3",
+                                       "prompt": "go"})
+    assert out == server.FOLDERS_OFF and ex.spawned == []

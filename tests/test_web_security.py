@@ -60,7 +60,7 @@ def no_spawn(env, monkeypatch):
     spawned = []
 
     async def fake_spawn(prompt, project_name, project_path, origin,
-                         resume_from=None, timeout_sec=0):
+                         resume_from=None, timeout_sec=0, folder_id=None):
         spawned.append((prompt, project_path, origin))
         return "fake-run-id"
 

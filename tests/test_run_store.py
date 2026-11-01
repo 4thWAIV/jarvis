@@ -253,3 +253,39 @@ def test_existing_database_without_is_error_still_opens(monkeypatch, tmp_path):
     new_id = run_store.create_run("new prompt", "proj", "/tmp/proj", "voice")
     run_store.update_run(new_id, is_error=1)
     assert run_store.get_run(new_id)["is_error"] == 1
+
+
+# -- `folder_id`: the registered folder a run worked in ----------------------
+# A run the brain starts in a registered folder (spawn_run's `folder_id`)
+# keeps that folder's ID, so the views can say where it ran. Added by the
+# same backfill: an older jarvis.db gains the column and its rows read None.
+
+
+def test_folder_id_is_recorded_and_absent_by_default(store):
+    plain = store.create_run("p", "proj", "/tmp/proj", "voice")
+    assert store.get_run(plain)["folder_id"] is None
+    fid = "0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3"
+    in_folder = store.create_run("p", "denice", "/tmp/denice", "voice", folder_id=fid)
+    assert store.get_run(in_folder)["folder_id"] == fid
+
+
+def test_existing_database_without_folder_id_still_opens(monkeypatch, tmp_path):
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    from jarvis import data_paths
+    importlib.reload(data_paths)
+    from jarvis import run_store
+    importlib.reload(run_store)
+    conn = sqlite3.connect(str(data_paths.db_path()))
+    conn.executescript(_OLD_RUNS_SCHEMA)
+    conn.execute(
+        "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
+        "status, created_at) VALUES (?,?,?,?,?,?,?)",
+        ("old-run", "proj", "/tmp/proj", "legacy prompt", "voice",
+         "succeeded", time.time()))
+    conn.commit()
+    conn.close()
+
+    run_store.init_db()
+    run_store.init_db()          # repeatable
+
+    assert run_store.get_run("old-run")["folder_id"] is None

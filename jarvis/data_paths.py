@@ -169,6 +169,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "82bb990af7e6227939611fddc8095ab87223cac827f2465782c33f3a29d1da82",  # never ask which model, Sonnet by default; needs board in full
     "b6d67254ef2abd55050ce586325324f1c6af4069a93cc47cb26d0f00fe895826",  # one message per turn; priority interrupts to correct
     "c75ec19829fe2905f3dc16a0b8dc212eb1117245fa539fe7001db8be23513a1a",  # conversation_history; restore_capture
+    "6b304d5fb4e2a3abd2d6cafac113dc2aa94391e7cc72f58cb2ef522612ad2dc6",  # registered folders are not projects; spawn_run's folder_id
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

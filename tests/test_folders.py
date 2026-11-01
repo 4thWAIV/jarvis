@@ -415,6 +415,31 @@ def test_unregister_leaves_files_and_needs_an_explicit_reactivation(svc, tmp_pat
     assert events[:3] == ["reactivated", "unregistered", "registered"]
 
 
+def test_work_runs_only_in_an_available_ordinary_folder(svc, claude_root, tmp_path):
+    """Where spawn_run may work: the same checks as a read, and a files
+    reader only. History and notes folders are read-only."""
+    plain = _tree(tmp_path / "denice", {"a.txt": "a"})
+    f = _register(svc, plain)["folder"]
+    got, root = svc.work_location(f["id"])
+    assert got.id == f["id"] and root == Path(os.path.realpath(plain))
+
+    journal = _tree(data_paths.brain_home() / "journal", {"x.md": "x"})
+    notes = _register(svc, journal)["folder"]
+    assert _err(svc.work_location, notes["id"]) == "unsupported"
+    hist = _tree(claude_root / "projects" / "-tmp-x", {"s.jsonl": ""})
+    history = _register(svc, hist)["folder"]
+    assert _err(svc.work_location, history["id"]) == "unsupported"
+
+    assert _err(svc.work_location, "no-such-folder") == "not_found"
+    svc.unregister(f["id"])
+    assert _err(svc.work_location, f["id"]) == "removed"
+    gone = _tree(tmp_path / "gone-soon", {"a": "a"})
+    g = _register(svc, gone)["folder"]
+    (gone / "a").unlink()
+    gone.rmdir()
+    assert _err(svc.work_location, g["id"]) == "missing"
+
+
 def test_reconnect_needs_confirmation_for_a_different_directory(svc, tmp_path):
     first = _tree(tmp_path / "v1", {"a": "a"})
     f = _register(svc, first)["folder"]

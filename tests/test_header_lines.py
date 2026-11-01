@@ -1512,6 +1512,7 @@ def _blank_run(**over):
         "model": "sonnet",
         "requested_model": "sonnet",
         "exit_code": 0, "pid": 0, "is_error": 0,
+        "folder_id": None,
         "created_at": now - 300, "started_at": now - 290, "ended_at": now - 10,
     }
     run.update(over)
@@ -1535,6 +1536,7 @@ ALT_RUN = {
     "error": "exit 1",
     "model": "opus",
     "requested_model": "opus",
+    "folder_id": "33333333-3333-4333-8333-333333333333",
 }
 
 
