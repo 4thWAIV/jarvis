@@ -42,6 +42,10 @@ What the page shows or does, JARVIS can now do by voice. He can say who is on yo
 
 A teammate can send you work to run as a .zip in an ordinary message. When a message has one, JARVIS offers to open it. On your yes, he downloads it, unpacks it into its own folder and follows its instructions with you, running each step only when you say to. A step that needs you, such as recording your voice, opens in a Terminal window. At the end he drafts a reply with the results attached and asks you to review it, as for any other message. You can also ask him to attach a file you name to a message. The format and an example, a Spanish speech test, are in [work packages](work-packages.md).
 
+## Spanish words, ready for the language setting
+
+JARVIS now reads accented words whole. Before, "sí" was heard as the letter "s" and "espérate" as two fragments, so no Spanish yes, no or cancel could ever count. The Spanish words are in place: sí, claro, adelante, hazlo, dale or "de acuerdo" to say yes; no, espera, luego, después, nunca, negativo or todavía to say no; espera, espérate, cancela, alto or detente to stop him; repite or otra vez to hear the last answer again; and exactly "empezar de cero" to clear the conversation, still confirmed with a yes. They take effect once JARVIS can be set to Spanish, which comes in a later release; until then English works exactly as before. Agent names and memories with accents are now found with or without them.
+
 ## Agents and workflows stay in context
 
 The agent interface covers Claude Code and Codex sessions. Threads bring messages and replies together instead of requiring the user to reconstruct an exchange from separate announcements.

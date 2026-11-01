@@ -1631,3 +1631,115 @@ async def test_the_quiet_room_bar_returns_once_his_audio_has_ended(h):
     await h.ack_all()
     await asyncio.sleep(0.05)
     assert not s.is_speaking
+
+
+# ── in Spanish ──────────────────────────────────────────────────────────────
+# The same rules, read with the Spanish word lists once the active language
+# is Spanish. Before `spoken_words`, "espérate" split into "esp" and "rate",
+# so none of this could match at all.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word", ["espera", "espérate", "esperate", "cancela",
+                                  "alto", "detente", "Espérate."])
+async def test_a_spanish_cancel_word_interrupts_him_mid_sentence(h, spanish, word):
+    s = h.sched
+    await s.say("Chitauri sigue con la migración ahora.")
+    await asyncio.sleep(0.1)
+    assert s.is_speaking
+    await s.user_interim(word)
+    assert not s.is_speaking, f"{word!r} should have cut him off"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word", ["para", "stop", "wait"])
+async def test_words_that_are_not_spanish_cancel_words_do_not_interrupt(h, spanish, word):
+    """"para" is an everyday preposition; English cancel words belong to the
+    English list."""
+    s = h.sched
+    await s.say("Chitauri sigue con la migración ahora.")
+    await asyncio.sleep(0.1)
+    await s.user_interim(word)
+    assert s.is_speaking
+
+
+@pytest.mark.asyncio
+async def test_spanish_cancel_words_do_nothing_while_the_language_is_english(h):
+    s = h.sched
+    await s.say("Telling chitauri to proceed with the migration now.")
+    await asyncio.sleep(0.1)
+    await s.user_interim("espérate")
+    assert s.is_speaking
+
+
+@pytest.mark.asyncio
+async def test_a_spanish_cancel_word_cancels_inside_the_cancel_window(h, spanish):
+    s = h.sched
+    task = asyncio.create_task(s.open_cancel_window(1.0))
+    await asyncio.sleep(0.02)
+    assert await s.user_final("¡Espérate!") == "cancel"
+    assert await task is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("said,heard", [
+    ("Esperando a que termine el build, señor.", "espera"),
+    ("Cancelando la ejecución, señor.", "cancela"),
+])
+async def test_a_clipped_spanish_echo_of_his_own_word_does_not_interrupt(h, spanish,
+                                                                         said, heard):
+    """The four-character stem rule, in Spanish: "espera" heard while he says
+    "esperando" is him."""
+    s = h.sched
+    await s.say(said)
+    await asyncio.sleep(0.1)
+    assert s.is_speaking
+    await s.user_interim(heard)
+    assert s.is_speaking, f"heard {heard!r} while saying {said!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(strict=True, reason=(
+    "`_is_stem_echo` requires four characters of the HEARD word only, so a "
+    "short word he is saying that begins it (\"es\" for \"espera\", \"a\" for "
+    "\"alto\") makes a real cancel look like his echo. Requiring four of the "
+    "shorter word would fix it, but also changes English (\"cancel\" said while "
+    "he says \"can\"), so it waits for Tim's yes."))
+@pytest.mark.parametrize("said,heard", [
+    ("Es la migración de chitauri, señor.", "espera"),
+    ("Voy a desplegar chitauri ahora, señor.", "alto"),
+])
+async def test_a_spanish_cancel_word_beginning_with_a_short_word_he_says_interrupts(
+        h, spanish, said, heard):
+    s = h.sched
+    await s.say(said)
+    await asyncio.sleep(0.1)
+    await s.user_interim(heard)
+    assert not s.is_speaking
+
+
+@pytest.mark.asyncio
+async def test_his_own_accented_words_come_back_as_echo(h, spanish):
+    """Whole accented words, accents or not: his Spanish coming back through
+    the microphone is recognised as his."""
+    s = h.sched
+    await s.say("Después de la reunión, señor.")
+    await asyncio.sleep(0.1)
+    assert s.classify("después de la reunión señor") == "echo"
+    assert s.classify("despues de la reunion senor") == "echo"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("repite", "replay"),
+    ("Repite.", "replay"),
+    ("otra vez", "replay"),
+    ("Jarvis, otra vez", "replay"),
+    # deliberately NOT a replay: ordinary speech
+    ("¿cómo?", "speech"),
+    ("¿qué?", "speech"),
+    ("¿mande?", "speech"),
+    ("perdón", "speech"),
+    ("repite lo que dijo el agente", "speech"),
+    ("say that again", "speech"),
+])
+def test_spanish_replay_classification(h, spanish, text, expected):
+    assert h.sched.classify(text) == expected

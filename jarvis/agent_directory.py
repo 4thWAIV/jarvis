@@ -26,6 +26,7 @@ from jarvis import data_paths
 from jarvis import run_store
 from jarvis import session_needs
 from jarvis import session_watch
+from jarvis import spoken_words
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,8 @@ def spoken_key(text: str) -> str:
 
 
 def _words(text: str) -> set[str]:
-    return {w for w in re.split(r"[^a-z0-9]+", spoken_key(text)) if w}
+    """A name's words as said, accents folded: "José" is "jose"."""
+    return set(spoken_words.folded_words(spoken_key(text)))
 
 
 def _needs_by_project() -> dict[str, int]:
