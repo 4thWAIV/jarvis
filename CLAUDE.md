@@ -490,14 +490,16 @@ matched like the clear command: the whole utterance, optional leading
 (`speech_models.switch`, a few seconds) and only then saves the choice in
 JARVIS's own store (`data_paths.language_path()`, never .env) and puts it in
 force (`spoken_words.set_active_language`), so a model that is not installed
-or fails to load changes nothing. Speech input's model is switched only this
-way. The page and the phrase are confirmed aloud in the new language
+or fails to load changes nothing (after a failed load the language in
+force's model is loaded again, so he is still heard). Speech input's model is
+switched only this way. The page and the phrase are confirmed aloud in the new language
 (`language_setting.choose`: "Speaking English now, sir." / "Ahora hablo en
 español, señor.") through `_say_notice`, whose note tells the brain to answer
 in that language from its next turn; the brain's tool returns the same rule
 and the brain says it. Español is disabled until the Spanish model is
 installed; "Download (124 MB)" is the install route, its progress read every
-second while it runs. At startup `language_setting.load` puts the saved
+second while it runs. At startup, before the brain is spawned (its launch
+prompt carries the language rule), `language_setting.load` puts the saved
 language in force and gives speech input its model, or English for that run
 when the saved one's model is missing (preflight checks the same model,
 `startup_model`). `GET`/`POST /api/settings/language` are the routes; the

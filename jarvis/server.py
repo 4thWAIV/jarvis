@@ -2891,11 +2891,14 @@ async def lifespan(application: FastAPI):
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
 
+    # The language chosen in Settings, and its speech model
+    # (language_setting.py). Put in force before the brain starts: its launch
+    # prompt carries the language rule, and the brain is spawned below.
+    speech_model = language_setting.load()
     await start_brain_and_speech()
     await start_session_watcher()
     start_folders()
-    # The language chosen in Settings, and its speech model (language_setting.py).
-    transcription_api.start(model=language_setting.load())
+    transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
     # network exchange runs while paired whether or not a page is open, and

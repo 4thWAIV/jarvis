@@ -142,9 +142,34 @@ def test_a_model_that_fails_to_load_changes_nothing(said, monkeypatch):
     _put(SPANISH)
     with TestClient(_app_heard(factory, monkeypatch, said)) as c:
         got = _choose(c, "es")
+        speech = c.get("/api/settings/language").json()["speech"]
     assert got.status_code == 500 and "bad weights" in got.json()["error"]
     assert spoken_words.active_language() == "en" and not data_paths.language_path().exists()
     assert said == []
+    # Speech input hears English again, not nothing.
+    assert speech["language"] == "en" and speech["state"] == "ready"
+
+
+def test_the_saved_language_is_in_force_before_the_brain_starts(monkeypatch):
+    """The brain's launch prompt carries the language rule, so a saved
+    Spanish must be in force before the brain is spawned at startup."""
+    from jarvis import server
+
+    _put(SPANISH)
+    data_paths.language_path().write_text(json.dumps({"language": "es"}))
+    seen, started = [], []
+    original = server.start_brain_and_speech
+
+    async def start_brain_and_speech():
+        seen.append(spoken_words.active_language())
+        await original()
+
+    monkeypatch.setattr(server, "start_brain_and_speech", start_brain_and_speech)
+    monkeypatch.setattr(server.transcription_api, "start",
+                        lambda model=None, **_: started.append(model))
+    with TestClient(server.app):
+        pass
+    assert seen == ["es"] and started == [SPANISH]
 
 
 def test_an_unknown_language_is_refused(client):

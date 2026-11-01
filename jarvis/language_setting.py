@@ -10,7 +10,8 @@ everything that depends on it reads: the word lists, Fish's language and the
 brain's launch prompt. `change` first loads the language's speech model
 (`speech_models.switch`: a few seconds, one model in memory) and only once it
 has loaded saves the choice and puts it in force, so a model that is not
-installed, or that fails to load, changes nothing. Spanish cannot be chosen
+installed, or that fails to load, changes nothing (after a failed load the
+language in force's model is loaded again). Spanish cannot be chosen
 until its model is installed.
 
 At startup `load` puts the saved choice in force, or English for this run
@@ -118,11 +119,28 @@ async def change(language: str) -> bool:
         service_language = speech_models.models()["language"]
         if language == spoken_words.active_language() and service_language == language:
             return False
-        await speech_models.switch(language)
+        try:
+            await speech_models.switch(language)
+        except Refused:
+            await _hear_again(spoken_words.active_language())
+            raise
         _save(language)
         spoken_words.set_active_language(language)
     log.info("language changed to %s", NAMES[language])
     return True
+
+
+async def _hear_again(language: str) -> None:
+    """After a model that failed to load, speech input has none: load the
+    language still in force again, so a failed change leaves him heard as
+    before. Nothing to do when the old model was never let go."""
+    if speech_models.models()["language"] == language:
+        return
+    try:
+        await speech_models.switch(language)
+    except Refused as refused:
+        log.warning("speech input could not go back to %s: %s",
+                    NAMES[language], refused.message)
 
 
 def honorific() -> str:
