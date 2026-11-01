@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -575,3 +576,110 @@ def test_the_command_looks_where_the_tool_channel_does(monkeypatch):
     assert update_cli.server_url() == "https://[::1]:8341"
     monkeypatch.setenv("JARVIS_URL", "https://127.0.0.1:9000/")
     assert update_cli.server_url() == "https://127.0.0.1:9000"
+
+
+# --- where the running server is (server_address.py) ----------------------
+
+def _record(pid: int, scheme="https", host="::1", port=8341) -> None:
+    from jarvis import data_paths
+    data_paths.server_address_path().parent.mkdir(parents=True, exist_ok=True)
+    data_paths.server_address_path().write_text(json.dumps(
+        {"scheme": scheme, "host": host, "port": port, "pid": pid}))
+
+
+def _dead_pid() -> int:
+    done = subprocess.Popen(["true"])
+    done.wait()
+    return done.pid
+
+
+def test_the_server_records_its_address_at_startup_and_removes_it_on_shutdown(
+        server, monkeypatch):
+    from jarvis import data_paths, server_address
+    monkeypatch.setenv("JARVIS_SCHEME", "https")
+    monkeypatch.setenv("JARVIS_BIND_HOST", "::1")
+    monkeypatch.setenv("JARVIS_PORT", "8341")
+    with TestClient(server.module.app):
+        found = server_address.running()
+        assert found is not None and found.pid == os.getpid()
+        assert found.url == "https://[::1]:8341"
+    assert not data_paths.server_address_path().exists()
+
+
+@pytest.mark.parametrize("bind,url", [
+    ("0.0.0.0", "http://127.0.0.1:8341"),
+    ("::", "http://[::1]:8341"),
+    ("[::1]", "http://[::1]:8341"),
+    ("localhost", "http://localhost:8341"),
+])
+def test_the_recorded_address_is_one_that_can_be_dialled(monkeypatch, bind, url):
+    from jarvis import server_address
+    monkeypatch.setenv("JARVIS_SCHEME", "http")
+    monkeypatch.setenv("JARVIS_BIND_HOST", bind)
+    monkeypatch.setenv("JARVIS_PORT", "8341")
+    server_address.record()
+    assert server_address.running().url == url
+
+
+def test_shutdown_leaves_another_servers_record_alone():
+    from jarvis import data_paths, server_address
+    other = os.getppid()
+    _record(other)
+    server_address.forget()
+    assert data_paths.server_address_path().exists()
+    assert server_address.running().pid == other
+
+
+@pytest.mark.parametrize("text", ["", "not json", "{}", '{"scheme": "http", "pid": "x"}'])
+def test_an_unreadable_record_is_no_record(text):
+    from jarvis import data_paths, server_address
+    data_paths.server_address_path().parent.mkdir(parents=True, exist_ok=True)
+    data_paths.server_address_path().write_text(text)
+    assert server_address.running() is None
+
+
+def test_a_stale_record_is_ignored(monkeypatch, repos, capsys):
+    from jarvis import server_address
+    _record(_dead_pid())
+    assert server_address.running() is None
+    asked = []
+    monkeypatch.setattr(update_cli, "ask_server", lambda url: asked.append(url))
+    monkeypatch.delenv("JARVIS_URL", raising=False)
+    monkeypatch.delenv("JARVIS_TOOL_URL", raising=False)
+    latest = repos.push({"a.py": "1\n"}, "Add a")
+    assert update_cli.main([]) == 0
+    assert asked and asked[0].endswith("://127.0.0.1:8340")
+    assert repos.head() == latest
+    assert "JARVIS is not running" in capsys.readouterr().out
+
+
+def test_the_command_asks_the_server_where_it_recorded_itself(monkeypatch, repos, capsys):
+    _record(os.getpid())
+    monkeypatch.setenv("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
+    asked = []
+
+    def server_answers(url):
+        asked.append(url)
+        return self_update.Outcome(status=self_update.Status(source="github"), ok=True,
+                                   updated=True, to_commit="e" * 40).to_json()
+
+    monkeypatch.setattr(update_cli, "ask_server", server_answers)
+    before = repos.head()
+    assert update_cli.main([]) == 0
+    assert asked == ["https://[::1]:8341"]
+    assert repos.head() == before, "the server did the work, not the command"
+    assert "restarting on the new code" in capsys.readouterr().out
+
+
+def test_a_recorded_server_that_cannot_be_reached_is_not_updated_under(monkeypatch, repos):
+    _record(os.getpid())
+
+    def refused(*a, **k):
+        raise update_cli.urllib.error.URLError(ConnectionRefusedError(61, "refused"))
+
+    monkeypatch.setattr(update_cli.urllib.request, "urlopen", refused)
+    before = repos.head()
+    repos.push({"a.py": "1\n"}, "Add a")
+    with pytest.raises(SystemExit, match=r"recorded https://\[::1\]:8341 .*not updating under it"):
+        update_cli.main([])
+    assert repos.head() == before

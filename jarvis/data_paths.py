@@ -540,6 +540,13 @@ def language_path() -> Path:
     return data_dir() / "language.json"
 
 
+def server_address_path() -> Path:
+    """Where the running server says it can be reached: its scheme, host,
+    port and pid, written at startup and removed on a clean shutdown
+    (server_address.py). `python -m jarvis.update` reads it."""
+    return data_dir() / "server-address.json"
+
+
 def tool_token_path() -> Path:
     """The bearer token the MCP child uses to reach /internal/tool."""
     return brain_home() / "tool-token"
