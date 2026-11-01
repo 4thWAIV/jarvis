@@ -16,7 +16,9 @@ import {
   bytesText, cpuPercent, MEASURED_WORDS, memoryPercent, network, serverReading,
   whenText, type HealthPoint, type NetworkStatus, type ServerHealth,
 } from "./network";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { DetailHead, Facts } from "./NodeView";
+import { useUiTarget } from "./uiRegistry";
 import { readinessClass, ServerIcon } from "./TeamServerTile";
 
 const CONNECTION_WORDS: Record<NetworkStatus["connection"], string> = {
@@ -68,6 +70,9 @@ export function TeamServerView() {
   const status = live.value;
   const r = serverReading(status);
   const h = r.health;
+  // Pointed at as its database, connection and service sections.
+  const ui = useUiTarget({ ref: { region: "main", view: "main.network", kind: "teamServer" },
+                           label: "Team server", socket: CENTRE_SOCKET });
   const unknown = "Unknown from here";
   // Stale values never look healthy: what would is unknown; failures stay.
   const current = (healthy: boolean, text: string) =>
@@ -97,20 +102,20 @@ export function TeamServerView() {
     ["CPU / memory", h ? resources(h) : "—"],
   ];
   return (
-    <div id="network-detail" className="network-detail" data-node="server">
+    <div id="network-detail" className="network-detail" data-node="server" ref={ui.whole}>
       <DetailHead title="Team server" state={r.readiness} className={`readiness-${readinessClass(r.readiness)}`}
                   icon={<span className={`server-beacon readiness-${readinessClass(r.readiness)}`}><ServerIcon /></span>} />
-      <section aria-label="Database">
+      <section aria-label="Database" ref={ui.part("database")}>
         <h3>Database</h3>
         <Facts rows={database} />
         <h3>Last 15 minutes</h3>
         {h ? <History points={h.history} /> : <p className="network-waiting">{unknown}.</p>}
       </section>
-      <section aria-label="Connection">
+      <section aria-label="Connection" ref={ui.part("connection")}>
         <h3>Connection</h3>
         <Facts rows={contact} />
       </section>
-      <section aria-label="Service">
+      <section aria-label="Service" ref={ui.part("service")}>
         <h3>Service</h3>
         <Facts rows={service} />
       </section>

@@ -11,7 +11,9 @@
  * called human presence.
  */
 
-import { byHand, useUiTarget } from "./uiRegistry";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { PROVIDERS } from "./providers";
 import { resetDay } from "./WeeklyUsage";
@@ -75,20 +77,23 @@ function Account({ a }: { a: AccountPace }) {
   );
 }
 
-/** A centre detail's head: its name, one line under it, and Close, which
- *  goes back to the view before. */
-export function DetailHead({ title, state, className = "", icon }: {
+/** A centre detail's head: its name, one line under it, and Close
+ *  (`network.close`), which goes back to the view before. `partRef`, the
+ *  detail's registered target's, takes the title as `name` and Close as
+ *  `close`. */
+export function DetailHead({ title, state, className = "", icon, partRef }: {
   title: string; state: string; className?: string; icon?: ReactNode;
+  partRef?: (part: string) => (el: Element | null) => void;
 }) {
   return (
     <section className="subsystem-head">
       {icon}
       <div className="subsystem-head-words">
-        <h2>{title}</h2>
+        <h2 ref={partRef?.("name")}>{title}</h2>
         <p className={`subsystem-head-state ${className}`}>{state}</p>
       </div>
-      <button type="button" className="workflow-close" title="Close" aria-label="Close"
-              onClick={() => byHand("network.close", {})}>×</button>
+      <button type="button" className="workflow-close" title="Close" aria-label="Close" ref={partRef?.("close")}
+              {...bindingProps(bind("network.close", {}))}>×</button>
     </section>
   );
 }
@@ -133,17 +138,17 @@ export function NodeView({ nodeId }: { nodeId: string }) {
   const current = status !== null && rosterCurrent(status);
   const human = node ? humanReading(node) : null;
   const ui = useUiTarget(node ? { ref: { region: "main", view: "main.network", kind: "node", key: node.node_id },
-                                    label: node.label, socket: { rail: "rail.main", side: "right" } } : null);
+                                    label: node.label, socket: CENTRE_SOCKET } : null);
   const rows: [string, string, string?][] = node ? [
     ["Owner", node.owner_login, "owner"],
     ["Instance", node.node_id],
     ["Version / OS", `JARVIS ${node.jarvis_version} · ${node.os}`, "version"],
-    ["Presence", current ? PRESENCE_WORDS[node.presence] : "Inventory stale; current presence unknown"],
+    ["Presence", current ? PRESENCE_WORDS[node.presence] : "Inventory stale; current presence unknown", "presence"],
     ["Last server update", whenText(node.last_seen_at), "lastUpdate"],
     ["Last human interaction", human!.ageMs === null ? (node.activity_state === "unsupported"
       ? "Activity unavailable" : "No activity observed")
       : `${whenText(node.last_human_activity_at)}${node.last_human_activity_source
-        ? ` · ${SOURCE_WORDS[node.last_human_activity_source]}` : ""}`],
+        ? ` · ${SOURCE_WORDS[node.last_human_activity_source]}` : ""}`, "human"],
     ["Activity data", ACTIVITY_WORDS[node.activity_state]],
     ["CPU", cpuText(node.resources), "cpu"],
     ["Memory", memoryText(node.resources), "memory"],
@@ -151,19 +156,19 @@ export function NodeView({ nodeId }: { nodeId: string }) {
     ["Quota coverage", coverage(node), "coverage"],
     ["Average remaining", node.brains.average_remaining_percent === null ? "—"
       : `${Math.round(node.brains.average_remaining_percent)}%${
-        node.brains.measured < node.brains.configured ? " · partial" : ""}`],
+        node.brains.measured < node.brains.configured ? " · partial" : ""}`, "remaining"],
   ] : [];
   return (
     <div id="network-detail" className="network-detail" data-node={nodeId} ref={ui.whole}>
       <DetailHead title={`${node ? node.label : "Instance"}${self ? " · This Mac" : ""}`}
-                  state="Values from Team Server" />
+                  state="Values from Team Server" partRef={node ? ui.part : undefined} />
       {!current && node && (
         <p className="network-stale">Values are stale: the last arrived {whenText(status!.received_at)}.</p>
       )}
       {!node && <p className="network-waiting">The team server no longer lists this instance.</p>}
       {node && <Facts rows={rows} partRef={ui.part} />}
       {node && node.brains.accounts.length > 0 && (
-        <section aria-label="Brain accounts">
+        <section aria-label="Brain accounts" ref={ui.part("accounts")}>
           <h3>Brain accounts</h3>
           <ul className="network-accounts">
             {node.brains.accounts.map((a) => <Account key={a.account_ref} a={a} />)}

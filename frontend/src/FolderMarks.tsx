@@ -15,9 +15,11 @@ export function RoleMark({ role, short }: { role: Role; short?: boolean }) {
   );
 }
 
-export function AvailabilityMark({ availability }: { availability: Availability }) {
+/** `ref` is a registered target's part (the availability itself). */
+export function AvailabilityMark({ availability, ref }: {
+  availability: Availability; ref?: (el: Element | null) => void }) {
   return (
-    <span className={`folder-availability availability-${availability}`}>
+    <span className={`folder-availability availability-${availability}`} ref={ref}>
       <span className="folder-availability-dot" aria-hidden="true" />
       {AVAILABILITY_WORDS[availability]}
     </span>

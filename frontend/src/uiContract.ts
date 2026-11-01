@@ -2217,6 +2217,7 @@ export const UI_CONTRACT = {
         "detail",
         "location",
         "contents",
+        "preview",
         "close"
       ],
       "presentations": [
@@ -2242,6 +2243,7 @@ export const UI_CONTRACT = {
             "availability",
             "location",
             "contents",
+            "preview",
             "close"
           ],
           "reveal": {
@@ -2324,7 +2326,13 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "main.conversation"
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
         }
       ],
       "family": "conversation"
@@ -2343,7 +2351,13 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "main.conversation"
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
         }
       ],
       "family": "conversation"
@@ -2360,10 +2374,22 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "main.conversation"
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
         },
         {
-          "view": "main.main"
+          "view": "main.main",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "main"
+            }
+          }
         }
       ],
       "family": "conversation"
@@ -2378,7 +2404,13 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "main.conversation"
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
         }
       ],
       "family": "conversation"
