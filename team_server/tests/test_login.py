@@ -6,7 +6,7 @@ import logging
 from urllib.parse import parse_qs, urlsplit
 
 from conftest import (ADMIN, ALICE, MALLORY, SESSION_COOKIE, bearer,
-                      browser_token, run_db, sign_in)
+                      browser_token, change_member, pair, run_db, sign_in)
 from teamserver import team as team_mod
 from teamserver.config import Config
 from teamserver.github import Identity
@@ -156,3 +156,26 @@ def test_suspended_member_cannot_sign_in(client, github):
     assert r.status_code == 200, r.text
     r = sign_in(client, github, ALICE)
     assert r.status_code == 403 and "suspended" in r.text
+
+
+def test_a_reenabled_member_signs_in_again_with_a_new_session(client, github):
+    admin = browser_token(client, github, ADMIN)
+    change_member(client, admin, ALICE.id)
+    old_browser = browser_token(client, github, ALICE)
+    old_device = pair(client, old_browser)
+    assert change_member(client, admin, ALICE.id, status="suspended")["state"] == "suspended"
+    assert sign_in(client, github, ALICE).status_code == 403
+    assert change_member(client, admin, ALICE.id, status="approved")["state"] == "active"
+
+    client.cookies.clear()
+    assert sign_in(client, github, ALICE).status_code == 303
+    new_browser = client.cookies.get(SESSION_COOKIE)
+    client.cookies.clear()
+    assert new_browser and new_browser != old_browser
+    me = client.get("/api/v1/me", headers=bearer(new_browser))
+    assert me.status_code == 200 and me.json()["state"] == "active"
+    for old in (old_browser, old_device):
+        r = client.get("/api/v1/status", headers=bearer(old))
+        assert r.status_code == 401 and r.json()["error"]["code"] == "session_revoked"
+    new_device = pair(client, new_browser)
+    assert client.get("/api/v1/status", headers=bearer(new_device)).status_code == 200
