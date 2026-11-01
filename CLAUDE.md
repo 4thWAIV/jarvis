@@ -884,6 +884,8 @@ Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
 
+Every CI run uploads a `test-timing` artifact (14 days, failed runs too): both pytest steps' junit XML (`unit.xml`, `page.xml`), the runner's size, and its load sampled every 30 s through the page step; the steps' logs carry `--durations` and a timed bare vite build and Chromium launch.
+
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
 - Max 1-2 sentences per voice response
