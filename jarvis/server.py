@@ -121,6 +121,7 @@ from jarvis import subsystem_diagnostics
 from jarvis import folder_contract, folder_service, folder_store, folders_api
 from jarvis.folder_contract import FolderError
 from jarvis import tts
+from jarvis import spoken_words
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
 
@@ -133,7 +134,6 @@ log = logging.getLogger("jarvis")
 
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-FISH_API_URL = "https://api.fish.audio/v1/tts"
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -388,6 +388,13 @@ def apply_speech_corrections(text: str) -> str:
 # Markdown Stripping for TTS
 # ---------------------------------------------------------------------------
 
+# The English list's Spanish counterparts. No English sentence contains them,
+# so they are always stripped, whichever language is in force.
+_BANNED_SPANISH = ["por supuesto", "claro que sí", "con mucho gusto",
+                   "excelente pregunta", "buena pregunta", "mis disculpas",
+                   "le pido disculpas", "no dudes en", "no dude en"]
+
+
 def strip_markdown_for_tts(text: str) -> str:
     """Strip ALL markdown from text before sending to TTS."""
     import re as _md_re
@@ -420,7 +427,7 @@ def strip_markdown_for_tts(text: str) -> str:
     banned = ["my apologies", "i apologize", "absolutely", "great question",
               "i'd be happy to", "of course", "how can i help",
               "is there anything else", "i should clarify", "let me know if",
-              "feel free to"]
+              "feel free to"] + _BANNED_SPANISH
     result_lower = result.lower()
     for phrase in banned:
         idx = result_lower.find(phrase)
@@ -429,6 +436,13 @@ def strip_markdown_for_tts(text: str) -> str:
             end = idx + len(phrase)
             if end < len(result) and result[end] in " ,—-":
                 end += 1
+            if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
+                closer = "!" if result[idx - 1] == "¡" else "?"
+                idx -= 1
+                if result[end:end + 1] == closer:
+                    end += 1
+                    if result[end:end + 1] == " ":
+                        end += 1
             result = result[:idx] + result[end:]
             result_lower = result.lower()
             idx = result_lower.find(phrase)
@@ -500,35 +514,12 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
+    """Generate speech audio from text using Fish Audio TTS: the same
+    synthesis everything JARVIS says goes through (`_synth_for_speech`)."""
     if not FISH_API_KEY:
         log.warning("FISH_API_KEY not set, skipping TTS")
         return None
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
-    except Exception as e:
-        log.error(f"TTS error: {e}")
-        return None
+    return await _synth_for_speech(text)
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +685,8 @@ async def _voice_emit(msg: dict) -> None:
 
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
-    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client,
+                                   language=spoken_words.active_language())
     if FISH_API_KEY and (text or "").strip():
         subsystem_diagnostics.voice_output_calls.note(r is not None)
     if r is None:
@@ -11085,10 +11077,12 @@ async def api_test_fish(body: KeyTest):
         return {"valid": False, "error": "No key provided"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Not `synthesize_chunk`: this check needs the status code, to
+            # tell a refused key (401) from any other failure.
             resp = await client.post(
-                "https://api.fish.audio/v1/tts",
+                tts.FISH_TTS_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"text": "test", "reference_id": FISH_VOICE_ID},
+                json=tts.request_body("test", FISH_VOICE_ID),
             )
             if resp.status_code in (200, 201):
                 return {"valid": True}

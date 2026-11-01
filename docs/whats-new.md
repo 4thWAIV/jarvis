@@ -1,6 +1,6 @@
 # The new JARVIS workspace
 
-Updated 2026-10-31. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
 ## Conversation is the main view
 
@@ -41,6 +41,10 @@ What the page shows or does, JARVIS can now do by voice. He can say who is on yo
 ## Work packages
 
 A teammate can send you work to run as a .zip in an ordinary message. When a message has one, JARVIS offers to open it. On your yes, he downloads it, unpacks it into its own folder and follows its instructions with you, running each step only when you say to. A step that needs you, such as recording your voice, opens in a Terminal window. At the end he drafts a reply with the results attached and asks you to review it, as for any other message. You can also ask him to attach a file you name to a message. The format and an example, a Spanish speech test, are in [work packages](work-packages.md).
+
+## Getting ready to speak Spanish
+
+JARVIS's speaking side is ready for Spanish, though nothing changes yet: English stays in force until the language setting arrives in a later release. In Spanish, Fish Audio is told the text is Latin American Spanish, so it reads numbers, dates and units the Spanish way in the same JARVIS voice. Spanish abbreviations such as Sra., Dra., Ud. and pág., and times written "3 p. m.", no longer split a sentence into separately spoken pieces. "Por supuesto", "Claro que sí" and the other Spanish counterparts of JARVIS's banned phrases are never spoken. The brain answers in Spanish, calls you "señor", says English tool results in Spanish and searches its memory in both languages before saying it doesn't have something. Messages you send agents stay in the words and language you used.
 
 ## Agents and workflows stay in context
 
