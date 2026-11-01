@@ -19,13 +19,16 @@
  *   - "messages" (and every (re)connect): the queue reads
  *     /api/team/messages again (queue.ts);
  *   - "human_transfer": a person's message went or came; its ray is drawn
- *     once (transfers.ts), and a replayed one only reconciles.
+ *     once (transfers.ts), and a replayed one only reconciles;
+ *   - "packages" (and every (re)connect): a work package was unpacked; the
+ *     list Open page is offered from reads again (packages.ts).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
 import { foldersChanged } from "./folders";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { networkChanged } from "./network";
+import { packagesChanged } from "./packages";
 import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
 import { presentHumanTransfer } from "./transfers";
@@ -51,6 +54,7 @@ export function startSessionsSocket(): void {
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
+    if (msg.type === "packages" || snapshot) bump(packagesChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });
     }

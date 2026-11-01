@@ -21,6 +21,7 @@ import { inputStatus, micLevel, micMuted, micOff } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startSessionsSocket } from "./sessionsSocket";
+import { showPackage, type PackageInfo } from "./packages";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -225,6 +226,10 @@ export function startJarvis(orb: Orb): void {
     } else if (type === "display") {
       // Shown, never spoken: a Sources item in the conversation (SourcesChip.tsx).
       shown(msg as unknown as Display);
+    } else if (type === "package_page") {
+      // A page package to show in the centre area (PackageView.tsx), on the
+      // page's Open page or the brain's open_package_page.
+      if (msg.package) showPackage(msg.package as unknown as PackageInfo);
     } else if (type === "stop") {
       audioPlayer.stop();
       jarvisQuiet();
