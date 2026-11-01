@@ -269,7 +269,33 @@ is the gate. `run_package_command` runs one shell step in the folder with a
 `list_packages` and `package_results` read what is there. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's
 own snapshot step (`FileSnapshots.add_to_draft`), so review and approval are
-unchanged. The example is `examples/packages/spanish-speech-test/`.
+unchanged. A package runs one of three ways, package.json's `runs`
+(`work_packages.MODES`): `conversation` (the default, as above: the brain
+follows its `skill`), `agent` and `page`. An agent package's `brief` is
+carried out by one run through `RunExecutor` in its folder, started by the
+acting `run_package_agent` and recorded in `runs.package_id` (added by
+`run_store.init_db`'s column backfill; one active run per package, and a
+retry keeps it); `_on_run_event` hands its end to `_announce_package_run`,
+which says it through `_say_notice` and tells the brain to call
+`package_results` and `draft_message` once he agrees. A page package's
+`entry` opens in the centre area (`PackageView.tsx`) in an iframe
+`sandbox="allow-scripts"`, never `allow-same-origin`: its files
+(`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
+`work_packages.page_file` through `folder_readers` with no link followed)
+are served from JARVIS's own origin, so web_auth gives exactly those paths
+`frame-ancestors 'self'; sandbox allow-scripts` and `SAMEORIGIN`
+(`PACKAGE_PAGE_HEADERS`) in place of DENY. The frame asks the page by
+postMessage (`packageBridge.ts`): `save` writes `results/<name>`
+(`work_packages.save_result`, plain names, 20 MB, through `POST
+/api/packages/<id>/results`), and `listen` streams the page's own
+microphone frames (`voiceInput.listenToMicrophone`), because Chrome refuses
+`getUserMedia` to a frame without an origin even with `allow="microphone"`.
+The acting `open_package_page` and the page's Open page (on the package's
+file in the Queue, `POST /api/packages/<id>/page`) share
+`_open_package_page`, which sends every page a `package_page` frame on the
+voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. The
+examples are `examples/packages/spanish-speech-test/` (conversation),
+`text-stats-agent/` (agent) and `mic-check-page/` (page).
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -748,8 +774,14 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   catalog's ordinary-file rule, a held descriptor reached without links,
   and one save at the exact revision under the same sign-in, all or none
 - `work_packages.py` — Work packages: unpacking a received zip, finding,
-  running a step, its results, and which files the brain may attach (see
-  "Work packages")
+  running a step, its results, and which files the brain may attach; the
+  three ways a package runs, an agent package's brief, and a page package's
+  files and saved results (see "Work packages")
+- `packages_api.py` — The page's `/api/packages*` routes: the packages here,
+  a page package's files, what its frame saves, and opening it
+- `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
+  page package in the centre area, its frame's postMessage bridge (save,
+  listen), and the page's packages and the one open
 - `arrival_announcer.py` — Saying that a person's message has come in,
   through the ordinary notice path
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,
