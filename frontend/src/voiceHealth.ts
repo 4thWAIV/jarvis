@@ -13,6 +13,7 @@
  */
 
 import { liveRead } from "./liveRead";
+import { t } from "./locale";
 import { createStore } from "./store";
 import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
@@ -22,9 +23,8 @@ export type HealthState = "healthy" | "no-frames" | "browser-behind" | "connecti
 export type StageState = "ok" | "warn" | "bad" | "unknown";
 export type Stage = "mic" | "browser" | "connection" | "recogniser" | "jarvis";
 export const STAGES: Stage[] = ["mic", "browser", "connection", "recogniser", "jarvis"];
-export const STAGE_WORDS: Record<Stage, string> = {
-  mic: "Mic", browser: "Page", connection: "Link", recogniser: "Recog", jarvis: "Server",
-};
+/** A stage of the audio's way, in a short word. */
+export const stageWords = (stage: Stage): string => t(`main.voice.stage.${stage}`);
 
 export interface Health {
   state: HealthState;
@@ -68,11 +68,17 @@ export interface Summary {
   now: number;
 }
 
-export const HEALTH_WORDS: Record<HealthState | "idle", string> = {
-  healthy: "Hearing you", "no-frames": "No audio from the mic", "browser-behind": "Browser behind",
-  "connection-behind": "Connection backed up", "server-starved": "Server too busy",
-  "decoder-slow": "Recogniser behind", idle: "Not listening",
-};
+const HEALTH_STATES = ["healthy", "no-frames", "browser-behind", "connection-behind", "server-starved",
+                       "decoder-slow", "idle"] as const;
+
+/** A health state in words, in the language in force. */
+export const healthWords = (state: HealthState | "idle"): string => t(`main.voice.health.${state}`);
+
+/** The same words by state, each read in the language in force when it is
+ *  read: kept for MicControl.tsx, which indexes it, until it calls
+ *  `healthWords`. */
+export const HEALTH_WORDS = Object.defineProperties({} as Record<HealthState | "idle", string>,
+  Object.fromEntries(HEALTH_STATES.map((s) => [s, { get: () => healthWords(s), enumerable: true }])));
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 
@@ -84,12 +90,12 @@ const DROPPING_FOR_SEC = 60;
  *  last minute, or no audio at all), or not listening. */
 export function audioStatus(state: HealthState | "idle", lastDropAt: number | null,
                             now = Date.now() / 1000): { word: string; tone: Tone } {
-  if (state === "idle") return { word: "Not listening", tone: "off" };
+  if (state === "idle") return { word: t("main.voice.status.off"), tone: "off" };
   if (state === "no-frames" || (lastDropAt !== null && now - lastDropAt < DROPPING_FOR_SEC)) {
-    return { word: "Dropping speech", tone: "bad" };
+    return { word: t("main.voice.status.bad"), tone: "bad" };
   }
-  if (state !== "healthy") return { word: "Falling behind", tone: "warn" };
-  return { word: "Hearing you", tone: "ok" };
+  if (state !== "healthy") return { word: t("main.voice.status.warn"), tone: "warn" };
+  return { word: t("main.voice.status.ok"), tone: "ok" };
 }
 
 /** Sentences heard as a share of sentences heard plus speech dropped, or

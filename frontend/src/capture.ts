@@ -12,6 +12,8 @@
  */
 
 import { claimTurns } from "./captions";
+import type { Said } from "./conversation";
+import { t } from "./locale";
 import { createStore } from "./store";
 import { speakWords, stopWords, words } from "./wordClock";
 
@@ -96,9 +98,11 @@ export function captureKind(capture: { to: string }): CaptureKind | null {
 }
 
 /** How the conversation names a capture of each kind. */
-export const KIND_LABEL: Record<CaptureKind, (capture: { to: string }) => string> = {
-  transmission: (c) => `Transmission to ${c.to}`,
-};
+export function kindLabel(kind: CaptureKind, capture: { to: string }): string {
+  switch (kind) {
+    case "transmission": return t("main.capture.transmissionTo", { to: capture.to });
+  }
+}
 
 /** The capture box's buttons. Read reads it aloud, which, heard to the end,
  *  counts as read back; Accept counts as his having read it; Send accepts it
@@ -107,14 +111,15 @@ export const KIND_LABEL: Record<CaptureKind, (capture: { to: string }) => string
  *  change the box itself. */
 export type CaptureAction = "read" | "accept" | "delete" | "send";
 
-export function captureAction(id: number, action: CaptureAction): Promise<string | null> {
+export function captureAction(id: number, action: CaptureAction): Promise<Said | null> {
   return fetch(`/api/capture/${id}/${action}`, { method: "POST" })
-    .then(async (r) => {
+    .then(async (r): Promise<Said | null> => {
       if (r.ok) return null;
       const body = await r.json().catch(() => null);
-      return typeof body?.detail === "string" ? body.detail : `It could not ${action} (${r.status}).`;
+      return typeof body?.detail === "string" ? { original: body.detail }
+        : { words: () => t(`main.capture.refused.${action}`, { status: r.status }) };
     })
-    .catch(() => `It could not ${action}: JARVIS is not answering.`);
+    .catch((): Said => ({ words: () => t(`main.capture.unanswered.${action}`) }));
 }
 
 /** A chunk reading capture `id` has started playing and lasts `seconds`. */

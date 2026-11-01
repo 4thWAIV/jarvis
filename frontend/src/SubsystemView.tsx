@@ -12,6 +12,8 @@
  */
 
 import { CENTRE_SOCKET } from "./ConversationView";
+import { statusWords } from "./conversation";
+import { useT } from "./locale";
 import { useSubsystems } from "./SubsystemList";
 import { STATE_WORDS, type Check, type SentMessage } from "./subsystems";
 import { bind, bindingProps } from "./uiNavigation";
@@ -19,31 +21,32 @@ import { useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
 import { ago } from "./workflows";
 
-const OUTCOME_WORDS: Record<string, string> = { reached: "reached", lost: "did not reach" };
-
 export function SubsystemView({ id }: { id: string }) {
   useTick(5000);
+  const t = useT();
   const { list, error } = useSubsystems();
   const s = list.find((x) => x.id === id);
   const ui = useUiTarget({ ref: { region: "main", view: "main.subsystem", kind: "subsystem", key: id },
-                           label: s?.name ?? "Subsystem", socket: CENTRE_SOCKET });
+                           label: s?.name ?? t("tabs.main.subsystem"), socket: CENTRE_SOCKET });
   return (
     <div id="subsystem-detail" data-subsystem={id} ref={ui.whole}>
       <section className="subsystem-head" ref={ui.part("header")}>
         <span className={`subsystem-dot big state-${s?.state ?? "unknown"}`} aria-hidden="true" />
         <div className="subsystem-head-words">
-          <h2>{s?.name ?? "Subsystem"}</h2>
+          <h2>{s?.name ?? t("tabs.main.subsystem")}</h2>
           <p className={`subsystem-head-state state-${s?.state ?? "unknown"}`}>
-            {s ? `${STATE_WORDS[s.state]}: ${s.summary}` : "Not on record."}
+            {s ? `${STATE_WORDS[s.state]}: ${s.summary}`
+               : t("main.subsystem.notOnRecord")}
           </p>
         </div>
-        <button type="button" className="workflow-close" title="Close" aria-label="Close" ref={ui.part("close")}
+        <button type="button" className="workflow-close" title={t("main.common.close")} aria-label={t("main.common.close")}
+                ref={ui.part("close")}
                 {...bindingProps(bind("subsystem.close", {}))}>×</button>
       </section>
-      {error && <p className="read-failure">Couldn't read the subsystems ({error}); trying again.</p>}
+      {error && <p className="read-failure">{t("main.subsystem.unreadable", { error })}</p>}
       {s && (
-        <section aria-label="Checks" ref={ui.part("checks")}>
-          <h3>Checks</h3>
+        <section aria-label={t("main.subsystem.checks")} ref={ui.part("checks")}>
+          <h3>{t("main.subsystem.checks")}</h3>
           <ul className="subsystem-checks">
             {s.checks.map((c) => <CheckRow key={c.id} subsystem={id} c={c} />)}
           </ul>
@@ -68,18 +71,20 @@ function CheckRow({ subsystem, c }: { subsystem: string; c: Check }) {
 }
 
 function Messages({ messages, partRef }: { messages: SentMessage[]; partRef: (el: Element | null) => void }) {
+  const t = useT();
   return (
-    <section aria-label="Messages to agents" ref={partRef}>
-      <h3>Messages to agents</h3>
-      {!messages.length && <p className="voice-empty">No messages on record.</p>}
+    <section aria-label={t("main.subsystem.messages")} ref={partRef}>
+      <h3>{t("main.subsystem.messages")}</h3>
+      {!messages.length && <p className="voice-empty">{t("main.subsystem.noMessages")}</p>}
       <ol className="subsystem-messages">
         {messages.map((m) => (
           <li key={m.id} className={`outcome-${m.outcome ?? "none"}`}>
             <time>{ago(m.at)}</time>
             <span className="subsystem-name">{m.agentName}</span>
-            <span className="subsystem-state">{m.status}</span>
+            <span className="subsystem-state">{statusWords(m.status)}</span>
             <span className="subsystem-summary">
-              {m.outcome ? OUTCOME_WORDS[m.outcome] : ""}{m.failure ? ` (${m.failure})` : ""}
+              {m.outcome ? t(`main.subsystem.outcome.${m.outcome}`) : ""}
+              {m.failure ? <> (<span data-original-detail="">{m.failure}</span>)</> : null}
             </span>
           </li>
         ))}

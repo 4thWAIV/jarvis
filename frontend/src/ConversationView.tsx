@@ -33,9 +33,10 @@ import { conversation, turnKey, useRecordOpen, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
-import { conversationChanged, fromRecord, getConversation, restoreCapture,
-         STATUS_WORDS, type ConversationItem } from "./conversation";
+import { conversationChanged, fromRecord, getConversation, saidShown, restoreCapture,
+         statusWords, type ConversationItem, type Said } from "./conversation";
 import { useLiveRead } from "./liveRead";
+import { useT, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
 import type { OrbState } from "./orb";
 import { createStore } from "./store";
@@ -171,7 +172,8 @@ export function ConversationView() {
   const { turns, speaking: word } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const voice = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   const { history, speaking, hearing } = placeTurns(turns, voice);
-  const ui = useUiTarget({ ref: conversationRef("conversation"), label: "Conversation", socket: CENTRE_SOCKET });
+  const t = useT();
+  const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
   return (
     <div id="conversation" ref={ui.whole}>
       <History turns={history} partRef={ui.part} />
@@ -213,6 +215,7 @@ export function historyRows(turns: Turn[], items: ConversationItem[],
 type PartRef = (part: string) => (el: Element | null) => void;
 
 function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   const live = useLiveRead(() => getConversation(), [conversationChanged]);
   const { older, earlier } = historyPages.use(HISTORY, live.value ? live.value.earlier : undefined);
@@ -227,10 +230,10 @@ function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
   }, [newest?.key, newest?.turn?.sentences.length, newest?.item?.message?.status]);
   const history = partRef("history");
   return (
-    <div className="conversation-history" aria-label="History"
+    <div className="conversation-history" aria-label={t("main.conversation.history")}
          ref={(el) => { ref.current = el; history(el); }}>
       {earlier != null && <button type="button" className="history-earlier" ref={partRef("earlier")}
-                                  {...bindingProps(bind("conversation.earlier", {}))}>Earlier</button>}
+                                  {...bindingProps(bind("conversation.earlier", {}))}>{t("main.conversation.earlier")}</button>}
       {rows.map((r) => (r.item ? <RecordItem key={r.key} item={r.item} answer={r.answer}
                                              restorable={r.restorable} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: r.key }} />
         : r.turn!.display
@@ -266,15 +269,15 @@ export function AgentLink({ item, partRef }: { item: ConversationItem; partRef?:
 
 /** What a record is called when the brain is told what is on the page:
  *  its kind and its agent, never its words. */
-function recordLabel(item: ConversationItem): string {
-  const agent = item.agent_name ? ` ${item.agent_name}` : " an agent";
+function recordLabel(t: Translate, item: ConversationItem): string {
+  const agent = item.agent_name ?? t("main.record.anAgent");
   switch (item.kind) {
-    case "to_agent": return `Message to${agent}`;
-    case "answer": return `Answer from${agent}`;
-    case "from_agent": return `Message from${agent}`;
-    case "notice": return "Notice";
-    case "jarvis": return "JARVIS's words";
-    default: return "Your words";
+    case "to_agent": return t("main.record.messageTo", { agent });
+    case "answer": return t("main.record.answerFrom", { agent });
+    case "from_agent": return t("main.record.messageFrom", { agent });
+    case "notice": return t("main.record.notice");
+    case "jarvis": return t("main.record.jarvis");
+    default: return t("main.record.yours");
   }
 }
 
@@ -296,8 +299,9 @@ export function RecordItem({ item, answer, restorable, place }: {
   item: ConversationItem; answer?: ConversationItem; restorable?: boolean; place: RecordPlace }) {
   const recordId = `r${item.id}`;
   const { open, toggle } = useOpener(recordId, item.kind === "to_agent" && !!answer);
-  const [refused, setRefused] = useState<string | null>(null);
-  const ui = useUiTarget({ ref: place, label: recordLabel(item), socket: CENTRE_SOCKET });
+  const [refused, setRefused] = useState<Said | null>(null);
+  const t = useT();
+  const ui = useUiTarget({ ref: place, label: recordLabel(t, item), socket: CENTRE_SOCKET });
   const text = ui.part("text");
   if (item.kind === "to_agent") {
     const status = item.message?.status ?? "staged";
@@ -307,8 +311,8 @@ export function RecordItem({ item, answer, restorable, place }: {
           <span className="record-arrow" aria-hidden="true">→</span><AgentLink item={item} partRef={ui.part} />
           <button type="button" className={`record-status status-${status}`} ref={ui.part("expand")}
                   disabled={!answer} {...toggle}
-                  title={answer ? (open ? "Hide the answer" : "Show the answer") : undefined}>
-            {STATUS_WORDS[status] ?? status}{answer ? (open ? " ▴" : " ▾") : ""}
+                  title={answer ? (open ? t("main.conversation.hideAnswer") : t("main.conversation.showAnswer")) : undefined}>
+            {statusWords(status)}{answer ? (open ? " ▴" : " ▾") : ""}
           </button>
         </div>
         <p className="record-text" ref={text}>{item.text}</p>
@@ -321,7 +325,7 @@ export function RecordItem({ item, answer, restorable, place }: {
       <div className={`history-turn record-from kind-${item.kind}`} ref={ui.whole}>
         <div className="record-head">
           <span className="record-arrow" aria-hidden="true">←</span><AgentLink item={item} partRef={ui.part} />
-          <span className="record-label">{item.kind === "answer" ? "Answer" : "Message"}</span>
+          <span className="record-label">{item.kind === "answer" ? t("main.conversation.answer") : t("main.conversation.message")}</span>
         </div>
         <p className="record-text" ref={text}>{item.text}</p>
       </div>
@@ -334,8 +338,8 @@ export function RecordItem({ item, answer, restorable, place }: {
         <span ref={text}>{item.text}</span>
         {restorable && <button type="button" className="record-restore" ref={ui.part("restore")}
                                onClick={async () => setRefused(await restoreCapture(item))}>
-          Restore</button>}
-        {refused && <span className="read-failure">{refused}</span>}
+          {t("main.conversation.restore")}</button>}
+        {refused && <SaidText said={refused} className="read-failure" />}
       </div>
     );
   }
@@ -351,13 +355,23 @@ function kindClass(turn: Turn): string {
   return kind ? ` kind-${kind}` : "";
 }
 
+/** Words for the person, in an inline element: the server's own marked as
+ *  original detail, or the page's in the language in force. */
+export function SaidText({ said, className, as: Tag = "span", role }: {
+  said: Said; className: string; as?: "span" | "p" | "div"; role?: "alert" | "status" }) {
+  useT();
+  const { text, mark } = saidShown(said);
+  return <Tag className={className} role={role} {...mark}>{text}</Tag>;
+}
+
 function HistoryTurn({ turn }: { turn: Turn }) {
+  const t = useT();
   const ref = useRef<HTMLParagraphElement | null>(null);
   const [long, setLong] = useState(false);
   const key = turnKey(turn);
   const { open, toggle } = useOpener(key, long);
   const ui = useUiTarget({ ref: conversationRef("conversationRecord", key),
-                           label: turn.speaker === "jarvis" ? "JARVIS's words" : "Your words", socket: CENTRE_SOCKET });
+                           label: turn.speaker === "jarvis" ? t("main.record.jarvis") : t("main.record.yours"), socket: CENTRE_SOCKET });
   // Measured unclamped: more than LONG_LINES lines makes it a long turn.
   useLayoutEffect(() => {
     const p = ref.current;
@@ -373,7 +387,7 @@ function HistoryTurn({ turn }: { turn: Turn }) {
        className={`history-turn ${turn.speaker}${clamped ? " clamped" : ""}${
          long ? " long" : ""}${kindClass(turn)}`}
        {...(long ? toggle : {})}
-       title={long ? (open ? "Show less" : "Show all") : undefined}>
+       title={long ? (open ? t("main.conversation.showLess") : t("main.conversation.showAll")) : undefined}>
       <TurnWords turn={turn} speaking={null} partRef={ui.part} />
     </p>
   );
@@ -382,6 +396,7 @@ function HistoryTurn({ turn }: { turn: Turn }) {
 function SpeakingBox({ turn, word, partRef }: { turn: Turn | null;
                                                 word: [number, number, number] | null;
                                                 partRef: (el: Element | null) => void }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   // The line being spoken stays in view, with the line before it above.
   useLayoutEffect(() => {
@@ -395,7 +410,7 @@ function SpeakingBox({ turn, word, partRef }: { turn: Turn | null;
     }
   }, [word, turn?.id]);
   return (
-    <div className="conversation-speaking" aria-label="JARVIS is saying"
+    <div className="conversation-speaking" aria-label={t("main.conversation.speaking")}
          ref={(el) => { ref.current = el; partRef(el); }}>
       {turn && <p className="caption-turn jarvis"><TurnWords turn={turn} speaking={word} /></p>}
     </div>
@@ -403,6 +418,7 @@ function SpeakingBox({ turn, word, partRef }: { turn: Turn | null;
 }
 
 function HearingBox({ turn, partRef }: { turn: Turn | null; partRef: (el: Element | null) => void }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const [typing, setTyping] = useState(false);
@@ -424,12 +440,12 @@ function HearingBox({ turn, partRef }: { turn: Turn | null; partRef: (el: Elemen
     input.current?.blur();
   }
   return (
-    <div className="conversation-hearing" aria-label="You are saying"
+    <div className="conversation-hearing" aria-label={t("main.conversation.hearing")}
          ref={(el) => { ref.current = el; partRef(el); }}
          onClick={() => setTyping(true)}>
       {heard !== null && <p className="caption-turn user">{heard}</p>}
       <textarea ref={input} className="hearing-input" rows={1} hidden={heard !== null}
-                aria-label="Type instead of speaking" placeholder="Speak, or click to type"
+                aria-label={t("main.conversation.typeInstead")} placeholder={t("main.conversation.typePlaceholder")}
                 value={draft} onChange={(e) => setDraft(e.target.value)}
                 onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
                 onKeyDown={(e) => {

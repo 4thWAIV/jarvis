@@ -14,60 +14,69 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { formatNumber, formatPercent, t as tNow, useT } from "./locale";
 import { Ring } from "./WorkflowVisuals";
-import { BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, STAGES, STAGE_WORDS, type Stage, type StageState,
+import { BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, STAGES, stageWords, type Stage, type StageState,
          type Tone } from "./voiceHealth";
 
+/** A whole percentage in the language's own form ("42%", "42 %"). */
+const percent = (pct: number | null) => pct === null ? "—" : formatPercent(pct / 100);
+
 export function HeardRing({ share, tone, size }: { share: number | null; tone: Tone; size: number }) {
+  const t = useT();
   const pct = share === null ? null : Math.floor(share * 100);
   return <Ring done={pct ?? 0} total={100} size={size} className={`heard-ring tone-${tone}`}
-               label="Sentences heard, last hour" text={pct === null ? "—" : `${pct}%`} />;
+               label={t("main.voice.heardRing")} text={percent(pct)} />;
 }
 
 // Amber from here; red at all of it (it can no longer keep up).
 const SPEED_WARN = 0.9;
 
 export function SpeedRing({ rtf, size }: { rtf: number | null; size: number }) {
+  const t = useT();
   const pct = rtf === null ? null : Math.round(rtf * 100);
   return <Ring done={Math.min(pct ?? 0, 100)} total={100} size={size}
                className={`speed-ring tone-${tone(rtf, SPEED_WARN, 1)}`}
-               label="Recogniser time used per second of speech"
-               text={pct === null ? "—" : `${pct}%`} />;
+               label={t("main.voice.speedRing")}
+               text={percent(pct)} />;
 }
 
 export function HeadroomBar({ backlogSec }: { backlogSec: number | null }) {
+  const t = useT();
   const share = Math.min(1, Math.max(0, (backlogSec ?? 0) / BACKLOG_DROP_SEC));
   return (
     <span className={`headroom tone-${tone(backlogSec, BACKLOG_WARN_SEC, BACKLOG_DROP_SEC * 0.75)}`}
-          title={`${seconds(backlogSec)} behind; speech is dropped at ${BACKLOG_DROP_SEC} s`}>
-      <span className="headroom-label">Headroom</span>
+          title={t("main.voice.headroomTitle", { behind: seconds(backlogSec), drop: seconds(BACKLOG_DROP_SEC) })}>
+      <span className="headroom-label">{t("main.voice.headroom")}</span>
       <span className="headroom-bar"><span style={{ width: `${share * 100}%` }} /></span>
-      <span className="headroom-end">{BACKLOG_DROP_SEC} s drop</span>
+      <span className="headroom-end">{t("main.voice.headroomEnd", { drop: seconds(BACKLOG_DROP_SEC) })}</span>
     </span>
   );
 }
 
-/** "0.4 s", "—" when unknown. */
-export const seconds = (v: number | null | undefined) => v == null ? "—" : `${v.toFixed(1)} s`;
+/** "0.4 s" ("0,4 s" in Spanish), "—" when unknown. */
+export const seconds = (v: number | null | undefined) =>
+  v == null ? "—" : `${formatNumber(v, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
 
 function stageValue(stage: Stage, value: number | null): string {
   if (value == null) return "";
-  if (stage === "mic") return value === 0 ? "silent" : "";
-  if (stage === "jarvis") return `${Math.round(value)} ms`;
+  if (stage === "mic") return value === 0 ? tNow("main.voice.silent") : "";
+  if (stage === "jarvis") return `${formatNumber(Math.round(value))} ms`;
   return value >= 0.05 ? seconds(value) : "";
 }
 
 export function PipelineTrack({ pipeline, labels = true }: {
   pipeline: Record<Stage, { state: StageState; value: number | null }>; labels?: boolean }) {
+  const t = useT();
   return (
-    <div className="pipeline" role="list" aria-label="Where the audio is">
+    <div className="pipeline" role="list" aria-label={t("main.voice.whereAudio")}>
       {STAGES.map((stage) => {
         const { state, value } = pipeline[stage] ?? { state: "unknown", value: null };
         return (
           <div key={stage} role="listitem" className={`pipeline-stage st-${state}`}
-               data-stage={stage} title={`${STAGE_WORDS[stage]}: ${state}`}>
+               data-stage={stage} title={`${stageWords(stage)}: ${t(`main.voice.stageState.${state}`)}`}>
             <span className="pipeline-bar" />
-            {labels && <span className="pipeline-label">{STAGE_WORDS[stage]}</span>}
+            {labels && <span className="pipeline-label">{stageWords(stage)}</span>}
             {labels && <span className="pipeline-value">{state === "ok" ? "" : stageValue(stage, value)}</span>}
           </div>
         );

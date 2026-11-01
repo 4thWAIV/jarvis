@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useT } from "./locale";
 import { isQuiet, quietUntil } from "./voiceHealth";
 import { createOrb, type Orb, type OrbPalette, type OrbState } from "./orb";
 import { FINISHED, type Workflow, type WorkflowItem, type WorkflowState } from "./workflows";
@@ -84,13 +85,14 @@ export function phaseStates(w: Workflow): { item: WorkflowItem; at: "done" | "cu
 }
 
 export function PhaseTrack({ w, labels = false }: { w: Workflow; labels?: boolean }) {
+  const t = useT();
   const phases = phaseStates(w);
   if (!phases.length) return null;
   return (
-    <span className={`phase-track${labels ? " labelled" : ""}`} role="list" aria-label="Phases">
+    <span className={`phase-track${labels ? " labelled" : ""}`} role="list" aria-label={t("main.workflow.tab.phases")}>
       {phases.map(({ item, at }) => (
         <span key={item.slug} role="listitem" className={`phase-segment at-${at}`}
-              data-phase={item.slug} title={`${item.title}: ${at}`}>
+              data-phase={item.slug} title={`${item.title}: ${t(`main.workflow.at.${at}`)}`}>
           {labels && <span className="phase-label">{item.title}</span>}
         </span>
       ))}
@@ -129,8 +131,10 @@ const ICONS = {
 };
 
 export function OpenIcon({ kind, count }: { kind: keyof typeof ICONS; count?: number }) {
+  const t = useT();
   return (
-    <span className={`open-icon open-${kind}`} title={`${count ?? ""} open ${kind}${count === 1 ? "" : "s"}`}>
+    <span className={`open-icon open-${kind}`}
+          title={count === undefined ? t(`main.workflow.open.${kind}`) : t(`main.workflow.openCount.${kind}`, { count })}>
       <svg width="14" height="14" viewBox="0 0 16 16">{ICONS[kind]}</svg>
       {count !== undefined && <span className="open-count">{count}</span>}
     </span>
