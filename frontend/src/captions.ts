@@ -6,6 +6,11 @@
  * can glow (wordClock.ts). User turns the brain made a capture of are marked
  * with it, and drawn as a collapsed item. jarvis.ts calls the functions
  * below; the views only read `conversation`.
+ *
+ * It also gives each live turn its identity for pointing at (`turnKey`),
+ * and keeps which of the conversation's records are open (a long turn, an
+ * agent's answer, a capture or sources item), changed only by the
+ * `conversation.record.expand` command.
  */
 
 import { useEffect, useSyncExternalStore } from "react";

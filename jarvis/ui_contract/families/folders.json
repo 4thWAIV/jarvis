@@ -55,7 +55,7 @@
     {"kind": "folderRow", "entity": "folder", "label": "Folder in the catalog list", "parts": ["row", "name", "availability"],
      "presentations": [{"view": "main.folders", "reveal": {"command": "main.tab.select", "args": {"tab": "folders"}}}]},
     {"kind": "folderEntry", "entity": null, "keyOf": ["folder", "folderEntry"], "label": "Folder entry",
-     "parts": ["row", "crumb", "preview"], "presentations": [{"view": "main.folders"}]},
+     "parts": ["row", "crumb"], "presentations": [{"view": "main.folders"}]},
     {"kind": "folderCandidate", "entity": "candidate", "label": "Discovered folder", "parts": ["row", "path", "actions"],
      "presentations": [{"view": "main.folders"}]}
   ]

@@ -13,7 +13,7 @@
  * escaped by React; an HTML file is its source, never a page.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
@@ -231,12 +231,6 @@ function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
   const c = now && now.folderId === folder.id && now.revision === revision ? now : null;
   const { page, rows, error, loading } = c?.dir ?? NO_LISTING;
   const file = c?.file ?? null;
-  // The preview is the folder's `preview` and the previewed entry's.
-  // (One stable callback, so it is called only as the preview mounts and goes.)
-  const [previewEl, setPreviewEl] = useState<Element | null>(null);
-  const parts = useRef(partRef);
-  parts.current = partRef;
-  const previewRef = useCallback((el: Element | null) => { parts.current("preview")(el); setPreviewEl(el); }, []);
 
   return (
     <section className="folder-contents" aria-label="Contents" ref={partRef("contents")}>
@@ -257,15 +251,14 @@ function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
       )}
       <div className="folder-contents-body">
         <ul className="folder-entries">
-          {rows.map((e) => <EntryRow key={e.path} folderId={folder.id} entry={e}
-                                     preview={file === e.path ? previewEl : null} />)}
+          {rows.map((e) => <EntryRow key={e.path} folderId={folder.id} entry={e} selected={file === e.path} />)}
         </ul>
         {page?.next_cursor && (
           <button type="button" className="folder-button quiet" disabled={loading}
                   {...bindingProps(bind("folder.more", { folderId: folder.id, list: "entries" }))}>Load more</button>
         )}
       </div>
-      {c && file && <FilePreview folder={folder} path={file} preview={c.preview} previewRef={previewRef} />}
+      {c && file && <FilePreview folder={folder} path={file} preview={c.preview} previewRef={partRef("preview")} />}
     </section>
   );
 }
@@ -284,15 +277,8 @@ function Crumb({ folderId, crumb: b, last }: { folderId: string; crumb: { name: 
   );
 }
 
-/** One entry; `preview` is the preview's element while it is this file's. */
-function EntryRow({ folderId, entry: e, preview }: { folderId: string; entry: Entry; preview: Element | null }) {
+function EntryRow({ folderId, entry: e, selected }: { folderId: string; entry: Entry; selected: boolean }) {
   const ui = useEntryTarget(folderId, e.path, e.name);
-  const selected = preview !== null;
-  const previewPart = ui.part("preview");
-  useLayoutEffect(() => {
-    previewPart(preview);
-    return () => previewPart(null);
-  }, [preview]);                                      // eslint-disable-line react-hooks/exhaustive-deps
   const opens = e.kind === "dir" ? browseTo(folderId, e.path)
     : e.kind === "file" ? bind("folder.preview", { folderId, path: e.path }) : null;
   return (

@@ -2288,8 +2288,7 @@ export const UI_CONTRACT = {
       "label": "Folder entry",
       "parts": [
         "row",
-        "crumb",
-        "preview"
+        "crumb"
       ],
       "presentations": [
         {
