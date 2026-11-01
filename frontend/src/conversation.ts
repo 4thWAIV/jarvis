@@ -12,6 +12,8 @@
  */
 
 import { createStore } from "./store";
+import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type ItemKind = "heard" | "typed" | "jarvis" | "capture" | "to_agent"
   | "from_agent" | "answer" | "notice";
@@ -50,8 +52,47 @@ export interface ConversationPage {
 /** Moves on every "conversation" hint and every (re)connect. */
 export const conversationChanged = createStore(0);
 
-/** The agent whose thread the centre area shows, or null. */
-export const openThread = createStore<{ sessionId: string; name: string | null } | null>(null);
+// ── The agent's thread open in the centre ────────────────────────────────
+
+export interface OpenThread { sessionId: string; name: string | null }
+
+const threadSlot = detailSlot<OpenThread>("thread", (a, b) => a.sessionId === b.sessionId);
+
+/** Each agent's name as the conversation record gives it, by session:
+ *  what an opened thread is called before its own page is read. */
+const agentNames = new Map<string, string | null>();
+
+function noteAgents(page: ConversationPage): ConversationPage {
+  for (const i of page.items) {
+    if (i.agent_session_id) agentNames.set(i.agent_session_id, i.agent_name ?? agentNames.get(i.agent_session_id) ?? null);
+  }
+  if (page.agent) agentNames.set(page.agent.session_id, page.agent.name);
+  return page;
+}
+
+/** The agent whose thread the centre area shows, or null. Writing it runs
+ *  `thread.open` or `thread.close`, as a person's navigation. */
+export const openThread = routeStore(threadSlot.value, (next: OpenThread | null) =>
+  next ? bind("thread.open", { sessionId: next.sessionId }) : bind("thread.close", {}));
+
+registerCommand("thread.open", {
+  availability: () => ({ available: true }),
+  async execute({ sessionId }, { signal }) {
+    if (!agentNames.has(sessionId)) {
+      // Not in the record this page has read: JARVIS says whether there
+      // is anything to or from it, and what it is called.
+      const read = await readForOpen<ConversationPage>(
+        `/api/conversation/agents/${encodeURIComponent(sessionId)}`, signal,
+        (page) => page.items.length > 0 || (!!page.agent && page.agent.state !== "gone"));
+      if ("refused" in read) return read.refused;
+      noteAgents(read.body);
+    }
+    return { status: "completed",
+             effects: threadSlot.show({ sessionId, name: agentNames.get(sessionId) ?? null }) };
+  },
+});
+
+registerClose("thread.close", threadSlot);
 
 /** When this page opened, in seconds: what was said before it comes from the
  *  record, what is said after from the live captions. */
@@ -64,11 +105,11 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const getConversation = (before?: number | null) =>
-  getJson<ConversationPage>(`/api/conversation${before != null ? `?before=${before}` : ""}`);
+  getJson<ConversationPage>(`/api/conversation${before != null ? `?before=${before}` : ""}`).then(noteAgents);
 
 export const getThread = (sessionId: string, before?: number | null) =>
   getJson<ConversationPage>(`/api/conversation/agents/${encodeURIComponent(sessionId)}`
-    + (before != null ? `?before=${before}` : ""));
+    + (before != null ? `?before=${before}` : "")).then(noteAgents);
 
 /** What a message's status is called on the page. */
 export const STATUS_WORDS: Record<string, string> = {

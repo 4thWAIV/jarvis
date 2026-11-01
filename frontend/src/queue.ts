@@ -34,6 +34,9 @@ import {
   EMPTY, removeDraft, waiting, withPending, type Directory, type QueueState,
 } from "./queueStore";
 import { createStore } from "./store";
+import type { SideEffect } from "./uiContract";
+import { bind, bindingAvailable, detailSlot, runBinding } from "./uiNavigation";
+import { registerCommand, type Availability, type CommandOutcome } from "./uiRegistry";
 
 /** A refusal in the contract's words. */
 const asError = (e: unknown) => (e instanceof MessagingError ? e : new MessagingError("transport", 0, String(e)));
@@ -120,7 +123,11 @@ export interface QueueOpen {
   back: string[];
 }
 export const NEW = "new";
-export const openQueue = createStore<QueueOpen | null>(null);
+
+const queueSlot = detailSlot<QueueOpen>("queue", (a, b) => a.thread === b.thread);
+/** Read-only: the item open in the centre. The controls run `queue.open`,
+ *  `queue.follow`, `queue.back`, `queue.next` and `queue.close`. */
+export const openQueue = queueSlot.value;
 
 /** Something to tell the owner about one item (a refusal, a kept command),
  *  by thread. */
@@ -133,57 +140,115 @@ function note(thread: string, words: string | null): void {
 
 /** The item a row stands for, opened from the Queue: a waiting one becomes
  *  Active. The item left keeps its place and its draft, saved now. */
-export function openItem(thread: string): void {
-  leaveCurrent();
-  openQueue.set({ thread, back: [] });
-  const item = queueRecord.get().items[thread];
-  if (item?.work_state.placement === "queued") {
-    void command(thread, { command: "open", expected_revision: item.work_state.revision });
-  }
-}
+export const openItem = (thread: string): void => runBinding(bind("queue.open", { threadId: thread }));
 
 /** Follow a link (a parent, a reply, a related message) without changing
  *  the linked item's place: a dismissed one stays dismissed. The current
  *  one stays where it is, and Back returns to it. */
-export function followLink(thread: string): void {
-  const now = openQueue.get();
-  leaveCurrent();
-  openQueue.set({ thread, back: now && now.thread !== thread ? [...now.back, now.thread] : now?.back ?? [] });
-}
+export const followLink = (thread: string): void => runBinding(bind("queue.follow", { threadId: thread }));
 
-export function goBack(): void {
-  const now = openQueue.get();
-  if (!now?.back.length) return;
-  leaveCurrent();
-  openQueue.set({ thread: now.back[now.back.length - 1], back: now.back.slice(0, -1) });
-}
+export const goBack = (): void => runBinding(bind("queue.back", {}));
 
 /** Open the next waiting item; the current one stays in Active. False when
  *  nothing is waiting (the current view stays). */
 export function nextItem(): boolean {
-  const current = openQueue.get()?.thread;
-  const next = waiting(queue.get()).find((i) => i.work_state.thread_id !== current);
-  if (!next) return false;
-  openItem(next.work_state.thread_id);
+  const b = bind("queue.next", {});
+  if (!bindingAvailable(b)) return false;
+  runBinding(b);
   return true;
 }
 
-export function closeItem(): void {
-  leaveCurrent();
-  openQueue.set(null);
-}
+export const closeItem = (): void => runBinding(bind("queue.close", {}));
 
-/** Start writing a new conversation. */
+/** Start writing a new conversation: a draft of its own (not navigation;
+ *  the New button), shown in the item's place. */
 export function startNew(): void {
   leaveCurrent();
   if (!editors.get()[NEW]) setEditor(NEW, blankEditor({ recipient: null, thread: null, parent: null, subject: "" }));
-  openQueue.set({ thread: NEW, back: [] });
+  queueSlot.show({ thread: NEW, back: [] });
 }
 
-function leaveCurrent(): void {
+/** Save the open item's draft as it is left: whether there was one to save. */
+function leaveCurrent(): SideEffect[] {
   const now = openQueue.get();
-  if (now) void flush(now.thread);
+  if (!now) return [];
+  const dirty = !!editors.get()[now.thread]?.dirty;
+  void flush(now.thread);
+  return dirty ? ["queue.draft-saved"] : [];
 }
+
+/** Whether showing `thread` will mark a message read: one to the owner it
+ *  has not read yet (the body's receipt is sent once it is on screen). */
+function unreadToOwner(thread: string): boolean {
+  const state = queueRecord.get();
+  return (state.items[thread]?.message_ids ?? []).some((id) =>
+    state.messages[id]?.message.recipient_github_id === state.owner_github_id && !state.receipts[id]?.read_at);
+}
+
+/** Show `thread` in the item's place, leaving the current one. */
+function showItem(thread: string, back: string[]): SideEffect[] {
+  const left = openQueue.get()?.thread !== thread ? leaveCurrent() : [];
+  return [...left, ...queueSlot.show({ thread, back }), ...(unreadToOwner(thread) ? ["queue.read-marked" as const] : [])];
+}
+
+/** Whether the Queue lists `thread`: refused until the queue is read. */
+function itemAvailable(thread: string): Availability {
+  if (queueRecord.get().items[thread]) return { available: true };
+  return applied === null ? { available: false, reason: "not-loaded" } : { available: false, reason: "no-entity" };
+}
+
+/** Open `thread` from the Queue: a waiting one becomes Active. */
+function openFromQueue(thread: string): CommandOutcome {
+  const effects = showItem(thread, []);
+  const item = queueRecord.get().items[thread];
+  if (item?.work_state.placement === "queued") {
+    void command(thread, { command: "open", expected_revision: item.work_state.revision });
+    effects.push("queue.item-activated");
+  }
+  return { status: "completed", effects };
+}
+
+registerCommand("queue.open", {
+  availability: ({ threadId }) => itemAvailable(threadId),
+  execute: ({ threadId }) => openFromQueue(threadId),
+});
+
+registerCommand("queue.follow", {
+  availability: ({ threadId }) => itemAvailable(threadId),
+  execute({ threadId }) {
+    const now = openQueue.get();
+    const back = now && now.thread !== threadId ? [...now.back, now.thread] : now?.back ?? [];
+    return { status: "completed", effects: showItem(threadId, back) };
+  },
+});
+
+registerCommand("queue.back", {
+  availability: () => openQueue.get()?.back.length ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    const now = openQueue.get()!;
+    return { status: "completed", effects: showItem(now.back[now.back.length - 1], now.back.slice(0, -1)) };
+  },
+});
+
+/** The next waiting item after the open one, if any. */
+const nextWaiting = () => {
+  const current = openQueue.get()?.thread;
+  return waiting(queue.get()).find((i) => i.work_state.thread_id !== current) ?? null;
+};
+
+registerCommand("queue.next", {
+  availability: () => nextWaiting() ? { available: true } : { available: false, reason: "no-entity" },
+  // The same as opening its row: it becomes Active.
+  execute: () => openFromQueue(nextWaiting()!.work_state.thread_id),
+});
+
+registerCommand("queue.close", {
+  availability: () => openQueue.get() ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    const effects = leaveCurrent();
+    return { status: "completed", effects: [...effects, ...queueSlot.close()] };
+  },
+});
 
 // ── Commands ─────────────────────────────────────────────────────────────
 
@@ -236,7 +301,7 @@ export const restore = (thread: string) => on(thread, (r) => ({ command: "restor
 export async function putBack(thread: string): Promise<boolean> {
   if (!(await flush(thread))) return false;
   if (!(await on(thread, (r) => ({ command: "put_back", expected_revision: r })))) return false;
-  if (openQueue.get()?.thread === thread) openQueue.set(null);
+  if (openQueue.get()?.thread === thread) queueSlot.adjust(null);
   return true;
 }
 
@@ -244,7 +309,7 @@ export async function putBack(thread: string): Promise<boolean> {
  *  `blockers` and offered their ways out first. */
 export async function dismiss(thread: string): Promise<boolean> {
   if (!(await on(thread, (r) => ({ command: "dismiss", expected_revision: r })))) return false;
-  if (openQueue.get()?.thread === thread) openQueue.set(null);
+  if (openQueue.get()?.thread === thread) queueSlot.adjust(null);
   return true;
 }
 
@@ -469,7 +534,7 @@ async function save(key: string): Promise<boolean> {
       const newKey = key === NEW ? draft.thread_id : key;
       if (newKey !== key) {
         setEditor(key, null);
-        if (openQueue.get()?.thread === key) openQueue.set({ thread: newKey, back: openQueue.get()!.back });
+        if (openQueue.get()?.thread === key) queueSlot.adjust({ thread: newKey, back: openQueue.get()!.back });
       }
       setEditor(newKey, saved);
       if (changed) edit(newKey, {});
@@ -620,7 +685,7 @@ export async function discard(key: string): Promise<boolean> {
   }
   setEditor(key, null);
   if (key === NEW || draft?.thread_id === draft?.message_id) {
-    if (openQueue.get()?.thread === key) openQueue.set(null);
+    if (openQueue.get()?.thread === key) queueSlot.adjust(null);
   }
   return true;
 }

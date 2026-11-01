@@ -14,6 +14,8 @@
 
 import { liveRead } from "./liveRead";
 import { createStore } from "./store";
+import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type HealthState = "healthy" | "no-frames" | "browser-behind" | "connection-behind"
   | "server-starved" | "decoder-slow";
@@ -135,8 +137,22 @@ export const getHistory = (from: number, to: number) =>
   getJson<{ samples: Sample[]; events: VoiceEvent[] }>(
     `/api/voice/diagnostics/samples?from=${from}&to=${to}`);
 
-/** Whether the centre area shows the Diagnostics view. */
-export const openDiagnostics = createStore(false);
+/** The centre's voice diagnostics detail: open or not (it has no item). */
+export const diagnosticsSlot = detailSlot<true>("diagnostics");
+
+/** Whether the centre area offers the Diagnostics view. Writing it runs
+ *  `voice.diagnostics.open` or `voice.diagnostics.close`, as a person's
+ *  navigation. */
+export const openDiagnostics = routeStore<boolean>(
+  { get: () => diagnosticsSlot.value.get() !== null, subscribe: diagnosticsSlot.value.subscribe },
+  (open) => open ? bind("voice.diagnostics.open", {}) : bind("voice.diagnostics.close", {}));
+
+registerCommand("voice.diagnostics.open", {
+  availability: () => ({ available: true }),
+  execute: () => ({ status: "completed", effects: diagnosticsSlot.show(true) }),
+});
+
+registerClose("voice.diagnostics.close", diagnosticsSlot);
 
 // ── what the page measures ────────────────────────────────────────────────
 
