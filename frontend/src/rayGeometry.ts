@@ -32,9 +32,16 @@ export function rayRoute(orb: Box, target: Box, toTab: boolean, column: Box,
   const [sx, sy] = rayStart(orb);
   const ex = target.left + target.width / 2, ey = target.top + target.height / 2;
   if (toTab) return `M ${sx} ${sy} V ${TOP_LANE_PX} H ${ex} V ${ey} H ${ex}`;
-  const inner = Math.max(column.right, menuRight);
-  const channel = inner + (viewportWidth - inner) / 2;
+  const channel = rightChannelX(column, menuRight, viewportWidth);
   return `M ${sx} ${sy} V ${TOP_LANE_PX} H ${channel} V ${ey} H ${ex}`;
+}
+
+/** The channel down the right-hand lane: the middle of what is left of it
+ *  beside the right column and the menu button. Every ray runs down it, and
+ *  the pipeline's right rail is the same line (uiPipeline.ts). */
+export function rightChannelX(column: Box, menuRight: number, viewportWidth: number): number {
+  const inner = Math.max(column.right, menuRight);
+  return inner + (viewportWidth - inner) / 2;
 }
 
 /** The numbers in a ray's path: start x and y, the top lane's y, the
