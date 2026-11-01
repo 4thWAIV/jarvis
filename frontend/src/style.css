@@ -2293,6 +2293,35 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .subsystem-messages li.outcome-lost { background: rgba(239, 68, 68, 0.15); }
 .subsystem-messages time { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
 
+/* A page work package (PackageView.tsx): its name and purpose, then its
+   frame filling the rest of the centre, then one status line. */
+#package-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#package-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+.package-head { display: flex; align-items: center; gap: 12px; }
+.package-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.package-head-words p { margin: 0; color: rgba(255, 255, 255, 0.6); }
+.package-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 8px;
+  background: #fff;
+}
+.package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
+
 /* ---------------------------------------------------------------------------
    Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the
    Diagnostics view (VoiceDiagnosticsView.tsx) and their pictures

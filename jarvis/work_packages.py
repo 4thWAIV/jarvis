@@ -18,6 +18,16 @@ a zip entry may not land outside its package's folder.
     results      the files a package's `returns` globs match, which go back
                  through draft_files.py (a package's folder is the one part
                  of JARVIS's data a draft may attach from)
+    page_file,   a page package's own files, served to the page's sandboxed
+    save_result  frame, and what that frame saves into its results/ folder:
+                 both walk the folder one component at a time without
+                 following a link (folder_readers)
+
+A package runs in one of three ways, its `runs` (MODES): "conversation",
+the default, where the brain follows its skill with the person step by
+step; "agent", where one Claude Code run (the run pipeline) carries out its
+brief in the package's folder; and "page", where its entry HTML opens in
+the page's centre area in a frame without an origin.
 """
 from __future__ import annotations
 
@@ -38,7 +48,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
-from jarvis import data_paths
+from jarvis import data_paths, folder_readers
+from jarvis.folder_contract import FolderError
 from jarvis.messaging_files import QUARANTINE_ATTRIBUTE
 
 log = logging.getLogger("jarvis.work_packages")
@@ -51,6 +62,18 @@ OUTPUT_TAIL_CHARS = 4000
 PARTIAL = ".partial-"
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
+# How a package runs, its package.json `runs`, and the file each way needs.
+CONVERSATION, AGENT, PAGE = "conversation", "agent", "page"
+MODES = {CONVERSATION: "skill", AGENT: "brief", PAGE: "entry"}
+# What a page package's frame may save: a name of at most RESULT_MAX_PARTS
+# plain parts under results/, and at most RESULT_MAX_BYTES each.
+RESULTS = "results"
+RESULT_MAX_BYTES = 20 * 1024 * 1024
+RESULT_MAX_PARTS = 4
+_RESULT_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+# The largest page file served to the frame.
+PAGE_FILE_MAX_BYTES = 32 * 1024 * 1024
+
 
 class PackageError(ValueError):
     """Why a package cannot be opened, found or run, in words he can hear."""
@@ -58,12 +81,16 @@ class PackageError(ValueError):
 
 @dataclass(frozen=True)
 class Manifest:
-    """A package's package.json."""
+    """A package's package.json. `runs` is one of MODES; the file it needs
+    (`skill`, `brief` or `entry`) is required, the other two optional."""
     name: str
     version: str
     purpose: str
-    skill: str
     returns: tuple[str, ...]
+    runs: str = CONVERSATION
+    skill: Optional[str] = None
+    brief: Optional[str] = None
+    entry: Optional[str] = None
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -73,20 +100,30 @@ class Manifest:
             raise PackageError("Its package.json is not valid JSON.") from None
         if not isinstance(body, dict):
             raise PackageError("Its package.json is not an object.")
+        runs = body.get("runs", CONVERSATION)
+        if runs not in MODES:
+            raise PackageError(f"Its package.json's runs is not one of {', '.join(MODES)}.")
         fields = {}
-        for key in ("name", "version", "purpose", "skill"):
+        for key in ("name", "version", "purpose", *MODES.values()):
             value = body.get(key)
+            if value is None and key in MODES.values() and key != MODES[runs]:
+                continue
             if not isinstance(value, str) or not value.strip():
                 raise PackageError(f"Its package.json has no {key}.")
             fields[key] = value.strip()
         returns = body.get("returns")
         if not isinstance(returns, list) or not all(isinstance(r, str) and r for r in returns):
             raise PackageError("Its package.json's returns is not a list of file patterns.")
-        return cls(returns=tuple(returns), **fields)
+        return cls(returns=tuple(returns), runs=runs, **fields)
+
+    def named_files(self) -> dict[str, str]:
+        """The files package.json names, by field, which the zip must hold."""
+        return {key: getattr(self, key) for key in MODES.values() if getattr(self, key)}
 
     def as_json(self) -> str:
         return json.dumps({"name": self.name, "version": self.version, "purpose": self.purpose,
-                           "skill": self.skill, "returns": list(self.returns)}, indent=2)
+                           "runs": self.runs, **self.named_files(),
+                           "returns": list(self.returns)}, indent=2)
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -112,9 +149,23 @@ class Package:
     def id(self) -> str:
         return self.folder.name
 
+    @property
+    def source(self) -> str:
+        """The start of the attachment id it was unpacked from: the last
+        part of its folder's name (`unpack`)."""
+        return self.id.rsplit("-", 1)[-1]
+
+    def text(self, relative: Optional[str]) -> str:
+        """One of its Markdown files (its skill or brief), or "" for none."""
+        if not relative:
+            return ""
+        return _within(self.folder, relative).read_text(encoding="utf-8", errors="replace")
+
     def skill_text(self) -> str:
-        return _within(self.folder, self.manifest.skill).read_text(encoding="utf-8",
-                                                                    errors="replace")
+        return self.text(self.manifest.skill)
+
+    def brief_text(self) -> str:
+        return self.text(self.manifest.brief)
 
     def results(self) -> list[Path]:
         """Every regular file a `returns` pattern matches, in the package's
@@ -163,7 +214,7 @@ def unpack(archive_path: Path, short_id: str,
            clear_mark: Optional[Callable[[Path], None]] = None) -> tuple[Package, bool]:
     """Unpack a package zip into its own folder: (the package, whether it
     was unpacked now rather than already). Its package.json must be at the
-    zip's root and name a skill file inside it."""
+    zip's root, and every file it names (skill, brief, entry) inside it."""
     try:
         archive = zipfile.ZipFile(archive_path)
     except (OSError, zipfile.BadZipFile):
@@ -175,8 +226,9 @@ def unpack(archive_path: Path, short_id: str,
             raise PackageError(f"That zip has no {MANIFEST} at its root, so it is not "
                                f"a package.") from None
         names = set(archive.namelist())
-        if manifest.skill not in names:
-            raise PackageError(f"Its skill file {manifest.skill!r} is not in the zip.")
+        for key, named in manifest.named_files().items():
+            if named not in names:
+                raise PackageError(f"Its {key} file {named!r} is not in the zip.")
         label = "-".join(_UNSAFE_NAME.sub("-", part).strip(".-")[:40] or "package"
                          for part in (manifest.name, manifest.version,
                                       _UNSAFE_NAME.sub("", short_id)[:8] or "x"))
@@ -221,14 +273,17 @@ def every() -> list[Package]:
     return out
 
 
-def find(reference: str) -> Package:
+def find(reference: str, runs: Optional[str] = None) -> Package:
     """A package by its folder name (its id), or by its own name when only
-    one package here has it."""
+    one package here has it; with `runs`, only one that runs that way."""
     reference = str(reference or "").strip()
     packages = every()
     found = ([p for p in packages if p.id == reference]
              or [p for p in packages if p.manifest.name == reference])
     if len(found) == 1:
+        if runs and found[0].manifest.runs != runs:
+            raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, "
+                               f"not as {runs}.")
         return found[0]
     ids = ", ".join(p.id for p in (found or packages)) or "none"
     if found:
@@ -288,3 +343,85 @@ async def run(package: Package, command: str,
              "timed out" if code is None else f"exit {code}")
     return Ran(code, text)
 
+
+
+# -- a page package's frame -------------------------------------------------------------
+
+def page_file(package: Package, relative: str) -> bytes:
+    """One of a page package's files, for its frame: read without following
+    a link at any step, and refused outside its folder, hidden, not a
+    regular file, or over PAGE_FILE_MAX_BYTES."""
+    pure = PurePosixPath(relative or "")
+    refused = PackageError(f"{relative!r} is not a file of {package.id}'s page.")
+    if not pure.parts or pure.is_absolute() or "\\" in relative \
+            or any(p.startswith(".") for p in pure.parts):
+        raise refused
+    try:
+        with folder_readers.opened_file(package.folder, Path(*pure.parts)) as (fd, info):
+            if info.st_size > PAGE_FILE_MAX_BYTES:
+                raise PackageError(f"{relative!r} is too large to serve.")
+            return os.pread(fd, info.st_size, 0) if info.st_size else b""
+    except FolderError:
+        raise refused from None
+
+
+def result_name(name: str) -> list[str]:
+    """The parts of a name the page may save under results/: at most
+    RESULT_MAX_PARTS, separated by '/', each letters, digits, '.', '_' and
+    '-' and starting with a letter or a digit."""
+    parts = str(name or "").split("/")
+    if not 1 <= len(parts) <= RESULT_MAX_PARTS \
+            or not all(_RESULT_PART.fullmatch(p) for p in parts):
+        raise PackageError(f"{name!r} is not a name a result can be saved under: letters, "
+                           f"digits, '.', '_' and '-', in at most {RESULT_MAX_PARTS} parts "
+                           f"separated by '/'.")
+    return parts
+
+
+def save_result(package: Package, name: str, data: bytes) -> Path:
+    """Write `data` as results/<name> in the package's folder, replacing a
+    file of that name, and return its path. Every folder on the way is made
+    or opened without following a link, and the file is written beside its
+    name and renamed into place, so it is never seen half written."""
+    parts = result_name(name)
+    if len(data) > RESULT_MAX_BYTES:
+        raise PackageError(f"That result is {len(data)} bytes; at most {RESULT_MAX_BYTES} "
+                           f"may be saved.")
+    folders = [RESULTS, *parts[:-1]]
+    try:
+        for depth, part in enumerate(folders):
+            with folder_readers.opened_dir(package.folder, Path(*folders[:depth])) as fd:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass
+        with folder_readers.opened_dir(package.folder, Path(*folders)) as fd:
+            temp = f"{PARTIAL}{uuid.uuid4()}"
+            out = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644,
+                          dir_fd=fd)
+            try:
+                with os.fdopen(out, "wb") as f:
+                    f.write(data)
+                os.replace(temp, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
+            except BaseException:
+                try:
+                    os.unlink(temp, dir_fd=fd)
+                except OSError:
+                    pass
+                raise
+    except (FolderError, OSError):
+        raise PackageError(f"{name!r} could not be saved in {package.id}'s results.") from None
+    log.info("package %s: its page saved a result (%d bytes)", package.id, len(data))
+    return package.folder / RESULTS / Path(*parts)
+
+
+# -- an agent package's run ---------------------------------------------------------------
+
+def agent_brief(package: Package) -> str:
+    """What an agent package's run is asked to do: its brief, and where
+    the files that go back to the sender must be."""
+    return (f"{package.brief_text()}\n\n"
+            f"(You are in the folder of work package {package.id}. The files that go back "
+            f"to the person who sent it are the ones matching: "
+            f"{', '.join(package.manifest.returns)}. Write them there, relative to this "
+            f"folder.)")

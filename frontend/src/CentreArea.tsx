@@ -30,6 +30,11 @@
  *     way: offered while one is open, which clicking its row in the Queue
  *     does. One view however many messages there are; opening another item
  *     replaces it.
+ *   - A page work package (PackageView.tsx), named after it, the same way:
+ *     offered while one is open, which its file's Open page in the Queue or
+ *     the brain's open_package_page does. Opening another replaces it. Kept
+ *     on the page, hidden, while another view is shown, as Folders is, so a
+ *     package part way through is not started again.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -61,6 +66,8 @@ import { showFolders } from "./folders";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
 import { TeamSignInReminder } from "./TeamSignInReminder";
+import { openPackage } from "./packages";
+import { PackageView } from "./PackageView";
 
 function MainView() {
   return (
@@ -142,6 +149,13 @@ const QUEUE_VIEW: Tab = {
   view: () => null,
 };
 
+const PACKAGE_VIEW: Tab = {
+  id: "package",
+  title: "Package",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -167,6 +181,7 @@ export function CentreArea() {
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
+  const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -187,6 +202,9 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (queueOpen ? "queue" : now === "queue" ? VIEWS[0].id : now));
   }, [queueOpen]);
+  useEffect(() => {
+    setSelected((now) => (packageOpen ? "package" : now === "package" ? VIEWS[0].id : now));
+  }, [packageOpen]);
   // Choosing a folder in the right panel shows the Folders view.
   const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
   useEffect(() => { if (foldersAsked) setSelected("folders"); }, [foldersAsked]);
@@ -204,6 +222,7 @@ export function CentreArea() {
           view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
     ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
                        view: () => <QueueItemView thread={queueOpen} /> }] : []),
+    ...(packageOpen ? [{ ...PACKAGE_VIEW, title: packageOpen.name }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
@@ -233,7 +252,14 @@ export function CentreArea() {
           {folders.view()}
         </div>
       )}
-      {view.id !== conversation.id && view.id !== folders.id && view.view()}
+      {packageOpen && (
+        <div className={`centre-kept${view.id === PACKAGE_VIEW.id ? "" : " hidden"}`}
+             inert={view.id !== PACKAGE_VIEW.id}>
+          <PackageView key={packageOpen.id} info={packageOpen} />
+        </div>
+      )}
+      {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
+        && view.view()}
     </>
   );
 }

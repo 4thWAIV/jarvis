@@ -137,17 +137,41 @@ SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
 
 _SECURITY_HEADER_NAMES = frozenset(name for name, _ in SECURITY_HEADERS)
 
+# A page work package's own files (packages_api.py) are the one thing
+# framed, and only by JARVIS's own page (`frame-ancestors 'self'`). They are
+# a teammate's code served from JARVIS's own origin, so every one of them
+# also carries `sandbox allow-scripts`: the document gets an opaque origin
+# whether it is opened in the page's sandboxed frame or straight in a tab,
+# and so can never read JARVIS's routes or pass its origin check.
+PACKAGE_PAGE_PREFIX = "/api/packages/"
+PACKAGE_PAGE_MARK = "/files/"
+PACKAGE_PAGE_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-frame-options", b"SAMEORIGIN"),
+    (b"content-security-policy", b"frame-ancestors 'self'; sandbox allow-scripts"),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"no-referrer"),
+)
 
-def apply_security_headers(raw_headers) -> list[tuple[bytes, bytes]]:
+
+def is_package_page(path: str) -> bool:
+    """`/api/packages/<id>/files/...`: a page package's own file."""
+    if not path.startswith(PACKAGE_PAGE_PREFIX):
+        return False
+    package, _, rest = path[len(PACKAGE_PAGE_PREFIX):].partition("/")
+    return bool(package) and ("/" + rest).startswith(PACKAGE_PAGE_MARK)
+
+
+def apply_security_headers(raw_headers, path: str = "") -> list[tuple[bytes, bytes]]:
     """Our values, replacing rather than joining any that are already there.
 
     Appending would produce `X-Frame-Options: SAMEORIGIN, DENY`, which is
     two conflicting policies and which several browsers resolve by ignoring
-    the header entirely. These are the security headers; ours win.
+    the header entirely. These are the security headers; ours win. A page
+    package's file gets PACKAGE_PAGE_HEADERS instead.
     """
     kept = [(name, value) for name, value in (raw_headers or ())
             if name.lower() not in _SECURITY_HEADER_NAMES]
-    kept.extend(SECURITY_HEADERS)
+    kept.extend(PACKAGE_PAGE_HEADERS if is_package_page(path) else SECURITY_HEADERS)
     return kept
 
 
@@ -543,7 +567,7 @@ class OriginGuard:
         # the headers too — they never reach the router, so a middleware
         # further in could not have added them.
         if kind == "http":
-            send = self._with_security_headers(send)
+            send = self._with_security_headers(send, scope.get("path") or "")
         # The Host check covers every method, reads included: it is the only
         # evidence of a DNS rebind, which is how a page makes a loopback GET
         # same-origin and so needs no CORS from us at all.
@@ -579,8 +603,9 @@ class OriginGuard:
         await self.app(scope, receive, send)
 
     @staticmethod
-    def _with_security_headers(send):
-        """Add SECURITY_HEADERS to the response start message.
+    def _with_security_headers(send, path: str = ""):
+        """Add SECURITY_HEADERS (PACKAGE_PAGE_HEADERS for a page package's
+        file) to the response start message.
 
         A raw ASGI wrapper rather than a `BaseHTTPMiddleware` on top,
         because BaseHTTPMiddleware would buffer every streamed response
@@ -594,7 +619,7 @@ class OriginGuard:
             if message.get("type") == "http.response.start":
                 message = dict(message)
                 message["headers"] = apply_security_headers(
-                    message.get("headers"))
+                    message.get("headers"), path)
             await send(message)
 
         return send_wrapper

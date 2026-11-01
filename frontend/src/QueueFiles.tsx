@@ -3,10 +3,13 @@
  * declared type (the type is what was declared, never guessed from the
  * name, and nothing is opened), and where it is. Sending: prepared,
  * uploading, uploaded. Receiving: on the team server (Download), being
- * downloaded, downloaded and checked (Reveal in Finder, the one action on
- * it). Either side: failed, with the reason, or missing.
+ * downloaded, downloaded and checked (Reveal in Finder, and Open page once
+ * JARVIS has opened it as a page work package, packages.ts). Either side:
+ * failed, with the reason, or missing.
  */
 
+import { useState, useSyncExternalStore } from "react";
+import { openPackagePage, packageList, pagePackageFrom } from "./packages";
 import { downloadFile, revealFile } from "./queue";
 import { shownFor } from "./messagingApi";
 import type { AttachmentRef, LocalFile } from "./messagingContract";
@@ -58,10 +61,29 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
           Reveal in Finder
         </button>
       )}
+      {incoming && state === "verified" && <OpenPage attachmentId={fileRef.attachment_id} />}
       {onRemove && (
         <button type="button" className="file-action" onClick={onRemove}
                 aria-label={`Remove ${fileRef.filename}`}>Remove</button>
       )}
     </div>
+  );
+}
+
+/** Open page, for a file JARVIS has unpacked as a page work package. */
+function OpenPage({ attachmentId }: { attachmentId: string }) {
+  const list = packageList();
+  const packages = useSyncExternalStore(list.subscribe, list.get).value;
+  const [problem, setProblem] = useState<string | null>(null);
+  const found = pagePackageFrom(packages, attachmentId);
+  if (!found) return null;
+  return (
+    <>
+      <button type="button" className="file-action"
+              onClick={async () => setProblem(await openPackagePage(found.id))}>
+        Open page
+      </button>
+      {problem && <span className="file-state">{problem}</span>}
+    </>
   );
 }

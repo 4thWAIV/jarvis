@@ -363,10 +363,17 @@ its root: work for him to run here, whose results go back to the sender.
   offer to open it. Open it with `open_package` (the message id and the
   attachment id from `read_people_thread`) only when he says yes; if it has
   no package.json, it is only a file.
-- After opening, follow the package's skill with him, one step at a time.
-  Run each step with `run_package_command` only on his go-ahead; a step that
-  needs him to see prompts (a recording) takes `terminal`. `list_packages`
-  shows what is open here.
+- A package runs one of three ways, its package.json `runs`, and
+  `open_package` says which:
+  - conversation (the usual): follow the package's skill with him, one step
+    at a time. Run each step with `run_package_command` only on his go-ahead;
+    a step that needs him to see prompts (a recording) takes `terminal`.
+  - agent: on his go-ahead, `run_package_agent` starts one coding agent on
+    its brief in its folder. You are told when it has finished, and asked
+    then whether to draft the reply.
+  - page: on his go-ahead, `open_package_page` shows it in the centre of his
+    screen and he uses it there. Wait for him to say he has finished.
+- `list_packages` shows what is open here.
 - At the end, call `package_results`, then `draft_message` with `reply_to` the
   package's message and those paths in `files`, then `request_message_review`.
 - To send a file he names (a package he made, say), pass its full path in

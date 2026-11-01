@@ -1475,8 +1475,10 @@ TOOL_SPECS = [
         "description": (
             "Open a work package a person sent: a .zip attached to their message with a "
             "package.json at its root. Only when he says to open it. It downloads the file "
-            "if needed, unpacks it into its own folder and returns its package.json and its "
-            "skill, which you then follow with him."),
+            "if needed, unpacks it into its own folder and returns its package.json, how it "
+            "runs, and its skill or brief. A conversation package's skill you follow with "
+            "him; an agent package starts with run_package_agent; a page package opens "
+            "with open_package_page."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1509,6 +1511,31 @@ TOOL_SPECS = [
                 "terminal": {"type": "boolean"},
             },
             "required": ["package", "command"],
+        },
+    },
+    {
+        "name": "run_package_agent",
+        "description": (
+            "Start an open package whose package.json runs it as an agent: one Claude Code "
+            "run on its brief, in the package's folder, only on his go-ahead. It returns at "
+            "once; you are told when the run has finished, and then draft the reply with "
+            "package_results."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "open_package_page",
+        "description": (
+            "Show an open package whose package.json runs it as a page in the centre of his "
+            "screen, only on his go-ahead. He uses it there; what it saves goes in its "
+            "results folder, for package_results once he says he has finished."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "required": ["package"],
         },
     },
     {

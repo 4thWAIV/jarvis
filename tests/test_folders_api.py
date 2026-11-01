@@ -248,7 +248,7 @@ def test_a_folder_run_is_retried_only_while_the_folder_can_take_it(wired, monkey
     fid = server.folder_catalog.register(request_key="k", path=str(folder))["folder"]["id"]
     spawned = []
 
-    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None):
+    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None, package_id=None):
         spawned.append((path, folder_id))
         return "new-run"
 

@@ -90,6 +90,20 @@ const TELEMETRY_EVERY_MS = 1000 * protocol.telemetryEverySec;
 
 interface Frame { pcm: ArrayBuffer; at: number }
 
+/** Every captured frame, as 16 kHz mono PCM16, whether or not it is sent
+ *  to the recogniser: muted, JARVIS hears nothing and a listener still
+ *  does; mic off, there are no frames. A page package's frame listens
+ *  through this (packageBridge.ts), since a frame without an origin cannot
+ *  have the microphone itself. Returns the way to stop listening. */
+const frameListeners = new Set<(pcm: ArrayBuffer) => void>();
+export function listenToMicrophone(listener: (pcm: ArrayBuffer) => void): () => void {
+  frameListeners.add(listener);
+  return () => { frameListeners.delete(listener); };
+}
+export const MICROPHONE_FORMAT = {
+  sampleRate: protocol.sampleRate, channels: protocol.channels, format: protocol.format,
+} as const;
+
 interface Microphone {
   stream: MediaStream;
   ctx: AudioContext;
@@ -397,6 +411,7 @@ export function createVoiceInput(
 
   function onFrame(pcm: ArrayBuffer) {
     framesCaptured++;
+    frameListeners.forEach((listener) => listener(pcm.slice(0)));
     // While quiet, only the frames the worklet flushes for the muted session.
     const s = quiet() ? (closing && !closing.lastFrame ? closing : null) : session;
     if (!s || (paused && !quiet())) return;
