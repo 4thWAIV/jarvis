@@ -12,6 +12,8 @@ import { shownFor } from "./messagingApi";
 import type { AttachmentRef, LocalFile } from "./messagingContract";
 import { QueueIcon } from "./QueueIcons";
 import { sizeText } from "./queueStore";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { useUiTarget } from "./uiRegistry";
 
 function percent(file: LocalFile, ref: AttachmentRef): string {
   return ref.size_bytes ? ` ${Math.floor((100 * file.bytes_done) / ref.size_bytes)}%` : "";
@@ -40,8 +42,13 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
 }) {
   const state = file?.state ?? (incoming ? "available" : "staged");
   const canDownload = incoming && messageId && (state === "available" || state === "failed");
+  // A file on an accepted message can be pointed at; a draft's is not yet one.
+  const ui = useUiTarget(messageId ? {
+    ref: { region: "main", view: "main.queue", kind: "queueAttachment", key: fileRef.attachment_id },
+    label: "File", socket: CENTRE_SOCKET } : null);
   return (
-    <div className={`queue-file state-${state}`} data-attachment-id={fileRef.attachment_id}>
+    <div className={`queue-file state-${state}`} data-attachment-id={fileRef.attachment_id}
+         ref={(el) => { ui.whole(el); ui.part("entry")(el); }}>
       <QueueIcon kind="files" size={16} />
       <span className="file-name">{fileRef.filename}</span>
       <span className="file-meta">{sizeText(fileRef.size_bytes)} · {fileRef.media_type}</span>

@@ -14,14 +14,21 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { createStore } from "./store";
+import { bind, bindingProps } from "./uiNavigation";
+import { registerCommand, useUiTarget, type Availability, type CommandOutcome } from "./uiRegistry";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
   catalog, editFolder, foldersChanged, FolderError, nodeWords, PROVIDER_WORDS, readDetail,
-  readEntries, readPreview, reconnectFolder, refreshFolder, ROLE_WORDS, selectedFolder, sizeWords,
+  readEntries, readPreview, reconnectFolder, refreshFolder, ROLE_WORDS, sizeWords,
   unregisterFolder, type Entries, type Entry, type Folder, type FolderDetail as Detail,
   type Preview, type Role,
 } from "./folders";
 import { shortAgo } from "./timeFormat";
+
+/** A part's callback ref, from a registered target. */
+type PartRef = (part: string) => (el: Element | null) => void;
 
 function when(at: number | null): string {
   if (at === null) return "never";
@@ -55,62 +62,182 @@ function useLatest() {
   }, []);
 }
 
-function Contents({ folder }: { folder: Folder }) {
-  const [path, setPath] = useState("");
-  const [page, setPage] = useState<Entries | null>(null);
-  const [rows, setRows] = useState<Entry[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [file, setFile] = useState<string | null>(null);
-  const latest = useLatest();
+// ── the selected folder's contents ──────────────────────────────────────
+//
+// Which directory of the shown folder is open, which file is previewed and
+// how much of each is loaded are kept here, for one folder at its location
+// revision, and changed only by `folder.browse`, `folder.preview` and
+// `folder.more`: a click and the brain's request run the same handler. The
+// folder's reader on the server decides what may be read (containment,
+// links, hidden files and credentials stay its refusals), and a refusal is
+// shown in its words. Opening the folder reads its top directory.
+
+interface Listing { page: Entries | null; rows: Entry[]; error: string | null; loading: boolean }
+interface Showing { windows: Preview[]; error: string | null; loading: boolean }
+interface Contents {
+  folderId: string;
+  revision: number;
+  /** The directory shown, relative to the folder ("" is its top). */
+  path: string;
+  dir: Listing;
+  /** The file previewed, or null. */
+  file: string | null;
+  preview: Showing;
+}
+
+const NO_LISTING: Listing = { page: null, rows: [], error: null, loading: false };
+const NO_PREVIEW: Showing = { windows: [], error: null, loading: false };
+
+const contents = createStore<Contents | null>(null);
+
+/** The read in flight for the directory and for the preview: a newer one
+ *  aborts the older, and its answer, if it still arrives, is dropped. */
+const reads: Record<"dir" | "preview", AbortController | null> = { dir: null, preview: null };
+
+function fresh(which: "dir" | "preview"): AbortController {
+  reads[which]?.abort();
+  reads[which] = new AbortController();
+  return reads[which]!;
+}
+
+/** Change the contents if they are still `of`'s folder at its revision. */
+function update(of: Contents, change: (c: Contents) => Contents): void {
+  const now = contents.get();
+  if (now && now.folderId === of.folderId && now.revision === of.revision) contents.set(change(now));
+}
+
+const superseded: CommandOutcome = { status: "cancelled", effects: [], reason: "superseded" };
+const unread: CommandOutcome = { status: "unavailable", effects: [], reason: "not-loaded" };
+
+/** Show directory `path` of the folder: its first page, or with `cursor`
+ *  the next one added below. */
+async function readDir(of: Contents, path: string, cursor: string | null): Promise<CommandOutcome> {
+  const ctl = fresh("dir");
+  update(of, (c) => ({ ...c, path, dir: { ...(cursor ? c.dir : NO_LISTING), loading: true, error: null } }));
+  try {
+    const got = await readEntries(of.folderId, path, of.revision, cursor, ctl.signal);
+    if (ctl.signal.aborted) return superseded;
+    update(of, (c) => ({ ...c, dir: { page: got, rows: cursor ? [...c.dir.rows, ...got.entries] : got.entries,
+                                      error: null, loading: false } }));
+    return { status: "completed", effects: ["list.paged"] };
+  } catch (e) {
+    if (ctl.signal.aborted) return superseded;
+    // The location moved under the cursor: shown again from the top.
+    if (e instanceof FolderError && e.code === "stale_cursor") return readDir(of, "", null);
+    update(of, (c) => ({ ...c, dir: { ...NO_LISTING, error: refusalWords(e) } }));
+    return unread;
+  }
+}
+
+/** Preview file `path`: its first window, or with `cursor` the next one. */
+async function readFile(of: Contents, path: string, cursor: string | null): Promise<CommandOutcome> {
+  const ctl = fresh("preview");
+  update(of, (c) => ({ ...c, file: path, preview: { ...(cursor ? c.preview : NO_PREVIEW), loading: true, error: null } }));
+  try {
+    const got = await readPreview(of.folderId, path, of.revision, cursor, ctl.signal);
+    if (ctl.signal.aborted) return superseded;
+    update(of, (c) => ({ ...c, preview: { windows: cursor ? [...c.preview.windows, got] : [got],
+                                          error: null, loading: false } }));
+    return { status: "completed", effects: cursor ? ["list.paged"] : [] };
+  } catch (e) {
+    if (ctl.signal.aborted) return superseded;
+    update(of, (c) => ({ ...c, preview: { ...c.preview, error: refusalWords(e), loading: false } }));
+    return unread;
+  }
+}
+
+function closePreview(of: Contents): void {
+  reads.preview?.abort();
+  update(of, (c) => ({ ...c, file: null, preview: NO_PREVIEW }));
+}
+
+/** Offered for the folder shown, and refused at another location revision. */
+function shownFolder(folderId: string): Availability {
+  return contents.get()?.folderId === folderId ? { available: true } : { available: false, reason: "no-entity" };
+}
+
+const staleAt = (revision: number | undefined): CommandOutcome | null =>
+  revision !== undefined && revision !== contents.get()!.revision
+    ? { status: "stale", effects: [], reason: "entity-gone" } : null;
+
+/** Where the next page of the list starts, if there is one. */
+function nextOf(c: Contents, list: "entries" | "preview"): string | null {
+  return list === "entries" ? c.dir.page?.next_cursor ?? null
+    : c.preview.windows[c.preview.windows.length - 1]?.next_cursor ?? null;
+}
+
+registerCommand("folder.browse", {
+  availability: ({ folderId }) => shownFolder(folderId),
+  execute({ path, revision }) {
+    const stale = staleAt(revision);
+    if (stale) return stale;
+    const c = contents.get()!;
+    closePreview(c);
+    return readDir(c, path ?? "", null);
+  },
+});
+
+registerCommand("folder.preview", {
+  availability: ({ folderId }) => shownFolder(folderId),
+  execute({ path, revision }) {
+    const stale = staleAt(revision);
+    if (stale) return stale;
+    const c = contents.get()!;
+    if (!path) {
+      closePreview(c);
+      return { status: "completed", effects: [] };
+    }
+    return readFile(c, path, null);
+  },
+});
+
+registerCommand("folder.more", {
+  availability: ({ folderId, list }) => {
+    const shown = shownFolder(folderId);
+    if (!shown.available) return shown;
+    return nextOf(contents.get()!, list) ? { available: true } : { available: false, reason: "no-entity" };
+  },
+  execute({ list }) {
+    const c = contents.get()!;
+    return list === "entries" ? readDir(c, c.path, nextOf(c, list)) : readFile(c, c.file!, nextOf(c, list));
+  },
+});
+
+/** A directory or file of the folder, as a binding: the folder's top when
+ *  `path` is "". */
+const browseTo = (folderId: string, path: string) =>
+  bind("folder.browse", path ? { folderId, path } : { folderId });
+
+/** One entry of the folder or one crumb of the path, by its relative path. */
+function useEntryTarget(folderId: string, path: string, label: string) {
+  return useUiTarget(path ? { ref: { region: "main", view: "main.folders", kind: "folderEntry", key: `${folderId}/${path}` },
+                              label, socket: CENTRE_SOCKET } : null);
+}
+
+function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
   const revision = folder.location.revision;
-
-  const load = useCallback(async (at: string, cursor: string | null) => {
-    const ctl = latest();
-    setLoading(true);
-    setError(null);
-    try {
-      const got = await readEntries(folder.id, at, revision, cursor, ctl.signal);
-      if (ctl.signal.aborted) return;
-      setPage(got);
-      setRows((prev) => (cursor ? [...prev, ...got.entries] : got.entries));
-    } catch (e) {
-      if (ctl.signal.aborted) return;
-      if (e instanceof FolderError && e.code === "stale_cursor") {
-        setPath("");
-        return;
-      }
-      setPage(null);
-      setRows([]);
-      setError(refusalWords(e));
-    } finally {
-      if (!ctl.signal.aborted) setLoading(false);
-    }
-  }, [folder.id, revision, latest]);
-
-  useEffect(() => { void load(path, null); }, [path, load]);
-  useEffect(() => { setPath(""); setFile(null); }, [folder.id, revision]);
-
-  const open = (e: Entry) => {
-    if (e.kind === "dir") {
-      setFile(null);
-      setPath(e.path);
-    } else if (e.kind === "file") {
-      setFile(e.path);
-    }
-  };
+  // Opening the folder, or its location moving, shows its top directory.
+  useEffect(() => {
+    const opened: Contents = { folderId: folder.id, revision, path: "", dir: NO_LISTING, file: null, preview: NO_PREVIEW };
+    contents.set(opened);
+    void readDir(opened, "", null);
+    return () => {
+      reads.dir?.abort();
+      reads.preview?.abort();
+      if (contents.get()?.folderId === opened.folderId) contents.set(null);
+    };
+  }, [folder.id, revision]);
+  const now = useSyncExternalStore(contents.subscribe, contents.get);
+  const c = now && now.folderId === folder.id && now.revision === revision ? now : null;
+  const { page, rows, error, loading } = c?.dir ?? NO_LISTING;
+  const file = c?.file ?? null;
 
   return (
-    <section className="folder-contents" aria-label="Contents">
+    <section className="folder-contents" aria-label="Contents" ref={partRef("contents")}>
       <h3>Contents</h3>
       <nav className="folder-crumbs" aria-label="Path in folder">
         {(page?.breadcrumbs ?? [{ name: folder.display_name, path: "" }]).map((b, i, all) => (
-          <span key={b.path}>
-            {i < all.length - 1
-              ? <button type="button" className="folder-crumb" onClick={() => { setFile(null); setPath(b.path); }}>{b.name}</button>
-              : <span aria-current="location">{b.name}</span>}
-            {i < all.length - 1 && <span aria-hidden="true"> / </span>}
-          </span>
+          <Crumb key={b.path} folderId={folder.id} crumb={b} last={i === all.length - 1} />
         ))}
       </nav>
       {loading && !rows.length && <p className="folder-note" role="status">Reading…</p>}
@@ -124,54 +251,58 @@ function Contents({ folder }: { folder: Folder }) {
       )}
       <div className="folder-contents-body">
         <ul className="folder-entries">
-          {rows.map((e) => (
-            <li key={e.path}>
-              <button type="button" className={`folder-entry kind-${e.kind}${file === e.path ? " selected" : ""}`}
-                      disabled={e.kind === "link" || e.kind === "other"}
-                      title={e.kind === "link" ? "A link: JARVIS does not follow links" : e.name}
-                      onClick={() => open(e)}>
-                <span className="folder-entry-kind">{e.kind === "dir" ? "Folder" : e.kind === "file" ? (e.transcript ? "Transcript" : "File") : e.kind === "link" ? "Link" : "Other"}</span>
-                <span className="folder-entry-name">{e.name}{e.kind === "dir" ? "/" : ""}</span>
-                <span className="folder-entry-size">{sizeWords(e.size)}</span>
-              </button>
-            </li>
-          ))}
+          {rows.map((e) => <EntryRow key={e.path} folderId={folder.id} entry={e} selected={file === e.path} />)}
         </ul>
         {page?.next_cursor && (
           <button type="button" className="folder-button quiet" disabled={loading}
-                  onClick={() => void load(path, page.next_cursor)}>Load more</button>
+                  {...bindingProps(bind("folder.more", { folderId: folder.id, list: "entries" }))}>Load more</button>
         )}
       </div>
-      {file && <FilePreview key={`${folder.id}:${revision}:${file}`} folder={folder} path={file} />}
+      {c && file && <FilePreview folder={folder} path={file} preview={c.preview} previewRef={partRef("preview")} />}
     </section>
   );
 }
 
-function FilePreview({ folder, path }: { folder: Folder; path: string }) {
-  const [windows, setWindows] = useState<Preview[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const latest = useLatest();
+function Crumb({ folderId, crumb: b, last }: { folderId: string; crumb: { name: string; path: string }; last: boolean }) {
+  const ui = useEntryTarget(folderId, b.path, b.name);
+  const crumb = (el: Element | null) => { ui.whole(el); ui.part("crumb")(el); };
+  return (
+    <span>
+      {!last
+        ? <button type="button" className="folder-crumb" ref={crumb}
+                  {...bindingProps(browseTo(folderId, b.path))}>{b.name}</button>
+        : <span aria-current="location" ref={crumb}>{b.name}</span>}
+      {!last && <span aria-hidden="true"> / </span>}
+    </span>
+  );
+}
 
-  const load = useCallback(async (cursor: string | null) => {
-    const ctl = latest();
-    setLoading(true);
-    setError(null);
-    try {
-      const got = await readPreview(folder.id, path, folder.location.revision, cursor, ctl.signal);
-      if (!ctl.signal.aborted) setWindows((prev) => (cursor ? [...prev, got] : [got]));
-    } catch (e) {
-      if (!ctl.signal.aborted) setError(refusalWords(e));
-    } finally {
-      if (!ctl.signal.aborted) setLoading(false);
-    }
-  }, [folder.id, folder.location.revision, path, latest]);
+function EntryRow({ folderId, entry: e, selected }: { folderId: string; entry: Entry; selected: boolean }) {
+  const ui = useEntryTarget(folderId, e.path, e.name);
+  const opens = e.kind === "dir" ? browseTo(folderId, e.path)
+    : e.kind === "file" ? bind("folder.preview", { folderId, path: e.path }) : null;
+  return (
+    <li>
+      <button type="button" className={`folder-entry kind-${e.kind}${selected ? " selected" : ""}`}
+              ref={(el) => { ui.whole(el); ui.part("row")(el); }}
+              disabled={!opens}
+              title={e.kind === "link" ? "A link: JARVIS does not follow links" : e.name}
+              {...(opens ? bindingProps(opens) : {})}>
+        <span className="folder-entry-kind">{e.kind === "dir" ? "Folder" : e.kind === "file" ? (e.transcript ? "Transcript" : "File") : e.kind === "link" ? "Link" : "Other"}</span>
+        <span className="folder-entry-name">{e.name}{e.kind === "dir" ? "/" : ""}</span>
+        <span className="folder-entry-size">{sizeWords(e.size)}</span>
+      </button>
+    </li>
+  );
+}
 
-  useEffect(() => { void load(null); }, [load]);
+function FilePreview({ folder, path, preview, previewRef }: {
+  folder: Folder; path: string; preview: Showing; previewRef: (el: Element | null) => void }) {
+  const { windows, error, loading } = preview;
   const first = windows[0];
   const last = windows[windows.length - 1];
   return (
-    <section className="folder-preview" aria-label={`Preview of ${path}`}>
+    <section className="folder-preview" aria-label={`Preview of ${path}`} ref={previewRef}>
       <h4 className="folder-path">{path}</h4>
       {loading && !first && <p className="folder-note" role="status">Reading…</p>}
       {error && <p className="folder-error" role="alert">{error}</p>}
@@ -196,7 +327,7 @@ function FilePreview({ folder, path }: { folder: Folder; path: string }) {
       )}
       {last?.next_cursor && (
         <button type="button" className="folder-button quiet" disabled={loading}
-                onClick={() => void load(last.next_cursor)}>Show more</button>
+                {...bindingProps(bind("folder.more", { folderId: folder.id, list: "preview" }))}>Show more</button>
       )}
       {last && !last.next_cursor && windows.length > 0 && first?.kind !== "binary" && <p className="folder-note">End of file.</p>}
     </section>
@@ -264,6 +395,8 @@ export function FolderDetail({ id }: { id: string }) {
     readDetail(id, ctl.signal).then((d) => { if (!ctl.signal.aborted) { setDetail(d); setError(null); } })
       .catch((e) => { if (!ctl.signal.aborted) setError(refusalWords(e)); });
   }, [id, hint, reconnects, latest]);
+  const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "folder", key: id },
+                           label: detail?.folder.display_name ?? "Folder", socket: CENTRE_SOCKET });
 
   if (error && !detail) return <p className="folder-error" role="alert">{error}</p>;
   if (!detail) return <p className="folder-note" role="status">Reading the folder…</p>;
@@ -286,7 +419,7 @@ export function FolderDetail({ id }: { id: string }) {
   };
 
   return (
-    <div className="folder-detail" data-folder={f.id}>
+    <div className="folder-detail" data-folder={f.id} ref={(el) => { ui.whole(el); ui.part("detail")(el); }}>
       <header className="folder-detail-head">
         {mode === "edit" ? (
           <form className="folder-edit" aria-label="Edit label"
@@ -302,16 +435,16 @@ export function FolderDetail({ id }: { id: string }) {
           </form>
         ) : (
           <>
-            <h2>{f.display_name}</h2>
+            <h2 ref={ui.part("name")}>{f.display_name}</h2>
             <div className="folder-detail-marks">
               <RoleMark role={f.role} />
-              <AvailabilityMark availability={f.location.availability} />
+              <AvailabilityMark availability={f.location.availability} ref={ui.part("availability")} />
               {removed && <span className="folder-removed">Removed from catalog</span>}
             </div>
           </>
         )}
         <button type="button" className="workflow-close" title="Close" aria-label="Close folder"
-                onClick={() => selectedFolder.set(null)}>×</button>
+                ref={ui.part("close")} {...bindingProps(bind("folders.close", {}))}>×</button>
       </header>
 
       {mode === "view" && !removed && (
@@ -337,7 +470,7 @@ export function FolderDetail({ id }: { id: string }) {
       {notice && <p className="folder-note" role="status">{notice}</p>}
 
       <dl className="folder-facts">
-        <dt>Location</dt><dd className="folder-path">{f.location.canonical_path}</dd>
+        <dt>Location</dt><dd className="folder-path" ref={ui.part("location")}>{f.location.canonical_path}</dd>
         {f.location.supplied_path !== f.location.canonical_path && (
           <><dt>Registered as</dt><dd className="folder-path">{f.location.supplied_path}</dd></>
         )}
@@ -348,7 +481,7 @@ export function FolderDetail({ id }: { id: string }) {
         <dt>Location revision</dt><dd>{f.location.revision}</dd>
       </dl>
 
-      {!removed && f.location.availability === "available" && <Contents folder={f} />}
+      {!removed && f.location.availability === "available" && <Contents folder={f} partRef={ui.part} />}
       {!removed && f.location.availability !== "available" && (
         <p className="folder-note" role="status">
           {f.location.availability === "missing" && "Nothing is at this location now. Its record and sessions are kept; reconnect it if it moved."}

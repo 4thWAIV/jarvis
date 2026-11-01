@@ -30,13 +30,35 @@
  * what it was asked to do, the session that dispatched it, and its
  * transcript.
  *
+ * Navigation here is registered (uiRegistry.ts), so a click and the
+ * brain's request run the same handler: the tab (`workflow.tab.select`),
+ * the events' kind (`workflow.events.filter`), a transcript's earlier page
+ * (`workflow.transcript.earlier`), a subagent's row (`subagent.open`) and
+ * Close (`workflow.close`). Which tab and kind the open workflow shows is
+ * kept in this module and changed only by those commands; a workflow
+ * opened anew starts on Overview with every kind. Answering a decision and
+ * Dismiss are his own acts on the workflow, not navigation.
+ *
+ * Everything that can be pointed at is registered with stable keys: the
+ * workflow (its header, state, Close, Dismiss and each tab), each phase,
+ * task, wait, blocker and decision (`<workflow>/<slug or key>`), the
+ * transcript, each attached agent's transcript (`<workflow>/<session>`),
+ * each subagent (`<session>/<agent>`) and the events. A phase, task or open
+ * item is shown on its own tab: the tab is selected first (a journey's
+ * navigate step), then it is pointed at.
+ *
  * Everything here was written by the session running the workflow, or by
  * its subagents, and is drawn as plain text.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { CENTRE_SOCKET, earlierPages } from "./ConversationView";
 import { useLiveRead } from "./liveRead";
+import { createStore } from "./store";
 import { TabRow, type Tab } from "./Tabs";
+import type { CommandArgs, TargetRef } from "./uiContract";
+import { bind, bindingProps, runBinding } from "./uiNavigation";
+import { registerCommand, useUiTarget, type Availability } from "./uiRegistry";
 import { TaskBar, useTick } from "./WorkflowsView";
 import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
@@ -53,60 +75,174 @@ function clock(seconds: number): string {
                                                             second: "2-digit" });
 }
 
+// ── what the open workflow shows ────────────────────────────────────────
+
+type WorkflowTab = CommandArgs["workflow.tab.select"]["tab"];
+
+interface Shown { workflowId: string | null; tab: WorkflowTab; kind: string }
+
+const FIRST: Omit<Shown, "workflowId"> = { tab: "overview", kind: "" };
+
+/** The open workflow's tab and event kind ("" for every kind). */
+const shown = createStore<Shown>({ workflowId: null, ...FIRST });
+
+/** What `workflowId` shows: its own choice while it stays open, else the
+ *  first tab and every kind. */
+const shownFor = (workflowId: string): Shown => {
+  const now = shown.get();
+  return now.workflowId === workflowId ? now : { workflowId, ...FIRST };
+};
+
+// A workflow closed, or replaced by another, forgets its tab and kind.
+openWorkflow.subscribe(() => {
+  if (shown.get().workflowId !== null && openWorkflow.get() !== shown.get().workflowId) {
+    shown.set({ workflowId: null, ...FIRST });
+  }
+});
+
+/** Offered for the workflow the centre holds, never another. */
+const whileOpen = (workflowId: string): Availability =>
+  openWorkflow.get() === workflowId ? { available: true } : { available: false, reason: "no-entity" };
+
+registerCommand("workflow.tab.select", {
+  availability: ({ workflowId }) => whileOpen(workflowId),
+  execute({ workflowId, tab }) {
+    shown.set({ ...shownFor(workflowId), tab });
+    return { status: "completed", effects: [] };
+  },
+});
+
+registerCommand("workflow.events.filter", {
+  availability: ({ workflowId }) => whileOpen(workflowId),
+  execute({ workflowId, kind }) {
+    shown.set({ ...shownFor(workflowId), kind: kind ?? "" });
+    return { status: "completed", effects: ["list.filtered"] };
+  },
+});
+
+// ── transcripts' earlier pages ──────────────────────────────────────────
+
+/** A transcript's key among those shown: its session, or `<session>/<agent>`
+ *  for a subagent's. */
+const transcriptKey = (sessionId: string, agentId?: string) => (agentId ? `${sessionId}/${agentId}` : sessionId);
+
+const transcriptPages = earlierPages<TranscriptEntry>((key, before) => {
+  const [sessionId, agentId] = key.split("/");
+  return getSessionTranscript(sessionId, before, agentId)
+    .then((page) => ({ items: page.entries, earlier: page.earlier }));
+});
+
+registerCommand("workflow.transcript.earlier", {
+  availability: ({ sessionId, agentId }) => transcriptPages.availability(transcriptKey(sessionId, agentId)),
+  execute: ({ sessionId, agentId }, { signal }) => transcriptPages.load(transcriptKey(sessionId, agentId), signal),
+});
+
+// ── targets ─────────────────────────────────────────────────────────────
+
+type DetailKind = "workflow" | "workflowPhase" | "workflowTask" | "workflowDecision" | "workflowWait"
+  | "workflowBlocker" | "workflowTranscript" | "workflowAgent" | "workflowEvents" | "subagent";
+
+/** One thing in the workflow view, registered while it is drawn. */
+function useDetailTarget(kind: DetailKind, key: string, label: string) {
+  const ref: TargetRef = { region: "main", view: "main.workflow", kind, key };
+  return useUiTarget({ ref, label, socket: CENTRE_SOCKET });
+}
+
+/** A part's callback ref, from a registered target. */
+type PartRef = (part: string) => (el: Element | null) => void;
+
+/** Joins a component's own ref and a registered part's. */
+const both = <E extends Element>(own: { current: E | null }, part: (el: Element | null) => void) =>
+  (el: E | null) => { own.current = el; part(el); };
+
+// ── the views ───────────────────────────────────────────────────────────
+
 /** A workflow's detail, or a subagent's when `id` names one. */
 export function WorkflowDetail({ id }: { id: string }) {
   const subagent = subagentOf(id);
   return subagent ? <SubagentDetail {...subagent} /> : <OneWorkflow id={id} />;
 }
 
+const TAB_TITLES: Record<WorkflowTab, string> = {
+  overview: "Overview", phases: "Phases", tasks: "Tasks", transcript: "Transcript", progress: "Progress",
+  waits: "Waits", decisions: "Decisions", blockers: "Blockers", events: "Events",
+};
+
 function OneWorkflow({ id }: { id: string }) {
   const live = useLiveRead(() => getWorkflow(id), [workflowsChanged]);
-  const [tab, setTab] = useState("overview");
+  const now = useSyncExternalStore(shown.subscribe, shown.get);
+  const { tab } = now.workflowId === id ? now : FIRST;
   useTick(30000);
   const w = live.value;
   useSyncExternalStore(dismissals.subscribe, dismissals.get);
   const gone = w ? isGone(w) : false;
-  const tabs: Tab[] = w ? [
-    { id: "overview", title: "Overview", icon: null, view: () => <Overview w={w} /> },
-    { id: "phases", title: "Phases", icon: null, view: () => <Phases w={w} /> },
-    { id: "tasks", title: "Tasks", icon: null, view: () => <Tasks w={w} /> },
-    { id: "transcript", title: "Transcript", icon: null, view: () => <Transcript id={id} /> },
-    { id: "progress", title: "Progress", icon: null, view: () => <Progress w={w} /> },
-    { id: "waits", title: "Waits", icon: null,
-      view: () => <Opened kind="wait" items={w.open.filter((o) => o.kind === "wait")} empty="Waiting on nothing" /> },
-    { id: "decisions", title: "Decisions", icon: null, view: () => <Decisions w={w} /> },
-    { id: "blockers", title: "Blockers", icon: null,
-      view: () => <Opened kind="blocker" items={w.open.filter((o) => o.kind === "blocker")} empty="Nothing in the way" /> },
-    { id: "events", title: "Events", icon: null, view: () => <Events id={id} /> },
-  ] : [];
-  const shown = tabs.find((t) => t.id === tab) ?? tabs[0];
+  const ui = useDetailTarget("workflow", id, w?.name ?? "Workflow");
+  const views: Record<WorkflowTab, (w: Workflow) => ReactNode> = {
+    overview: (w) => <Overview w={w} />,
+    phases: (w) => <Phases w={w} />,
+    tasks: (w) => <Tasks w={w} />,
+    transcript: () => <Transcript id={id} />,
+    progress: (w) => <Progress w={w} />,
+    waits: (w) => <Opened workflowId={w.id} kind="wait" items={w.open.filter((o) => o.kind === "wait")}
+                          empty="Waiting on nothing" />,
+    decisions: (w) => <Decisions w={w} />,
+    blockers: (w) => <Opened workflowId={w.id} kind="blocker" items={w.open.filter((o) => o.kind === "blocker")}
+                             empty="Nothing in the way" />,
+    events: () => <Events id={id} />,
+  };
+  const tabs: Tab[] = w ? (Object.keys(TAB_TITLES) as WorkflowTab[])
+    .map((t) => ({ id: t, title: TAB_TITLES[t], icon: null, view: () => views[t](w) })) : [];
+  const selected = tabs.find((t) => t.id === tab) ?? tabs[0];
+  const row = useRef<HTMLDivElement | null>(null);
+  useTabParts(row, id, ui.part, tabs.length > 0);
   return (
-    <div id="workflow-detail">
-      <div className="workflow-detail-head">
+    <div id="workflow-detail" ref={ui.whole}>
+      <div className="workflow-detail-head" ref={ui.part("header")}>
         <WorkflowOrb state={w?.state ?? "running"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{w?.name ?? "Workflow"}</span>
           {w && <span className="workflow-detail-pills">
-            <span className={`workflow-detail-state state-${w.state}`}>{STATE_WORDS[w.state]}</span>
+            <span className={`workflow-detail-state state-${w.state}`} ref={ui.part("state")}>{STATE_WORDS[w.state]}</span>
             {gone && <span className="workflow-detail-dismissed">Dismissed</span>}
           </span>}
         </span>
         {w && FINISHED.has(w.state) && !gone && (
-          <button type="button" className="workflow-detail-dismiss"
+          <button type="button" className="workflow-detail-dismiss" ref={ui.part("dismiss")}
                   onClick={() => void dismissWorkflow(w.id)}>Dismiss</button>
         )}
-        <button type="button" className="workflow-close" title="Close" aria-label="Close"
-                onClick={() => openWorkflow.set(null)}>×</button>
+        <button type="button" className="workflow-close" title="Close" aria-label="Close" ref={ui.part("close")}
+                {...bindingProps(bind("workflow.close", {}))}>×</button>
       </div>
       {live.error && <p className="read-failure">Couldn't read this workflow ({live.error}); trying again.</p>}
-      {w && <>
-        <TabRow tabs={tabs} selected={shown.id} onSelect={setTab} className="workflow-tabs" words />
-        <div className="workflow-tab-view" role="tabpanel" aria-label={shown.title}>
-          {shown.view()}
+      {w && selected && <>
+        <div ref={row} style={{ flex: "none" }}>
+          <TabRow tabs={tabs} selected={selected.id} className="workflow-tabs" words
+                  binding={(t) => bind("workflow.tab.select", { workflowId: id, tab: t.id as WorkflowTab })} />
+        </div>
+        <div className="workflow-tab-view" role="tabpanel" aria-label={selected.title}>
+          {selected.view()}
         </div>
       </>}
     </div>
   );
+}
+
+/** Each tab's button as the workflow's `tab.<id>` part. The row draws the
+ *  buttons; each is found by the command and arguments it runs (its
+ *  binding's marks), never by its words or its place. */
+function useTabParts(row: { current: HTMLDivElement | null }, workflowId: string, part: PartRef, drawn: boolean) {
+  useLayoutEffect(() => {
+    const buttons = [...(row.current?.querySelectorAll<HTMLElement>('[data-ui-command="workflow.tab.select"]') ?? [])];
+    const set = (Object.keys(TAB_TITLES) as WorkflowTab[]).map((tab) => {
+      const el = buttons.find((b) => {
+        const args = JSON.parse(b.dataset.uiArgs ?? "{}") as { workflowId?: string; tab?: string };
+        return args.workflowId === workflowId && args.tab === tab;
+      }) ?? null;
+      part(`tab.${tab}`)(el);
+      return tab;
+    });
+    return () => set.forEach((tab) => part(`tab.${tab}`)(null));
+  }, [row, workflowId, part, drawn]);
 }
 
 function Overview({ w }: { w: Workflow }) {
@@ -134,20 +270,25 @@ function Subagents({ agents }: { agents: SubagentRow[] }) {
     <section className="workflow-subagents">
       <h5>Subagents</h5>
       <ul>
-        {agents.map((a) => (
-          <li key={a.key}>
-            <button type="button" className="workflow-subagent" data-subagent-key={a.key}
-                    data-state={a.state} onClick={() => openWorkflow.set(a.key)}>
-              <span className={`subagent-dot subagent-${a.state}`} />
-              <span className="workflow-subagent-name">{a.description || a.type || "Subagent"}</span>
-              <span className="workflow-subagent-of">{a.session_name}</span>
-              <span className="workflow-subagent-age">{ago(a.written)}</span>
-              <span className={`workflow-subagent-state subagent-${a.state}`}>{SUBAGENT_WORDS[a.state]}</span>
-            </button>
-          </li>
-        ))}
+        {agents.map((a) => <SubagentLine key={a.key} a={a} />)}
       </ul>
     </section>
+  );
+}
+
+function SubagentLine({ a }: { a: SubagentRow }) {
+  const ui = useDetailTarget("subagent", transcriptKey(a.session_id, a.id), a.description || a.type || "Subagent");
+  return (
+    <li>
+      <button type="button" className="workflow-subagent" data-subagent-key={a.key} ref={ui.whole}
+              data-state={a.state} {...bindingProps(bind("subagent.open", { sessionId: a.session_id, agentId: a.id }))}>
+        <span className={`subagent-dot subagent-${a.state}`} ref={ui.part("state")} />
+        <span className="workflow-subagent-name" ref={ui.part("row")}>{a.description || a.type || "Subagent"}</span>
+        <span className="workflow-subagent-of">{a.session_name}</span>
+        <span className="workflow-subagent-age">{ago(a.written)}</span>
+        <span className={`workflow-subagent-state subagent-${a.state}`}>{SUBAGENT_WORDS[a.state]}</span>
+      </button>
+    </li>
   );
 }
 
@@ -157,25 +298,28 @@ function SubagentDetail({ sessionId, agentId }: { sessionId: string; agentId: st
   const [page, setPage] = useState<TranscriptPage | null>(null);
   const state = (page?.state ?? "") as SubagentState;
   const known = state in SUBAGENT_LOOK;
+  const ui = useDetailTarget("subagent", transcriptKey(sessionId, agentId), page?.name ?? "Subagent");
   return (
-    <div id="workflow-detail" className="subagent-detail" data-subagent-key={`agent:${sessionId}/${agentId}`}>
-      <div className="workflow-detail-head">
+    <div id="workflow-detail" className="subagent-detail" data-subagent-key={`agent:${sessionId}/${agentId}`}
+         ref={ui.whole}>
+      <div className="workflow-detail-head" ref={ui.part("header")}>
         <WorkflowOrb state={known ? SUBAGENT_LOOK[state] : "silent"} size={88} particles={600} />
         <span className="workflow-detail-title">
           <span className="workflow-detail-name">{page?.name ?? "Subagent"}</span>
           {page && <span className="workflow-detail-pills">
-            <span className={`workflow-detail-state state-${known ? SUBAGENT_LOOK[state] : "silent"}`}>
+            <span className={`workflow-detail-state state-${known ? SUBAGENT_LOOK[state] : "silent"}`}
+                  ref={ui.part("state")}>
               {known ? SUBAGENT_WORDS[state] : "Unknown"}</span>
             {page.session_name && <span className="workflow-detail-dismissed">
               Subagent of {page.session_name}</span>}
           </span>}
         </span>
-        <button type="button" className="workflow-close" title="Close" aria-label="Close"
-                onClick={() => openWorkflow.set(null)}>×</button>
+        <button type="button" className="workflow-close" title="Close" aria-label="Close" ref={ui.part("close")}
+                {...bindingProps(bind("workflow.close", {}))}>×</button>
       </div>
       <div className="workflow-tab-view subagent-transcript">
         <AgentTranscript sessionId={sessionId} subagent={agentId} fallbackName="Subagent"
-                         gone={false} bare onPage={setPage} />
+                         gone={false} bare onPage={setPage} partRef={ui.part} />
       </div>
     </div>
   );
@@ -185,8 +329,9 @@ const ITEM_ICONS: Record<string, string> = {
   pending: "○", running: "◐", waiting: "◔", blocked: "■", done: "●", failed: "✕", skipped: "–",
 };
 
-function ItemIcon({ item }: { item: WorkflowItem }) {
-  return <span className={`item-icon item-${item.state}`} title={item.state}>{ITEM_ICONS[item.state] ?? "○"}</span>;
+function ItemIcon({ item, partRef }: { item: WorkflowItem; partRef?: (el: Element | null) => void }) {
+  return <span className={`item-icon item-${item.state}`} title={item.state} ref={partRef}>
+    {ITEM_ICONS[item.state] ?? "○"}</span>;
 }
 
 function Phases({ w }: { w: Workflow }) {
@@ -195,19 +340,25 @@ function Phases({ w }: { w: Workflow }) {
   const tasks = w.items.filter((i) => i.kind === "task");
   return (
     <ol className="phase-stepper">
-      {phases.map(({ item, at }, n) => {
-        const own = tasks.filter((t) => t.phase === item.slug);
-        const done = own.filter((t) => t.state === "done" || t.state === "skipped").length;
-        return (
-          <li key={item.slug} className={`phase-step at-${at}`} data-phase={item.slug}>
-            <span className="phase-step-dot">{at === "done" ? "✓" : n + 1}</span>
-            <span className="phase-step-title">{item.title}</span>
-            {own.length > 0 && <><TaskBar done={done} total={own.length} />
-              <span className="phase-step-count">{done}/{own.length}</span></>}
-          </li>
-        );
-      })}
+      {phases.map(({ item, at }, n) => (
+        <PhaseStep key={item.slug} workflowId={w.id} item={item} at={at} n={n}
+                   own={tasks.filter((t) => t.phase === item.slug)} />
+      ))}
     </ol>
+  );
+}
+
+function PhaseStep({ workflowId, item, at, n, own }: {
+  workflowId: string; item: WorkflowItem; at: string; n: number; own: WorkflowItem[] }) {
+  const ui = useDetailTarget("workflowPhase", `${workflowId}/${item.slug}`, item.title);
+  const done = own.filter((t) => t.state === "done" || t.state === "skipped").length;
+  return (
+    <li className={`phase-step at-${at}`} data-phase={item.slug} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <span className="phase-step-dot" ref={ui.part("state")}>{at === "done" ? "✓" : n + 1}</span>
+      <span className="phase-step-title">{item.title}</span>
+      {own.length > 0 && <><TaskBar done={done} total={own.length} />
+        <span className="phase-step-count" ref={ui.part("progress")}>{done}/{own.length}</span></>}
+    </li>
   );
 }
 
@@ -222,19 +373,20 @@ function Tasks({ w }: { w: Workflow }) {
       {groups.map((g) => (
         <section key={g.phase.slug} className={`task-column at-${g.at}`}>
           <h5>{g.phase.title}</h5>
-          {g.tasks.map((t) => <TaskCard key={t.slug} task={t} />)}
+          {g.tasks.map((t) => <TaskCard key={t.slug} workflowId={w.id} task={t} />)}
         </section>
       ))}
       {loose.length > 0 && <section className="task-column"><h5>Other</h5>
-        {loose.map((t) => <TaskCard key={t.slug} task={t} />)}</section>}
+        {loose.map((t) => <TaskCard key={t.slug} workflowId={w.id} task={t} />)}</section>}
     </div>
   );
 }
 
-function TaskCard({ task: t }: { task: WorkflowItem }) {
+function TaskCard({ workflowId, task: t }: { workflowId: string; task: WorkflowItem }) {
+  const ui = useDetailTarget("workflowTask", `${workflowId}/${t.slug}`, t.title);
   return (
-    <div className={`task-card item-${t.state}`} data-task={t.slug}>
-      <ItemIcon item={t} />
+    <div className={`task-card item-${t.state}`} data-task={t.slug} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <ItemIcon item={t} partRef={ui.part("state")} />
       <span className="task-card-title">{t.title}</span>
       {t.total ? <TaskBar done={t.done ?? 0} total={t.total} /> : null}
     </div>
@@ -251,29 +403,42 @@ function Progress({ w }: { w: Workflow }) {
         <Ring done={w.tasks_done} total={w.tasks_total} size={120} label="Tasks done" />
         <span className="ring-caption">tasks</span>
       </div>
-      {counted.map((t) => (
-        <div key={t.slug} className="progress-row">
-          <ItemIcon item={t} /><span className="task-card-title">{t.title}</span>
-          <TaskBar done={t.done ?? 0} total={t.total ?? 0} />
-          <span className="phase-step-count">{t.done ?? 0}/{t.total}</span>
-        </div>
-      ))}
+      {counted.map((t) => <ProgressRow key={t.slug} workflowId={w.id} task={t} />)}
     </div>
   );
 }
 
-function Opened({ kind, items, empty }: { kind: "wait" | "blocker"; items: OpenItem[]; empty: string }) {
+/** A counted task on the Progress tab: the same task, its bar large. */
+function ProgressRow({ workflowId, task: t }: { workflowId: string; task: WorkflowItem }) {
+  const ui = useDetailTarget("workflowTask", `${workflowId}/${t.slug}`, t.title);
+  return (
+    <div className="progress-row" ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <ItemIcon item={t} partRef={ui.part("state")} /><span className="task-card-title">{t.title}</span>
+      <TaskBar done={t.done ?? 0} total={t.total ?? 0} />
+      <span className="phase-step-count" ref={ui.part("progress")}>{t.done ?? 0}/{t.total}</span>
+    </div>
+  );
+}
+
+function Opened({ workflowId, kind, items, empty }: {
+  workflowId: string; kind: "wait" | "blocker"; items: OpenItem[]; empty: string }) {
   if (!items.length) return <p className="workflow-empty">{empty}</p>;
   return (
     <div className="open-cards">
-      {items.map((o) => (
-        <div key={o.key} className={`open-card open-card-${kind}`}>
-          <OpenIcon kind={kind} />
-          <span className="open-card-text">{o.summary}</span>
-          <AgeBar since={o.opened_at} />
-          <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? ` · until ${String(o.detail.until)}` : ""}</span>
-        </div>
-      ))}
+      {items.map((o) => <OpenCard key={o.key} workflowId={workflowId} kind={kind} o={o} />)}
+    </div>
+  );
+}
+
+function OpenCard({ workflowId, kind, o }: { workflowId: string; kind: "wait" | "blocker"; o: OpenItem }) {
+  const ui = useDetailTarget(kind === "wait" ? "workflowWait" : "workflowBlocker", `${workflowId}/${o.key}`,
+                             kind === "wait" ? "Wait" : "Blocker");
+  return (
+    <div className={`open-card open-card-${kind}`} data-key={o.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <OpenIcon kind={kind} />
+      <span className="open-card-text">{o.summary}</span>
+      <AgeBar since={o.opened_at} />
+      <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? ` · until ${String(o.detail.until)}` : ""}</span>
     </div>
   );
 }
@@ -288,10 +453,14 @@ function Decisions({ w }: { w: Workflow }) {
   );
 }
 
+/** One decision. Answering it is his own act (or the brain's acting
+ *  `answer_workflow_decision` on his word), never navigation: the brain
+ *  can point at its options and answer box, not press them. */
 function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
   const [text, setText] = useState("");
   const [refused, setRefused] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const ui = useDetailTarget("workflowDecision", `${id}/${o.key}`, "Decision");
   const options = Array.isArray(o.detail.options) ? o.detail.options.map(String) : [];
   const recommended = typeof o.detail.recommendation === "string" ? o.detail.recommendation : null;
   // A recommendation may say why after the option's own words.
@@ -308,12 +477,12 @@ function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
     }, (e: Error) => { setSending(false); setRefused(e.message); });
   };
   return (
-    <li className="workflow-decision" data-key={o.key}>
+    <li className="workflow-decision" data-key={o.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <OpenIcon kind="decision" />
       <p className="workflow-decision-question">{o.summary}</p>
       {recommended && <p className="workflow-recommended">★ {recommended}</p>}
       {options.length > 0 && (
-        <div className="workflow-options">
+        <div className="workflow-options" ref={ui.part("options")}>
           {options.map((option) => (
             <button key={option} type="button" disabled={sending}
                     className={`workflow-option${isRecommended(option) ? " recommended" : ""}`}
@@ -321,7 +490,7 @@ function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
           ))}
         </div>
       )}
-      <div className="workflow-answer">
+      <div className="workflow-answer" ref={ui.part("answer")}>
         <input type="text" value={text} placeholder="Another answer..."
                onChange={(e) => setText(e.target.value)}
                onKeyDown={(e) => { if (e.key === "Enter") answer(text); }} />
@@ -334,12 +503,13 @@ function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
 
 function Transcript({ id }: { id: string }) {
   const live = useLiveRead(() => getTranscript(id), [workflowsChanged]);
+  const ui = useDetailTarget("workflowTranscript", id, "Transcript");
   const agents = live.value?.agents;
   return (
-    <div className="workflow-transcript">
+    <div className="workflow-transcript" ref={(el) => { ui.whole(el); ui.part("list")(el); }}>
       {live.error && <p className="read-failure">Couldn't read the transcript ({live.error}); trying again.</p>}
       {agents && agents.length === 0 && <p className="workflow-empty">No agent has attached to this workflow</p>}
-      {agents?.map((a) => <AgentTranscript key={a.session_id} sessionId={a.session_id}
+      {agents?.map((a) => <AgentTranscript key={a.session_id} sessionId={a.session_id} workflowId={id}
                                            fallbackName={a.name ?? a.session_id} gone={a.state === "gone"} />)}
       {live.value?.subagents.map((a) => (
         <AgentTranscript key={a.key} sessionId={a.session_id} subagent={a.id}
@@ -353,22 +523,42 @@ const ROLE_LABELS: Record<TranscriptEntry["role"], string> = {
   you: "Prompt", jarvis: "From JARVIS", agent: "Agent", tool: "Tool", result: "Result",
 };
 
+/** How an agent's transcript is registered: an attached agent's in its
+ *  workflow (`workflowAgent`), a subagent's on its own (`subagent`), or
+ *  through the parts of the subagent detail it sits in (`partRef`). */
+function useTranscriptTarget(sessionId: string, name: string, workflowId?: string, subagent?: string,
+                             partRef?: PartRef): PartRef {
+  const own = useUiTarget(partRef ? null : {
+    ref: subagent
+      ? { region: "main", view: "main.workflow", kind: "subagent", key: transcriptKey(sessionId, subagent) }
+      : { region: "main", view: "main.workflow", kind: "workflowAgent", key: `${workflowId}/${sessionId}` },
+    label: name, socket: CENTRE_SOCKET,
+  });
+  if (partRef) return partRef;
+  // An attached agent's section is its whole; a subagent's is its transcript.
+  return (part) => (part === "section" || part === "transcript"
+    ? (el) => { own.whole(el); own.part(part)(el); } : own.part(part));
+}
+
 /** One agent's transcript: the latest page, kept current, and earlier pages
- *  added above it on request. Stays at the bottom while it is there. With
- *  `subagent`, that subagent of the session instead; `bare` leaves out its
- *  own heading, and `onPage` hears each latest page read. */
-function AgentTranscript({ sessionId, fallbackName, gone, subagent, bare, onPage }: {
-  sessionId: string; fallbackName: string; gone: boolean; subagent?: string; bare?: boolean;
-  onPage?: (page: TranscriptPage) => void }) {
+ *  added above it by `workflow.transcript.earlier`. Stays at the bottom
+ *  while it is there. With `subagent`, that subagent of the session
+ *  instead; `bare` leaves out its own heading, `onPage` hears each latest
+ *  page read, and `partRef` registers it through the detail it sits in. */
+function AgentTranscript({ sessionId, workflowId, fallbackName, gone, subagent, bare, onPage, partRef }: {
+  sessionId: string; workflowId?: string; fallbackName: string; gone: boolean; subagent?: string; bare?: boolean;
+  onPage?: (page: TranscriptPage) => void; partRef?: PartRef }) {
   const [latest, setLatest] = useState<TranscriptEntry[]>([]);
-  const [older, setOlder] = useState<TranscriptEntry[]>([]);
-  const [earlier, setEarlier] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<number | null | undefined>(undefined);
   const [name, setName] = useState(fallbackName);
   const [state, setState] = useState("");
   const [parent, setParent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement | null>(null);
   const atBottom = useRef(true);
+  const key = transcriptKey(sessionId, subagent);
+  const { older, earlier } = transcriptPages.use(key, cursor);
+  const part = useTranscriptTarget(sessionId, name, workflowId, subagent, partRef);
 
   useEffect(() => {
     if (gone) return;
@@ -381,45 +571,37 @@ function AgentTranscript({ sessionId, fallbackName, gone, subagent, bare, onPage
       setParent(page.session_name ?? null);
       onPage?.(page);
       setError(null);
-      setEarlier((e) => (older.length ? e : page.earlier));
+      setCursor(page.earlier);
     }).catch((e: Error) => { if (!stopped) setError(e.message); });
     read();
     const timer = setInterval(read, TRANSCRIPT_EVERY_MS);
     const unsubscribe = workflowsChanged.subscribe(read);
     return () => { stopped = true; clearInterval(timer); unsubscribe(); };
-  }, [sessionId, subagent, gone, older.length]);
+  }, [sessionId, subagent, gone]);                    // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     const el = box.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [latest]);
 
-  async function loadEarlier() {
-    if (earlier == null) return;
-    try {
-      const page = await getSessionTranscript(sessionId, earlier, subagent);
-      setOlder((o) => [...page.entries, ...o]);
-      setEarlier(page.earlier);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
   // The latest page and the earlier ones overlap once the transcript grows.
   const seen = new Set(latest.map((e) => `${e.offset}:${e.role}:${e.text.length}`));
   const entries = [...older.filter((e) => !seen.has(`${e.offset}:${e.role}:${e.text.length}`)), ...latest];
   return (
-    <section className="workflow-agent">
+    <section className="workflow-agent" ref={subagent ? undefined : part("section")}>
       {!bare && <h4>{name} <span className="workflow-item-slug">{gone ? "ended" : state}</span>
         {subagent && parent && <span className="workflow-item-slug"> · subagent of {parent}</span>}</h4>}
       {gone && <p className="workflow-empty">This agent's session has ended.</p>}
       {error && <p className="read-failure">Couldn't read its transcript ({error}); trying again.</p>}
-      <div className="transcript-entries" ref={box}
+      <div className="transcript-entries"
+           ref={both(box, part(subagent ? "transcript" : "entries"))}
            onScroll={(e) => {
              const el = e.currentTarget;
              atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
            }}>
-        {earlier != null && <button type="button" className="transcript-earlier" onClick={loadEarlier}>
+        {earlier != null && <button type="button" className="transcript-earlier" ref={part("earlier")}
+                                    {...bindingProps(bind("workflow.transcript.earlier",
+                                      subagent ? { sessionId, agentId: subagent } : { sessionId }))}>
           Load earlier</button>}
         {entries.map((e, i) => (
           <div key={`${e.offset}-${i}`} className={`transcript-entry role-${e.role}`}>
@@ -437,20 +619,24 @@ function AgentTranscript({ sessionId, fallbackName, gone, subagent, bare, onPage
 
 function Events({ id }: { id: string }) {
   const live = useLiveRead(() => getEvents(id), [workflowsChanged]);
-  const [kind, setKind] = useState("");
+  const now = useSyncExternalStore(shown.subscribe, shown.get);
+  const kind = now.workflowId === id ? now.kind : "";
+  const ui = useDetailTarget("workflowEvents", id, "Events");
   const events = live.value ?? [];
   const kinds = [...new Set(events.map((e) => e.kind))].sort();
-  const shown = [...(kind ? events.filter((e) => e.kind === kind) : events)].reverse();
+  const list = [...(kind ? events.filter((e) => e.kind === kind) : events)].reverse();
   return (
-    <div className="workflow-events">
+    <div className="workflow-events" ref={ui.whole}>
       {live.error && <p className="read-failure">Couldn't read the events ({live.error}); trying again.</p>}
-      <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind">
+      <select value={kind} aria-label="Kind" ref={ui.part("filter")} data-ui-command="workflow.events.filter"
+              onChange={(e) => runBinding(bind("workflow.events.filter",
+                e.target.value ? { workflowId: id, kind: e.target.value } : { workflowId: id }))}>
         <option value="">Every kind</option>
         {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
       </select>
-      <table>
+      <table ref={ui.part("list")}>
         <tbody>
-          {shown.map((e) => (
+          {list.map((e) => (
             <tr key={e.seq} data-kind={e.kind}>
               <td>{e.seq}</td><td>{clock(e.at)}</td><td>{e.kind}</td>
               <td>{e.item ?? ""}</td><td>{e.summary}</td>

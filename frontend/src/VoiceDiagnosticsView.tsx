@@ -18,15 +18,26 @@
  *   - Messages: every line of text the page showed, newest first, repeats
  *     grouped;
  *   - Save: the stretch on screen as JSON.
+ *
+ * Registered for pointing at: the view (`voice`: its overview, range,
+ * zoom, timeline, incidents, notifications, messages and Close) and each
+ * incident (`voiceIncident`, by its record id). Close is
+ * `voice.diagnostics.close`, as the brain runs it. The range and the zoom
+ * are still this view's own state until their commands are declared
+ * (`voice.range`, `voice.zoom`, in the diagnostics family). Save and the
+ * quiet page are his own acts, not navigation.
  */
 
 import { useState, useSyncExternalStore } from "react";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useLiveRead } from "./liveRead";
 import { useTick } from "./WorkflowsView";
 import { Chip, HeadroomBar, HeardRing, PipelineTrack, Sparkline, SpeedRing, type Point } from "./VoiceVisuals";
 import { ago } from "./workflows";
 import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, getHistory, health, heardShare, isQuiet, notices,
-         openDiagnostics, quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
+         quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
 import { beforeDrops, clock, DROP_KINDS, groupMessages, INCIDENT_KINDS, INCIDENT_WORDS,
          noticesBySource, quietComparison } from "./voiceAnalysis";
 
@@ -44,25 +55,30 @@ export function VoiceDiagnosticsView() {
   // Read again whenever the range, the zoom or the record changes; the
   // window ends now, so it is worked out at read time.
   const key = `${range.id}:${zoom ?? ""}`;
+  const ui = useUiTarget({ ref: { region: "main", view: "main.diagnostics", kind: "voice" },
+                           label: "Voice diagnostics", socket: CENTRE_SOCKET });
   return (
-    <div id="voice-diagnostics">
-      <Overview />
-      <div className="voice-range" role="group" aria-label="How far back">
+    <div id="voice-diagnostics" ref={ui.whole}>
+      <Overview partRef={ui.part} />
+      <div className="voice-range" role="group" aria-label="How far back" ref={ui.part("range")}>
         {RANGES.map((r) => (
           <button key={r.id} type="button" className={`voice-range-button${!zoom && r.id === range.id ? " selected" : ""}`}
                   onClick={() => { setRange(r); setZoom(null); }}>{r.words}</button>
         ))}
-        {zoom !== null && <span className="voice-zoomed">The half minute before the drop at {clock(zoom)}</span>}
+        {zoom !== null && <span className="voice-zoomed" ref={ui.part("zoom")}>The half minute before the drop at {clock(zoom)}</span>}
       </div>
       <Stretch key={key} window={() => {
         const now = Date.now() / 1000;
         return zoom !== null ? [zoom - ZOOM_BEFORE_SEC, zoom + ZOOM_AFTER_SEC] : [now - range.sec, now];
-      }} onZoom={setZoom} />
+      }} onZoom={setZoom} partRef={ui.part} />
     </div>
   );
 }
 
-function Overview() {
+/** A part's callback ref, from the view's registered target. */
+type PartRef = (part: string) => (el: Element | null) => void;
+
+function Overview({ partRef }: { partRef: PartRef }) {
   useTick(1000);
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get).value;
@@ -72,7 +88,7 @@ function Overview() {
   const last = record?.last2min[record.last2min.length - 1];
   const t = record?.today;
   return (
-    <section className="voice-overview" aria-label="Voice overview">
+    <section className="voice-overview" aria-label="Voice overview" ref={partRef("overview")}>
       <span className="voice-ring-cap">
         <HeardRing share={record ? heardShare(record.lastHour) : null} tone={status.tone} size={72} />
         <small>heard, last hour</small>
@@ -90,8 +106,8 @@ function Overview() {
         <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={72} />
         <small>speed</small>
       </span>
-      <button type="button" className="workflow-close" title="Close" aria-label="Close"
-              onClick={() => openDiagnostics.set(false)}>×</button>
+      <button type="button" className="workflow-close" title="Close" aria-label="Close" ref={partRef("close")}
+              {...bindingProps(bind("voice.diagnostics.close", {}))}>×</button>
       {t && (
         <div className="voice-chips voice-today" aria-label="Today">
           <Chip tone="plain">listened {Math.round(t.listenedSec / 60)} min</Chip>
@@ -105,8 +121,8 @@ function Overview() {
   );
 }
 
-function Stretch({ window: span, onZoom }: { window: () => [number, number];
-                                              onZoom: (t: number) => void }) {
+function Stretch({ window: span, onZoom, partRef }: { window: () => [number, number];
+                                                       onZoom: (t: number) => void; partRef: PartRef }) {
   const [from, to] = span();
   const read = useLiveRead(() => { const [f, t] = span(); return getHistory(f, t); }, [voiceChanged]);
   const local = useSyncExternalStore(notices.subscribe, notices.get);
@@ -115,18 +131,22 @@ function Stretch({ window: span, onZoom }: { window: () => [number, number];
   return (
     <>
       {read.error && <p className="read-failure">Couldn't read the voice record ({read.error}); trying again.</p>}
-      <Timeline samples={samples} events={events} from={from} to={to} onZoom={onZoom} />
-      <Incidents events={events} />
-      <Notifications samples={samples} events={events} />
-      <Messages events={events} local={local.filter((n) => n.at / 1000 >= from)} />
+      <Timeline samples={samples} events={events} from={from} to={to} onZoom={onZoom} partRef={partRef("timeline")} />
+      <Incidents events={events} partRef={partRef("incidents")} />
+      <Notifications samples={samples} events={events} partRef={partRef("notifications")} />
+      <Messages events={events} local={local.filter((n) => n.at / 1000 >= from)} partRef={partRef("messages")} />
       <button type="button" className="voice-save" disabled={!read.value}
               onClick={() => save(from, to, samples, events)}>Save as JSON</button>
     </>
   );
 }
 
-function Timeline({ samples, events, from, to, onZoom }: {
-  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => void }) {
+/** A section's callback ref, as its view's registered part. */
+type SectionRef = (el: Element | null) => void;
+
+function Timeline({ samples, events, from, to, onZoom, partRef }: {
+  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => void;
+  partRef: SectionRef }) {
   const series = (f: (s: Sample) => number | null): Point[] => samples.map((s) => ({ t: s.at, v: f(s) }));
   const drops = events.filter((e) => DROP_KINDS.has(e.kind))
     .map((e) => ({ t: e.at, title: `${INCIDENT_WORDS[e.kind]} at ${clock(e.at)}${e.cause ? `: ${e.cause}` : ""}` }));
@@ -144,7 +164,7 @@ function Timeline({ samples, events, from, to, onZoom }: {
     { label: "Notifications / s", points: series((s) => s.notices), max: 20, bars: true },
   ];
   return (
-    <section className="voice-timeline" aria-label="Timeline">
+    <section className="voice-timeline" aria-label="Timeline" ref={partRef}>
       <h3>Timeline</h3>
       {!samples.length && <p className="voice-empty">Nothing recorded in this stretch: the microphone was not streaming.</p>}
       {rows.map((r) => (
@@ -159,28 +179,34 @@ function Timeline({ samples, events, from, to, onZoom }: {
   );
 }
 
-function Incidents({ events }: { events: VoiceEvent[] }) {
+function Incidents({ events, partRef }: { events: VoiceEvent[]; partRef: SectionRef }) {
   const incidents = events.filter((e) => INCIDENT_KINDS.has(e.kind)).reverse();
   return (
-    <section className="voice-incidents" aria-label="Incidents">
+    <section className="voice-incidents" aria-label="Incidents" ref={partRef}>
       <h3>Incidents</h3>
       {!incidents.length && <p className="voice-empty">No drops or failures in this stretch.</p>}
       <div className="voice-cards">
-        {incidents.slice(0, 50).map((e) => (
-          <article key={e.id} className={`voice-card kind-${e.kind}`}>
-            <span className="voice-card-when">{clock(e.at)} · {INCIDENT_WORDS[e.kind] ?? e.kind}</span>
-            <p><b>{e.cause || "No cause recorded"}</b>{e.text ? ` ${e.text}` : ""}</p>
-            {e.topProcesses.length > 0 && (
-              <p className="voice-card-busy">Busiest: {e.topProcesses.map((p) => `${p.name} ${Math.round(p.cpu)}%`).join(", ")}</p>
-            )}
-          </article>
-        ))}
+        {incidents.slice(0, 50).map((e) => <IncidentCard key={e.id} e={e} />)}
       </div>
     </section>
   );
 }
 
-function Notifications({ samples, events }: { samples: Sample[]; events: VoiceEvent[] }) {
+function IncidentCard({ e }: { e: VoiceEvent }) {
+  const ui = useUiTarget({ ref: { region: "main", view: "main.diagnostics", kind: "voiceIncident", key: String(e.id) },
+                           label: INCIDENT_WORDS[e.kind] ?? "Incident", socket: CENTRE_SOCKET });
+  return (
+    <article className={`voice-card kind-${e.kind}`} data-event={e.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <span className="voice-card-when">{clock(e.at)} · {INCIDENT_WORDS[e.kind] ?? e.kind}</span>
+      <p><b>{e.cause || "No cause recorded"}</b>{e.text ? ` ${e.text}` : ""}</p>
+      {e.topProcesses.length > 0 && (
+        <p className="voice-card-busy">Busiest: {e.topProcesses.map((p) => `${p.name} ${Math.round(p.cpu)}%`).join(", ")}</p>
+      )}
+    </article>
+  );
+}
+
+function Notifications({ samples, events, partRef }: { samples: Sample[]; events: VoiceEvent[]; partRef: SectionRef }) {
   const quiet = useSyncExternalStore(quietUntil.subscribe, isQuiet);
   const sources = noticesBySource(samples);
   const most = Math.max(1, ...sources.map(([, n]) => n));
@@ -188,7 +214,7 @@ function Notifications({ samples, events }: { samples: Sample[]; events: VoiceEv
   const q = quietComparison(samples, events);
   const perHour = (x: { hours: number; drops: number }) => x.hours > 0 ? (x.drops / x.hours).toFixed(1) : "—";
   return (
-    <section className="voice-notifications" aria-label="Notifications">
+    <section className="voice-notifications" aria-label="Notifications" ref={partRef}>
       <h3>Notifications</h3>
       <div className="voice-bars">
         {sources.map(([source, n]) => (
@@ -222,10 +248,11 @@ function Notifications({ samples, events }: { samples: Sample[]; events: VoiceEv
   );
 }
 
-function Messages({ events, local }: { events: VoiceEvent[]; local: ReturnType<typeof notices.get> }) {
+function Messages({ events, local, partRef }: {
+  events: VoiceEvent[]; local: ReturnType<typeof notices.get>; partRef: SectionRef }) {
   const groups = groupMessages(events, local);
   return (
-    <section className="voice-messages" aria-label="Messages">
+    <section className="voice-messages" aria-label="Messages" ref={partRef}>
       <h3>Messages</h3>
       {!groups.length && <p className="voice-empty">Nothing was shown in this stretch.</p>}
       <ol>

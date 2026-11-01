@@ -19,6 +19,7 @@
  */
 
 import { useState, useSyncExternalStore, type FormEvent } from "react";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { FolderDetail } from "./FolderDetail";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
@@ -26,25 +27,88 @@ import {
   PROVIDER_WORDS, registerFolder, resolvePath, ROLE_WORDS, selectedFolder,
   type Availability, type Candidate, type Folder, type Resolved, type Role,
 } from "./folders";
+import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
+import type { CommandArgs } from "./uiContract";
+import { bind, bindingProps, runBinding } from "./uiNavigation";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
 
-type ListView = "registered" | "discovered";
+type ListView = CommandArgs["folders.list"]["view"];
+
+// ── what the catalog list shows ─────────────────────────────────────────
+//
+// Registered or Discovered, the search, the role and availability filters,
+// whether removed and ignored folders show, and whether Add existing
+// folder is open: kept here (so they stay as left while another view is
+// shown) and changed only by the folders.list, folders.search,
+// folders.filter and folders.add.open commands, a click and the brain
+// alike. None of them reads, saves or changes a folder.
+
+interface ListState {
+  view: ListView;
+  search: string;
+  role: Role | "";
+  availability: Availability | "";
+  removed: boolean;
+  ignored: boolean;
+  adding: boolean;
+}
+
+const listState = createStore<ListState>({
+  view: "registered", search: "", role: "", availability: "", removed: false, ignored: false, adding: false,
+});
+
+const always = () => ({ available: true });
+const setList = (change: Partial<ListState>) => listState.set({ ...listState.get(), ...change });
+
+registerCommand("folders.list", {
+  availability: always,
+  execute({ view }) { setList({ view }); return { status: "completed", effects: ["list.filtered"] }; },
+});
+
+registerCommand("folders.search", {
+  availability: always,
+  execute({ text }) { setList({ search: text ?? "" }); return { status: "completed", effects: ["list.filtered"] }; },
+});
+
+registerCommand("folders.filter", {
+  availability: always,
+  execute({ role, availability, removed, ignored }) {
+    setList({
+      ...(role === undefined ? {} : { role: role === "any" ? "" : role }),
+      ...(availability === undefined ? {} : { availability: availability === "any" ? "" : availability }),
+      ...(removed === undefined ? {} : { removed }),
+      ...(ignored === undefined ? {} : { ignored }),
+    });
+    return { status: "completed", effects: ["list.filtered"] };
+  },
+});
+
+registerCommand("folders.add.open", {
+  availability: always,
+  execute({ open }) { setList({ adding: open }); return { status: "completed", effects: [] }; },
+});
+
+/** A filter change, as a person's control runs it. */
+const filter = (args: CommandArgs["folders.filter"]) => runBinding(bind("folders.filter", args));
 
 function ago(at: number | null): string {
   return at === null ? "never" : shortAgo(Date.now() - at * 1000, 10_000);
 }
 
 function CatalogRow({ f, selected }: { f: Folder; selected: boolean }) {
+  const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "folderRow", key: f.id },
+                           label: f.display_name, socket: CENTRE_SOCKET });
   return (
     <li>
       <button type="button" className={`folder-row${selected ? " selected" : ""}`}
-              aria-current={selected ? "true" : undefined}
-              onClick={() => selectedFolder.set(f.id)}>
+              aria-current={selected ? "true" : undefined} ref={(el) => { ui.whole(el); ui.part("row")(el); }}
+              {...bindingProps(bind("folders.open", { folderId: f.id }))}>
         <RoleMark role={f.role} />
-        <span className="folder-row-name" title={f.location.canonical_path}>{f.display_name}</span>
+        <span className="folder-row-name" title={f.location.canonical_path} ref={ui.part("name")}>{f.display_name}</span>
         <span className="folder-row-node">{nodeWords(f)}</span>
-        <AvailabilityMark availability={f.location.availability} />
+        <AvailabilityMark availability={f.location.availability} ref={ui.part("availability")} />
         <span className="folder-row-seen">checked {ago(f.location.last_checked_at)}</span>
       </button>
     </li>
@@ -66,11 +130,13 @@ function CandidateRow({ c }: { c: Candidate }) {
     }
   };
   const who = c.providers.map((p) => PROVIDER_WORDS[p] ?? p).join(", ");
+  const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "folderCandidate", key: c.id },
+                           label: "Discovered folder", socket: CENTRE_SOCKET });
   return (
-    <li className="candidate-row">
+    <li className="candidate-row" ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <div className="candidate-head">
         <RoleMark role={c.proposed_role} />
-        <span className="candidate-path" title={c.path}>{c.path}</span>
+        <span className="candidate-path" title={c.path} ref={ui.part("path")}>{c.path}</span>
       </div>
       <div className="candidate-meta">
         <AvailabilityMark availability={c.availability} />
@@ -79,13 +145,13 @@ function CandidateRow({ c }: { c: Candidate }) {
       </div>
       {c.refusal && <p className="folder-note">JARVIS does not read this location, so it cannot be registered.</p>}
       {c.access && !c.refusal && <p className="folder-note">Would be read as: {c.access.description}.</p>}
-      <div className="candidate-actions">
+      <div className="candidate-actions" ref={ui.part("actions")}>
         {c.state === "discovered" && (
           <>
             <button type="button" className="folder-button" disabled={busy || !!c.refusal || c.availability !== "available"}
                     onClick={() => act(async () => {
                       const done = await registerFolder(c.path, c.access!.reader);
-                      selectedFolder.set(done.folder.id);
+                      runBinding(bind("folders.open", { folderId: done.folder.id }));
                     })}>
               Register
             </button>
@@ -135,7 +201,7 @@ function AddFolder({ onDone }: { onDone: () => void }) {
       const removed = checked.existing?.lifecycle === "removed";
       const done = await registerFolder(checked.supplied_path, checked.access.reader,
                                         name.trim() || undefined, removed);
-      selectedFolder.set(done.folder.id);
+      runBinding(bind("folders.open", { folderId: done.folder.id }));
       onDone();
     } catch (err) {
       const e = err as FolderError;
@@ -198,13 +264,10 @@ export function FoldersView() {
   const live = useSyncExternalStore(catalog.subscribe, catalog.get);
   const found = useSyncExternalStore(candidates.subscribe, candidates.get);
   const selected = useSyncExternalStore(selectedFolder.subscribe, selectedFolder.get);
-  const [view, setView] = useState<ListView>("registered");
-  const [search, setSearch] = useState("");
-  const [role, setRole] = useState<Role | "">("");
-  const [availability, setAvailability] = useState<Availability | "">("");
-  const [showIgnored, setShowIgnored] = useState(false);
-  const [showRemoved, setShowRemoved] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const { view, search, role, availability, removed: showRemoved, ignored: showIgnored, adding } =
+    useSyncExternalStore(listState.subscribe, listState.get);
+  const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "foldersList" },
+                           label: "Folder catalog", socket: CENTRE_SOCKET });
 
   const all = live.value ? [...live.value.folders, ...(showRemoved ? live.value.removed : [])] : [];
   const folders = all.filter((f) => matches(search, f.display_name, f.location.canonical_path)
@@ -220,54 +283,64 @@ export function FoldersView() {
 
   return (
     <div id="folders-view" className="folders-view">
-      <section className="folders-catalog" aria-label="Folder catalog">
+      <section className="folders-catalog" aria-label="Folder catalog" ref={ui.whole}>
         <div className="folders-toolbar">
-          <label className="folder-field folder-search">
+          <label className="folder-field folder-search" ref={ui.part("search")}>
             <span className="visually-hidden">Search folders by name or path</span>
-            <input type="search" placeholder="Search name or path" value={search}
-                   onChange={(e) => setSearch(e.target.value)} />
+            <input type="search" placeholder="Search name or path" value={search} maxLength={200}
+                   data-ui-command="folders.search"
+                   onChange={(e) => runBinding(e.target.value ? bind("folders.search", { text: e.target.value })
+                                                              : bind("folders.search", {}))} />
           </label>
-          <button type="button" className="folder-button" aria-expanded={adding}
-                  onClick={() => setAdding((a) => !a)}>Add existing folder</button>
+          <button type="button" className="folder-button" aria-expanded={adding} ref={ui.part("add")}
+                  {...bindingProps(bind("folders.add.open", { open: !adding }))}>Add existing folder</button>
         </div>
         <div className="folders-tabs" role="tablist" aria-label="Which folders">
           {(["registered", "discovered"] as ListView[]).map((v) => (
-            <button key={v} type="button" role="tab" aria-selected={view === v}
-                    className={`folder-tab${view === v ? " selected" : ""}`} onClick={() => setView(v)}>
+            <button key={v} type="button" role="tab" aria-selected={view === v} ref={ui.part(v)}
+                    className={`folder-tab${view === v ? " selected" : ""}`}
+                    {...bindingProps(bind("folders.list", { view: v }))}>
               {v === "registered" ? `Registered (${live.value?.folders.length ?? 0})`
                                   : `Discovered (${found.value?.discovered.length ?? 0})`}
             </button>
           ))}
         </div>
         <div className="folders-filters">
-          <label className="folder-field">
+          <label className="folder-field" ref={ui.part("role")}>
             <span>Role</span>
-            <select value={role} onChange={(e) => setRole(e.target.value as Role | "")}>
+            <select value={role} data-ui-command="folders.filter"
+                    onChange={(e) => filter({ role: (e.target.value || "any") as Role | "any" })}>
               <option value="">All roles</option>
               {ROLES.map((r) => <option key={r} value={r}>{ROLE_WORDS[r]}</option>)}
             </select>
           </label>
-          <label className="folder-field">
+          <label className="folder-field" ref={ui.part("availability")}>
             <span>Availability</span>
-            <select value={availability} onChange={(e) => setAvailability(e.target.value as Availability | "")}>
+            <select value={availability} data-ui-command="folders.filter"
+                    onChange={(e) => filter({ availability: (e.target.value || "any") as CommandArgs["folders.filter"]["availability"] })}>
               <option value="">Any</option>
               {AVAILABILITIES.map((a) => <option key={a} value={a}>{AVAILABILITY_WORDS[a]}</option>)}
             </select>
           </label>
           {view === "registered" ? (
-            <label className="folder-check">
-              <input type="checkbox" checked={showRemoved} onChange={(e) => setShowRemoved(e.target.checked)} />
+            <label className="folder-check" ref={ui.part("removed")}>
+              <input type="checkbox" checked={showRemoved} data-ui-command="folders.filter"
+                     onChange={(e) => filter({ removed: e.target.checked })} />
               Show removed
             </label>
           ) : (
-            <label className="folder-check">
-              <input type="checkbox" checked={showIgnored} onChange={(e) => setShowIgnored(e.target.checked)} />
+            <label className="folder-check" ref={ui.part("ignored")}>
+              <input type="checkbox" checked={showIgnored} data-ui-command="folders.filter"
+                     onChange={(e) => filter({ ignored: e.target.checked })} />
               Show ignored
             </label>
           )}
         </div>
-        {adding && <AddFolder onDone={() => { setAdding(false); setView("registered"); }} />}
-        <div className="folders-list" role="tabpanel" aria-label={view === "registered" ? "Registered" : "Discovered"}>
+        {adding && <AddFolder onDone={() => {
+          runBinding(bind("folders.add.open", { open: false }));
+          runBinding(bind("folders.list", { view: "registered" }));
+        }} />}
+        <div className="folders-list" role="tabpanel" ref={ui.part("list")} aria-label={view === "registered" ? "Registered" : "Discovered"}>
           {view === "registered" && (
             <>
               {!live.value && <p className="folder-note" role="status">{live.error ? `Couldn't read the catalog (${live.error}); trying again.` : "Reading the catalog…"}</p>}

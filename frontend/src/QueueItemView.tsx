@@ -18,6 +18,16 @@
  * A message's read receipt is sent once its body has been on screen, never
  * on selection. Nothing arriving changes this view: not its scroll, not the
  * text being written, not the review.
+ *
+ * Registered for pointing at: the item (`queueThread`: its head, whose
+ * turn it is, Back, Next, Close and the reply being written), each message
+ * (`queueMessage`: its card, body and receipt) and each file on a message
+ * (`queueAttachment`). Back, Next item, Close and a link to another item
+ * run `queue.back`, `queue.next`, `queue.close` and `queue.follow`
+ * (queue.ts), the same commands the brain runs, with their side effects:
+ * the next item becomes Active, leaving a reply saves its draft, and a
+ * body shown sends its read receipt. The item's work commands, replies,
+ * sends and files are his own acts, never navigation.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -39,6 +49,17 @@ import {
   type Directory, type QueueState, type ShownMessage,
 } from "./queueStore";
 import { clockTime } from "./network";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
+
+/** A part's callback ref, from a registered target. */
+type PartRef = (part: string) => (el: Element | null) => void;
+
+/** The open item, registered as the Queue's `queueThread` in the centre. */
+const useItemTarget = (thread: string | null, label: string) =>
+  useUiTarget(thread ? { ref: { region: "main", view: "main.queue", kind: "queueThread", key: thread },
+                         label, socket: CENTRE_SOCKET } : null);
 
 export function QueueItemView({ thread }: { thread: string }) {
   const state = useSyncExternalStore(queue.subscribe, queue.get);
@@ -78,14 +99,16 @@ function OneItem({ thread }: { thread: string }) {
   }, [thread, hint]);
   useEffect(() => resumeDraft(thread), [thread, state.drafts]);
 
+  const ui = useItemTarget(thread, subjectOf(state, thread) || "Message");
   const item = state.items[thread];
   if (!item) {
     return (
-      <div id="queue-item-view" className="queue-item-view">
+      <div id="queue-item-view" className="queue-item-view" ref={ui.whole}>
         <p className="read-failure" role="status">
           {loadError ? `Couldn't read this item (${loadError}); trying again on the next change.` : "Reading…"}
         </p>
-        <div className="item-actions"><button type="button" onClick={closeItem}>Close</button></div>
+        <div className="item-actions"><button type="button" ref={ui.part("close")}
+                                              {...bindingProps(bind("queue.close", {}))}>Close</button></div>
       </div>
     );
   }
@@ -119,10 +142,10 @@ function OneItem({ thread }: { thread: string }) {
   };
 
   return (
-    <div id="queue-item-view" className="queue-item-view" data-thread-id={thread}>
-      <header className="item-head">
+    <div id="queue-item-view" className="queue-item-view" data-thread-id={thread} ref={ui.whole}>
+      <header className="item-head" ref={ui.part("header")}>
         {open && open.back.length > 0 && (
-          <button type="button" className="item-back" onClick={goBack}>
+          <button type="button" className="item-back" ref={ui.part("back")} {...bindingProps(bind("queue.back", {}))}>
             ← Back to {queueViewTitle(state, dir, open.back[open.back.length - 1])}
           </button>
         )}
@@ -132,7 +155,7 @@ function OneItem({ thread }: { thread: string }) {
           {handle(dir, correspondent) && <span className="item-handle"> {handle(dir, correspondent)}</span>}
           {latestTheirs && <span className="item-via"> · {jarvisLabel(dir, latestTheirs.message.source_node_id)}</span>}
         </p>
-        <div className="item-cues">
+        <div className="item-cues" ref={ui.part("turn")}>
           <Cue kind={c.turn === "mine" ? "your-turn" : "their-turn"}>{turnWords(dir, work)}</Cue>
           {c.addressed && <Cue kind="addressed">Addressed</Cue>}
           {c.dismissed && <Cue kind="dismissed">Dismissed</Cue>}
@@ -148,7 +171,7 @@ function OneItem({ thread }: { thread: string }) {
           {!c.dismissed && parentForReply && !ed && !editable && (
             <button type="button" onClick={() => respond(parentForReply.message_id)}>Respond</button>
           )}
-          <button type="button" onClick={next}>Next item</button>
+          <button type="button" onClick={next} ref={ui.part("next")} data-ui-command="queue.next">Next item</button>
           {!c.dismissed && work.placement !== "queued" && (
             <button type="button" disabled={busy} onClick={() => void putBack(thread)}>Put back</button>
           )}
@@ -164,7 +187,7 @@ function OneItem({ thread }: { thread: string }) {
           {c.dismissed
             ? <button type="button" disabled={busy} onClick={() => void restore(thread)}>Restore to queue</button>
             : <button type="button" disabled={busy} onClick={done}>Done</button>}
-          <button type="button" onClick={close}>Close</button>
+          <button type="button" onClick={close} ref={ui.part("close")} data-ui-command="queue.close">Close</button>
         </div>
         {noneWaiting && <p className="item-note" role="status">No items are waiting.</p>}
         {busy && <p className="item-note" role="status">Saving…</p>}
@@ -188,7 +211,7 @@ function OneItem({ thread }: { thread: string }) {
           ))}
         </ol>
         {editable?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={editable} />}
-        {ed && <MessageComposer editorKey={thread} />}
+        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} /></div>}
       </div>
     </div>
   );
@@ -204,18 +227,22 @@ function UnsentConversation({ thread }: { thread: string }) {
   const draft = state.drafts[thread] ?? (ed?.messageId ? state.drafts[ed.messageId] : undefined);
   useEffect(() => { if (thread !== NEW) resumeDraft(thread); }, [thread]);
   const editable = !draft || draft.send.state === "draft" || draft.send.state === "awaiting_approval";
+  const ui = useItemTarget(thread === NEW ? null : thread, draft?.subject || "New message");
   return (
-    <div id="queue-item-view" className="queue-item-view" data-thread-id={thread === NEW ? undefined : thread}>
-      <header className="item-head">
-        {back.length > 0 && <button type="button" className="item-back" onClick={goBack}>← Back</button>}
+    <div id="queue-item-view" className="queue-item-view" data-thread-id={thread === NEW ? undefined : thread}
+         ref={ui.whole}>
+      <header className="item-head" ref={ui.part("header")}>
+        {back.length > 0 && <button type="button" className="item-back" ref={ui.part("back")}
+                                    {...bindingProps(bind("queue.back", {}))}>← Back</button>}
         <h2 className="item-subject">{draft?.subject || "New message"}</h2>
         {draft && <p className="item-who">To {recipientLabel(dir, draft.recipient_github_id)}</p>}
-        <div className="item-actions"><button type="button" onClick={closeItem}>Close</button></div>
+        <div className="item-actions"><button type="button" ref={ui.part("close")}
+                                                {...bindingProps(bind("queue.close", {}))}>Close</button></div>
       </header>
       <div className="item-scroll">
         {draft && !editable && <OutgoingDraft draft={draft} thread={thread} dir={dir} />}
         {draft?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={draft} />}
-        {ed && <MessageComposer editorKey={thread} />}
+        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} /></div>}
       </div>
     </div>
   );
@@ -256,7 +283,9 @@ function MessageCard({ m, state, dir, thread, onReply }: {
   const owner = state.owner_github_id;
   const toMe = msg.recipient_github_id === owner;
   const fromMe = msg.sender_github_id === owner;
-  const body = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement | null>(null);
+  const ui = useUiTarget({ ref: { region: "main", view: "main.queue", kind: "queueMessage", key: msg.message_id },
+                           label: `From ${personName(dir, msg.sender_github_id)}`, socket: CENTRE_SOCKET });
   const parent = msg.in_reply_to_message_id ? state.messages[msg.in_reply_to_message_id]?.message : undefined;
   const replies = repliesTo(state, msg.message_id);
 
@@ -282,7 +311,8 @@ function MessageCard({ m, state, dir, thread, onReply }: {
 
   return (
     <article className={`queue-message ${fromMe ? "outgoing" : "incoming"}${m.self_message ? " self" : ""}`}
-             data-message-id={msg.message_id} aria-label={`From ${personName(dir, msg.sender_github_id)}`}>
+             data-message-id={msg.message_id} aria-label={`From ${personName(dir, msg.sender_github_id)}`}
+             ref={(el) => { ui.whole(el); ui.part("card")(el); }}>
       <header className="message-head">
         <span className="message-person">{fromMe ? "You" : personName(dir, msg.sender_github_id)}</span>
         {!fromMe && handle(dir, msg.sender_github_id) && (
@@ -303,7 +333,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
         </p>
       )}
       {msg.subject && <h3 className="message-subject">{msg.subject}</h3>}
-      <div className="message-text" ref={body}>{msg.text}</div>
+      <div className="message-text" ref={(el) => { body.current = el; ui.part("body")(el); }}>{msg.text}</div>
       {msg.attachments.length > 0 && (
         <div className="message-files">
           {msg.attachments.map((a) => (
@@ -313,15 +343,17 @@ function MessageCard({ m, state, dir, thread, onReply }: {
         </div>
       )}
       <footer className="message-foot">
-        {toMe && (m.receipts?.read_at
-          ? <Cue kind="read-by-you" title={m.receipts.read_at}>Read by you</Cue>
-          : <Cue kind="unread">Unread</Cue>)}
-        {fromMe && (
-          <Cue kind={DELIVERY_CUE[delivery(msg, m.receipts)]}
-               title={m.receipts?.nodes.map((n) => jarvisLabel(dir, n.node_id)).join(", ") || undefined}>
-            {DELIVERY_WORDS(dir, msg.recipient_github_id)[delivery(msg, m.receipts)]}
-          </Cue>
-        )}
+        {(toMe || fromMe) && <span className="message-receipt" ref={ui.part("receipt")}>
+          {toMe && (m.receipts?.read_at
+            ? <Cue kind="read-by-you" title={m.receipts.read_at}>Read by you</Cue>
+            : <Cue kind="unread">Unread</Cue>)}
+          {fromMe && (
+            <Cue kind={DELIVERY_CUE[delivery(msg, m.receipts)]}
+                 title={m.receipts?.nodes.map((n) => jarvisLabel(dir, n.node_id)).join(", ") || undefined}>
+              {DELIVERY_WORDS(dir, msg.recipient_github_id)[delivery(msg, m.receipts)]}
+            </Cue>
+          )}
+        </span>}
         {replies.length > 0 && (
           <span className="message-replies">
             <Cue kind="replied">{replies.length === 1 ? "1 reply" : `${replies.length} replies`}</Cue>

@@ -7,7 +7,7 @@
  */
 
 import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { conversation, type Turn } from "./captions";
+import { conversation, turnKey, type Turn } from "./captions";
 import { CaptureChip } from "./CaptureChip";
 import { SourcesChip } from "./SourcesChip";
 import { SpokenWords } from "./SpokenWords";
@@ -39,11 +39,13 @@ export function CaptionBox() {
 
 /** A turn's words: its sentences, with the word being spoken glowing, or the
  *  collapsed item for a turn the brain made a capture of, or for what it
- *  showed instead of saying. */
-export function TurnWords({ turn, speaking }: { turn: Turn;
-                            speaking: [number, number, number] | null }) {
-  if (turn.capture) return <CaptureChip turn={turn} />;
-  if (turn.display) return <SourcesChip display={turn.display} />;
+ *  showed instead of saying. `partRef` is the turn's registered target's,
+ *  for the item's own parts. */
+export function TurnWords({ turn, speaking, partRef }: { turn: Turn;
+                            speaking: [number, number, number] | null;
+                            partRef?: (part: string) => (el: Element | null) => void }) {
+  if (turn.capture) return <CaptureChip turn={turn} partRef={partRef} />;
+  if (turn.display) return <SourcesChip display={turn.display} recordId={turnKey(turn)} partRef={partRef} />;
   return (
     <>
       {turn.sentences.map((sentence, i) =>
