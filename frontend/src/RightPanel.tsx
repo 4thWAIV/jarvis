@@ -14,8 +14,7 @@ import { QueueIcon } from "./QueueIcons";
 import { QueuePanel } from "./QueuePanel";
 import { attention } from "./queueStore";
 import { agentsTabLit } from "./agents";
-import { byHand } from "./uiRegistry";
-import { rightTab, type RightTab } from "./uiNavigation";
+import { bind, rightTab, type RightTab } from "./uiNavigation";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { TabRow, type Tab } from "./Tabs";
 import { VoiceSummary } from "./VoiceSummary";
@@ -123,12 +122,12 @@ export function RightPanel() {
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
   const tab = TABS.find((t) => t.id === selected)!;
-  // Selecting Agents clears its lit mark: in right.tab.select's handler
-  // (uiNavigation.ts), which the brain's request runs too.
-  const select = (id: string) => byHand("right.tab.select", { tab: id as RightTab });
   return (
     <div id="right-column">
-      <TabRow tabs={LAID_OUT} selected={selected} onSelect={select} className="right-tabs" labelled
+      <TabRow tabs={LAID_OUT} selected={selected} className="right-tabs" labelled
+              // Selecting Agents clears its lit mark: in right.tab.select's
+              // handler (uiNavigation.ts), which the brain's request runs too.
+              binding={(t) => bind("right.tab.select", { tab: t.id as RightTab })}
               lit={(t) => t.id !== selected && ((t.id === "agents" && lit) || (t.id === "queue" && unread))}
               alert={(t) => t.id === "diagnostics" && down} />
       <div className="right-panel" role="tabpanel" aria-label={tab.title}>

@@ -9,6 +9,8 @@
 import { liveRead } from "./liveRead";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
+import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type WorkflowState = "running" | "waiting" | "blocked" | "needs_you" | "succeeded"
   | "failed" | "cancelled" | "silent";
@@ -160,8 +162,54 @@ export function getSessionTranscript(sessionId: string, before?: number | null,
 /** Moves on every "workflows" hint, and on every (re)connect of /ws/sessions. */
 export const workflowsChanged = createStore(0);
 
-/** The workflow whose detail the centre area shows, or null. */
-export const openWorkflow = createStore<string | null>(null);
+// ── The workflow (or subagent) open in the centre ────────────────────────
+
+const workflowSlot = detailSlot<string>("workflow");
+
+/** The workflow whose detail the centre area shows (or a subagent's key,
+ *  `subagentOf`), or null. Writing it runs `workflow.open`,
+ *  `subagent.open` or `workflow.close`, as a person's navigation. */
+export const openWorkflow = routeStore(workflowSlot.value, (key: string | null) => {
+  if (key === null) return bind("workflow.close", {});
+  const sub = subagentOf(key);
+  return sub ? bind("subagent.open", sub) : bind("workflow.open", { workflowId: key });
+});
+
+/** A subagent's key among the workflows (server: _subagent_row). */
+export const subagentKey = (sessionId: string, agentId: string) => `agent:${sessionId}/${agentId}`;
+
+/** Whether the page lists `key` now: a workflow, or a subagent in the
+ *  Workflows list. Anything else is read from JARVIS before it opens. */
+function listed(key: string): boolean {
+  const now = workflows.get().value;
+  return !!now && (now.workflows.some((w) => w.id === key) || now.subagents.some((a) => a.key === key));
+}
+
+registerCommand("workflow.open", {
+  availability: () => ({ available: true }),
+  async execute({ workflowId }, { signal }) {
+    if (!listed(workflowId)) {
+      const read = await readForOpen(`/api/workflows/${encodeURIComponent(workflowId)}`, signal);
+      if ("refused" in read) return read.refused;
+    }
+    return { status: "completed", effects: workflowSlot.show(workflowId) };
+  },
+});
+
+registerCommand("subagent.open", {
+  availability: () => ({ available: true }),
+  async execute({ sessionId, agentId }, { signal }) {
+    const key = subagentKey(sessionId, agentId);
+    if (!listed(key)) {
+      const read = await readForOpen(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?`
+        + new URLSearchParams({ subagent: agentId }), signal);
+      if ("refused" in read) return read.refused;
+    }
+    return { status: "completed", effects: workflowSlot.show(key) };
+  },
+});
+
+registerClose("workflow.close", workflowSlot);
 
 export const FINISHED: ReadonlySet<WorkflowState> = new Set(["succeeded", "failed", "cancelled"]);
 

@@ -21,7 +21,7 @@ import { createStore } from "./store";
 import { spokenAgo } from "./timeFormat";
 import { sign } from "./WeeklyUsage";
 import { registerCommand } from "./uiRegistry";
-import { mainView } from "./uiNavigation";
+import { detailSlot, registerClose } from "./uiNavigation";
 
 // ── The team server's snapshot ───────────────────────────────────────────
 
@@ -138,7 +138,11 @@ export const network = liveRead(getNetwork, [networkChanged]);
 /** What the centre area shows from the network, or null: the team server's
  *  health, or one node. */
 export type NetworkOpen = { kind: "server" } | { kind: "node"; nodeId: string };
-export const openNetwork = createStore<NetworkOpen | null>(null);
+
+const networkSlot = detailSlot<NetworkOpen>("network", (a, b) =>
+  a.kind === b.kind && (a.kind === "server" || a.nodeId === (b as { nodeId: string }).nodeId));
+/** Read-only: the controls run `network.open` and `network.close`. */
+export const openNetwork = networkSlot.value;
 
 // Opening and closing that detail: the registered commands every control
 // (the Team Server tile, an instance's tile, Close) and the brain run.
@@ -151,23 +155,12 @@ registerCommand("network.open", {
       ? { available: true } : { available: false, reason: "no-entity" };
   },
   execute(args) {
-    const was = openNetwork.get();
     const next: NetworkOpen = args.kind === "server" ? { kind: "server" } : { kind: "node", nodeId: args.nodeId! };
-    const replaced = was !== null && JSON.stringify(was) !== JSON.stringify(next);
-    openNetwork.set(next);
-    mainView.set("network");
-    return { status: "completed",
-             effects: replaced ? ["centre.view-shown", "centre.detail-replaced"] : ["centre.view-shown"] };
+    return { status: "completed", effects: networkSlot.show(next) };
   },
 });
 
-registerCommand("network.close", {
-  availability: () => openNetwork.get() ? { available: true } : { available: false, reason: "no-entity" },
-  execute() {
-    openNetwork.set(null);
-    return { status: "completed", effects: ["centre.detail-closed"] };
-  },
-});
+registerClose("network.close", networkSlot);
 
 // ── Read out of it, the same way everywhere ──────────────────────────────
 

@@ -19,6 +19,8 @@
 
 import { liveRead } from "./liveRead";
 import { createStore } from "./store";
+import { bind, readForOpen, routeStore, runBinding, showStatic } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type Role = "data" | "source" | "history";
 export type Availability = "available" | "missing" | "access_denied" | "unavailable_node" | "unknown";
@@ -335,17 +337,49 @@ export const candidateAction = (c: Candidate, action: "ignore" | "restore") =>
 
 // ── what is selected ─────────────────────────────────────────────────────
 
-/** The selected folder, the same in the centre and the right panel. */
-export const selectedFolder = createStore<string | null>(null);
+const selected = createStore<string | null>(null);
 
-/** Moves when something asks the centre to show the Folders view. */
-export const showFolders = createStore(0);
+/** The selected folder, the same in the centre and the right panel.
+ *  Writing it runs `folders.open` or `folders.close`, as a person's
+ *  navigation. */
+export const selectedFolder = routeStore<string | null>(selected, (id) =>
+  id === null ? bind("folders.close", {}) : bind("folders.open", { folderId: id }));
 
-/** Select a folder (or none) and show it in the centre. */
+/** Select a folder (or none) and show it in the centre: the right panel's
+ *  rows and its Open button. */
 export function openFolder(id: string | null): void {
-  selectedFolder.set(id);
-  showFolders.set(showFolders.get() + 1);
+  if (id !== null) return runBinding(bind("folders.open", { folderId: id }));
+  if (selected.get() !== null) runBinding(bind("folders.close", {}));
+  runBinding(bind("main.tab.select", { tab: "folders" }));
 }
+
+/** Whether the catalog this page has read lists `id`, active or removed. */
+const catalogued = (id: string) => {
+  const now = catalog.get().value;
+  return !!now && (now.folders.some((f) => f.id === id) || now.removed.some((f) => f.id === id));
+};
+
+// Selecting a folder shows it in the centre's Folders view; one the page
+// has not read yet (one just registered) is read from JARVIS first.
+registerCommand("folders.open", {
+  availability: () => ({ available: true }),
+  async execute({ folderId }, { signal }) {
+    if (!catalogued(folderId)) {
+      const read = await readForOpen(`/api/folders/${encodeURIComponent(folderId)}`, signal);
+      if ("refused" in read) return read.refused;
+    }
+    selected.set(folderId);
+    return { status: "completed", effects: showStatic("folders") };
+  },
+});
+
+registerCommand("folders.close", {
+  availability: () => selected.get() !== null ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    selected.set(null);
+    return { status: "completed", effects: [] };
+  },
+});
 
 /** A folder or candidate matches a search when its name or path holds it. */
 export function matches(text: string, ...fields: string[]): boolean {

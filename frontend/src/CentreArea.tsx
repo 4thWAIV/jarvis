@@ -40,8 +40,7 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { byHand } from "./uiRegistry";
-import { mainView, openDetails, type MainTab } from "./uiNavigation";
+import { bind, mainView, type MainTab } from "./uiNavigation";
 import { AgentThread } from "./AgentThread";
 import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
@@ -59,7 +58,6 @@ import { useSubsystems } from "./SubsystemList";
 import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 import { directory, openQueue, queue } from "./queue";
-import { showFolders } from "./folders";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
 import { TeamSignInReminder } from "./TeamSignInReminder";
@@ -151,10 +149,10 @@ const WORKFLOW_VIEW: Tab = {
   view: () => null,
 };
 
-/** The selected view lives in the shared route state (uiNavigation.ts);
- *  these effects still follow an item opening or closing. */
-const setSelected = (next: (now: MainTab) => MainTab) => mainView.set(next(mainView.get()));
-
+/** The selected view and every detail's item are the shared route state
+ *  (uiNavigation.ts): opening an item shows its view and closing it goes
+ *  back to Conversation, in the open and close commands themselves. This
+ *  area only draws them. */
 export function CentreArea() {
   const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
@@ -167,29 +165,6 @@ export function CentreArea() {
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
-  // Opening a workflow or a thread shows it; closing it goes back to the
-  // first view.
-  useEffect(() => {
-    setSelected((now) => (workflow ? "workflow" : now === "workflow" ? "conversation" : now));
-  }, [workflow]);
-  useEffect(() => {
-    setSelected((now) => (thread ? "thread" : now === "thread" ? "conversation" : now));
-  }, [thread]);
-  useEffect(() => {
-    setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? "conversation" : now));
-  }, [diagnostics]);
-  useEffect(() => {
-    setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? "conversation" : now));
-  }, [subsystem]);
-  useEffect(() => {
-    setSelected((now) => (networkOpen ? "network" : now === "network" ? "conversation" : now));
-  }, [networkOpen]);
-  useEffect(() => {
-    setSelected((now) => (queueOpen ? "queue" : now === "queue" ? "conversation" : now));
-  }, [queueOpen]);
-  // Choosing a folder in the right panel shows the Folders view.
-  const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
-  useEffect(() => { if (foldersAsked) mainView.set("folders"); }, [foldersAsked]);
   const views: Tab[] = [
     ...VIEWS,
     ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
@@ -208,9 +183,6 @@ export function CentreArea() {
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
-  // Which detail tabs have an item open: main.tab.select offers only these.
-  const open = views.map((v) => v.id).join(" ");
-  useEffect(() => { openDetails.set(new Set(open.split(" ") as MainTab[])); }, [open]);
   const conversation = VIEWS[0];
   const folders = VIEWS[1];
   // Once opened, Folders is kept too, so its filters, selection and scroll
@@ -222,7 +194,7 @@ export function CentreArea() {
   const kept = view.id !== "main";
   return (
     <>
-      <TabRow tabs={views} selected={view.id} onSelect={(tab) => byHand("main.tab.select", { tab: tab as MainTab })}
+      <TabRow tabs={views} selected={view.id} binding={(t) => bind("main.tab.select", { tab: t.id as MainTab })}
               className="centre-tabs" words />
       <TeamSignInReminder />
       {kept && (
