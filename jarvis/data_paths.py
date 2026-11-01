@@ -181,6 +181,9 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
     "799e9124a7841f4f0153ff04eb5f5b18b3316fcc0379b314becd246898c01346",  # Spanish: señora under Ma'am
     "d0a9312fadb148e9cc7bb87aba4e7bdc6addfc880bec13895e4b4660397a2a4b",  # the language setting with self-update
+    "ac5d51b21b3c26a2cec653592065e83e55095f30abd06ce2c2d44668a6ece7ed",  # UI navigation: ui_map, ui_navigate, ui_indicate
+    "2812d44b2001159bdd46abb80193d9b2ddc929c87a44122043c01478dd6f3219",  # UI navigation: the UI tools' turn binding
+    "165255a4d9a01a66b2e8652e54f2be8015c2374a24ed590990c71c84f9dbf986",  # UI navigation: ui_journey and interruption
     "de87215499c617643fd3c51c945c5835f4f55403d2f2497175dc478ec52b7bd4",  # UI navigation with the language setting
 })
 
