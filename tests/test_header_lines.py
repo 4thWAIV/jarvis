@@ -347,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "self_update.ci_state": (
+        "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
+        "to compare them with fixed values, and returns one of five fixed CI "
+        "words (passed, pending, failed, none, unknown); no text from GitHub "
+        "reaches the string it returns, a header, a spoken line or the brain"),
     "folder_discovery.claude_history": (
         "it reads a transcript record's `cwd` and `sessionId` only to store them "
         "as an observation in the folder catalog; its one f-string is the "

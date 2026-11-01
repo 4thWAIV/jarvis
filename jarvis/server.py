@@ -99,6 +99,7 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import work_packages
+from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
 from jarvis import specs
@@ -1614,18 +1615,20 @@ def _message_number(message: dict) -> int:
         return 0
 
 
-async def _say_notice(line: str, note: str, what: str, **links) -> None:
+async def _say_notice(line: str, note: str, what: str, **links):
     """Say `line`, and tell the brain at its next turn that it was said. The
     line goes in the conversation as a notice with `links`. The one notice
-    path for agents' messages and people's arrivals alike."""
+    path for agents' messages and people's arrivals alike. Returns the
+    utterance, for a caller that waits until it has been heard, or None."""
     _notes_for_brain.append(note)
     _record(conversation_log.ItemKind.NOTICE, line, **links)
     if speech is None:
-        return
+        return None
     try:
-        await speech.say(line, Priority.NORMAL, label="announcement")
+        return await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
         log.warning(f"{what} announcement failed: {e}")
+        return None
 
 
 async def _say_about_message(line: str, note: str, what: str,
@@ -11136,12 +11139,17 @@ async def api_save_preferences(body: PreferencesUpdate):
 # Control endpoints (restart)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/restart")
-async def api_restart():
-    """Restart the JARVIS server."""
-    log.info("Restart requested — shutting down in 2 seconds")
+RESTART_AFTER_SEC = 2
+
+
+def _restart_server(why: str) -> None:
+    """Restart the JARVIS server in RESTART_AFTER_SEC, long enough for the
+    reply that asked for it to go out. The one restart: /api/restart and the
+    update (/api/update, the brain's update_jarvis) both come here."""
+    log.info("Restart requested (%s) — shutting down in %s seconds", why, RESTART_AFTER_SEC)
+
     async def _restart():
-        await asyncio.sleep(2)
+        await asyncio.sleep(RESTART_AFTER_SEC)
         # Re-exec with the ARGUMENTS WE WERE GIVEN, not hardcoded defaults.
         # This used to force --host 0.0.0.0 --port 8340, so a server started
         # on ::1:8341 came back on a different origin — and Chrome scopes
@@ -11150,7 +11158,109 @@ async def api_restart():
         # so JARVIS_DATA_DIR and friends carry over on their own.
         os.execv(sys.executable, [sys.executable, "-m", "jarvis", *sys.argv[1:]])
     asyncio.create_task(_restart())
+
+
+@app.post("/api/restart")
+async def api_restart():
+    """Restart the JARVIS server."""
+    _restart_server("the page's Restart Server")
     return {"status": "restarting"}
+
+
+# ---------------------------------------------------------------------------
+# Self-update (self_update.py). The Settings Updates section and the menu's
+# Check for updates, the brain's update_status and update_jarvis, and
+# `python -m jarvis.update` with the server running all reach the same
+# self_update functions through here. Page origin or tool token; no
+# access-key category covers these routes.
+# ---------------------------------------------------------------------------
+
+async def _update_and_restart(why: str) -> self_update.Outcome:
+    """Update the checkout and, once the new code is in, restart."""
+    out = await asyncio.to_thread(self_update.update)
+    if out.restart:
+        _restart_server(why)
+    return out
+
+
+@app.get("/api/update")
+async def api_update_status():
+    """Where this checkout stands against origin/main, and what stops an update."""
+    return (await asyncio.to_thread(self_update.check)).to_json()
+
+
+@app.post("/api/update")
+async def api_update():
+    """Update to origin/main's latest commit, when its CI passed, and restart."""
+    out = await _update_and_restart("the page's Update and restart")
+    code = 409 if out.refused else 500 if out.failed else 200
+    return JSONResponse(status_code=code, content=out.to_json())
+
+
+_UPDATE_WRAP_NAME = "update"
+UPDATE_SPEECH_WAIT_SEC = 30
+
+
+def _update_said(head: str, details: list[str]) -> str:
+    """A self_update head, in fixed words, with its commits and files walled
+    below it: a commit subject is a teammate's words."""
+    if not details:
+        return head
+    return head + "\n" + _wrap_untrusted(_UPDATE_WRAP_NAME, "\n".join(details))
+
+
+async def tool_update_status(args: dict) -> str:
+    """Whether JARVIS is up to date with GitHub: the Updates section."""
+    status = await asyncio.to_thread(self_update.check)
+    return _update_said(*self_update.describe(status))
+
+
+UPDATE_BEGUN = ("The update has begun. JARVIS says so out loud itself and restarts once it "
+                 "is in, or says that it did not go through; say nothing more.")
+
+
+async def _update_by_voice() -> None:
+    """The update the brain asked for, after its turn: say it is updating,
+    update, and restart once that has been heard; or say it did not go
+    through. Never raises out."""
+    try:
+        heard = await _say_notice(
+            "Updating myself from GitHub, sir; I'll restart once it's in.",
+            "Since your last turn you told him you were updating yourself from GitHub "
+            "and would restart.", "update")
+        out = await asyncio.to_thread(self_update.update)
+        head, _details = self_update.describe_outcome(out)
+        if out.restart:
+            if heard is not None and speech is not None:
+                await speech.wait_for(heard, timeout=UPDATE_SPEECH_WAIT_SEC)
+            _restart_server("the brain's update_jarvis")
+            return
+        await _say_notice(
+            "The update did not go through, sir; Settings, under Updates, says why.",
+            "Since your last turn you told him the update did not go through. "
+            + head, "update")
+    except Exception as e:
+        log.error("update by voice failed: %s", e, exc_info=True)
+
+
+async def tool_update_jarvis(args: dict) -> str:
+    """Update JARVIS from GitHub and restart: the Updates section's Update
+    and restart. An ACTING tool. Checked here; the update itself (minutes,
+    with pip and npm) runs after the turn, in `_update_by_voice`."""
+    status = await asyncio.to_thread(self_update.check)
+    if not status.can_update:
+        return _update_said(*self_update.describe(status))
+    asyncio.create_task(_update_by_voice())
+    return UPDATE_BEGUN
+
+
+TOOL_HANDLERS.update({
+    "update_status": tool_update_status,
+    "update_jarvis": tool_update_jarvis,
+})
+ACTING_TOOLS.add("update_jarvis")
+TAINTING_TOOLS["update_status"] = "the new commits' messages, written by the team"
+TAINT_EXEMPT_TOOLS["update_jarvis"] = "it updates and restarts JARVIS, it does not read"
 
 
 # ---------------------------------------------------------------------------

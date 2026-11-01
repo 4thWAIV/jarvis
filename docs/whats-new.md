@@ -1,6 +1,6 @@
 # The new JARVIS workspace
 
-Updated 2026-10-31. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
 ## Conversation is the main view
 
@@ -36,7 +36,11 @@ JARVIS works as before when it is not signed in to a team server, and reminds yo
 
 ## Ask JARVIS about anything on the page
 
-What the page shows or does, JARVIS can now do by voice. He can say who is on your team and who is signed in, pending or suspended, which JARVIS on the team network are online and how busy they are, and who you can message right now; ask him to write to someone and he drafts it to a name from that list. He reads what people have sent you and what you sent them, a conversation at a time, marks a message read once he has read it to you, opens, puts back, dismisses or hands the turn on a conversation in the Queue, and discards, cancels or retries one of your unsent messages, when you ask. For an administrator he looks up a GitHub account and adds, promotes, suspends, re-enables or removes a member, or ends their sessions, only on your word. He reports how each part of JARVIS is doing from the Diagnostics tab, voice input with today's figures; answers or dismisses a workflow's decision when you give the answer; runs a finished run again; and shows a folder in full, renames it, changes its role, reconnects it or checks it now, and lists, ignores or restores the folders discovery found. Signing in to the team server, API keys and restarting JARVIS stay on the page.
+What the page shows or does, JARVIS can now do by voice. He can say who is on your team and who is signed in, pending or suspended, which JARVIS on the team network are online and how busy they are, and who you can message right now; ask him to write to someone and he drafts it to a name from that list. He reads what people have sent you and what you sent them, a conversation at a time, marks a message read once he has read it to you, opens, puts back, dismisses or hands the turn on a conversation in the Queue, and discards, cancels or retries one of your unsent messages, when you ask. For an administrator he looks up a GitHub account and adds, promotes, suspends, re-enables or removes a member, or ends their sessions, only on your word. He reports how each part of JARVIS is doing from the Diagnostics tab, voice input with today's figures; answers or dismisses a workflow's decision when you give the answer; runs a finished run again; and shows a folder in full, renames it, changes its role, reconnects it or checks it now, and lists, ignores or restores the folders discovery found. Signing in to the team server, API keys and restarting JARVIS on its own stay on the page.
+
+## Update from GitHub
+
+A JARVIS running from a checkout of the GitHub repository can update itself. Settings has an Updates section, which the ⋮ menu's Check for updates opens: it says "Up to date at" this commit, or lists the new commits on main and whether their CI passed, with Update and restart. JARVIS updates only to a commit whose CI passed, installs the Python requirements or the page's packages when they changed, rebuilds the page when it is served from built files, and restarts; the page reloads itself as it does after Restart Server. If the page's packages changed while you run `npm run dev`, it says to restart that. It refuses, and says why, when the checkout is not on main, has changes or commits of its own, or has untracked files the update would overwrite. Ask JARVIS "is there an update?" or tell him to update himself: he says he is updating, and is back on the new code a few seconds later. From a terminal, `.venv/bin/python -m jarvis.update` does the same (`--check` only reports); with JARVIS stopped it only updates. An installed copy is not offered the update and says so.
 
 ## Work packages
 
