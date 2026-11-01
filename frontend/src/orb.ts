@@ -71,35 +71,223 @@ export interface OrbOptions {
   transparent?: boolean;   // draw on whatever is behind the canvas
   core?: boolean;          // a permanent glowing core at the centre (the main orb)
   palette?: OrbPalette;    // another orb's colours: a workflow's is light red
+  /** Drawn by a WebGL renderer of its own (the main orb). Every other orb is
+   *  drawn by the one renderer the small orbs share (SharedOrbs), so the
+   *  page holds two WebGL contexts however many orbs it shows: Chrome allows
+   *  a page sixteen, and takes the oldest away past that. */
+  ownRenderer?: boolean;
 }
+
+/** One orb as the renderer drawing it sees it. */
+interface Drawable {
+  readonly canvas: HTMLCanvasElement;
+  readonly scene: THREE.Scene;
+  readonly camera: THREE.PerspectiveCamera;
+  readonly transparent: boolean;
+  readonly paused: () => boolean;
+  /** Moves the orb on one frame. `pointScale` makes its points the size
+   *  they are on a renderer of its own (1) when it is drawn by a renderer
+   *  of another size: three.js sizes points by the renderer's height. */
+  readonly step: (pointScale: number) => void;
+}
+
+const CLEAR_COLOUR = 0x050508;
+
+/** Reports a renderer's context going and coming back (graphicsTrouble);
+ *  three.js keeps the scene and redraws it once the context is restored.
+ *  Returns how to stop watching. */
+function watchContext(canvas: HTMLCanvasElement, onLost = () => {}, onRestored = () => {}) {
+  const lost = () => { graphicsTrouble.set(WEBGL_LOST); onLost(); };
+  const restored = () => {
+    if (graphicsTrouble.get() === WEBGL_LOST) graphicsTrouble.set(null);
+    onRestored();
+  };
+  canvas.addEventListener("webglcontextlost", lost);
+  canvas.addEventListener("webglcontextrestored", restored);
+  return () => {
+    canvas.removeEventListener("webglcontextlost", lost);
+    canvas.removeEventListener("webglcontextrestored", restored);
+  };
+}
+
+function newRenderer(canvas: HTMLCanvasElement, alpha: boolean): THREE.WebGLRenderer | null {
+  try {
+    return new THREE.WebGLRenderer({ canvas, antialias: true, alpha });
+  } catch (e) {
+    console.error("orb: no WebGL context", e);
+    graphicsTrouble.set(WEBGL_OFF);
+    return null;
+  }
+}
+
+/** Gives a renderer's WebGL context back now, not when it is garbage
+ *  collected: a page may only hold a few at once. Its watch is taken off
+ *  first, so giving it back is not reported as losing it. */
+function release(renderer: THREE.WebGLRenderer, unwatch: () => void) {
+  unwatch();
+  renderer.dispose();
+  renderer.forceContextLoss();
+}
+
+/** The main orb's drawing: a renderer on its own canvas, in a loop of its
+ *  own. Returns how to stop, or null without WebGL. */
+function drawOwn(orb: Drawable): (() => void) | null {
+  const renderer = newRenderer(orb.canvas, orb.transparent);
+  if (!renderer) return null;
+  const unwatch = watchContext(orb.canvas);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setClearColor(CLEAR_COLOUR, orb.transparent ? 0 : 1);
+  const resize = () => renderer.setSize(Math.max(1, orb.canvas.clientWidth),
+                                        Math.max(1, orb.canvas.clientHeight), false);
+  resize();
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(orb.canvas);
+  let stopped = false;
+  const animate = () => {
+    if (stopped) return;
+    requestAnimationFrame(animate);
+    if (orb.paused()) return;
+    orb.step(1);
+    renderer.render(orb.scene, orb.camera);
+  };
+  animate();
+  return () => {
+    stopped = true;
+    resizeObserver.disconnect();
+    release(renderer, unwatch);
+  };
+}
+
+/** A small orb on the shared renderer: its own canvas, drawn on in 2D. */
+interface SharedOrb {
+  orb: Drawable;
+  context: CanvasRenderingContext2D;
+  visible: boolean;
+  width: number;    // its canvas's size, in device pixels
+  height: number;
+}
+
+/**
+ * Every small orb, drawn by one WebGL renderer in one loop. The renderer
+ * draws on a canvas that is not on the page, each orb in turn in its lower
+ * left corner, and each is copied straight onto that orb's own canvas, so
+ * every orb keeps its own element where it always was (the rays find their
+ * ends by those elements). An orb out of sight still moves but is not drawn.
+ * The renderer is made with the first small orb and given back once the
+ * last has gone. Losing its context is reported like losing any other, and
+ * the orbs it draws go blank until it comes back.
+ */
+const SharedOrbs = (() => {
+  const orbs = new Set<SharedOrb>();
+  let renderer: THREE.WebGLRenderer | null = null;
+  let unwatch = () => {};
+  let lost = false;
+  let frame = 0;
+  // The renderer's canvas only grows, so it is not made again every frame.
+  let bufferWidth = 1, bufferHeight = 1;
+  const bufferSize = new THREE.Vector2();
+
+  const blank = (o: SharedOrb) => o.context.clearRect(0, 0, o.width, o.height);
+
+  function start(): boolean {
+    if (renderer) return true;
+    renderer = newRenderer(document.createElement("canvas"), true);
+    if (!renderer) return false;
+    unwatch = watchContext(renderer.domElement,
+                           () => { lost = true; orbs.forEach(blank); },
+                           () => { lost = false; });
+    lost = false;
+    bufferWidth = bufferHeight = 1;
+    // Sizes are in device pixels: each orb sets its own share of them.
+    renderer.setPixelRatio(1);
+    renderer.setScissorTest(true);
+    return true;
+  }
+
+  function stop() {
+    frame = 0;
+    if (renderer) release(renderer, unwatch);
+    renderer = null;
+  }
+
+  function draw() {
+    // Given back a frame after the last orb goes, not at once: a view that
+    // swaps its orbs for another's drops them all before it adds the next.
+    if (!orbs.size) {
+      stop();
+      return;
+    }
+    frame = requestAnimationFrame(draw);
+    const r = renderer!;
+    for (const o of orbs) {
+      if (o.visible) {
+        bufferWidth = Math.max(bufferWidth, o.width);
+        bufferHeight = Math.max(bufferHeight, o.height);
+      }
+    }
+    r.getSize(bufferSize);
+    if (bufferSize.x !== bufferWidth || bufferSize.y !== bufferHeight) {
+      r.setSize(bufferWidth, bufferHeight, false);
+    }
+
+    for (const o of orbs) {
+      if (o.orb.paused()) continue;
+      const drawn = o.visible && !lost;
+      // On a renderer of its own its points are sized by its canvas's
+      // height; here they would be sized by the shared canvas's.
+      o.orb.step(drawn ? o.height / bufferHeight : 1);
+      if (!drawn) continue;
+      r.setViewport(0, 0, o.width, o.height);
+      r.setScissor(0, 0, o.width, o.height);
+      r.setClearColor(CLEAR_COLOUR, o.orb.transparent ? 0 : 1);
+      r.render(o.orb.scene, o.orb.camera);
+      // WebGL counts rows from the bottom, the 2D canvas from the top.
+      blank(o);
+      o.context.drawImage(r.domElement, 0, bufferHeight - o.height, o.width, o.height,
+                          0, 0, o.width, o.height);
+    }
+  }
+
+  return {
+    /** Starts drawing `orb`; returns how to stop, or null without WebGL. */
+    add(orb: Drawable): (() => void) | null {
+      const context = orb.canvas.getContext("2d");
+      if (!context || !start()) return null;
+      const o: SharedOrb = { orb, context, visible: false, width: 1, height: 1 };
+      // The same size its own renderer would give its canvas.
+      const resize = () => {
+        const ratio = window.devicePixelRatio;
+        o.width = orb.canvas.width = Math.max(1, Math.floor(orb.canvas.clientWidth * ratio));
+        o.height = orb.canvas.height = Math.max(1, Math.floor(orb.canvas.clientHeight * ratio));
+      };
+      resize();
+      const resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(orb.canvas);
+      const seen = new IntersectionObserver((entries) => {
+        o.visible = entries[entries.length - 1].isIntersecting;
+      });
+      seen.observe(orb.canvas);
+      orbs.add(o);
+      if (!frame) frame = requestAnimationFrame(draw);
+      return () => {
+        resizeObserver.disconnect();
+        seen.disconnect();
+        orbs.delete(o);
+        blank(o);
+      };
+    },
+  };
+})();
 
 export function createOrb(canvas: HTMLCanvasElement,
                           { particles = 2000, transparent = false, core = false,
-                            palette = BLUE_PALETTE }: OrbOptions = {}): Orb {
-  let destroyed = false;
+                            palette = BLUE_PALETTE, ownRenderer = false }: OrbOptions = {}): Orb {
   const N = particles;
 
   // The orb fills its canvas, and the canvas is sized by the page's layout,
   // not the window: it is one control on the page.
   const width = () => Math.max(1, canvas.clientWidth);
   const height = () => Math.max(1, canvas.clientHeight);
-
-  let renderer: THREE.WebGLRenderer;
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: transparent });
-  } catch (e) {
-    console.error("orb: no WebGL context", e);
-    graphicsTrouble.set(WEBGL_OFF);
-    return STILL_ORB;
-  }
-  // three.js keeps the scene and redraws it once the context is restored.
-  const lost = () => graphicsTrouble.set(WEBGL_LOST);
-  const restored = () => { if (graphicsTrouble.get() === WEBGL_LOST) graphicsTrouble.set(null); };
-  canvas.addEventListener("webglcontextlost", lost);
-  canvas.addEventListener("webglcontextrestored", restored);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(width(), height(), false);
-  renderer.setClearColor(0x050508, transparent ? 0 : 1);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, width() / height(), 1, 1000);
@@ -180,8 +368,9 @@ export function createOrb(canvas: HTMLCanvasElement,
   electronGeo.setAttribute("position", new THREE.BufferAttribute(electronPos, 3));
   electronGeo.setDrawRange(0, 0);
 
+  const ELECTRON_SIZE = 0.8;
   const electronMat = new THREE.PointsMaterial({
-    color: 0xffffff, size: 0.8, transparent: true, opacity: 1.0,
+    color: 0xffffff, size: ELECTRON_SIZE, transparent: true, opacity: 1.0,
     sizeAttenuation: true, blending: THREE.AdditiveBlending, depthWrite: false,
   });
 
@@ -275,10 +464,7 @@ export function createOrb(canvas: HTMLCanvasElement,
 
   let paused = false;
 
-  function animate() {
-    if (destroyed) return;
-    requestAnimationFrame(animate);
-    if (paused) return;
+  function step(pointScale: number) {
     const t = clock.getElapsedTime();
 
     switch (state) {
@@ -531,7 +717,8 @@ export function createOrb(canvas: HTMLCanvasElement,
     coreHalo.position.z = cloudZ;
 
     mat.opacity = currentBright + bass * 0.08;
-    mat.size = currentSize + bass * 0.05;
+    mat.size = (currentSize + bass * 0.05) * pointScale;
+    electronMat.size = ELECTRON_SIZE * pointScale;
 
     if (gray) { base.set(GRAY); lineBase.set(GRAY); }
     else if (state === "thinking") { base.lerp(stateColours.thinking, 0.015); lineBase.lerp(stateColours.thinking, 0.015); }
@@ -546,15 +733,12 @@ export function createOrb(canvas: HTMLCanvasElement,
     const coreColour = tx ? mixed.copy(CORE_COLOUR).lerp(tx.colour, txStrength) : CORE_COLOUR;
     coreMat.color.copy(coreColour);
     coreHaloMat.color.copy(coreColour);
-
-    renderer.render(scene, camera);
   }
 
   function onResize() {
     camera.aspect = width() / height();
     camera.updateProjectionMatrix();
     fitCamera();
-    renderer.setSize(width(), height(), false);
   }
 
   function startTransmission(colour: string,
@@ -567,9 +751,22 @@ export function createOrb(canvas: HTMLCanvasElement,
            dir: new THREE.Vector3(dx, -dy, 0).normalize(), inward };
   }
 
+  // What this orb holds on the GPU, given back when it goes.
+  function dispose() {
+    for (const held of [geo, mat, lineGeo, lineMat, electronGeo, electronMat,
+                        coreMat, coreHaloMat, coreMesh.geometry, coreHalo.geometry]) {
+      held.dispose();
+    }
+  }
+
+  const drawable: Drawable = { canvas, scene, camera, transparent, paused: () => paused, step };
+  const stopDrawing = ownRenderer ? drawOwn(drawable) : SharedOrbs.add(drawable);
+  if (!stopDrawing) {
+    dispose();
+    return STILL_ORB;
+  }
   const resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(canvas);
-  animate();
 
   return {
     setState(s: OrbState) { state = s; },
@@ -583,15 +780,9 @@ export function createOrb(canvas: HTMLCanvasElement,
       if (a) freqData = new Uint8Array(a.frequencyBinCount);
     },
     destroy() {
-      destroyed = true;
-      canvas.removeEventListener("webglcontextlost", lost);
-      canvas.removeEventListener("webglcontextrestored", restored);
       resizeObserver.disconnect();
-      renderer.dispose();
-      // Give the WebGL context back now, not when it is garbage collected:
-      // a page may only hold a few at once, and the agents list makes and
-      // drops small orbs.
-      renderer.forceContextLoss();
+      stopDrawing();
+      dispose();
     },
   };
 }
