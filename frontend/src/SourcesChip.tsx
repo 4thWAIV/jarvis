@@ -4,23 +4,29 @@
  * transmission's, named by its title and how many it holds. Opening it lists
  * them; links open in a new tab and say which site they go to. Everything is
  * drawn as plain text.
+ *
+ * Opening and closing it is `conversation.record.expand` on its turn's
+ * record key (`recordId`), for a click and the brain alike; `partRef`, its
+ * target's, registers the head as `chip` and the list as `items`.
  */
 
-import { useState } from "react";
+import { useRecordOpen } from "./captions";
 import type { Display } from "./sources";
+import { bind, bindingProps } from "./uiNavigation";
 
-export function SourcesChip({ display }: { display: Display }) {
-  const [open, setOpen] = useState(false);
+export function SourcesChip({ display, recordId, partRef }: {
+  display: Display; recordId: string; partRef?: (part: string) => (el: Element | null) => void }) {
+  const open = useRecordOpen(recordId, true);
   const n = display.items.length;
   return (
     <span className={`sources-chip kind-${display.kind}${open ? " open" : ""}`}
           data-display={display.id}>
-      <button type="button" className="sources-chip-head" aria-expanded={open}
-              onClick={() => setOpen(!open)}>
+      <button type="button" className="sources-chip-head" aria-expanded={open} ref={partRef?.("chip")}
+              {...bindingProps(bind("conversation.record.expand", { recordId, open: !open }))}>
         {display.title} ({n})
       </button>
       {open && (
-        <ul className="sources-chip-body">
+        <ul className="sources-chip-body" ref={partRef?.("items")}>
           {display.items.map((item, i) => (
             <li key={i}>
               {item.url

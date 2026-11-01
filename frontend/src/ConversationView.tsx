@@ -29,15 +29,20 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { conversation, type Turn } from "./captions";
+import { conversation, turnKey, useRecordOpen, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
-import { conversationChanged, fromRecord, getConversation, openThread, restoreCapture,
+import { conversationChanged, fromRecord, getConversation, restoreCapture,
          STATUS_WORDS, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
 import { SourcesChip } from "./SourcesChip";
 import type { OrbState } from "./orb";
+import { createStore } from "./store";
+import type { AvailabilityReason, TargetRef } from "./uiContract";
+import { bind, bindingProps } from "./uiNavigation";
+import { registerRevealer } from "./uiNavigationReveal";
+import { registerCommand, useUiTarget, type Availability, type CommandOutcome, type Socket } from "./uiRegistry";
 import { sendTyped, voiceState } from "./voiceStatus";
 
 // A history turn longer than this many lines is shown as its first two.
@@ -55,16 +60,123 @@ export function placeTurns(turns: Turn[], voice: OrbState):
   return { history, speaking, hearing };
 }
 
+// ── earlier pages ───────────────────────────────────────────────────────
+
+/** One page of a list read newest first, as its reader gives it. */
+export interface EarlierPage<T> { items: T[]; earlier: number | null }
+
+interface Pages<T> { older: T[]; earlier: number | null }
+
+/** Lists read newest page first, with earlier pages loaded above the
+ *  latest on request (the history, an agent's thread, a transcript): what
+ *  each has loaded, and where its next earlier page starts, by list key.
+ *  A mounted list follows its latest page's cursor until an earlier page is
+ *  loaded and lets its pages go when it unmounts; only `load`, which a
+ *  list's earlier command runs, loads one, so a click and the brain load
+ *  the same page. */
+export function earlierPages<T>(read: (key: string, before: number) => Promise<EarlierPage<T>>) {
+  const lists = createStore<ReadonlyMap<string, Pages<T>>>(new Map());
+  const loading = new Set<string>();
+  const put = (key: string, pages: Pages<T> | null) => {
+    const next = new Map(lists.get());
+    if (pages) next.set(key, pages); else next.delete(key);
+    lists.set(next);
+  };
+  const none: Pages<T> = { older: [], earlier: null };
+  const refuse = (status: CommandOutcome["status"], reason: string): CommandOutcome =>
+    ({ status, effects: [], reason });
+  return {
+    /** A mounted list's pages; `latest` is its latest page's cursor
+     *  (undefined until it is read). */
+    use(key: string, latest: number | null | undefined): Pages<T> {
+      const pages = useSyncExternalStore(lists.subscribe, () => lists.get().get(key));
+      useEffect(() => {
+        if (latest === undefined) return;
+        const now = lists.get().get(key);
+        if (!now || (!now.older.length && now.earlier !== latest)) put(key, { older: [], earlier: latest });
+      }, [key, latest]);
+      useEffect(() => () => put(key, null), [key]);
+      return pages ?? none;
+    },
+    /** What the list has loaded above its latest page now. */
+    get: (key: string): Pages<T> | undefined => lists.get().get(key),
+    availability(key: string): Availability {
+      const pages = lists.get().get(key);
+      if (!pages) return { available: false, reason: "not-mounted" };
+      return pages.earlier === null ? { available: false, reason: "no-entity" } : { available: true };
+    },
+    /** Load the list's next earlier page. */
+    async load(key: string, signal: AbortSignal): Promise<CommandOutcome> {
+      const pages = lists.get().get(key);
+      if (!pages || pages.earlier === null) return refuse("unavailable", pages ? "no-entity" : "not-mounted");
+      if (loading.has(key)) return refuse("busy", "not-loaded");
+      loading.add(key);
+      let page: EarlierPage<T>;
+      try {
+        page = await read(key, pages.earlier);
+      } catch {
+        return refuse("unavailable", "not-loaded");
+      } finally {
+        loading.delete(key);
+      }
+      if (signal.aborted) return refuse("cancelled", "superseded");
+      // Gone, or moved meanwhile: this page no longer goes above it.
+      if (lists.get().get(key) !== pages) return refuse("cancelled", "superseded");
+      put(key, { older: [...page.items, ...pages.older], earlier: page.items.length ? page.earlier : null });
+      return { status: "completed", effects: ["list.paged"] };
+    },
+    /** Read earlier pages, a few at most, until one holds an item `wanted`
+     *  picks out (a revealer's bounded load): true once loaded, else why
+     *  not. */
+    async seek(key: string, wanted: (item: T) => boolean, signal: AbortSignal): Promise<true | AvailabilityReason> {
+      const has = () => !!lists.get().get(key)?.older.some(wanted);
+      for (let n = 0; n < SEEK_PAGES && !has(); n++) {
+        const pages = lists.get().get(key);
+        if (!pages) return "not-mounted";
+        if (pages.earlier === null) return "entity-gone";
+        if ((await this.load(key, signal)).status !== "completed") return "not-loaded";
+      }
+      return has() ? true : "not-loaded";
+    },
+  };
+}
+
+/** At most this many earlier pages are read to find one item. */
+const SEEK_PAGES = 10;
+
+/** Where every centre view's targets hang from: the main rail, entering
+ *  at their right edge. */
+export const CENTRE_SOCKET: Socket = { rail: "rail.main", side: "right" };
+
+// ── the history's paging, and finding a record in it ───────────────────
+
+const HISTORY = "conversation";
+const historyPages = earlierPages<ConversationItem>((_, before) => getConversation(before));
+
+registerCommand("conversation.earlier", {
+  availability: () => historyPages.availability(HISTORY),
+  execute: (_, { signal }) => historyPages.load(HISTORY, signal),
+});
+
+// A record not on the page yet is looked for further back, a page at a
+// time, by its id; a live turn the page no longer has is gone.
+registerRevealer("main.conversation", "conversationRecord", async (ref, { signal }) =>
+  ref.key?.startsWith("r") ? historyPages.seek(HISTORY, (i) => `r${i.id}` === ref.key, signal) : "entity-gone");
+
+const conversationRef = (kind: "conversation" | "conversationRecord" | "sources", key?: string): TargetRef =>
+  ({ region: "main", view: "main.conversation", kind, ...(key === undefined ? {} : { key }) });
+
 export function ConversationView() {
   const { turns, speaking: word } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const voice = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   const { history, speaking, hearing } = placeTurns(turns, voice);
+  const ui = useUiTarget({ ref: conversationRef("conversation"), label: "Conversation", socket: CENTRE_SOCKET });
   return (
-    <div id="conversation">
-      <History turns={history} />
-      <CaptureList />
-      <SpeakingBox turn={speaking} word={word} />
-      <HearingBox turn={hearing} />
+    <div id="conversation" ref={ui.whole}>
+      <History turns={history} partRef={ui.part} />
+      <CaptureList view="main.conversation" />
+      <SpeakingBox turn={speaking} word={word} partRef={ui.part("speaking")} />
+      <HearingBox turn={hearing} partRef={ui.part("input")} />
     </div>
   );
 }
@@ -86,7 +198,7 @@ export function historyRows(turns: Turn[], items: ConversationItem[],
   const restoredLater = (i: ConversationItem) => items.some((j) => j.id > i.id
     && j.capture_id === i.capture_id && j.detail?.capture_event === "restored");
   const rows: Row[] = [
-    ...turns.map((t) => ({ at: t.at ?? 0, key: `t${t.id}`, turn: t })),
+    ...turns.map((t) => ({ at: t.at ?? 0, key: turnKey(t), turn: t })),
     ...shown.filter((i) => !(i.kind === "answer" && asked.has(i.message_id)))
       .map((i) => ({ at: i.at, key: `r${i.id}`, item: i,
                      answer: i.kind === "to_agent" && i.message_id != null
@@ -96,14 +208,13 @@ export function historyRows(turns: Turn[], items: ConversationItem[],
   return rows.sort((a, b) => a.at - b.at);
 }
 
-function History({ turns }: { turns: Turn[] }) {
-  const ref = useRef<HTMLDivElement>(null);
+/** A part's callback ref, from a registered target (`useUiTarget`). */
+type PartRef = (part: string) => (el: Element | null) => void;
+
+function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   const live = useLiveRead(() => getConversation(), [conversationChanged]);
-  const [older, setOlder] = useState<ConversationItem[]>([]);
-  const [earlier, setEarlier] = useState<number | null | undefined>(undefined);
-  useEffect(() => {
-    if (earlier === undefined && live.value) setEarlier(live.value.earlier);
-  }, [live.value, earlier]);
+  const { older, earlier } = historyPages.use(HISTORY, live.value ? live.value.earlier : undefined);
   const latest = live.value?.items ?? [];
   const newestIds = new Set(latest.map((i) => i.id));
   const items = [...older.filter((i) => !newestIds.has(i.id)), ...latest];
@@ -113,88 +224,123 @@ function History({ turns }: { turns: Turn[] }) {
   useLayoutEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [newest?.key, newest?.turn?.sentences.length, newest?.item?.message?.status]);
-  async function loadEarlier() {
-    if (earlier == null) return;
-    const page = await getConversation(earlier).catch(() => null);
-    if (!page) return;
-    setOlder((o) => [...page.items, ...o]);
-    setEarlier(page.items.length ? page.earlier : null);
-  }
+  const history = partRef("history");
   return (
-    <div className="conversation-history" ref={ref} aria-label="History">
-      {earlier != null && <button type="button" className="history-earlier" onClick={loadEarlier}>
-        Earlier</button>}
+    <div className="conversation-history" aria-label="History"
+         ref={(el) => { ref.current = el; history(el); }}>
+      {earlier != null && <button type="button" className="history-earlier" ref={partRef("earlier")}
+                                  {...bindingProps(bind("conversation.earlier", {}))}>Earlier</button>}
       {rows.map((r) => (r.item ? <RecordItem key={r.key} item={r.item} answer={r.answer}
-                                             restorable={r.restorable} />
+                                             restorable={r.restorable} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: r.key }} />
         : r.turn!.display
-          ? <div key={r.key} className="history-turn jarvis kind-sources"><SourcesChip display={r.turn!.display} /></div>
+          ? <SourcesRow key={r.key} turn={r.turn!} />
           : <HistoryTurn key={r.key} turn={r.turn!} />))}
     </div>
   );
 }
 
-/** An agent's name, opening its thread. */
-export function AgentLink({ item }: { item: ConversationItem }) {
-  if (!item.agent_name) return null;
-  if (!item.agent_session_id) return <span className="record-agent">{item.agent_name}</span>;
+/** What the brain showed instead of saying it, as a history row. */
+function SourcesRow({ turn }: { turn: Turn }) {
+  const key = turnKey(turn);
+  const ui = useUiTarget({ ref: conversationRef("sources", key), label: turn.display!.title, socket: CENTRE_SOCKET });
   return (
-    <button type="button" className="record-agent"
-            onClick={() => openThread.set({ sessionId: item.agent_session_id!, name: item.agent_name })}>
+    <div className="history-turn jarvis kind-sources" ref={ui.whole}>
+      <SourcesChip display={turn.display!} recordId={key} partRef={ui.part} />
+    </div>
+  );
+}
+
+/** An agent's name, opening its thread. */
+export function AgentLink({ item, partRef }: { item: ConversationItem; partRef?: PartRef }) {
+  if (!item.agent_name) return null;
+  const ref = partRef?.("agent");
+  if (!item.agent_session_id) return <span className="record-agent" ref={ref}>{item.agent_name}</span>;
+  return (
+    <button type="button" className="record-agent" ref={ref}
+            {...bindingProps(bind("thread.open", { sessionId: item.agent_session_id }))}>
       {item.agent_name}
     </button>
   );
 }
 
+/** What a record is called when the brain is told what is on the page:
+ *  its kind and its agent, never its words. */
+function recordLabel(item: ConversationItem): string {
+  const agent = item.agent_name ? ` ${item.agent_name}` : " an agent";
+  switch (item.kind) {
+    case "to_agent": return `Message to${agent}`;
+    case "answer": return `Answer from${agent}`;
+    case "from_agent": return `Message from${agent}`;
+    case "notice": return "Notice";
+    case "jarvis": return "JARVIS's words";
+    default: return "Your words";
+  }
+}
+
+/** Where a record is shown: the history's or a thread's presentation of it. */
+export type RecordPlace = TargetRef & { kind: "conversationRecord" | "threadRecord"; key: string };
+
+/** A record's open state and the control that opens and closes it. */
+function useOpener(recordId: string, opens: boolean) {
+  const open = useRecordOpen(recordId, opens);
+  return { open, toggle: bindingProps(bind("conversation.record.expand", { recordId, open: !open })) };
+}
+
 /** One item from the record: what was said before the page opened, a
  *  message to an agent with its live status (opening to the answer), a
- *  message from an agent, or a notice. Drawn as text. */
-export function RecordItem({ item, answer, restorable }: {
-  item: ConversationItem; answer?: ConversationItem; restorable?: boolean }) {
-  const [open, setOpen] = useState(false);
+ *  message from an agent, or a notice. Drawn as text, and registered where
+ *  it is shown (`place`) with its parts. */
+export function RecordItem({ item, answer, restorable, place }: {
+  item: ConversationItem; answer?: ConversationItem; restorable?: boolean; place: RecordPlace }) {
+  const recordId = `r${item.id}`;
+  const { open, toggle } = useOpener(recordId, item.kind === "to_agent" && !!answer);
   const [refused, setRefused] = useState<string | null>(null);
+  const ui = useUiTarget({ ref: place, label: recordLabel(item), socket: CENTRE_SOCKET });
+  const text = ui.part("text");
   if (item.kind === "to_agent") {
     const status = item.message?.status ?? "staged";
     return (
-      <div className={`history-turn record-message status-${status}`}>
+      <div className={`history-turn record-message status-${status}`} ref={ui.whole}>
         <div className="record-head">
-          <span className="record-arrow" aria-hidden="true">→</span><AgentLink item={item} />
-          <button type="button" className={`record-status status-${status}`}
-                  disabled={!answer} onClick={() => setOpen(!open)}
+          <span className="record-arrow" aria-hidden="true">→</span><AgentLink item={item} partRef={ui.part} />
+          <button type="button" className={`record-status status-${status}`} ref={ui.part("expand")}
+                  disabled={!answer} {...toggle}
                   title={answer ? (open ? "Hide the answer" : "Show the answer") : undefined}>
             {STATUS_WORDS[status] ?? status}{answer ? (open ? " ▴" : " ▾") : ""}
           </button>
         </div>
-        <p className="record-text">{item.text}</p>
-        {open && answer && <p className="record-answer">{answer.text}</p>}
+        <p className="record-text" ref={text}>{item.text}</p>
+        {open && answer && <p className="record-answer" ref={ui.part("answer")}>{answer.text}</p>}
       </div>
     );
   }
   if (item.kind === "answer" || item.kind === "from_agent") {
     return (
-      <div className={`history-turn record-from kind-${item.kind}`}>
+      <div className={`history-turn record-from kind-${item.kind}`} ref={ui.whole}>
         <div className="record-head">
-          <span className="record-arrow" aria-hidden="true">←</span><AgentLink item={item} />
+          <span className="record-arrow" aria-hidden="true">←</span><AgentLink item={item} partRef={ui.part} />
           <span className="record-label">{item.kind === "answer" ? "Answer" : "Message"}</span>
         </div>
-        <p className="record-text">{item.text}</p>
+        <p className="record-text" ref={text}>{item.text}</p>
       </div>
     );
   }
   if (item.kind === "notice" && item.detail?.capture_event === "cleared") {
     // A capture closed without being sent: Restore brings it back, unread.
     return (
-      <div className="history-turn record-notice record-cleared">
-        <span>{item.text}</span>
-        {restorable && <button type="button" className="record-restore"
+      <div className="history-turn record-notice record-cleared" ref={ui.whole}>
+        <span ref={text}>{item.text}</span>
+        {restorable && <button type="button" className="record-restore" ref={ui.part("restore")}
                                onClick={async () => setRefused(await restoreCapture(item))}>
           Restore</button>}
         {refused && <span className="read-failure">{refused}</span>}
       </div>
     );
   }
-  if (item.kind === "notice") return <p className="history-turn record-notice">{item.text}</p>;
+  const whole = (el: Element | null) => { ui.whole(el); text(el); };
+  if (item.kind === "notice") return <p className="history-turn record-notice" ref={whole}>{item.text}</p>;
   const speaker = item.kind === "jarvis" ? "jarvis" : "user";
-  return <p className={`history-turn ${speaker} record-said kind-${item.kind}`}>{item.text}</p>;
+  return <p className={`history-turn ${speaker} record-said kind-${item.kind}`} ref={whole}>{item.text}</p>;
 }
 
 /** A captured turn takes its capture kind's look in the history. */
@@ -204,9 +350,12 @@ function kindClass(turn: Turn): string {
 }
 
 function HistoryTurn({ turn }: { turn: Turn }) {
-  const ref = useRef<HTMLParagraphElement>(null);
+  const ref = useRef<HTMLParagraphElement | null>(null);
   const [long, setLong] = useState(false);
-  const [open, setOpen] = useState(false);
+  const key = turnKey(turn);
+  const { open, toggle } = useOpener(key, long);
+  const ui = useUiTarget({ ref: conversationRef("conversationRecord", key),
+                           label: turn.speaker === "jarvis" ? "JARVIS's words" : "Your words", socket: CENTRE_SOCKET });
   // Measured unclamped: more than LONG_LINES lines makes it a long turn.
   useLayoutEffect(() => {
     const p = ref.current;
@@ -215,19 +364,23 @@ function HistoryTurn({ turn }: { turn: Turn }) {
     if (p.scrollHeight > LONG_LINES * line + 1) setLong(true);
   }, [turn.sentences, long]);
   const clamped = long && !open;
+  const text = ui.part("text");
+  const expand = ui.part("expand");
   return (
-    <p ref={ref} className={`history-turn ${turn.speaker}${clamped ? " clamped" : ""}${
+    <p ref={(el) => { ref.current = el; ui.whole(el); text(el); if (long) expand(el); }}
+       className={`history-turn ${turn.speaker}${clamped ? " clamped" : ""}${
          long ? " long" : ""}${kindClass(turn)}`}
-       onClick={long ? () => setOpen(!open) : undefined}
+       {...(long ? toggle : {})}
        title={long ? (open ? "Show less" : "Show all") : undefined}>
-      <TurnWords turn={turn} speaking={null} />
+      <TurnWords turn={turn} speaking={null} partRef={ui.part} />
     </p>
   );
 }
 
-function SpeakingBox({ turn, word }: { turn: Turn | null;
-                                       word: [number, number, number] | null }) {
-  const ref = useRef<HTMLDivElement>(null);
+function SpeakingBox({ turn, word, partRef }: { turn: Turn | null;
+                                                word: [number, number, number] | null;
+                                                partRef: (el: Element | null) => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   // The line being spoken stays in view, with the line before it above.
   useLayoutEffect(() => {
     const box = ref.current;
@@ -240,14 +393,15 @@ function SpeakingBox({ turn, word }: { turn: Turn | null;
     }
   }, [word, turn?.id]);
   return (
-    <div className="conversation-speaking" ref={ref} aria-label="JARVIS is saying">
+    <div className="conversation-speaking" aria-label="JARVIS is saying"
+         ref={(el) => { ref.current = el; partRef(el); }}>
       {turn && <p className="caption-turn jarvis"><TurnWords turn={turn} speaking={word} /></p>}
     </div>
   );
 }
 
-function HearingBox({ turn }: { turn: Turn | null }) {
-  const ref = useRef<HTMLDivElement>(null);
+function HearingBox({ turn, partRef }: { turn: Turn | null; partRef: (el: Element | null) => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState("");
@@ -268,7 +422,8 @@ function HearingBox({ turn }: { turn: Turn | null }) {
     input.current?.blur();
   }
   return (
-    <div className="conversation-hearing" ref={ref} aria-label="You are saying"
+    <div className="conversation-hearing" aria-label="You are saying"
+         ref={(el) => { ref.current = el; partRef(el); }}
          onClick={() => setTyping(true)}>
       {heard !== null && <p className="caption-turn user">{heard}</p>}
       <textarea ref={input} className="hearing-input" rows={1} hidden={heard !== null}

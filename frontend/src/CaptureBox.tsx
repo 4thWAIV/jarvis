@@ -18,26 +18,35 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { heardText } from "./captions";
 import { captureAction, captures, reading, type Capture, type CaptureAction } from "./capture";
 import { SpokenWords } from "./SpokenWords";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { useUiTarget } from "./uiRegistry";
 
 const FADE_MS = 250;
 
-/** Every open capture, in the order they opened. */
-export function CaptureList() {
+/** The centre views the capture boxes are drawn in. */
+type CaptureView = "main.conversation" | "main.main";
+
+/** Every open capture, in the order they opened, in `view` (the Main view
+ *  unless said). Each box is registered there as a `capture` target. */
+export function CaptureList({ view = "main.main" }: { view?: CaptureView }) {
   const open = useSyncExternalStore(captures.subscribe, captures.get);
   if (!open.length) return null;
   return (
     <div className="capture-list">
-      {open.map((c) => <CaptureBox key={c.id} capture={c} />)}
+      {open.map((c) => <CaptureBox key={c.id} capture={c} view={view} />)}
     </div>
   );
 }
 
-function CaptureBox({ capture }: { capture: Capture }) {
+function CaptureBox({ capture, view }: { capture: Capture; view: CaptureView }) {
+  const ui = useUiTarget({ ref: { region: "main", view, kind: "capture", key: String(capture.id) },
+                           label: capture.to ? `Message to ${capture.to}` : `Capture ${capture.id}`,
+                           socket: CENTRE_SOCKET });
   // Opened from his words as heard, so the first thing seen is them turning
   // into the restatement.
   const [shown, setShown] = useState(() => ({
     text: capture.text, leaving: heardText(capture.heard) || null as string | null }));
-  const height = useRef<HTMLDivElement>(null);
+  const height = useRef<HTMLDivElement | null>(null);
   const [px, setPx] = useState<number | null>(null);
 
   useLayoutEffect(() => {
@@ -62,23 +71,27 @@ function CaptureBox({ capture }: { capture: Capture }) {
   const message = capture.to ? " message" : "";
   return (
     <div className={`capture-box ${capture.state}${message}`} data-capture={capture.id}
-         aria-live="polite">
+         aria-live="polite" ref={ui.whole}>
       <span className="capture-state">{capture.state}</span>
-      {capture.to && <span className="capture-to">Send to: {capture.to}</span>}
-      <div className="capture-body" ref={height} style={px === null ? undefined : { height: px }}>
+      {capture.to && <span className="capture-to" ref={ui.part("recipient")}>Send to: {capture.to}</span>}
+      <div className="capture-body" style={px === null ? undefined : { height: px }}
+           ref={(el) => { height.current = el; ui.part("body")(el); }}>
         <CaptureText key={`in-${shown.text}`} capture={capture} text={shown.text} />
         {shown.leaving !== null &&
           <div className="capture-text leaving" aria-hidden="true">{shown.leaving}</div>}
       </div>
-      <CaptureButtons capture={capture} />
+      <CaptureButtons capture={capture} actionsRef={ui.part("actions")} />
     </div>
   );
 }
 
 /** Accept, Delete and Send. Each waits for the server, which changes the box
  *  itself; a refusal is shown until the next press. The Queue's inline
- *  review (MessageReview.tsx) uses these same buttons on its capture. */
-export function CaptureButtons({ capture }: { capture: Capture }) {
+ *  review (MessageReview.tsx) uses these same buttons on its capture. They
+ *  are Tim's own acts on the capture, never navigation: the brain can point
+ *  at them (`actionsRef`) but not press them. */
+export function CaptureButtons({ capture, actionsRef }: {
+  capture: Capture; actionsRef?: (el: Element | null) => void }) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const sending = capture.state === "transmitting";
@@ -94,7 +107,7 @@ export function CaptureButtons({ capture }: { capture: Capture }) {
   return (
     <>
       {refused && <div className="capture-refused" role="alert">{refused}</div>}
-      <div className="capture-buttons">
+      <div className="capture-buttons" ref={actionsRef}>
         {/* Read aloud; heard to the end, it counts as read back. */}
         <button type="button" className="capture-read" disabled={busy || sending || beingRead}
                 title="Read it aloud" onClick={() => act("read")}>

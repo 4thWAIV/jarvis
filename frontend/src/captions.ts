@@ -8,8 +8,10 @@
  * below; the views only read `conversation`.
  */
 
+import { useEffect, useSyncExternalStore } from "react";
 import type { Display } from "./sources";
 import { createStore } from "./store";
+import { registerCommand } from "./uiRegistry";
 import { speakWords, stopWords } from "./wordClock";
 
 export type Speaker = "user" | "jarvis";
@@ -45,6 +47,51 @@ const KEEP_TURNS = 40;
 export const conversation = createStore<Conversation>({ turns: [], speaking: null });
 
 let nextId = 1;
+
+/** A live turn's identity among the conversation's records, for pointing
+ *  at it: `t<id>`, the id this module gave it, kept for the life of the
+ *  page (the record's own items are `r<id>`, conversation.ts). Never its
+ *  words or its place in the list. A turn the page has dropped, or one from
+ *  before a reload, has no live key: it is found as a record. */
+export const turnKey = (turn: Pick<Turn, "id">): string => `t${turn.id}`;
+
+// ── which records are open ──────────────────────────────────────────────
+//
+// A long turn, a message with its agent's answer, a capture item and a
+// sources item open and close; which are open is kept here, by record key
+// (`turnKey`, or the record's `r<id>`), and changed only by the
+// `conversation.record.expand` command, so a click and the brain open the
+// same thing the same way. The same record open in the history and in its
+// agent's thread is open in both.
+
+const openRecords = createStore<ReadonlySet<string>>(new Set());
+/** How many shown records of each key can open now, counted as they mount. */
+const openable = new Map<string, number>();
+
+/** Whether record `key` is open. `opens` says this one can (a short turn
+ *  cannot); while it can and is mounted, the command is offered for it. */
+export function useRecordOpen(key: string, opens: boolean): boolean {
+  const open = useSyncExternalStore(openRecords.subscribe, () => openRecords.get().has(key));
+  useEffect(() => {
+    if (!opens) return;
+    openable.set(key, (openable.get(key) ?? 0) + 1);
+    return () => {
+      const left = (openable.get(key) ?? 1) - 1;
+      if (left) openable.set(key, left); else openable.delete(key);
+    };
+  }, [key, opens]);
+  return open;
+}
+
+registerCommand("conversation.record.expand", {
+  availability: ({ recordId }) => openable.has(recordId) ? { available: true } : { available: false, reason: "no-entity" },
+  execute({ recordId, open }) {
+    const now = new Set(openRecords.get());
+    if (open) now.add(recordId); else now.delete(recordId);
+    openRecords.set(now);
+    return { status: "completed", effects: [] };
+  },
+});
 
 function commit(turns: Turn[], speaking: [number, number, number] | null): void {
   conversation.set({ turns: turns.slice(-KEEP_TURNS), speaking });

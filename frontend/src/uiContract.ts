@@ -934,6 +934,358 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "navigation"
+    },
+    {
+      "id": "workflow.tab.select",
+      "label": "Show one of the open workflow's tabs",
+      "view": "main.workflow",
+      "args": {
+        "workflowId": {
+          "type": "key",
+          "entity": "workflow"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "phases",
+            "tasks",
+            "transcript",
+            "progress",
+            "waits",
+            "decisions",
+            "blockers",
+            "events"
+          ]
+        }
+      },
+      "required": [
+        "workflowId",
+        "tab"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "workflows"
+    },
+    {
+      "id": "workflow.events.filter",
+      "label": "Show the open workflow's events of one kind; without a kind, every kind",
+      "view": "main.workflow",
+      "args": {
+        "workflowId": {
+          "type": "key",
+          "entity": "workflow"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "workflowId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "workflows"
+    },
+    {
+      "id": "workflow.transcript.earlier",
+      "label": "Load the earlier page of one transcript shown in the workflow view",
+      "view": "main.workflow",
+      "args": {
+        "sessionId": {
+          "type": "key",
+          "entity": "session"
+        },
+        "agentId": {
+          "type": "key",
+          "entity": "subagent"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "workflows"
+    },
+    {
+      "id": "folders.list",
+      "label": "Show the registered folders or what discovery found, in the centre's Folders view",
+      "view": "main.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "registered",
+            "discovered"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "folders.search",
+      "label": "Search the centre's folder list by name or path; without text the search is cleared",
+      "view": "main.folders",
+      "args": {
+        "text": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "folders.filter",
+      "label": "Filter the centre's folder list by role and availability, and show or hide removed and ignored folders",
+      "view": "main.folders",
+      "args": {
+        "role": {
+          "type": "enum",
+          "values": [
+            "any",
+            "data",
+            "source",
+            "history"
+          ]
+        },
+        "availability": {
+          "type": "enum",
+          "values": [
+            "any",
+            "available",
+            "missing",
+            "access_denied",
+            "unavailable_node"
+          ]
+        },
+        "removed": {
+          "type": "boolean"
+        },
+        "ignored": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "folders.add.open",
+      "label": "Open or close the Add existing folder form (nothing is checked or saved)",
+      "view": "main.folders",
+      "args": {
+        "open": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "open"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "folders"
+    },
+    {
+      "id": "folder.browse",
+      "label": "Show one directory of the selected folder; without a path, its top",
+      "view": "main.folders",
+      "args": {
+        "folderId": {
+          "type": "key",
+          "entity": "folder"
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "revision": {
+          "type": "integer",
+          "min": 0
+        }
+      },
+      "required": [
+        "folderId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "folder.preview",
+      "label": "Preview one file of the selected folder, or close the preview",
+      "view": "main.folders",
+      "args": {
+        "folderId": {
+          "type": "key",
+          "entity": "folder"
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "revision": {
+          "type": "integer",
+          "min": 0
+        }
+      },
+      "required": [
+        "folderId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "folders"
+    },
+    {
+      "id": "folder.more",
+      "label": "Load more of the selected folder's directory or of its file preview",
+      "view": "main.folders",
+      "args": {
+        "folderId": {
+          "type": "key",
+          "entity": "folder"
+        },
+        "list": {
+          "type": "enum",
+          "values": [
+            "entries",
+            "preview"
+          ]
+        }
+      },
+      "required": [
+        "folderId",
+        "list"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "id": "conversation.earlier",
+      "label": "Load the earlier page of the Conversation history",
+      "view": "main.conversation",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "conversation"
+    },
+    {
+      "id": "conversation.record.expand",
+      "label": "Open or close one record of the history or a thread (a long turn, an agent's answer, a capture or sources item)",
+      "view": "main.conversation",
+      "args": {
+        "recordId": {
+          "type": "key",
+          "entity": "record"
+        },
+        "open": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "recordId",
+        "open"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "conversation"
+    },
+    {
+      "id": "thread.earlier",
+      "label": "Load the earlier page of the open agent's thread",
+      "view": "main.thread",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "conversation"
     }
   ],
   "kinds": [
@@ -1473,6 +1825,7 @@ export const UI_CONTRACT = {
           "view": "main.workflow",
           "parts": [
             "header",
+            "state",
             "close",
             "dismiss",
             "tab.overview",
@@ -1484,7 +1837,13 @@ export const UI_CONTRACT = {
             "tab.decisions",
             "tab.blockers",
             "tab.events"
-          ]
+          ],
+          "reveal": {
+            "command": "workflow.open",
+            "args": {
+              "workflowId": "$key"
+            }
+          }
         }
       ],
       "family": "workflows"
@@ -1499,7 +1858,8 @@ export const UI_CONTRACT = {
       "label": "Workflow phase",
       "parts": [
         "row",
-        "state"
+        "state",
+        "progress"
       ],
       "presentations": [
         {
@@ -1589,7 +1949,26 @@ export const UI_CONTRACT = {
       "entity": "workflow",
       "label": "Workflow transcript",
       "parts": [
-        "list",
+        "list"
+      ],
+      "presentations": [
+        {
+          "view": "main.workflow"
+        }
+      ],
+      "family": "workflows"
+    },
+    {
+      "kind": "workflowAgent",
+      "entity": null,
+      "keyOf": [
+        "workflow",
+        "session"
+      ],
+      "label": "Attached agent's transcript",
+      "parts": [
+        "section",
+        "entries",
         "earlier"
       ],
       "presentations": [
@@ -1616,14 +1995,19 @@ export const UI_CONTRACT = {
     },
     {
       "kind": "subagent",
-      "entity": "subagent",
+      "entity": null,
+      "keyOf": [
+        "session",
+        "subagent"
+      ],
       "label": "Subagent",
       "parts": [
         "row",
         "state",
         "header",
         "close",
-        "transcript"
+        "transcript",
+        "earlier"
       ],
       "presentations": [
         {
@@ -1642,9 +2026,12 @@ export const UI_CONTRACT = {
         {
           "view": "main.workflow",
           "parts": [
+            "row",
+            "state",
             "header",
             "close",
-            "transcript"
+            "transcript",
+            "earlier"
           ]
         }
       ],
@@ -1779,7 +2166,8 @@ export const UI_CONTRACT = {
         "discovered",
         "ignored",
         "removed",
-        "add"
+        "add",
+        "list"
       ],
       "presentations": [
         {
@@ -1805,8 +2193,15 @@ export const UI_CONTRACT = {
             "discovered",
             "ignored",
             "removed",
-            "add"
-          ]
+            "add",
+            "list"
+          ],
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
         }
       ],
       "family": "folders"
@@ -1842,12 +2237,41 @@ export const UI_CONTRACT = {
         {
           "view": "main.folders",
           "parts": [
-            "row",
             "detail",
+            "name",
+            "availability",
             "location",
             "contents",
             "close"
-          ]
+          ],
+          "reveal": {
+            "command": "folders.open",
+            "args": {
+              "folderId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "folders"
+    },
+    {
+      "kind": "folderRow",
+      "entity": "folder",
+      "label": "Folder in the catalog list",
+      "parts": [
+        "row",
+        "name",
+        "availability"
+      ],
+      "presentations": [
+        {
+          "view": "main.folders",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
         }
       ],
       "family": "folders"
@@ -1877,7 +2301,9 @@ export const UI_CONTRACT = {
       "entity": "candidate",
       "label": "Discovered folder",
       "parts": [
-        "row"
+        "row",
+        "path",
+        "actions"
       ],
       "presentations": [
         {
@@ -1893,6 +2319,7 @@ export const UI_CONTRACT = {
       "parts": [
         "history",
         "earlier",
+        "speaking",
         "input"
       ],
       "presentations": [
@@ -1908,10 +2335,11 @@ export const UI_CONTRACT = {
       "label": "Conversation record",
       "parts": [
         "record",
-        "user",
+        "text",
         "answer",
         "agent",
-        "expand"
+        "expand",
+        "restore"
       ],
       "presentations": [
         {
@@ -1961,12 +2389,19 @@ export const UI_CONTRACT = {
       "label": "Agent thread",
       "parts": [
         "header",
+        "state",
         "close",
         "earlier"
       ],
       "presentations": [
         {
-          "view": "main.thread"
+          "view": "main.thread",
+          "reveal": {
+            "command": "thread.open",
+            "args": {
+              "sessionId": "$key"
+            }
+          }
         }
       ],
       "family": "conversation"
@@ -1980,7 +2415,12 @@ export const UI_CONTRACT = {
       ],
       "label": "Thread record",
       "parts": [
-        "record"
+        "record",
+        "text",
+        "answer",
+        "agent",
+        "expand",
+        "restore"
       ],
       "presentations": [
         {
@@ -2141,8 +2581,17 @@ export interface UIHello {
 export interface UIWelcome { type: "ui_welcome"; clientId: string; epoch: number }
 
 export interface CommandArgs {
+  "conversation.earlier": { };
+  "conversation.record.expand": { recordId: string; open: boolean; };
+  "folder.browse": { folderId: string; path?: string; revision?: number; };
+  "folder.more": { folderId: string; list: "entries" | "preview"; };
+  "folder.preview": { folderId: string; path?: string; revision?: number; };
+  "folders.add.open": { open: boolean; };
   "folders.close": { };
+  "folders.filter": { role?: "any" | "data" | "source" | "history"; availability?: "any" | "available" | "missing" | "access_denied" | "unavailable_node"; removed?: boolean; ignored?: boolean; };
+  "folders.list": { view: "registered" | "discovered"; };
   "folders.open": { folderId: string; };
+  "folders.search": { text?: string; };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue"; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -2156,9 +2605,13 @@ export interface CommandArgs {
   "subsystem.close": { };
   "subsystem.open": { subsystemId: string; };
   "thread.close": { };
+  "thread.earlier": { };
   "thread.open": { sessionId: string; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
   "workflow.close": { };
+  "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; };
+  "workflow.tab.select": { workflowId: string; tab: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };
+  "workflow.transcript.earlier": { sessionId: string; agentId?: string; };
 }
