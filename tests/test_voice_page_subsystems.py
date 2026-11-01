@@ -283,22 +283,20 @@ async def _open_with_orbs(p, page_url):
     return browser, page
 
 
-def _lit(png: bytes) -> int:
-    """Pixels an orb has drawn: anything brighter than the page behind it."""
-    import io
-    from PIL import Image
-    raw = Image.open(io.BytesIO(png)).convert("RGB").tobytes()
-    return sum(1 for i in range(0, len(raw), 3) if max(raw[i], raw[i + 1], raw[i + 2]) > 60)
+async def _drawn(canvas) -> int:
+    """Pixels a small orb has drawn on its own canvas (they are copied there
+    from the shared renderer), read from the canvas itself."""
+    return await canvas.evaluate("""c => c.getContext('2d').getImageData(0, 0, c.width, c.height)
+        .data.filter((v, i) => i % 4 === 3 && v > 0).length""")
 
 
 @pytest.mark.asyncio
 async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_url):
-    pytest.importorskip("PIL")
     async with async_api.async_playwright() as p:
         browser, page = await _open_with_orbs(p, page_url)
         agent_orbs = page.locator(".agents-list li .agent-orb")
         assert await agent_orbs.count() >= 5, await agent_orbs.count()
-        assert _lit(await agent_orbs.nth(1).screenshot()) > 30, "an agent's orb is not drawn"
+        assert await _drawn(agent_orbs.nth(1)) > 30, "an agent's orb is not drawn"
 
         await page.click(".right-tabs [role=tab][title=Workflows]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19]", timeout=10000)
@@ -308,7 +306,7 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_url):
         await page.wait_for_timeout(1000)
         shown = await page.locator(".workflow-orb canvas").count()
         assert shown >= 10, shown
-        assert _lit(await page.locator(head).screenshot()) > 30, "a workflow's orb is not drawn"
+        assert await _drawn(page.locator(head)) > 30, "a workflow's orb is not drawn"
 
         # Back and forth: small orbs made and dropped again and again.
         for _ in range(3):
@@ -328,7 +326,6 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_url):
 
 @pytest.mark.asyncio
 async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_url):
-    pytest.importorskip("PIL")
     async with async_api.async_playwright() as p:
         browser, page = await _open_with_orbs(p, page_url)
         # A workflow's detail in the centre keeps a small orb on the page
@@ -338,15 +335,13 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_u
         orb = page.locator("#workflow-detail .workflow-detail-head .workflow-orb canvas")
         await orb.wait_for()
         await page.wait_for_timeout(1000)
-        assert _lit(await orb.screenshot()) > 30
+        assert await _drawn(orb) > 30
         await page.evaluate("""() => {
             const shared = window.__glContexts.find(m => m.canvas.id !== 'orb-canvas' && !m.context.isContextLost());
             window.__lose = shared.context.getExtension('WEBGL_lose_context');
             window.__lose.loseContext(); }""")
         await page.wait_for_timeout(300)
-        drawn = await orb.evaluate("""c => c.getContext('2d').getImageData(0, 0, c.width, c.height)
-            .data.filter((v, i) => i % 4 === 3 && v > 0).length""")
-        assert drawn == 0, "a small orb still shows with its context gone"
+        assert await _drawn(orb) == 0, "a small orb still shows with its context gone"
         await page.click(".right-tabs [aria-label='Diagnostics']")
         row = ".subsystem-row[data-subsystem='page']"
         await page.wait_for_selector(f"{row}.state-degraded")
@@ -355,5 +350,5 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_u
         await page.evaluate("() => window.__lose.restoreContext()")
         await page.wait_for_selector(f"{row}.state-ok")
         await page.wait_for_timeout(1000)
-        assert _lit(await orb.screenshot()) > 30, "the small orbs did not come back"
+        assert await _drawn(orb) > 30, "the small orbs did not come back"
         await browser.close()
