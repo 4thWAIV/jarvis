@@ -54,7 +54,7 @@ def start(engine_factory=None) -> TranscriptionService:
     anything; the page is told when it connects."""
     global service, _last_failure_at
     _last_failure_at = None
-    service = TranscriptionService(engine_factory or transcriber.SherpaEngine)
+    service = TranscriptionService(engine_factory or transcriber.load_engine)
     service.start()
     probe.start()
     voice_diagnostics.record_soon_prune()
@@ -111,7 +111,7 @@ async def transcribe(ws: WebSocket):
     async def fail(error: TranscriptionError) -> None:
         global _last_failure_at
         log.info("transcription %s refused: %s", session, error.code)
-        if error.code in voice_diagnostics.INCIDENT_KINDS:
+        if error.incident and error.code in voice_diagnostics.INCIDENT_KINDS:
             _last_failure_at = time.monotonic()
             if monitor is not None:
                 await monitor.incident(error.code, error.message)

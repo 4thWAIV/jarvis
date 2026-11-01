@@ -2,6 +2,7 @@
 recognizer, PCM conversion, where the model is looked for, and the setup
 helper's checks on the archive."""
 
+import dataclasses
 import hashlib
 import io
 import struct
@@ -115,9 +116,24 @@ def test_the_model_is_found_in_the_data_folder_or_where_the_override_says(
         monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("JARVIS_STT_MODEL_DIR", raising=False)
-    assert transcriber.model_dir() == tmp_path / "data" / "models" / transcriber.MODEL_NAME
+    english, spanish = transcriber.find_model("en"), transcriber.find_model("es")
+    assert transcriber.model_dir() == tmp_path / "data" / "models" / english.name
+    assert transcriber.model_dir(spanish) == tmp_path / "data" / "models" / spanish.name
     monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "elsewhere"))
-    assert transcriber.model_dir() == tmp_path / "elsewhere"
+    assert transcriber.model_dir() == tmp_path / "elsewhere" / english.name
+    assert transcriber.model_dir(spanish) == tmp_path / "elsewhere" / spanish.name
+
+
+def test_the_model_list_has_english_by_default_and_spanish():
+    english, spanish = transcriber.default_model(), transcriber.find_model("es")
+    assert english.language == "en" and english.name.endswith("-en-kroko-2025-08-06")
+    assert spanish.name == "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06"
+    assert spanish.sha256 == "31b2230a95d23290b308b393da930015a4b2105cb3abb9367aed35f7fcf29cf1"
+    assert spanish.url == ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+                           "asr-models/sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06.tar.bz2")
+    assert transcriber.find_model("fr") is None
+    assert transcriber.setup_command(english) == transcriber.SETUP_COMMAND
+    assert transcriber.setup_command(spanish).endswith("--language es")
 
 
 def test_a_missing_or_incomplete_model_names_the_setup_command(tmp_path):
@@ -154,19 +170,21 @@ def _archive(tmp_path, entries):
 
 
 def _good_entries():
-    return [(f"{transcriber.MODEL_NAME}/{n}", b"weights") for n in transcriber.MODEL_FILES]
+    name = transcriber.default_model().name
+    return [(f"{name}/{n}", b"weights") for n in transcriber.MODEL_FILES]
 
 
 @pytest.fixture
 def destination(monkeypatch, tmp_path):
-    dest = tmp_path / "models" / transcriber.MODEL_NAME
-    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(dest))
-    return dest
+    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "models"))
+    return tmp_path / "models" / transcriber.default_model().name
 
 
 def _trust(monkeypatch, archive):
-    monkeypatch.setattr(transcriber, "MODEL_SHA256",
-                        hashlib.sha256(archive.read_bytes()).hexdigest())
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    monkeypatch.setattr(transcriber, "MODELS", tuple(
+        dataclasses.replace(m, sha256=digest) if m.language == "en" else m
+        for m in transcriber.MODELS))
 
 
 def test_setup_installs_a_verified_archive_in_one_rename(monkeypatch, tmp_path, destination):
@@ -174,7 +192,7 @@ def test_setup_installs_a_verified_archive_in_one_rename(monkeypatch, tmp_path, 
     _trust(monkeypatch, archive)
     assert setup_speech_input.install(archive) == destination
     assert transcriber.model_problem(destination) is None
-    assert [p.name for p in destination.parent.iterdir()] == [transcriber.MODEL_NAME]
+    assert [p.name for p in destination.parent.iterdir()] == [destination.name]
 
 
 def test_setup_refuses_an_archive_whose_digest_is_not_the_releases(tmp_path, destination):
@@ -187,7 +205,7 @@ def test_setup_refuses_an_archive_whose_digest_is_not_the_releases(tmp_path, des
 @pytest.mark.parametrize("bad", [
     ("../escape", b"x"),
     ("elsewhere/tokens.txt", b"x"),
-    (f"{transcriber.MODEL_NAME}/link", None),
+    ("sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06/link", None),
 ])
 def test_setup_refuses_paths_that_escape_and_links(monkeypatch, tmp_path, destination, bad):
     archive = _archive(tmp_path, _good_entries() + [bad])

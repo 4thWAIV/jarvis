@@ -347,6 +347,23 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._speech_model_line": (
+        "its `state` is a download's own step, one of speech_models' fixed words, "
+        "and every other value is from transcriber.MODELS or the installer's own "
+        "refusal; no session, run or person writes any of it"),
+    "server.tool_speech_models": (
+        "its `state` is the transcription service's own status word and its labels "
+        "come from transcriber.MODELS; the failure is the loader's own sentence; no "
+        "session, run or person writes any of it"),
+    "speech_models._install": (
+        "its `state` is the download's own step, set from the installer's fixed "
+        "progress words, and its f-string is a log line naming a model from "
+        "transcriber.MODELS; nothing a session wrote reaches it"),
+    "self_update.ci_state": (
+        "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
+        "to compare them with fixed values, and returns one of five fixed CI "
+        "words (passed, pending, failed, none, unknown); no text from GitHub "
+        "reaches the string it returns, a header, a spoken line or the brain"),
     "folder_discovery.claude_history": (
         "it reads a transcript record's `cwd` and `sessionId` only to store them "
         "as an observation in the folder catalog; its one f-string is the "

@@ -616,8 +616,10 @@ def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypa
 
 def test_speech_input_is_ok_with_every_model_file_and_loads_nothing(monkeypatch, tmp_path):
     from jarvis import transcriber
+    folder = tmp_path / transcriber.default_model().name
+    folder.mkdir()
     for name in transcriber.MODEL_FILES:
-        (tmp_path / name).write_text("x")
+        (folder / name).write_text("x")
     monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path))
     monkeypatch.setattr(transcriber, "SherpaEngine", None)   # building one would fail
     assert preflight._check_speech_input_sync().status == STATUS_OK

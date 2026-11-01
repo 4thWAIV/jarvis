@@ -1,14 +1,11 @@
 /**
- * The ⋮ menu in the top right: Settings (Settings.tsx) and Restart Server.
- * It closes on any click elsewhere.
+ * The ⋮ menu in the top right: Settings (Settings.tsx), Check for updates
+ * (Settings at Updates) and Restart Server. It closes on any click elsewhere.
  */
 
 import { useEffect, useState } from "react";
-import { openSettings } from "./Settings";
+import { openSettings, reloadAfterRestart } from "./Settings";
 import { notice } from "./voiceHealth";
-
-// How long a restart is given before the page reloads itself.
-const RELOAD_AFTER_MS = 4000;
 
 export function MenuControl() {
   const [open, setOpen] = useState(false);
@@ -22,10 +19,9 @@ export function MenuControl() {
 
   const restart = async () => {
     setOpen(false);
-    notice("Status", "Restarting the server.");
     try {
       await fetch("/api/restart", { method: "POST" });
-      setTimeout(() => window.location.reload(), RELOAD_AFTER_MS);
+      reloadAfterRestart("Restarting the server.");
     } catch {
       notice("Status", "The restart failed: the server did not answer.");
     }
@@ -45,6 +41,8 @@ export function MenuControl() {
       {open && (
         <div id="menu-dropdown" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => { setOpen(false); openSettings(); }}>Settings</button>
+          <button onClick={() => { setOpen(false); openSettings("updates"); }}>
+            Check for updates</button>
           <button onClick={restart}>Restart Server</button>
         </div>
       )}
