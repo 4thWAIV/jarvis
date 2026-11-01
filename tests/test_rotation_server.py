@@ -629,3 +629,23 @@ async def test_a_fresh_start_closes_the_question(wired, monkeypatch):
 def test_the_answer_is_read_plainly(wired, text, answer):
     assert wired._rotation_answer(text) is answer
 
+
+
+@pytest.mark.parametrize("text, answer", [
+    ("sí", True), ("Sí.", True), ("si", True), ("Sí, adelante.", True),
+    ("claro", True), ("hazlo", True), ("dale", True), ("De acuerdo", True),
+    ("adelante, sí", True),
+    ("no", False), ("Todavía no", False), ("sí, pero después", False),
+    ("despues", False), ("espera", False), ("luego", False), ("nunca", False),
+    ("negativo", False),
+    ("¿qué hora es?", None), ("", None), ("yes", None),
+    # The 4-word limit holds: a long sentence opening with "sí" is not a yes.
+    ("sí claro que me parece bien hacerlo", None),
+])
+def test_the_spanish_answer_is_read_plainly(wired, spanish, text, answer):
+    assert wired._rotation_answer(text) is answer
+
+
+def test_spanish_words_are_not_an_answer_while_the_language_is_english(wired):
+    assert wired._rotation_answer("sí") is None
+    assert wired._rotation_answer("dale") is None

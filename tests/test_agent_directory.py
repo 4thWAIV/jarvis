@@ -59,6 +59,23 @@ def test_that_one_is_the_agent_last_talked_about(directory):
     assert [a.name for a in agent_directory.find("that one", last_mentioned="h")] == ["hammer"]
 
 
+@pytest.mark.parametrize("sessions, said, found", [
+    # The only agent: no word step can narrow, so the exact name must match.
+    ([_session("j", "José", "casa")], "jose", ["j"]),
+    ([_session("j", "Jose", "casa")], "José", ["j"]),
+    # The exact name still beats a longer one sharing the word.
+    ([_session("j", "José", "casa"), _session("d", "José dos", "otra")], "jose", ["j"]),
+])
+def test_a_name_matches_with_or_without_its_accents(sessions, said, found):
+    agent_directory.connect(lambda: sw.Snapshot(sessions=sessions),
+                            rows=lambda: [], needs=lambda: {})
+    try:
+        assert [a.session_id for a in agent_directory.find(said)] == found
+        assert agent_directory.same_name("José Núñez", "jose nunez")
+    finally:
+        importlib.reload(agent_directory)
+
+
 def test_nothing_is_guessed(directory):
     assert agent_directory.find("anvil") == []
     assert agent_directory.find("") == []

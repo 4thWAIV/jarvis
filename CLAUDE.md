@@ -87,6 +87,25 @@ cancels and says nothing was cleared. Context rotation likewise waits for a
 yes to its own question. Every clear or rotation is logged with its trigger
 and the exact utterance. The one involuntary replacement is the crash/stall
 restart in `brain.py`, which is recovery, not a decision, and is logged.
+In Spanish the one clear command is exactly `empezar de cero`, under the
+same rules.
+
+## Spoken words
+Every matcher of what the user said against fixed words splits and folds it
+with `spoken_words.py`: the yes and no to clearing and compaction
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+command, the cancel and replay words and echo rejection (`speech._tokens`),
+agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
+(`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
+"s") and `fold` takes accents off before comparing; on ASCII text both give
+exactly what the old `[a-z0-9]` splitters gave. Each language's word lists
+are one `Vocabulary` there, English and Latin American Spanish (yes: sí, si,
+claro, adelante, hazlo, dale, "de acuerdo"; no: no, espera, luego, después,
+nunca, negativo, todavía; cancel: espera, espérate, cancela, alto, detente,
+never "para"; replay: repite, otra vez). Which list counts is
+`spoken_words.active_language()`, the one place the language is decided; it
+returns English until the language setting exists, so the Spanish words
+match nothing yet. Tests switch it with the `spanish` fixture.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
