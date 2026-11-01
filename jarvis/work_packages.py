@@ -15,10 +15,9 @@ a zip entry may not land outside its package's folder.
                  package's own name, when only one has it)
     run          one shell command in a package's folder, with a timeout,
                  its exit code and the last of its output
-    results      the files a package's `returns` globs match
-    attachable   a file the brain may attach to a draft (`draft_message`'s
-                 `files`): any regular file he names, never JARVIS's own
-                 data outside the packages
+    results      the files a package's `returns` globs match, which go back
+                 through draft_files.py (a package's folder is the one part
+                 of JARVIS's data a draft may attach from)
 """
 from __future__ import annotations
 
@@ -289,24 +288,3 @@ async def run(package: Package, command: str,
              "timed out" if code is None else f"exit {code}")
     return Ran(code, text)
 
-
-# -- files to send ----------------------------------------------------------------------
-
-def attachable(raw: str) -> Path:
-    """A file the brain may attach to a draft: an absolute path to a regular
-    file, not a link, and not in JARVIS's own data unless it is in a package.
-    Raises PackageError saying why not."""
-    path = Path(str(raw or "")).expanduser()
-    if not path.is_absolute():
-        raise PackageError(f"{raw!r} is not a full path.")
-    try:
-        info = os.lstat(path)
-    except OSError:
-        raise PackageError(f"There is no file at {path}.") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise PackageError(f"{path} is not a file.")
-    real = path.resolve()
-    if _inside(data_paths.data_dir().resolve(), real) \
-            and not _inside(data_paths.packages_dir().resolve(), real):
-        raise PackageError(f"{path} is JARVIS's own data; it is not sent.")
-    return real

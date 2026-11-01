@@ -20,6 +20,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# The one limit on a message's files, from the messaging contract.
+from jarvis.messaging_wire import ATTACHMENTS_MAX
+
 PROTOCOL_VERSION = "2024-11-05"
 
 # How long this child waits for the server's answer to one tool call.
@@ -40,7 +43,10 @@ PROTOCOL_VERSION = "2024-11-05"
 TIMEOUT_SEC = 20.0
 # read_capture returns only once the capture has been read aloud, and the
 # server waits up to a minute for that (server.READBACK_TIMEOUT).
-TIMEOUT_FOR = {"read_capture": 75.0}
+# Attaching copies up to a message's 100 MiB of files before it saves the
+# draft; a copy that outlives the wait still ends in one save or none, and a
+# retry at the same revision is refused (draft_files.py).
+TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0}
 
 TOOL_SPECS = [
     {
@@ -1078,9 +1084,10 @@ TOOL_SPECS = [
             "himself, as Me), on his say-so. It is only a draft: it shows on its item "
             "as one you wrote, and nothing is sent. To revise one, pass its `message` "
             "id and the `draft_revision` you last saw. To reply, pass the exact "
-            "`reply_to` message id instead of `to`. To attach files, pass their full "
-            "paths in `files`: a package's results (package_results), or a file he names "
-            "this turn. Then request_message_review."),
+            "`reply_to` message id instead of `to`. `files` attaches full paths as the "
+            "draft is saved, the same way attach_message_files does: a package's results "
+            "(package_results), or a file he names this turn. Then "
+            "request_message_review."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1099,6 +1106,33 @@ TOOL_SPECS = [
                                    "description": "With `message`: the revision last seen."},
             },
             "required": ["text"],
+        },
+    },
+    {
+        "name": "attach_message_files",
+        "description": (
+            "Attach the local files the user asked for to an existing team-message "
+            "draft. Nothing is sent. Needs the exact draft revision last read; each "
+            "path is the full path of one file (no ~, wildcards or folders), resolved "
+            "from what he said before calling, never a guess between candidates. "
+            "Returns the new revision and every file's name and size: review that "
+            "revision (request_message_review) before sending. If the revision has "
+            "moved, nothing is attached: say what the draft already holds, never "
+            "attach again blindly."),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "message": {"type": "string", "format": "uuid",
+                            "description": "The draft's message id."},
+                "draft_revision": {"type": "integer", "minimum": 1,
+                                   "description": "The draft's revision last read."},
+                "paths": {"type": "array", "minItems": 1, "maxItems": ATTACHMENTS_MAX,
+                          "uniqueItems": True,
+                          "items": {"type": "string", "minLength": 1},
+                          "description": "Full paths of the files to attach."},
+            },
+            "required": ["message", "draft_revision", "paths"],
         },
     },
     {

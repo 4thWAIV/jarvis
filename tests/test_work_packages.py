@@ -20,7 +20,7 @@ from uuid import UUID
 
 import pytest
 
-from jarvis import data_paths, messaging_files, work_packages
+from jarvis import data_paths, draft_files, messaging_files, work_packages
 from jarvis.messaging_files import FilesContext, FileSnapshots
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
 from tests.test_messaging_files import MATT, SERVER, TIM, World
@@ -126,20 +126,21 @@ def test_package_results_are_the_files_its_returns_match(tmp_path, marks):
 
 def test_a_file_may_be_attached_from_a_package_or_anywhere_he_names(tmp_path, marks):
     package, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"SKILL.md": "x"})), "aa")
-    assert work_packages.attachable(str(package.folder / "SKILL.md")) == \
+    assert draft_files.source_path(str(package.folder / "SKILL.md")) == \
         (package.folder / "SKILL.md").resolve()
     named = tmp_path / "made-here.zip"
     named.write_bytes(b"zip")
-    assert work_packages.attachable(str(named)) == named.resolve()
+    assert draft_files.source_path(str(named)) == named.resolve()
     os.symlink(named, tmp_path / "via-link.zip")
     data_paths.ensure_tool_token()
     token = data_paths.tool_token_path()
-    for raw, said in [("made-here.zip", "not a full path"), (str(tmp_path), "not a file"),
-                      (str(tmp_path / "via-link.zip"), "not a file"),
+    for raw, said in [("made-here.zip", "not a full path"),
+                      (str(tmp_path), "not an ordinary file"),
+                      (str(tmp_path / "via-link.zip"), "is a link"),
                       (str(tmp_path / "gone.zip"), "no file"),
-                      (str(token), "JARVIS's own data")]:
-        with pytest.raises(work_packages.PackageError, match=said):
-            work_packages.attachable(raw)
+                      (str(token), "does not send")]:
+        with pytest.raises(draft_files.NotAttached, match=said):
+            draft_files.Source.open(raw).close()
 
 
 # -- running a step -------------------------------------------------------------------------

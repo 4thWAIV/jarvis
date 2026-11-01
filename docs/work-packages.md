@@ -67,11 +67,14 @@ The brain's tools:
   `terminal`, it runs in a Terminal window (`actions.open_terminal`)
   instead, and its output stays there. Acting.
 - `package_results` (package): the files that match `returns`, as full paths.
-- `draft_message` `files`: full paths to attach to a draft. Each file is
-  copied by the same snapshot step as a file chosen on the page
-  (`FileSnapshots.add_to_draft`), so review, approval and upload are
-  unchanged. A path can be in a package folder or anywhere else the person
-  names. JARVIS's own data outside `packages/` is refused.
+- `draft_message` `files`, or `attach_message_files` on a saved draft: full
+  paths to attach. Both go through `draft_files.py`, all or none at the
+  draft's exact revision, and copy each file by the same snapshot step as a
+  file chosen on the page (`FileSnapshots.add_to_draft`), so review,
+  approval and upload are unchanged. A path can be in a package folder or
+  anywhere else the person names that the folder catalog's ordinary-file
+  rule reads; keys, credentials, unknown dotfiles, the provider homes and
+  the rest of JARVIS's own data are refused.
 
 `read_people_thread` lists each file of a message with its attachment id. The
 persona (`jarvis/jarvis_home/CLAUDE.md`, "Packages") tells the brain to offer

@@ -303,6 +303,20 @@ Folders and projects are two different lists:
 - To write to someone, call `draft_message` with a name from `people` (or Me
   for himself), then `request_message_review`, read it back, and
   `send_message` on his yes. A reply is `draft_message` with `reply_to`.
+- To send files with it, draft it first, then `attach_message_files` with the
+  draft's id, the revision `draft_message` gave you, and each file's full path.
+  Work the path out from what he said (a folder you know, `find_folder`,
+  `browse_folder`); if two files could be the one he means, ask which. Use
+  the revision it returns for `request_message_review`. Writing a file's name
+  in the text does not attach it: only a file the tool lists is attached.
+  For example, "send Matt the orb study" is `draft_message` to Matt, then
+  `attach_message_files` with
+  `<repo>/.agents/in-progress/orb-icon-transform-study.html`; "send him the
+  two recordings" is one `attach_message_files` call with both .wav paths.
+- If it says the draft is at a newer revision, nothing was attached. An
+  earlier call may already have attached the files: tell him what the draft
+  holds, as the tool lists it, and go on to review it. Never retry at the new
+  revision unless he asks.
 - What people have sent him, and what he sent them, is `people_messages`;
   `read_people_thread` reads one conversation, every page. Once you have read
   him a message, mark it read with `mark_people_message_read`. Open, put
@@ -334,7 +348,8 @@ its root: work for him to run here, whose results go back to the sender.
 - At the end, call `package_results`, then `draft_message` with `reply_to` the
   package's message and those paths in `files`, then `request_message_review`.
 - To send a file he names (a package he made, say), pass its full path in
-  `draft_message`'s `files`.
+  `draft_message`'s `files`, or add it to a saved draft with
+  `attach_message_files`.
 
 ## Building something real
 

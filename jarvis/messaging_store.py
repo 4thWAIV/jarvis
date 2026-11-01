@@ -488,7 +488,7 @@ class SqliteMessagingStore:
             "SELECT body FROM human_drafts WHERE server_id=? AND owner=? AND thread_id=? "
             "ORDER BY rowid", (server_id, owner, thread)).fetchall()]
         drafts = [d for d in drafts if d.send.state != "accepted"]
-        editable = [d for d in drafts if d.send.state in ("draft", "awaiting_approval")]
+        editable = [d for d in drafts if d.send.state in ports.SEND_EDITABLE]
         command = conn.execute("SELECT body FROM human_commands WHERE server_id=? AND owner=? "
                                "AND thread_id=?", (server_id, owner, thread)).fetchone()
         return ports.LocalItem(
