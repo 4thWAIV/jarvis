@@ -89,3 +89,17 @@ def test_every_list_is_stored_as_matchers_compare_it():
         for phrase in v.replay_phrases:
             assert all(spoken_words.folded_words(w, apostrophes=True) == [w]
                        for w in phrase), (language, phrase)
+
+
+@pytest.mark.parametrize("honorific,english,spanish", [
+    ("sir", "sir", "señor"),
+    ("", "sir", "señor"),
+    ("ma'am", "ma'am", "señora"),
+    ("Ma'am", "ma'am", "señora"),
+    ("señor", "señor", "señor"),
+    ("none", None, None),
+    ("Lord Vader", "sir", "señor"),
+])
+def test_the_honorific_in_each_language(honorific, english, spanish):
+    assert spoken_words.address(spoken_words.ENGLISH, honorific) == english
+    assert spoken_words.address(spoken_words.SPANISH, honorific) == spanish

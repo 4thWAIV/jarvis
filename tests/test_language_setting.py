@@ -189,7 +189,7 @@ def test_choosing_needs_the_pages_origin(client):
     ("sir", "Speaking English now, sir.", "Ahora hablo en español, señor."),
     ("", "Speaking English now, sir.", "Ahora hablo en español, señor."),
     ("señor", "Speaking English now, señor.", "Ahora hablo en español, señor."),
-    ("ma'am", "Speaking English now, ma'am.", "Ahora hablo en español, ma'am."),
+    ("ma'am", "Speaking English now, ma'am.", "Ahora hablo en español, señora."),
     ("none", "Speaking English now.", "Ahora hablo en español."),
     ("Lord Vader", "Speaking English now, sir.", "Ahora hablo en español, señor."),
 ])
@@ -228,6 +228,11 @@ def test_an_honorific_not_on_the_list_never_reaches_the_prompt(tmp_path):
 
 def test_spanish_addresses_him_as_senor_by_default(tmp_path, spanish):
     assert "Address the user as señor, never sir." in _launch_prompt(tmp_path, "sir")
+
+
+def test_spanish_addresses_her_as_senora_under_maam(tmp_path, spanish):
+    """Ma'am in Spanish is señora, as sir is señor."""
+    assert "Address the user as señora, never sir." in _launch_prompt(tmp_path, "ma'am")
 
 
 def test_the_honorific_reaches_the_brain_from_env(monkeypatch, tmp_path):

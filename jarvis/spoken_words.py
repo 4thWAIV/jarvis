@@ -46,16 +46,22 @@ def set_active_language(language: str) -> None:
     _active = language
 
 
-# How he is addressed, by the Honorific setting (Settings, You). Only these
-# fixed words ever reach the brain's launch prompt: any other value in .env
-# counts as the default. The default is each language's own: "sir" in
-# English, "señor" in Spanish, where "sir" is never said.
-HONORIFICS = ("sir", "ma'am", "señor", "none")
-_DEFAULT_ADDRESS = {ENGLISH: "sir", SPANISH: "señor"}
+# How he is addressed, by the Honorific setting (Settings, You), in each
+# language: the one table. Only these fixed words ever reach the brain's
+# launch prompt: any other value in .env counts as the default, "sir", which
+# in Spanish is "señor" (and "ma'am" is "señora"), since "sir" is never said
+# there.
+_ADDRESS = {
+    "sir": {ENGLISH: "sir", SPANISH: "señor"},
+    "ma'am": {ENGLISH: "ma'am", SPANISH: "señora"},
+    "señor": {ENGLISH: "señor", SPANISH: "señor"},
+}
+_DEFAULT_HONORIFIC = "sir"
+HONORIFICS = (*_ADDRESS, "none")
 
 
 def default_address(language: str) -> str:
-    return _DEFAULT_ADDRESS[language]
+    return _ADDRESS[_DEFAULT_HONORIFIC][language]
 
 
 def address(language: str, honorific: str | None) -> str | None:
@@ -64,9 +70,7 @@ def address(language: str, honorific: str | None) -> str | None:
     chosen = (honorific or "").strip().lower()
     if chosen == "none":
         return None
-    if chosen in HONORIFICS and chosen != "sir":
-        return chosen
-    return default_address(language)
+    return _ADDRESS.get(chosen, _ADDRESS[_DEFAULT_HONORIFIC])[language]
 
 
 # Letters, digits, any alphabet; `_` is a word character to `\w` and is not
