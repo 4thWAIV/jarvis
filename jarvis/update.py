@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from jarvis import data_paths, self_update, server_address
+from jarvis import data_paths, self_update, server_address, web_auth
 from jarvis.jarvis_mcp import _ssl_context_for
 
 # pip and npm can take minutes; the server answers once they are done.
@@ -43,7 +43,7 @@ def server_url() -> str:
     if tool.scheme and tool.netloc:
         return f"{tool.scheme}://{tool.netloc}"
     certs = all((data_paths.CONFIG_DIR / name).exists() for name in ("cert.pem", "key.pem"))
-    return f"{'https' if certs else 'http'}://127.0.0.1:{server_address.DEFAULT_PORT}"
+    return f"{'https' if certs else 'http'}://127.0.0.1:{web_auth.DEFAULT_API_PORT}"
 
 
 def ask_server(url: str) -> dict | None:
