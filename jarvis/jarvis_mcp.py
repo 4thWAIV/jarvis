@@ -1541,7 +1541,8 @@ TOOL_SPECS = [
     {
         "name": "speech_models",
         "description": (
-            "Which language speech input hears (one model is loaded at a time), and each "
+            "JARVIS's language (set_language), which language speech input hears (one model "
+            "is loaded at a time), and each "
             "language's speech model: installed, downloading and how far, or not installed "
             "and its download size."),
         "inputSchema": {"type": "object", "properties": {}},
@@ -1562,11 +1563,13 @@ TOOL_SPECS = [
         },
     },
     {
-        "name": "switch_speech_model",
+        "name": "set_language",
         "description": (
-            "Make speech input hear another language, only when he asks: its model is loaded "
-            "in place of the current one, which takes a few seconds, and what he is saying "
-            "at that moment is not heard. The model must be installed first."),
+            "Change the language JARVIS hears and speaks (Settings, Voice, Language), only "
+            "when he asks: speech input loads that language's model in place of the current "
+            "one, which takes a few seconds, and the choice is kept. The language's speech "
+            "model must be installed first (install_speech_model). Then tell him in the new "
+            "language."),
         "inputSchema": {
             "type": "object",
             "properties": {

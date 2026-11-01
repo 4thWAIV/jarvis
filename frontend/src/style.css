@@ -945,6 +945,13 @@ html, body {
   flex: 1;
 }
 
+/* Settings → Voice: the Spanish speech model's state beside its Download. */
+.settings-model-state {
+  flex: 1;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .settings-hint {
   margin: 6px 0 0 0;
   font-size: 11px;

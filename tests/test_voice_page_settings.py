@@ -61,6 +61,15 @@ class _Server:
         self.codex_added, self.codex_signed_in = codex_added, codex_signed_in
         self.default = "anthropic"
         self.update = _update_status()
+        self.language, self.spanish_installed = "en", False
+
+    def language_status(self):
+        models = [{"language": "en", "label": "English", "archiveBytes": 57_267_600,
+                   "installed": True, "install": None},
+                  {"language": "es", "label": "Spanish", "archiveBytes": 124_394_665,
+                   "installed": self.spanish_installed, "install": None}]
+        return {"language": self.language, "speech": {"language": self.language,
+                "state": "ready", "failure": None, "models": models}}
 
     def brains(self):
         return [_card("anthropic", "Claude", True, default=self.default == "anthropic", active=True,
@@ -120,6 +129,22 @@ class _Server:
                                                      "sign_in_id": "login-1"}))
                 return
             await route.fulfill(status=200, content_type="application/json", body='{"ok": true}')
+
+        async def language(route):
+            if route.request.method == "POST":
+                body = json.loads(route.request.post_data or "{}")
+                self.posts.append(("language", body))
+                self.language = body["language"]
+            await route.fulfill(status=200, content_type="application/json",
+                                body=json.dumps(self.language_status()))
+
+        async def install(route):
+            self.posts.append(("install", {}))
+            self.spanish_installed = True
+            await route.fulfill(status=200, content_type="application/json", body='{"model": {}}')
+
+        await page.route("**/api/settings/language", language)
+        await page.route("**/api/speech/models/es/install", install)
 
         async def update(route):
             if route.request.method == "POST":
@@ -219,6 +244,25 @@ async def test_name_and_honorific_are_saved(page_url):
         await page.get_by_role("button", name="Save Preferences").click()
         await page.wait_for_timeout(300)
         assert ("preferences", {"user_name": "Timothy", "honorific": "none"}) in server.posts
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_espanol_waits_for_its_model_then_is_chosen(page_url):
+    server = _Server()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server)
+        await _open_settings(page)
+        espanol = page.locator("#settings-language option[value='es']")
+        await async_api.expect(espanol).to_be_disabled()
+        await page.get_by_role("button", name="Download (124 MB)").click()
+        await async_api.expect(page.get_by_text("Installed", exact=True)).to_be_visible()
+        await async_api.expect(espanol).to_be_enabled()
+        await page.locator("#settings-language").select_option("es")
+        await async_api.expect(page.locator("#settings-language")).to_have_value("es")
+        assert ("install", {}) in server.posts
+        assert ("language", {"language": "es"}) in server.posts
+        assert await page.locator("select:has(option[value='none']) option[value='señor']").count() == 1
         await browser.close()
 
 

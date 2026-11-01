@@ -12,9 +12,9 @@ may or may not write them; every list below is folded before it is compared,
 so it can be written as the words are spelt. Plain ASCII text comes out of
 both exactly as the old `[a-z0-9]` splitters gave it.
 
-Which language's words count is `active_language()`. It returns English until
-the language setting exists, so the Spanish lists are written and tested but
-nothing matches them yet.
+Which language's words count is `active_language()`: the language chosen in
+Settings, which language_setting.py keeps and sets here; English until another
+is chosen.
 """
 
 from __future__ import annotations
@@ -27,12 +27,50 @@ ENGLISH = "en"
 SPANISH = "es"
 
 
+_active = ENGLISH
+
+
 def active_language() -> str:
     """The language the user speaks to JARVIS in: the one place it is decided.
 
-    English until the language setting exists; that setting answers here and
-    nowhere else."""
-    return ENGLISH
+    English until another is chosen; language_setting.py sets it, through
+    `set_active_language` and nowhere else."""
+    return _active
+
+
+def set_active_language(language: str) -> None:
+    """Make `language` the one in force (language_setting.py's alone)."""
+    global _active
+    if language not in VOCABULARIES:
+        raise ValueError(f"no words for language {language!r}")
+    _active = language
+
+
+# How he is addressed, by the Honorific setting (Settings, You), in each
+# language: the one table. Only these fixed words ever reach the brain's
+# launch prompt: any other value in .env counts as the default, "sir", which
+# in Spanish is "señor" (and "ma'am" is "señora"), since "sir" is never said
+# there.
+_ADDRESS = {
+    "sir": {ENGLISH: "sir", SPANISH: "señor"},
+    "ma'am": {ENGLISH: "ma'am", SPANISH: "señora"},
+    "señor": {ENGLISH: "señor", SPANISH: "señor"},
+}
+_DEFAULT_HONORIFIC = "sir"
+HONORIFICS = (*_ADDRESS, "none")
+
+
+def default_address(language: str) -> str:
+    return _ADDRESS[_DEFAULT_HONORIFIC][language]
+
+
+def address(language: str, honorific: str | None) -> str | None:
+    """The word he is addressed by in `language` under the Honorific setting,
+    or None for no form of address."""
+    chosen = (honorific or "").strip().lower()
+    if chosen == "none":
+        return None
+    return _ADDRESS.get(chosen, _ADDRESS[_DEFAULT_HONORIFIC])[language]
 
 
 # Letters, digits, any alphabet; `_` is a word character to `\w` and is not
@@ -79,7 +117,9 @@ class Vocabulary:
     `cancel_phrases`: a whole utterance that cancels and cuts him off.
     `replay_phrases` / `replay_filler`: a whole utterance, filler trimmed
     from its ends only, that replays his last answer.
-    `clear_command`: the one whole utterance that asks to clear."""
+    `clear_command`: the one whole utterance that asks to clear.
+    `switch_command`: the one whole utterance that switches JARVIS to
+    `switch_to`, the other language (language_setting.py)."""
     yes_words: frozenset
     yes_phrases: tuple
     no_words: frozenset
@@ -87,10 +127,13 @@ class Vocabulary:
     replay_phrases: frozenset
     replay_filler: frozenset
     clear_command: str
+    switch_command: str
+    switch_to: str
 
 
 def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
-                replay_phrases, replay_filler, clear_command) -> Vocabulary:
+                replay_phrases, replay_filler, clear_command,
+                switch_command, switch_to) -> Vocabulary:
     return Vocabulary(
         yes_words=frozenset(_key(w) for w in yes_words),
         yes_phrases=tuple(_key(p) for p in yes_phrases),
@@ -99,6 +142,8 @@ def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
         replay_phrases=frozenset(tuple(_key(p).split()) for p in replay_phrases),
         replay_filler=frozenset(_key(w) for w in replay_filler),
         clear_command=_key(clear_command),
+        switch_command=_key(switch_command),
+        switch_to=switch_to,
     )
 
 
@@ -128,6 +173,8 @@ _ENGLISH = _vocabulary(
                     "come again", "one more time", "pardon", "pardon me"),
     replay_filler=("sorry", "jarvis", "please", "um", "uh", "i'm"),
     clear_command="start fresh",
+    switch_command="switch to spanish",
+    switch_to=SPANISH,
 )
 
 # Latin American Spanish (es-MX), as approved: "dale", not Spain's "vale".
@@ -144,6 +191,9 @@ _SPANISH = _vocabulary(
     replay_phrases=("repite", "otra vez"),
     replay_filler=("jarvis",),
     clear_command="empezar de cero",
+    # Heard only through the Spanish model, so the way back is Spanish words.
+    switch_command="cambia a inglés",
+    switch_to=ENGLISH,
 )
 
 VOCABULARIES = {ENGLISH: _ENGLISH, SPANISH: _SPANISH}

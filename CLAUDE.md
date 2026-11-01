@@ -104,9 +104,10 @@ are one `Vocabulary` there, English and Latin American Spanish (yes: sí, si,
 claro, adelante, hazlo, dale, "de acuerdo"; no: no, espera, luego, después,
 nunca, negativo, todavía; cancel: espera, espérate, cancela, alto, detente,
 never "para"; replay: repite, otra vez). Which list counts is
-`spoken_words.active_language()`, the one place the language is decided; it
-returns English until the language setting exists, so the Spanish words
-match nothing yet. Tests switch it with the `spanish` fixture.
+`spoken_words.active_language()`, the one place the language is decided;
+only `language_setting` sets it (see "The language setting"). Every test
+starts in English (`conftest._english_until_a_test_chooses`) and switches
+with the `spanish` fixture.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -496,19 +497,61 @@ that, replies included, and announcements never start at once.
 
 ## Speaking Spanish
 The language in force is `spoken_words.active_language()`, the one place it
-is decided (English until the language setting exists); callers reach it
-through the module so there is one answer. Every Fish request body is built
+is decided (see "The language setting"); callers reach it through the
+module so there is one answer. Every Fish request body is built
 by `tts.request_body`: the speech path (`_synth_for_speech`, which
 `synthesize_speech` and `/api/tts-test` go through too) and the key check.
 It adds Fish's `language` from `tts.FISH_LANGUAGES` (`es-MX` for Spanish;
 English sends none, as before). The splitter knows Spanish abbreviations
 (`speech._ABBREVIATIONS`) and keeps the spaced "p. m." / "a. m." in one
 piece. `strip_markdown_for_tts` also strips the Spanish banned phrases
-(`server._BANNED_SPANISH`) with their ¡ ¿ marks. For Spanish the brain's
-`launch_prompt` adds `brain.LANGUAGE_RULES`: answer in Latin American
-Spanish, "señor", English tool results said in Spanish, memory searched in
-both languages. It is in the launch prompt because an edited persona never
-receives template changes; the persona's "Language" section says the same.
+(`server._BANNED_SPANISH`) with their ¡ ¿ marks; every banned phrase is
+matched with accents folded (`spoken_words.fold`) and as whole words
+(`server._banned_match`), so "claro que si" goes as "claro que sí" does and
+"claro que siempre" stays. For Spanish the brain's
+`launch_prompt` adds `brain.language_rule`: `LANGUAGE_RULES` (answer in
+Latin American Spanish, English tool results said in Spanish, memory
+searched in both languages) and how he is addressed ("señor" by default,
+"señora" under Ma'am). It
+is in the launch prompt because an edited persona never receives template
+changes; the persona's "Language" section says the same.
+
+## The language setting
+JARVIS hears and speaks one language at a time, English or Spanish, chosen
+in Settings, Voice, Language (`LanguageControl.tsx`), by the brain's acting
+`set_language`, or by one exact spoken phrase: "switch to Spanish" while in
+English, "cambia a inglés" while in Spanish (`Vocabulary.switch_command`,
+matched like the clear command: the whole utterance, optional leading
+"jarvis"; `server._language_switch_asked`). All three go through
+`language_setting.change`: it loads the language's speech model first
+(`speech_models.switch`, a few seconds) and only then saves the choice in
+JARVIS's own store (`data_paths.language_path()`, never .env) and puts it in
+force (`spoken_words.set_active_language`), so a model that is not installed
+or fails to load changes nothing (after a failed load the language in
+force's model is loaded again, so he is still heard). Speech input's model is
+switched only this way: there is no `POST /api/speech/model` route and no
+`switch_speech_model` tool; the language route and `set_language` replaced
+them, so what JARVIS hears and what it speaks can never differ. The page and the phrase are confirmed aloud in the new language
+(`language_setting.choose`: "Speaking English now, sir." / "Ahora hablo en
+español, señor.") through `_say_notice`, whose note tells the brain to answer
+in that language from its next turn; the brain's tool returns the same rule
+and the brain says it. Español is disabled until the Spanish model is
+installed; "Download (124 MB)" is the install route, its progress read every
+second while it runs. At startup, before the brain is spawned (its launch
+prompt carries the language rule), `language_setting.load` puts the saved
+language in force and gives speech input its model, or English for that run
+when the saved one's model is missing (preflight checks the same model,
+`startup_model`). `GET`/`POST /api/settings/language` are the routes; the
+brain's `speech_models` read starts with the language.
+
+The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
+in .env) is now used: `spoken_words.address` turns it into a fixed word
+from one table, `spoken_words._ADDRESS`, each honorific's word in each
+language (sir is señor in Spanish, ma'am is señora), and any value not on
+that list counting as the default, sir, so nothing typed into .env reaches
+the prompt. `brain.address_rule` adds a launch-prompt line only when
+the address is not plain "sir", so the English prompt is unchanged by
+default; the confirmations use it too.
 
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
@@ -552,11 +595,14 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   SHA-256 check, safe extract, one rename; `scripts/setup_speech_input.py`
   is a thin command over it) and the service the page's
   `/api/speech/models*` routes and the brain's `speech_models`,
-  `install_speech_model` and `switch_speech_model` share. A switch ends the
+  `install_speech_model` share, and `switch`, which only
+  `language_setting.change` calls. A switch ends the
   open capture with a non-incident `interrupted` (the page reconnects and
-  waits while it loads) and is a `model-load` event in the voice record.
-  Choosing and keeping the language is the language setting's, not this
-  module's
+  waits while it loads) and is a `model-load` event in the voice record
+- `language_setting.py` — The language JARVIS hears and speaks: the stored
+  choice, `change` (model first, then saved and in force), the spoken
+  confirmation and `/api/settings/language` (see "The language setting");
+  `frontend/src/LanguageControl.tsx` is the page's side
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");

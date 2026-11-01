@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { BrainsSection } from "./BrainsSection";
+import { LanguageControl } from "./LanguageControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
@@ -242,6 +243,7 @@ function VoiceSection({ status, statusFailed, reload }: {
           Saved. Restart the server (menu &rarr; Restart Server) for this to take effect.
         </p>
       )}
+      <LanguageControl />
     </section>
   );
 }
@@ -281,6 +283,7 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
         <select value={honorific} onChange={(e) => setHonorific(e.target.value)}>
           <option value="sir">Sir</option>
           <option value="ma'am">Ma'am</option>
+          <option value="señor">Señor</option>
           <option value="none">None</option>
         </select>
       </div>

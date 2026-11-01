@@ -116,6 +116,7 @@ from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
 from jarvis import speech_models
+from jarvis import language_setting
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -392,10 +393,36 @@ def apply_speech_corrections(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 # The English list's Spanish counterparts. No English sentence contains them,
-# so they are always stripped, whichever language is in force.
+# so they are always stripped, whichever language is in force. Matched with
+# accents folded ("claro que si" is "claro que sí") and as whole words
+# ("claro que siempre" is not "claro que si"); see `_banned_match`.
 _BANNED_SPANISH = ["por supuesto", "claro que sí", "con mucho gusto",
                    "excelente pregunta", "buena pregunta", "mis disculpas",
                    "le pido disculpas", "no dudes en", "no dude en"]
+_BANNED = ["my apologies", "i apologize", "absolutely", "great question",
+           "i'd be happy to", "of course", "how can i help",
+           "is there anything else", "i should clarify", "let me know if",
+           "feel free to"] + _BANNED_SPANISH
+_BANNED_PATTERNS = [re.compile(r"(?<!\w)" + re.escape(spoken_words.fold(p).lower())
+                               + r"(?!\w)")
+                    for p in _BANNED]
+
+
+def _match_form(text: str) -> str:
+    """`text` lowercased with its accents folded, one character for one, so a
+    match in it is at the same place in `text`."""
+    out = []
+    for c in text:
+        f = spoken_words.fold(c).lower()
+        out.append(f if len(f) == 1 else c)
+    return "".join(out)
+
+
+def _banned_match(text: str):
+    """The first banned phrase in `text`, as a match in `_match_form(text)`."""
+    form = _match_form(text)
+    found = [m for m in (p.search(form) for p in _BANNED_PATTERNS) if m]
+    return min(found, key=lambda m: m.start()) if found else None
 
 
 def strip_markdown_for_tts(text: str) -> str:
@@ -427,28 +454,19 @@ def strip_markdown_for_tts(text: str) -> str:
     result = _md_re.sub(r"\s{2,}", " ", result)
 
     # Strip banned phrases
-    banned = ["my apologies", "i apologize", "absolutely", "great question",
-              "i'd be happy to", "of course", "how can i help",
-              "is there anything else", "i should clarify", "let me know if",
-              "feel free to"] + _BANNED_SPANISH
-    result_lower = result.lower()
-    for phrase in banned:
-        idx = result_lower.find(phrase)
-        while idx != -1:
-            # Remove the phrase and any trailing comma/dash
-            end = idx + len(phrase)
-            if end < len(result) and result[end] in " ,—-":
+    while (match := _banned_match(result)) is not None:
+        idx, end = match.span()
+        # Remove the phrase and any trailing comma/dash
+        if end < len(result) and result[end] in " ,—-":
+            end += 1
+        if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
+            closer = "!" if result[idx - 1] == "¡" else "?"
+            idx -= 1
+            if result[end:end + 1] == closer:
                 end += 1
-            if idx > 0 and result[idx - 1] in "¡¿":   # Spanish marks, both
-                closer = "!" if result[idx - 1] == "¡" else "?"
-                idx -= 1
-                if result[end:end + 1] == closer:
+                if result[end:end + 1] == " ":
                     end += 1
-                    if result[end:end + 1] == " ":
-                        end += 1
-            result = result[:idx] + result[end:]
-            result_lower = result.lower()
-            idx = result_lower.find(phrase)
+        result = result[:idx] + result[end:]
 
     return result.strip().strip(",").strip("—").strip("-").strip()
 
@@ -775,10 +793,37 @@ def _is_fresh_start(text: str) -> bool:
     sentence that merely contains the words never counts: a misheard "start
     over" once wiped a live conversation, and nothing may do that again.
     """
+    return _whole_command(text) == spoken_words.vocabulary().clear_command
+
+
+def _whole_command(text: str) -> str:
+    """The utterance as a whole command is compared: lowercased, punctuation
+    and accents stripped, one optional leading "jarvis" dropped."""
     words = _action_words(text)
     if words and words[0] == "jarvis":
         words = words[1:]
-    return " ".join(words) == spoken_words.vocabulary().clear_command
+    return " ".join(words)
+
+
+def _language_switch_asked(text: str) -> Optional[str]:
+    """The language the ENTIRE utterance asks for, when it is the active
+    language's one switch phrase ("switch to Spanish"; in Spanish "cambia a
+    inglés"), matched as the clear command is; otherwise None. Settings
+    always works too, so a misheard phrase cannot strand him."""
+    vocabulary = spoken_words.vocabulary()
+    return vocabulary.switch_to if _whole_command(text) == vocabulary.switch_command else None
+
+
+async def _switch_language_by_voice(language: str) -> None:
+    """The spoken switch: what the Settings control does, confirmed in the
+    new language (language_setting.choose); a refusal is said."""
+    try:
+        await language_setting.choose(language)
+    except speech_models.Refused as refused:
+        log.info(f"spoken language switch refused: {refused.message}")
+        if speech is not None:
+            await speech.say(f"The language was not changed, sir. {refused.message}",
+                             Priority.NORMAL, label="system")
 
 
 def _action_words(text: str) -> list[str]:
@@ -2866,10 +2911,14 @@ async def lifespan(application: FastAPI):
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
 
+    # The language chosen in Settings, and its speech model
+    # (language_setting.py). Put in force before the brain starts: its launch
+    # prompt carries the language rule, and the brain is spawned below.
+    speech_model = language_setting.load()
     await start_brain_and_speech()
     await start_session_watcher()
     start_folders()
-    transcription_api.start()
+    transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
     # network exchange runs while paired whether or not a page is open, and
@@ -2931,6 +2980,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 speech_models.mount(app)
+language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")))
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
@@ -7406,10 +7456,13 @@ def _speech_model_line(m: dict) -> str:
 
 
 async def tool_speech_models(args: dict) -> str:
-    """Which language speech input hears, and each model's install state."""
-    status = speech_models.models()
+    """JARVIS's language, which language speech input hears, and each
+    model's install state: what the Settings language route reads."""
+    setting = language_setting.status()
+    status = setting["speech"]
     labels = {m["language"]: m["label"] for m in status["models"]}
-    head = (f"Speech input hears {labels.get(status['language'], 'nothing yet')} "
+    head = (f"JARVIS's language is {language_setting.NAMES[setting['language']]}. "
+            f"Speech input hears {labels.get(status['language'], 'nothing yet')} "
             f"({status['state']}).")
     if status.get("failure"):
         head += f" {status['failure']}"
@@ -7429,27 +7482,32 @@ async def tool_install_speech_model(args: dict) -> str:
             f"release's SHA-256 first. {_speech_model_line(m)}")
 
 
-async def tool_switch_speech_model(args: dict) -> str:
-    """Make speech input hear another language: the switch route's `switch`.
-    An ACTING tool: it reloads the speech model."""
+async def tool_set_language(args: dict) -> str:
+    """Change the language JARVIS hears and speaks: the Settings language
+    route's `language_setting.change`, without its spoken confirmation, which
+    the brain gives. An ACTING tool: it reloads the speech model."""
     try:
-        status = await speech_models.switch(str(args.get("language") or ""))
+        changed = await language_setting.change(str(args.get("language") or ""))
     except speech_models.Refused as refused:
-        return f"Speech input was not switched, sir: {refused.message}"
-    label = next(m["label"] for m in status["models"] if m["language"] == status["language"])
-    return f"Speech input hears {label} now, sir."
+        return f"The language was not changed, sir: {refused.message}"
+    language = spoken_words.active_language()
+    name = language_setting.NAMES[language]
+    if not changed:
+        return f"JARVIS's language is already {name}, sir."
+    return (f"JARVIS's language is {name} now, sir: speech input hears it and you speak "
+            f"it. Tell him so in {name}. {language_setting.brain_rule(language)}")
 
 
 TOOL_HANDLERS.update({
     "speech_models": tool_speech_models,
     "install_speech_model": tool_install_speech_model,
-    "switch_speech_model": tool_switch_speech_model,
+    "set_language": tool_set_language,
 })
-ACTING_TOOLS.update({"install_speech_model", "switch_speech_model"})
+ACTING_TOOLS.update({"install_speech_model", "set_language"})
 TAINT_EXEMPT_TOOLS.update({
     "speech_models": "it reads JARVIS's own speech models: fixed names, sizes and states",
     "install_speech_model": "it starts a download of a fixed model, it does not read",
-    "switch_speech_model": "it reloads speech input with a fixed model, it does not read",
+    "set_language": "it changes JARVIS's language to a fixed one, it does not read",
 })
 
 
@@ -10864,6 +10922,10 @@ async def voice_handler(ws: WebSocket):
             return
         if cleared is None and _is_fresh_start(text):
             _spawn(_ask_to_clear(text))
+            return
+        switch_to = _language_switch_asked(text) if cleared is None else None
+        if switch_to:
+            _spawn(_switch_language_by_voice(switch_to))
             return
         if cleared is False and _rotation_answer(text) is False:
             return                  # a plain no: consumed, not a request

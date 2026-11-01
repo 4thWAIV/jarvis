@@ -1001,6 +1001,19 @@ async def test_the_stem_rescue_does_not_reach_short_words(h):
 
 
 @pytest.mark.asyncio
+async def test_cancel_heard_while_he_says_can_interrupts(h):
+    """Four characters of the shorter word: "can" is three, so "cancel" heard
+    while he says "can" is the user, not a clipped echo. Approved by Tim with
+    the Spanish fix ("espera" while he says "es")."""
+    s = h.sched
+    await s.say("I can deploy the storefront now, sir.")
+    await asyncio.sleep(0.1)
+    assert s.is_speaking
+    await s.user_interim("cancel")
+    assert not s.is_speaking
+
+
+@pytest.mark.asyncio
 async def test_two_novel_words_are_unaffected_by_the_stem_rule(h):
     """The general bar does not consult stems at all: a follow-up that merely
     shares roots with what he is saying must still cut him off."""
@@ -1698,18 +1711,14 @@ async def test_a_clipped_spanish_echo_of_his_own_word_does_not_interrupt(h, span
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason=(
-    "`_is_stem_echo` requires four characters of the HEARD word only, so a "
-    "short word he is saying that begins it (\"es\" for \"espera\", \"a\" for "
-    "\"alto\") makes a real cancel look like his echo. Requiring four of the "
-    "shorter word would fix it, but also changes English (\"cancel\" said while "
-    "he says \"can\"), so it waits for Tim's yes."))
 @pytest.mark.parametrize("said,heard", [
     ("Es la migración de chitauri, señor.", "espera"),
     ("Voy a desplegar chitauri ahora, señor.", "alto"),
 ])
 async def test_a_spanish_cancel_word_beginning_with_a_short_word_he_says_interrupts(
         h, spanish, said, heard):
+    """The stem rule needs four characters of the SHORTER word: "es" or "a"
+    he is saying is no evidence that "espera" or "alto" is his echo."""
     s = h.sched
     await s.say(said)
     await asyncio.sleep(0.1)
