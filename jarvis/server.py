@@ -97,6 +97,7 @@ from jarvis import transmission
 from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
+from jarvis import work_packages
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
 from jarvis import specs
@@ -6516,8 +6517,8 @@ def _thread_text(local, item) -> str:
         if msg.subject:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
-        out += [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)})"
-                for a in msg.attachments]
+        out += [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
+                f"attachment {a.attachment_id}" for a in msg.attachments]
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
@@ -6678,6 +6679,120 @@ TAINT_EXEMPT_TOOLS.update({
     "mark_people_message_read": "it records that he read a message, it does not read it",
     "set_people_thread": "it moves one conversation on the Queue, it does not read",
     "change_people_draft": "it discards, cancels or retries his own unsent message, it does not read",
+})
+
+
+# --- Work packages -------------------------------------------------------
+#
+# A zip a teammate sends in an ordinary message, with a package.json at its
+# root (docs/work-packages.md). Opening it and running each step are
+# ACTING_TOOLS: his spoken yes on that turn is the one gate, as the team
+# asked; there is no sandbox. The results go back as a reply through
+# draft_message's `files`, so the ordinary review and approval apply.
+
+_PACKAGE_WRAP_NAME = "package"
+
+
+async def tool_open_package(args: dict) -> str:
+    """Download a received zip if it is not here yet, unpack it into its own
+    folder and hand the brain its package.json and skill to follow."""
+    context = messaging.files_context() if messaging is not None else None
+    if context is None:
+        return MESSAGING_OFF
+    message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+    if message_id is None or attachment_id is None:
+        return ("Which file, sir? Give me its message id and attachment id from "
+                "read_people_thread. Nothing was opened.")
+    try:
+        archive = await context.files.downloaded(context.server_id, context.owner_github_id,
+                                                 message_id, attachment_id)
+    except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
+        return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
+    try:
+        package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
+                                                 attachment_id.hex[:8])
+        skill = package.skill_text()
+    except (work_packages.PackageError, OSError) as e:
+        return f"{e} Nothing was opened."
+    how = "is unpacked" if fresh else "was already unpacked"
+    return (f"Package {package.id} {how} in {package.folder}. Follow its skill below with "
+            f"him, one step at a time; run each step with run_package_command only on his "
+            f"go-ahead. At the end, package_results, then draft_message with reply_to "
+            f"{message_id} and those files, then request_message_review.\n"
+            f"package.json:\n{package.manifest.as_json()}\n\n"
+            f"Skill ({package.manifest.skill}):\n{skill}")
+
+
+def _package_or_problem(args: dict) -> tuple[Optional["work_packages.Package"], str]:
+    try:
+        return work_packages.find(str(args.get("package") or "")), ""
+    except work_packages.PackageError as e:
+        return None, str(e)
+
+
+def tool_list_packages(args: dict) -> str:
+    """The packages received and unpacked here."""
+    packages = work_packages.every()
+    if not packages:
+        return "No packages have been opened here, sir."
+    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, {p.manifest.purpose} "
+             f"({p.folder})" for p in packages]
+    return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
+            f"run_package_command and package_results take the id.\n"
+            + _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines)))
+
+
+async def tool_run_package_command(args: dict) -> str:
+    """Run one of a package's steps in its folder, or in a Terminal window
+    he can see and answer when it needs him."""
+    package, problem = _package_or_problem(args)
+    if package is None:
+        return f"{problem} Nothing was run."
+    command = str(args.get("command") or "").strip()
+    if not command:
+        return "Which command, sir? Nothing was run."
+    if args.get("terminal"):
+        result = await actions.open_terminal(work_packages.terminal_command(package, command))
+        if not result.get("success"):
+            return result.get("confirmation") or "Terminal wouldn't open, sir."
+        return (f"It is running in a Terminal window in {package.id}, sir. Its output stays "
+                f"there; ask him when it has finished.")
+    ran = await work_packages.run(package, command)
+    said = ("stopped after " f"{work_packages.COMMAND_TIMEOUT_SEC // 60} minutes"
+            if ran.exit_code is None else f"exited with code {ran.exit_code}")
+    return (f"The step {said}. The last of its output:\n"
+            + _wrap_untrusted(_PACKAGE_WRAP_NAME, ran.output or "(no output)"))
+
+
+def tool_package_results(args: dict) -> str:
+    """The files a package's `returns` match, to pass to draft_message."""
+    package, problem = _package_or_problem(args)
+    if package is None:
+        return problem
+    found = package.results()
+    if not found:
+        return (f"Nothing in {package.id} matches its returns "
+                f"({', '.join(package.manifest.returns)}) yet.")
+    lines = [f"{p} ({messaging_ports.spoken_size(p.stat().st_size)})" for p in found]
+    return (f"{len(found)} file{'s' if len(found) != 1 else ''} to send back; pass these "
+            f"paths to draft_message's files:\n" + "\n".join(lines))
+
+
+TOOL_HANDLERS.update({
+    "open_package": tool_open_package,
+    "list_packages": tool_list_packages,
+    "run_package_command": tool_run_package_command,
+    "package_results": tool_package_results,
+})
+ACTING_TOOLS.update({"open_package", "run_package_command"})
+TAINTING_TOOLS.update({
+    "open_package": "a work package a teammate sent",
+    "list_packages": "work packages teammates sent",
+    "run_package_command": "the output of a work package's step",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "package_results": ("it lists the paths and sizes of files a package wrote, from "
+                        "JARVIS's own glob, and no file content"),
 })
 
 

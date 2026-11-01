@@ -1,0 +1,12 @@
+{
+  "name": "spanish-speech-test",
+  "version": "1.0.0",
+  "purpose": "Record 15 Spanish commands and measure how well the Spanish Kroko speech model hears them on this Mac.",
+  "skill": "SKILL.md",
+  "returns": [
+    "results/summary.md",
+    "results/bench.json",
+    "results/clips/*.wav",
+    "results/clips/*.txt"
+  ]
+}

@@ -235,6 +235,21 @@ history), `read_people_thread` (one item; no read receipt), and the acting
 command) and `change_people_draft` (discard, cancel, retry). A refusal is worded by `messaging_api.Refused.shown`; names,
 subjects and bodies come back in an untrusted block.
 
+## Work packages
+A teammate sends runnable work as a zip with `package.json` at its root,
+attached to an ordinary message between people (format:
+`docs/work-packages.md`). `work_packages.py` unpacks it into
+`data_paths.packages_dir()/<name>-<version>-<id>/`, refusing the whole zip if
+any entry escapes the folder or is a link, and removes the quarantine mark.
+There is no other sandbox: the team is trusted. The brain's `open_package`
+and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
+is the gate. `run_package_command` runs one shell step in the folder with a
+10-minute timeout, or in a Terminal window through `actions.open_terminal`.
+`list_packages` and `package_results` read what is there. Results go back
+through `draft_message`'s `files`, which attaches each file with the page's
+own snapshot step (`FileSnapshots.add_to_draft`), so review and approval are
+unchanged. The example is `examples/packages/spanish-speech-test/`.
+
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
 seconds while paired, `team_client` sends one node update to the team
@@ -593,6 +608,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `messaging_api.py` — The page's `/api/team/messages*` routes
 - `messaging_files.py` — A message's files: private snapshots, upload,
   verified downloads (quarantined, never opened) and their routes
+- `work_packages.py` — Work packages: unpacking a received zip, finding,
+  running a step, its results, and which files the brain may attach (see
+  "Work packages")
 - `arrival_announcer.py` — Saying that a person's message has come in,
   through the ordinary notice path
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,

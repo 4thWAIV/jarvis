@@ -170,6 +170,17 @@ def _hash_file(path: Path) -> Optional[tuple[int, str]]:
         os.close(fd)
 
 
+async def file_chunks(path: Path) -> AsyncIterator[bytes]:
+    """A file on this Mac in upload-sized chunks, never through a link: what
+    `add_to_draft` copies when the brain attaches a file by its path."""
+    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        while chunk := os.read(fd, wire.UPLOAD_CHUNK_BYTES):
+            yield chunk
+    finally:
+        os.close(fd)
+
+
 def reveal_in_finder(path: Path) -> None:
     """Show the file selected in a Finder window. `-R` reveals; it never
     opens or runs the file."""
@@ -324,6 +335,18 @@ class FileSnapshots:
                                  size_bytes=size, sha256=hasher.hexdigest())
         self._insert(server_id, owner_github_id, ref, message_id, SNAPSHOT, "staged")
         return ref
+
+    async def add_to_draft(self, server_id: str, owner_github_id: int, message_id: UUID,
+                           filename: str, media_type: Optional[str],
+                           chunks: AsyncIterator[bytes]) -> wire.AttachmentRef:
+        """The one way a file joins a draft, the page's upload and the
+        brain's `draft_message` `files` alike: the draft must be there, then
+        the file is snapshotted for it. The draft names it once it is saved
+        with its `attachment_ids`."""
+        if self.store.draft(server_id, owner_github_id, message_id) is None:
+            raise wire.ContractError("draft_not_found")
+        return await self.snapshot(server_id, owner_github_id, message_id, filename,
+                                   media_type, chunks)
 
     def refs(self, server_id: str, owner_github_id: int, message_id: UUID,
              attachment_ids: list[UUID]) -> list[wire.AttachmentRef]:
@@ -550,10 +573,10 @@ class FileSnapshots:
         os.replace(partial, final)
         return set_state("verified", bytes_done=size)
 
-    def reveal(self, server_id: str, owner_github_id: int, message_id: UUID,
-               attachment_id: UUID) -> None:
-        """Show a verified download in Finder, after checking its bytes are
-        still the manifest's. Never opens it."""
+    def verified_path(self, server_id: str, owner_github_id: int, message_id: UUID,
+                      attachment_id: UUID) -> Path:
+        """Where a verified download is, after checking its bytes are still
+        the manifest's."""
         ref = self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
         if self._download_file(server_id, owner_github_id, attachment_id).state != "verified":
             raise wire.ContractError("attachment_not_ready")
@@ -562,7 +585,22 @@ class FileSnapshots:
             self._set(server_id, owner_github_id, attachment_id, DOWNLOAD, state="failed",
                       failure="attachment_mismatch")
             raise wire.ContractError("attachment_mismatch")
-        self.reveal_path(path)
+        return path
+
+    async def downloaded(self, server_id: str, owner_github_id: int, message_id: UUID,
+                         attachment_id: UUID) -> Path:
+        """A received file, downloaded first if it is not here yet: its
+        verified path (a work package's zip, `open_package`)."""
+        got = await self.download(server_id, owner_github_id, message_id, attachment_id)
+        if got.state == "failed":
+            raise wire.ContractError(got.failure or "transport")
+        return self.verified_path(server_id, owner_github_id, message_id, attachment_id)
+
+    def reveal(self, server_id: str, owner_github_id: int, message_id: UUID,
+               attachment_id: UUID) -> None:
+        """Show a verified download in Finder. Never opens it."""
+        self.reveal_path(self.verified_path(server_id, owner_github_id, message_id,
+                                            attachment_id))
 
     # -- cleanup -----------------------------------------------------------------------------
 
@@ -658,12 +696,10 @@ def router(context: Callable[[], Optional[FilesContext]]) -> APIRouter:
     async def add_file(request: Request, message_id: UUID):
         async def go():
             c = ctx()
-            if c.files.store.draft(c.server_id, c.owner_github_id, message_id) is None:
-                raise wire.ContractError("draft_not_found")
             length = request.headers.get("content-length", "")
             if length.isdigit() and int(length) > wire.FILE_MAX_BYTES:
                 raise wire.ContractError("too_large")
-            ref = await c.files.snapshot(
+            ref = await c.files.add_to_draft(
                 c.server_id, c.owner_github_id, message_id,
                 unquote(request.headers.get("x-filename", "")),
                 request.headers.get("content-type"), request.stream())
