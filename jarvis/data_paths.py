@@ -180,6 +180,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "3f08a66e67af3f4776fd76b8b03a2d4980de6f217c6c1bbf5d64135ecbd8b93b",  # Spanish speaking and clear command with self-update
     "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
     "799e9124a7841f4f0153ff04eb5f5b18b3316fcc0379b314becd246898c01346",  # Spanish: señora under Ma'am
+    "d0a9312fadb148e9cc7bb87aba4e7bdc6addfc880bec13895e4b4660397a2a4b",  # the language setting with self-update
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
