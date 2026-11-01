@@ -43,7 +43,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Literal, Optional
+from pathlib import Path
+from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Optional
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -482,6 +483,11 @@ def staged_note(record: Optional[str], problem: Optional[str], capture_id: int,
 # save, written by an agent) -> the saved draft. A conflict raises
 # wire.ContractError("revision_conflict", latest=<the draft>).
 DraftWriter = Callable[[Identity, Optional[UUID], ports.DraftSave, bool], ports.Draft]
+# `draft_message`'s files: whether a path may be attached (the file, or
+# ValueError saying why not), and the snapshot step that adds it to a draft
+# (messaging_files.FileSnapshots.add_to_draft, as the page's upload does).
+FileCheck = Callable[[str], Path]
+FileAttach = Callable[[Identity, UUID, Path], Awaitable[wire.AttachmentRef]]
 
 def _uuid(value) -> Optional[UUID]:
     try:
@@ -494,8 +500,10 @@ class MessagingTools:
     """The brain's draft and review tools. The brain may draft and ask for
     a review; approving is never a tool."""
 
-    def __init__(self, messaging: HumanMessaging, reviews: Reviews, save_draft: DraftWriter):
+    def __init__(self, messaging: HumanMessaging, reviews: Reviews, save_draft: DraftWriter,
+                 check_file: Optional[FileCheck] = None, attach: Optional[FileAttach] = None):
         self.messaging, self.reviews, self.save_draft = messaging, reviews, save_draft
+        self.check_file, self.attach = check_file, attach
 
     def _who(self) -> Optional[Identity]:
         m = self.messaging
@@ -518,27 +526,60 @@ class MessagingTools:
         return None, (f"There is no one called {said} on the team. The team is: "
                       f"{names or 'nobody yet'}. Nothing was drafted.")
 
-    def draft_message(self, args: dict) -> str:
+    def _files(self, raw) -> tuple[list[Path], str]:
+        """`draft_message`'s files, each checked before anything is saved:
+        (the paths, "") or ([], why not)."""
+        if raw is None:
+            return [], ""
+        if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+            return [], "files must be a list of paths; nothing was drafted."
+        if raw and (self.check_file is None or self.attach is None):
+            return [], "Files cannot be attached on this JARVIS; nothing was drafted."
+        paths = []
+        for p in raw:
+            try:
+                paths.append(self.check_file(p))
+            except ValueError as e:
+                return [], f"{e} Nothing was drafted."
+        return paths, ""
+
+    @staticmethod
+    def _kept(current: ports.Draft, revision: Optional[int] = None) -> dict:
+        """A save that keeps everything of `current` but what it overrides."""
+        return {"expected_draft_revision": revision if isinstance(revision, int)
+                else current.draft_revision,
+                "thread_id": current.thread_id,
+                "in_reply_to_message_id": current.in_reply_to_message_id,
+                "related_message_ids": list(current.related_message_ids),
+                "recipient_github_id": current.recipient_github_id,
+                "subject": current.subject, "text": current.text,
+                "attachment_ids": [a.attachment_id for a in current.attachments]}
+
+    async def _attach_files(self, who: Identity, draft: ports.Draft,
+                            paths: list[Path]) -> ports.Draft:
+        """Each file snapshotted for the draft, then the draft saved with them."""
+        added = [(await self.attach(who, draft.message_id, p)).attachment_id for p in paths]
+        save = self._kept(draft)
+        save["attachment_ids"] = save["attachment_ids"] + added
+        return self.save_draft(who, draft.message_id, ports.DraftSave(**save), True)
+
+    async def draft_message(self, args: dict) -> str:
         who = self._who()
         if who is None:
             return "Messaging isn't available on this JARVIS; nothing was drafted."
         editing = _uuid(args.get("message")) if args.get("message") is not None else None
         if args.get("message") is not None and editing is None:
             return "That is not a draft's message id; nothing was drafted."
+        paths, problem = self._files(args.get("files"))
+        if problem:
+            return problem
         save = {"subject": wire.normalize_subject(str(args.get("subject") or "")),
                 "text": wire.normalize_text(str(args.get("text") or ""))}
         if editing is not None:
             current = self.messaging.approvals.store.draft(*who.ns, editing)
             if current is None:
                 return "There is no draft by that id; nothing was saved."
-            revision = args.get("draft_revision")
-            save.update(expected_draft_revision=revision if isinstance(revision, int)
-                        else current.draft_revision,
-                        thread_id=current.thread_id,
-                        in_reply_to_message_id=current.in_reply_to_message_id,
-                        related_message_ids=list(current.related_message_ids),
-                        recipient_github_id=current.recipient_github_id,
-                        attachment_ids=[a.attachment_id for a in current.attachments])
+            save = {**self._kept(current, args.get("draft_revision")), **save}
         elif args.get("reply_to") is not None:
             parent = self.messaging.approvals.store.message(*who.ns, _uuid(args["reply_to"])) \
                 if _uuid(args["reply_to"]) else None
@@ -567,7 +608,16 @@ class MessagingTools:
             return "That message is already on its way out; it cannot be edited now."
         to = recipient_label(self.messaging.recipients(), draft.recipient_github_id,
                              who.owner_github_id)
-        return (f"Draft {draft.message_id} to {to} is saved at revision "
+        if paths:
+            try:
+                draft = await self._attach_files(who, draft, paths)
+            except (wire.ContractError, ports.SnapshotMissing, OSError) as e:
+                return (f"Draft {draft.message_id} to {to} is saved at revision "
+                        f"{draft.draft_revision} without its files: a file could not be "
+                        f"attached ({getattr(e, 'code', type(e).__name__)}). Nothing is sent.")
+        files = len(draft.attachments)
+        with_files = f" with {files} file{'s' if files != 1 else ''}" if files else ""
+        return (f"Draft {draft.message_id} to {to} is saved{with_files} at revision "
                 f"{draft.draft_revision}. Nothing is sent. Ask him whether to review it; "
                 f"request_message_review opens it for him.")
 

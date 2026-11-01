@@ -171,6 +171,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "c75ec19829fe2905f3dc16a0b8dc212eb1117245fa539fe7001db8be23513a1a",  # conversation_history; restore_capture
     "6b304d5fb4e2a3abd2d6cafac113dc2aa94391e7cc72f58cb2ef522612ad2dc6",  # registered folders are not projects; spawn_run's folder_id
     "c7f8ecb68c4a82b1431618e5bbfef9ae91b5153c50a722954f39654dd7214f1f",  # people and the team; every page feature a tool
+    "df337fd9c8313b23ea2b1d12fc521f39274338ca5debb55561223417f9dbeb52",  # work packages: open, run, send results back
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -464,6 +465,14 @@ def messaging_downloads_dir() -> Path:
     """Received files, written privately and moved here only once their size
     and hash are verified (messaging_files.py). Not created here, as above."""
     return data_dir() / "messaging" / "downloads"
+
+
+def packages_dir() -> Path:
+    """Work packages received from teammates and unpacked to be run here
+    (work_packages.py), one folder each."""
+    path = data_dir() / "packages"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def team_connection_path() -> Path:

@@ -1,0 +1,15 @@
+sí
+no
+cancela
+empezar de cero
+sí, adelante
+espérate un momento
+¿qué agentes están trabajando ahora?
+léeme el último mensaje del agente de diagnósticos
+mándale un mensaje al agente guardia preguntando cómo va
+¿tengo mensajes nuevos?
+recuérdame a las tres y media llamar al banco
+no reinicies el servidor hasta que pasen las pruebas
+¿cuántos agentes terminaron hoy?
+pon un temporizador de quince minutos
+son las cinco y cuarto de la tarde

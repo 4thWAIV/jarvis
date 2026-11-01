@@ -84,6 +84,8 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__people,mcp__jarvis__people_messages,"
         "mcp__jarvis__read_people_thread,mcp__jarvis__mark_people_message_read,"
         "mcp__jarvis__set_people_thread,mcp__jarvis__change_people_draft,"
+        "mcp__jarvis__open_package,mcp__jarvis__list_packages,"
+        "mcp__jarvis__run_package_command,mcp__jarvis__package_results,"
         "mcp__jarvis__diagnostics,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
         "mcp__jarvis__retry_run,"

@@ -443,7 +443,8 @@ def test_the_brain_s_tools_draft_and_request_review_but_never_approve(tim, serve
             body.expected_draft_revision)
 
     tools = MessagingTools(tim.messaging, tim.reviews, save_draft)
-    out = tools.draft_message({"to": "Matt", "subject": "Deploy", "text": "Friday?"})
+    out = asyncio.run(tools.draft_message({"to": "Matt", "subject": "Deploy",
+                                           "text": "Friday?"}))
     (draft,) = saved
     assert out.startswith(f"Draft {draft.message_id} to Matt") and "Nothing is sent" in out
     out = tools.request_message_review({"message": str(draft.message_id), "draft_revision": 1})
@@ -455,18 +456,18 @@ def test_the_brain_s_tools_draft_and_request_review_but_never_approve(tim, serve
     # A revision since the review sends the brain back, and revising reopens review.
     assert "changed since" in tools.request_message_review(
         {"message": str(draft.message_id), "draft_revision": 9})
-    out = tools.draft_message({"message": str(draft.message_id), "draft_revision": 1,
-                               "text": "Friday at noon?"})
+    out = asyncio.run(tools.draft_message({"message": str(draft.message_id),
+                                           "draft_revision": 1, "text": "Friday at noon?"}))
     assert "revision 2" in out
     assert (tim.current(draft).send.content_revision, tim.current(draft).send.state) == (2, "draft")
 
 
 def test_the_draft_tool_names_the_team_when_it_does_not_know_the_person(tim):
     tools = MessagingTools(tim.messaging, tim.reviews, lambda *a: pytest.fail("saved"))
-    assert "no one called Bob" in tools.draft_message({"to": "Bob", "text": "hi"})
-    assert "Say who it is for" in tools.draft_message({"text": "hi"})
+    assert "no one called Bob" in asyncio.run(tools.draft_message({"to": "Bob", "text": "hi"}))
+    assert "Say who it is for" in asyncio.run(tools.draft_message({"text": "hi"}))
     tim.available = "not_paired"
-    assert "isn't available" in tools.draft_message({"to": "Matt", "text": "hi"})
+    assert "isn't available" in asyncio.run(tools.draft_message({"to": "Matt", "text": "hi"}))
 
 
 def test_a_message_to_oneself_needs_the_same_approval_and_goes_through_the_team_server(

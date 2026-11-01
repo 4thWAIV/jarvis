@@ -1078,7 +1078,9 @@ TOOL_SPECS = [
             "himself, as Me), on his say-so. It is only a draft: it shows on its item "
             "as one you wrote, and nothing is sent. To revise one, pass its `message` "
             "id and the `draft_revision` you last saw. To reply, pass the exact "
-            "`reply_to` message id instead of `to`. Then request_message_review."),
+            "`reply_to` message id instead of `to`. To attach files, pass their full "
+            "paths in `files`: a package's results (package_results), or a file he names "
+            "this turn. Then request_message_review."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1088,6 +1090,9 @@ TOOL_SPECS = [
                              "description": "The id of the exact message being answered."},
                 "subject": {"type": "string", "maxLength": 200},
                 "text": {"type": "string", "maxLength": 20000},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": ("Full paths of files to attach, added to any the "
+                                          "draft already has.")},
                 "message": {"type": "string",
                             "description": "The draft being revised. Omit for a new one."},
                 "draft_revision": {"type": "integer",
@@ -1424,6 +1429,58 @@ TOOL_SPECS = [
                 "action": {"type": "string", "enum": ["discard", "cancel", "retry"]},
             },
             "required": ["message", "action"],
+        },
+    },
+    {
+        "name": "open_package",
+        "description": (
+            "Open a work package a person sent: a .zip attached to their message with a "
+            "package.json at its root. Only when he says to open it. It downloads the file "
+            "if needed, unpacks it into its own folder and returns its package.json and its "
+            "skill, which you then follow with him."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The message id."},
+                "attachment": {"type": "string",
+                               "description": "The zip's attachment id, from read_people_thread."},
+            },
+            "required": ["message", "attachment"],
+        },
+    },
+    {
+        "name": "list_packages",
+        "description": "The work packages opened on this JARVIS: each one's id, name, "
+                       "version, purpose and folder.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "run_package_command",
+        "description": (
+            "Run one step of an open package's skill: a shell command in the package's "
+            "folder, only on his go-ahead. It returns the exit code and the last of the "
+            "output, and is stopped after 10 minutes. With `terminal`, it runs in a "
+            "Terminal window he can see instead, for a step that needs him (a recording "
+            "with prompts); its output stays there."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string", "description": "The package's id."},
+                "command": {"type": "string"},
+                "terminal": {"type": "boolean"},
+            },
+            "required": ["package", "command"],
+        },
+    },
+    {
+        "name": "package_results",
+        "description": (
+            "The files an open package has produced that its package.json says to send "
+            "back, as full paths for draft_message's files."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "required": ["package"],
         },
     },
     {
