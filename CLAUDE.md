@@ -472,10 +472,14 @@ It adds Fish's `language` from `tts.FISH_LANGUAGES` (`es-MX` for Spanish;
 English sends none, as before). The splitter knows Spanish abbreviations
 (`speech._ABBREVIATIONS`) and keeps the spaced "p. m." / "a. m." in one
 piece. `strip_markdown_for_tts` also strips the Spanish banned phrases
-(`server._BANNED_SPANISH`) with their ¡ ¿ marks. For Spanish the brain's
+(`server._BANNED_SPANISH`) with their ¡ ¿ marks; every banned phrase is
+matched with accents folded (`spoken_words.fold`) and as whole words
+(`server._banned_match`), so "claro que si" goes as "claro que sí" does and
+"claro que siempre" stays. For Spanish the brain's
 `launch_prompt` adds `brain.language_rule`: `LANGUAGE_RULES` (answer in
 Latin American Spanish, English tool results said in Spanish, memory
-searched in both languages) and how he is addressed ("señor" by default). It
+searched in both languages) and how he is addressed ("señor" by default,
+"señora" under Ma'am). It
 is in the launch prompt because an edited persona never receives template
 changes; the persona's "Language" section says the same.
 
@@ -492,7 +496,9 @@ JARVIS's own store (`data_paths.language_path()`, never .env) and puts it in
 force (`spoken_words.set_active_language`), so a model that is not installed
 or fails to load changes nothing (after a failed load the language in
 force's model is loaded again, so he is still heard). Speech input's model is
-switched only this way. The page and the phrase are confirmed aloud in the new language
+switched only this way: there is no `POST /api/speech/model` route and no
+`switch_speech_model` tool; the language route and `set_language` replaced
+them, so what JARVIS hears and what it speaks can never differ. The page and the phrase are confirmed aloud in the new language
 (`language_setting.choose`: "Speaking English now, sir." / "Ahora hablo en
 español, señor.") through `_say_notice`, whose note tells the brain to answer
 in that language from its next turn; the brain's tool returns the same rule
@@ -506,10 +512,11 @@ when the saved one's model is missing (preflight checks the same model,
 brain's `speech_models` read starts with the language.
 
 The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
-in .env) is now used: `spoken_words.address` turns it into a fixed word,
-"sir" meaning each language's own (sir in English, señor in Spanish) and any
-value not on that list counting as the default, so nothing typed into .env
-reaches the prompt. `brain.address_rule` adds a launch-prompt line only when
+in .env) is now used: `spoken_words.address` turns it into a fixed word
+from one table, `spoken_words._ADDRESS`, each honorific's word in each
+language (sir is señor in Spanish, ma'am is señora), and any value not on
+that list counting as the default, sir, so nothing typed into .env reaches
+the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
 
