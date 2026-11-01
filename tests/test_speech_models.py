@@ -239,3 +239,52 @@ def test_switching_with_speech_input_stopped_says_so(monkeypatch):
     with pytest.raises(speech_models.Refused) as refused:
         asyncio.run(speech_models.switch("es"))
     assert refused.value.status == 503
+
+
+def test_a_download_gives_up_on_a_dead_connection(monkeypatch, tmp_path):
+    opened = []
+
+    class Response:
+        headers = {"Content-Length": "3"}
+
+        def __init__(self):
+            self.blocks = [b"abc", b""]
+
+        def read(self, _n):
+            return self.blocks.pop(0)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(url, timeout=None):
+        opened.append((url, timeout))
+        return Response()
+
+    monkeypatch.setattr(speech_models.urllib.request, "urlopen", fake_urlopen)
+    speech_models.download("https://example.invalid/m.tar.bz2", tmp_path / "m",
+                           lambda *a: None)
+    assert opened == [("https://example.invalid/m.tar.bz2",
+                       speech_models.DOWNLOAD_TIMEOUT_SEC)]
+    assert (tmp_path / "m").read_bytes() == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_a_switch_overtaken_by_another_is_refused_and_not_recorded(monkeypatch):
+    service = TranscriptionService(lambda _model: FakeEngine())
+    monkeypatch.setattr(transcription_api, "service", service)
+    _put(ENGLISH)
+    _put(SPANISH)
+    service.start()
+    await service.ready()
+    to_spanish = asyncio.create_task(speech_models.switch("es"))
+    await asyncio.sleep(0)
+    back = await speech_models.switch("en")
+    with pytest.raises(speech_models.Refused) as refused:
+        await to_spanish
+    assert refused.value.status == 409 and "switched to English" in refused.value.message
+    assert back["language"] == "en" and service.model == ENGLISH
+    assert all("to Spanish" not in e.text for e in _events("model-load"))
+    await service.close()

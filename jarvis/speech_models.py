@@ -49,6 +49,10 @@ log = logging.getLogger("jarvis.speech_models")
 
 # (state, bytes done, bytes in all): "downloading", "verifying", "installing".
 Progress = Callable[[str, int, int], None]
+# How long one read of the download may wait. Without it a connection that
+# goes dead hangs the install for good, and while it shows as downloading a
+# new install of that model is not started.
+DOWNLOAD_TIMEOUT_SEC = 60
 
 
 # ── installing one model ─────────────────────────────────────────────────
@@ -66,7 +70,8 @@ def sha256_of(path: Path) -> str:
 
 
 def download(url: str, dest: Path, progress: Progress) -> None:
-    with urllib.request.urlopen(url) as response, dest.open("wb") as out:
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SEC) as response, \
+            dest.open("wb") as out:
         total = int(response.headers.get("Content-Length") or 0)
         done = 0
         for block in iter(lambda: response.read(1 << 20), b""):
@@ -238,6 +243,10 @@ async def switch(language: str) -> dict:
         await voice_diagnostics.record(voice_diagnostics.Event(
             at=time.time(), kind="model-unavailable", text=error.message))
         raise Refused(500, error.message) from error
+    if service.model != model:
+        # Another switch was asked for while this one loaded, and won.
+        raise Refused(409, f"Speech input was switched to {service.model.label} "
+                           f"before {model.label} had loaded.")
     await voice_diagnostics.record(voice_diagnostics.Event(
         at=time.time(), kind="model-load",
         text=(f"Speech input switched from {previous.label} to {model.label} "

@@ -471,10 +471,8 @@ def test_retry_run_resumes_a_finished_run_and_refuses_a_live_one(wired, monkeypa
 
 def _install_model(language):
     from jarvis import transcriber
-    folder = transcriber.model_dir(transcriber.find_model(language))
-    folder.mkdir(parents=True)
-    for name in transcriber.MODEL_FILES:
-        (folder / name).write_text("x")
+    from tests.test_speech_models import _put
+    _put(transcriber.find_model(language))
 
 
 def test_speech_models_reads_what_the_route_reads(wired):
