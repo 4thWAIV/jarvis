@@ -29,6 +29,8 @@ export function openSettings(section: SectionId | null = null): void {
 }
 
 interface Status {
+  voice_output?: { provider: string; voice: string; installed: boolean; state: string;
+    error: string | null; download_bytes: number; metrics: { rtf: number } | null };
   claude_code_installed: boolean;
   server_port: number;
   uptime_seconds: number;
@@ -97,7 +99,7 @@ export function Settings() {
   useEffect(() => {
     const timer = setTimeout(async () => {
       const s = await loadStatus();
-      if (s && !s.env_keys_set.fish_audio) {
+      if (s && !(s.voice_output?.provider === "local" ? s.voice_output.installed : s.env_keys_set.fish_audio)) {
         setSetup(0);
         settingsOpen.set(true);
       }
@@ -170,6 +172,35 @@ export function Settings() {
 function VoiceSection({ status, statusFailed, reload }: {
   status: Status | null; statusFailed: boolean; reload: () => Promise<Status | null>;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [sample, setSample] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const output = status?.voice_output;
+  const provider = output?.provider ?? "fish";
+  const voice = output?.voice ?? "george";
+  const change = async (provider: string, voice: string) => {
+    setSaving(true); setError(""); setSample(null);
+    try { await postJson("/api/settings/voice-output", { provider, voice }); await reload(); }
+    catch { setError("Could not save the voice selection. Try again."); }
+    finally { setSaving(false); }
+  };
+  const installLocal = async () => {
+    setBusy(true); setError("");
+    try { await postJson("/api/settings/voice-output/install", {}); await reload(); }
+    catch { setError("Local model installation failed. Check the connection and available disk space, then retry. Existing files are preserved."); }
+    finally { setBusy(false); }
+  };
+  const preview = async () => {
+    setBusy(true); setError(""); setSample(null);
+    try {
+      const result = await postJson<{audio: string | null}>("/api/tts-test", {});
+      if (!result.audio) throw new Error("No audio");
+      setSample(`data:audio/${provider === "local" ? "wav" : "mpeg"};base64,${result.audio}`);
+      await reload();
+    } catch { setError("Could not generate a voice sample. Your text conversation still works."); }
+    finally { setBusy(false); }
+  };
   const [key, setKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [tested, setTested] = useState<Dot | null>(null);
@@ -202,6 +233,33 @@ function VoiceSection({ status, statusFailed, reload }: {
     <section className="settings-section" id="settings-voice">
       <h3>Voice</h3>
       <div className="settings-field">
+        <label htmlFor="voice-provider">Speech output</label>
+        <select id="voice-provider" value={provider} disabled={!status || saving || busy}
+                onChange={(e) => void change(e.target.value, voice)}>
+          <option value="fish">Fish Audio (cloud)</option>
+          <option value="local">Local voice (Kokoro, CPU)</option>
+        </select>
+      </div>
+      {provider === "local" && <>
+        <p>Runs on this computer with no Fish key or per-use API charge. Downloads once; synthesis then works offline.</p>
+        <div className="settings-field">
+          <label htmlFor="local-voice">Local voice</label>
+          <select id="local-voice" value={voice} disabled={saving || busy}
+                  onChange={(e) => void change("local", e.target.value)}>
+            <option value="george">George · British English</option>
+            <option value="daniel">Daniel · British English</option>
+            <option value="lewis">Lewis · British English</option>
+            <option value="emma">Emma · British English</option>
+          </select>
+        </div>
+        <p role="status">{busy ? "Working…" : output?.error ?? (output?.installed ? "Model installed. Loads when first used." : "Local model not installed.")}</p>
+        {!output?.installed && <button className="settings-btn" disabled={busy || saving}
+          onClick={() => void installLocal()}>Install local model (126 MiB)</button>}
+        {output?.metrics && <p>Last generation: {output.metrics.rtf.toFixed(2)} seconds of compute per second of audio.</p>}
+      </>}
+      {provider === "fish" && <>
+
+      <div className="settings-field">
         <label>Fish Audio API Key</label>
         <div className="settings-input-row">
           <input type="password" placeholder="Fish Audio key..." value={key}
@@ -221,7 +279,12 @@ function VoiceSection({ status, statusFailed, reload }: {
       <div className="settings-actions">
         <button className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
       </div>
-      {savedKey && (
+      </>}
+      <button className="settings-btn" disabled={busy || saving || (provider === "local" && !output?.installed)}
+              onClick={() => void preview()}>Preview selected voice</button>
+      {sample && <audio controls autoPlay src={sample} aria-label="Voice preview" />}
+      {error && <p role="alert">{error}</p>}
+      {provider === "fish" && savedKey && (
         <p className="settings-restart-notice">
           Saved. Restart the server (menu &rarr; Restart Server) for this to take effect.
         </p>

@@ -441,6 +441,12 @@ def _check_screen_recording_sync() -> Check:
 
 def _check_fish_api_key_sync() -> Check:
     """FISH_API_KEY must be set or JARVIS has no voice."""
+    if os.environ.get("JARVIS_TTS_PROVIDER") == "local":
+        from jarvis.local_tts import model_problem
+        problem = model_problem()
+        return Check(name="fish_api_key", status=STATUS_FAIL if problem else STATUS_OK,
+                     message=problem or "Local CPU voice model is installed.",
+                     remedy="Install the local voice model in Settings → Voice." if problem else "")
     if os.environ.get("FISH_API_KEY"):
         return Check(name="fish_api_key", status=STATUS_OK, message="FISH_API_KEY is set.")
     return Check(

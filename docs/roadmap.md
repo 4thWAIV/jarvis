@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated 2026-10-26. This is the project direction, not a release schedule. **Current** means present in this checkout. **Next** describes the next development focus. **Evaluation** means a candidate still needs acceptance. **Future** describes the successor product direction rather than functionality delivered by JARVIS.
+Updated 2026-11-01. This is the project direction, not a release schedule. **Current** means present in this checkout. **Next** describes the next development focus. **Evaluation** means a candidate still needs acceptance. **Future** describes the successor product direction rather than functionality delivered by JARVIS.
 
 ## One interface for conversation and work
 
@@ -10,7 +10,7 @@ Updated 2026-10-26. This is the project direction, not a release schedule. **Cur
 
 ## Reliable listening and speaking under load
 
-**Current:** Microphone audio goes to local Kroko streaming recognition through sherpa-onnx. Fish Audio supplies speech output. The diagnostics interface exposes the voice pipeline, recognition headroom, incident history, system load and notification activity.
+**Current:** Microphone audio goes to local Kroko streaming recognition through sherpa-onnx. Speech output is selectable between Fish Audio and local Kokoro CPU synthesis. Local voices use the existing sherpa-onnx runtime, an explicitly installed model and a warm worker; local failure preserves visible text without billable fallback. See [local voice setup](local-voice.md). The diagnostics interface exposes the voice pipeline, recognition headroom, incident history, system load and notification activity.
 
 **Next:** Treat speech reliability as an end-to-end property. Measure capture, browser scheduling, transport, recognition, synthesis and playback together while development work is running. A fast model in isolation does not establish a responsive assistant. Prioritize complete first words, bounded queues, useful failure explanations and predictable recovery after interruption or reconnect.
 
@@ -31,6 +31,18 @@ A workflow monitor reports what its participating sessions have recorded. It sho
 **Current:** The conversational brain has Claude and Codex provider implementations. Settings expose provider configuration, and the left column shows brain account usage. Development runs retain their own execution path; selecting a different conversational brain does not automatically replace the development executor.
 
 **Next:** Keep conversation, tools, messages and diagnostics consistent when a provider is unavailable or changed. Account failure, model failure, transport failure and exhausted capacity should have distinguishable symptoms and recovery steps. Evaluate integrations through the same user workflow rather than adding a separate interface for every provider.
+
+## Platform backlog and visual polish
+
+Windows local onboarding remains backlog work. Tim has supplied a native Windows
+11 x64 port handoff; receipt does not accept its broad scope or estimate, and no
+Windows VM or port is implemented here. The handoff is for the operator's Claude
+session through JARVIS. A Mac ARM VM would not establish x64 desktop support.
+
+The [whole-workspace visual polish proposal](planning/ui-polish.md) covers all
+panels, settings and states while preserving Tim's composition, geometry and
+interactions. Two restrained themes are proposed for review; no theme, layout or
+component-framework migration is implemented by this plan.
 
 ## From the prototype to Denice
 

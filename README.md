@@ -57,7 +57,7 @@ Regenerate these captures with `.venv/bin/python scripts/capture_docs.py`.
 
 ## Run the workspace
 
-Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Fish Audio credentials are required for spoken output; without working synthesis, replies can appear as text.
+Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Choose Fish Audio or local Kokoro CPU speech in Settings → Voice. Fish needs its own key; local output needs an explicit model installation. See [local voice setup](docs/local-voice.md). Without working synthesis, replies remain visible as text.
 
 From a clone of this repository:
 

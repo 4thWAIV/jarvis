@@ -131,6 +131,8 @@ log = logging.getLogger("jarvis")
 # Config
 # ---------------------------------------------------------------------------
 
+from jarvis import local_tts
+
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 FISH_API_URL = "https://api.fish.audio/v1/tts"
@@ -693,7 +695,35 @@ async def _voice_emit(msg: dict) -> None:
         raise NoVoiceClient("no voice client connected")
 
 
+def _voice_output_status() -> dict:
+    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
+    voice = os.environ.get("JARVIS_LOCAL_VOICE", "george")
+    problem = local_tts.model_problem() if provider == "local" else None
+    if provider not in ("fish", "local"):
+        problem = "Unknown speech output provider. Choose Local or Fish in Settings."
+    return {"provider": provider, "voice": voice, "voices": list(local_tts.VOICES),
+            "model": local_tts.MODEL_NAME, "download_bytes": local_tts.MODEL_BYTES,
+            "installed": local_tts.model_problem() is None,
+            "state": local_tts.client.state, "error": problem or local_tts.client.error,
+            "metrics": local_tts.client.last_metrics}
+
+
 async def _synth_for_speech(text: str) -> Optional[bytes]:
+    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
+    if provider not in ("fish", "local"):
+        log.warning("Unknown speech output provider; synthesis disabled")
+        return None
+    if provider == "local":
+        try:
+            audio = await local_tts.client.synthesize(text, os.environ.get("JARVIS_LOCAL_VOICE", "george"))
+            subsystem_diagnostics.voice_output_calls.note(True)
+            return audio
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            subsystem_diagnostics.voice_output_calls.note(False)
+            log.warning("local voice: %s", e)
+            return None  # Never fall back to a billable provider.
     r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
     if FISH_API_KEY and (text or "").strip():
         subsystem_diagnostics.voice_output_calls.note(r is not None)
@@ -1491,6 +1521,7 @@ async def stop_brain_and_speech() -> None:
         log.warning(f"shutdown journal failed: {e}")
     for label, coro in (("brain", brain_instance.stop() if brain_instance else None),
                         ("speech", speech.stop() if speech else None),
+                        ("local voice", local_tts.client.close()),
                         ("tts client", _tts_client.aclose() if _tts_client else None)):
         if coro is None:
             continue
@@ -2971,7 +3002,7 @@ async def tts_test():
     GET is the one method OriginGuard cannot cover, so as a GET this was an
     <img> tag on any page the user visited, in a loop.
     """
-    audio = await synthesize_speech("Testing audio, sir.")
+    audio = await _synth_for_speech("Testing audio, sir.")
     if audio:
         return {"audio": base64.b64encode(audio).decode()}
     return {"audio": None, "error": "TTS failed"}
@@ -7451,6 +7482,7 @@ def _subsystems() -> list:
     return subsystem_diagnostics.gather(
         watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
         has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at,
+        local_voice=(_voice_output_status() if os.environ.get("JARVIS_TTS_PROVIDER") == "local" else None),
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
                  if folder_catalog is not None else None))
@@ -10938,6 +10970,7 @@ async def voice_handler(ws: WebSocket):
 # a restart.
 SETTABLE_ENV_KEYS = frozenset({
     "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC",
+    "JARVIS_TTS_PROVIDER", "JARVIS_LOCAL_VOICE",
 })
 
 # A value may not carry anything that ends the line it is written on.
@@ -10993,6 +11026,10 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot contain a null byte"
     if value.splitlines() != ([value] if value else []):
         return "A setting cannot contain a line break"
+    if key == "JARVIS_TTS_PROVIDER" and value not in ("fish", "local"):
+        return "Voice provider must be fish or local"
+    if key == "JARVIS_LOCAL_VOICE" and value not in local_tts.VOICES:
+        return "Unknown local voice"
     if _ENV_CONTROL_RE.search(value):
         return "A setting cannot contain a control character"
     if _parse_env_lines(f"{key}={value}") != [(key, value)]:
@@ -11099,12 +11136,47 @@ async def api_test_fish(body: KeyTest):
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
+class VoiceOutputUpdate(BaseModel):
+    provider: str
+    voice: str = "george"
+
+
+@app.post("/api/settings/voice-output")
+async def api_voice_output(body: VoiceOutputUpdate):
+    for key, value in (("JARVIS_TTS_PROVIDER", body.provider), ("JARVIS_LOCAL_VOICE", body.voice)):
+        problem = _env_value_problem(key, value)
+        if problem:
+            return JSONResponse({"error": problem}, status_code=400)
+    # Cancel queued playback/synthesis before switching models/providers.
+    if speech:
+        await speech.barge_in(reason="voice provider changed")
+    await local_tts.client.close()
+    _write_env_key("JARVIS_TTS_PROVIDER", body.provider)
+    _write_env_key("JARVIS_LOCAL_VOICE", body.voice)
+    return _voice_output_status()
+
+
+_voice_install_lock = asyncio.Lock()
+
+
+@app.post("/api/settings/voice-output/install")
+async def api_install_voice_output():
+    from jarvis.setup_speech_output import install
+    async with _voice_install_lock:
+        try:
+            await asyncio.to_thread(install)
+        except (Exception, SystemExit) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+    return _voice_output_status()
+
+
 @app.get("/api/settings/status")
 async def api_settings_status():
     import shutil as _shutil
     _, env_dict = _read_env()
     claude_installed = _shutil.which("claude") is not None
     return {
+        "voice_output": _voice_output_status(),
         "claude_code_installed": claude_installed,
         "server_port": 8340,
         "uptime_seconds": int(time.time() - _session_start),
