@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Callable, Literal, Optional
+from typing import Any, AsyncIterator, Callable, Literal, Optional
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -289,6 +289,18 @@ def capture_binding(draft: ports.Draft) -> dict:
             "content_digest": draft.send.content_digest}
 
 
+def people_called(said: str, people: list, names: Callable[[Any], tuple]) -> list:
+    """Everyone among `people` whose login or name (`names(person)`) is what
+    was said, matched as said aloud (agent_directory.spoken_key): the one
+    way a person on the team is found by name, for a message or a roster
+    change."""
+    key = agent_directory.spoken_key(said)
+    if not key:
+        return []
+    return [p for p in people
+            if key in {agent_directory.spoken_key(n or "") for n in names(p)} - {""}]
+
+
 def recipient_label(members: list[wire.TeamMember], github_id: int, owner_github_id: int) -> str:
     """How a recipient is named in the read-back: Me for the owner, else the
     roster's name or login."""
@@ -496,9 +508,7 @@ class MessagingTools:
         if key in ("me", "myself", "self"):
             return owner_github_id, ""
         members = self.messaging.recipients()
-        found = [m for m in members
-                 if key in {agent_directory.spoken_key(m.login),
-                            agent_directory.spoken_key(m.name or "")} - {""}]
+        found = people_called(said, members, lambda m: (m.login, m.name))
         if len(found) == 1:
             return found[0].github_id, ""
         names = ", ".join(recipient_label(members, m.github_id, owner_github_id)

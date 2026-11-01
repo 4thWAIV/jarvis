@@ -77,6 +77,16 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__list_folders,mcp__jarvis__find_folder,"
         "mcp__jarvis__browse_folder,mcp__jarvis__read_folder_file,"
         "mcp__jarvis__register_folder,mcp__jarvis__unregister_folder,"
+        "mcp__jarvis__folder_detail,mcp__jarvis__change_folder,"
+        "mcp__jarvis__folder_candidates,mcp__jarvis__change_folder_candidate,"
+        "mcp__jarvis__team_status,mcp__jarvis__find_github_user,"
+        "mcp__jarvis__change_team_member,mcp__jarvis__team_network,"
+        "mcp__jarvis__people,mcp__jarvis__people_messages,"
+        "mcp__jarvis__read_people_thread,mcp__jarvis__mark_people_message_read,"
+        "mcp__jarvis__set_people_thread,mcp__jarvis__change_people_draft,"
+        "mcp__jarvis__diagnostics,"
+        "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
+        "mcp__jarvis__retry_run,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch,Skill")

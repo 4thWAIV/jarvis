@@ -817,6 +817,51 @@ EXEMPT = {
         "sentence is `_describe_run`\'s and the task heading is "
         "`_build_progress_clause`\'s — all three driven. `project_name` "
         "appears once, in a `==` comparison"),
+    # The page-parity tools (tests/test_brain_page_parity.py drives each).
+    "server.tool_team_status": (
+        "its header holds the connection's state through a fixed word map, the "
+        "team's member counts as numbers and fixed words; the team's name, his "
+        "login and every member's login, name, role and state go inside the "
+        "untrusted block only"),
+    "server._team_refusal": (
+        "it returns the team server's own refusal wording, and its only callers "
+        "(`_team_refused` and `tool_team_status`) put that string inside "
+        "`_wrap_untrusted`, never in a header line the brain reads as JARVIS's"),
+    "server._node_line": (
+        "a node's label, its owner's login, presence, load and brains are formatted "
+        "only as the BODY of `_wrap_untrusted` by team_network; the header holds "
+        "counts by presence through a fixed word map"),
+    "server.tool_people_messages": (
+        "its header holds counts, fixed words and the store's own continuation "
+        "token; every conversation's correspondent, subject, text and draft "
+        "state is in the lines `_item_line` builds, which go inside the "
+        "untrusted block only"),
+    "server._thread_text": (
+        "it builds the body of one conversation, which `tool_read_people_thread` "
+        "hands to `_one_page`, and `_one_page` puts every page of it inside "
+        "`_wrap_untrusted`; the header above holds counts and message uuids"),
+    "server.tool_diagnostics": (
+        "its header holds a subsystem's name as subsystem_diagnostics fixed it "
+        "and a state through a fixed word map; every summary and check detail, "
+        "which can quote an agent's name or an error, is inside the untrusted "
+        "block only"),
+    "server.tool_folder_detail": (
+        "its header holds the folder's revision and the number of sessions; the "
+        "folder line, its sessions' names, cwds and relations and its events are "
+        "inside the untrusted block only"),
+    "server.tool_folder_candidates": (
+        "its header holds counts, a fixed word for the state asked for and the "
+        "service's own cursor; every candidate's path, role, providers and "
+        "refusal code is inside the untrusted block only"),
+    "server.tool_change_folder_candidate": (
+        "the candidate's `state` only chooses between two fixed sentences and is "
+        "never printed; its path, which a session's record named, is inside the "
+        "untrusted block only"),
+    "server.tool_retry_run": (
+        "it reads a run's `status` only to compare it, prints the run's project "
+        "only through `_run_project`, the wall every run sentence uses, and "
+        "otherwise fixed words or `_retry_run`'s refusal, which is fixed words or "
+        "the folder service's fixed refusal"),
 }
 
 

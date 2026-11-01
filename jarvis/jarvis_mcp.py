@@ -1223,6 +1223,268 @@ TOOL_SPECS = [
             "required": ["folder_id"],
         },
     },
+    {
+        "name": "folder_detail",
+        "description": (
+            "One registered folder in full, as its detail view shows it: where it is, how "
+            "it is read, the sessions found for it and its latest events. Read-only."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder_id": {"type": "string", "description": "The folder's ID."},
+            },
+            "required": ["folder_id"],
+        },
+    },
+    {
+        "name": "change_folder",
+        "description": (
+            "Change one registered folder, only when the user asks: rename it "
+            "(`display_name`), change its role (`role`: data, source or history), point it "
+            "at the directory it now lives in (`path`, absolute or ~/; `replace` true only "
+            "when he confirms it is a different directory), or just check it now "
+            "(`check_now`). It changes the catalog only; no file is touched."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder_id": {"type": "string", "description": "The folder's ID."},
+                "display_name": {"type": "string", "description": "Optional: its new name."},
+                "role": {"type": "string", "enum": ["data", "source", "history"]},
+                "path": {"type": "string", "description": "Optional: its new location."},
+                "replace": {"type": "boolean"},
+                "check_now": {"type": "boolean"},
+            },
+            "required": ["folder_id"],
+        },
+    },
+    {
+        "name": "folder_candidates",
+        "description": (
+            "Folders discovery found in sessions' records that are not registered yet: each "
+            "one's ID, path, proposed role, availability and sessions. `state` ignored lists "
+            "the ones he ignored, registered the ones already in the catalog. Read-only; "
+            "register one with register_folder and its path."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "state": {"type": "string", "enum": ["discovered", "ignored", "registered"]},
+                "query": {"type": "string", "description": "Optional: part of a path."},
+                "cursor": {"type": "string", "description": "Optional: the next page's cursor."},
+            },
+        },
+    },
+    {
+        "name": "change_folder_candidate",
+        "description": (
+            "Ignore one discovered folder candidate, or restore an ignored one, only when the "
+            "user asks. It registers nothing."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "candidate": {"type": "string", "description": "Its ID, from folder_candidates."},
+                "action": {"type": "string", "enum": ["ignore", "restore"]},
+            },
+            "required": ["candidate", "action"],
+        },
+    },
+    {
+        "name": "team_status",
+        "description": (
+            "Settings, Team: whether this JARVIS is signed in to the team server, the team, "
+            "who he is signed in as and his role, and for an administrator every member "
+            "with their role and state (signed in, pending, suspended). THE way to answer "
+            "who is on the team. For who can be messaged use people; for who is online, "
+            "team_network."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "find_github_user",
+        "description": (
+            "Look up a GitHub account by username before adding it to the team: its name and "
+            "whether it is already on the team. Administrators only."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "login": {"type": "string", "description": "The GitHub username."},
+            },
+            "required": ["login"],
+        },
+    },
+    {
+        "name": "change_team_member",
+        "description": (
+            "Change the team's roster, only when the user asks and only as an administrator: "
+            "add someone by GitHub username (`add`, with `role` member or admin), make a "
+            "member an administrator or back (`make_admin`, `make_member`), `suspend` them "
+            "(which ends their sessions), `re_enable` them, `remove` someone added who never "
+            "signed in, or `end_sessions`. Name the person as he said it; for add, their "
+            "GitHub username, looked up first with find_github_user."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "person": {"type": "string",
+                           "description": "The member as he named them, or a GitHub username to add."},
+                "change": {"type": "string",
+                           "enum": ["add", "make_admin", "make_member", "suspend",
+                                    "re_enable", "remove", "end_sessions"]},
+                "role": {"type": "string", "enum": ["member", "admin"],
+                         "description": "Only with add. Omit for member."},
+            },
+            "required": ["person", "change"],
+        },
+    },
+    {
+        "name": "team_network",
+        "description": (
+            "The Network view: every JARVIS on the team's network, whose it is, whether it is "
+            "online, delayed or offline, its CPU and memory, its brains' remaining usage and "
+            "pace, and when a person last used it. THE way to answer who is online."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "people",
+        "description": (
+            "Who on the team can be messaged right now, read from the team server: each "
+            "person's name and GitHub username, and Me for himself. Call it before "
+            "draft_message whenever he names a person, and pass draft_message a name from it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "people_messages",
+        "description": (
+            "His conversations with people on the Queue, received and sent: each thread, who "
+            "it is with, waiting or active, whose turn it is, whether it is marked unread, "
+            "and its latest message. `dismissed` lists the ones he put away. Read one with "
+            "read_people_thread."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dismissed": {"type": "boolean"},
+                "continuation": {"type": "string",
+                                 "description": "With dismissed: where the last page ended."},
+            },
+        },
+    },
+    {
+        "name": "read_people_thread",
+        "description": (
+            "One conversation with a person, every message in full with who sent it, when, "
+            "whether it was read and its files, one page at a time; read every page before "
+            "telling him what it said. It marks nothing read: once he has heard a message, "
+            "call mark_people_message_read. Reply with draft_message's `reply_to`."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread": {"type": "string", "description": "The thread, from people_messages."},
+                "page": {"type": "integer", "description": "Which page, starting at 1."},
+            },
+            "required": ["thread"],
+        },
+    },
+    {
+        "name": "mark_people_message_read",
+        "description": (
+            "Mark a person's message read once he has heard it in full: the sender is told "
+            "he has read it. Only for a message read to him this turn."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The message id."},
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "set_people_thread",
+        "description": (
+            "Move one conversation on the Queue, only when the user asks: `open` it, "
+            "`put_back`, mark it `addressed` or `not_addressed`, `unread` or `read`, say it is "
+            "`my_turn` or `their_turn`, `dismiss` it or `restore` it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread": {"type": "string", "description": "The thread, from people_messages."},
+                "change": {"type": "string",
+                           "enum": ["open", "put_back", "addressed", "not_addressed", "unread",
+                                    "read", "my_turn", "their_turn", "dismiss", "restore"]},
+            },
+            "required": ["thread", "change"],
+        },
+    },
+    {
+        "name": "change_people_draft",
+        "description": (
+            "His own unsent message to a person, only when he asks: `discard` a draft, "
+            "`cancel` a send before it has gone (it stays a draft), or `retry` a send "
+            "that failed. By the message id people_messages or read_people_thread gave."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The draft's message id."},
+                "action": {"type": "string", "enum": ["discard", "cancel", "retry"]},
+            },
+            "required": ["message", "action"],
+        },
+    },
+    {
+        "name": "diagnostics",
+        "description": (
+            "The Diagnostics tab: how each part of JARVIS is doing (communications with the "
+            "agents, voice input, the brain, voice output, the tool channel, the workflow "
+            "monitor, the folder catalog, the team server), or one of them in full with its "
+            "checks; voice input adds today's and the last hour's figures. THE way to answer "
+            "whether something in JARVIS is working."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "subsystem": {"type": "string",
+                              "description": "Optional: one part, as he named it."},
+            },
+        },
+    },
+    {
+        "name": "answer_workflow_decision",
+        "description": (
+            "Record his answer to a workflow's open decision, only when he gives it: the "
+            "session running the workflow reads it from the record. `decision` is the key "
+            "workflow_status shows; omit it when there is only one open."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workflow": {"type": "string", "description": "Its name as he said it, or its id."},
+                "decision": {"type": "string"},
+                "answer": {"type": "string", "description": "His answer, in his words."},
+            },
+            "required": ["workflow", "answer"],
+        },
+    },
+    {
+        "name": "dismiss_workflow",
+        "description": (
+            "Take a finished workflow off the Workflows list, only when he asks."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workflow": {"type": "string", "description": "Its name as he said it, or its id."},
+            },
+            "required": ["workflow"],
+        },
+    },
+    {
+        "name": "retry_run",
+        "description": (
+            "Run a finished run's own instruction again, picking up where it left off — the "
+            "dashboard's Retry — only when he asks. Refer to the run as for run_status. For "
+            "new work, or the same project with a new instruction, use spawn_run."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run": {"type": "string",
+                        "description": "The project, or how the user referred to the run."},
+            },
+            "required": ["run"],
+        },
+    },
 ]
 
 

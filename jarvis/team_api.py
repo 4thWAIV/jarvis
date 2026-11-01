@@ -21,7 +21,7 @@ import itertools
 import platform
 import socket
 import uuid
-from typing import Callable, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
@@ -89,15 +89,46 @@ def node_update(account_key: Optional[str]) -> dict:
             "activity": human_activity.recorder.current()}
 
 
+def _refusal(e: TeamError) -> dict:
+    return {"error": {"code": "team", "message": str(e)}}
+
+
 def _refused(e: TeamError, status: int = 400) -> JSONResponse:
-    return JSONResponse({"error": {"code": "team", "message": str(e)}}, status_code=status)
+    return JSONResponse(_refusal(e), status_code=status)
 
 
-async def _forward(method: str, path: str, body=None) -> JSONResponse:
+async def team_call(method: str, path: str, body=None) -> tuple[int, Any]:
+    """One member-management call to the team server, for the routes below
+    and the brain's team tools alike: (status, JSON body). A connection that
+    cannot make it answers 502 (unreachable) or 409, with the refusal."""
     try:
-        status, payload = await team_client.connection.call(method, path, body)
+        return await team_client.connection.call(method, path, body)
     except TeamError as e:
-        return _refused(e, 502 if e.unreachable else 409)
+        return (502 if e.unreachable else 409), _refusal(e)
+
+
+# The member calls, each one team server route. The page's routes return
+# them as they are; server.py's team tools word them for speech.
+
+def members_call() -> Awaitable[tuple[int, Any]]:
+    return team_call("GET", "/api/v1/team/members")
+
+
+def resolve_call(login: str) -> Awaitable[tuple[int, Any]]:
+    return team_call("POST", "/api/v1/team/members/resolve", {"login": login})
+
+
+def change_call(github_id: int, change: dict) -> Awaitable[tuple[int, Any]]:
+    """`change` is a MemberBody's fields: expected_revision, and role and/or status."""
+    return team_call("PUT", f"/api/v1/team/members/{int(github_id)}", change)
+
+
+def revoke_call(github_id: int) -> Awaitable[tuple[int, Any]]:
+    return team_call("POST", f"/api/v1/team/members/{int(github_id)}/revoke-sessions")
+
+
+def _answer(called: tuple[int, Any]) -> JSONResponse:
+    status, payload = called
     return JSONResponse(payload, status_code=status)
 
 
@@ -132,20 +163,19 @@ async def refresh():
 
 
 async def list_members():
-    return await _forward("GET", "/api/v1/team/members")
+    return _answer(await members_call())
 
 
 async def resolve_member(body: ResolveBody):
-    return await _forward("POST", "/api/v1/team/members/resolve", body.model_dump())
+    return _answer(await resolve_call(body.login))
 
 
 async def change_member(github_id: int, body: MemberBody):
-    return await _forward("PUT", f"/api/v1/team/members/{int(github_id)}",
-                          body.model_dump(exclude_none=True))
+    return _answer(await change_call(github_id, body.model_dump(exclude_none=True)))
 
 
 async def revoke_sessions(github_id: int):
-    return await _forward("POST", f"/api/v1/team/members/{int(github_id)}/revoke-sessions")
+    return _answer(await revoke_call(github_id))
 
 
 def mount(app: FastAPI) -> None:

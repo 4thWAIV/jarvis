@@ -95,6 +95,28 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__read_folder_file",
     "mcp__jarvis__register_folder",
     "mcp__jarvis__unregister_folder",
+    "mcp__jarvis__folder_detail",
+    "mcp__jarvis__change_folder",
+    "mcp__jarvis__folder_candidates",
+    "mcp__jarvis__change_folder_candidate",
+    # The rest of what the page shows and does (server.py): the team, its
+    # network and its people, messages between people, diagnostics, a
+    # workflow's decisions and a run's retry. Reads that carry other people's
+    # words come back in an untrusted block; every change is an ACTING_TOOL.
+    "mcp__jarvis__team_status",
+    "mcp__jarvis__find_github_user",
+    "mcp__jarvis__change_team_member",
+    "mcp__jarvis__team_network",
+    "mcp__jarvis__people",
+    "mcp__jarvis__people_messages",
+    "mcp__jarvis__read_people_thread",
+    "mcp__jarvis__mark_people_message_read",
+    "mcp__jarvis__set_people_thread",
+    "mcp__jarvis__change_people_draft",
+    "mcp__jarvis__diagnostics",
+    "mcp__jarvis__answer_workflow_decision",
+    "mcp__jarvis__dismiss_workflow",
+    "mcp__jarvis__retry_run",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had
     # no answer at all. Both were verified inside this exact flag set
