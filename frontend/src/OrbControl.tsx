@@ -5,10 +5,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { activeBrain, brains } from "./brains";
 import { createOrb, type Orb } from "./orb";
+import { mainOrb } from "./orbSource";
 import { PROVIDERS } from "./providers";
-
-/** The main orb, for the rays (RayLane.tsx), which make it transmit. */
-export const mainOrb: { current: Orb | null } = { current: null };
 
 export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);

@@ -80,14 +80,24 @@ export function queueEndpoint(threadId: string): Endpoint {
 /** Every end's layout signal, for a ray to re-measure on. */
 export const LAYOUT_SIGNALS: Store<number>[] = [agentsLaidOut, queueLaidOut];
 
+/** The fixed boxes every route from the orb is laid out against, measured
+ *  now: the main orb, the right column and the menu button's right edge.
+ *  Null while the orb or the column is not on the page. The rays and the
+ *  pipeline (uiPipeline.ts) both read them here. */
+export function lanes(): { orb: DOMRect; column: DOMRect; menuRight: number; width: number } | null {
+  const orb = document.getElementById("orb-control")?.getBoundingClientRect();
+  const column = document.getElementById("right-column")?.getBoundingClientRect();
+  if (!orb || !column) return null;
+  const menu = document.getElementById("controls")?.getBoundingClientRect();
+  return { orb, column, menuRight: menu?.right ?? 0, width: window.innerWidth };
+}
+
 /** The ray's path to `end` now, and whether it ends at a tab's icon; null
  *  while there is nothing to draw to. */
 export function measure(end: Endpoint): { d: string; toTab: boolean } | null {
-  const orb = document.getElementById("orb-control")?.getBoundingClientRect();
-  const column = document.getElementById("right-column")?.getBoundingClientRect();
+  const at = lanes();
   const found = end.find();
-  if (!orb || !column || !found) return null;
-  const menu = document.getElementById("controls")?.getBoundingClientRect();
-  return { d: rayRoute(orb, found.box, found.toTab, column, menu?.right ?? 0, window.innerWidth),
+  if (!at || !found) return null;
+  return { d: rayRoute(at.orb, found.box, found.toTab, at.column, at.menuRight, at.width),
            toTab: found.toTab };
 }

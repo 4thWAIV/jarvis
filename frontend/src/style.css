@@ -37,6 +37,11 @@
      measures rendered rows). On :root because the orb's height uses them. */
   --agent-row: 60px;
   --agent-gap: 8px;
+  /* The pipeline's corridor along an object's facing edge (uiPipeline.ts
+     CORRIDOR_PX): its socket enters there and its leaves run down it, so
+     content keeps out of it. A component that registers a target and
+     draws to its own edge reserves it with this. */
+  --ui-corridor: 10px;
 }
 
 html, body {
@@ -3483,3 +3488,13 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   overflow-wrap: anywhere;
 }
 .update-commits code { color: rgba(0, 212, 255, 0.7); }
+
+/* The pipeline's corridor in the centre: every centre view hangs from the
+   main rail in the gutter on its right, so its socket enters at its right
+   edge and its parts' leaves run down the strip inside it; that strip is
+   kept clear of content (UiPipelineLayer.tsx). Last, so it wins over each
+   view's own padding on that side. */
+#conversation, #workflow-detail, #agent-thread, #subsystem-detail, #voice-diagnostics,
+#network-detail, #queue-item-view, #folders-view {
+  padding-right: var(--ui-corridor);
+}

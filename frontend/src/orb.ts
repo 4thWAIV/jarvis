@@ -33,6 +33,13 @@ const STILL_ORB: Orb = {
 // drawn inward, in a cooler colour -- unmistakably not "about to answer".
 export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "compacting";
 
+export interface TransmitOptions {
+  direction?: [number, number];
+  seconds?: number;
+  riseSeconds?: number;
+  fadeSeconds?: number;
+}
+
 export interface Orb {
   setState(s: OrbState): void;
   /** Drawn entirely in gray, with no colour, while true. */
@@ -42,12 +49,15 @@ export interface Orb {
   /** The "transmitting" state, laid over whatever state the orb is in: it
    *  spins up, fills with `colour` from the centre out, and its particles
    *  lean toward `direction` (screen x, y; the way the ray leaves), for
-   *  `seconds`, easing back to the state it was in over the last of them. */
-  transmit(colour: string, options?: { direction?: [number, number]; seconds?: number }): void;
+   *  `seconds`, easing back to the state it was in over the last of them.
+   *  `riseSeconds` and `fadeSeconds` (default 0.6 and 1.5) set how fast it
+   *  eases in and out, so an effect with its own timing (white attention,
+   *  uiSignal.ts) moves with it. */
+  transmit(colour: string, options?: TransmitOptions): void;
   /** The "receiving" state, the other end of a transmission: the same as
    *  transmitting, except the colour comes in from the edge to the centre,
    *  and `direction` is the way the ray arrives from. */
-  receive(colour: string, options?: { direction?: [number, number]; seconds?: number }): void;
+  receive(colour: string, options?: TransmitOptions): void;
   /** Ends a transmitting or receiving state at once. */
   endTransmission(): void;
   setAnalyser(a: AnalyserNode | null): void;
@@ -228,7 +238,7 @@ export function createOrb(canvas: HTMLCanvasElement,
   // The transmitting or receiving state under way, if any (see transmit()
   // and receive()). It never touches `state`, so when it ends the orb is in
   // exactly the state it was.
-  let tx: { colour: THREE.Color; start: number; seconds: number;
+  let tx: { colour: THREE.Color; start: number; seconds: number; rise: number; fade: number;
             dir: THREE.Vector3; inward: boolean } | null = null;
   const TX_RISE_SEC = 0.6;        // eases in this fast
   const TX_FADE_SEC = 1.5;        // and back out over the last this long
@@ -327,8 +337,7 @@ export function createOrb(canvas: HTMLCanvasElement,
         tx = null;
       } else {
         txWave = (since / TX_WAVE_SEC) * TX_WAVE_REACH;
-        txStrength = Math.min(1, since / TX_RISE_SEC,
-                              (tx.seconds - since) / TX_FADE_SEC);
+        txStrength = Math.min(1, since / tx.rise, (tx.seconds - since) / tx.fade);
         spinY += TX_SPIN * txStrength;
       }
     }
@@ -557,12 +566,12 @@ export function createOrb(canvas: HTMLCanvasElement,
     renderer.setSize(width(), height(), false);
   }
 
-  function startTransmission(colour: string,
-                             options: { direction?: [number, number]; seconds?: number },
-                             inward: boolean) {
+  function startTransmission(colour: string, options: TransmitOptions, inward: boolean) {
     const [dx, dy] = options.direction ?? [0, 0];
     tx = { colour: new THREE.Color(colour), start: clock.getElapsedTime(),
            seconds: options.seconds ?? TX_DEFAULT_SEC,
+           rise: Math.max(0.01, options.riseSeconds ?? TX_RISE_SEC),
+           fade: Math.max(0.01, options.fadeSeconds ?? TX_FADE_SEC),
            // Screen y runs down; the scene's y runs up.
            dir: new THREE.Vector3(dx, -dy, 0).normalize(), inward };
   }

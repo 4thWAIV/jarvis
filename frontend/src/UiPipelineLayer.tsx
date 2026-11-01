@@ -3,73 +3,82 @@
  * the top pipeline, one rail per region and a branch into each object on
  * show), and over it any white attention cue under way (uiAttention.ts):
  * its whole route faint, three bright pulses running along it, two rings
- * where it arrives, the target's contour, then the fade.
+ * where it arrives, the target's contour, then the fade. A cue waiting for
+ * a real transmission to give the orb back shows its route dashed until it
+ * can go.
  *
- * Two layers, both pointer-transparent: the map and the routes run behind
+ * Three layers, all pointer-transparent. The map and the routes run behind
  * the side columns, as the transmissions' rays do (so the rise comes out
- * from inside the orb); a part's leaf inside its object, the rings and the
- * contour are drawn above them, so they show on the object itself. Every
- * position is computed from the contract's one timing table, the same one
- * that decides when the request is answered.
+ * from inside the orb). A part's leaf inside its object, the rings and the
+ * contour are drawn above the columns, so they show on the object itself.
+ * An open modal's rail, sockets and leaves are drawn in a layer above the
+ * modal, in the same page coordinates. Every position is computed from the
+ * one schedule (uiSignal.ts) that also decides when the request is answered.
  */
 
-import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import "./uiPipeline.css";
-import { cues, TIMING, type CueFrame } from "./uiAttention";
-import { layoutRevision, navigationRevision, visibilityOf } from "./uiRegistry";
-import { length, mapEdges, pathOf, pointAlong, polyline, socketBranches, type Point, type RouteEdge } from "./uiPipeline";
+import { EffectLife, onGeometryChange, VISUALLY_HIDDEN } from "./effectLife";
+import { orbSource } from "./orbSource";
+import { cues, type CueFrame } from "./uiAttention";
+import { visibilityOf } from "./uiRegistry";
+import { mapEdges, polyline, socketBranches, type RouteEdge } from "./uiPipeline";
+import {
+  fadeAt, length, pathOf, pointAlong, pulseFractions, ringProgress, routeLit, type Point,
+} from "./uiSignal";
 
-const HIDDEN: CSSProperties = {
-  position: "absolute", width: 1, height: 1, margin: -1, padding: 0, overflow: "hidden",
-  clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
-};
-const RING_MS = 700;
 const RING_R = 26;
 const CONTOUR_PAD = 4;
 
-/** The faint map, measured again whenever the layout may have moved. */
+type Layer = "base" | "over" | "modal";
+const LAYERS: Layer[] = ["base", "over", "modal"];
+
+/** Which of the three layers an edge is drawn in. */
+const layerOf = (e: RouteEdge): Layer => e.host === "modal" ? "modal" : e.layer === "leaf" ? "over" : "base";
+
+const sameEdges = (a: RouteEdge[], b: RouteEdge[]): boolean =>
+  a.length === b.length && a.every((e, i) => e.id === b[i].id && e.host === b[i].host
+    && pathOf(e.points) === pathOf(b[i].points));
+
+/** The faint map, measured again whenever the layout may have moved (once
+ *  per frame at most). */
 function useMap(): RouteEdge[] {
   const [edges, setEdges] = useState<RouteEdge[]>([]);
-  const layout = useSyncExternalStore(layoutRevision.subscribe, layoutRevision.get);
-  const nav = useSyncExternalStore(navigationRevision.subscribe, navigationRevision.get);
   useEffect(() => {
-    let raf = 0;
+    let life: EffectLife | null = null;
     const measure = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => setEdges([
-        ...mapEdges(),
-        ...socketBranches((t) => visibilityOf(t.element()) === "visible"),
-      ]));
+      if (life && !life.ended) return;
+      life = new EffectLife();
+      const mine = life;
+      mine.frame(() => {
+        mine.end();
+        const next = [...mapEdges(), ...socketBranches((t) => visibilityOf(t.element()) === "visible")];
+        // Drawn again only when something moved: a list committing every
+        // frame must not redraw an unchanged map every frame.
+        setEdges((now) => sameEdges(now, next) ? now : next);
+      });
     };
     measure();
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, { capture: true, passive: true });
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, { capture: true });
-    };
-  }, [layout, nav]);
+    const stop = onGeometryChange(measure);
+    return () => { stop(); life?.end(); };
+  }, []);
   return edges;
 }
 
-function fadeOf(cue: CueFrame): number {
-  if (cue.elapsed <= cue.holdUntil) return 1;
-  return Math.max(0, 1 - (cue.elapsed - cue.holdUntil) / (cue.resetBy - cue.holdUntil));
-}
-
-/** Where each pulse is, and whether it is inside the object (the leaf). */
-function pulses(cue: CueFrame): { at: Point; inside: boolean }[] {
-  if (cue.still || cue.elapsed >= TIMING.arrivalAtMs + (TIMING.pulseCount - 1) * TIMING.pulseOffsetMs) return [];
+/** Each pulse still travelling, and the layer it is in now. */
+function pulses(cue: CueFrame): { at: Point; layer: Layer }[] {
+  if (cue.still || cue.queued) return [];
+  const runs = cue.route.edges.map((e) => ({ layer: layerOf(e), run: length(e.points) }));
   const total = length(cue.points);
-  const outside = length(polyline(cue.route.edges.filter((e) => e.layer !== "leaf")));
-  const out: { at: Point; inside: boolean }[] = [];
-  for (let i = 0; i < TIMING.pulseCount; i++) {
-    const p = (cue.elapsed - TIMING.emitMs - i * TIMING.pulseOffsetMs) / TIMING.travelMs;
-    if (p <= 0 || p >= 1) continue;
-    out.push({ at: pointAlong(cue.points, p), inside: p * total > outside });
-  }
-  return out;
+  return pulseFractions(cue.elapsed).map((p) => {
+    let d = p * total;
+    let layer: Layer = runs[runs.length - 1].layer;
+    for (const r of runs) {
+      if (d <= r.run) { layer = r.layer; break; }
+      d -= r.run;
+    }
+    return { at: pointAlong(cue.points, p), layer };
+  });
 }
 
 function Contour({ cue }: { cue: CueFrame }) {
@@ -90,63 +99,70 @@ function Contour({ cue }: { cue: CueFrame }) {
 }
 
 function Rings({ cue }: { cue: CueFrame }) {
-  if (cue.still) return null;
+  if (cue.still || cue.queued) return null;
   const [cx, cy] = cue.points[cue.points.length - 1];
   return (
     <>
-      {[0, 1].map((i) => {
-        const t = (cue.elapsed - TIMING.arrivalAtMs - i * TIMING.ringGapMs) / RING_MS;
-        if (t <= 0 || t >= 1) return null;
-        return <circle key={i} cx={cx} cy={cy} r={4 + t * RING_R} className="ui-ring" style={{ opacity: 1 - t }} />;
-      })}
+      {ringProgress(cue.elapsed).map((t, i) => t === null ? null
+        : <circle key={i} cx={cx} cy={cy} r={4 + t * RING_R} className="ui-ring" style={{ opacity: 1 - t }} />)}
     </>
   );
+}
+
+/** One cue's share of one layer. */
+function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
+  const edges = cue.route.edges.filter((e) => layerOf(e) === layer);
+  const line = polyline(edges);
+  const endLayer = layerOf(cue.route.edges[cue.route.edges.length - 1]);
+  const ends = layer === (endLayer === "base" ? "over" : endLayer);
+  const lit = routeLit(cue.elapsed, cue.still);
+  const moving = pulses(cue).filter((p) => p.layer === layer);
+  if (!line.length && !moving.length && !ends) return null;
+  return (
+    <g data-cue={cue.cueId} data-queued={cue.queued ? "true" : "false"}
+       data-arrived={ends ? (cue.box ? "true" : "false") : undefined}
+       style={{ opacity: fadeAt(cue.elapsed, cue.schedule) }}>
+      {line.length > 1 && cue.queued && <path d={pathOf(line)} className="ui-route-queued" />}
+      {line.length > 1 && !cue.queued && lit && <>
+        <path d={pathOf(line)} className="ui-under" />
+        {layer === "base" && <path d={pathOf(line)} className="ui-route-glow" filter="url(#ui-glow)" />}
+        <path d={pathOf(line)} className="ui-route" />
+      </>}
+      {moving.map((p, i) => <circle key={i} cx={p.at[0]} cy={p.at[1]} r={3} className="ui-pulse" />)}
+      {ends && <Rings cue={cue} />}
+      {ends && cue.box && <Contour cue={cue} />}
+    </g>
+  );
+}
+
+function spoken(showing: CueFrame[], waiting: number): string {
+  const words = showing.map((c) => c.queued ? `Waiting for the orb to point at ${c.label}`
+    : c.box ? `JARVIS is pointing from the orb to ${c.label}` : "").filter(Boolean);
+  if (waiting && !showing.some((c) => c.queued)) words.push("Waiting for the orb");
+  return words.join(". ");
 }
 
 export function UiPipelineLayer() {
   const map = useMap();
   const showing = useSyncExternalStore(cues.subscribe, cues.get);
-  const routes = showing.map((cue) => {
-    const outside = polyline(cue.route.edges.filter((e) => e.layer !== "leaf"));
-    const inside = polyline(cue.route.edges.filter((e) => e.layer === "leaf"));
-    // The route appears once the orb has begun to emit; still, at once.
-    const lit = cue.still || cue.elapsed >= TIMING.emitMs;
-    return { cue, outside, inside, lit, fade: fadeOf(cue), pulses: pulses(cue) };
-  });
+  const source = useSyncExternalStore(orbSource.subscribe, orbSource.get);
   return (
     <>
-      <svg id="ui-pipeline" className="ui-pipeline" aria-hidden="true">
-        <defs>
-          <filter id="ui-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" /></filter>
-        </defs>
-        {map.map((e) => <path key={e.id} d={pathOf(e.points)} className="ui-map" data-edge={e.id} />)}
-        {routes.map(({ cue, outside, lit, fade, pulses: ps }) => (
-          <g key={cue.cueId} data-cue={cue.cueId} style={{ opacity: fade }}>
-            {lit && <>
-              <path d={pathOf(outside)} className="ui-under" />
-              <path d={pathOf(outside)} className="ui-route-glow" filter="url(#ui-glow)" />
-              <path d={pathOf(outside)} className="ui-route" />
-            </>}
-            {ps.filter((p) => !p.inside).map((p, i) => <circle key={i} cx={p.at[0]} cy={p.at[1]} r={3} className="ui-pulse" />)}
-          </g>
-        ))}
-      </svg>
-      <svg id="ui-pipeline-over" className="ui-pipeline over" aria-hidden="true">
-        {routes.map(({ cue, inside, lit, fade, pulses: ps }) => (
-          <g key={cue.cueId} data-cue={cue.cueId} data-arrived={cue.box ? "true" : "false"} style={{ opacity: fade }}>
-            {lit && inside.length > 1 && <>
-              <path d={pathOf(inside)} className="ui-under" />
-              <path d={pathOf(inside)} className="ui-route" />
-            </>}
-            {ps.filter((p) => p.inside).map((p, i) => <circle key={i} cx={p.at[0]} cy={p.at[1]} r={3} className="ui-pulse" />)}
-            <Rings cue={cue} />
-            {cue.box && <Contour cue={cue} />}
-          </g>
-        ))}
-      </svg>
-      <div id="ui-pipeline-status" role="status" style={HIDDEN}>
-        {showing.filter((c) => c.box).map((c) => `JARVIS is pointing at ${c.label}`).join(". ")}
-      </div>
+      {LAYERS.map((layer) => (
+        <svg key={layer} id={layer === "base" ? "ui-pipeline" : `ui-pipeline-${layer}`}
+             className={`ui-pipeline ${layer}`} aria-hidden="true"
+             data-source={layer === "base" ? source.holder ?? "free" : undefined}
+             data-waiting={layer === "base" ? source.waiting : undefined}>
+          {layer === "base" && (
+            <defs>
+              <filter id="ui-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" /></filter>
+            </defs>
+          )}
+          {map.filter((e) => layerOf(e) === layer).map((e) => <path key={e.id} d={pathOf(e.points)} className="ui-map" data-edge={e.id} />)}
+          {showing.map((cue) => <CueInLayer key={cue.cueId} cue={cue} layer={layer} />)}
+        </svg>
+      ))}
+      <div id="ui-pipeline-status" role="status" style={VISUALLY_HIDDEN}>{spoken(showing, source.waiting)}</div>
     </>
   );
 }

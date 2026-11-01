@@ -9,38 +9,54 @@
  * The orb itself (orb.ts) eases each effect out over its own seconds and
  * keeps its listening/thinking/speaking state underneath, so giving the
  * overlay back needs no call unless an effect is cut short.
+ *
+ * The main orb lives here (OrbControl.tsx sets it), so nothing else makes
+ * it transmit. Its imports name their `.ts` extension so node can run it as
+ * it is (tests/ui_signal_cases.mts).
  */
 
-import { mainOrb } from "./OrbControl";
-import { createStore } from "./store";
+import type { Orb, TransmitOptions } from "./orb.ts";
+import { createStore } from "./store.ts";
+
+/** The main orb, while it is on the page. */
+export const mainOrb: { current: Orb | null } = { current: null };
 
 type Kind = "transfer" | "attention";
 interface Holder { token: symbol; kind: Kind; until: number }
 
 let holder: Holder | null = null;
-/** Moves whenever the overlay changes hands. */
-export const orbSourceChanged = createStore(0);
+let waiting = 0;
 
-const changed = () => orbSourceChanged.set(orbSourceChanged.get() + 1);
+/** What the overlay is doing, for the page to show: which kind of effect
+ *  holds it (null when none) and how many attention cues wait for it. */
+export const orbSource = createStore<{ holder: Kind | null; waiting: number; turn: number }>(
+  { holder: null, waiting: 0, turn: 0 });
+
 const live = (h: Holder | null): h is Holder => h !== null && performance.now() < h.until;
 
-type Motion = { direction?: [number, number]; seconds?: number };
+function changed(): void {
+  orbSource.set({ holder: live(holder) ? holder.kind : null, waiting, turn: orbSource.get().turn + 1 });
+}
 
 function take(kind: Kind, seconds: number): symbol {
   const token = Symbol(kind);
-  holder = { token, kind, until: performance.now() + seconds * 1000 };
+  let until = performance.now() + seconds * 1000;
+  // A second message while one is going keeps the orb for the longer of
+  // the two: its own shorter end must not hand the orb on under the first.
+  if (kind === "transfer" && live(holder) && holder.kind === "transfer") until = Math.max(until, holder.until);
+  holder = { token, kind, until };
   changed();
   return token;
 }
 
 /** A message going out: always takes the orb. */
-export function transferTransmit(colour: string, motion: Motion & { seconds: number }): void {
+export function transferTransmit(colour: string, motion: TransmitOptions & { seconds: number }): void {
   take("transfer", motion.seconds);
   mainOrb.current?.transmit(colour, motion);
 }
 
 /** A message coming in: always takes the orb. */
-export function transferReceive(colour: string, motion: Motion & { seconds: number }): void {
+export function transferReceive(colour: string, motion: TransmitOptions & { seconds: number }): void {
   take("transfer", motion.seconds);
   mainOrb.current?.receive(colour, motion);
 }
@@ -59,6 +75,7 @@ export function claimForAttention(seconds: number, waitMs: number, signal: Abort
     let timer: ReturnType<typeof setTimeout> | null = null;
     let unsubscribe = () => {};
     let done = false;
+    let queued = false;
     // Stops listening BEFORE taking the orb: taking it is itself a change
     // of hands, which must not wake this wait again.
     const finish = (claim: () => symbol | null) => {
@@ -67,7 +84,10 @@ export function claimForAttention(seconds: number, waitMs: number, signal: Abort
       if (timer) clearTimeout(timer);
       unsubscribe();
       signal.removeEventListener("abort", onAbort);
-      resolve(claim());
+      if (queued) waiting--;
+      const token = claim();
+      if (queued && !token) changed();
+      resolve(token);
     };
     const none = () => null;
     const onAbort = () => finish(none);
@@ -82,17 +102,29 @@ export function claimForAttention(seconds: number, waitMs: number, signal: Abort
       if (remaining <= 0) return finish(none);
       timer = setTimeout(wake, Math.min(remaining, Math.max(0, holder!.until - performance.now()) + 1));
     };
+    if (signal.aborted) return resolve(null);
+    if (!transferActive()) return resolve(take("attention", seconds));
+    // It waits: counted (shown as queued) before it listens, so counting
+    // it does not wake it.
+    queued = true;
+    waiting++;
+    changed();
     signal.addEventListener("abort", onAbort);
-    unsubscribe = orbSourceChanged.subscribe(wake);
+    unsubscribe = orbSource.subscribe(wake);
     wake();
   });
 }
 
 /** Start the white emission for a token that holds the orb. */
-export function attentionTransmit(token: symbol, colour: string, motion: Motion): boolean {
+export function attentionTransmit(token: symbol, colour: string, motion: TransmitOptions): boolean {
   if (holder?.token !== token) return false;
   mainOrb.current?.transmit(colour, motion);
   return true;
+}
+
+/** Whether `token` still holds the orb. */
+export function holds(token: symbol): boolean {
+  return holder?.token === token && live(holder);
 }
 
 /** Give the orb back. `early`: the effect was cut short, so end it now --
