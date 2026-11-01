@@ -11,7 +11,12 @@ removes it on a clean shutdown (`record`, `forget`).
 `running()` is the one reader: the recorded address while the process that
 wrote it is alive, else None. A record whose process has gone (a crash, a
 kill) is stale and is ignored. `python -m jarvis.update` reads it first, so a
-server on another port or on ::1 is found without any variable in the shell.
+server on another port or on ::1 is found without any variable in the shell,
+and `workflow_report.py` reads it when JARVIS_URL is not set.
+
+The reader needs nothing outside the standard library and `data_paths`, so
+`workflow_report.py` can use it under whichever Python a session has; only
+`own()`, which the server alone calls, imports `web_auth`.
 """
 from __future__ import annotations
 
@@ -20,13 +25,11 @@ import logging
 import os
 from typing import NamedTuple, Optional
 
-from jarvis import data_paths, web_auth
+from jarvis import data_paths
 
 log = logging.getLogger("jarvis.server_address")
 
 DEFAULT_SCHEME = "http"
-DEFAULT_HOST = web_auth.JARVIS_DEFAULT_HOST
-DEFAULT_PORT = web_auth.DEFAULT_API_PORT
 
 
 class Address(NamedTuple):
@@ -63,9 +66,10 @@ def dial_host(bind_host: str) -> str:
 
 def own() -> Address:
     """This server's address, from what it was started with."""
+    from jarvis import web_auth  # the server's defaults; it needs starlette
     return Address(scheme=os.getenv("JARVIS_SCHEME", DEFAULT_SCHEME),
-                   host=dial_host(os.getenv("JARVIS_BIND_HOST", DEFAULT_HOST)),
-                   port=int(os.getenv("JARVIS_PORT", str(DEFAULT_PORT))))
+                   host=dial_host(os.getenv("JARVIS_BIND_HOST", web_auth.JARVIS_DEFAULT_HOST)),
+                   port=int(os.getenv("JARVIS_PORT", str(web_auth.DEFAULT_API_PORT))))
 
 
 def record() -> None:
