@@ -99,7 +99,7 @@ from jarvis import transmission
 from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
-from jarvis import work_packages
+from jarvis import packages_api, work_packages
 from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
@@ -2030,6 +2030,12 @@ def _on_run_event(message: dict) -> None:
         if message.get("type") != "run_finished":
             return
         run = message.get("run") or {}
+        if run.get("package_id"):
+            # An agent package's run: its own words, and what comes next
+            # (the reply with its results). Cancelled is silent, as below.
+            if run.get("status") != run_store.RunStatus.CANCELLED:
+                _spawn(_announce_package_run(run))
+            return
         if run.get("origin") != "voice":
             return
         status = run.get("status")
@@ -6750,21 +6756,41 @@ async def tool_open_package(args: dict) -> str:
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
                                                  attachment_id.hex[:8])
-        skill = package.skill_text()
+        files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
+                        for title, relative in (("Skill", package.manifest.skill),
+                                                ("Brief", package.manifest.brief))
+                        if relative)
     except (work_packages.PackageError, OSError) as e:
         return f"{e} Nothing was opened."
+    if fresh:
+        _send_to_session_clients({"type": "packages"})
     how = "is unpacked" if fresh else "was already unpacked"
-    return (f"Package {package.id} {how} in {package.folder}. Follow its skill below with "
-            f"him, one step at a time; run each step with run_package_command only on his "
-            f"go-ahead. At the end, package_results, then draft_message with reply_to "
-            f"{message_id} and those files, then request_message_review.\n"
-            f"package.json:\n{package.manifest.as_json()}\n\n"
-            f"Skill ({package.manifest.skill}):\n{skill}")
+    return (f"Package {package.id} {how} in {package.folder}. "
+            f"{_PACKAGE_HOW[package.manifest.runs]} At the end, package_results, then "
+            f"draft_message with reply_to {message_id} and those files, then "
+            f"request_message_review.\n"
+            f"package.json:\n{package.manifest.as_json()}{files}")
 
 
-def _package_or_problem(args: dict) -> tuple[Optional["work_packages.Package"], str]:
+# What the brain does with an open package, by how it runs.
+_PACKAGE_HOW = {
+    work_packages.CONVERSATION: (
+        "Follow its skill below with him, one step at a time; run each step with "
+        "run_package_command only on his go-ahead."),
+    work_packages.AGENT: (
+        "It runs as an agent: on his go-ahead, run_package_agent starts one Claude Code run "
+        "on its brief below, in its folder, and you are told when it has finished."),
+    work_packages.PAGE: (
+        "It runs as a page: on his go-ahead, open_package_page shows it in the centre of his "
+        "screen, where he uses it; what it saves goes in its results folder. Ask him to say "
+        "when he has finished with it."),
+}
+
+
+def _package_or_problem(args: dict, runs: Optional[str] = None
+                        ) -> tuple[Optional["work_packages.Package"], str]:
     try:
-        return work_packages.find(str(args.get("package") or "")), ""
+        return work_packages.find(str(args.get("package") or ""), runs), ""
     except work_packages.PackageError as e:
         return None, str(e)
 
@@ -6774,10 +6800,11 @@ def tool_list_packages(args: dict) -> str:
     packages = work_packages.every()
     if not packages:
         return "No packages have been opened here, sir."
-    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, {p.manifest.purpose} "
-             f"({p.folder})" for p in packages]
+    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}, "
+             f"{p.manifest.purpose} ({p.folder})" for p in packages]
     return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
-            f"run_package_command and package_results take the id.\n"
+            f"run_package_command, run_package_agent, open_package_page and package_results "
+            f"take the id.\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines)))
 
 
@@ -6817,13 +6844,102 @@ def tool_package_results(args: dict) -> str:
             f"paths to draft_message's files:\n" + "\n".join(lines))
 
 
+async def tool_run_package_agent(args: dict) -> str:
+    """Start an agent package: one Claude Code run, through the run
+    pipeline like every other, on its brief in its folder. Its finish is
+    announced by `_announce_package_run`."""
+    package, problem = _package_or_problem(args, work_packages.AGENT)
+    if package is None:
+        return f"{problem} Nothing was started."
+    if run_executor_instance is None:
+        return "I can't start anything just now, sir."
+    if run_store.list_runs(status=list(run_store.RunStatus.ACTIVE), package_id=package.id,
+                           limit=1):
+        return (f"{package.id} is already running, sir; you will be told when it has "
+                f"finished. Nothing else was started.")
+    try:
+        brief = work_packages.agent_brief(package)
+    except (work_packages.PackageError, OSError) as e:
+        return f"{e} Nothing was started."
+    try:
+        run_id = await run_executor_instance.spawn(
+            compose_run_prompt(brief), package.id, str(package.folder), "voice",
+            package_id=package.id)
+    except Exception as e:
+        log.error(f"run_package_agent failed for {package.id}: {e}", exc_info=True)
+        return f"I couldn't start {package.id}, sir."
+    global last_started_run
+    last_started_run = run_id
+    return (f"Started {package.id} as an agent run in its folder, sir. You will be told when "
+            f"it has finished.")
+
+
+async def _open_package_page(reference: str
+                             ) -> tuple[Optional["work_packages.Package"], str]:
+    """Open a page package in the centre area of every page open: the
+    brain's `open_package_page` and the page's own route alike.
+    (the package, "") or (None, why not)."""
+    try:
+        package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+    except work_packages.PackageError as e:
+        return None, str(e)
+    if not voice_clients:
+        return None, "No JARVIS page is open to show it on."
+    await _voice_emit({"type": "package_page", "package": packages_api.describe(package)})
+    return package, ""
+
+
+packages_api.mount(app, _open_package_page)
+
+
+async def tool_open_package_page(args: dict) -> str:
+    """Show a page package on his screen, where he uses it."""
+    package, problem = await _open_package_page(str(args.get("package") or ""))
+    if package is None:
+        return f"{problem} Nothing was opened."
+    return (f"{package.id} is open in the centre of his screen, sir. What it saves goes in "
+            f"{package.folder / work_packages.RESULTS}; when he says he has finished, "
+            f"package_results.")
+
+
+async def _announce_package_run(run: dict) -> None:
+    """An agent package's run has ended: say so, and tell the brain what
+    comes next."""
+    package_id = str(run.get("package_id") or "")
+    try:
+        name = work_packages.find(package_id).manifest.name
+    except work_packages.PackageError:
+        name = package_id
+    said = _plain_name(name, "a work package")
+    if run.get("status") == run_store.RunStatus.SUCCEEDED:
+        await _say_notice(
+            f"The work package {said} has finished, sir. Shall I draft the reply with its "
+            f"results?",
+            f"Since your last turn you told him the agent run of work package {package_id} "
+            f"finished, and asked whether to draft the reply with its results. If he says "
+            f"yes: package_results with package {package_id}, then draft_message with "
+            f"reply_to the message the package came in on and those paths in files, then "
+            f"request_message_review.", "package run")
+        return
+    ended = ("ran out of time" if run.get("status") == run_store.RunStatus.TIMED_OUT
+             else "failed")
+    await _say_notice(
+        f"The work package {said} {ended}, sir.",
+        f"Since your last turn you told him the agent run of work package {package_id} "
+        f"{ended}. Nothing was drafted; retry_run runs it again on his word.",
+        "package run")
+
+
 TOOL_HANDLERS.update({
     "open_package": tool_open_package,
     "list_packages": tool_list_packages,
     "run_package_command": tool_run_package_command,
     "package_results": tool_package_results,
+    "run_package_agent": tool_run_package_agent,
+    "open_package_page": tool_open_package_page,
 })
-ACTING_TOOLS.update({"open_package", "run_package_command"})
+ACTING_TOOLS.update({"open_package", "run_package_command", "run_package_agent",
+                     "open_package_page"})
 TAINTING_TOOLS.update({
     "open_package": "a work package a teammate sent",
     "list_packages": "work packages teammates sent",
@@ -6832,6 +6948,9 @@ TAINTING_TOOLS.update({
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
                         "JARVIS's own glob, and no file content"),
+    "run_package_agent": ("it starts a package's run and says so; the brief goes to the run, "
+                          "not back to the brain"),
+    "open_package_page": "it opens a package's page on his screen and reads nothing back",
 })
 
 
@@ -10666,7 +10785,8 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
             return None, problem
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
-        resume_from=original["id"], folder_id=folder_id)
+        resume_from=original["id"], folder_id=folder_id,
+        package_id=original.get("package_id"))
     return new_id, None
 
 

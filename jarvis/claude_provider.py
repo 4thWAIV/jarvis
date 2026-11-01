@@ -114,12 +114,15 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_people_thread",
     "mcp__jarvis__change_people_draft",
     "mcp__jarvis__attach_message_files",
-    # Work packages a teammate sends: opening one and running its steps are
-    # ACTING_TOOLS; the results go back through draft_message's files.
+    # Work packages a teammate sends: opening one, running its steps, starting
+    # its agent run and opening its page are ACTING_TOOLS; the results go back
+    # through draft_message's files.
     "mcp__jarvis__open_package",
     "mcp__jarvis__list_packages",
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",
+    "mcp__jarvis__run_package_agent",
+    "mcp__jarvis__open_package_page",
     "mcp__jarvis__diagnostics",
     # Speech input's models (speech_models.py) and the language
     # (language_setting.py): reading them, and the acting install and

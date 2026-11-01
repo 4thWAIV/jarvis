@@ -456,7 +456,7 @@ def test_retry_run_resumes_a_finished_run_and_refuses_a_live_one(wired, monkeypa
     server = wired.server
     spawned = []
 
-    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None):
+    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None, package_id=None):
         spawned.append((prompt, name, path, origin, resume_from, folder_id))
         return "new-run"
 

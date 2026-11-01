@@ -733,7 +733,7 @@ def server(monkeypatch, tmp_path):
         thing Python 3.12 cannot cancel (tests/conftest.py)."""
 
         async def spawn(self, prompt, name, path, origin, resume_from=None, model=None,
-                        folder_id=None):
+                        folder_id=None, package_id=None):
             run_id = run_store.create_run(prompt, name, path, origin, resume_from)
             run_store.update_run(run_id, requested_model=model or "sonnet")
             return run_id
