@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pymongo.errors import AutoReconnect
 
-from conftest import (ADMIN, ALICE, BASE, browser_token, make_config, pair,
-                      wait_initialized)
+from conftest import (ADMIN, ALICE, BASE, browser_token, change_member, make_config,
+                      pair, wait_initialized)
 from teamserver import clock, network
 from teamserver.app import create_app
 from teamserver.models import NetworkSnapshot, ServerHealth
@@ -167,6 +167,19 @@ def test_suspended_member_refused_and_their_nodes_withdrawn(client, admin, node,
     assert r.status_code == 200, r.text
     assert alice.send().status_code in (401, 403)
     assert [n["owner_login"] for n in node.snapshot()["nodes"]] == [ADMIN.login]
+
+
+def test_a_reenabled_members_node_is_accepted_again(client, github, admin, node, alice):
+    alice.snapshot()
+    change_member(client, admin, ALICE.id, status="suspended")
+    assert [n["owner_login"] for n in node.snapshot()["nodes"]] == [ADMIN.login]
+    change_member(client, admin, ALICE.id, status="approved")
+    assert alice.send().status_code == 401, "re-enabling never revives the old session"
+    alice.token = pair(client, browser_token(client, github, ALICE))
+    snap = alice.snapshot()          # the same node and boot, its next update
+    assert snap["you_node_id"] == str(alice.node_id)
+    assert alice.view(snap)["owner_github_id"] == ALICE.id
+    assert {n["owner_login"] for n in node.snapshot()["nodes"]} == {ADMIN.login, ALICE.login}
 
 
 def test_node_limit_per_member(client, admin, node, monkeypatch):

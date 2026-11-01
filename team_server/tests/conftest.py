@@ -216,6 +216,16 @@ def bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def change_member(client: TestClient, admin: str, github_id: int, **body) -> dict:
+    """An administrator's roster change through the members route the
+    Settings page uses, at the current revision; returns the member."""
+    rev = client.get("/api/v1/team/members", headers=bearer(admin)).json()["revision"]
+    r = client.put(f"/api/v1/team/members/{github_id}", headers=bearer(admin),
+                   json={"expected_revision": rev, **body})
+    assert r.status_code == 200, r.text
+    return r.json()["member"]
+
+
 def start_device(client: TestClient, name: str = "JARVIS on test-mac"):
     verifier = new_secret()
     r = client.post("/api/v1/device-authorizations",
