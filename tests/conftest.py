@@ -64,6 +64,14 @@ def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
     monkeypatch.setenv("JARVIS_ALLOW_UNTRUSTED_ACTIONS", "")
 
 
+@pytest.fixture(autouse=True)
+def _english_until_a_test_chooses(monkeypatch):
+    """Every test starts in English, whatever language one before it chose
+    (language_setting.change sets it for the process)."""
+    from jarvis import spoken_words
+    monkeypatch.setattr(spoken_words, "_active", spoken_words.ENGLISH)
+
+
 @pytest.fixture
 def spanish(monkeypatch):
     """Speak Spanish to JARVIS for one test: the active language is "es"."""

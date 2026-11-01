@@ -529,6 +529,12 @@ def human_activity_path() -> Path:
     return data_dir() / "human-activity.json"
 
 
+def language_path() -> Path:
+    """The language chosen in Settings (language_setting.py). JARVIS's own
+    store, not .env: it is a choice made on the page or by voice."""
+    return data_dir() / "language.json"
+
+
 def tool_token_path() -> Path:
     """The bearer token the MCP child uses to reach /internal/tool."""
     return brain_home() / "tool-token"

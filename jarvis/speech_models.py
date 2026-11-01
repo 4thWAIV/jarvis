@@ -12,14 +12,16 @@ that whole sequence, shared by scripts/setup_speech_input.py and the
 service below; nothing is downloaded except when one of them is asked to.
 
 The service is what the page's routes (`/api/speech/models*`) and the
-brain's tools (`speech_models`, `install_speech_model`,
-`switch_speech_model`) both call: `models` reads, `start_install` starts a
-download in the background and reports its progress through `models`, and
-`switch` loads another language's model in place of the one speech input
-has (transcriber.TranscriptionService.switch: one model in memory at a
-time) and records it in the voice record as a `model-load` event, or as
-`model-unavailable` when it could not load. Which language is chosen, and
-keeping that choice, is the language setting's, not this module's.
+brain's tools (`speech_models`, `install_speech_model`) both call:
+`models` reads, `start_install` starts a download in the background and
+reports its progress through `models`. `switch` loads another language's
+model in place of the one speech input has
+(transcriber.TranscriptionService.switch: one model in memory at a time) and
+records it in the voice record as a `model-load` event, or as
+`model-unavailable` when it could not load. It is called only by the
+language setting (language_setting.change), which decides which language is
+chosen and keeps that choice, so speech input never hears a language other
+than the one JARVIS speaks.
 
 The models are Banafo's Kroko community models, under CC-BY-SA; the
 sherpa-onnx engine is Apache-2.0. See https://huggingface.co/Banafo/Kroko-ASR
@@ -37,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from fastapi import Body, FastAPI
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from jarvis import transcriber
@@ -271,15 +273,7 @@ async def api_install(language: str):
         return _refused(refused)
 
 
-async def api_switch(language: str = Body(embed=True)):
-    try:
-        return await switch(language)
-    except Refused as refused:
-        return _refused(refused)
-
-
 def mount(app: FastAPI) -> None:
     app.add_api_route("/api/speech/models", api_models, methods=["GET"])
     app.add_api_route("/api/speech/models/{language}/install", api_install,
                       methods=["POST"])
-    app.add_api_route("/api/speech/model", api_switch, methods=["POST"])

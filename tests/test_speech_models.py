@@ -12,7 +12,8 @@ import time
 import pytest
 from starlette.testclient import TestClient
 
-from jarvis import speech_models, transcriber, transcription_api, voice_diagnostics
+from jarvis import (language_setting, speech_models, transcriber, transcription_api,
+                    voice_diagnostics)
 from jarvis.transcriber import TranscriptionService
 from tests.test_transcriber import _archive
 from tests.test_transcription_ws import (FakeEngine, PAGE, _app as _socket_app, _open,
@@ -168,9 +169,11 @@ async def test_a_model_that_fails_to_load_fails_the_switch_and_english_comes_bac
 # ── switching: the service function and the routes ───────────────────────
 
 def _app(factory):
-    """The transcription socket's test app, with the speech model routes."""
+    """The transcription socket's test app, with the speech model routes and
+    the language route that switches the model (language_setting.py)."""
     app = _socket_app(factory)
     speech_models.mount(app.app)
+    language_setting.mount(app.app)
     return app
 
 
@@ -194,7 +197,7 @@ def test_the_routes_read_install_and_switch(monkeypatch, tmp_path):
             ("en", True), ("es", False)]
         assert got["models"][1]["archiveBytes"] == 124_394_665
 
-        refused = client.post("/api/speech/model", json={"language": "es"}, headers=PAGE)
+        refused = client.post("/api/settings/language", json={"language": "es"}, headers=PAGE)
         assert refused.status_code == 409 and "not installed" in refused.json()["error"]
         assert client.post("/api/speech/models/fr/install", headers=PAGE).status_code == 404
 
@@ -202,7 +205,7 @@ def test_the_routes_read_install_and_switch(monkeypatch, tmp_path):
         installed = client.post("/api/speech/models/es/install", headers=PAGE).json()
         assert installed["model"]["installed"] and installed["model"]["install"] is None
 
-        switched = client.post("/api/speech/model", json={"language": "es"}, headers=PAGE)
+        switched = client.post("/api/settings/language", json={"language": "es"}, headers=PAGE)
         assert switched.status_code == 200 and switched.json()["language"] == "es"
         assert loaded[-1] == "es"
         load = _events("model-load")
@@ -217,7 +220,7 @@ def test_a_page_listening_through_a_switch_is_told_and_reconnects(monkeypatch):
         with _open(client) as ws:
             _ready(ws)
             ws.send_bytes(word("hola"))
-            assert client.post("/api/speech/model", json={"language": "es"},
+            assert client.post("/api/settings/language", json={"language": "es"},
                                headers=PAGE).status_code == 200
             error = _until(ws, "error")[-1]
             assert error["code"] == "interrupted" and "Spanish" in error["message"]
@@ -228,7 +231,7 @@ def test_a_page_listening_through_a_switch_is_told_and_reconnects(monkeypatch):
 
 def test_a_state_change_needs_the_pages_origin():
     with TestClient(_app(lambda _model: FakeEngine())) as client:
-        r = client.post("/api/speech/model", json={"language": "en"})
+        r = client.post("/api/settings/language", json={"language": "en"})
         assert r.status_code == 403
         assert client.post("/api/speech/models/es/install").status_code == 403
 
