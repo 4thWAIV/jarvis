@@ -95,7 +95,7 @@ Every matcher of what the user said against fixed words splits and folds it
 with `spoken_words.py`: the yes and no to clearing and compaction
 (`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
 command, the cancel and replay words and echo rejection (`speech._tokens`),
-agent names (`agent_directory._words`) and memory search and slugs
+agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
 (`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
 "s") and `fold` takes accents off before comparing; on ASCII text both give
 exactly what the old `[a-z0-9]` splitters gave. Each language's word lists

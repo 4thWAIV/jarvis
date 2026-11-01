@@ -6,7 +6,8 @@ it (run_store.rename_agent), else the one the session watcher derived. Every
 tool that lists agents or takes an agent's name comes here, and nowhere else
 matches names, so a name that works once works everywhere.
 
-Names are matched as they are SPOKEN: `spoken_key` lowercases and turns
+Names are matched as they are SPOKEN: `spoken_key` lowercases, folds
+accents (`spoken_words.fold`, since the recogniser may or may not write them) and turns
 hyphens, underscores, dots and commas into spaces, so "Tokens for Cash",
 "tokens-for-cash" and "tokens_for_cash" are one name. Ambiguity is never
 resolved by guessing: `find` returns every candidate and the caller asks.
@@ -59,15 +60,16 @@ _THAT_ONE = frozenset({"that one", "that", "it", "the same one", "that session",
 
 
 def spoken_key(text: str) -> str:
-    """A name as it is said: lowercase; hyphens, underscores, dots and commas
-    become spaces; apostrophes go; spaces collapsed."""
-    text = (text or "").lower().replace("'", "").replace("’", "")
+    """A name as it is said: lowercase, accents folded ("José" is "jose");
+    hyphens, underscores, dots and commas become spaces; apostrophes go;
+    spaces collapsed."""
+    text = spoken_words.fold(text).lower().replace("'", "").replace("’", "")
     return " ".join(re.sub(r"[-_.,]+", " ", text).split())
 
 
 def _words(text: str) -> set[str]:
-    """A name's words as said, accents folded: "José" is "jose"."""
-    return set(spoken_words.folded_words(spoken_key(text)))
+    """A name's words as said, accents folded."""
+    return set(spoken_words.words(spoken_key(text)))
 
 
 def _needs_by_project() -> dict[str, int]:
