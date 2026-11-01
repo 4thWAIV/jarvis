@@ -60,7 +60,7 @@ export function BrainsSection() {
       {others.length > 0 && (
         <div className="settings-actions brain-add">
           {others.map((card) => (
-            <button key={card.name} className="settings-btn"
+            <button data-ui-action="domain" key={card.name} className="settings-btn"
                     onClick={() => act(addBrain(card.name))}>
               + Add {card.title}
             </button>
@@ -102,7 +102,7 @@ function BrainCardView({ card, act, onProblem }: {
 
       <div className="settings-field">
         <label>Model</label>
-        <select value={card.model} onChange={(e) => act(setModel(card.name, e.target.value))}>
+        <select data-ui-action="domain" value={card.model} onChange={(e) => act(setModel(card.name, e.target.value))}>
           {(card.models ?? [card.model]).map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
@@ -113,19 +113,19 @@ function BrainCardView({ card, act, onProblem }: {
       </div>
 
       {card.signs_in_here && !signedIn && (
-        <button className="settings-btn primary" onClick={signIn} disabled={signing}>
+        <button data-ui-action="sign-in" className="settings-btn primary" onClick={signIn} disabled={signing}>
           {signing ? "Finish signing in in the new tab…" : "Sign in with ChatGPT"}
         </button>
       )}
 
       <label className="brain-default">
-        <input type="radio" name="brain-default" checked={card.default}
+        <input data-ui-action="domain" type="radio" name="brain-default" checked={card.default}
                onChange={() => act(setDefault(card.name))} />
         Start with this brain
       </label>
 
       {!card.default && card.name !== "anthropic" && (
-        <button className="settings-btn brain-remove" onClick={() => act(removeBrain(card.name))}>
+        <button data-ui-action="domain" className="settings-btn brain-remove" onClick={() => act(removeBrain(card.name))}>
           Remove
         </button>
       )}

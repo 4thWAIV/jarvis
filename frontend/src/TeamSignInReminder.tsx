@@ -15,6 +15,11 @@
  * While shown it sets --centre-notice-height to its own height, so every
  * centre view starts below it and it covers nothing, the conversation's
  * input included.
+ *
+ * Later is the registered command `reminder.later`, the same for his click
+ * and the brain's request; Sign in stays the browser approval flow and is
+ * never the brain's. The reminder is a target hung from the main rail, with
+ * its text and both buttons as parts.
  */
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -22,8 +27,9 @@ import { reconnected } from "./liveRead";
 import { needsSignIn, network } from "./network";
 import { createStore } from "./store";
 import { ServerIcon } from "./TeamServerTile";
-import { openSettings } from "./Settings";
 import { signInAgain } from "./teamSignIn";
+import { bind, bindingProps } from "./uiNavigation";
+import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
 
 export const REMINDER_TEXT =
   "Sign in to your team server: messages between people and the Network view need it";
@@ -31,9 +37,18 @@ export const REMINDER_TEXT =
 // The space kept between the reminder and the view below it.
 const GAP_PX = 8;
 
-// Later, until the page or its connection to JARVIS starts again.
+/** @routeState Later, until the page or its connection to JARVIS starts again. */
 const later = createStore(false);
 reconnected.subscribe(() => later.set(false));
+
+registerCommand("reminder.later", {
+  availability: () => needsSignIn(network.get().value) && !later.get()
+    ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    later.set(true);
+    return { status: "completed", effects: [] };
+  },
+});
 
 export function TeamSignInReminder() {
   const live = useSyncExternalStore(network.subscribe, network.get);
@@ -42,6 +57,9 @@ export function TeamSignInReminder() {
   const [problem, setProblem] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const shown = needsSignIn(live.value) && !hidden;
+  const ui = useUiTarget(shown ? { ref: { region: "main", view: "main.notice", kind: "teamReminder" },
+                                   label: "Sign-in reminder", socket: { rail: "rail.main", side: "right" } }
+                               : null);
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -60,17 +78,19 @@ export function TeamSignInReminder() {
     setProblem(null);
     try {
       await signInAgain();
-      openSettings("team");             // the code to check, or the address to give
+      byHand("settings.open", { section: "team" });   // the code to check, or the address to give
     } catch (e) { setProblem((e as Error).message); }
     setBusy(false);
   };
   return (
-    <div id="team-reminder" role="status" ref={box}>
+    <div id="team-reminder" role="status" ref={(el) => { box.current = el; ui.whole(el); }}>
       <ServerIcon />
-      <p>{REMINDER_TEXT}</p>
-      <button type="button" className="settings-btn primary" disabled={busy} onClick={start}>
+      <p ref={ui.part("text")}>{REMINDER_TEXT}</p>
+      <button type="button" className="settings-btn primary" disabled={busy} data-ui-action="sign-in"
+              ref={ui.part("signIn")} onClick={start}>
         Sign in</button>
-      <button type="button" className="settings-btn" onClick={() => later.set(true)}>Later</button>
+      <button type="button" className="settings-btn" ref={ui.part("later")}
+              {...bindingProps(bind("reminder.later", {}))}>Later</button>
       {problem && <p className="team-reminder-problem">{problem}</p>}
     </div>
   );

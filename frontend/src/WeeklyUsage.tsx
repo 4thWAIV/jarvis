@@ -9,11 +9,33 @@
  * the day it resets below it ("Fri 23 Oct"), both centred, monospaced and in
  * the figures' colour. The server
  * works it out (usage_store.week); this only draws it. Details are on hover.
+ *
+ * Display only: each box is a target the brain can point at (keyed by its
+ * provider, from the left rail), with the provider, what remains, the pace
+ * and the reset as parts. A box whose provider is not known yet is not one.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { activeBrain, brains } from "./brains";
 import { PROVIDERS, type ReportProvider } from "./providers";
 import { shortAgo } from "./timeFormat";
+import type { TargetRef } from "./uiContract";
+import { useUiTarget } from "./uiRegistry";
+import { targetProblem } from "./uiValidate";
+
+type PartRef = (el: Element | null) => void;
+
+/** This box as a target: keyed by the provider whose figures it shows (the
+ *  one named, else the one the figures say, else the running brain), or
+ *  none while that is not known. */
+function useAccountTarget(provider: string | undefined, week: Week | null) {
+  const live = useSyncExternalStore(brains.subscribe, brains.get);
+  const key = provider ?? week?.provider?.service ?? activeBrain(live.value) ?? undefined;
+  const ref: TargetRef = { region: "left", view: "left.fixed", kind: "brainAccount", key };
+  const valid = key !== undefined && targetProblem(ref) === null;
+  return useUiTarget(valid ? { ref, label: `${PROVIDERS[key]?.name ?? key} account`,
+                               socket: { rail: "rail.left", side: "left" } } : null);
+}
 
 interface Week {
   measured: boolean;
@@ -69,6 +91,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
     const timer = setInterval(load, REFRESH_MS);
     return () => clearInterval(timer);
   }, [provider]);
+  const ui = useAccountTarget(provider, week);
 
   const roleTag = role &&
     <span className={`weekly-role ${role}`}>{role === "brain" ? "BRAIN" : "STANDBY"}</span>;
@@ -80,15 +103,16 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
     const why = failed ? `Couldn't read it: ${failed}` : "Not measured yet";
     const cls = failed ? "behind" : "none";
     return (
-      <section className={box} title={why} data-provider={provider}>
+      <section className={box} title={why} data-provider={provider} ref={ui.whole}>
         {roleTag}
         <div className="account-rows">
-          <div className="account-row available">
+          <div className="account-row available" ref={ui.part("remaining")}>
             <span className="weekly-avatar" aria-hidden="true" />
             <span className={`weekly-left ${cls}`}>—</span>
           </div>
-          <div className="account-row pace">
-            <Provider provider={week?.provider ?? (provider ? { service: provider } : undefined)} />
+          <div className="account-row pace" ref={ui.part("pace")}>
+            <Provider provider={week?.provider ?? (provider ? { service: provider } : undefined)}
+                      partRef={ui.part("name")} />
             <div className={`weekly-ahead ${cls}`}>—</div>
           </div>
         </div>
@@ -100,11 +124,11 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const good = ahead >= 0;
   const left = Math.max(0, 100 - week.used!);
   return (
-    <section className={box} data-provider={provider}
+    <section className={box} data-provider={provider} ref={ui.whole}
              title={`${Math.round(week.expected_used!)}% of the week gone, ${Math.round(week.used!)}% used, reading ${shortAgo(week.age_sec! * 1000, 90_000)}`}>
       {roleTag}
       <div className="account-rows">
-        <div className="account-row available">
+        <div className="account-row available" ref={ui.part("remaining")}>
           <span className="weekly-avatar" aria-hidden="true" />
           <span className={`weekly-left ${good ? "ahead" : "behind"}`}>
             <span className="weekly-group">
@@ -113,8 +137,8 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
             </span>
           </span>
         </div>
-        <div className="account-row pace">
-          <Provider provider={week.provider} />
+        <div className="account-row pace" ref={ui.part("pace")}>
+          <Provider provider={week.provider} partRef={ui.part("name")} />
           <div className={`weekly-ahead ${good ? "ahead" : "behind"}`}>
             <span className="weekly-group">
               <span className={`weekly-sign ${sign(ahead) === "+" ? "plus" : "minus"}`}>{sign(ahead)}</span>
@@ -124,7 +148,7 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
           </div>
         </div>
       </div>
-      <BurnDown week={week} good={good} />
+      <BurnDown week={week} good={good} partRef={ui.part("reset")} />
     </section>
   );
 }
@@ -141,14 +165,14 @@ function Percent() {
 
 /** The logo of the provider whose figures these are, once providers.ts has
  *  one. */
-function Provider({ provider }: { provider?: ReportProvider }) {
+function Provider({ provider, partRef }: { provider?: ReportProvider; partRef: PartRef }) {
   const service = provider?.service ?? "";
   const info = PROVIDERS[service];
   // A logo file that is not there yet leaves the slot empty, not a broken image.
   const [missing, setMissing] = useState(false);
   const title = [info?.name ?? service, provider?.subscription].filter(Boolean).join(" ");
   return (
-    <span className="weekly-provider" data-provider={service} title={title}>
+    <span className="weekly-provider" data-provider={service} title={title} ref={partRef}>
       {info?.logo && !missing &&
         <img src={info.logo} alt={info.name} onError={() => setMissing(true)} />}
     </span>
@@ -174,10 +198,10 @@ export function resetDay(at: number): string {
 }
 
 /** The burn-down with the days left above it and the reset day below it. */
-function BurnDown({ week, good }: { week: Week; good: boolean }) {
+function BurnDown({ week, good, partRef }: { week: Week; good: boolean; partRef: PartRef }) {
   const state = good ? "ahead" : "behind";
   return (
-    <div className="weekly-burn">
+    <div className="weekly-burn" ref={partRef}>
       <span className={`weekly-days ${state}`}>{daysLeft(week.resets_at!)}</span>
       <Chart week={week} good={good} />
       <span className={`weekly-reset ${state}`}>{resetDay(week.resets_at!)}</span>

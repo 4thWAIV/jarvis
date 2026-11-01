@@ -118,9 +118,9 @@ export function TeamSection() {
         <div className="settings-field">
           <label htmlFor="team-url">Team server address</label>
           <div className="settings-input-row">
-            <input id="team-url" type="text" placeholder="https://team.example.com" value={url}
+            <input data-ui-action="input" id="team-url" type="text" placeholder="https://team.example.com" value={url}
                    onChange={(e) => setUrl(e.target.value)} />
-            <button className="settings-btn primary" disabled={busy || !url.trim()}
+            <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy || !url.trim()}
                     onClick={() => connect(url.trim())}>Sign in with GitHub</button>
           </div>
           <p className="settings-hint">JARVIS keeps working without a team server; this only
@@ -133,10 +133,10 @@ export function TeamSection() {
           <p>Approve this Mac on the team server. Check it shows this code:</p>
           <div className="team-code">{status.pairing.user_code}</div>
           <div className="settings-actions">
-            <button className="settings-btn"
+            <button data-ui-action="sign-in" className="settings-btn"
                     onClick={() => openApproval(status.pairing!.verification_uri_complete)}>
               Open the approval page again</button>
-            <button className="settings-btn" disabled={busy}
+            <button data-ui-action="sign-in" className="settings-btn" disabled={busy}
                     onClick={() => act(() => call("POST", "/api/team/cancel"))}>Cancel</button>
           </div>
         </div>
@@ -154,9 +154,9 @@ export function TeamSection() {
           </div>
           <div className="settings-actions">
             {status.state === "signed_out" && status.server_url && (
-              <button className="settings-btn primary" disabled={busy}
+              <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy}
                       onClick={() => connect(status.server_url!)}>Sign in again</button>)}
-            <button className="settings-btn" disabled={busy} onClick={disconnect}>Disconnect</button>
+            <button data-ui-action="sign-in" className="settings-btn" disabled={busy} onClick={disconnect}>Disconnect</button>
           </div>
           {status.me?.role === "admin" && status.state !== "signed_out" && (
             <MembersPanel me={status.me} />)}
@@ -246,27 +246,27 @@ function MembersPanel({ me }: { me: Me }) {
       <span className="team-member-meta">{m.role === "admin" ? "administrator" : "member"}</span>
       <span className="team-member-actions">
         {m.role === "member"
-          ? <button className="settings-btn" disabled={busy}
+          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
                     onClick={() => change(m, { role: "admin" },
                                           `${m.login} was not made an administrator.`)}>
               Make administrator</button>
-          : <button className="settings-btn" disabled={busy}
+          : <button data-ui-action="domain" className="settings-btn" disabled={busy}
                     onClick={() => change(m, { role: "member" },
                                           `${m.login} was not made a member.`)}>
               Make member</button>}
         {m.state === "suspended"
-          ? <button className="settings-btn" disabled={busy}
+          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
                     onClick={() => change(m, { status: "approved" },
                                           `${m.login} was not re-enabled.`)}>Re-enable</button>
-          : <button className="settings-btn" disabled={busy || m.github_id === me.github_id}
+          : <button data-ui-action="domain" className="settings-btn" disabled={busy || m.github_id === me.github_id}
                     onClick={() => change(m, { status: "suspended" },
                                           `${m.login} was not suspended.`)}>Suspend</button>}
         {m.state === "approved" &&
-          <button className="settings-btn" disabled={busy}
+          <button data-ui-action="domain" className="settings-btn" disabled={busy}
                   onClick={() => change(m, { status: "removed" },
                                         `${m.login} was not removed.`)}>Remove</button>}
         {m.state === "active" && m.github_id !== me.github_id &&
-          <button className="settings-btn" disabled={busy}
+          <button data-ui-action="domain" className="settings-btn" disabled={busy}
                   onClick={() => endSessions(m)}>End sessions</button>}
       </span>
       {said(m.github_id)}
@@ -295,9 +295,9 @@ function MembersPanel({ me }: { me: Me }) {
       <div className="settings-field">
         <label htmlFor="team-add">Add someone by GitHub username</label>
         <div className="settings-input-row">
-          <input id="team-add" type="text" placeholder="github-username" value={login}
+          <input data-ui-action="input" id="team-add" type="text" placeholder="github-username" value={login}
                  onChange={(e) => { setLogin(e.target.value); setFound(null); setOutcome(null); }} />
-          <button className="settings-btn" disabled={busy || !login.trim()} onClick={resolve}>
+          <button data-ui-action="domain" className="settings-btn" disabled={busy || !login.trim()} onClick={resolve}>
             Look up</button>
         </div>
       </div>
@@ -309,13 +309,13 @@ function MembersPanel({ me }: { me: Me }) {
                 <p>Add <strong>{found.login}</strong>{found.name ? ` (${found.name})` : ""}, GitHub
                   account #{found.github_id}?{addRefused ? "" : " They can sign in once added."}</p>
                 <div className="settings-input-row">
-                  <select value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
+                  <select data-ui-action="input" value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
                     <option value="member">Member</option>
                     <option value="admin">Administrator</option>
                   </select>
-                  <button className="settings-btn primary" disabled={busy || !roster}
+                  <button data-ui-action="domain" className="settings-btn primary" disabled={busy || !roster}
                           onClick={() => add(found)}>Add</button>
-                  <button className="settings-btn"
+                  <button data-ui-action="input" className="settings-btn"
                           onClick={() => { setFound(null); setOutcome(null); }}>Cancel</button>
                 </div>
               </>}

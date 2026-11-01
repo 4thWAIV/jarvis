@@ -10,33 +10,26 @@
  * before it used (/api/settings/*), plus /api/brains for the Brains section
  * and /api/update for Updates (self_update.py), which the menu's Check for
  * updates opens.
+ *
+ * Opening, closing and going to a section are registered commands
+ * (settings.open, settings.close, settings.section), run the same by his
+ * clicks and by the brain. Saving, testing keys, brains, sign-in, membership
+ * and updates stay on their own authorised paths. Settings and each section
+ * on show are targets hung from the overlay rail; while Settings covers the
+ * orb, pointing inside it is refused as blocked (there is never a second
+ * orb).
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BrainsSection } from "./BrainsSection";
+import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
-import { notice } from "./voiceHealth";
-
-export const settingsOpen = createStore(false);
-// The section to scroll to once Settings is open, when one was asked for.
-const settingsSection = createStore<SectionId | null>(null);
-
-/** Open Settings, at `section` if one is given (the sign-in reminder opens
- *  it at Team, the menu's Check for updates at Updates). */
-export function openSettings(section: SectionId | null = null): void {
-  settingsSection.set(section);
-  settingsOpen.set(true);
-}
-
-interface Status {
-  claude_code_installed: boolean;
-  server_port: number;
-  uptime_seconds: number;
-  env_keys_set: { fish_audio: boolean; fish_voice_id: boolean; user_name: string };
-}
+import type { CommandArgs, SideEffect } from "./uiContract";
+import { bind, bindingProps, type ReadStore } from "./uiNavigation";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 
 const SECTIONS = [
   { id: "brains", title: "Brains" },
@@ -45,20 +38,76 @@ const SECTIONS = [
   { id: "team", title: "Team" },
   { id: "updates", title: "Updates" },
   { id: "system", title: "System" },
-] as const;
+] as const satisfies readonly { id: CommandArgs["settings.section"]["section"]; title: string }[];
 export type SectionId = (typeof SECTIONS)[number]["id"];
 
 const SETUP_STEPS = ["voice", "you"] as const;
 const SETUP_DELAY_MS = 2000;
 
-// How long a restart is given before the page reloads itself.
-const RELOAD_AFTER_MS = 4000;
+// ── Settings' route state and its commands ───────────────────────────────
+// Whether Settings is open, the section asked for, and the first-time
+// setup step: changed only here, by the registered commands his clicks and
+// the brain's requests both run (settings.open, settings.section,
+// settings.close), and by first-time setup opening it by itself.
 
-/** The server is restarting: say so, and reload the page once it is back.
- *  The menu's Restart Server and Updates' Update and restart both end here. */
-export function reloadAfterRestart(said: string): void {
-  notice("Status", said);
-  setTimeout(() => window.location.reload(), RELOAD_AFTER_MS);
+/** @routeState Whether Settings is open. */
+const open = createStore(false);
+export const settingsOpen: ReadStore<boolean> = open;
+/** @routeState The section to go to once Settings is drawn, when one was asked for. */
+const asked = createStore<SectionId | null>(null);
+/** @routeState The first-time setup step being shown, or null when it is not setup. */
+const setup = createStore<number | null>(null);
+
+/** Whether a section is on show: all are, except during first-time setup,
+ *  which shows its own step's alone. */
+function sectionShown(id: SectionId): boolean {
+  const step = setup.get();
+  return step === null || SETUP_STEPS[step] === id;
+}
+
+/** Bring a section to the top of Settings' body. */
+function goTo(id: SectionId): void {
+  document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+registerCommand("settings.open", {
+  availability: ({ section }) => open.get() && section && !sectionShown(section)
+    ? { available: false, reason: "hidden" } : { available: true },
+  execute({ section }) {
+    closeMenu();
+    const effects: SideEffect[] = open.get() ? [] : ["settings.opened"];
+    asked.set(section ?? null);
+    open.set(true);
+    return { status: "completed", effects };
+  },
+});
+
+registerCommand("settings.section", {
+  availability: ({ section }) => !open.get() ? { available: false, reason: "not-mounted" }
+    : sectionShown(section) ? { available: true } : { available: false, reason: "hidden" },
+  execute({ section }) {
+    goTo(section);
+    return { status: "completed", effects: [] };
+  },
+});
+
+registerCommand("settings.close", {
+  availability: () => open.get() ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    open.set(false);
+    setup.set(null);
+    return { status: "completed", effects: [] };
+  },
+});
+
+// Pointed at from the overlay rail, down the left of the open view.
+const SOCKET = { rail: "rail.overlay", side: "left" } as const;
+
+interface Status {
+  claude_code_installed: boolean;
+  server_port: number;
+  uptime_seconds: number;
+  env_keys_set: { fish_audio: boolean; fish_voice_id: boolean; user_name: string };
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -82,13 +131,25 @@ function formatUptime(seconds: number): string {
   return `${h}h ${m}m`;
 }
 
+/** One section of Settings: its heading and body, registered as the
+ *  section's target (keyed by its ID) while it is on show. */
+function SettingsSection({ id, children }: { id: SectionId; children: ReactNode }) {
+  const title = SECTIONS.find((s) => s.id === id)!.title;
+  const ui = useUiTarget({ ref: { region: "overlay", view: "overlay.settings", kind: "settingsSection", key: id },
+                           label: `Settings, ${title}`, socket: SOCKET });
+  return (
+    <section className="settings-section" id={`settings-${id}`} ref={ui.whole}>
+      <h3 ref={ui.part("heading")}>{title}</h3>
+      <div className="settings-section-body" ref={ui.part("body")}>{children}</div>
+    </section>
+  );
+}
+
 export function Settings() {
-  const open = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
+  const shown = useSyncExternalStore(open.subscribe, open.get);
+  const step = useSyncExternalStore(setup.subscribe, setup.get);
   const [status, setStatus] = useState<Status | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
-  // The first-time setup step being shown, or null when it is not setup.
-  const [setup, setSetup] = useState<number | null>(null);
-  const body = useRef<HTMLDivElement>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -104,76 +165,72 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
-    if (open) loadStatus();
-  }, [open, loadStatus]);
+    if (shown) loadStatus();
+  }, [shown, loadStatus]);
 
-  // First-time setup: no Fish key means JARVIS cannot speak at all.
+  // First-time setup: no Fish key means JARVIS cannot speak at all. The
+  // page opens Settings by itself here; no one navigated.
   useEffect(() => {
     const timer = setTimeout(async () => {
       const s = await loadStatus();
       if (s && !s.env_keys_set.fish_audio) {
-        setSetup(0);
-        settingsOpen.set(true);
+        setup.set(0);
+        open.set(true);
       }
     }, SETUP_DELAY_MS);
     return () => clearTimeout(timer);
   }, [loadStatus]);
 
-  const close = () => {
-    settingsOpen.set(false);
-    setSetup(null);
-  };
-
-  const goTo = (id: string) =>
-    body.current?.querySelector(`#settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-
   // Opened at a section: go to it once the sections are drawn.
-  const asked = useSyncExternalStore(settingsSection.subscribe, settingsSection.get);
+  const section = useSyncExternalStore(asked.subscribe, asked.get);
   useEffect(() => {
-    if (!open || !asked) return;
-    goTo(asked);
-    settingsSection.set(null);
-  }, [open, asked]);
+    if (!shown || !section) return;
+    goTo(section);
+    asked.set(null);
+  }, [shown, section]);
 
-  if (!open) return null;
-  const shown = (id: string) => setup === null || SETUP_STEPS[setup] === id;
+  const ui = useUiTarget(shown ? { ref: { region: "overlay", view: "overlay.settings", kind: "settings" },
+                                   label: "Settings", socket: SOCKET } : null);
+
+  if (!shown) return null;
+  const close = bindingProps(bind("settings.close", {}));
+  const visible = (id: SectionId) => step === null || SETUP_STEPS[step] === id;
 
   return (
     <div id="settings-container" className="open">
-      <div className="settings-backdrop" onClick={close} />
-      <div className="settings-panel settings-view" role="dialog" aria-label="Settings">
+      <div className="settings-backdrop" {...close} />
+      <div className="settings-panel settings-view" role="dialog" aria-label="Settings" ref={ui.whole}>
         <div className="settings-header">
           <h2>Settings</h2>
-          <button className="settings-close" onClick={close} aria-label="Close">&times;</button>
+          <button className="settings-close" aria-label="Close" ref={ui.part("close")} {...close}>&times;</button>
         </div>
-        {setup !== null && (
+        {step !== null && (
           <div className="settings-welcome"><p>Welcome to JARVIS. Let's get you set up.</p></div>
         )}
         <div className="settings-columns">
-          {setup === null && (
-            <nav className="settings-nav" aria-label="Settings sections">
+          {step === null && (
+            <nav className="settings-nav" aria-label="Settings sections" ref={ui.part("nav")}>
               {SECTIONS.map((s) => (
-                <button key={s.id} type="button" onClick={() => goTo(s.id)}>{s.title}</button>
+                <button key={s.id} type="button" {...bindingProps(bind("settings.section", { section: s.id }))}>
+                  {s.title}</button>
               ))}
             </nav>
           )}
-          <div className="settings-body" ref={body}>
-            {shown("brains") && <section className="settings-section" id="settings-brains">
-              <h3>Brains</h3><BrainsSection /></section>}
-            {shown("voice") && <VoiceSection status={status} statusFailed={statusFailed}
-                                             reload={loadStatus} />}
-            {shown("you") && <YouSection reload={loadStatus} />}
-            {shown("team") && <section className="settings-section" id="settings-team">
-              <h3>Team</h3><TeamSection /></section>}
-            {shown("updates") && <section className="settings-section" id="settings-updates">
-              <h3>Updates</h3><UpdatesSection /></section>}
-            {shown("system") && <SystemSection status={status} statusFailed={statusFailed} />}
-            {setup !== null && (
+          <div className="settings-body">
+            {visible("brains") && <SettingsSection id="brains"><BrainsSection /></SettingsSection>}
+            {visible("voice") && <SettingsSection id="voice">
+              <VoiceSection status={status} statusFailed={statusFailed} reload={loadStatus} /></SettingsSection>}
+            {visible("you") && <SettingsSection id="you"><YouSection reload={loadStatus} /></SettingsSection>}
+            {visible("team") && <SettingsSection id="team"><TeamSection /></SettingsSection>}
+            {visible("updates") && <SettingsSection id="updates"><UpdatesSection /></SettingsSection>}
+            {visible("system") && <SettingsSection id="system">
+              <SystemSection status={status} statusFailed={statusFailed} /></SettingsSection>}
+            {step !== null && (
               <div className="setup-nav">
-                <button className="settings-btn primary" onClick={() =>
-                  setup + 1 >= SETUP_STEPS.length ? close() : setSetup(setup + 1)}>
-                  {setup === 0 ? "Next: Set Your Name" : "Finish Setup"}
-                </button>
+                {step + 1 >= SETUP_STEPS.length
+                  ? <button className="settings-btn primary" {...close}>Finish Setup</button>
+                  : <button className="settings-btn primary" data-ui-action="setup"
+                            onClick={() => setup.set(step + 1)}>Next: Set Your Name</button>}
               </div>
             )}
           </div>
@@ -215,34 +272,33 @@ function VoiceSection({ status, statusFailed, reload }: {
   };
 
   return (
-    <section className="settings-section" id="settings-voice">
-      <h3>Voice</h3>
+    <>
       <div className="settings-field">
         <label>Fish Audio API Key</label>
         <div className="settings-input-row">
-          <input type="password" placeholder="Fish Audio key..." value={key}
+          <input data-ui-action="input" type="password" placeholder="Fish Audio key..." value={key}
                  onChange={(e) => setKey(e.target.value)} />
-          <button className="settings-btn" onClick={test}>Test</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={test}>Test</button>
           <StatusDot status={tested ?? known} />
         </div>
       </div>
       <div className="settings-field">
         <label>Fish Voice ID</label>
         <div className="settings-input-row">
-          <input type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
+          <input data-ui-action="input" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
                  onChange={(e) => setVoiceId(e.target.value)} />
-          <button className="settings-btn" onClick={saveVoice}>Save</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={saveVoice}>Save</button>
         </div>
       </div>
       <div className="settings-actions">
-        <button className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
       </div>
       {savedKey && (
         <p className="settings-restart-notice">
           Saved. Restart the server (menu &rarr; Restart Server) for this to take effect.
         </p>
       )}
-    </section>
+    </>
   );
 }
 
@@ -270,15 +326,14 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
   };
 
   return (
-    <section className="settings-section" id="settings-you">
-      <h3>You</h3>
+    <>
       <div className="settings-field">
         <label>Your Name</label>
-        <input type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input data-ui-action="input" type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="settings-field">
         <label>Honorific</label>
-        <select value={honorific} onChange={(e) => setHonorific(e.target.value)}>
+        <select data-ui-action="input" value={honorific} onChange={(e) => setHonorific(e.target.value)}>
           <option value="sir">Sir</option>
           <option value="ma'am">Ma'am</option>
           <option value="none">None</option>
@@ -291,9 +346,9 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
         </p>
       )}
       <div className="settings-actions">
-        <button className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
       </div>
-    </section>
+    </>
   );
 }
 
@@ -400,10 +455,10 @@ function UpdatesSection() {
       ))}
       {result && <p className="settings-restart-notice">{result}</p>}
       <div className="settings-actions">
-        <button className="settings-btn" onClick={check} disabled={checking || updating}>
+        <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}>
           Check again</button>
         {status?.can_update && (
-          <button className="settings-btn primary" onClick={update} disabled={updating || checking}>
+          <button data-ui-action="restart" className="settings-btn primary" onClick={update} disabled={updating || checking}>
             {updating ? "Updating…" : "Update and restart"}</button>
         )}
       </div>
@@ -415,8 +470,7 @@ function SystemSection({ status, statusFailed }: { status: Status | null; status
   const detail = statusFailed ? "no answer from the server"
     : status ? `port ${status.server_port} | up ${formatUptime(status.uptime_seconds)}` : "";
   return (
-    <section className="settings-section" id="settings-system">
-      <h3>System</h3>
+    <>
       <div className="status-grid">
         <div className="status-row">
           <StatusDot status={statusFailed ? "red" : status ? "green" : "off"} />
@@ -429,6 +483,6 @@ function SystemSection({ status, statusFailed }: { status: Status | null; status
         <div className="sysinfo-row"><span className="sysinfo-label">Uptime</span>
           <span>{status && !statusFailed ? formatUptime(status.uptime_seconds) : "—"}</span></div>
       </div>
-    </section>
+    </>
   );
 }

@@ -31,10 +31,10 @@ function zone(index: number): string {
   return "low";
 }
 
-export function MicMeter() {
+export function MicMeter({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
   const lit = litSegments(useSyncExternalStore(micLevel.subscribe, micLevel.get));
   return (
-    <div id="mic-meter" title="microphone input">
+    <div id="mic-meter" title="microphone input" ref={partRef}>
       {Array.from({ length: SEGMENTS }, (_, i) => (
         <span key={i} className={`mic-segment ${zone(i)}${i < lit ? " on" : ""}`} />
       ))}
