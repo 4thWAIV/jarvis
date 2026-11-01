@@ -7,8 +7,11 @@ With the server running it asks the server to update itself
 (`POST /api/update` with the tool token), so the server restarts on the new
 code; with the server stopped it only updates. Either way the work is
 self_update's, the same functions the page and the brain use. The server is
-looked for at JARVIS_URL, else on 127.0.0.1:8340 over https when the
-certificates are there and http when they are not.
+looked for at JARVIS_URL, else at JARVIS_TOOL_URL's address (the one the
+brain's tool channel uses), else on 127.0.0.1:8340 over https when the
+certificates are there and http when they are not. Only a refused
+connection there counts as the server being stopped; anything else that
+answers, or answers wrongly, stops the command without updating.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from jarvis import data_paths, self_update
@@ -32,12 +36,17 @@ def server_url() -> str:
     explicit = os.environ.get("JARVIS_URL", "").strip()
     if explicit:
         return explicit.rstrip("/")
+    tool = urllib.parse.urlsplit(os.environ.get("JARVIS_TOOL_URL", "").strip())
+    if tool.scheme and tool.netloc:
+        return f"{tool.scheme}://{tool.netloc}"
     certs = all((data_paths.CONFIG_DIR / name).exists() for name in ("cert.pem", "key.pem"))
     return f"{'https' if certs else 'http'}://127.0.0.1:{DEFAULT_PORT}"
 
 
 def ask_server(url: str) -> dict | None:
-    """The server's update outcome, or None when no server answers there."""
+    """The server's update outcome, or None when the connection there is
+    refused (no server listening). Any other failure exits: something is
+    there, and the checkout must not be changed under it."""
     endpoint = f"{url}/api/update"
     req = urllib.request.Request(
         endpoint, data=b"{}", method="POST",
@@ -48,13 +57,23 @@ def ask_server(url: str) -> dict | None:
                                     context=_ssl_context_for(endpoint)) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
-        # A refusal (409) or a failed step (500) still carries the outcome.
+        # A refusal (409) or a failed step (500) still carries the outcome;
+        # any other answer (the web boundary's 403, a 404 from a server
+        # without /api/update) is not one.
+        body = e.read().decode("utf-8", "replace")
         try:
-            return json.loads(e.read().decode("utf-8", "replace"))
+            answered = json.loads(body)
         except ValueError:
-            raise SystemExit(f"JARVIS answered {e.code}.") from e
-    except (urllib.error.URLError, ConnectionError):
-        return None
+            answered = None
+        if e.code in (409, 500) and isinstance(answered, dict) and "status" in answered:
+            return answered
+        raise SystemExit(f"JARVIS answered {e.code}: {body.strip()[:200]}") from e
+    except (urllib.error.URLError, OSError) as e:
+        reason = getattr(e, "reason", e)
+        if isinstance(reason, ConnectionRefusedError):
+            return None
+        raise SystemExit(f"Something is at {url} but did not answer as JARVIS ({reason}); "
+                         "not updating under it.") from e
 
 
 def _print(head: str, details: list[str]) -> None:

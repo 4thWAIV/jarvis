@@ -437,22 +437,29 @@ routes and tools off and keeps the records.
 A checkout whose `origin` is on github.com updates itself from GitHub through
 one service, `self_update.py`: `check` fetches origin and says the branch,
 this commit, origin/main's latest, the new commits and the latest commit's
-CI (GitHub's check runs, read without a login); `update` checks again, moves
-to the checked commit (`git merge --ff-only`, so only a commit whose CI
-passed), then runs `.venv/bin/pip install -r requirements.txt` if that file
-changed, `npm ci` if `frontend/package-lock.json` changed, and `npm run
-build` if the page is served from built files (`jarvis/web`) and anything
-under `frontend/` changed; under Vite a changed lock file says to restart
-`npm run dev`. It is refused, with the reason, when not on main, with
-modified tracked files, with local commits not on origin/main, with
-untracked files the update would add, or when the latest commit's CI has not
-passed; an installed copy or another origin is told why it is not offered.
+CI (its latest run of the `ci` workflow alone, from GitHub's Actions runs,
+read without a login; the scheduled team server health check does not
+count, and a commit with no `ci` run has no CI result); `update` checks
+again, moves to the checked commit (`git merge --ff-only`, so only a commit
+whose CI passed), then runs `.venv/bin/pip install -r requirements.txt` if
+that file changed, `npm ci` if `frontend/package-lock.json` changed, and
+`npm run build` if the page is served from built files (`jarvis/web`) and
+anything under `frontend/` changed; under Vite a changed lock file says to
+restart `npm run dev`. A step that fails moves the checkout back (`git reset
+--keep`), so the update is offered again and runs every step. It is refused,
+with the reason, when not on main, with modified tracked files, with local
+commits not on origin/main, with untracked files the update would add
+(renames included), or when the latest commit's CI has not passed; an
+installed copy or another origin is told why it is not offered.
 `GET /api/update` is the check and `POST /api/update` the update, then the
 restart (page origin or tool token; no access-key category). The restart is
 one function, `server._restart_server`, shared with `/api/restart`. The
 command `python -m jarvis.update` (`update.py`) asks a running server to do
 it, so it restarts itself, and with the server stopped only updates;
-`--check` only reports. The page's side is Settings, Updates, which the ⋮
+`--check` only reports. It looks at `JARVIS_URL`, else `JARVIS_TOOL_URL`'s
+address, else 127.0.0.1:8340; only a refused connection there counts as
+stopped, and an answer that is not an update outcome (a 403, a 404) stops
+it without updating. The page's side is Settings, Updates, which the ⋮
 menu's Check for updates opens; the brain's is `update_status` and the
 acting `update_jarvis`, which says it is updating, updates after the turn
 and restarts once that has been heard (`_update_by_voice`). Tests point

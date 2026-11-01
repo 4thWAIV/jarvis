@@ -39,6 +39,15 @@ def _commit(repo: Path, files: dict[str, str], subject: str) -> str:
     return _git(repo, "rev-parse", "HEAD").strip()
 
 
+def _run(status: str, conclusion, path: str = ".github/workflows/ci.yml",
+         created: str = "2026-11-01T10:00:00Z") -> dict:
+    """One GitHub Actions run, as /actions/runs lists it."""
+    return {"path": path, "status": status, "conclusion": conclusion, "created_at": created}
+
+
+HEALTH = ".github/workflows/team-server-health.yml"
+
+
 class Repos(SimpleNamespace):
     def push(self, files: dict[str, str], subject: str) -> str:
         """A teammate's commit, merged to main on GitHub."""
@@ -75,19 +84,20 @@ def repos(tmp_path, monkeypatch):
     _git(checkout, "remote", "set-url", "origin", GITHUB_URL)
     _git(checkout, "config", f"url.{remote}.insteadOf", GITHUB_URL)
 
-    ci = {"check_runs": [{"name": "test", "status": "completed", "conclusion": "success"}]}
+    ci = {"workflow_runs": [_run("completed", "success")]}
     asked: list[tuple] = []
 
-    def fake_check_runs(owner, repo, sha):
+    def fake_workflow_runs(owner, repo, sha):
         asked.append((owner, repo, sha))
         if isinstance(ci.get("raise"), Exception):
             raise ci["raise"]
-        return ci
+        # Every run is of the commit asked about, as GitHub's head_sha filter gives.
+        return {"workflow_runs": [{"head_sha": sha, **r} for r in ci["workflow_runs"]]}
 
     monkeypatch.setattr(self_update, "repo_root", lambda: checkout)
     monkeypatch.setattr(self_update, "is_checkout", lambda: True)
     monkeypatch.setattr(self_update, "serves_built_page", lambda: False)
-    monkeypatch.setattr(self_update, "fetch_check_runs", fake_check_runs)
+    monkeypatch.setattr(self_update, "fetch_workflow_runs", fake_workflow_runs)
 
     # pip and npm at the subprocess seam: recorded, and answered as told.
     steps: list[tuple[list[str], str]] = []
@@ -167,12 +177,22 @@ def test_new_commits_whose_ci_passed_can_be_updated(repos):
 
 
 @pytest.mark.parametrize("ci,state", [
-    ({"check_runs": [{"status": "in_progress", "conclusion": None}]}, "pending"),
-    ({"check_runs": [{"status": "completed", "conclusion": "success"},
-                     {"status": "completed", "conclusion": "failure"}]}, "failed"),
-    ({"check_runs": []}, "none"),
+    ({"workflow_runs": [_run("in_progress", None)]}, "pending"),
+    ({"workflow_runs": [_run("completed", "failure")]}, "failed"),
+    ({"workflow_runs": [_run("completed", "cancelled")]}, "failed"),
+    ({"workflow_runs": []}, "none"),
     ({"raise": OSError("offline")}, "unknown"),
-    ({"check_runs": [{"status": "completed", "conclusion": "skipped"}]}, "passed"),
+    ({"workflow_runs": [_run("completed", "skipped")]}, "passed"),
+    # Only the ci workflow counts: the scheduled health check failing or
+    # running on the same commit does not block an update.
+    ({"workflow_runs": [_run("completed", "success"), _run("completed", "failure", HEALTH),
+                        _run("in_progress", None, HEALTH)]}, "passed"),
+    # A docs-only commit skips ci: the health check alone is no CI result.
+    ({"workflow_runs": [_run("completed", "success", HEALTH)]}, "none"),
+    # A re-run is judged on the newest run.
+    ({"workflow_runs": [_run("completed", "failure", created="2026-11-01T10:00:00Z"),
+                        _run("completed", "success", created="2026-11-01T11:00:00Z")]},
+     "passed"),
 ])
 def test_only_a_commit_whose_ci_passed_is_updated_to(repos, ci, state):
     repos.ci.clear()
@@ -199,6 +219,19 @@ def test_each_blocker_is_named(repos):
     assert head.endswith("The update is refused: Tracked files have been changed here. "
                          "Untracked files here would be overwritten by the update.")
     assert "Tracked files have been changed here. README.md" in details
+
+
+def test_an_untracked_file_where_upstream_renamed_one_to_is_named(repos):
+    _git(repos.upstream, "mv", "README.md", "README.txt")
+    _git(repos.upstream, "commit", "-m", "Rename")
+    _git(repos.upstream, "push", "origin", "main")
+    (repos.checkout / "README.txt").write_text("mine\n")
+    before = repos.head()
+    status = self_update.check()
+    assert [(b.code, b.detail) for b in status.blockers] == [
+        (self_update.WOULD_OVERWRITE, ["README.txt"])]
+    out = self_update.update()
+    assert out.refused and repos.head() == before
 
 
 def test_a_local_commit_or_another_branch_is_refused(repos):
@@ -254,20 +287,52 @@ def test_nothing_installed_when_nothing_needs_it(repos):
     assert out.ok and out.updated and repos.steps == []
 
 
-def test_a_failed_step_is_said_and_nothing_restarts(repos):
+def test_a_failed_step_moves_back_so_the_next_update_installs_again(repos):
+    before = repos.head()
+    repos.failing.add("ci")
+    latest = repos.push({"requirements.txt": "fastapi\nhttpx\n",
+                         "frontend/package-lock.json": '{"v": 3}\n'}, "Deps")
+    out = self_update.update()
+    assert not out.updated and not out.ok and not out.restart
+    assert repos.head() == before, "the checkout is back where it was"
+    assert out.failed == "npm ci: npm ERR! broken"
+    assert out.steps[-1] == f"Moved back to {before[:7]}."
+    head, details = self_update.describe_outcome(out)
+    assert head == ("The update failed. The checkout is where it was, "
+                    "so the update can be tried again.")
+    assert details == ["npm ci: npm ERR! broken"]
+
+    # Still offered, and the next update runs every step again.
+    assert self_update.check().can_update
+    repos.failing.clear()
+    repos.steps.clear()
+    again = self_update.update()
+    assert again.ok and again.updated and again.restart and repos.head() == latest
+    assert [cmd[1:] for cmd, _cwd in repos.steps] == [
+        ["install", "-r", "requirements.txt"], ["ci"]]
+
+
+def test_a_step_that_fails_and_cannot_move_back_says_so(repos, monkeypatch):
     repos.failing.add("ci")
     latest = repos.push({"frontend/package-lock.json": '{"v": 3}\n'}, "Deps")
+    real_git = self_update._git
+
+    def no_reset(root, *args, **kwargs):
+        if args[0] == "reset":
+            raise self_update.UpdateError("cannot reset")
+        return real_git(root, *args, **kwargs)
+
+    monkeypatch.setattr(self_update, "_git", no_reset)
     out = self_update.update()
     assert out.updated and not out.ok and not out.restart and repos.head() == latest
-    assert out.failed == "npm ci: npm ERR! broken"
-    head, details = self_update.describe_outcome(out)
-    assert head.startswith("The update failed. The checkout was moved")
-    assert details == ["npm ci: npm ERR! broken"]
+    assert out.failed.endswith("failed too: cannot reset")
+    head, _details = self_update.describe_outcome(out)
+    assert head.startswith("The update failed. The checkout was moved to the latest commit")
 
 
 def test_a_refused_update_changes_nothing(repos):
     before = repos.head()
-    repos.ci.update(check_runs=[{"status": "completed", "conclusion": "failure"}])
+    repos.ci.update(workflow_runs=[_run("completed", "failure")])
     repos.push({"a.py": "1\n"}, "Add a")
     out = self_update.update()
     assert not out.ok and not out.updated and repos.head() == before
@@ -445,9 +510,68 @@ def test_with_the_server_running_the_command_asks_it(repos, monkeypatch, capsys)
     assert asked and asked[0].endswith("://127.0.0.1:8340")
 
 
-def test_no_server_answering_is_none(monkeypatch):
+def test_a_refused_connection_is_no_server(monkeypatch):
     def refused(*a, **k):
-        raise update_cli.urllib.error.URLError("refused")
+        raise update_cli.urllib.error.URLError(ConnectionRefusedError(61, "refused"))
 
     monkeypatch.setattr(update_cli.urllib.request, "urlopen", refused)
     assert update_cli.ask_server("http://127.0.0.1:1") is None
+
+
+@pytest.mark.parametrize("reason", [
+    __import__("ssl").SSLError(1, "wrong version number"),
+    TimeoutError("timed out"),
+    "unknown url type",
+])
+def test_something_else_at_the_address_stops_the_command(monkeypatch, reason):
+    def broken(*a, **k):
+        raise update_cli.urllib.error.URLError(reason)
+
+    monkeypatch.setattr(update_cli.urllib.request, "urlopen", broken)
+    with pytest.raises(SystemExit, match="not updating under it"):
+        update_cli.ask_server("https://127.0.0.1:8340")
+
+
+def _http_error(code: int, body: dict):
+    import io
+    return update_cli.urllib.error.HTTPError(
+        "https://127.0.0.1:8340/api/update", code, "x", {},
+        io.BytesIO(json.dumps(body).encode()))
+
+
+@pytest.mark.parametrize("code,body", [
+    (403, {"detail": "Forbidden"}),
+    (404, {"detail": "Not Found"}),
+    (409, {"detail": "no status here"}),
+])
+def test_an_answer_that_is_not_an_outcome_is_not_read_as_one(monkeypatch, repos, capsys,
+                                                            code, body):
+    def answers(*a, **k):
+        raise _http_error(code, body)
+
+    monkeypatch.setattr(update_cli.urllib.request, "urlopen", answers)
+    before = repos.head()
+    repos.push({"a.py": "1\n"}, "Add a")
+    with pytest.raises(SystemExit, match=f"JARVIS answered {code}"):
+        update_cli.main([])
+    assert "Already up to date" not in capsys.readouterr().out
+    assert repos.head() == before, "nothing updated in place"
+
+
+def test_a_refusal_or_failed_step_still_carries_the_outcome(monkeypatch):
+    outcome = self_update.Outcome(status=self_update.Status(source="github"),
+                                  refused="This checkout is not on main.").to_json()
+
+    def answers(*a, **k):
+        raise _http_error(409, outcome)
+
+    monkeypatch.setattr(update_cli.urllib.request, "urlopen", answers)
+    assert update_cli.ask_server("https://127.0.0.1:8340") == outcome
+
+
+def test_the_command_looks_where_the_tool_channel_does(monkeypatch):
+    monkeypatch.delenv("JARVIS_URL", raising=False)
+    monkeypatch.setenv("JARVIS_TOOL_URL", "https://[::1]:8341/internal/tool")
+    assert update_cli.server_url() == "https://[::1]:8341"
+    monkeypatch.setenv("JARVIS_URL", "https://127.0.0.1:9000/")
+    assert update_cli.server_url() == "https://127.0.0.1:9000"

@@ -8,8 +8,10 @@ call `check` and `update` here, and say what they return through
 Only a checkout whose `origin` is on github.com is offered the update; an
 installed copy, or a checkout of somewhere else, is told why not. An update
 goes only to `origin/main`'s latest commit, and only when its CI passed: the
-GitHub check runs of that commit, read without a login (the repository is
-public). It is refused, with the reason, when this checkout is not on main,
+run of the `ci` workflow (`.github/workflows/ci.yml`) for that commit, read
+from GitHub's Actions runs without a login (the repository is public). Other
+workflows that attach to the commit, such as the scheduled team server
+health check, do not count. It is refused, with the reason, when this checkout is not on main,
 has modified tracked files, has commits of its own not on origin/main, has
 untracked files the update would overwrite, or the latest commit's CI has
 not passed.
@@ -17,7 +19,9 @@ not passed.
 `update` moves the checkout to the commit it checked (fast-forward only),
 then installs what changed: `requirements.txt` through `.venv/bin/pip`,
 `frontend/package-lock.json` through `npm ci`, and the built page through
-`npm run build` when the page is served from built files. Restarting is the
+`npm run build` when the page is served from built files. When a step
+fails, the checkout is moved back to where it was (`git reset --keep`), so
+the next update runs every step again. Restarting is the
 caller's: the server restarts itself (`server._restart_server`), and the
 command run with the server stopped only updates.
 """
@@ -43,7 +47,8 @@ UPSTREAM = f"{REMOTE}/{BRANCH}"
 # Where each kind of source stands.
 GITHUB, INSTALLED, OTHER = "github", "installed", "other"
 
-# The latest commit's CI, as GitHub's check runs say it.
+# The latest commit's CI: its run of the ci workflow, as GitHub says it.
+CI_WORKFLOW = ".github/workflows/ci.yml"
 CI_PASSED, CI_PENDING, CI_FAILED, CI_NONE, CI_UNKNOWN = (
     "passed", "pending", "failed", "none", "unknown")
 _CI_GOOD = {"success", "skipped", "neutral"}
@@ -139,7 +144,8 @@ class Status:
 
 @dataclass
 class Outcome:
-    """What `update` did. `updated` is true once the checkout moved; `ok` is
+    """What `update` did. `updated` is true when the checkout was left on
+    the new commit (a failed step moves it back, see `_move_back`); `ok` is
     false when it was refused or a step failed. `restart` says the server
     should now restart to run the new code."""
     status: Status
@@ -235,26 +241,31 @@ _SOURCE_REASONS = {
 
 # --- the CI of a commit ---------------------------------------------------
 
-def fetch_check_runs(owner: str, repo: str, sha: str) -> dict:
-    """GitHub's check runs for one commit, without a login."""
+def fetch_workflow_runs(owner: str, repo: str, sha: str) -> dict:
+    """GitHub's Actions runs for one commit, without a login."""
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?per_page=100",
+        f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+        f"?head_sha={sha}&per_page=100",
         headers={"Accept": "application/vnd.github+json", "User-Agent": "jarvis-self-update"})
     with urllib.request.urlopen(req, timeout=GITHUB_TIMEOUT_SEC) as resp:
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 
 def ci_state(owner: str, repo: str, sha: str) -> str:
-    """passed only when every check run of the commit finished well."""
+    """The commit's latest run of the ci workflow: passed only when it
+    finished well, none when the commit has no such run (a docs-only commit
+    skips it). Runs of any other workflow are not looked at."""
     try:
-        runs = fetch_check_runs(owner, repo, sha).get("check_runs") or []
+        runs = [r for r in fetch_workflow_runs(owner, repo, sha).get("workflow_runs") or []
+                if r.get("path") == CI_WORKFLOW and r.get("head_sha") == sha]
     except (urllib.error.URLError, OSError, ValueError, AttributeError):
         return CI_UNKNOWN
     if not runs:
         return CI_NONE
-    if any(r.get("status") != "completed" for r in runs):
+    latest = max(runs, key=lambda r: (str(r.get("created_at") or ""), r.get("id") or 0))
+    if latest.get("status") != "completed":
         return CI_PENDING
-    if any(r.get("conclusion") not in _CI_GOOD for r in runs):
+    if latest.get("conclusion") not in _CI_GOOD:
         return CI_FAILED
     return CI_PASSED
 
@@ -283,8 +294,9 @@ def check(root: Optional[Path] = None) -> Status:
             root, "status", "--porcelain", "--untracked-files=no").splitlines() if ln.strip()]
         overwrite: list[str] = []
         if status.behind:
-            added = set(_git(root, "diff", "--name-only", "--diff-filter=A",
-                             "HEAD", UPSTREAM).splitlines())
+            # --no-renames: a path upstream renamed or copied a file to is new too.
+            added = set(_git(root, "diff", "--name-only", "--no-renames",
+                             "--diff-filter=A", "HEAD", UPSTREAM).splitlines())
             untracked = set(_git(root, "ls-files", "--others",
                                  "--exclude-standard").splitlines())
             overwrite = sorted(added & untracked)
@@ -374,9 +386,24 @@ def _update(root: Path) -> Outcome:
             out.steps.append("Built the page.")
     except (UpdateError, OSError, subprocess.SubprocessError) as e:
         out.failed = str(e)
+        if out.updated:
+            _move_back(root, out)
         return out
     out.ok = True
     return out
+
+
+def _move_back(root: Path, out: Outcome) -> None:
+    """After a failed step, put the checkout back on the commit it was on,
+    keeping anything changed since, so the update is offered again and its
+    next run does every step."""
+    try:
+        _git(root, "reset", "--keep", out.from_commit)
+    except (UpdateError, OSError, subprocess.SubprocessError) as e:
+        out.failed += f" Moving back to {out.from_commit[:7]} failed too: {e}"
+        return
+    out.updated, out.to_commit = False, ""
+    out.steps.append(f"Moved back to {out.from_commit[:7]}.")
 
 
 # --- saying it --------------------------------------------------------------
@@ -414,9 +441,11 @@ def describe_outcome(out: Outcome) -> tuple[str, list[str]]:
         error = [out.status.error] if out.status.error else []
         return f"Not updated. {out.refused}", _blocker_lines(out.status) + error
     if out.failed:
-        moved = (" The checkout was moved to the latest commit, but an install step "
-                 "failed, so nothing was restarted." if out.updated else "")
-        return "The update failed." + moved, [out.failed]
+        where = (" The checkout was moved to the latest commit, but an install step "
+                 "failed and it could not be moved back, so nothing was restarted."
+                 if out.updated else
+                 " The checkout is where it was, so the update can be tried again.")
+        return "The update failed." + where, [out.failed]
     if not out.updated:
         return "Already up to date; nothing to do.", []
     head = f"Updated to {out.to_commit[:7]}." + ("" if not out.notes else " " + " ".join(out.notes))
