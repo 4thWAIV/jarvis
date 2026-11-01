@@ -76,6 +76,10 @@ Speech input currently uses local Kroko streaming recognition through sherpa-onn
 
 These captures render the real frontend with sample records; they are not production measurements.
 
+## A Spanish speech model, ready for the language setting
+
+Speech input now knows two models, English and Spanish, and holds one in memory at a time. The Spanish model (124 MB) can be installed with `.venv/bin/python scripts/setup_speech_input.py --language es`, or by asking JARVIS; the download is checked against the SHA-256 the sherpa-onnx release publishes before anything is unpacked. Switching speech input to the other language reloads the model, which takes a few seconds: whatever was being said at that moment is not heard, the page says speech recognition is switching and listens again once it has loaded, and the voice record notes the switch and how long it took. JARVIS can say which models are installed, install one and switch speech input when you ask. The Settings control to choose the language, and JARVIS answering in Spanish, come in the next steps; English remains the default and works as before.
+
 ## More than one conversational provider
 
 Claude and Codex brain providers share the application interface. Settings expose provider configuration, and brain account usage appears in the left column. Development runs retain a separate execution path; conversational provider selection does not switch every execution engine.

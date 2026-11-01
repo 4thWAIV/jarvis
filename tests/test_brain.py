@@ -88,6 +88,8 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__open_package,mcp__jarvis__list_packages,"
         "mcp__jarvis__run_package_command,mcp__jarvis__package_results,"
         "mcp__jarvis__diagnostics,"
+        "mcp__jarvis__speech_models,mcp__jarvis__install_speech_model,"
+        "mcp__jarvis__switch_speech_model,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
         "mcp__jarvis__retry_run,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"

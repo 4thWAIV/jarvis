@@ -134,20 +134,24 @@ NEW_READS = ("team_status", "find_github_user", "team_network", "people", "peopl
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
-            "dismiss_workflow", "retry_run", "update_jarvis")
+            "dismiss_workflow", "retry_run", "install_speech_model", "switch_speech_model",
+            "update_jarvis")
+# Reads with JARVIS's own words only: granted and handled, and exempt from taint.
+NEW_OWN_READS = ("speech_models",)
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     from jarvis import claude_provider, jarvis_mcp
     server = wired.server
     specs = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
-    for name in NEW_READS + NEW_ACTS:
+    for name in NEW_READS + NEW_ACTS + NEW_OWN_READS:
         assert name in specs and name in server.TOOL_HANDLERS
         assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert set(NEW_ACTS) <= server.ACTING_TOOLS
     assert not set(NEW_READS) & server.ACTING_TOOLS, "reading is not acting"
     assert set(NEW_READS) <= set(server.TAINTING_TOOLS)
     assert set(NEW_ACTS) <= set(server.TAINT_EXEMPT_TOOLS)
+    assert set(NEW_OWN_READS) <= set(server.TAINT_EXEMPT_TOOLS) - server.ACTING_TOOLS
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -160,6 +164,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("answer_workflow_decision", {"workflow": "x", "answer": "yes"}),
     ("dismiss_workflow", {"workflow": "x"}),
     ("retry_run", {"run": "x"}),
+    ("install_speech_model", {"language": "es"}),
+    ("switch_speech_model", {"language": "es"}),
     ("update_jarvis", {}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
@@ -463,6 +469,51 @@ def test_retry_run_resumes_a_finished_run_and_refuses_a_live_one(wired, monkeypa
     assert got["text"].startswith("Started the work in chitauri again, sir")
     assert spawned == [("make it blue", "chitauri", str(wired.tmp), "voice", run_id, None)]
     assert server.last_started_run == "new-run"
+
+
+# ── speech models ────────────────────────────────────────────────────────
+
+def _install_model(language):
+    from jarvis import transcriber
+    from tests.test_speech_models import _put
+    _put(transcriber.find_model(language))
+
+
+def test_speech_models_reads_what_the_route_reads(wired):
+    _install_model("en")
+    got = _call(wired, "speech_models")
+    assert got["ok"] and got["text"].splitlines() == [
+        "Speech input hears nothing yet (idle).",
+        "English: installed.",
+        "Spanish: not installed, 124 MB to download."]
+    assert wired.client.get("/api/speech/models").json()["models"][0]["installed"] is True
+
+
+def test_install_speech_model_is_the_install_button(wired, monkeypatch):
+    from jarvis import speech_models
+    monkeypatch.setattr(speech_models, "_installs", {})
+    _install_model("es")
+    got = _call(wired, "install_speech_model", language="es")
+    assert got["text"] == "The Spanish speech model is already installed, sir."
+    refused = _call(wired, "install_speech_model", language="fr")
+    assert refused["text"].startswith("Nothing was downloaded, sir: There is a speech model")
+
+
+def test_switch_speech_model_is_the_switch_route(wired, monkeypatch):
+    from jarvis import speech_models, transcriber
+    switched = []
+
+    async def fake_switch(language):
+        switched.append(language)
+        return {"language": language, "models": [
+            speech_models.model_json(m) for m in transcriber.MODELS]}
+
+    stopped = _call(wired, "switch_speech_model", language="es")
+    assert stopped["text"] == ("Speech input was not switched, sir: "
+                               "Speech input is not running.")
+    monkeypatch.setattr(speech_models, "switch", fake_switch)
+    got = _call(wired, "switch_speech_model", language="es")
+    assert got["text"] == "Speech input hears Spanish now, sir." and switched == ["es"]
 
 
 # ── updates ──────────────────────────────────────────────────────────────

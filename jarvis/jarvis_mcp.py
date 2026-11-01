@@ -1539,6 +1539,44 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "speech_models",
+        "description": (
+            "Which language speech input hears (one model is loaded at a time), and each "
+            "language's speech model: installed, downloading and how far, or not installed "
+            "and its download size."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "install_speech_model",
+        "description": (
+            "Download and install one language's speech model in the background, only when he "
+            "asks; it is checked against the release's SHA-256 before it is installed. "
+            "speech_models says how the download is going."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "enum": ["en", "es"],
+                             "description": "en for English, es for Spanish."},
+            },
+            "required": ["language"],
+        },
+    },
+    {
+        "name": "switch_speech_model",
+        "description": (
+            "Make speech input hear another language, only when he asks: its model is loaded "
+            "in place of the current one, which takes a few seconds, and what he is saying "
+            "at that moment is not heard. The model must be installed first."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string", "enum": ["en", "es"],
+                             "description": "en for English, es for Spanish."},
+            },
+            "required": ["language"],
+        },
+    },
+    {
         "name": "answer_workflow_decision",
         "description": (
             "Record his answer to a workflow's open decision, only when he gives it: the "

@@ -21,7 +21,8 @@ When a user clones this repo and starts Claude Code, help them:
 5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
 5a. Install the current local Kroko speech model:
-   `.venv/bin/python scripts/setup_speech_input.py`
+   `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
+   adds the Spanish model, `--language all` both)
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
@@ -344,7 +345,8 @@ How voice input is doing is one durable record, `voice_diagnostics.py`:
 `voice_samples` (one a second while a page listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
 start and end, reconnects, every failure with the cause in force and the
-busiest processes, and every line of text the page showed). `classify` gives
+busiest processes, every line of text the page showed, and each switch of
+speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
@@ -524,9 +526,20 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,
   an AudioWorklet (`pcm-worklet.ts`, `pcm.ts`) making 16 kHz PCM16, streamed
   to `/ws/transcribe`; its finals go to `/ws/voice` as before
-- `transcriber.py` — Local speech recognition: the model's identity and
-  where it lives, the sherpa-onnx engine, and the worker that owns it
-  (one capture at a time, overload refused rather than trimmed)
+- `transcriber.py` — Local speech recognition: the model list (`MODELS`,
+  English and Spanish Kroko, each with its digest) and where each lives, the
+  sherpa-onnx engine, and the worker that owns it (one model loaded at a
+  time, `switch` loads another in its place; one capture at a time, overload
+  refused rather than trimmed)
+- `speech_models.py` — Installing a speech model (`install`: download,
+  SHA-256 check, safe extract, one rename; `scripts/setup_speech_input.py`
+  is a thin command over it) and the service the page's
+  `/api/speech/models*` routes and the brain's `speech_models`,
+  `install_speech_model` and `switch_speech_model` share. A switch ends the
+  open capture with a non-incident `interrupted` (the page reconnects and
+  waits while it loads) and is a `model-load` event in the voice record.
+  Choosing and keeping the language is the language setting's, not this
+  module's
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
@@ -741,9 +754,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   text may not act, and memory writers are refused for the rest of that
   generation. Off by default, so JARVIS keeps acting after reading foreign
   content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
-- `JARVIS_STT_MODEL_DIR` (optional) — where the local speech model is.
-  Defaults to `<data>/models/<model>`; `scripts/setup_speech_input.py`
-  installs it there, checked against the release's SHA-256
+- `JARVIS_STT_MODEL_DIR` (optional) — the folder holding the local speech
+  models, one folder per model (`<root>/<model name>`). Defaults to
+  `<data>/models`; `scripts/setup_speech_input.py` and the install route
+  install there, checked against the release's SHA-256
 - `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real
