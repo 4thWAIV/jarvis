@@ -20,6 +20,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT } from "./locale";
 import { RIGHT_SOCKET } from "./uiRight";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
@@ -32,6 +33,7 @@ import { audioStatus, health, heardShare, summary } from "./voiceHealth";
  *  summary is one button, and that button is the target the brain points at
  *  (`voice`: the whole, its summary and its open control). */
 export function VoiceSummary() {
+  const t = useT();
   useTick(1000);
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get);
@@ -43,26 +45,26 @@ export function VoiceSummary() {
   const last = s?.last2min[s.last2min.length - 1];
 
   return (
-    <section className="voice-summary" aria-label="Voice health">
+    <section className="voice-summary" aria-label={t("right.voice.label")}>
       <button type="button" className="voice-summary-open" ref={(el) => { ui.whole(el); ui.part("summary")(el); ui.part("open")(el); }}
               {...bindingProps(bind("voice.diagnostics.open", {}))}
-              title="Open the Diagnostics view">
+              title={t("right.voice.open")}>
         {/* A grid: the rings and the status word on one line, centred on the
             same middle; the captions and the status's details under them. */}
         <span className="voice-rings">
           <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={48} />
           <b className={`voice-status-word tone-${status.tone}`}>{status.word}</b>
           <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
-          <small className="voice-ring-caption">heard</small>
+          <small className="voice-ring-caption">{t("right.voice.heard")}</small>
           <span className="voice-status-detail">
-            {s?.lastDropAt != null && <span className="voice-last-drop">last drop {ago(s.lastDropAt)}</span>}
+            {s?.lastDropAt != null && <span className="voice-last-drop">{t("right.voice.lastDrop", { ago: ago(s.lastDropAt) })}</span>}
           </span>
-          <small className="voice-ring-caption">speed</small>
+          <small className="voice-ring-caption">{t("right.voice.speed")}</small>
         </span>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
         <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
       </button>
-      {record.error && !s && <p className="read-failure">Couldn't read the voice record ({record.error}); trying again.</p>}
+      {record.error && !s && <p className="read-failure">{t("right.voice.readFailed", { error: record.error })}</p>}
     </section>
   );
 }

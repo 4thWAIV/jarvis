@@ -26,6 +26,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
+import { useT } from "./locale";
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
@@ -72,6 +73,7 @@ export function useTick(ms: number): void {
 }
 
 export function WorkflowsView() {
+  const t = useT();
   const live = useSyncExternalStore(workflows.subscribe, workflows.get);
   const open = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   useSyncExternalStore(dismissals.subscribe, dismissals.get);
@@ -99,9 +101,9 @@ export function WorkflowsView() {
 
   return (
     <div className="right-view workflows-view" ref={ui.whole}>
-      {live.error && <p className="read-failure">Couldn't read the workflows ({live.error}); trying again.</p>}
+      {live.error && <p className="read-failure">{t("right.workflows.readFailed", { error: live.error })}</p>}
       {live.value && current.length === 0 && subagents.length === 0 &&
-        <p className="workflows-empty">No workflows</p>}
+        <p className="workflows-empty">{t("right.workflows.none")}</p>}
       <ul className="workflows-list">
         {current.map((w) => <WorkflowItem key={w.id} workflow={w} selected={w.id === open} />)}
         {subagents.map((a) => (
@@ -114,7 +116,7 @@ export function WorkflowsView() {
         <div className="workflows-done">
           <button type="button" className="workflows-done-toggle" aria-expanded={doneShown}
                   ref={ui.part("showDone")} {...bindingProps(bind("workflows.showDone", { shown: !doneShown }))}>
-            {doneShown ? "▾" : "▸"} Done ({done.length})
+            {doneShown ? "▾" : "▸"} {t("right.workflows.done", { count: done.length })}
           </button>
           {doneShown && (
             <ul className="workflows-list done">
@@ -130,6 +132,7 @@ export function WorkflowsView() {
 /** A dismissed workflow: small, dimmed, its outcome's colour and the mark
  *  that it is done with. */
 function DoneRow({ workflow: w, selected }: { workflow: Workflow; selected: boolean }) {
+  const t = useT();
   const ui = useWorkflowTarget(w);
   return (
     <li>
@@ -138,7 +141,7 @@ function DoneRow({ workflow: w, selected }: { workflow: Workflow; selected: bool
               {...bindingProps(bind("workflow.open", { workflowId: w.id }))}>
         <span className={`workflow-outcome-dot outcome-${w.state}`} ref={ui.part("state")} />
         <span className="workflow-done-name">{w.name}</span>
-        <span className="workflow-dismissed-mark">Dismissed</span>
+        <span className="workflow-dismissed-mark">{t("right.workflows.dismissed")}</span>
       </button>
     </li>
   );
@@ -156,14 +159,15 @@ function useWorkflowTarget(w: Workflow) {
  *  `dismiss` part until the pipeline can reach a part beside its whole
  *  (coverage.md). */
 function WorkflowItem({ workflow: w, selected }: { workflow: Workflow; selected: boolean }) {
+  const t = useT();
   const finished = FINISHED.has(w.state);
   const ui = useWorkflowTarget(w);
   return (
     <li className={`workflow-item${finished ? " dismissible" : ""}`}>
       <WorkflowRow workflow={w} selected={selected} ui={ui} />
       {finished && (
-        <button type="button" className="workflow-dismiss" aria-label="Dismiss"
-                title="Dismiss" onClick={() => void dismissWorkflow(w.id)}>×</button>
+        <button type="button" className="workflow-dismiss" aria-label={t("right.workflows.dismiss")}
+                title={t("right.workflows.dismiss")} onClick={() => void dismissWorkflow(w.id)}>×</button>
       )}
     </li>
   );
@@ -182,6 +186,7 @@ export function TaskBar({ done, total }: { done: number; total: number }) {
 function WorkflowRow({ workflow: w, selected, ui }: {
   workflow: Workflow; selected: boolean; ui: ReturnType<typeof useUiTarget>;
 }) {
+  const t = useT();
   const finished = FINISHED.has(w.state);
   const state = within(ui.part("state"), ".workflow-orb");
   return (
@@ -200,7 +205,7 @@ function WorkflowRow({ workflow: w, selected, ui }: {
         <span className="workflow-track"><PhaseTrack w={w} /></span>
         <span className="workflow-counts">
           {w.tasks_total > 0 && (
-            <span className="workflow-tasks" aria-label="Tasks done" ref={ui.part("tasks")}>
+            <span className="workflow-tasks" aria-label={t("right.workflows.tasksDone")} ref={ui.part("tasks")}>
               {w.tasks_done}/{w.tasks_total}</span>
           )}
           {!finished && <OpenIcons w={w} />}
@@ -214,9 +219,10 @@ function WorkflowRow({ workflow: w, selected, ui }: {
  *  its orb ringed by its state, what it was asked to do, when it last
  *  wrote, and below, the session that dispatched it. */
 function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolean }) {
+  const t = useT();
   const look = SUBAGENT_LOOK[a.state];
   const ended = a.state === "finished";
-  const name = a.description || a.type || "Subagent";
+  const name = a.description || a.type || t("right.workflows.subagent");
   return (
     <button type="button" data-subagent-key={a.key} data-state={a.state}
             className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
@@ -231,7 +237,8 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
         ? <span className="workflow-outcome outcome-succeeded">{SUBAGENT_WORDS[a.state]}</span>
         : <span className="workflow-age">{ago(a.written)}</span>}
       <span className="workflow-strip subagent-parent">
-        {a.background ? "Background subagent" : "Subagent"} of {a.session_name}
+        {t(a.background ? "right.workflows.backgroundSubagentOf" : "right.workflows.subagentOf",
+           { session: a.session_name })}
       </span>
     </button>
   );

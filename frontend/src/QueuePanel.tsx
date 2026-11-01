@@ -30,7 +30,8 @@
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
-import { AVAILABILITY_SHOWN, type Draft } from "./messagingContract";
+import { useT } from "./locale";
+import type { Draft } from "./messagingContract";
 import {
   directory, historyError, NEW, openQueue, pendingCommands, queue, queueReadError, readHistory, restore,
   startNew,
@@ -119,6 +120,7 @@ function useRowTarget(thread: string | null, who: string, subject: string) {
 }
 
 export function QueuePanel() {
+  const t = useT();
   const state = useSyncExternalStore(queue.subscribe, queue.get);
   const error = useSyncExternalStore(queueReadError.subscribe, queueReadError.get);
   const dir = useSyncExternalStore(directory.subscribe, directory.get);
@@ -131,7 +133,7 @@ export function QueuePanel() {
   if (!state.offered) {
     return (
       <div className="right-view queue-view" ref={ui.whole}>
-        <p className="queue-notice">Messaging is not available on this JARVIS.</p>
+        <p className="queue-notice">{t("right.queue.notOffered")}</p>
       </div>
     );
   }
@@ -142,30 +144,30 @@ export function QueuePanel() {
     <div className="right-view queue-view" ref={ui.whole}>
       {state.availability && state.availability !== "available" && (
         <p className="queue-notice" data-availability={state.availability}>
-          {AVAILABILITY_SHOWN[state.availability]}
+          {t(`right.queue.availability.${state.availability}`)}
         </p>
       )}
       {error && (
         <p className="read-failure" role="status">
-          Couldn't read the queue ({error}); showing the last known and trying again.
+          {t("right.queue.readFailed", { error })}
         </p>
       )}
       {state.stale && !error && (
-        <p className="queue-notice stale" role="status">The team server is not answering; this is the last known.</p>
+        <p className="queue-notice stale" role="status">{t("right.queue.stale")}</p>
       )}
       <div className="queue-head">
         <button type="button" className="queue-new" onClick={startNew} ref={ui.part("new")}
                 disabled={state.availability !== "available"}
                 aria-current={open === NEW ? "true" : undefined}>
-          <QueueIcon kind="new" /> New
+          <QueueIcon kind="new" /> {t("right.queue.new")}
         </button>
       </div>
 
       <section className="queue-section" aria-labelledby="queue-waiting-heading" ref={ui.part("waiting")}>
         <h3 className="queue-heading" id="queue-waiting-heading">
-          Waiting <span className="queue-count">{waitingRows.length}</span>
+          {t("right.queue.waiting")} <span className="queue-count">{waitingRows.length}</span>
         </h3>
-        {state.loaded && waitingRows.length === 0 && <p className="queue-empty">Nothing waiting</p>}
+        {state.loaded && waitingRows.length === 0 && <p className="queue-empty">{t("right.queue.nothingWaiting")}</p>}
         <ul className="queue-list" data-list="waiting">
           {waitingRows.map((i) => <Row key={i.work_state.thread_id} item={i} state={state} dir={dir}
                                        current={open === i.work_state.thread_id} />)}
@@ -174,9 +176,9 @@ export function QueuePanel() {
 
       <section className="queue-section" aria-labelledby="queue-active-heading" ref={ui.part("active")}>
         <h3 className="queue-heading" id="queue-active-heading">
-          Active / Outbox <span className="queue-count">{activeRows.length + unsent.length}</span>
+          {t("right.queue.active")} <span className="queue-count">{activeRows.length + unsent.length}</span>
         </h3>
-        {state.loaded && activeRows.length + unsent.length === 0 && <p className="queue-empty">Nothing active</p>}
+        {state.loaded && activeRows.length + unsent.length === 0 && <p className="queue-empty">{t("right.queue.nothingActive")}</p>}
         <ul className="queue-list" data-list="active">
           {unsent.map((d) => <UnsentRow key={d.message_id} draft={d} dir={dir}
                                         current={open === d.thread_id}
@@ -204,6 +206,7 @@ function whoAndVia(state: QueueState, dir: Directory, item: ItemRecord): [string
 function Row({ item, state, dir, current }: {
   item: ItemRecord; state: QueueState; dir: Directory; current: boolean;
 }) {
+  const t = useT();
   const work = item.work_state;
   const thread = work.thread_id;
   const c = cues(state, thread)!;
@@ -230,24 +233,24 @@ function Row({ item, state, dir, current }: {
           {via && <span className="row-via"> · {via}</span>}
         </span>
         <span className="row-age" title={work.arrival_at}>{shortAgo(Math.max(0, ago), JUST_NOW_MS)}</span>
-        <span className="row-subject" ref={ui.part("subject")}>{subject || previewOf(latest) || "(no subject)"}</span>
+        <span className="row-subject" ref={ui.part("subject")}>{subject || previewOf(latest) || t("right.queue.noSubject")}</span>
         <span className="row-side" ref={ui.part("turn")}>
           <Cue kind={c.turn === "mine" ? "your-turn" : "their-turn"}>{turnWords(dir, work)}</Cue>
         </span>
         <span className="row-strip">
-          {c.unread && <Cue kind="unread">Unread</Cue>}
-          {c.readByYou && <Cue kind="read-by-you">Read by you</Cue>}
-          {c.addressed && <Cue kind="addressed">Addressed</Cue>}
-          {c.replied && <Cue kind="replied">You replied</Cue>}
-          {c.files > 0 && <Cue kind="files">{c.files} file{c.files === 1 ? "" : "s"}</Cue>}
-          {c.related && <Cue kind="related">Related</Cue>}
+          {c.unread && <Cue kind="unread">{t("right.queue.unread")}</Cue>}
+          {c.readByYou && <Cue kind="read-by-you">{t("right.queue.readByYou")}</Cue>}
+          {c.addressed && <Cue kind="addressed">{t("right.queue.addressed")}</Cue>}
+          {c.replied && <Cue kind="replied">{t("right.queue.replied")}</Cue>}
+          {c.files > 0 && <Cue kind="files">{t("right.queue.files", { count: c.files })}</Cue>}
+          {c.related && <Cue kind="related">{t("right.queue.related")}</Cue>}
         </span>
         {(c.sending || c.delivery || unsentReply) && (
           <span className="row-delivery" ref={ui.part("receipt")}>
             {c.sending
               ? <span className="queue-sending">{sendWords(c.sending)}</span>
               : unsentReply
-                ? <span className="queue-sending">Reply drafted, not sent</span>
+                ? <span className="queue-sending">{t("right.queue.replyDrafted")}</span>
                 : <DeliveryCue state={state} dir={dir} thread={thread} />}
           </span>
         )}
@@ -270,8 +273,10 @@ function DeliveryCue({ state, dir, thread }: { state: QueueState; dir: Directory
 function UnsentRow({ draft, dir, current, listed }: {
   draft: Draft; dir: Directory; current: boolean; listed: boolean;
 }) {
+  const t = useT();
   const who = personName(dir, draft.recipient_github_id);
-  const ui = useRowTarget(listed ? null : draft.thread_id, `To ${who}`, draft.subject ?? "");
+  const to = t("right.queue.to", { name: who });
+  const ui = useRowTarget(listed ? null : draft.thread_id, to, draft.subject ?? "");
   return (
     <li data-thread-id={draft.thread_id} className="queue-item">
       <button type="button" {...bindingProps(bind("queue.follow", { threadId: draft.thread_id }))}
@@ -281,9 +286,9 @@ function UnsentRow({ draft, dir, current, listed }: {
               {...{ [TRANSFER_ENDPOINT_ATTR]: draft.thread_id }} aria-hidden="true">
           {who.slice(0, 1).toUpperCase()}
         </span>
-        <span className="row-who" ref={ui.part("sender")}><span className="row-person">To {who}</span></span>
+        <span className="row-who" ref={ui.part("sender")}><span className="row-person">{to}</span></span>
         <span className="row-subject" ref={ui.part("subject")}>
-          {draft.subject || previewOf(draft) || "(no subject)"}
+          {draft.subject || previewOf(draft) || t("right.queue.noSubject")}
         </span>
         <span className="row-delivery" ref={ui.part("receipt")}>
           <span className="queue-sending">{sendWords(draft)}</span>
@@ -299,6 +304,7 @@ type PartRef = (el: Element | null) => void;
 function History({ state, dir, open, historyRef, moreRef }: {
   state: QueueState; dir: Directory; open: string | null; historyRef: PartRef; moreRef: PartRef;
 }) {
+  const t = useT();
   const shown = useSyncExternalStore(historyOpen.subscribe, historyOpen.get);
   const error = useSyncExternalStore(historyError.subscribe, historyError.get);
   const rows = dismissed(state);
@@ -306,12 +312,13 @@ function History({ state, dir, open, historyRef, moreRef }: {
     <div className="queue-history" ref={historyRef}>
       <button type="button" className="queue-history-toggle" aria-expanded={shown}
               {...bindingProps(bind("queue.history", { shown: !shown }))}>
-        {shown ? "▾" : "▸"} {shown ? "Hide" : "Show"} dismissed ({state.history_count})
+        {shown ? "▾" : "▸"} {t(shown ? "right.queue.hideDismissed" : "right.queue.showDismissed",
+                                 { count: state.history_count })}
       </button>
       {shown && (
         <>
           {error && <p className="read-failure" role="status">{error}</p>}
-          {state.history_read && rows.length === 0 && <p className="queue-empty">Nothing dismissed</p>}
+          {state.history_read && rows.length === 0 && <p className="queue-empty">{t("right.queue.nothingDismissed")}</p>}
           <ul className="queue-list done" data-list="dismissed">
             {rows.map((i) => <DismissedRow key={i.work_state.thread_id} item={i} state={state} dir={dir}
                                            current={open === i.work_state.thread_id} />)}
@@ -319,7 +326,7 @@ function History({ state, dir, open, historyRef, moreRef }: {
           {state.history_next && (
             <button type="button" className="queue-history-more" ref={moreRef}
                     {...bindingProps(bind("queue.history.more", {}))}>
-              Show more
+              {t("right.queue.more")}
             </button>
           )}
         </>
@@ -331,6 +338,7 @@ function History({ state, dir, open, historyRef, moreRef }: {
 function DismissedRow({ item, state, dir, current }: {
   item: ItemRecord; state: QueueState; dir: Directory; current: boolean;
 }) {
+  const t = useT();
   const thread = item.work_state.thread_id;
   const [who] = whoAndVia(state, dir, item);
   const subject = subjectOf(state, thread);
@@ -341,11 +349,11 @@ function DismissedRow({ item, state, dir, current }: {
               aria-current={current ? "true" : undefined}
               {...bindingProps(bind("queue.follow", { threadId: thread }))}>
         <span className="row-person" ref={ui.part("sender")}>{who}</span>
-        <span className="row-subject" ref={ui.part("subject")}>{subject || "(no subject)"}</span>
-        <Cue kind="dismissed">Dismissed</Cue>
+        <span className="row-subject" ref={ui.part("subject")}>{subject || t("right.queue.noSubject")}</span>
+        <Cue kind="dismissed">{t("right.queue.dismissed")}</Cue>
       </button>
       <button type="button" className="queue-restore" onClick={() => void restore(thread)}>
-        Restore
+        {t("right.queue.restore")}
       </button>
     </li>
   );

@@ -14,8 +14,11 @@
 
 import { useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
+import { useT } from "./locale";
 import { graphicsTrouble } from "./orb";
-import { sessionsConnected, STATE_WORDS, subsystems, withPage, type Subsystem } from "./subsystems";
+import {
+  sessionsConnected, STATE_WORDS, subsystemName, subsystems, subsystemSummary, withPage, type Subsystem,
+} from "./subsystems";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 
@@ -33,29 +36,33 @@ export function useAnyDown(): boolean {
 }
 
 export function SubsystemList() {
+  const t = useT();
   const { list, read } = useSubsystems();
   return (
-    <section className="subsystems" aria-label="Subsystems">
+    <section className="subsystems" aria-label={t("right.subsystems.label")}>
       <ul>
         {list.map((s) => <SubsystemRow key={s.id} subsystem={s} />)}
       </ul>
-      {!read && <p className="subsystem-waiting">Reading JARVIS's subsystems…</p>}
+      {!read && <p className="subsystem-waiting">{t("right.subsystems.reading")}</p>}
     </section>
   );
 }
 
 function SubsystemRow({ subsystem: s }: { subsystem: Subsystem }) {
+  useT();
+  const name = subsystemName(s);
+  const summary = subsystemSummary(s);
   const ui = useUiTarget({ ref: { region: "right", view: "right.diagnostics", kind: "subsystem", key: s.id },
-                           label: s.name, socket: RIGHT_SOCKET });
+                           label: name, socket: RIGHT_SOCKET });
   return (
     <li>
       <button type="button" className={`subsystem-row state-${s.state}`} data-subsystem={s.id}
-              title={`${s.name}: ${STATE_WORDS[s.state]}. ${s.summary}`} ref={row(ui)}
+              title={`${name}: ${STATE_WORDS[s.state]}. ${summary}`} ref={row(ui)}
               disabled={s.id === "page"} {...bindingProps(bind("subsystem.open", { subsystemId: s.id }))}>
         <span className={`subsystem-dot state-${s.state}`} aria-hidden="true" />
-        <span className="subsystem-name">{s.name}</span>
+        <span className="subsystem-name">{name}</span>
         <span className="subsystem-state" ref={ui.part("status")}>{STATE_WORDS[s.state]}</span>
-        <span className="subsystem-summary">{s.summary}</span>
+        <span className="subsystem-summary">{summary}</span>
       </button>
     </li>
   );

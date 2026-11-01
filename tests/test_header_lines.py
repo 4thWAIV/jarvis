@@ -315,6 +315,11 @@ def _builds_text(node) -> bool:
         if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                 and sub.func.attr == "join"):
             return True
+        # subsystem_diagnostics says its lines through `say(code, **values)`,
+        # which fills an English template with the values: the same text an
+        # f-string built, so the walk must not go blind at that call.
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == "say":
+            return True
         # `base += "…" + ", ".join(projects) + "."` — the shape
         # `brain.launch_prompt` uses, and the one the old predicate did not
         # know about at all.

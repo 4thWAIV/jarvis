@@ -18,6 +18,7 @@ import { RIGHT_SOCKET } from "./uiRight";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore } from "react";
+import { t, useT } from "./locale";
 import {
   cpuPercent, memoryPercent, openNetwork, paceText, paceWidth, paceWords, PRESENCE_WORDS,
   sinceMs, type NodeView,
@@ -26,6 +27,10 @@ import { shortAge, spokenAgo } from "./timeFormat";
 
 /** Within this, the badge is solid cyan; past it, dashed lavender. */
 const RECENT_MS = 5 * 60_000;
+
+/** The badge's figure size past three characters (the `.long` size is for
+ *  three). */
+const LONGER_FIGURE_PX = "13px";
 
 function PersonIcon() {
   return (
@@ -36,37 +41,37 @@ function PersonIcon() {
   );
 }
 
-/** The human badge's look, figure and words. */
+/** The human badge's look, figure and words, in the interface's language. */
 export function humanReading(node: NodeView, now: number = Date.now()):
     { kind: "recent" | "away" | "unknown"; figure: string; words: string; ageMs: number | null } {
   if (node.activity_state === "unsupported") {
-    return { kind: "unknown", figure: "—", words: "human activity unavailable", ageMs: null };
+    return { kind: "unknown", figure: "—", words: t("right.node.humanUnavailable"), ageMs: null };
   }
   const ageMs = node.activity_state === "available" ? sinceMs(node.last_human_activity_at, now) : null;
   if (ageMs === null) {
-    return { kind: "unknown", figure: "?", words: "no human activity observed", ageMs: null };
+    return { kind: "unknown", figure: "?", words: t("right.node.humanNever"), ageMs: null };
   }
   return { kind: ageMs < RECENT_MS ? "recent" : "away", figure: shortAge(ageMs),
-           words: `last human activity ${spokenAgo(ageMs)}`, ageMs };
+           words: t("right.node.humanLast", { ago: spokenAgo(ageMs) }), ageMs };
 }
 
-/** The whole tile in words. */
+/** The whole tile in words: one clause each, in the tile's order. */
 function spoken(node: NodeView, self: boolean, current: boolean, human: string): string {
-  const whose = `${self ? "this Mac, " : ""}owned by ${node.owner_login}`;
   const cpu = cpuPercent(node.resources);
   const mem = memoryPercent(node.resources);
   const pace = node.brains.pace_points;
-  const brains = node.brains.measured === 1 ? "brain" : "brains";
   return [
-    `${node.label}, ${whose}, as reported by Team Server:`,
+    t(self ? "right.node.spoken.headSelf" : "right.node.spoken.head", { label: node.label, owner: node.owner_login }),
     current ? `${PRESENCE_WORDS[node.presence].toLowerCase()};` : "",
     `${human}.`,
-    cpu === null ? "CPU unknown," : `CPU ${Math.round(cpu)} percent,`,
-    mem === null ? "memory unknown," : `memory ${Math.round(mem)} percent,`,
-    node.brains.configured === 0 ? "no brain accounts configured."
-      : pace === null ? "brain pace not measured." : `${brains} ${paceWords(pace)}.`,
-    current ? "" : "Values are stale.",
-    "Open details in the centre.",
+    cpu === null ? t("right.node.spoken.cpuUnknown") : t("right.node.spoken.cpu", { percent: Math.round(cpu) }),
+    mem === null ? t("right.node.spoken.memoryUnknown") : t("right.node.spoken.memory", { percent: Math.round(mem) }),
+    node.brains.configured === 0 ? t("right.node.spoken.noBrains")
+      : pace === null ? t("right.node.spoken.paceUnmeasured")
+      : t(node.brains.measured === 1 ? "right.node.spoken.paceOne" : "right.node.spoken.pace",
+          { pace: paceWords(pace) }),
+    current ? "" : t("right.node.spoken.stale"),
+    t("right.node.spoken.open"),
   ].filter(Boolean).join(" ");
 }
 
@@ -87,13 +92,13 @@ function Rail({ label, percent, colour, partRef }: {
 }
 
 function PaceRail({ points, partRef }: { points: number | null; partRef?: PartRef }) {
+  const t = useT();
   const ahead = points !== null && paceText(points).startsWith("+");
   return (
     <span ref={partRef} className={`visual-metric pace-metric${points === null ? " unknown" : ""}`}
-          title={points === null ? "Brain pace not measured"
-            : ahead ? `Brains ${paceWords(points)}: more left than expected at this point in the week`
-            : `Brains ${paceWords(points)}`}>
-      <span className="metric-label">BRAIN</span>
+          title={points === null ? t("right.node.paceUnmeasured")
+            : t(ahead ? "right.node.paceAheadTitle" : "right.node.paceTitle", { pace: paceWords(points) })}>
+      <span className="metric-label">{t("right.node.brain")}</span>
       <span className="pace-track">
         {points !== null && <i className={ahead ? "ahead" : "behind"} style={{ width: `${paceWidth(points)}%` }} />}
       </span>
@@ -105,6 +110,7 @@ function PaceRail({ points, partRef }: { points: number | null; partRef?: PartRe
 }
 
 export function NetworkTile({ node, self, current }: { node: NodeView; self: boolean; current: boolean }) {
+  const t = useT();
   const open = useSyncExternalStore(openNetwork.subscribe, openNetwork.get);
   const selected = open?.kind === "node" && open.nodeId === node.node_id;
   const human = humanReading(node);
@@ -122,18 +128,20 @@ export function NetworkTile({ node, self, current }: { node: NodeView; self: boo
       <span className="tile-title" aria-hidden="true">
         <i ref={ui.part("presence")} className={`online-marker ${marker}`} />
         <span ref={ui.part("name")} className="tile-name">{node.label.toUpperCase()}</span>
-        {self && <span className="tile-self">&nbsp;· THIS MAC</span>}
+        {self && <span className="tile-self">{"\u00a0"}{t("right.node.thisMac")}</span>}
       </span>
       <span className="tile-body">
         <span ref={ui.part("human")} className={`human-beacon ${human.kind}${human.figure.length > 2 ? " long" : ""}`} aria-hidden="true"
               title={human.ageMs === null ? human.words : `${human.words} (${node.last_human_activity_at})`}>
           <PersonIcon />
-          <strong>{human.figure}</strong>
-          <span>HUMAN</span>
+          {/* A figure longer than the badge was drawn for ("2 min", "15 sem"
+              in Spanish) is set smaller, so it stays inside the badge. */}
+          <strong style={human.figure.length > 3 ? { fontSize: LONGER_FIGURE_PX } : undefined}>{human.figure}</strong>
+          <span>{t("right.node.human")}</span>
         </span>
         <span className="metric-stack" aria-hidden="true">
           <Rail label="CPU" percent={cpuPercent(node.resources)} colour="#64ded5" partRef={ui.part("cpu")} />
-          <Rail label="MEM" percent={memoryPercent(node.resources)} colour="#b8a0f4" partRef={ui.part("memory")} />
+          <Rail label={t("right.node.memory")} percent={memoryPercent(node.resources)} colour="#b8a0f4" partRef={ui.part("memory")} />
           <PaceRail points={node.brains.pace_points} partRef={ui.part("pace")} />
         </span>
       </span>

@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
+import { useT } from "./locale";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
          workingCount, type AgentRow } from "./agents";
@@ -58,6 +59,7 @@ function rowsThatFit(space: HTMLElement, list: HTMLElement, downChevron: HTMLEle
 }
 
 export function AgentsControl() {
+  const t = useT();
   const agents = useSyncExternalStore(agentRows.subscribe, agentRows.get);
   const showing = useSyncExternalStore(agentsShow.subscribe, agentsShow.get);
   useSyncExternalStore(agentsFirst.subscribe, agentsFirst.get);
@@ -160,13 +162,13 @@ export function AgentsControl() {
 
   return (
     <div id="agents-control" ref={ui.whole}>
-      <div className="agents-show" role="group" aria-label="Show agents" ref={ui.part("filter")}>
+      <div className="agents-show" role="group" aria-label={t("right.agents.show")} ref={ui.part("filter")}>
         {(["active", "all"] as const).map((option) => (
           <button key={option} type="button"
                   className={showing === option ? "selected" : ""}
                   aria-pressed={showing === option}
                   {...bindingProps(bind("agents.filter", { show: option }))}>
-            {option === "active" ? "Active" : "All"}
+            {option === "active" ? t("right.agents.active") : t("right.agents.all")}
           </button>
         ))}
       </div>
@@ -204,6 +206,7 @@ export function AgentsControl() {
 function AgentItem({ agent, switchable, onToggle }: {
   agent: AgentRow; switchable: boolean; onToggle: (agent: AgentRow) => void;
 }) {
+  const t = useT();
   const ui = useUiTarget({ ref: { region: "right", view: "right.agents", kind: "agent", key: agent.session_id },
                            label: agentName(agent), socket: RIGHT_SOCKET });
   // The agent's box is the whole; its orb is AgentOrb's own canvas, looked
@@ -232,7 +235,7 @@ function AgentItem({ agent, switchable, onToggle }: {
       {switchable && (
         <button type="button" role="switch" aria-checked={agent.active}
                 className="agent-switch"
-                title={agent.active ? "Deactivate" : "Activate"}
+                title={agent.active ? t("right.agents.deactivate") : t("right.agents.activate")}
                 onClick={() => onToggle(agent)} />
       )}
     </li>
@@ -245,9 +248,10 @@ function Chevron({ direction, hidden, onClick, ref }: {
   onClick: () => void;
   ref?: React.Ref<HTMLButtonElement>;
 }) {
+  const t = useT();
   return (
     <button type="button" className="agents-chevron" ref={ref}
-            title={direction === "up" ? "Previous agents" : "More agents"}
+            title={direction === "up" ? t("right.agents.previous") : t("right.agents.more")}
             aria-hidden={hidden} tabIndex={hidden ? -1 : 0}
             style={{ visibility: hidden ? "hidden" : "visible" }}
             data-ui-command="agents.page"
