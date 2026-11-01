@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useSyncExternalStore } from "react";
+import { t, useT } from "./locale";
 import { createStore } from "./store";
 import { bind, bindingProps, type ReadStore } from "./uiNavigation";
 import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
@@ -49,6 +50,7 @@ export function reloadAfterRestart(said: string): void {
 const SOCKET = { rail: "rail.right", side: "right" } as const;
 
 export function MenuControl() {
+  const tr = useT();
   const shown = useSyncExternalStore(open.subscribe, open.get);
   const button = useUiTarget({ ref: { region: "overlay", view: "overlay.controls", kind: "menu" },
                                label: "Menu button", socket: SOCKET });
@@ -66,9 +68,9 @@ export function MenuControl() {
     closeMenu();
     try {
       await fetch("/api/restart", { method: "POST" });
-      reloadAfterRestart("Restarting the server.");
+      reloadAfterRestart(t("menu.restarting"));
     } catch {
-      notice("Status", "The restart failed: the server did not answer.");
+      notice("Status", t("menu.restartFailed"));
     }
   };
 
@@ -80,7 +82,7 @@ export function MenuControl() {
       <div id="controls">
         {/* The button is the whole object: the box around it has no edge
             of its own for a socket. */}
-        <button id="btn-menu" className="control-button" title="Menu" aria-label="Menu"
+        <button id="btn-menu" className="control-button" title={tr("menu.button")} aria-label={tr("menu.button")}
                 aria-expanded={shown} ref={(el) => { button.whole(el); button.part("toggle")(el); }}
                 {...toggle} onClick={(e) => { e.stopPropagation(); toggle.onClick(); }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -91,10 +93,10 @@ export function MenuControl() {
       {shown && (
         <div id="menu-dropdown" ref={menu.whole} data-ui-action="plumbing"
              onClick={(e) => e.stopPropagation()}>
-          <button ref={menu.part("settings")} {...bindingProps(bind("settings.open", {}))}>Settings</button>
+          <button ref={menu.part("settings")} {...bindingProps(bind("settings.open", {}))}>{tr("menu.settings")}</button>
           <button ref={menu.part("updates")} {...bindingProps(bind("settings.open", { section: "updates" }))}>
-            Check for updates</button>
-          <button ref={menu.part("restart")} data-ui-action="restart" onClick={restart}>Restart Server</button>
+            {tr("menu.updates")}</button>
+          <button ref={menu.part("restart")} data-ui-action="restart" onClick={restart}>{tr("menu.restart")}</button>
         </div>
       )}
     </>

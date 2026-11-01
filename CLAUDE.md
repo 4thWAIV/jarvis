@@ -717,6 +717,16 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/TeamServerTile.tsx` / `TeamServerView.tsx` — The left
   column's Team Server tile and the team server's health in full
 - `frontend/src/humanActivity.ts` — The page's one human-activity collector
+- `frontend/src/locale.ts` / `frontend/src/messages/` — The interface's
+  language, which is the language setting's (`language_setting.py`), never a
+  second preference or browser storage: one store fed by the server's
+  `/api/settings/language`, its `language` frame on `/ws/sessions` (published
+  by `change`) and that socket's snapshot, a read never undoing a newer
+  frame; typed English and Latin American Spanish catalogs with the same
+  keys and placeholders, one part per region; a component's words come from
+  `useT()` (`t("key", { name })`), numbers and dates from its format helpers.
+  Words written in English in a component are the `label-unlocalized`
+  coverage rule; elements are found by registered ids, never by their words
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members

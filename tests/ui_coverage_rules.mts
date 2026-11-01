@@ -30,6 +30,17 @@
 //   index-key             A target's key is made from a number (an array
 //                         position), not the record's own identity; a
 //                         record's numeric field (`item.id`) is its identity.
+//   label-unlocalized     Words the application shows are written into a
+//                         component as English instead of coming from the
+//                         catalog (`t("key")`, frontend/src/locale.ts): JSX
+//                         text, a string in a JSX expression, a LABELLED
+//                         attribute (aria-label, title, placeholder, alt,
+//                         label), or a `title:` property in a .tsx file.
+//                         Names that stay as they are in every language
+//                         (KEPT_AS_IS) and text with no words (symbols,
+//                         numbers, a hex id) are not words to translate; a
+//                         call's arguments (a key, a class name) are not
+//                         shown text.
 //
 // Run: node --experimental-transform-types --no-warnings
 //        --import ./tests/ui_ts_loader.mjs tests/ui_coverage_rules.mts <dir>...
@@ -56,6 +67,14 @@ export const CONTROL_CLASSES: Record<string, string> = {
   setup: "First-time setup's own steps.",
   plumbing: "Only keeps an event from reaching the page; no action of its own.",
 };
+
+/** Names shown as they are in every language: products, providers and
+ *  each language's own name. Adding one is a review decision. */
+export const KEPT_AS_IS = ["JARVIS", "Claude Code", "Claude", "Codex", "GitHub", "Fish Audio", "Fish",
+                           "English", "Español", "MB", "GB", "KB", "CPU", "SHA-256", "OK"];
+
+/** The attributes whose value is words a person reads or hears. */
+const LABELLED = new Set(["aria-label", "title", "placeholder", "alt", "label", "aria-description"]);
 
 /** The events that mean a person acted on the element. */
 const EVENTS = new Set(["onClick", "onDoubleClick", "onKeyDown", "onKeyUp", "onKeyPress", "onSubmit",
@@ -298,11 +317,62 @@ function checkTarget(call: ts.CallExpression): void {
   visit(scope);
 }
 
+// ── words written in English ─────────────────────────────────────────────
+
+const KEPT = new RegExp(`\\b(?:${KEPT_AS_IS.map((w) => w.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")).join("|")})\\b`, "g");
+
+/** Whether text has words to translate: two letters in a row, once the
+ *  names kept as they are and hex ids are taken out. */
+function hasWords(text: string): boolean {
+  const rest = text.replace(KEPT, " ").replace(/\b[0-9a-f]{8,}\b/gi, " ");
+  return /\p{L}{2,}/u.test(rest);
+}
+
+/** The literal texts an expression shows (through conditionals, `??`,
+ *  `||`, `&&` and templates), never a call's arguments or a comparison. */
+function shownLiterals(e: ts.Expression, out: ts.Node[] = []): ts.Node[] {
+  e = bare(e);
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    if (hasWords(e.text)) out.push(e);
+  } else if (ts.isTemplateExpression(e)) {
+    const texts = [e.head.text, ...e.templateSpans.map((sp) => sp.literal.text)].join(" ");
+    if (hasWords(texts)) out.push(e);
+    e.templateSpans.forEach((sp) => shownLiterals(sp.expression, out));
+  } else if (ts.isConditionalExpression(e)) {
+    shownLiterals(e.whenTrue, out);
+    shownLiterals(e.whenFalse, out);
+  } else if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken,
+                                           ts.SyntaxKind.AmpersandAmpersandToken].includes(e.operatorToken.kind)) {
+    shownLiterals(e.left, out);
+    shownLiterals(e.right, out);
+  }
+  return out;
+}
+
+function checkWords(n: ts.Node): void {
+  if (!n.getSourceFile().fileName.endsWith(".tsx")) return;
+  if (ts.isJsxText(n)) {
+    if (hasWords(n.text)) report("label-unlocalized", n, `text "${n.text.trim().slice(0, 40)}"`);
+  } else if (ts.isJsxExpression(n) && n.expression && (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))) {
+    for (const lit of shownLiterals(n.expression)) {
+      report("label-unlocalized", lit, `text ${lit.getText().slice(0, 40)}`);
+    }
+  } else if (ts.isJsxAttribute(n) && LABELLED.has(n.name.getText()) && n.initializer) {
+    const init = n.initializer;
+    const lits = ts.isStringLiteral(init) ? (hasWords(init.text) ? [init] : [])
+      : ts.isJsxExpression(init) && init.expression ? shownLiterals(init.expression) : [];
+    for (const lit of lits) report("label-unlocalized", lit, `${n.name.getText()} ${lit.getText().slice(0, 40)}`);
+  } else if (ts.isPropertyAssignment(n) && n.name.getText() === "title") {
+    for (const lit of shownLiterals(n.initializer)) report("label-unlocalized", lit, `title ${lit.getText().slice(0, 40)}`);
+  }
+}
+
 for (const file of roots) {
   const sf = program.getSourceFile(file)!;
   const visit = (n: ts.Node) => {
     if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) checkControl(n);
     if (ts.isCallExpression(n)) { checkWrite(n); checkTarget(n); }
+    checkWords(n);
     ts.forEachChild(n, visit);
   };
   visit(sf);

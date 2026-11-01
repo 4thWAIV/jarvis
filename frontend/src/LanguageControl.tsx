@@ -1,20 +1,26 @@
 /**
- * Settings → Voice: the language JARVIS hears and speaks, and the Spanish
- * speech model it needs (language_setting.py, speech_models.py).
+ * Settings → Voice: the language JARVIS hears and speaks, which is also the
+ * interface's language (locale.ts), and the Spanish speech model it needs
+ * (language_setting.py, speech_models.py).
  *
  * Language: English | Español. Changing it reloads the speech model, which
  * takes a few seconds, and JARVIS confirms aloud in the new language; the
- * choice is kept by JARVIS, not in .env. Español can be chosen only once its
- * speech model is installed: "Download (124 MB)" starts that, checked against
- * the release's SHA-256, and its progress is read again every second while it
+ * choice is kept by JARVIS, not in .env or the browser. The interface
+ * changes once the server has put the language in force: from the change's
+ * answer here, or the `language` frame every open page gets; a refused
+ * change leaves it as it was. Español can be chosen only once its speech
+ * model is installed: "Download (124 MB)" starts that, checked against the
+ * release's SHA-256, and its progress is read again every second while it
  * runs (there is no push for it).
  *
+ * Each language is named in its own words in either interface language.
  * The brain's `set_language` and `install_speech_model` call the same
  * functions as these routes.
  */
 
 import { useEffect, useState } from "react";
 import { useLiveRead } from "./liveRead";
+import { formatNumber, guardedRead, language as interfaceLanguage, useLanguage, useT, type Translate } from "./locale";
 
 interface Install {
   state: "downloading" | "verifying" | "installing" | "installed" | "failed";
@@ -36,7 +42,8 @@ interface LanguageStatus {
   speech: { language: string | null; state: string; failure: string | null; models: Model[] };
 }
 
-// What each language is called on the control: in its own words.
+// What each language is called on the control: in its own words, whatever
+// the interface's language.
 const LANGUAGES = [
   { language: "en", name: "English" },
   { language: "es", name: "Español" },
@@ -45,7 +52,8 @@ const SPANISH = "es";
 const RUNNING = new Set(["downloading", "verifying", "installing"]);
 const PROGRESS_EVERY_MS = 1000;
 
-const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
+const megabytes = (t: Translate, bytes: number) =>
+  t("units.megabytes", { amount: formatNumber(Math.round(bytes / 1_000_000)) });
 
 async function readJson<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -53,20 +61,31 @@ async function readJson<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-const readStatus = () => fetch("/api/settings/language").then(readJson<LanguageStatus>);
+// What it reads is the language in force too, so the interface takes it
+// (unless a newer pushed report came first).
+const readStatus = async () => {
+  const take = guardedRead();
+  const status = await fetch("/api/settings/language").then(readJson<LanguageStatus>);
+  take(status.language);
+  return status;
+};
 
-function installWords(model: Model): string {
+function installWords(t: Translate, model: Model): string {
   const install = model.install;
-  if (model.installed) return "Installed";
+  if (model.installed) return t("language.installed");
   if (install?.state === "downloading")
-    return `Downloading, ${megabytes(install.doneBytes)} of ${megabytes(install.totalBytes)}`;
-  if (install?.state === "verifying") return "Checking the download";
-  if (install?.state === "installing") return "Installing";
-  return "Not installed";
+    return t("language.downloading", { done: megabytes(t, install.doneBytes), total: megabytes(t, install.totalBytes) });
+  if (install?.state === "verifying") return t("language.verifying");
+  if (install?.state === "installing") return t("language.installing");
+  return t("language.notInstalled");
 }
 
 export function LanguageControl() {
-  const live = useLiveRead(readStatus);
+  const t = useT();
+  const inForce = useLanguage();
+  // Read again whenever the language in force moves (another page, the
+  // brain or the spoken phrase changed it): the models' state goes with it.
+  const live = useLiveRead(readStatus, [interfaceLanguage]);
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const status = live.value;
@@ -83,11 +102,13 @@ export function LanguageControl() {
   const choose = async (language: string) => {
     setBusy(language);
     setProblem(null);
+    const take = guardedRead();
     try {
-      await fetch("/api/settings/language", {
+      const done = await fetch("/api/settings/language", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language }),
       }).then(readJson<LanguageStatus>);
+      take(done.language);
     } catch (e) {
       setProblem((e as Error).message);
     } finally {
@@ -110,38 +131,38 @@ export function LanguageControl() {
   return (
     <>
       <div className="settings-field">
-        <label htmlFor="settings-language">Language</label>
+        <label htmlFor="settings-language">{t("language.label")}</label>
         <div className="settings-input-row">
-          <select id="settings-language" value={status?.language ?? ""}
+          <select id="settings-language" data-ui-action="domain" value={status ? inForce : ""}
                   disabled={!status || busy !== null}
                   onChange={(e) => choose(e.target.value)}>
             {LANGUAGES.map((l) => (
-              <option key={l.language} value={l.language}
+              <option key={l.language} value={l.language} lang={l.language}
                       disabled={l.language === SPANISH && !spanish?.installed}>{l.name}</option>
             ))}
           </select>
         </div>
-        {busy && <p className="settings-hint">Loading the speech model; this takes a few seconds.</p>}
+        {busy && <p className="settings-hint">{t("language.loading")}</p>}
       </div>
       {spanish && (
         <div className="settings-field">
-          <label>Spanish speech model</label>
+          <label>{t("language.spanishModel")}</label>
           <div className="settings-input-row">
-            <span className="settings-model-state">{installWords(spanish)}</span>
+            <span className="settings-model-state">{installWords(t, spanish)}</span>
             {!spanish.installed && !downloading && (
-              <button className="settings-btn" onClick={download}>
-                Download ({megabytes(spanish.archiveBytes)})
+              <button className="settings-btn" data-ui-action="domain" onClick={download}>
+                {t("language.download", { size: megabytes(t, spanish.archiveBytes) })}
               </button>
             )}
           </div>
-          {failed && <p className="settings-hint read-failure">{failed}</p>}
+          {/* The server's own words, shown as they came: original detail. */}
+          {failed && <p className="settings-hint read-failure" data-original-detail="">{failed}</p>}
         </div>
       )}
-      {problem && <p className="settings-hint read-failure">{problem}</p>}
+      {problem && <p className="settings-hint read-failure" data-original-detail="">{problem}</p>}
       {!status && (
         <p className="settings-hint read-failure">
-          {live.error ? `The language could not be read (${live.error}); trying again.`
-                      : "Reading the language…"}
+          {live.error ? t("language.unreadable", { error: live.error }) : t("language.reading")}
         </p>
       )}
     </>

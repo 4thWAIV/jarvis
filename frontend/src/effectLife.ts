@@ -15,6 +15,7 @@
  */
 
 import type { CSSProperties } from "react";
+import { language } from "./locale";
 import { LAYOUT_SIGNALS } from "./transferEndpoints";
 import { layoutRevision, navigationRevision } from "./uiRegistry";
 
@@ -52,9 +53,10 @@ export function framesRunning(): number {
 // ── the one geometry invalidation ───────────────────────────────────────
 
 /** Calls `callback` whenever geometry may have moved, until the returned
- *  function is called. */
+ *  function is called. A change of the interface's language is one: the
+ *  words reflow, so every target and route is measured again. */
 export function onGeometryChange(callback: () => void): () => void {
-  const stores = [...LAYOUT_SIGNALS, layoutRevision, navigationRevision].map((s) => s.subscribe(callback));
+  const stores = [...LAYOUT_SIGNALS, layoutRevision, navigationRevision, language].map((s) => s.subscribe(callback));
   window.addEventListener("resize", callback);
   window.addEventListener("scroll", callback, { capture: true, passive: true });
   return () => {

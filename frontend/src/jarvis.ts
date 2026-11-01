@@ -20,6 +20,7 @@ import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted, micOff } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
+import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
 import { startUiClient } from "./uiClient";
 
@@ -52,6 +53,8 @@ export function startJarvis(orb: Orb): void {
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
   startSessionsSocket();
+  // The interface's language: the one in force on the server (locale.ts).
+  startLocale();
   // The brain's UI requests come to this page on the same socket.
   const uiClient = startUiClient(socket);
 

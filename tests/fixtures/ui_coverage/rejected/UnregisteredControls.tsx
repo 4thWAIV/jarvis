@@ -14,7 +14,7 @@ export function UnregisteredControls({ rows }: { rows: string[] }) {
       {/* A keyboard handler counts as much as a click. */}
       <div role="tab" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") setTab("c"); }}>C</div>
       {/* A control drawn only sometimes is still a control. */}
-      {open && <button onClick={() => setOpen(false)}>Close</button>}
+      {open && <button onClick={() => setOpen(false)}>×</button>}
       {/* A classification that was never reviewed. */}
       <button data-ui-action="navigation-ish" onClick={() => setTab("d")}>D</button>
       {/* Reading route state is fine; it is not a write. */}

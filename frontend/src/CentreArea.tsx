@@ -46,6 +46,7 @@ import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
+import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
@@ -73,10 +74,13 @@ function MainView() {
   );
 }
 
-const VIEWS: Tab[] = [
+/** A view as defined here: its words come from the catalog by its id when
+ *  the area is drawn (`tabs.main.<id>`), or are its item's own name. */
+type MainTabView = Omit<Tab, "id" | "title"> & { id: MainTab };
+
+const VIEWS: MainTabView[] = [
   {
     id: "conversation",
-    title: "Conversation",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -89,13 +93,11 @@ const VIEWS: Tab[] = [
   },
   {
     id: "folders",
-    title: "Folders",
     icon: null,
     view: () => <FoldersView />,
   },
   {
     id: "main",
-    title: "Main",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -107,44 +109,38 @@ const VIEWS: Tab[] = [
   },
 ];
 
-const THREAD_VIEW: Tab = {
+const THREAD_VIEW: MainTabView = {
   id: "thread",
-  title: "Thread",
   icon: null,
   view: () => null,
 };
 
-const DIAGNOSTICS_VIEW: Tab = {
+const DIAGNOSTICS_VIEW: MainTabView = {
   id: "diagnostics",
-  title: "Diagnostics",
   icon: null,
   view: () => <VoiceDiagnosticsView />,
 };
 
-const SUBSYSTEM_VIEW: Tab = {
+const SUBSYSTEM_VIEW: MainTabView = {
   id: "subsystem",
-  title: "Subsystem",
   icon: null,
   view: () => null,
 };
 
-const NETWORK_VIEW: Tab = {
+const NETWORK_VIEW: MainTabView = {
   id: "network",
-  title: "Network",
   icon: null,
   view: () => null,
 };
 
-const QUEUE_VIEW: Tab = {
+const QUEUE_VIEW: MainTabView = {
   id: "queue",
-  title: "Message",
   icon: null,
   view: () => null,
 };
 
-const WORKFLOW_VIEW: Tab = {
+const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
-  title: "Workflow",
   icon: null,
   view: () => null,
 };
@@ -165,21 +161,23 @@ export function CentreArea() {
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
+  const t = useT();
+  const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
-    ...VIEWS,
-    ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
+    ...VIEWS.map(titled),
+    ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? t("tabs.main.thread"),
                     view: () => <AgentThread key={thread.sessionId} sessionId={thread.sessionId}
                                              name={thread.name} /> }] : []),
-    ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
-    ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? "Subsystem",
+    ...(diagnostics ? [titled(DIAGNOSTICS_VIEW)] : []),
+    ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? t("tabs.main.subsystem"),
                        view: () => <SubsystemView key={subsystem} id={subsystem} /> }] : []),
     ...(networkOpen ? [networkOpen.kind === "server"
-      ? { ...NETWORK_VIEW, title: "Team server", view: () => <TeamServerView /> }
-      : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? "Instance",
+      ? { ...NETWORK_VIEW, title: t("tabs.main.teamServer"), view: () => <TeamServerView /> }
+      : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? t("tabs.main.network"),
           view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
     ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
                        view: () => <QueueItemView thread={queueOpen} /> }] : []),
-    ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
+    ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
@@ -194,7 +192,7 @@ export function CentreArea() {
   const kept = view.id !== "main";
   return (
     <>
-      <TabRow tabs={views} selected={view.id} binding={(t) => bind("main.tab.select", { tab: t.id as MainTab })}
+      <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
               className="centre-tabs" words />
       <TeamSignInReminder />
       {kept && (

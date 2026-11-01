@@ -3,7 +3,9 @@ TypeScript's own parser and type checker (tests/ui_coverage_rules.mts), not
 by text matching: every control that reacts to a person runs a registered
 command or carries a reviewed classification, route state is written only
 by its owner (a cast does not get round it), and every target and part a
-component registers is one the contract declares, keyed by its record.
+component registers is one the contract declares, keyed by its record,
+and the words a component shows come from the catalog (frontend/src/locale.ts),
+not written in English.
 
 The negative fixtures (tests/fixtures/ui_coverage/rejected) are what CI must
 reject; the accepted one is a view written the way the rules ask. The page
@@ -24,21 +26,60 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # (file, rule) -> how many violations it still has, until its owner's
 # coverage lands; each count must be exact so a fix shrinks it here too.
 # The right panel's files are coverage-right's, the centre views'
-# coverage-main's.
+# coverage-main's. `label-unlocalized` counts are the localization
+# workers' (execution.md, LOCALIZATION OWNERSHIP): each reaches zero.
 PENDING = {
+    ("AgentThread.tsx", "label-unlocalized"): 5,
     ("AgentsControl.tsx", "control-unclassified"): 1,
+    ("AgentsControl.tsx", "label-unlocalized"): 7,
+    ("BrainUsage.tsx", "label-unlocalized"): 3,
+    ("BrainsSection.tsx", "label-unlocalized"): 12,
     ("CaptureBox.tsx", "control-unclassified"): 4,
+    ("CaptureBox.tsx", "label-unlocalized"): 12,
+    ("CaptureChip.tsx", "label-unlocalized"): 1,
     ("ConversationView.tsx", "control-unclassified"): 3,
+    ("ConversationView.tsx", "label-unlocalized"): 13,
     ("FolderDetail.tsx", "control-unclassified"): 14,
+    ("FolderDetail.tsx", "label-unlocalized"): 82,
+    ("FoldersPanel.tsx", "label-unlocalized"): 12,
     ("FoldersView.tsx", "control-unclassified"): 7,
+    ("FoldersView.tsx", "label-unlocalized"): 52,
     ("MessageComposer.tsx", "control-unclassified"): 10,
+    ("MessageComposer.tsx", "label-unlocalized"): 24,
+    ("MessageReview.tsx", "label-unlocalized"): 9,
+    ("MicControl.tsx", "label-unlocalized"): 2,
+    ("MicMeter.tsx", "label-unlocalized"): 1,
+    ("MicOffButton.tsx", "label-unlocalized"): 2,
+    ("MuteButton.tsx", "label-unlocalized"): 1,
+    ("NetworkPanel.tsx", "label-unlocalized"): 7,
+    ("NetworkTile.tsx", "label-unlocalized"): 7,
+    ("NodeView.tsx", "label-unlocalized"): 11,
+    ("OrbControl.tsx", "label-unlocalized"): 1,
     ("QueueFiles.tsx", "control-unclassified"): 3,
+    ("QueueFiles.tsx", "label-unlocalized"): 5,
     ("QueueItemView.tsx", "control-unclassified"): 19,
+    ("QueueItemView.tsx", "label-unlocalized"): 53,
     ("QueuePanel.tsx", "control-unclassified"): 2,
+    ("QueuePanel.tsx", "label-unlocalized"): 27,
+    ("Settings.tsx", "label-unlocalized"): 38,
+    ("StatusControl.tsx", "label-unlocalized"): 2,
+    ("SubsystemList.tsx", "label-unlocalized"): 2,
+    ("SubsystemView.tsx", "label-unlocalized"): 11,
+    ("TeamSection.tsx", "label-unlocalized"): 43,
+    ("TeamServerTile.tsx", "label-unlocalized"): 10,
+    ("TeamServerView.tsx", "label-unlocalized"): 10,
+    ("TeamSignInReminder.tsx", "label-unlocalized"): 2,
     ("VoiceDiagnosticsView.tsx", "control-unclassified"): 3,
+    ("VoiceDiagnosticsView.tsx", "label-unlocalized"): 42,
+    ("VoiceSummary.tsx", "label-unlocalized"): 7,
     ("VoiceVisuals.tsx", "control-unclassified"): 1,
+    ("VoiceVisuals.tsx", "label-unlocalized"): 6,
+    ("WeeklyUsage.tsx", "label-unlocalized"): 4,
     ("WorkflowDetail.tsx", "control-unclassified"): 5,
+    ("WorkflowDetail.tsx", "label-unlocalized"): 46,
+    ("WorkflowVisuals.tsx", "label-unlocalized"): 2,
     ("WorkflowsView.tsx", "control-unclassified"): 1,
+    ("WorkflowsView.tsx", "label-unlocalized"): 11,
 }
 
 
@@ -68,6 +109,14 @@ def test_the_negative_fixtures_are_rejected_rule_by_rule():
         ("UndeclaredTargets.tsx", 14, "index-key"),
         ("UndeclaredTargets.tsx", 18, "undeclared-part"),
         ("UndeclaredTargets.tsx", 19, "undeclared-part"),
+        # Words written in English: a title property, JSX text, a labelled
+        # attribute, a branch of a conditional, a template and a fallback.
+        ("UnlocalizedLabels.tsx", 9, "label-unlocalized"),
+        ("UnlocalizedLabels.tsx", 12, "label-unlocalized"),
+        ("UnlocalizedLabels.tsx", 13, "label-unlocalized"),
+        ("UnlocalizedLabels.tsx", 14, "label-unlocalized"),
+        ("UnlocalizedLabels.tsx", 15, "label-unlocalized"),
+        ("UnlocalizedLabels.tsx", 16, "label-unlocalized"),
         # A tab of its own, a keyboard handler, a conditional control, and a
         # classification nobody reviewed.
         ("UnregisteredControls.tsx", 13, "control-unclassified"),

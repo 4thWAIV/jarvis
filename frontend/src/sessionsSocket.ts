@@ -19,12 +19,15 @@
  *   - "messages" (and every (re)connect): the queue reads
  *     /api/team/messages again (queue.ts);
  *   - "human_transfer": a person's message went or came; its ray is drawn
- *     once (transfers.ts), and a replayed one only reconciles.
+ *     once (transfers.ts), and a replayed one only reconciles;
+ *   - "language" (and the language on every (re)connect's snapshot): the
+ *     language in force changed; the interface follows it (locale.ts).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
 import { foldersChanged } from "./folders";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
+import { reported as languageReported } from "./locale";
 import { networkChanged } from "./network";
 import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
@@ -43,6 +46,7 @@ export function startSessionsSocket(): void {
   socket.onMessage((msg) => {
     countSessionMessage();
     const snapshot = msg.type === "snapshot";
+    if (msg.type === "language" || (snapshot && msg.language !== undefined)) languageReported(msg.language);
     if (msg.type === "agents" || snapshot) bump(agentsChanged);
     if (msg.type === "voice" || snapshot) bump(voiceChanged);
     if (msg.type === "subsystems" || snapshot) bump(subsystemsChanged);

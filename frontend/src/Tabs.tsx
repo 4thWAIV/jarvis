@@ -6,13 +6,20 @@
  * handler the brain's request runs; the row never selects a tab itself, so
  * what it shows selected is the shared route state it is given. Selecting
  * a tab, by pointer or key, leaves keyboard focus where the person put it.
+ *
+ * A tab's `title` is the words shown, in the interface's language; its
+ * identity is its registered `id`, carried as `data-ui-tab` for anything
+ * that has to find the tab on the page (transferEndpoints.ts), never its
+ * words.
  */
 
 import type { ReactNode } from "react";
 import { bindingProps, type Binding } from "./uiNavigation";
 
 export interface Tab {
+  /** The registered tab id (uiContract.ts): never translated. */
   id: string;
+  /** What the tab says, in the interface's language. */
   title: string;
   icon: ReactNode;
   view: () => ReactNode;
@@ -38,7 +45,7 @@ export function TabRow({ tabs, selected, className, lit, alert, words, labelled,
   return (
     <div className={className} role="tablist">
       {tabs.filter((t) => !t.hidden).map((t) => (
-        <button key={t.id} type="button" role="tab" title={t.title} aria-label={t.title}
+        <button key={t.id} type="button" role="tab" title={t.title} aria-label={t.title} data-ui-tab={t.id}
                 aria-selected={t.id === selected}
                 className={`control-button right-tab${words ? " word-tab" : ""}${
                   labelled ? " labelled-tab" : ""}${

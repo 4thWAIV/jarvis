@@ -2965,7 +2965,8 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 speech_models.mount(app)
-language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")))
+language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
+                       publish=_send_to_session_clients)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
@@ -10575,8 +10576,11 @@ async def ws_sessions(websocket: WebSocket):
         # Same filter as /api/sessions, and for the same reason: the opening
         # snapshot is what the page draws before its first reconcile, so a
         # run leaking in here is a run on screen.
+        # The language in force rides on it, so a page that (re)connects
+        # shows its interface in that language (language_setting.py).
         await websocket.send_json({
             "type": "snapshot",
+            "language": language_setting.state_frame()["language"],
             "sessions": [session_watch.session_to_dict(s)
                          for s in _snapshot_or_empty().sessions]})
         # People's messages drawn in the last few seconds, marked replay: a

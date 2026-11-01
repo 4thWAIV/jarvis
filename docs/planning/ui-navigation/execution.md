@@ -35,7 +35,8 @@ navigation, and no command or UI-control infrastructure on the base.
 | `pipeline-animation` | finished | `ui-nav-pipeline-animation` c198962, merged 9cdfe1e |
 | `brain-transport` | finished | `ui-nav-brain-transport` 043b35a, merged afdb36c; its pending items 1–3 applied in the integration commit |
 | `component-coverage` | finished | `ui-nav-coverage-right` 45f7fd9, `ui-nav-coverage-main` b51ba75, `ui-nav-coverage-left-settings` e0eed32; merged (see "Coverage integration") |
-| `integration-review` | started: coverage merged and shared changes applied (see "Coverage integration"); blockers open: corridor centring, leaf sibling routing; localization and the independent review still to run | |
+| `integration-review` | started: coverage merged and shared changes applied (see "Coverage integration"); corridor centring answered and applied (76eb517); blocker open: leaf sibling routing; the independent review still to run | |
+| `localization` | started: origin/main merged (2b0cfb3), foundation built (see "Localization"); per-region localization by loc-right, loc-main, loc-left-settings next (see "LOCALIZATION OWNERSHIP") | |
 | `local-validation-ready`, `human-validation` | later | |
 
 ## The contract (what workers build against)
@@ -386,11 +387,7 @@ wheel build, and `tests/ui_validate_cases.mts` beyond what
 8. The live brain-tool demonstration needs an authorised isolated provider
    path (the isolated home has no Claude login by design).
 
-9. BLOCKER (raised on the monitor, item `layout-corridor-centring`): the
-   10 px corridor on the right of every centre view puts the Conversation
-   box off centre (gaps 12 vs 22); `test_voice_page_layout` pins it
-   centred. Recommendation: keep the corridor on the rail side and measure
-   centring on the view, not its padded box. Waiting for Tim.
+9. Closed (76eb517): `layout-corridor-centring`. Tim's answer (2026-11-01), approved as written: make the spacing changes the pipeline needs, the Conversation box smaller if need be, to look like the UI sample's "symmetric" option, with bevelled corners. Applied: the corridor is kept on both sides of every centre view, so the Conversation box is centred; every right-angled turn of the pipeline is a 45-degree bevel of 6 px (`uiSignal.ts` `bevelled()`, used by `corner()`, the socket edges and every resolved route); the corridor widens by the bevel to 16 px per side, still one variable (`--ui-corridor`, equal to `CORRIDOR_PX` = inner margin 6 + clearance 4 + bevel 6). Route length and points along a route are true lengths, so a pulse keeps its speed on a bevel. `test_voice_page_layout` passes as written; the pipeline page test accepts a bevel between two map lines and nothing else off the registered map. Reported `blocker_cleared --key layout-corridor-centring`. The fixed map's joins between two separate edges (a rail's top under the top pipeline) are junctions of two registered edges and are drawn square; every turn a cue takes is bevelled.
 10. Open question from navigation: if the brain switches the centre away
     from Conversation while he is typing there, the box loses focus because
     the hidden view is made inert (true before this work; the plan does not
@@ -523,10 +520,90 @@ page` (refresh, screen, speech_input), the wheel build.
 
 ## Next action
 
-Localization phase (merge origin/main's Spanish PRs, then catalogs and
-per-region localization), then the independent review. Tim to decide the
-two open blockers: corridor centring and leaf sibling routing.
+Per-region localization by loc-right, loc-main and loc-left-settings (see "LOCALIZATION OWNERSHIP"), then the localization integration, then the independent review. Tim to decide the open blocker `leaf-sibling-routing`.
 
 ## Scope update: Spanish interface (2026-11-01)
 
 Tim's instruction (JARVIS message 733, capture 4): when the language is switched to Spanish, the words in the user interface change to Spanish too. Plan: `docs/planning/ui-navigation/localization.md` (copied from the source checkout). Folded into this workflow as phase `localization`, after the coverage merge and before the independent review: first merge origin/main (the merged Spanish PRs 33-36: `jarvis/language_setting.py`, `LanguageControl.tsx`, `spoken_words.py`) into this branch, then the shared catalogs, locale store and language-state sync, then per-region localization by the same ownership split as coverage, then integration. The review and the local candidate include the localization acceptance list and Spanish screenshots. Estimate added: about 15 to 25 agent-hours on top of the plan's 82 to 132.
+
+## Localization
+
+### origin/main merged (2b0cfb3, 746a0cd)
+
+`git fetch origin` then `git merge --no-ff origin/main` (e8b0496: the Spanish PRs 33-36, self-update 32/38, the workflow reporter's address 39, the shared orb renderer 41). Conflicts, each resolved keeping both sides:
+
+- `frontend/src/Settings.tsx`: imports both `MenuControl` and `LanguageControl`; `LanguageControl` stays at the end of the Voice section, inside this branch's fragment.
+- `jarvis/server.py`: imports `server_address`, `spoken_words` and `ui_control`.
+- `CLAUDE.md` key files and `tests/test_header_lines.py` allowances: both sides' entries.
+
+Persona hashes, additive: the merged `jarvis_home/CLAUDE.md` (`de87215…`) and this branch's three earlier ones (`ac5d51b…` 064f1b3, `2812d44…` 043b35a, `165255a…` 2a9f718), which the history test asks for, are listed in `data_paths.KNOWN_TEMPLATE_HASHES`.
+
+After the merge: contract `--check` exit 0; `npx tsc --noEmit` pass; `npx vite build` (scratch outDir) pass; targeted pytest (the 19 coverage-integration files plus `test_language_setting`, `test_spanish_speaking`, `test_speech_models`, `test_spoken_words`, `test_data_paths`, `test_system_prompt_header`, `test_brain`): 797 passed, 2 skipped, 1 failed, the coverage ratchet on `LanguageControl.tsx`'s two unclassified controls (fixed below).
+
+### The foundation (plan items 2, 3, 5, 6, 7 in part, 9 in part, 10)
+
+How a component gets a string:
+
+```tsx
+import { useT } from "./locale";
+
+export function Example({ n, name }: { n: number; name: string }) {
+  const t = useT();                                  // re-renders on a language change; nothing remounts
+  return <p title={t("right.example.title")}>
+    {t("right.example.count", { count: n, name })}  {/* typed: the key must exist, the values it names must be given */}
+  </p>;
+}
+```
+
+with the words in the region's part of the catalog:
+
+```ts
+// messages/right.en.ts
+export const rightEn = {
+  "right.example.title": "Example",
+  "right.example.count": { one: "{name} has {count} item", other: "{name} has {count} items" },
+} as const;
+// messages/right.es.ts (typed by rightEn: a missing key is a compile error)
+export const rightEs: CatalogOf<typeof rightEn> = {
+  "right.example.title": "Ejemplo",
+  "right.example.count": { one: "{name} tiene {count} elemento", other: "{name} tiene {count} elementos" },
+};
+```
+
+Outside a component, `t(...)` gives the words of the language in force at that moment. Numbers, percentages and dates: `formatNumber`, `formatPercent`, `formatDateTime` (en-US, es-419); a number given to `t` is formatted that way. Ages: `timeFormat.ts`, now localized.
+
+Files:
+
+- `frontend/src/locale.ts`: the one locale store (`language`, set only by `reported` and `guardedRead`), `t`, `translate`, `useT`, `useLanguage`, `startLocale`, the format helpers, `missingTranslations()` (the missing-translation diagnostic: an unknown key or a missing value, listed once each and warned in the console while developing), and `document.documentElement.lang` kept to the language.
+- `frontend/src/messages/en.ts`, `es.ts`: the catalogs, each composed of four parts: `shell.*` (the integrator's: tabs, menu, language control, units, ages) and `right.*`, `main.*`, `left.*`, one per localization worker, so the three never edit the same file.
+- `jarvis/language_setting.py`: `change` publishes `state_frame()` (`{"type": "language", "language": ...}`) through the publisher `mount` is given, after the language is saved and in force; a refused or failed change publishes nothing. `jarvis/server.py` mounts it with `_send_to_session_clients` and puts `language` on `/ws/sessions`' opening snapshot.
+- `frontend/src/sessionsSocket.ts` takes the frame and the snapshot's language; `startLocale` (called from `jarvis.ts`) reads `/api/settings/language` at start, after every reconnect, retried until it answers; `LanguageControl.tsx`'s own read and its change's answer go through the same guard. A read answered after a pushed frame is dropped.
+- `frontend/src/Tabs.tsx`: every tab carries its registered id as `data-ui-tab`; `transferEndpoints.ts` finds the Agents and Queue tabs by it, not by `aria-label`. No source finds an element by its words (`tests/test_ui_locale.py`).
+- `frontend/src/effectLife.ts`: a language change is a geometry change, so targets and routes are measured again after the words reflow.
+- Worked example, localized: `RightPanel.tsx` and `CentreArea.tsx` tabs (`tabs.right.<id>`, `tabs.main.<id>`; an item's own name is kept), `MenuControl.tsx`, `LanguageControl.tsx` (each language keeps its own name; the server's refusal is shown as it came, marked `data-original-detail`), `timeFormat.ts`.
+- Enforcement: `tests/ui_coverage_rules.mts` rule `label-unlocalized` (JSX text, strings in JSX expressions, `aria-label`, `title`, `placeholder`, `alt`, `label`, and `title:` properties in `.tsx`; reviewed names kept as they are: `KEPT_AS_IS`). Its per-file counts are in `PENDING` (a ratchet: 585 at the start, in 47 files); each worker takes its files to zero.
+- Tests: `tests/ui_locale_cases.mts` with `tests/test_ui_locale.py` (key, kind and placeholder parity part by part, nothing left in English but `units.megabytes`, plurals, formatting, stale-read guard, diagnostic, no browser storage, no lookup by words); `tests/test_language_setting.py` (published once on a change, by the route and the brain's path; nothing on a refusal or a failed load; the snapshot carries it); `tests/test_voice_page_language.py` (page: Settings switch both ways without reload, Settings still open and the same tab selected; a refused change stays English; a frame from elsewhere; the snapshot's language beats a late read); the accepted and rejected coverage fixtures.
+
+Not in the foundation, and whose (below): every other component's words, the backend's English that reaches the page (item 7), the status words `jarvis.ts` writes (`listening...`, `thinking...`), the brain discovery labels in `useUiTarget` (they may stay English; command and target identities never change), and the acceptance run (screenshots in both languages, widths, text scaling).
+
+### LOCALIZATION OWNERSHIP
+
+Same regions as coverage. Each worker branches from `feature/ui-navigation-pipeline` at the foundation commit, owns the files listed, adds its words only to its own catalog part (`messages/<region>.en.ts` and `.es.ts`, keys starting `<region>.`), and takes its files' `label-unlocalized` counts in `tests/test_ui_coverage_rules.py` `PENDING` to zero (the line for each of its files only). A word shared by two regions goes to the integrator for `shell.*`. Anything not listed stays the integrator's; ask rather than edit.
+
+| Worker | Components (`frontend/src/`) | Modules with shown words | Backend English reaching its views (plan item 7) | Page tests |
+|---|---|---|---|---|
+| `loc-right` | `FoldersPanel.tsx`, `AgentsControl.tsx`, `AgentOrb.tsx`, `QueuePanel.tsx`, `QueueIcons.tsx`, `WorkflowsView.tsx`, `NetworkPanel.tsx`, `NetworkTile.tsx`, `SubsystemList.tsx`, `VoiceSummary.tsx` | `network.ts` (readiness words, which the left column's Team Server tile shows too), `subsystems.ts`, `queueStore.ts`, `workflows.ts`, `agentName.ts` | `subsystem_diagnostics.py` row words, `workflow_store` status words as shown, the needs board's | `test_voice_page_right.py`, `_network`, `_queue` (panel), `_workflows` (list), `_subsystems`, `_subagents`, `test_agents_list_fits.py`, in Spanish too |
+| `loc-main` | `ConversationView.tsx`, `CaptureBox.tsx`, `CaptureChip.tsx`, `SourcesChip.tsx`, `CaptionBox.tsx`, `FoldersView.tsx`, `FolderDetail.tsx`, `FolderMarks.tsx`, `WorkflowDetail.tsx`, `WorkflowVisuals.tsx`, `AgentThread.tsx`, `VoiceDiagnosticsView.tsx`, `VoiceVisuals.tsx`, `SubsystemView.tsx`, `NodeView.tsx`, `TeamServerView.tsx`, `QueueItemView.tsx`, `QueueFiles.tsx`, `MessageComposer.tsx`, `MessageReview.tsx`, `UiPipelineLayer.tsx` (the attention status line) | `captions.ts`, `capture.ts`, `conversation.ts`, `folders.ts`, `queue.ts`, `voiceAnalysis.ts`, `voiceHealth.ts` (notices and their headings), `transfers.ts`, `uiAttention.ts` (the pipeline-attention descriptions) | `messaging_api.Refused.shown`, `folder_contract` refusals, `voice_diagnostics` incident words as shown | `test_voice_page_conversation.py`, `_captions`, `_centre_nav`, `_folders`, `_workflows` (detail), `_diagnostics`, `_voice_health`, `_queue` (item), `_human_rays`, `_pipeline`, in Spanish too |
+| `loc-left-settings` | `OrbControl.tsx`, `StatusControl.tsx`, `MicControl.tsx`, `MicMeter.tsx`, `MuteButton.tsx`, `MicOffButton.tsx`, `TeamServerTile.tsx`, `BrainUsage.tsx`, `WeeklyUsage.tsx`, `Settings.tsx`, `BrainsSection.tsx`, `TeamSection.tsx`, `TeamSignInReminder.tsx`, `Footer.tsx`, `SpokenWords.tsx`, `StatusDot.tsx` | `voiceInput.ts`, `mic.ts`, `teamSignIn.ts`, `brains.ts`, `providers.ts`, `voiceStatus.ts`, and the two status labels in `jarvis.ts` (`updateStatus` only: store the state, translate where shown) | `language_setting` and `speech_models` refusals, `team_api` and `brains_config` errors, the update status words (`update.py`) | `test_voice_page_left_settings.py`, `_settings`, `_mute`, `_team`, `_team_reminder`, `_layout`, `_language`, in Spanish too |
+
+Every worker: words whole, values by name, counts through plural entries, numbers and dates through the format helpers; names, paths, people's and agents' words and product names left as they are; no element found by its words; a backend message the page owns becomes a code plus values translated by the catalog, with any raw external detail kept and marked as original detail. Report on the monitor under phase `localization` (task item `localization-<worker>`).
+
+Gates the integration adds: every `label-unlocalized` count zero; the acceptance list in `localization.md` run on the local candidate, with Spanish and English screenshots and the switch steps in the validation report.
+
+### Localization test evidence (foundation)
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+- `pytest tests/test_ui_locale.py tests/test_ui_coverage_rules.py tests/test_ui_pipeline.py tests/test_ui_navigation.py tests/test_language_setting.py`: pass (see the commit's run below for the full targeted set).
+- `pytest -m page tests/test_voice_page_language.py tests/test_voice_page_settings.py`: 16 passed.
+- Corridor change, `pytest -m page` on every page file but refresh, screen and speech_input: 186 passed.
+
