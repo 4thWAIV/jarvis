@@ -130,6 +130,10 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",
+    # Self-update (self_update.py): the Updates section's check, and its
+    # Update and restart as an ACTING_TOOL.
+    "mcp__jarvis__update_status",
+    "mcp__jarvis__update_jarvis",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had
     # no answer at all. Both were verified inside this exact flag set

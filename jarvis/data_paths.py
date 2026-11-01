@@ -174,7 +174,10 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "df337fd9c8313b23ea2b1d12fc521f39274338ca5debb55561223417f9dbeb52",  # work packages: open, run, send results back
     "7151dd997fe89a1cfbc2aa2eb04a8bf7277e856e6da7744f42dcaaeeddc96004",  # attach_message_files: files onto a saved draft
     "9cf23b8d034d94dc4494f5f6d3a445c1fdc198f19798a87c89fd001bcd45861a",  # Spanish clear command: empezar de cero, then sí
+    "c13810ab6c2f8d40d4203738e54a5506ddbd2d5bea81663c79966a220c9623ac",  # update_status, update_jarvis
+    "50c30b27676ea842b717d8e82d24b95db95f7eb073d8baf18a18a51b9f33c79e",  # Spanish clear command with update_status, update_jarvis
     "d4ed710d0af5dd10e7c7b66088a7f84b40a61763c5f588edff6e661f2a1a60c7",  # Spanish: señor, results in his language, memory in both
+    "3f08a66e67af3f4776fd76b8b03a2d4980de6f217c6c1bbf5d64135ecbd8b93b",  # Spanish speaking and clear command with self-update
     "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
     "799e9124a7841f4f0153ff04eb5f5b18b3316fcc0379b314becd246898c01346",  # Spanish: señora under Ma'am
 })

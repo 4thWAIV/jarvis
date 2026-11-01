@@ -167,6 +167,22 @@ def _never_touch_the_real_keychain(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_update_or_restart_the_real_checkout(monkeypatch, tmp_path):
+    """No test may fetch, merge or install in the developer's checkout, nor
+    re-exec the test run as a JARVIS server.
+
+    self_update reads the checkout from `repo_root()`; under test that is a
+    folder that does not exist, so every check says "not on GitHub" unless a
+    test points it at a temporary repository of its own. The restart's
+    `os.execv` is patched on the `os` module itself, so the
+    `importlib.reload(server)` several fixtures do cannot hand it back.
+    """
+    from jarvis import self_update
+    monkeypatch.setattr(self_update, "repo_root", lambda: tmp_path / "no-checkout")
+    monkeypatch.setattr(os, "execv", lambda *a: None)
+
+
+@pytest.fixture(autouse=True)
 def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     """No test may write into the user's real `data/`.
 

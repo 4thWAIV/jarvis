@@ -3,7 +3,8 @@ menu; the Fish Audio key saved (with the note to restart), and tested; the
 voice id saved; name and honorific loaded and saved; the status dots green
 on a good reading and not green on a failed one; and, with no Fish key set,
 the first-time setup that opens by itself and walks through the key, then
-the name. Then the Brains section, the menu, and both brains in Diagnostics.
+the name. Then the Brains section, the menu, the Updates section the menu's
+Check for updates opens, and both brains in Diagnostics.
 
 The first five were written against the dialog as it was before it moved
 into React, and the React view is held to the same behaviour. The one change
@@ -37,6 +38,16 @@ def _card(name, title, added, default=False, active=False, signed_in=True, check
     return card
 
 
+def _update_status(behind=2, blockers=()):
+    """GET /api/update as self_update.Status.to_json answers it."""
+    commits = [{"sha": "c" * 40, "subject": "Say the weather <b>sooner</b>"},
+               {"sha": "d" * 40, "subject": "Fix the orb"}][:behind]
+    return {"source": "github", "reason": "", "error": "", "branch": "main",
+            "commit": "a" * 40, "latest": "b" * 40, "behind": behind, "commits": commits,
+            "ci": "passed" if behind else "", "blockers": list(blockers),
+            "up_to_date": behind == 0, "can_update": behind > 0 and not blockers}
+
+
 CLAUDE_CHECKS = [{"name": "claude_cli", "status": "ok", "message": "claude 2.1.306 on PATH.", "remedy": None}]
 
 
@@ -49,6 +60,7 @@ class _Server:
         self.prefs = {"user_name": "Tim", "honorific": "sir"}
         self.codex_added, self.codex_signed_in = codex_added, codex_signed_in
         self.default = "anthropic"
+        self.update = _update_status()
         self.language, self.spanish_installed = "en", False
 
     def language_status(self):
@@ -133,6 +145,19 @@ class _Server:
 
         await page.route("**/api/settings/language", language)
         await page.route("**/api/speech/models/es/install", install)
+
+        async def update(route):
+            if route.request.method == "POST":
+                self.posts.append(("update", {}))
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "status": self.update, "ok": True, "updated": True, "refused": "",
+                    "failed": "", "from_commit": "a" * 40, "to_commit": "b" * 40,
+                    "steps": [], "notes": [], "restart": True}))
+                return
+            await route.fulfill(status=200, content_type="application/json",
+                                body=json.dumps(self.update))
+
+        await page.route("**/api/update", update)
         await page.route("**/api/brains**", brains)
         await page.route("**/api/settings/status", status)
         await page.route("**/api/settings/preferences", prefs)
@@ -285,7 +310,7 @@ async def test_the_menu_offers_settings_and_restart_and_no_fix_yourself(page_url
         browser, page = await _open(p, page_url, server)
         await page.click("#btn-menu")
         items = await page.evaluate("[...document.querySelectorAll('#menu-dropdown button')].map(b => b.textContent)")
-        assert items == ["Settings", "Restart Server"], items
+        assert items == ["Settings", "Check for updates", "Restart Server"], items
         await page.mouse.click(700, 500)                  # anywhere else closes it
         assert await page.locator("#menu-dropdown").count() == 0
         await browser.close()
@@ -341,4 +366,44 @@ async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_url):
         await page.wait_for_timeout(1500)
         assert await page.locator(".weekly-usage").count() == 1
         assert await page.locator(".weekly-role").count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_check_for_updates_lists_the_new_commits_and_updates_and_restarts(page_url):
+    server = _Server()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server)
+        await page.click("#btn-menu")
+        await page.get_by_role("button", name="Check for updates").click()
+        section = page.locator("#settings-updates")
+        await async_api.expect(section).to_contain_text("2 new commits on main; CI passed.")
+        # A commit subject is shown as text, never as markup.
+        await async_api.expect(section.locator(".update-commits li").first).to_have_text(
+            "ccccccc Say the weather <b>sooner</b>")
+        assert await section.locator(".update-commits b").count() == 0
+        await section.get_by_role("button", name="Update and restart").click()
+        await async_api.expect(section).to_contain_text("Updated to bbbbbbb; restarting.")
+        assert ("update", {}) in server.posts
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_updates_says_up_to_date_and_what_stops_an_update(page_url):
+    server = _Server()
+    server.update = _update_status(behind=0)
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, server)
+        await page.click("#btn-menu")
+        await page.get_by_role("button", name="Check for updates").click()
+        section = page.locator("#settings-updates")
+        await async_api.expect(section).to_contain_text("Up to date at aaaaaaa.")
+        assert await section.get_by_role("button", name="Update and restart").count() == 0
+        server.update = _update_status(blockers=[{
+            "code": "modified", "text": "Tracked files have been changed here.",
+            "detail": ["jarvis/server.py"]}])
+        await section.get_by_role("button", name="Check again").click()
+        await async_api.expect(section).to_contain_text(
+            "Tracked files have been changed here. jarvis/server.py")
+        assert await section.get_by_role("button", name="Update and restart").count() == 0
         await browser.close()
