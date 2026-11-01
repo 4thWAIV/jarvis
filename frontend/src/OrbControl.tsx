@@ -16,7 +16,7 @@ export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
   useEffect(() => {
     // Transparent, so a ray drawn behind it shows through, as if it came from
     // inside the orb. The page behind is the same near-black.
-    const orb = createOrb(canvasRef.current!, { transparent: true, core: true });
+    const orb = createOrb(canvasRef.current!, { transparent: true, core: true, ownRenderer: true });
     mainOrb.current = orb;
     onReady(orb);
     return () => {
