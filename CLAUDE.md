@@ -666,6 +666,29 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   folder in full, and the right panel's Folders tab
 - `self_update.py` / `update.py` — Updating a checkout from GitHub, and the
   `python -m jarvis.update` command (see "Self-update")
+- `ui_contract/` — The page's navigation and white attention contract:
+  `protocol.json` and one file per family in `families/`, merged and checked
+  by `ui_contract.load`; `frontend/src/uiContract.ts` is generated from it
+  (`scripts/generate_ui_contract.py`), and `tool_specs()` gives the brain's
+  `ui_map`, `ui_navigate`, `ui_indicate`, `ui_journey` and `ui_clear`
+- `ui_control.py` / `frontend/src/uiClient.ts` — Carrying the brain's UI
+  requests to the one page of the turn and its answer back: binding, epochs,
+  one deadline, success only at arrival; stopping JARVIS withdraws them
+- `frontend/src/uiRegistry.ts` — The one registry of navigation commands
+  and mounted targets; `dispatch` (actor always given) and `byHand`
+- `frontend/src/uiNavigation.ts` / `uiNavigationReveal.ts` — The route
+  state (right tab, centre view, detail slots) and bringing one exact
+  presentation into view before anything points at it
+- `frontend/src/uiPipeline.ts` / `uiAttention.ts` / `UiPipelineLayer.tsx` —
+  The pipeline graph and routes, one cue's lifecycle, and the map and cues
+  drawn
+- `frontend/src/uiSignal.ts` — The one schedule and path maths for white
+  attention, from the contract's timing
+- `frontend/src/effectLife.ts` — The one frame scheduler, geometry
+  invalidation and effect lifecycle for everything drawn from the orb (rays
+  and attention alike)
+- `frontend/src/orbSource.ts` — Who holds the orb's overlay (`mainOrb`):
+  a real transmission always, attention waits then answers busy
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live

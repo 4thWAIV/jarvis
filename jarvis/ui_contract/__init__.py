@@ -429,10 +429,32 @@ def _target_schema(c: Contract) -> dict:
     }
 
 
+def _navigate_properties(c: Contract) -> dict:
+    """What one navigation names: ui_navigate's and a journey step's."""
+    return {"command": {"type": "string", "enum": sorted(c.commands)},
+            "args": {"type": "object"}}
+
+
+def _indicate_properties(c: Contract) -> dict:
+    """What one indication names: ui_indicate's and a journey step's."""
+    p = c.protocol
+    return {
+        "target": _target_schema(c),
+        "reveal": {"type": "string", "enum": p["revealModes"]},
+        "style": {"type": "string", "enum": p["endpointStyles"]},
+        "holdMs": {"type": "integer", "minimum": 0, "maximum": p["timing"]["maxExtraHoldMs"],
+                   "description": "Extra hold for a longer explanation; travel time never changes."},
+        "label": {"type": "string", "maxLength": p["limits"]["labelMax"]},
+    }
+
+
 def tool_specs() -> list[dict]:
-    """The MCP specs of ui_map, ui_navigate, ui_indicate and ui_clear."""
+    """The MCP specs of ui_map, ui_navigate, ui_indicate, ui_journey and
+    ui_clear."""
     c = load()
     p = c.protocol
+    client = {"type": "string", "maxLength": p["limits"]["idMax"],
+              "description": "A page's client ID, only when no page is bound to this turn."}
     return [
         {
             "name": "ui_map",
@@ -446,8 +468,9 @@ def tool_specs() -> list[dict]:
                 "properties": {
                     "region": {"type": "string", "enum": p["regions"]},
                     "view": {"type": "string", "enum": sorted(c.views)},
-                    "client": {"type": "string", "maxLength": p["limits"]["idMax"],
-                               "description": "A page's client ID, only when no page is bound to this turn."},
+                    "cursor": {"type": "integer", "minimum": 0,
+                               "description": "Where the next page of the map starts, from the previous answer."},
+                    "client": client,
                 },
             },
         },
@@ -459,11 +482,7 @@ def tool_specs() -> list[dict]:
                 "Returns what the page actually did and its declared side effects."),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "command": {"type": "string", "enum": sorted(c.commands)},
-                    "args": {"type": "object"},
-                    "client": {"type": "string", "maxLength": p["limits"]["idMax"]},
-                },
+                "properties": {**_navigate_properties(c), "client": client},
                 "required": ["command"],
             },
         },
@@ -477,16 +496,33 @@ def tool_specs() -> list[dict]:
                 "or marks anything read by itself."),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "target": _target_schema(c),
-                    "reveal": {"type": "string", "enum": p["revealModes"]},
-                    "style": {"type": "string", "enum": p["endpointStyles"]},
-                    "holdMs": {"type": "integer", "minimum": 0, "maximum": p["timing"]["maxExtraHoldMs"],
-                               "description": "Extra hold for a longer explanation; travel time never changes."},
-                    "label": {"type": "string", "maxLength": p["limits"]["labelMax"]},
-                    "client": {"type": "string", "maxLength": p["limits"]["idMax"]},
-                },
+                "properties": {**_indicate_properties(c), "client": client},
                 "required": ["target"],
+            },
+        },
+        {
+            "name": "ui_journey",
+            "description": (
+                "Show Tim several things in order on his page: each step either runs one "
+                "navigation command (command, args) or points at one target (target, reveal, "
+                "style, holdMs, label), each signal starting at the orb once the step before "
+                "it has finished. His own navigation in the meantime ends the rest. Returns "
+                "each step's outcome; complete only when every signal arrived."),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array", "minItems": 1, "maxItems": p["limits"]["journeyMaxSteps"],
+                        "items": {"oneOf": [
+                            {"type": "object", "properties": _navigate_properties(c),
+                             "required": ["command"], "additionalProperties": False},
+                            {"type": "object", "properties": _indicate_properties(c),
+                             "required": ["target"], "additionalProperties": False},
+                        ]},
+                    },
+                    "client": client,
+                },
+                "required": ["steps"],
             },
         },
         {
@@ -496,7 +532,7 @@ def tool_specs() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "cueId": {"type": "string", "maxLength": p["limits"]["idMax"]},
-                    "client": {"type": "string", "maxLength": p["limits"]["idMax"]},
+                    "client": client,
                 },
             },
         },

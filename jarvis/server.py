@@ -11420,14 +11420,16 @@ TOOL_HANDLERS.update({
     "ui_map": tool_ui_map,
     "ui_navigate": tool_ui_navigate,
     "ui_indicate": tool_ui_indicate,
+    "ui_journey": tool_ui_journey,
     "ui_clear": tool_ui_clear,
 })
 # Changing what he is looking at is his to ask for: only on his turn.
-ACTING_TOOLS.update({"ui_navigate", "ui_indicate"})
+ACTING_TOOLS.update({"ui_navigate", "ui_indicate", "ui_journey"})
 TAINTING_TOOLS["ui_map"] = "what is on your screen"
 TAINT_EXEMPT_TOOLS.update({
     "ui_navigate": "it changes the view through a registered command; it returns ids and effects, no text",
     "ui_indicate": "it points at a target; it returns ids, a status and effects, no text",
+    "ui_journey": "it navigates and points in order; it returns each step's ids, status and effects, no text",
     "ui_clear": "it clears the brain's own pointing; it reads nothing",
 })
 

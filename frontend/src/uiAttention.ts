@@ -34,14 +34,13 @@ import { EffectLife, onFrame } from "./effectLife";
 import { attentionTransmit, claimForAttention, releaseSource } from "./orbSource";
 import { createStore } from "./store";
 import {
-  dispatch, elementOf, findTarget, lastNavigationActor, layoutRevision, navigationRevision, visibilityOf,
-  type VisualTarget,
+  elementOf, findTarget, lastNavigationActor, navigationRevision, visibilityOf, type VisualTarget,
 } from "./uiRegistry";
+import { reveal } from "./uiNavigationReveal";
 import { polyline, resolveRoute, topologyOf, type Route } from "./uiPipeline";
 import { leaving, orbEmission, phaseAt, scheduleFor, TIMING, type Point, type Schedule } from "./uiSignal";
-import { kindDecl } from "./uiValidate";
 import {
-  type Arrival, type AvailabilityReason, type CommandId, type EndpointStyle, type Lifecycle, type SideEffect,
+  type Arrival, type AvailabilityReason, type EndpointStyle, type Lifecycle, type SideEffect,
   type Status, type TargetRef, UI_CONTRACT,
 } from "./uiContract";
 import { isQuiet } from "./voiceHealth";
@@ -117,38 +116,6 @@ let counter = 0;
 
 function stillMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-// ── revealing ───────────────────────────────────────────────────────────
-
-/** Wait for `ref`'s presentation to mount and become visible, until the
- *  contract's reveal limit; no fixed sleep, it looks again on every
- *  registration change and every frame in between. */
-function waitForTarget(ref: TargetRef, signal: AbortSignal): Promise<VisualTarget | null> {
-  return new Promise((resolve) => {
-    const deadline = performance.now() + UI_CONTRACT.limits.revealWaitMs;
-    const life = new EffectLife();
-    const done = (t: VisualTarget | null) => { life.end(); resolve(t); };
-    const check = () => {
-      if (life.ended) return;
-      if (signal.aborted || performance.now() > deadline) return done(null);
-      const t = findTarget(ref);
-      if (t && visibilityOf(elementOf(t, ref.part)) === "visible") done(t);
-    };
-    life.hold(layoutRevision.subscribe(check));
-    life.everyFrame(check);
-    check();
-  });
-}
-
-/** The presentation's reveal command, with the key put in. */
-function revealOf(ref: TargetRef): { command: CommandId; args: Record<string, unknown> } | null {
-  const pres = kindDecl(ref.kind)?.presentations.find((p) => p.view === ref.view) as
-    { reveal?: { command: CommandId; args: Record<string, unknown> } } | undefined;
-  if (!pres?.reveal) return null;
-  const args = Object.fromEntries(Object.entries(pres.reveal.args)
-    .map(([k, v]) => [k, v === "$key" ? ref.key : v]));
-  return { command: pres.reveal.command, args };
 }
 
 // ── the one scheduler ───────────────────────────────────────────────────
@@ -271,22 +238,16 @@ export async function indicate(ref: TargetRef, options: IndicateOptions): Promis
   if (isQuiet()) return fail("unavailable", "quiet-page" satisfies AvailabilityReason);
   options.onEvent("resolving", cueId);
   let target = findTarget(ref);
-  let seen = visibilityOf(target ? elementOf(target, ref.part) : null);
+  const seen = visibilityOf(target ? elementOf(target, ref.part) : null);
   if (seen !== "visible") {
     if ((options.reveal ?? "never") === "never") {
       return fail(target ? "not_visible" : "not_found", target ? seen : "not-mounted");
     }
     options.onEvent("revealing", cueId);
-    const reveal = revealOf(ref);
-    if (!reveal) return fail("unavailable", "not-mounted");
-    const done = await dispatch(reveal.command, reveal.args as never,
-                                { actor: "brain", requestId: options.requestId, signal: options.signal });
-    effects.push(...done.effects);
-    if (done.status !== "completed") return fail(done.status, done.reason ?? "unavailable");
-    target = await waitForTarget(ref, options.signal);
-    if (options.signal.aborted) return fail("cancelled", "superseded");
-    if (!target) return fail("not_visible", "not-mounted");
-    seen = "visible";
+    const shown = await reveal(ref, { actor: "brain", requestId: options.requestId, signal: options.signal });
+    effects.push(...shown.effects);
+    if (shown.status !== "completed") return fail(shown.status, shown.reason);
+    target = shown.target;
   }
   const first = resolveRoute(target!, ref);
   if (!first.route) {

@@ -49,7 +49,9 @@ can point at (each with a kind, a stable key and its parts). `ui_navigate`
 runs one of those commands, the same one his own click runs. `ui_indicate`
 sends a white signal from your orb along the page's pipeline into one exact
 target and part, and answers once it has arrived; with reveal "navigate" it
-opens what is needed first. Take keys from `ui_map`, never from a label or a
+opens what is needed first. `ui_journey` does several of those in order
+(for example a tab, then a detail, then a part), each signal starting at
+the orb once the step before has finished. Take keys from `ui_map`, never from a label or a
 row's position. A long map comes a page at a time; ask again with the
 cursor it gives. Pointing opens, sends and marks nothing read by itself. If
 he moves the page himself while you are pointing, his move wins: say what

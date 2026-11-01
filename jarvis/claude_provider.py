@@ -129,10 +129,11 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__update_status",
     "mcp__jarvis__update_jarvis",
     # The page's navigation and white attention (ui_control.py): ui_map reads
-    # (untrusted block); ui_navigate and ui_indicate are ACTING_TOOLS.
+    # (untrusted block); ui_navigate, ui_indicate and ui_journey are ACTING_TOOLS.
     "mcp__jarvis__ui_map",
     "mcp__jarvis__ui_navigate",
     "mcp__jarvis__ui_indicate",
+    "mcp__jarvis__ui_journey",
     "mcp__jarvis__ui_clear",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had

@@ -24,7 +24,7 @@ export const TIMING = UI_CONTRACT.timing;
 
 /** How long one arrival ring takes to grow and fade (the design's
  *  "Arrive · 700 ms"); the second starts ringGapMs after the first. */
-export const RING_MS = 700;
+export const RING_MS = TIMING.ringMs;
 
 export type Point = readonly [number, number];
 

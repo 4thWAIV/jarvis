@@ -118,16 +118,27 @@ def test_an_undeclared_side_effect_is_refused():
 
 def test_the_tools_come_from_the_declarations():
     specs = {s["name"]: s for s in ui_contract.tool_specs()}
-    assert set(specs) == {"ui_map", "ui_navigate", "ui_indicate", "ui_clear"}
+    assert set(specs) == {"ui_map", "ui_navigate", "ui_indicate", "ui_journey", "ui_clear"}
     c = ui_contract.load()
     assert set(specs["ui_navigate"]["inputSchema"]["properties"]["command"]["enum"]) == set(c.commands)
     target = specs["ui_indicate"]["inputSchema"]["properties"]["target"]
     assert set(target["properties"]["kind"]["enum"]) == set(c.kinds)
     assert target["additionalProperties"] is False
+    # A journey's steps are ui_navigate's and ui_indicate's own arguments.
+    steps = specs["ui_journey"]["inputSchema"]["properties"]["steps"]
+    assert steps["maxItems"] == c.protocol["limits"]["journeyMaxSteps"]
+    navigate, indicate = steps["items"]["oneOf"]
+    assert navigate["properties"] == {k: v for k, v in specs["ui_navigate"]["inputSchema"]["properties"].items()
+                                      if k != "client"}
+    assert indicate["properties"] == {k: v for k, v in specs["ui_indicate"]["inputSchema"]["properties"].items()
+                                      if k != "client"}
     # No way to hand the page code, a selector, a URL or coordinates.
     def names(schema):
         for name, sub in schema.get("properties", {}).items():
             yield name
+            yield from names(sub)
+        items = schema.get("items")
+        for sub in [items, *items.get("oneOf", [])] if items else []:
             yield from names(sub)
     for spec in specs.values():
         assert not set(names(spec["inputSchema"])) & {"selector", "script", "code", "url", "x", "y", "rect"}

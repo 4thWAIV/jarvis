@@ -40,11 +40,12 @@
     "ringGapMs": 350,
     "holdUntilMs": 4400,
     "resetByMs": 5000,
-    "maxExtraHoldMs": 6000
+    "maxExtraHoldMs": 6000,
+    "ringMs": 700
   },
   "limits": {
     "requestTtlMs": 15000,
-    "resultWaitMs": 14000,
+    "answerGraceMs": 1000,
     "revealWaitMs": 4000,
     "sourceQueueMs": 3000,
     "mapMaxTargets": 200,
@@ -118,6 +119,7 @@
   "families": [
     "families/shell.json",
     "families/network.json",
+    "families/navigation.json",
     "families/left.json",
     "families/settings.json",
     "families/agents.json",

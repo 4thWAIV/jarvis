@@ -347,6 +347,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "ui_control.map_lines": (
+        "it reads a command's `id` only after checking it is a command declared "
+        "in the UI contract, so the id it prints is the contract's own; the "
+        "page's labels it prints go back only inside the server's untrusted "
+        "`ui_map` block (`_ui_said`), never into a header or a spoken line"),
     "self_update.ci_state": (
         "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
         "to compare them with fixed values, and returns one of five fixed CI "

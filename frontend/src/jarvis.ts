@@ -53,7 +53,7 @@ export function startJarvis(orb: Orb): void {
   const socket = createSocket(WS_URL);
   startSessionsSocket();
   // The brain's UI requests come to this page on the same socket.
-  startUiClient(socket);
+  const uiClient = startUiClient(socket);
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());
@@ -127,6 +127,9 @@ export function startJarvis(orb: Orb): void {
     // Locally first: the round trip is real and silence should be instant.
     audioPlayer.stop();
     jarvisQuiet();
+    // The turn he stopped also stops pointing: its UI requests are
+    // withdrawn and every white signal cleared.
+    uiClient.interrupt();
     socket.send({ type: "hush" });
     transition("listening");
   }

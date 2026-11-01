@@ -94,10 +94,10 @@ const state = () => ({
 async function reset() {
   for (const close of ["workflow.close", "thread.close", "voice.diagnostics.close", "subsystem.close",
                        "folders.close"] as const) {
-    await dispatch(close, {});
+    await dispatch(close, {}, { actor: "human" });
   }
-  await dispatch("main.tab.select", { tab: "conversation" });
-  await dispatch("right.tab.select", { tab: "agents" });
+  await dispatch("main.tab.select", { tab: "conversation" }, { actor: "human" });
+  await dispatch("right.tab.select", { tab: "agents" }, { actor: "human" });
   agents.agentsTabLit.set(false);
 }
 
@@ -134,7 +134,7 @@ await parity("right tab", [["right.tab.select", { tab: "network" }]], ({ outcome
   // Agents' lit mark is cleared by selecting it, whoever selects it.
   for (const actor of ["human", "brain"] as const) {
     await reset();
-    await dispatch("right.tab.select", { tab: "queue" });
+    await dispatch("right.tab.select", { tab: "queue" }, { actor: "human" });
     agents.agentsTabLit.set(true);
     const o = await dispatch("right.tab.select", { tab: "agents" }, { actor });
     assert.deepEqual(o.effects, ["agents.tab-attention-cleared"]);
@@ -349,7 +349,7 @@ function registerFolderRow(el: unknown) {
 {
   // Already visible: nothing navigates.
   await reset();
-  await dispatch("right.tab.select", { tab: "folders" });
+  await dispatch("right.tab.select", { tab: "folders" }, { actor: "human" });
   const off = registerFolderRow(element(() => true));
   const before = navigationRevision.get();
   const o = await reveal.reveal(folderRef as never, ctx());
@@ -374,7 +374,7 @@ function registerFolderRow(el: unknown) {
 {
   // Scrolled out of view: scrolled to, once, without a fixed wait.
   await reset();
-  await dispatch("right.tab.select", { tab: "folders" });
+  await dispatch("right.tab.select", { tab: "folders" }, { actor: "human" });
   const el = element(() => true, true);
   const off = registerFolderRow(el);
   const o = await reveal.reveal(folderRef as never, ctx());

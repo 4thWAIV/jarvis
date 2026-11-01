@@ -17,7 +17,10 @@
  * its one deadline: never started after it, abandoned (answered `expired`
  * with whatever it had already done) if still running at it. A hidden page
  * refuses navigation and pointing (`not_visible`): it paints nothing, so
- * neither could be confirmed.
+ * neither could be confirmed. When he stops JARVIS mid-turn (Escape or
+ * Stop, jarvis.ts), `interrupt` withdraws that turn's requests: the one
+ * running and those queued behind it are answered `cancelled`, and every
+ * cue is cleared.
  */
 
 import type { JarvisSocket } from "./ws";
@@ -59,8 +62,16 @@ function uiMap(op: Extract<Operation, { kind: "map" }>) {
   return { shown: { right: `right.${rightTab.get()}`, main: `main.${mainView.get()}` }, commands, targets };
 }
 
-export function startUiClient(socket: JarvisSocket): void {
+export interface UiClient {
+  /** He stopped the turn: withdraw its requests and clear every cue. */
+  interrupt(): void;
+}
+
+export function startUiClient(socket: JarvisSocket): UiClient {
   let epoch: number | null = null;
+  // Moves each time he interrupts a turn: a request received before the
+  // move and not yet started is the interrupted turn's, never carried out.
+  let generation = 0;
   let queue: Promise<void> = Promise.resolve();
   const seen: string[] = [];
   const seenSet = new Set<string>();
@@ -76,12 +87,14 @@ export function startUiClient(socket: JarvisSocket): void {
   });
 
   socket.onOpen(() => { epoch = null; hello(); });
-  socket.onClose(() => {
-    epoch = null;
+  /** End everything under way: what is running is aborted (and answers
+   *  as cancelled), and every cue is cleared. */
+  const withdraw = () => {
     live.forEach((c) => c.abort());
     live.clear();
     clearCues();
-  });
+  };
+  socket.onClose(() => { epoch = null; withdraw(); });
 
   const answer = (req: UIRequest, a: Answer) => send({
     type: "ui_result", requestId: req.requestId, clientId: CLIENT_ID, epoch: req.epoch,
@@ -135,10 +148,11 @@ export function startUiClient(socket: JarvisSocket): void {
     }
   }
 
-  async function carryOut(req: UIRequest): Promise<void> {
+  async function carryOut(req: UIRequest, received: number): Promise<void> {
     // Queued behind another request when the connection dropped: that
     // epoch is over, and nothing meant for it is replayed on the next.
     if (req.epoch !== epoch) return;
+    if (received !== generation) return answer(req, { status: "cancelled", effects: [], reason: "he stopped the turn" });
     if (req.expiresAt <= Date.now()) return answer(req, { status: "expired", effects: [], reason: "expired" });
     if (req.expectedNavigationRevision !== null && req.expectedNavigationRevision !== navigationRevision.get()) {
       return answer(req, { status: "stale", effects: [], reason: "the page has moved on" });
@@ -187,7 +201,15 @@ export function startUiClient(socket: JarvisSocket): void {
     if (epoch === null || req.epoch !== epoch) return answer(req, { status: "stale", effects: [], reason: "connection epoch" });
     const problem = operationProblem(req.operation);
     if (problem) return answer(req, { status: "invalid", effects: [], reason: problem });
-    if (req.operation.kind === "clear") { void carryOut(req); return; }   // never waits behind a cue
-    queue = queue.then(() => carryOut(req));
+    const received = generation;
+    if (req.operation.kind === "clear") { void carryOut(req, received); return; }   // never waits behind a cue
+    queue = queue.then(() => carryOut(req, received));
   });
+
+  return {
+    interrupt() {
+      generation += 1;
+      withdraw();
+    },
+  };
 }

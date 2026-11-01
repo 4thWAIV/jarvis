@@ -56,7 +56,7 @@ EVENTS_KEPT = 50
 # rarely share one.
 HEARD_KEPT = 4
 # How long past a request's deadline its answer may still be in transit.
-ANSWER_GRACE_SEC = 1.0
+ANSWER_GRACE_SEC = _PROTOCOL["limits"]["answerGraceMs"] / 1000
 
 # What the brain is told about a request's progress when no answer came:
 # the page had started it (it reported a lifecycle step), or nothing is

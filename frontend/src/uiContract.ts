@@ -110,11 +110,12 @@ export const UI_CONTRACT = {
     "ringGapMs": 350,
     "holdUntilMs": 4400,
     "resetByMs": 5000,
-    "maxExtraHoldMs": 6000
+    "maxExtraHoldMs": 6000,
+    "ringMs": 700
   },
   "limits": {
     "requestTtlMs": 15000,
-    "resultWaitMs": 14000,
+    "answerGraceMs": 1000,
     "revealWaitMs": 4000,
     "sourceQueueMs": 3000,
     "mapMaxTargets": 200,
@@ -502,388 +503,6 @@ export const UI_CONTRACT = {
       "family": "shell"
     },
     {
-      "id": "workflow.open",
-      "label": "Open one workflow's detail in the centre",
-      "view": "main.workflow",
-      "args": {
-        "workflowId": {
-          "type": "key",
-          "entity": "workflow"
-        }
-      },
-      "required": [
-        "workflowId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "subagent.open",
-      "label": "Open one subagent's detail in the centre, in the workflow slot",
-      "view": "main.workflow",
-      "args": {
-        "sessionId": {
-          "type": "key",
-          "entity": "session"
-        },
-        "agentId": {
-          "type": "key",
-          "entity": "subagent"
-        }
-      },
-      "required": [
-        "sessionId",
-        "agentId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "workflow.close",
-      "label": "Close the workflow or subagent detail",
-      "view": "main.workflow",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "thread.open",
-      "label": "Open one agent's thread in the centre",
-      "view": "main.thread",
-      "args": {
-        "sessionId": {
-          "type": "key",
-          "entity": "session"
-        }
-      },
-      "required": [
-        "sessionId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "thread.close",
-      "label": "Close the agent's thread",
-      "view": "main.thread",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "voice.diagnostics.open",
-      "label": "Open voice diagnostics in the centre",
-      "view": "main.diagnostics",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "voice.diagnostics.close",
-      "label": "Close voice diagnostics",
-      "view": "main.diagnostics",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "subsystem.open",
-      "label": "Open one subsystem's detail in the centre (voice input opens voice diagnostics)",
-      "view": "main.subsystem",
-      "args": {
-        "subsystemId": {
-          "type": "key",
-          "entity": "subsystem"
-        }
-      },
-      "required": [
-        "subsystemId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        },
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "subsystem.close",
-      "label": "Close the subsystem's detail",
-      "view": "main.subsystem",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "queue.open",
-      "label": "Open one Queue item in the centre; a waiting one becomes Active",
-      "view": "main.queue",
-      "args": {
-        "threadId": {
-          "type": "key",
-          "entity": "thread"
-        }
-      },
-      "required": [
-        "threadId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        },
-        {
-          "effect": "queue.item-activated"
-        },
-        {
-          "effect": "queue.read-marked"
-        },
-        {
-          "effect": "queue.draft-saved"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "queue.follow",
-      "label": "Follow a link to another Queue item without changing its place",
-      "view": "main.queue",
-      "args": {
-        "threadId": {
-          "type": "key",
-          "entity": "thread"
-        }
-      },
-      "required": [
-        "threadId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        },
-        {
-          "effect": "queue.read-marked"
-        },
-        {
-          "effect": "queue.draft-saved"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "queue.back",
-      "label": "Go back to the Queue item a link was followed from",
-      "view": "main.queue",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        },
-        {
-          "effect": "queue.read-marked"
-        },
-        {
-          "effect": "queue.draft-saved"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "queue.next",
-      "label": "Open the next waiting Queue item; it becomes Active",
-      "view": "main.queue",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        },
-        {
-          "effect": "queue.item-activated"
-        },
-        {
-          "effect": "queue.read-marked"
-        },
-        {
-          "effect": "queue.draft-saved"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "queue.close",
-      "label": "Close the Queue item; its draft is saved",
-      "view": "main.queue",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        },
-        {
-          "effect": "queue.draft-saved"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "folders.open",
-      "label": "Select one folder and show it in the centre's Folders view",
-      "view": "main.folders",
-      "args": {
-        "folderId": {
-          "type": "key",
-          "entity": "folder"
-        }
-      },
-      "required": [
-        "folderId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        }
-      ],
-      "family": "shell"
-    },
-    {
-      "id": "folders.close",
-      "label": "Close the selected folder; the Folders view shows the catalog",
-      "view": "main.folders",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [],
-      "family": "shell"
-    },
-    {
       "id": "network.open",
       "label": "Open the team server's or one instance's detail in the centre",
       "view": "main.network",
@@ -933,6 +552,388 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "network"
+    },
+    {
+      "id": "workflow.open",
+      "label": "Open one workflow's detail in the centre",
+      "view": "main.workflow",
+      "args": {
+        "workflowId": {
+          "type": "key",
+          "entity": "workflow"
+        }
+      },
+      "required": [
+        "workflowId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "subagent.open",
+      "label": "Open one subagent's detail in the centre, in the workflow slot",
+      "view": "main.workflow",
+      "args": {
+        "sessionId": {
+          "type": "key",
+          "entity": "session"
+        },
+        "agentId": {
+          "type": "key",
+          "entity": "subagent"
+        }
+      },
+      "required": [
+        "sessionId",
+        "agentId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "workflow.close",
+      "label": "Close the workflow or subagent detail",
+      "view": "main.workflow",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "thread.open",
+      "label": "Open one agent's thread in the centre",
+      "view": "main.thread",
+      "args": {
+        "sessionId": {
+          "type": "key",
+          "entity": "session"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "thread.close",
+      "label": "Close the agent's thread",
+      "view": "main.thread",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "voice.diagnostics.open",
+      "label": "Open voice diagnostics in the centre",
+      "view": "main.diagnostics",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "voice.diagnostics.close",
+      "label": "Close voice diagnostics",
+      "view": "main.diagnostics",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "subsystem.open",
+      "label": "Open one subsystem's detail in the centre (voice input opens voice diagnostics)",
+      "view": "main.subsystem",
+      "args": {
+        "subsystemId": {
+          "type": "key",
+          "entity": "subsystem"
+        }
+      },
+      "required": [
+        "subsystemId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "subsystem.close",
+      "label": "Close the subsystem's detail",
+      "view": "main.subsystem",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "queue.open",
+      "label": "Open one Queue item in the centre; a waiting one becomes Active",
+      "view": "main.queue",
+      "args": {
+        "threadId": {
+          "type": "key",
+          "entity": "thread"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.item-activated"
+        },
+        {
+          "effect": "queue.read-marked"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "queue.follow",
+      "label": "Follow a link to another Queue item without changing its place",
+      "view": "main.queue",
+      "args": {
+        "threadId": {
+          "type": "key",
+          "entity": "thread"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.read-marked"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "queue.back",
+      "label": "Go back to the Queue item a link was followed from",
+      "view": "main.queue",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.read-marked"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "queue.next",
+      "label": "Open the next waiting Queue item; it becomes Active",
+      "view": "main.queue",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.item-activated"
+        },
+        {
+          "effect": "queue.read-marked"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "queue.close",
+      "label": "Close the Queue item; its draft is saved",
+      "view": "main.queue",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "folders.open",
+      "label": "Select one folder and show it in the centre's Folders view",
+      "view": "main.folders",
+      "args": {
+        "folderId": {
+          "type": "key",
+          "entity": "folder"
+        }
+      },
+      "required": [
+        "folderId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "folders.close",
+      "label": "Close the selected folder; the Folders view shows the catalog",
+      "view": "main.folders",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "navigation"
     }
   ],
   "kinds": [
@@ -1997,6 +1998,10 @@ export const UI_CONTRACT = {
     {
       "family": "network",
       "owner": "integrator"
+    },
+    {
+      "family": "navigation",
+      "owner": "navigation"
     },
     {
       "family": "left",

@@ -31,11 +31,12 @@ navigation, and no command or UI-control infrastructure on the base.
 |---|---|---|
 | `preflight` | finished | worktree, isolated ports and data, digests, baseline checks below, `coverage.md`, vertical slice |
 | `shared-contract` | finished | commit 064f1b3: schema, registries, pipeline graph, request/ack contract, journey steps |
-| `navigation` | next | see File ownership |
-| `pipeline-animation` | next | |
-| `brain-transport` | next | |
-| `component-coverage` | after the core three land their shared APIs | |
-| `integration-review`, `local-validation-ready`, `human-validation` | later | |
+| `navigation` | finished | `ui-nav-navigation` 6a55a37, merged c8149cd |
+| `pipeline-animation` | finished | `ui-nav-pipeline-animation` c198962, merged 9cdfe1e |
+| `brain-transport` | finished | `ui-nav-brain-transport` 043b35a, merged afdb36c; its pending items 1–3 applied in the integration commit |
+| `component-coverage` | next: the shared APIs have landed (see "For the coverage workers") | |
+| `integration-review` | core merge done (see "Core integration"); one blocker open (corridor centring); independent review still to run after coverage | |
+| `local-validation-ready`, `human-validation` | later | |
 
 ## The contract (what workers build against)
 
@@ -67,7 +68,14 @@ navigation, and no command or UI-control infrastructure on the base.
   presentations refused; `navigationRevision`, `lastNavigationActor`,
   `layoutRevision`; `visibilityOf`.
 - **Route state**: `frontend/src/uiNavigation.ts` — `rightTab`, `mainView`,
-  `openDetails`; handlers for `right.tab.select` and `main.tab.select`.
+  one detail slot per kind, owned by its data module; handlers for
+  `right.tab.select` and `main.tab.select`. Open/close/select commands of
+  every detail family are in `families/navigation.json` (navigation's).
+- **Reveal**: `frontend/src/uiNavigationReveal.ts` — `reveal(ref, {actor,
+  requestId, signal})` and `registerRevealer(view, kind, fn)`; the one
+  reveal path, used by `indicate` and journeys.
+- **Dispatch actor**: `dispatch(id, args, {actor})` requires the actor; a
+  control uses `byHand`.
 - **Pipeline graph**: `frontend/src/uiPipeline.ts` — junction geometry,
   `mapEdges`, `resolveRoute` (walks declared edges, then the target's rail
   tap, socket branch and part leaf; no free routing; `no-route` /
@@ -256,6 +264,108 @@ After the contract and slice (commit 064f1b3):
 Gates left for CI (not run locally by rule): the full `pytest` selection,
 `pytest -m page`, and the wheel build.
 
+## Core integration (feature/ui-navigation-pipeline)
+
+Merged `ui-nav-navigation`, `ui-nav-pipeline-animation` and
+`ui-nav-brain-transport` with no conflicts (they touched disjoint files),
+then applied the shared-file changes the workers asked for:
+
+- The 16 open/close commands moved from `shell.json` to a new
+  `families/navigation.json` (owner navigation), listed in `protocol.json`;
+  IDs unchanged. `uiContract.ts` regenerated.
+- `timing.ringMs` (700) added; `uiSignal.RING_MS` reads it.
+- `limits.resultWaitMs` (no longer read) replaced by `limits.answerGraceMs`
+  (1000), which `ui_control.ANSWER_GRACE_SEC` now reads.
+- `uiAttention.indicate` reveals through `uiNavigationReveal.reveal`; its
+  own `revealOf` / `waitForTarget` are gone. The reveal's wait runs on
+  `EffectLife` (the one frame loop) instead of its own
+  `requestAnimationFrame` loop.
+- `ui_journey` added to `tool_specs()` (steps are exactly ui_navigate's and
+  ui_indicate's properties, 1 to `journeyMaxSteps`), registered in
+  `TOOL_HANDLERS`, `ACTING_TOOLS`, `TAINT_EXEMPT_TOOLS`,
+  `claude_provider.ALLOWED_TOOLS` and the `test_brain.py` pin; the brain's
+  guide mentions it. `ui_map` takes `cursor`.
+- `tests/test_header_lines.py` exempts `ui_control.map_lines` with the
+  worker's reason.
+- `dispatch` requires its actor (navigation's item 7); the node cases pass
+  `actor: "human"` explicitly.
+- Turn interruption (plan, persistent pipeline 12): Escape / Stop
+  (`jarvis.ts` hush) calls `uiClient.interrupt()`, which aborts the running
+  request, answers queued ones `cancelled`, and clears every cue.
+- `tests/test_voice_page_layout.py` skips the full-page pipeline layers
+  (`[id^="ui-pipeline"]`) as it already skips `#ray-lane`.
+- `CLAUDE.md` Key Files: the UI contract, transport, registry, navigation,
+  reveal, pipeline, signal, effect lifecycle and orb source.
+
+Not applied (optional, left as they are): a `source-occluded` reason (a
+covered orb still reports `occluded`), a `ui_state` page frame for
+visibility changes, and passing the page into the turn explicitly.
+
+### For the coverage workers
+
+- Reveal declarations still to add on the `main.*` presentations in their
+  families: workflow → `workflow.open {workflowId: "$key"}`, thread →
+  `thread.open {sessionId: "$key"}`, subsystem → `subsystem.open
+  {subsystemId: "$key"}`, voice → `voice.diagnostics.open`, queueThread →
+  `queue.open {threadId: "$key"}`, folder → `folders.open {folderId:
+  "$key"}`.
+- Subagent: the real key is `agent:<session>/<id>`, which the `subagent`
+  key pattern rejects; `subagent.open` takes `{sessionId, agentId}`, and the
+  subagent target kind should use `keyOf [session, subagent]`.
+- Remaining direct writes to switch to `byHand` or bindings: `.set(...)` on
+  `openWorkflow` / `openThread` / `openDiagnostics` / `openSubsystem` /
+  `selectedFolder`, `openSubsystemRow`, and `WorkflowDetail`'s `TabRow
+  onSelect` once `workflow.tab.select` exists (`onSelect` is deprecated).
+- Settings, menu and reminder commands go in `settings.json` with handlers
+  in `Settings.tsx` and `MenuControl.tsx` (coverage-left-settings).
+- Socket rules: centre views `rail.main` right; right panel `rail.right`
+  right; left column `rail.left` left; footer `rail.footer` left; menu and
+  menu button `rail.right` right; Settings / modal targets `rail.overlay`
+  left. A component that draws to its own facing edge keeps
+  `var(--ui-corridor)` clear there.
+- The Settings modal covers the orb at every width, so pointing inside
+  Settings is refused as blocked by design; no overlay target is
+  registered yet.
+
+### Integration test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+- `pytest tests/test_ui_contract.py tests/test_ui_control.py
+  tests/test_ui_tools.py tests/test_ui_navigation.py tests/test_ui_pipeline.py
+  tests/test_brain_page_parity.py tests/test_jarvis_mcp.py
+  tests/test_header_lines.py tests/test_dead_code_removed.py
+  tests/test_anchored_patterns.py tests/test_internal_tool.py
+  tests/test_untrusted_turn.py tests/test_tool_handlers.py
+  tests/test_mcp_config.py tests/test_voice_ws.py
+  tests/test_tool_argument_echo.py tests/test_show_on_screen.py`:
+  569 passed, 2 skipped. `tests/test_brain.py`: 52 passed.
+  `tests/test_ui_contract.py` after the journey-spec test change: 12 passed.
+- `pytest -m page` navigation, pipeline, rays, human_rays, network, layout:
+  55 passed, 6 failed, all in `test_voice_page_layout.py`. After skipping
+  the pipeline layers in its overlap check: 8 passed, 3 failed, all
+  `[sizeN-]` (Conversation view): the centring assertion (gaps 12 vs 22),
+  caused by the corridor padding on `#conversation`. Blocker raised, not
+  changed (see below).
+- Vertical slice on the merged app (`ui-nav-run/tools/slice_driver.py`,
+  evidence `ui-nav-run/evidence/slice-integrated/`, log
+  `ui-nav-run/logs/slice-integrated.log`): `ui_navigate right.tab.select
+  network` completed; `ui_indicate main.network node <Mini> cpu reveal
+  navigate` returned `completed / animated` 1.65 s after the call (events
+  resolving, revealing, emitting, travelling, arrived); frames show map
+  (12 edges) idle, 3 pulses travelling, rings and contour at arrival,
+  contour through hold, reset by 5.6 s with the map still drawn; a
+  three-step `ui_journey` (tab, right tile CPU, main detail CPU with reveal)
+  returned completed with every step's signal arrived in 3.3 s; hidden
+  target with `reveal: never` → `not_found / not-mounted`; `page.eval` →
+  `invalid`; no console errors. Stand-in brain (user turn only), Network
+  snapshot as a browser fixture; no provider.
+
+Gates left for CI: the full `pytest` selection, the rest of `pytest -m
+page` (conversation, workflows, queue, folders, subsystems, voice_health,
+subagents, settings, team and others were not rerun after the merge), the
+wheel build, and `tests/ui_validate_cases.mts` beyond what
+`test_ui_contract.py` runs.
+
 ## Open items and known issues
 
 1. Preview fixtures without sign-in: the Network tab, node detail and the
@@ -263,25 +373,31 @@ Gates left for CI (not run locally by rule): the full `pytest` selection,
    sign in. The slice answers `GET /api/team/network` with a fixture inside
    the browser. A backend fixture mode would be new behaviour; decide before
    `local-validation-ready` how the running preview gets realistic records.
-2. The main rail sits in the 12 px gutter; the NodeView socket and leaf run
-   past the detail's × button. Corridor reservation (pipeline-animation)
-   must move the branch clear of buttons.
-3. Overlay and footer rails are declared but not laid out: targets there
-   return `no-route` until pipeline-animation measures them.
+2. Closed (c198962): corridors reserved; the node detail's branch clears
+   its × button.
+3. Closed (c198962): overlay and footer rails laid out; no overlay target
+   is registered yet (coverage-left-settings).
 4. `ui_map` taints the turn; with `JARVIS_REFUSE_UNTRUSTED_ACTIONS` on, a
    map followed by navigate in one turn is refused. Default is off.
-5. The journey operation is in the contract and the page, not yet a tool
-   (brain-transport).
+5. Closed: `ui_journey` is a brain tool.
 6. Live conversation turns (`t<id>`) have no durable identity
    (coverage-main, via captions.ts).
-7. CentreArea still selects detail tabs from effects on each open store;
-   the dispatcher sets `mainView` too (network.open). Navigation removes the
-   effects.
+7. Closed (6a55a37): one route state; no effect-based selection.
 8. The live brain-tool demonstration needs an authorised isolated provider
    path (the isolated home has no Claude login by design).
 
+9. BLOCKER (raised on the monitor, item `layout-corridor-centring`): the
+   10 px corridor on the right of every centre view puts the Conversation
+   box off centre (gaps 12 vs 22); `test_voice_page_layout` pins it
+   centred. Recommendation: keep the corridor on the rail side and measure
+   centring on the view, not its padded box. Waiting for Tim.
+10. Open question from navigation: if the brain switches the centre away
+    from Conversation while he is typing there, the box loses focus because
+    the hidden view is made inert (true before this work; the plan does not
+    say).
+
 ## Next action
 
-Start the three core workers on their branches with the ownership above;
-coverage workers start once navigation's `families/navigation.json` and
-pipeline's corridor rules land.
+Start the coverage workers (right, main, left-settings) from the
+integration commit with the ownership above and the notes in "For the
+coverage workers"; resolve the corridor-centring blocker with Tim.

@@ -21,6 +21,7 @@
  * reported, and his new view is never put back.
  */
 
+import { EffectLife } from "./effectLife";
 import {
   dispatch, elementOf, findTarget, layoutRevision, navigationRevision, visibilityOf,
   type VisualTarget,
@@ -77,17 +78,19 @@ const seen = (ref: TargetRef) => {
 };
 
 /** Wait until `ready` holds, looking on every registration change and
- *  every frame, until `deadline` or until `stop` says to give up. */
+ *  every frame of the one frame loop (effectLife.ts), until `deadline` or
+ *  until `stop` says to give up. */
 function until(ready: () => boolean, stop: () => boolean, deadline: number): Promise<boolean> {
   return new Promise((resolve) => {
-    let frame = 0;
+    const life = new EffectLife();
+    const done = (ok: boolean) => { life.end(); resolve(ok); };
     const look = () => {
+      if (life.ended) return;
       if (ready()) return done(true);
-      if (stop() || performance.now() > deadline) return done(false);
-      frame = requestAnimationFrame(look);
+      if (stop() || performance.now() > deadline) done(false);
     };
-    const unsubscribe = layoutRevision.subscribe(() => { cancelAnimationFrame(frame); look(); });
-    const done = (ok: boolean) => { cancelAnimationFrame(frame); unsubscribe(); resolve(ok); };
+    life.hold(layoutRevision.subscribe(look));
+    life.everyFrame(look);
     look();
   });
 }

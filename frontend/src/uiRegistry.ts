@@ -89,10 +89,12 @@ const afterPaint = () => new Promise<void>((resolve) => requestAnimationFrame(()
 const refused = (status: Status, reason: string): CommandOutcome => ({ status, effects: [], reason });
 
 /** Run one navigation command: the only way any view changes. */
-export async function dispatch<C extends CommandId>(id: C, args: CommandArgs[C],
-                                                    context: Partial<CommandContext> = {}): Promise<CommandOutcome> {
-  const ctx: CommandContext = { actor: "human", requestId: null,
-                                signal: new AbortController().signal, ...context };
+export async function dispatch<C extends CommandId>(
+  id: C, args: CommandArgs[C],
+  // The actor is always said: a caller that forgot it must not pass for a person.
+  context: Pick<CommandContext, "actor"> & Partial<CommandContext>,
+): Promise<CommandOutcome> {
+  const ctx: CommandContext = { requestId: null, signal: new AbortController().signal, ...context };
   const problem = argsProblem(id, args, ctx.actor);
   if (problem) return refused("invalid", problem);
   const handler = handlers.get(id) as CommandHandler<C> | undefined;
