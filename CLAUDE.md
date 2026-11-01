@@ -156,7 +156,10 @@ says when to read again. JARVIS says a new phase, a decision needed, a
 blocker, a finish and going quiet, once each. The brain answers anything
 about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
-and he answers them on the Workflows view.
+and he answers them on the Workflows view or by voice: the page's answer and
+Dismiss routes and the brain's acting `answer_workflow_decision` and
+`dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
+which record each as done "on the page" or "by voice".
 
 ## The team server
 `team_server/` is a separate service, not part of the JARVIS package: its own
@@ -172,7 +175,11 @@ it is `docs/team-server.md`. JARVIS's side is
 `team_client.py` (the connection, its 30-second status poll and the
 Keychain store, through `security` with the secret on stdin) and
 `team_api.py` (`/api/team*`, the Settings Team section's routes). The
-session credential lives only in the Keychain; the saved connection
+member routes and the brain's team tools call the same functions
+(`team_api.members_call`, `resolve_call`, `change_call`, `revoke_call`):
+`team_status` reads the status and, for an administrator, the roster;
+`find_github_user` is Look up; the acting `change_team_member` is Add and
+each member's buttons. The session credential lives only in the Keychain; the saved connection
 (`data_paths.team_connection_path()`) holds the URL, the pinned server ID and
 non-secret status. Nothing on a voice or agent path waits for the team
 server. Tests never touch the Keychain (`conftest._never_touch_the_real_keychain`).
@@ -220,6 +227,13 @@ header) into `jarvis/messaging_wire.py`, and its types generated into
 `scripts/generate_messaging_contract.py` (`--check` lists stale copies).
 `tests/test_messaging_integration.py` runs the end-to-end scenarios
 against a real local team server and needs TEAM_SERVER_TEST_MONGODB_URI.
+The brain reads and moves the Queue through the same `LocalMessaging` the
+routes use: `people` (the recipients read, which also fills the roster
+`draft_message` names people from), `people_messages` (the snapshot, or its
+history), `read_people_thread` (one item; no read receipt), and the acting
+`mark_people_message_read` (`read`), `set_people_thread` (the work
+command) and `change_people_draft` (discard, cancel, retry). A refusal is worded by `messaging_api.Refused.shown`; names,
+subjects and bodies come back in an untrusted block.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -237,7 +251,8 @@ activity (`human_activity.py`: a sequence number, an age and a source, never
 content). The team server binds each node to the member whose session first
 published it, refuses an older boot or sequence, and works out presence
 (online within 15 s, delayed to 45 s, then offline), the brains' pace and
-its own health when the snapshot is built. The page's Network tab
+its own health when the snapshot is built. The brain's `team_network` reads
+the same stored snapshot (`team_client.network_status`), this Mac first. The page's Network tab
 (`NetworkPanel.tsx`, one `NetworkTile.tsx` per node, `NodeView.tsx` in the
 centre) and the left column's Team Server tile (`TeamServerTile.tsx`,
 `TeamServerView.tsx`) read only that snapshot (`network.ts`); nothing local
@@ -328,7 +343,9 @@ not finished a poll for a minute or has failed three in a row; when the
 messages sent last, back to the last one that arrived, were lost on their way
 to two or more different sessions; or when the loop taking session messages
 or reading the needs board has stopped. A message held in the queue for its session's turn over ten minutes makes them degraded, naming the agent and what JARVIS takes its session to be doing. `GET /api/diagnostics/subsystems`
-reads it all; `_watch_subsystems` looks every five seconds, sends a
+reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
+(one row in full on request, voice input with `voice_diagnostics.summary`'s
+figures); `_watch_subsystems` looks every five seconds, sends a
 `subsystems` hint on `/ws/sessions` when any state moves, and says once
 "Communications with the agents are down, sir." and once that they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
@@ -381,8 +398,10 @@ event loop (`_watch_folders`), and checks every folder's availability
 the one service the page's routes (`folders_api.py`, `/api/folders*`; changes
 need the page's origin or the tool token, and no access-key category covers
 them) and the brain's tools (`list_folders`, `find_folder`, `browse_folder`,
-`read_folder_file`, and the acting `register_folder` and `unregister_folder`)
-both call; tool results come back in an untrusted block. All six are in
+`read_folder_file`, `folder_detail`, `folder_candidates`, and the acting
+`register_folder`, `unregister_folder`, `change_folder` (edit, reconnect,
+refresh) and `change_folder_candidate` (ignore, restore)) both call; tool
+results come back in an untrusted block. All of them are in
 `claude_provider.ALLOWED_TOOLS`, and the brain's instructions
 (`jarvis_home/CLAUDE.md`, "Folders") tell it a registered folder from a
 project and to look in both before saying it cannot find one. Work runs in
@@ -417,6 +436,10 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 2. **Every state transition is a DB write BEFORE it is a notification.** The
    WebSocket is a cache-invalidation hint, never a source of truth; clients
    reconcile against `/api/runs`.
+
+The dashboard's Retry and the brain's acting `retry_run` share `_retry_run`:
+a finished run's prompt again, resuming from it, a folder run re-checked
+through the folder service.
 
 No new npm or Python dependencies. When rendering arbitrary LLM and file content through imperative DOM code, use `createElement` / `textContent`, not `innerHTML` / `insertAdjacentHTML`.
 
@@ -704,6 +727,13 @@ needs the network, a real window, or a real `claude`, mark it.
   `/internal/tool`), not by parsing `[ACTION:X]` tags out of its reply — that
   tag machinery is gone in full, including the last handler (`_execute_browse`),
   which lost its caller with the voice dispatch chain
+- Anything the page lets him do or see, JARVIS must be able to do or see
+  when he asks by voice: every page feature has a brain tool that calls the
+  same service or function as its route (`tests/test_brain_page_parity.py`).
+  Changes are ACTING_TOOLS; reads carrying other people's words are wrapped
+  as untrusted. Left out on purpose: settings that hold secrets (API keys and
+  the Fish key test), `/api/restart`, and the sign-in and connect flows that
+  need a browser approval
 - AppleScript for Terminal and Chrome control (no OAuth needed)
 - SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
   long-term memory is plain Markdown files instead (`jarvis_memory.py`) —

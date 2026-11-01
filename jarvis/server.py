@@ -76,7 +76,7 @@ from typing import Awaitable, Callable, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
 from jarvis import builds
@@ -95,6 +95,7 @@ from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
 from jarvis import message_approvals
+from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
@@ -6161,6 +6162,525 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+# --- The team, its network and its people, for the brain --------------------
+#
+# Settings → Team, the Network tab and the Queue, as the brain's tools. Each
+# calls exactly what the page's route calls: team_client's status, team_api's
+# member calls, the stored network snapshot, and messaging's LocalMessaging.
+# Everything a person or the team server chose (a login, a name, a node's
+# label, a subject, a message, a refusal's wording) comes back inside an
+# untrusted block; the lines above it are JARVIS's own words and counts.
+# Changing the roster, marking a message read and moving a conversation are
+# ACTING_TOOLS: they run only on a turn the user drove.
+
+_TEAM_WRAP_NAME = "team"
+TEAM_NOT_SIGNED_IN = ("This JARVIS isn't signed in to a team server, sir. Signing in "
+                      "is done in the browser, from Settings, Team.")
+MESSAGING_OFF = "Messaging isn't available on this JARVIS."
+_TEAM_STATE_WORDS = {
+    "connected": "connected", "connecting": "connecting",
+    "stale": "out of touch: its last status check failed",
+}
+_MEMBER_STATE_WORDS = {"active": "signed in", "approved": "pending, not signed in yet",
+                       "suspended": "suspended"}
+_ROLE_WORDS = {"admin": "administrator", "member": "member"}
+
+
+def _iso_age(iso) -> Optional[float]:
+    """Seconds since a time the team server or the store wrote, or None."""
+    try:
+        at = iso if isinstance(iso, datetime) else datetime.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, time.time() - at.timestamp())
+
+
+def _person(m) -> str:
+    """A roster or recipient entry as the page names it: login (name)."""
+    login = m["login"] if isinstance(m, dict) else m.login
+    name = m.get("name") if isinstance(m, dict) else m.name
+    return f"{login} ({name})" if name else str(login)
+
+
+def _team_refusal(payload) -> str:
+    """The team server's (or the connection's) own words for a refusal, for
+    inside an untrusted block."""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return str((error or {}).get("message") or "no reason given")
+
+
+def _team_refused(what: str, payload) -> str:
+    return (f"{what}, sir; the team server refused it.\n"
+            + _wrap_untrusted(_TEAM_WRAP_NAME, _team_refusal(payload)))
+
+
+async def tool_team_status(args: dict) -> str:
+    """Settings, Team: this JARVIS's connection, the team, who it is signed
+    in as, and for an administrator the roster with each member's state and
+    role (team_api.members_call, the Members panel's own read)."""
+    snap = team_client.connection.snapshot()
+    if snap["state"] in team_client.NOT_SIGNED_IN:
+        return TEAM_NOT_SIGNED_IN
+    team, me = snap.get("team") or {}, snap.get("me") or {}
+    admin = me.get("role") == "admin"
+    head = f"Team server connection: {_TEAM_STATE_WORDS.get(snap['state'], 'unknown')}."
+    if team.get("member_count") is not None:
+        head += f" {int(team['member_count'])} of {int(team.get('member_limit') or 0)} members."
+    head += f" Signed in as {'an administrator' if admin else 'a member'}."
+    lines = [f"Team: {team.get('name') or 'unnamed'}"]
+    if me:
+        lines.append(f"Signed in as: {_person(me)}")
+    if not admin:
+        head += (" Only an administrator sees the whole roster; people lists who can be "
+                 "messaged, and team_network who is online.")
+        return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
+    status, roster = await team_api.members_call()
+    if status != 200:
+        head += " The roster could not be read; the team server's reason is below."
+        lines.append(f"Refused: {_team_refusal(roster)}")
+    else:
+        for m in roster.get("members") or []:
+            lines.append(f"{_person(m)}: {_ROLE_WORDS.get(m.get('role'), 'member')}, "
+                         f"{_MEMBER_STATE_WORDS.get(m.get('state'), 'unknown')}")
+    return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
+
+
+async def tool_find_github_user(args: dict) -> str:
+    """Look up a GitHub account before adding it to the team, as the Members
+    panel's Look up does (team_api.resolve_call). The team server answers
+    administrators only."""
+    if not team_client.connection.signed_in():
+        return TEAM_NOT_SIGNED_IN
+    try:
+        login = team_api.ResolveBody(login=str(args.get("login") or "").strip()).login
+    except ValidationError:
+        return "Give me their GitHub username, sir."
+    status, found = await team_api.resolve_call(login)
+    if status != 200:
+        return _team_refused("Nothing was found", found)
+    where = ("already on the team" if found.get("on_roster") else
+             "not on the team yet; change_team_member with change add adds it")
+    return (f"Found one GitHub account, {where}.\n"
+            + _wrap_untrusted(_TEAM_WRAP_NAME,
+                              f"{_person(found)}, GitHub account {int(found['github_id'])}"))
+
+
+# What each change sends the team server (team_api.MemberBody's fields), as
+# the Members panel's buttons do; `add` and `end_sessions` are their own.
+_MEMBER_CHANGES = {"make_admin": {"role": "admin"}, "make_member": {"role": "member"},
+                   "suspend": {"status": "suspended"}, "re_enable": {"status": "approved"},
+                   "remove": {"status": "removed"}}
+_MEMBER_DONE = {"add": "Added; pending until they sign in", "make_admin": "Made an administrator",
+                "make_member": "Made a member", "suspend": "Suspended, and their sessions ended",
+                "re_enable": "Re-enabled; their old sessions do not come back",
+                "remove": "Removed from the roster", "end_sessions": "Ended their sessions"}
+
+
+def _roster_person(said: str, roster: dict):
+    """(the one member `said` names, None) or (None, what to say)."""
+    members = roster.get("members") or []
+    found = message_approvals.people_called(said, members, lambda m: (m["login"], m.get("name")))
+    if len(found) == 1:
+        return found[0], None
+    listed = _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(_person(m) for m in (found or members)))
+    if found:
+        return None, "That could be more than one person; ask which. Nothing was changed.\n" + listed
+    return None, "No one on the team goes by that name; nothing was changed. The team is:\n" + listed
+
+
+async def tool_change_team_member(args: dict) -> str:
+    """Add, promote, demote, suspend, re-enable, remove or end the sessions
+    of one member, on his word: the Members panel's buttons, through the
+    same team_api calls. The team server allows it to administrators only."""
+    change = str(args.get("change") or "")
+    done = _MEMBER_DONE.get(change)
+    if done is None:
+        return ("Which change, sir: add, make_admin, make_member, suspend, re_enable, "
+                "remove or end_sessions? Nothing was changed.")
+    if not team_client.connection.signed_in():
+        return TEAM_NOT_SIGNED_IN
+    status, roster = await team_api.members_call()
+    if status != 200:
+        return _team_refused("Nothing was changed", roster)
+    said = str(args.get("person") or "").strip()
+    fields = dict(_MEMBER_CHANGES.get(change) or {})
+    if change == "add":
+        try:
+            login = team_api.ResolveBody(login=said).login
+        except ValidationError:
+            return "Give me their GitHub username, sir. Nothing was changed."
+        status, who = await team_api.resolve_call(login)
+        if status != 200:
+            return _team_refused("Nothing was changed", who)
+        if who.get("on_roster"):
+            return ("They are already on the team; nothing was changed.\n"
+                    + _wrap_untrusted(_TEAM_WRAP_NAME, _person(who)))
+        fields["role"] = "admin" if args.get("role") == "admin" else "member"
+    else:
+        who, problem = _roster_person(said, roster)
+        if problem:
+            return problem
+    if change == "end_sessions":
+        status, answer = await team_api.revoke_call(who["github_id"])
+    else:
+        body = team_api.MemberBody(expected_revision=int(roster.get("revision") or 1), **fields)
+        status, answer = await team_api.change_call(who["github_id"],
+                                                    body.model_dump(exclude_none=True))
+    if status != 200:
+        return _team_refused("Nothing was changed", answer)
+    return f"{done}, sir.\n" + _wrap_untrusted(_TEAM_WRAP_NAME, _person(who))
+
+
+_PRESENCE_WORDS = {"online": "online", "delayed": "delayed", "offline": "offline"}
+_ACTIVITY_WORDS = {"gui": "on screen", "speech": "by voice", "typed": "typed"}
+
+
+def _node_line(n: dict, you: str) -> str:
+    """One node as its Network tile shows it: label and owner, presence,
+    load, brains and when a person last used it."""
+    bits = [f"{n.get('label')}, {n.get('owner_login')}'s"
+            + (" (this Mac)" if n.get("node_id") == you else ""),
+            f"{_PRESENCE_WORDS.get(n.get('presence'), 'unknown')}, last seen "
+            f"{_say_age(_iso_age(n.get('last_seen_at')))}"]
+    r = n.get("resources") or {}
+    if r.get("state") == "measured":
+        if r.get("cpu_percent") is not None:
+            bits.append(f"CPU {round(r['cpu_percent'])}%")
+        if r.get("memory_used_bytes") is not None and r.get("memory_total_bytes"):
+            bits.append(f"memory {round(100 * r['memory_used_bytes'] / r['memory_total_bytes'])}%")
+    b = n.get("brains") or {}
+    if b.get("configured"):
+        brains = f"{b['configured']} brain account{'s' if b['configured'] != 1 else ''}"
+        if b.get("average_remaining_percent") is not None:
+            brains += f", {round(b['average_remaining_percent'])}% left on average"
+        if b.get("pace_points") is not None:
+            brains += (f", {abs(b['pace_points']):.1f} points "
+                       f"{'behind' if b['pace_points'] < 0 else 'ahead of'} an even pace")
+        bits.append(brains)
+    if n.get("activity_state") == "available" and n.get("last_human_activity_at"):
+        bits.append(f"last used {_say_age(_iso_age(n['last_human_activity_at']))} "
+                    f"{_ACTIVITY_WORDS.get(n.get('last_human_activity_source'), '')}".rstrip())
+    return "; ".join(bits)
+
+
+def tool_team_network(args: dict) -> str:
+    """The Network tab: every paired JARVIS on the team, from the snapshot
+    the team server last sent (team_client.network_status, the body GET
+    /api/team/network returns), nothing local merged in."""
+    status = json.loads(team_client.connection.network_status())
+    if status["connection"] in team_client.NOT_SIGNED_IN:
+        return TEAM_NOT_SIGNED_IN
+    snap = status.get("snapshot")
+    if not snap:
+        return "No word from the team server's network yet, sir; nothing says who is online."
+    nodes = snap.get("nodes") or []
+    counts = {p: sum(n.get("presence") == p for n in nodes) for p in _PRESENCE_WORDS}
+    head = (f"{len(nodes)} JARVIS node{'s' if len(nodes) != 1 else ''} on the team network: "
+            + ", ".join(f"{c} {p}" for p, c in counts.items() if c) + ".")
+    if status["connection"] != "connected" or status.get("stale"):
+        head += (" This is the last word from the team server; this JARVIS cannot reach it "
+                 "now, so who is online may have changed.")
+    if (snap.get("server") or {}).get("database") != "connected":
+        head += " The team server says its database is down."
+    you = snap.get("you_node_id")
+    ordered = ([n for n in nodes if n.get("node_id") == you]
+               + [n for n in nodes if n.get("node_id") != you])
+    if not ordered:
+        return head
+    return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME,
+                                         "\n".join(_node_line(n, you) for n in ordered))
+
+
+async def _messaging_call(work):
+    """Run one LocalMessaging call, the Queue's routes' own: (result, None),
+    or (None, the refusal's own words)."""
+    if messaging is None:
+        return None, MESSAGING_OFF
+    try:
+        result = work(messaging.local)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as e:
+        return None, messaging_api.refused_by(e).shown()
+    return result, None
+
+
+def _uuid_arg(args: dict, key: str) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(args.get(key) or ""))
+    except ValueError:
+        return None
+
+
+async def _with_roster(local) -> None:
+    """Read the team's roster once if none is known yet, so people are
+    named as the Queue names them; a roster that cannot be read leaves
+    them by GitHub number."""
+    if not local.members():
+        try:
+            await local.recipients()
+        except Exception as e:
+            log.info("messaging: the roster could not be read for naming (%s)",
+                     type(e).__name__)
+
+
+def _label_of(local, github_id: int) -> str:
+    """How the Queue names a person: Me, or the roster's name or login."""
+    return message_approvals.recipient_label(local.members(), github_id,
+                                             local.pairing().owner_github_id)
+
+
+async def tool_people(args: dict) -> str:
+    """Who can be messaged right now: the team's active members, read from
+    the team server (LocalMessaging.recipients, the Queue's own read), so
+    draft_message knows them too."""
+    got, said = await _messaging_call(lambda m: m.recipients())
+    if said:
+        return said
+    names = [f"{_label_of(messaging.local, p.github_id)}, {p.login}" for p in got.members]
+    if not names:
+        return "No one on the team can be messaged yet, sir."
+    return (f"{len(names)} {'person' if len(names) == 1 else 'people'} can be messaged; "
+            f"give draft_message one of these names (Me is himself).\n"
+            + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(names)))
+
+
+_PLACEMENT_WORDS = {"queued": "waiting", "active": "active", "inactive": "dismissed"}
+
+
+def _item_line(local, item) -> str:
+    """One Queue item: who it is with, where it sits, whose turn, and its
+    latest message's subject (or opening words)."""
+    ws = item.work_state
+    bits = [f"thread {ws.thread_id} with {_label_of(local, ws.correspondent_github_id)}",
+            _PLACEMENT_WORDS.get(ws.placement, "in the Queue"),
+            "his turn" if ws.action_owner_github_id == ws.owner_github_id else "waiting on them",
+            f"{len(item.messages)} message{'s' if len(item.messages) != 1 else ''}"]
+    if ws.unread_reminder:
+        bits.append("marked unread")
+    if item.messages:
+        last = item.messages[-1]
+        about = last.message.subject or " ".join(last.message.text.split())[:80]
+        bits.append(f"latest {'from them' if last.direction == 'incoming' else 'from him'} "
+                    f"{_say_age(_iso_age(last.message.accepted_at))}: {about}")
+    if item.drafts:
+        bits.append("an unsent reply")
+    return "; ".join(bits)
+
+
+async def tool_people_messages(args: dict) -> str:
+    """The Queue: his conversations with people, waiting and active (the
+    Queue's snapshot), or with `dismissed` the ones he has put away (its
+    history), each by its thread."""
+    dismissed = bool(args.get("dismissed"))
+    if dismissed:
+        got, said = await _messaging_call(lambda m: m.history(
+            args.get("continuation") or None, messaging_ports.HISTORY_PAGE_DEFAULT))
+        if said:
+            return said
+        items, unsent, more = got.items, [], got.continuation
+    else:
+        got, said = await _messaging_call(lambda m: m.snapshot())
+        if said:
+            return said
+        if got.availability != "available" and not got.items:
+            return messaging_ports.AVAILABILITY_SHOWN.get(got.availability, MESSAGING_OFF)
+        items, unsent, more = got.items, got.unsent, None
+    local = messaging.local
+    await _with_roster(local)
+    lines = [_item_line(local, i) for i in items]
+    lines += [f"new message {d.message_id} to {_label_of(local, d.recipient_github_id)}, "
+              f"not sent ({d.send.state.replace('_', ' ')}): {d.subject or d.text[:80]}"
+              for d in unsent]
+    which = "dismissed" if dismissed else "in the Queue"
+    if not lines:
+        return f"No conversations with people {which}, sir."
+    head = (f"{len(lines)} conversation{'s' if len(lines) != 1 else ''} with people {which}. "
+            f"read_people_thread reads one by its thread.")
+    if more:
+        head += f" Older ones: pass continuation {more}."
+    return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
+
+
+def _thread_text(local, item) -> str:
+    """Every message in one conversation, oldest first, with each one's
+    receipts and files, then any unsent draft: what the Queue's item shows."""
+    out = []
+    for m in item.messages:
+        msg = m.message
+        heard = ("read" if m.receipts.read_at else
+                 "delivered, not read" if m.receipts.received_at else "not delivered yet")
+        out.append(f"Message {msg.message_id}, from {_label_of(local, msg.sender_github_id)} "
+                   f"to {_label_of(local, msg.recipient_github_id)}, "
+                   f"{_say_age(_iso_age(msg.accepted_at))}, {heard}")
+        if msg.subject:
+            out.append(f"Subject: {msg.subject}")
+        out.append(msg.text)
+        out += [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)})"
+                for a in msg.attachments]
+        out.append("")
+    for d in item.drafts:
+        out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
+                   f"{d.send.state.replace('_', ' ')}: {d.text}")
+    return "\n".join(out).strip()
+
+
+async def tool_read_people_thread(args: dict) -> str:
+    """One conversation with a person, in full, a page at a time
+    (LocalMessaging.item, the Queue item's own read). Reading it here sends
+    no read receipt: mark_people_message_read does, once he has heard it."""
+    thread = _uuid_arg(args, "thread")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+    item, said = await _messaging_call(lambda m: m.item(thread))
+    if said:
+        return said
+    await _with_roster(messaging.local)
+    unread = [str(m.message.message_id) for m in item.messages
+              if m.direction == "incoming" and m.receipts.read_at is None]
+    head = (f"{_PLACEMENT_WORDS.get(item.work_state.placement, 'in the Queue').capitalize()}, "
+            f"{len(item.messages)} message{'s' if len(item.messages) != 1 else ''}.")
+    if unread:
+        head += (" Once he has heard them, mark these read with mark_people_message_read: "
+                 + ", ".join(unread) + ".")
+    return head + "\n" + _one_page(_thread_text(messaging.local, item), _page_arg(args),
+                                   "That conversation", "read_people_thread")
+
+
+async def tool_mark_people_message_read(args: dict) -> str:
+    """He has heard a person's message: its read receipt is owed, exactly
+    as the Queue's `read` does once a body was displayed."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which message, sir? Give me its message id from read_people_thread."
+    got, said = await _messaging_call(lambda m: m.read(message_id))
+    if said:
+        return said
+    if got.direction != "incoming":
+        return "That is a message he sent; there is nothing to mark read."
+    if got.receipts.read_at is not None:
+        return "That message was already marked read."
+    return "Marked read, sir: the sender is told he has read it."
+
+
+# Each change the Queue's item offers, as its work command
+# (wire.WorkCommandRequest), built from the item's current state.
+_THREAD_CHANGES = {
+    "open": lambda ws: messaging_wire.OpenItem(expected_revision=ws.revision),
+    "put_back": lambda ws: messaging_wire.PutBack(expected_revision=ws.revision),
+    "addressed": lambda ws: messaging_wire.SetAddressed(expected_revision=ws.revision,
+                                                        addressed=True),
+    "not_addressed": lambda ws: messaging_wire.SetAddressed(expected_revision=ws.revision,
+                                                            addressed=False),
+    "unread": lambda ws: messaging_wire.SetUnreadReminder(expected_revision=ws.revision,
+                                                          unread=True),
+    "read": lambda ws: messaging_wire.SetUnreadReminder(expected_revision=ws.revision,
+                                                        unread=False),
+    "my_turn": lambda ws: messaging_wire.SetActionOwner(
+        expected_revision=ws.revision, action_owner_github_id=ws.owner_github_id),
+    "their_turn": lambda ws: messaging_wire.SetActionOwner(
+        expected_revision=ws.revision, action_owner_github_id=ws.correspondent_github_id),
+    "dismiss": lambda ws: messaging_wire.Dismiss(expected_revision=ws.revision),
+    "restore": lambda ws: messaging_wire.Restore(expected_revision=ws.revision),
+}
+
+
+async def tool_set_people_thread(args: dict) -> str:
+    """Move one conversation on the Queue, on his word: open it, put it
+    back, mark it addressed or unread, say whose turn it is, dismiss or
+    restore it (LocalMessaging.work_command, the item's own buttons)."""
+    command = _THREAD_CHANGES.get(str(args.get("change") or ""))
+    if command is None:
+        return "Which change, sir: " + ", ".join(_THREAD_CHANGES) + "? Nothing was changed."
+    thread = _uuid_arg(args, "thread")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+
+    async def move(local):
+        item = local.item(thread)
+        request = messaging_wire.WorkCommandRequest(change=command(item.work_state))
+        return await local.work_command(thread, request)
+
+    got, said = await _messaging_call(move)
+    if said:
+        return f"Nothing was changed, sir: {said}"
+    if got.pending:
+        return ("Kept, sir: the team server can't be reached, so the change goes to it as "
+                "soon as it can.")
+    return (f"Done, sir: that conversation is now "
+            f"{_PLACEMENT_WORDS.get(got.work_state.placement, 'in the Queue')}.")
+
+
+def _draft_revision(local, message_id: uuid.UUID) -> int:
+    """The draft's revision now, as the page's buttons send the one shown."""
+    draft = local.store.draft(*local.pairing().ns, message_id)
+    if draft is None:
+        raise messaging_api.Refused("draft_not_found")
+    return draft.draft_revision
+
+
+# The unsent message's own buttons: Discard, Cancel and Retry, each the
+# LocalMessaging call its route makes, at the draft's current revision.
+_DRAFT_CALLS = {
+    "discard": lambda local, mid: local.discard_draft(mid, _draft_revision(local, mid)),
+    "cancel": lambda local, mid: local.cancel(mid, messaging_ports.DraftAction(
+        expected_draft_revision=_draft_revision(local, mid))),
+    "retry": lambda local, mid: local.retry(mid, messaging_ports.DraftAction(
+        expected_draft_revision=_draft_revision(local, mid))),
+}
+_DRAFT_DONE = {
+    "discard": "Discarded, sir; nothing was sent.",
+    "cancel": "Cancelled, sir: nothing went, and it waits as a draft to be reviewed again.",
+    "retry": "Sending it again, sir, as the same approved message; approved is not delivered.",
+}
+
+
+async def tool_change_people_draft(args: dict) -> str:
+    """Discard an unsent message, cancel its send before it has gone, or
+    retry a send that failed, on his word."""
+    action = str(args.get("action") or "")
+    call, done = _DRAFT_CALLS.get(action), _DRAFT_DONE.get(action)
+    if call is None:
+        return "Discard it, cancel its send, or retry it, sir? Nothing was changed."
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which message, sir? Give me its id from people_messages or read_people_thread."
+    _got, said = await _messaging_call(lambda m: call(m, message_id))
+    if said:
+        return f"Nothing was changed, sir: {said}"
+    return done
+
+
+TOOL_HANDLERS.update({
+    "change_people_draft": tool_change_people_draft,
+    "team_status": tool_team_status,
+    "find_github_user": tool_find_github_user,
+    "change_team_member": tool_change_team_member,
+    "team_network": tool_team_network,
+    "people": tool_people,
+    "people_messages": tool_people_messages,
+    "read_people_thread": tool_read_people_thread,
+    "mark_people_message_read": tool_mark_people_message_read,
+    "set_people_thread": tool_set_people_thread,
+})
+ACTING_TOOLS.update({"change_team_member", "mark_people_message_read", "set_people_thread",
+                     "change_people_draft"})
+TAINTING_TOOLS.update({
+    "team_status": "the team's names, written by its members on GitHub",
+    "find_github_user": "a GitHub account's name",
+    "team_network": "the names of the team's machines and their owners",
+    "people": "the team's names, written by its members on GitHub",
+    "people_messages": "messages from people on the team",
+    "read_people_thread": "messages from people on the team",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "change_team_member": "it changes one member on the team's roster, it does not read",
+    "mark_people_message_read": "it records that he read a message, it does not read it",
+    "set_people_thread": "it moves one conversation on the Queue, it does not read",
+    "change_people_draft": "it discards, cancels or retries his own unsent message, it does not read",
+})
+
+
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
 # angle bracket or a newline. Neither source below vets it: the watcher's
 # `project` is `Path(cwd).name` off another process's roster file, never
@@ -6579,19 +7099,27 @@ def tool_workflow_status(args: dict) -> str:
         n = len(running)
         return "\n".join([f"{_say_number(n).capitalize()} workflow{'s' if n != 1 else ''} running:"]
                          + [_workflow_line(w, now) for w in running])
+    w, problem = _workflow_or_explain(name)
+    if problem:
+        return problem
+    return (_workflow_line(w, now) + "\n"
+            + _wrap_untrusted(_WORKFLOW_WRAP_NAME, _workflow_detail(w)))
+
+
+def _workflow_or_explain(name: str):
+    """(the one workflow `name` means, None) or (None, what to say): no
+    such workflow, or several to choose between."""
     found = workflow_store.find(name)
     if not found:
         listed = [_workflow_said(w) for w in workflow_store.recent()]
         said = _plain_name(name, "")
-        return ((f"No workflow is called {said}." if said else "No workflow goes by that name.")
-                + (" The workflows on record are:\n" + "\n".join(listed) if listed
-                   else " None is on record."))
+        return None, ((f"No workflow is called {said}." if said else "No workflow goes by that name.")
+                      + (" The workflows on record are:\n" + "\n".join(listed) if listed
+                         else " None is on record."))
     if len(found) > 1:
-        return ("That could be " + ", or ".join(_workflow_said(w) for w in found)
-                + ". Which one?")
-    w = found[0]
-    return (_workflow_line(w, now) + "\n"
-            + _wrap_untrusted(_WORKFLOW_WRAP_NAME, _workflow_detail(w)))
+        return None, ("That could be " + ", or ".join(_workflow_said(w) for w in found)
+                      + ". Which one?")
+    return found[0], None
 
 
 TOOL_HANDLERS["workflow_status"] = tool_workflow_status
@@ -6806,6 +7334,66 @@ async def api_subsystems():
     return subsystem_diagnostics.to_json(await asyncio.to_thread(_subsystems), now)
 
 
+# --- Diagnostics, for the brain ---------------------------------------------
+#
+# The Diagnostics tab and its views as one tool: every subsystem's row, or
+# one in full, from the same `_subsystems()` the route reads, with the voice
+# record's own summary (voice_diagnostics.summary) for voice input. The rows'
+# names and states are JARVIS's own fixed words; a summary or a check's
+# detail can quote an agent's name or an error that quotes a file, so those
+# come back inside an untrusted block.
+
+_DIAGNOSTICS_WRAP_NAME = "diagnostics"
+_SUBSYSTEM_STATE_WORDS = {
+    subsystem_diagnostics.OK: "working", subsystem_diagnostics.DEGRADED: "degraded",
+    subsystem_diagnostics.DOWN: "down", subsystem_diagnostics.IDLE: "idle",
+    subsystem_diagnostics.UNKNOWN: "unknown",
+}
+
+
+def _voice_figures(summary: dict) -> list[str]:
+    """Today's and the last hour's counts from the voice record's summary,
+    as the Diagnostics tab's voice summary shows them."""
+    today, hour = summary.get("today") or {}, summary.get("incidentsLastHour") or {}
+    return [f"Today: listened {round((today.get('listenedSec') or 0) / 60)} minutes, "
+            f"{today.get('finals') or 0} sentences heard, {today.get('typed') or 0} typed, "
+            f"{today.get('drops') or 0} dropped, {today.get('reconnects') or 0} reconnects.",
+            f"Last hour: {hour.get('drops') or 0} drops, {hour.get('reconnects') or 0} "
+            f"reconnects, {hour.get('errors') or 0} errors."]
+
+
+async def tool_diagnostics(args: dict) -> str:
+    """How each part of JARVIS is doing, or one part in full."""
+    rows = await asyncio.to_thread(_subsystems)
+    want = agent_directory.spoken_key(str(args.get("subsystem") or ""))
+    if not want:
+        counts = {w: sum(_SUBSYSTEM_STATE_WORDS.get(s.state) == w for s in rows)
+                  for w in _SUBSYSTEM_STATE_WORDS.values()}
+        head = (f"{len(rows)} subsystems: "
+                + ", ".join(f"{c} {w}" for w, c in counts.items() if c)
+                + ". The page's own connection and graphics are judged by the page alone.")
+        return head + "\n" + _wrap_untrusted(_DIAGNOSTICS_WRAP_NAME, "\n".join(
+            f"{s.name}: {_SUBSYSTEM_STATE_WORDS.get(s.state, 'unknown')}, {s.summary}"
+            for s in rows))
+    found = ([s for s in rows if want in (agent_directory.spoken_key(s.id),
+                                          agent_directory.spoken_key(s.name))]
+             or [s for s in rows if want in agent_directory.spoken_key(s.name)])
+    if len(found) != 1:
+        return "Which subsystem, sir: " + ", ".join(s.name for s in rows) + "?"
+    s = found[0]
+    lines = [s.summary] + [
+        f"{c.name}: {_SUBSYSTEM_STATE_WORDS.get(c.state, 'unknown')}"
+        + (f", {c.detail}" if c.detail else "") for c in s.checks]
+    if s.id == "voice_input":
+        lines += _voice_figures(await asyncio.to_thread(voice_diagnostics.summary))
+    return (f"{s.name}: {_SUBSYSTEM_STATE_WORDS.get(s.state, 'unknown')}.\n"
+            + _wrap_untrusted(_DIAGNOSTICS_WRAP_NAME, "\n".join(lines)))
+
+
+TOOL_HANDLERS["diagnostics"] = tool_diagnostics
+TAINTING_TOOLS["diagnostics"] = "JARVIS's diagnostics, which quote agents' names and errors"
+
+
 async def _watch_subsystems() -> None:
     """Look at every subsystem every few seconds. A state that moved tells
     the pages to read again; communications going down, and coming back,
@@ -7007,38 +7595,110 @@ async def api_workflow_transcript(workflow_id: str):
     return {"agents": out, "subagents": _workflow_subagents(w)}
 
 
+# Where he answered or dismissed a workflow: the summary its record keeps.
+_WORKFLOW_WHERE = {"page": "on the page", "voice": "by voice"}
+
+
+async def _dismiss_workflow(workflow_id: str, where: str):
+    """Dismiss a workflow, from the page's route or the brain's tool: it
+    leaves the list at once and is listed as done from then on. Recorded as
+    the workflow's own workflow_dismissed event. Raises WorkflowRefused."""
+    event = workflow_store.WorkflowEvent(workflow_id, "workflow_dismissed", None,
+                                         f"Dismissed {_WORKFLOW_WHERE[where]}.", {"by": "user"})
+    w = await asyncio.to_thread(workflow_store.record, event)
+    _send_to_session_clients({"type": "workflows"})
+    return w
+
+
+async def _answer_workflow_decision(workflow_id: str, key: str, answer: str, where: str):
+    """Record his answer to a workflow's decision, from the page's route or
+    the brain's tool, as the workflow's own decision_made, so its reporter
+    reads the answer back. Raises WorkflowRefused (or ValueError for no
+    answer)."""
+    answer = " ".join(str(answer or "").split())[:workflow_store.SUMMARY_MAX]
+    if not answer:
+        raise ValueError("Give an answer.")
+    event = workflow_store.WorkflowEvent(workflow_id, "decision_made", None,
+                                         f"Answered {_WORKFLOW_WHERE[where]}: {key}.",
+                                         {"key": key, "answer": answer, "by": "user"})
+    w = await asyncio.to_thread(workflow_store.record, event)
+    _workflow_recorded(w, event)
+    return w
+
+
 @app.post("/api/workflows/{workflow_id}/dismiss")
 async def api_dismiss_workflow(workflow_id: str):
-    """He dismissed a finished workflow on the page: it leaves the list at
-    once and is listed as done from then on. Recorded as the workflow's own
-    workflow_dismissed event. The page's route only (not a reporter's key)."""
-    event = workflow_store.WorkflowEvent(workflow_id, "workflow_dismissed", None,
-                                         "Dismissed on the page.", {"by": "user"})
+    """He dismissed a finished workflow on the page. The page's route only
+    (not a reporter's key)."""
     try:
-        w = await asyncio.to_thread(workflow_store.record, event)
+        w = await _dismiss_workflow(workflow_id, "page")
     except workflow_store.WorkflowRefused as e:
         return _workflow_refused(e)
-    _send_to_session_clients({"type": "workflows"})
     return {"workflow": _workflow_json(w)}
 
 
 @app.post("/api/workflows/{workflow_id}/decisions/{key}")
 async def api_answer_workflow_decision(workflow_id: str, key: str, req: WorkflowAnswerRequest):
-    """He answered a workflow's decision on the page. Recorded as the
-    workflow's own decision_made, so its reporter reads the answer back."""
-    answer = " ".join(req.answer.split())[:workflow_store.SUMMARY_MAX]
-    if not answer:
-        return _workflow_refused(ValueError("Give an answer."))
-    event = workflow_store.WorkflowEvent(workflow_id, "decision_made", None,
-                                         f"Answered on the page: {key}.",
-                                         {"key": key, "answer": answer, "by": "user"})
+    """He answered a workflow's decision on the page."""
     try:
-        w = await asyncio.to_thread(workflow_store.record, event)
-    except workflow_store.WorkflowRefused as e:
+        w = await _answer_workflow_decision(workflow_id, key, req.answer, "page")
+    except (workflow_store.WorkflowRefused, ValueError) as e:
         return _workflow_refused(e)
-    _workflow_recorded(w, event)
     _notes_for_brain.append(f"He answered decision {key} of workflow {w.id} on the page.")
     return {"workflow": _workflow_json(w)}
+
+
+# --- Answering and dismissing a workflow, for the brain ---------------------
+#
+# The Workflows view's decision answer and its Dismiss, through the same
+# functions as their routes, recorded in the workflow's own events as done
+# by voice. A decision is named by a key the workflow's record holds, so
+# nothing the brain passes reaches the record unless it IS one of them.
+
+async def tool_answer_workflow_decision(args: dict) -> str:
+    """Record his answer to one of a workflow's open decisions."""
+    w, problem = _workflow_or_explain(str(args.get("workflow") or "").strip())
+    if problem:
+        return problem
+    open_keys = [o.key for o in w.open if o.kind == "decision"]
+    if not open_keys:
+        return f"{_workflow_said(w)} has no open decision, sir."
+    asked = str(args.get("decision") or "").strip()
+    key = next((k for k in open_keys if k == asked), None)
+    if key is None and not asked and len(open_keys) == 1:
+        key = open_keys[0]
+    if key is None:
+        return (f"That is not one of {_workflow_said(w)}'s open decisions, sir; "
+                f"workflow_status with workflow {w.id} lists them.")
+    try:
+        await _answer_workflow_decision(w.id, key, args.get("answer"), "voice")
+    except (workflow_store.WorkflowRefused, ValueError) as e:
+        return f"Nothing was recorded, sir: {e}"
+    return (f"Recorded his answer to {_workflow_said(w)}'s decision, sir; the session "
+            f"running it reads it from the record.")
+
+
+async def tool_dismiss_workflow(args: dict) -> str:
+    """Dismiss a finished workflow from the Workflows list."""
+    w, problem = _workflow_or_explain(str(args.get("workflow") or "").strip())
+    if problem:
+        return problem
+    try:
+        await _dismiss_workflow(w.id, "voice")
+    except workflow_store.WorkflowRefused as e:
+        return f"Nothing was dismissed, sir: {e}"
+    return f"Dismissed {_workflow_said(w)}, sir."
+
+
+TOOL_HANDLERS.update({
+    "answer_workflow_decision": tool_answer_workflow_decision,
+    "dismiss_workflow": tool_dismiss_workflow,
+})
+ACTING_TOOLS.update({"answer_workflow_decision", "dismiss_workflow"})
+TAINT_EXEMPT_TOOLS.update({
+    "answer_workflow_decision": "it records his answer to a decision, it does not read",
+    "dismiss_workflow": "it takes a finished workflow off the list, it does not read",
+})
 
 
 # --- The agents list, for the brain ----------------------------------------
@@ -8819,6 +9479,131 @@ TAINT_EXEMPT_TOOLS.update({
     "register_folder": "it adds a folder to the catalog, it does not read its contents",
     "unregister_folder": "it removes a folder from the catalog, it does not read",
 })
+
+
+# The rest of the Folders view: one folder in full, changing one, and the
+# candidates discovery found, through the same service calls as its routes.
+
+_CANDIDATE_STATE_WORDS = {"discovered": "found by discovery", "ignored": "ignored",
+                          "registered": "already registered"}
+
+
+async def tool_folder_detail(args: dict) -> str:
+    """One folder as its detail view shows it: where it is and how it is
+    read, the sessions found for it, and its latest events."""
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return "Which folder, sir? Give me its ID from list_folders or find_folder."
+    got, said = await _folder_call(lambda s: s.detail(folder_id))
+    if said:
+        return said
+    f, sessions = got["folder"], got["sessions"]
+    lines = [_folder_line(f), f"Read as: {f['access']['description']}"]
+    lines += [f"{s['provider']} session {s['agent_name'] or s['session_id']}"
+              f"{' (live)' if s['live'] else ''}: {s['relation']}, cwd {s['cwd']}, "
+              f"seen {_say_age(time.time() - s['observed_at'])}" for s in sessions]
+    lines += [f"{e['event']} {_say_age(time.time() - e['at'])}" for e in got["events"][-10:]]
+    head = (f"That folder, revision {f['revision']}: {len(sessions)} "
+            f"session{'s' if len(sessions) != 1 else ''} found for it.")
+    return head + "\n" + _wrap_untrusted(_FOLDER_WRAP_NAME, "\n".join(lines))
+
+
+async def tool_change_folder(args: dict) -> str:
+    """Rename a folder or change its role, point it at a new location, or
+    check it now, on his word: the detail view's Edit, Reconnect and
+    Refresh, through the same service calls. No file is touched."""
+    folder_id = _folder_id(args)
+    if folder_id is None:
+        return "Which folder, sir? Give me its ID from list_folders or find_folder."
+    name, role = args.get("display_name"), args.get("role")
+    path = str(args.get("path") or "").strip()
+    if not (name or role or path or args.get("check_now")):
+        return "What should change, sir: its name, its role, its location, or a check now?"
+
+    def revision(s) -> int:
+        return s.detail(folder_id)["folder"]["revision"]
+
+    if path:
+        change = lambda s: s.reconnect(folder_id, expected_revision=revision(s), path=path,
+                                       replace=bool(args.get("replace")))
+    elif name or role:
+        change = lambda s: s.edit(folder_id, expected_revision=revision(s),
+                                  display_name=name, role=role)
+    else:
+        change = lambda s: s.refresh(folder_id)
+    got, said = await _folder_call(change)
+    if said:
+        return f"Nothing was changed, sir: {said}"
+    _hint_folders()
+    f = got["folder"]
+    return (f"Done, sir: it is {f['location']['availability'].replace('_', ' ')}. "
+            f"No file was created, moved or changed.\n"
+            + _wrap_untrusted(_FOLDER_WRAP_NAME, _folder_line(f)))
+
+
+async def tool_folder_candidates(args: dict) -> str:
+    """What discovery found that is not registered yet (or, by `state`,
+    what he ignored or what is registered), as the Folders view's
+    candidates list shows it."""
+    state = str(args.get("state") or "discovered")
+    words = _CANDIDATE_STATE_WORDS.get(state)
+    if words is None:
+        return "Which candidates, sir: discovered, ignored or registered?"
+    got, said = await _folder_call(lambda s: s.candidates(
+        state=state, query=str(args.get("query") or ""), cursor=args.get("cursor") or None))
+    if said:
+        return said
+    found = got["candidates"]
+    head = (f"{len(found)} candidate folder{'s' if len(found) != 1 else ''} {words}; "
+            f"discovery {'has looked everywhere' if got['coverage']['complete'] else 'is still looking'}.")
+    if got["next_cursor"]:
+        head += f" More: pass cursor {got['next_cursor']}."
+    if not found:
+        return head
+    lines = [f"{c['id']} · {c['path']} · proposed {c['proposed_role']} · "
+             f"{c['availability'].replace('_', ' ')} · {c['sessions']} session"
+             f"{'s' if c['sessions'] != 1 else ''} from {', '.join(c['providers'])}"
+             + (f" · registered as folder {c['registered_folder_id']}"
+                if c["registered_folder_id"] else "")
+             + (f" · cannot be registered ({c['refusal']})" if c["refusal"] else "")
+             for c in found]
+    return head + "\n" + _wrap_untrusted(_FOLDER_WRAP_NAME, "\n".join(lines))
+
+
+async def tool_change_folder_candidate(args: dict) -> str:
+    """Ignore a candidate or bring an ignored one back, on his word. It
+    registers nothing: register_folder does that."""
+    action = str(args.get("action") or "")
+    if action not in ("ignore", "restore"):
+        return "Ignore it or restore it, sir?"
+    candidate = str(args.get("candidate") or "").strip().lower()
+    if not _FOLDER_ID_RE.fullmatch(candidate):
+        return "Which candidate, sir? Give me its ID from folder_candidates."
+    got, said = await _folder_call(lambda s: s.candidate_action(candidate, action))
+    if said:
+        return f"Nothing was changed, sir: {said}"
+    _hint_folders()
+    c = got["candidate"]
+    done = ("Ignored, sir: it stays off the candidates list until restored."
+            if c["state"] == "ignored" else "Restored, sir: it is back on the candidates list.")
+    return done + "\n" + _wrap_untrusted(_FOLDER_WRAP_NAME, c["path"])
+
+
+TOOL_HANDLERS.update({
+    "folder_detail": tool_folder_detail,
+    "change_folder": tool_change_folder,
+    "folder_candidates": tool_folder_candidates,
+    "change_folder_candidate": tool_change_folder_candidate,
+})
+ACTING_TOOLS.update({"change_folder", "change_folder_candidate"})
+TAINTING_TOOLS.update({
+    "folder_detail": "a folder's sessions and paths, from sessions' records",
+    "folder_candidates": "a list of folder paths that sessions' records named",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "change_folder": "it changes a folder's catalog entry, it does not read its contents",
+    "change_folder_candidate": "it ignores or restores a candidate, it does not read",
+})
 # ---------------------------------------------------------------------------
 # Reading a web page, and seeing one
 # ---------------------------------------------------------------------------
@@ -9629,28 +10414,70 @@ async def api_cancel_run(run_id: str):
     return {"run_id": run_id, "status": "cancelled"}
 
 
-@app.post("/api/runs/{run_id}/retry")
-async def api_retry_run(run_id: str):
-    original = run_store.get_run(run_id)
-    if not original:
-        return JSONResponse(status_code=404, content={"error": "Run not found"})
+RUN_STILL_ACTIVE = "Run is still active — cancel it first"
+
+
+async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Optional[str]]:
+    """Run a finished run's prompt again, resuming from it, for the page's
+    retry route and the brain's `retry_run` alike: (the new run's id, None),
+    or (None, why not)."""
     if original["status"] not in run_store.RunStatus.TERMINAL:
         # Retrying a run that is still going would double-spawn it: two
         # processes in the same directory, both forked from the same session.
-        return JSONResponse(
-            status_code=409,
-            content={"error": "Run is still active — cancel it first"})
+        return None, RUN_STILL_ACTIVE
     # A run in a registered folder is checked again: the folder may have
     # been removed, moved or made unavailable since it ran.
     path, folder_id = original["project_path"], original.get("folder_id")
     if folder_id:
         _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
         if problem:
-            return JSONResponse(status_code=409, content={"error": problem})
+            return None, problem
     new_id = await run_executor_instance.spawn(
-        original["prompt"], original["project_name"], path, "api",
-        resume_from=run_id, folder_id=folder_id)
+        original["prompt"], original["project_name"], path, origin,
+        resume_from=original["id"], folder_id=folder_id)
+    return new_id, None
+
+
+@app.post("/api/runs/{run_id}/retry")
+async def api_retry_run(run_id: str):
+    original = run_store.get_run(run_id)
+    if not original:
+        return JSONResponse(status_code=404, content={"error": "Run not found"})
+    new_id, problem = await _retry_run(original, "api")
+    if problem:
+        return JSONResponse(status_code=409, content={"error": problem})
     return {"run_id": new_id, "status": "spawned"}
+
+
+async def tool_retry_run(args: dict) -> str:
+    """Run a finished run's prompt again, picking up from it: the
+    dashboard's Retry, through the same `_retry_run`. An ACTING tool: it
+    starts a process."""
+    ref = str(args.get("run") or "").strip()
+    if not ref:
+        return "Which one should I run again, sir?"
+    runs, problem = _resolve_runs_or_explain(ref)
+    if problem:
+        return problem
+    active = [r for r in runs if r["status"] in run_store.RunStatus.ACTIVE]
+    if active:
+        return (f"The work in {_run_project(active[0])} is still going, sir; it can be run "
+                f"again once it has finished or been stopped.")
+    if run_executor_instance is None:
+        return "I can't start anything just now, sir."
+    run = runs[0]
+    new_id, problem = await _retry_run(run, "voice")
+    if problem:
+        return f"Nothing was started, sir: {problem}"
+    global last_started_run
+    last_started_run = new_id
+    return (f"Started the work in {_run_project(run)} again, sir, picking up where that run "
+            f"left off; you'll be told when it finishes.")
+
+
+TOOL_HANDLERS["retry_run"] = tool_retry_run
+ACTING_TOOLS.add("retry_run")
+TAINT_EXEMPT_TOOLS["retry_run"] = "it starts a run again, it does not read"
 
 
 @app.websocket("/ws/runs")

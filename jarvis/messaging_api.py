@@ -41,9 +41,22 @@ class Refused(Exception):
         super().__init__(code)
         self.code, self.latest, self.extra = code, latest, extra
 
-    def response(self) -> JSONResponse:
-        spec = (ports.LOCAL_ERRORS.get(self.code) or wire.ERRORS.get(self.code)
+    def spec(self) -> wire.ErrorSpec:
+        return (ports.LOCAL_ERRORS.get(self.code) or wire.ERRORS.get(self.code)
                 or wire.error_spec(self.code, 502))
+
+    def shown(self) -> str:
+        """What the owner is told, the page and the brain alike: the code's
+        own words, and why messaging is unavailable where that is the code."""
+        availability = self.extra.get("availability")
+        if self.code == "messaging_unavailable" and availability in ports.AVAILABILITY_SHOWN:
+            return ports.AVAILABILITY_SHOWN[availability]
+        blockers = [ports.DISMISS_BLOCKERS_SHOWN[b] for b in self.extra.get("dismiss_blockers", ())
+                    if b in ports.DISMISS_BLOCKERS_SHOWN]
+        return " ".join(blockers) if blockers else self.spec().shown
+
+    def response(self) -> JSONResponse:
+        spec = self.spec()
         body: dict = {"code": self.code, "message": spec.shown, **self.extra}
         if self.latest is not None:
             body["latest"] = (self.latest.model_dump(mode="json")

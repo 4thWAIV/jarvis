@@ -170,6 +170,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "b6d67254ef2abd55050ce586325324f1c6af4069a93cc47cb26d0f00fe895826",  # one message per turn; priority interrupts to correct
     "c75ec19829fe2905f3dc16a0b8dc212eb1117245fa539fe7001db8be23513a1a",  # conversation_history; restore_capture
     "6b304d5fb4e2a3abd2d6cafac113dc2aa94391e7cc72f58cb2ef522612ad2dc6",  # registered folders are not projects; spawn_run's folder_id
+    "c7f8ecb68c4a82b1431618e5bbfef9ae91b5153c50a722954f39654dd7214f1f",  # people and the team; every page feature a tool
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
