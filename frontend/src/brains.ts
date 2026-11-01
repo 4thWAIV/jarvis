@@ -7,6 +7,7 @@
  */
 
 import { liveRead } from "./liveRead";
+import { t } from "./locale";
 import { createStore } from "./store";
 
 export interface BrainCheck {
@@ -37,17 +38,36 @@ export function brainsMayHaveChanged(): void {
 
 export async function listBrains(brief = false): Promise<BrainCard[]> {
   const res = await fetch(brief ? "/api/brains?brief=1" : "/api/brains");
-  if (!res.ok) throw new Error(`the server answered ${res.status}`);
+  if (!res.ok) throw new Error(t("left.common.serverAnswered", { status: String(res.status) }));
   return ((await res.json()) as { brains: BrainCard[] }).brains;
+}
+
+/** A refusal of a brains change: brains_config's `code` and `values`
+ *  (brains_config.Refused) worded in the language in force, else the
+ *  server's own words as they came. */
+const REFUSALS: Record<string, (values: Record<string, string>) => string> = {
+  "unknown-brain": (v) => t("left.brains.refused.unknownBrain", { name: v.name ?? "" }),
+  "always-there": () => t("left.brains.refused.alwaysThere"),
+  "default-first": () => t("left.brains.refused.defaultFirst"),
+  "not-added": (v) => t("left.brains.refused.notAdded", { name: v.name ?? "" }),
+};
+
+async function refusal(res: Response): Promise<Error> {
+  const detail = await res.json().then((b) => b?.detail).catch(() => null) as
+    string | { code?: string; values?: Record<string, string>; message?: string } | null;
+  if (detail && typeof detail === "object") {
+    const words = detail.code ? REFUSALS[detail.code] : undefined;
+    if (words) return new Error(words(detail.values ?? {}));
+    if (detail.message) return new Error(detail.message);
+  }
+  if (typeof detail === "string" && detail) return new Error(detail);
+  return new Error(t("left.common.serverAnswered", { status: String(res.status) }));
 }
 
 async function send(method: string, url: string, body: unknown): Promise<void> {
   const res = await fetch(url, { method, headers: { "Content-Type": "application/json" },
                                  body: JSON.stringify(body) });
-  if (!res.ok) {
-    const detail = await res.json().then((b) => b?.detail).catch(() => null);
-    throw new Error(detail || `the server answered ${res.status}`);
-  }
+  if (!res.ok) throw await refusal(res);
 }
 
 export const addBrain = (name: string) => send("POST", `/api/brains/${name}`, { action: "add" });
@@ -58,10 +78,7 @@ export const setDefault = (name: string) => send("POST", "/api/brains/default", 
 /** Start the brain's own sign-in; returns the address to open. */
 export async function startSignIn(name: string): Promise<string> {
   const res = await fetch(`/api/brains/${name}/sign-in`, { method: "POST" });
-  if (!res.ok) {
-    const detail = await res.json().then((b) => b?.detail).catch(() => null);
-    throw new Error(detail || `the server answered ${res.status}`);
-  }
+  if (!res.ok) throw await refusal(res);
   return ((await res.json()) as { url: string }).url;
 }
 

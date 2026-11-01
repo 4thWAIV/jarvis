@@ -12,6 +12,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT, type Translate } from "./locale";
 import { inputStatus, micMuted, micOff } from "./mic";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
@@ -24,15 +25,17 @@ import type { InputStatus } from "./voiceInput";
 const QUIET_STATES = new Set(["listening", "paused", "muted", "off"]);
 const LOST_STATES = new Set(["interrupted", "unavailable", "permission"]);
 
-/** What the dot says, and whether words were lost, or null when all is well. */
-export function inputProblem(status: InputStatus, h: { state: string; cause: string } | null):
+/** What the dot says, in the language in force, and whether words were
+ *  lost, or null when all is well. */
+export function inputProblem(t: Translate, status: InputStatus, h: { state: string; cause: string } | null):
     { text: string; bad: boolean } | null {
-  if (!QUIET_STATES.has(status.state) && status.message) {
-    return { text: status.message, bad: LOST_STATES.has(status.state) };
+  if (!QUIET_STATES.has(status.state) && status.words) {
+    return { text: status.words.say(t), bad: LOST_STATES.has(status.state) };
   }
   if (h && h.state !== "healthy") {
     const words = HEALTH_WORDS[h.state as keyof typeof HEALTH_WORDS] ?? h.state;
-    return { text: h.cause ? `${words}: ${h.cause}` : words, bad: h.state === "no-frames" };
+    return { text: h.cause ? t("left.mic.healthCause", { state: words, cause: h.cause }) : words,
+             bad: h.state === "no-frames" };
   }
   return null;
 }
@@ -40,9 +43,10 @@ export function inputProblem(status: InputStatus, h: { state: string; cause: str
 type PartRef = (el: Element | null) => void;
 
 function HealthDot({ partRef }: { partRef: PartRef }) {
+  const t = useT();
   const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
   const h = useSyncExternalStore(health.subscribe, health.get);
-  const problem = inputProblem(status, h);
+  const problem = inputProblem(t, status, h);
   if (!problem) return null;
   return (
     <button id="health-dot" type="button" className={`health-dot${problem.bad ? " bad" : ""}`}
@@ -53,10 +57,11 @@ function HealthDot({ partRef }: { partRef: PartRef }) {
 
 /** The meter, or what stands in for it while nothing is sent. */
 function MicLevel({ partRef }: { partRef: PartRef }) {
+  const t = useT();
   const muted = useSyncExternalStore(micMuted.subscribe, micMuted.get);
   const off = useSyncExternalStore(micOff.subscribe, micOff.get);
   if (!muted && !off) return <MicMeter partRef={partRef} />;
-  return <span id="mic-silenced" ref={partRef}>{off ? "Mic off" : "Muted"}</span>;
+  return <span id="mic-silenced" ref={partRef}>{t(off ? "left.mic.off" : "left.mic.muted")}</span>;
 }
 
 export function MicControl() {

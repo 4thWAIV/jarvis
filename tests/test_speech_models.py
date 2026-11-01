@@ -108,12 +108,15 @@ async def test_a_failed_download_is_reported_not_installed(monkeypatch):
     assert not spanish["installed"]
     assert spanish["install"]["state"] == "failed"
     assert "network unreachable" in spanish["install"]["error"]
+    # Said apart from the words, so the page words it in its own language.
+    assert spanish["install"]["errorCode"] == "download-failed"
 
 
 def test_an_unknown_language_is_refused():
     with pytest.raises(speech_models.Refused) as refused:
         speech_models.start_install("fr")
     assert refused.value.status == 404 and "Spanish (es)" in refused.value.message
+    assert refused.value.code == "unknown-language"
 
 
 # ── switching: the service ───────────────────────────────────────────────
@@ -199,6 +202,9 @@ def test_the_routes_read_install_and_switch(monkeypatch, tmp_path):
 
         refused = client.post("/api/settings/language", json={"language": "es"}, headers=PAGE)
         assert refused.status_code == 409 and "not installed" in refused.json()["error"]
+        # The page words a refusal by its code and values, in its own language.
+        assert refused.json()["code"] == "not-installed"
+        assert refused.json()["values"] == {"language": "es"}
         assert client.post("/api/speech/models/fr/install", headers=PAGE).status_code == 404
 
         _put(SPANISH)
@@ -241,7 +247,7 @@ def test_switching_with_speech_input_stopped_says_so(monkeypatch):
     monkeypatch.setattr(transcription_api, "service", None)
     with pytest.raises(speech_models.Refused) as refused:
         asyncio.run(speech_models.switch("es"))
-    assert refused.value.status == 503
+    assert refused.value.status == 503 and refused.value.code == "not-running"
 
 
 def test_a_download_gives_up_on_a_dead_connection(monkeypatch, tmp_path):
@@ -288,6 +294,8 @@ async def test_a_switch_overtaken_by_another_is_refused_and_not_recorded(monkeyp
     with pytest.raises(speech_models.Refused) as refused:
         await to_spanish
     assert refused.value.status == 409 and "switched to English" in refused.value.message
+    assert refused.value.code == "switched-meanwhile"
+    assert refused.value.values == {"language": "en", "wanted": "es"}
     assert back["language"] == "en" and service.model == ENGLISH
     assert all("to Spanish" not in e.text for e in _events("model-load"))
     await service.close()

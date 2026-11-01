@@ -18,6 +18,12 @@
  * on show are targets hung from the overlay rail; while Settings covers the
  * orb, pointing inside it is refused as blocked (there is never a second
  * orb).
+ *
+ * Its words are the catalog's (left.settings.* and each section's), in the
+ * interface's language; a section is named by its registered id, and the
+ * brain's discovery labels stay in English. Updates are worded from
+ * self_update's codes; a commit's subject, a branch, a path or a failing
+ * step's output is shown as it came.
  */
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -26,21 +32,19 @@ import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
+import { translate, useT, type Translate } from "./locale";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
 import type { CommandArgs, SideEffect } from "./uiContract";
 import { bind, bindingProps, type ReadStore } from "./uiNavigation";
 import { registerCommand, useUiTarget } from "./uiRegistry";
 
-const SECTIONS = [
-  { id: "brains", title: "Brains" },
-  { id: "voice", title: "Voice" },
-  { id: "you", title: "You" },
-  { id: "team", title: "Team" },
-  { id: "updates", title: "Updates" },
-  { id: "system", title: "System" },
-] as const satisfies readonly { id: CommandArgs["settings.section"]["section"]; title: string }[];
-export type SectionId = (typeof SECTIONS)[number]["id"];
+// In order; each is named by its id (`left.settings.section.<id>`).
+const SECTIONS = ["brains", "voice", "you", "team", "updates", "system"] as const satisfies
+  readonly CommandArgs["settings.section"]["section"][];
+export type SectionId = (typeof SECTIONS)[number];
+
+const sectionKey = (id: SectionId) => `left.settings.section.${id}` as const;
 
 const SETUP_STEPS = ["voice", "you"] as const;
 const SETUP_DELAY_MS = 2000;
@@ -124,29 +128,29 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
+function formatUptime(t: Translate, seconds: number): string {
+  if (seconds < 60) return t("time.short.seconds", { n: Math.floor(seconds) });
+  if (seconds < 3600) return t("time.short.minutes", { n: Math.floor(seconds / 60) });
+  return t("left.system.hoursMinutes", { hours: Math.floor(seconds / 3600),
+                                         minutes: Math.floor((seconds % 3600) / 60) });
 }
 
 /** One section of Settings: its heading and body, registered as the
  *  section's target (keyed by its ID) while it is on show. */
 function SettingsSection({ id, children }: { id: SectionId; children: ReactNode }) {
-  const title = SECTIONS.find((s) => s.id === id)!.title;
+  const t = useT();
   const ui = useUiTarget({ ref: { region: "overlay", view: "overlay.settings", kind: "settingsSection", key: id },
-                           label: `Settings, ${title}`, socket: SOCKET });
+                           label: `Settings, ${translate("en", sectionKey(id))}`, socket: SOCKET });
   return (
     <section className="settings-section" id={`settings-${id}`} ref={ui.whole}>
-      <h3 ref={ui.part("heading")}>{title}</h3>
+      <h3 ref={ui.part("heading")}>{t(sectionKey(id))}</h3>
       <div className="settings-section-body" ref={ui.part("body")}>{children}</div>
     </section>
   );
 }
 
 export function Settings() {
+  const t = useT();
   const shown = useSyncExternalStore(open.subscribe, open.get);
   const step = useSyncExternalStore(setup.subscribe, setup.get);
   const [status, setStatus] = useState<Status | null>(null);
@@ -200,20 +204,21 @@ export function Settings() {
   return (
     <div id="settings-container" className="open">
       <div className="settings-backdrop" {...close} />
-      <div className="settings-panel settings-view" role="dialog" aria-label="Settings" ref={ui.whole}>
+      <div className="settings-panel settings-view" role="dialog" aria-label={t("menu.settings")} ref={ui.whole}>
         <div className="settings-header">
-          <h2>Settings</h2>
-          <button className="settings-close" aria-label="Close" ref={ui.part("close")} {...close}>&times;</button>
+          <h2>{t("menu.settings")}</h2>
+          <button className="settings-close" aria-label={t("left.settings.close")} ref={ui.part("close")}
+                  {...close}>×</button>
         </div>
         {step !== null && (
-          <div className="settings-welcome"><p>Welcome to JARVIS. Let's get you set up.</p></div>
+          <div className="settings-welcome"><p>{t("left.settings.welcome")}</p></div>
         )}
         <div className="settings-columns">
           {step === null && (
-            <nav className="settings-nav" aria-label="Settings sections" ref={ui.part("nav")}>
-              {SECTIONS.map((s) => (
-                <button key={s.id} type="button" {...bindingProps(bind("settings.section", { section: s.id }))}>
-                  {s.title}</button>
+            <nav className="settings-nav" aria-label={t("left.settings.sections")} ref={ui.part("nav")}>
+              {SECTIONS.map((id) => (
+                <button key={id} type="button" {...bindingProps(bind("settings.section", { section: id }))}>
+                  {t(sectionKey(id))}</button>
               ))}
             </nav>
           )}
@@ -229,9 +234,9 @@ export function Settings() {
             {step !== null && (
               <div className="setup-nav">
                 {step + 1 >= SETUP_STEPS.length
-                  ? <button className="settings-btn primary" {...close}>Finish Setup</button>
+                  ? <button className="settings-btn primary" {...close}>{t("left.settings.finishSetup")}</button>
                   : <button className="settings-btn primary" data-ui-action="setup"
-                            onClick={() => setup.set(step + 1)}>Next: Set Your Name</button>}
+                            onClick={() => setup.set(step + 1)}>{t("left.settings.nextName")}</button>}
               </div>
             )}
           </div>
@@ -244,6 +249,7 @@ export function Settings() {
 function VoiceSection({ status, statusFailed, reload }: {
   status: Status | null; statusFailed: boolean; reload: () => Promise<Status | null>;
 }) {
+  const t = useT();
   const [key, setKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [tested, setTested] = useState<Dot | null>(null);
@@ -275,36 +281,45 @@ function VoiceSection({ status, statusFailed, reload }: {
   return (
     <>
       <div className="settings-field">
-        <label>Fish Audio API Key</label>
+        <label>{t("left.voice.fishKey")}</label>
         <div className="settings-input-row">
-          <input data-ui-action="input" type="password" placeholder="Fish Audio key..." value={key}
+          <input data-ui-action="input" type="password" placeholder={t("left.voice.fishKeyPlaceholder")} value={key}
                  onChange={(e) => setKey(e.target.value)} />
-          <button data-ui-action="domain" className="settings-btn" onClick={test}>Test</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={test}>{t("left.voice.test")}</button>
           <StatusDot status={tested ?? known} />
         </div>
       </div>
       <div className="settings-field">
-        <label>Fish Voice ID</label>
+        <label>{t("left.voice.voiceId")}</label>
         <div className="settings-input-row">
           <input data-ui-action="input" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
                  onChange={(e) => setVoiceId(e.target.value)} />
-          <button data-ui-action="domain" className="settings-btn" onClick={saveVoice}>Save</button>
+          <button data-ui-action="domain" className="settings-btn" onClick={saveVoice}>{t("left.voice.save")}</button>
         </div>
       </div>
       <div className="settings-actions">
-        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKeys}>Save Keys</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKeys}>
+          {t("left.voice.saveKeys")}</button>
       </div>
       {savedKey && (
-        <p className="settings-restart-notice">
-          Saved. Restart the server (menu &rarr; Restart Server) for this to take effect.
-        </p>
+        <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
       )}
       <LanguageControl />
     </>
   );
 }
 
+// How he may be addressed (spoken_words.HONORIFICS): the stored value, and
+// its words on the control.
+const HONORIFICS = [
+  ["sir", "left.you.honorific.sir"],
+  ["ma'am", "left.you.honorific.maam"],
+  ["señor", "left.you.honorific.senor"],
+  ["none", "left.you.honorific.none"],
+] as const;
+
 function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
+  const t = useT();
   // Saving is held until what is stored has been read: saving the empty
   // fields of a read that failed would write a blank name over the real one.
   const stored = useLiveRead(() =>
@@ -330,26 +345,24 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
   return (
     <>
       <div className="settings-field">
-        <label>Your Name</label>
-        <input data-ui-action="input" type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
+        <label>{t("left.you.name")}</label>
+        <input data-ui-action="input" type="text" placeholder={t("left.you.namePlaceholder")} value={name}
+               onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="settings-field">
-        <label>Honorific</label>
+        <label>{t("left.you.honorific")}</label>
         <select data-ui-action="input" value={honorific} onChange={(e) => setHonorific(e.target.value)}>
-          <option value="sir">Sir</option>
-          <option value="ma'am">Ma'am</option>
-          <option value="señor">Señor</option>
-          <option value="none">None</option>
+          {HONORIFICS.map(([value, words]) => <option key={value} value={value}>{t(words)}</option>)}
         </select>
       </div>
       {!filled && (
         <p className="settings-hint read-failure">
-          {stored.error ? `Your preferences could not be read (${stored.error}); trying again.`
-                        : "Reading your preferences…"}
+          {stored.error ? t("left.you.unreadable", { error: stored.error }) : t("left.you.reading")}
         </p>
       )}
       <div className="settings-actions">
-        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}>
+          {t("left.you.save")}</button>
       </div>
     </>
   );
@@ -366,7 +379,7 @@ interface UpdateStatus {
   behind: number;
   commits: { sha: string; subject: string }[];
   ci: "" | "passed" | "pending" | "failed" | "none" | "unknown";
-  blockers: { code: string; text: string; detail: string[] }[];
+  blockers: { code: string; text: string; detail: string[]; values?: { count?: number } }[];
   up_to_date: boolean;
   can_update: boolean;
 }
@@ -376,23 +389,72 @@ interface UpdateOutcome {
   ok: boolean;
   updated: boolean;
   refused: string;
+  /** Why it was refused (self_update.REFUSED_*): its words are the page's. */
+  refused_code?: "busy" | "source" | "cannot_check" | "blocked" | "";
   failed: string;
   to_commit: string;
   notes: string[];
+  note_codes?: string[];
   restart: boolean;
 }
 
-const CI_WORDS: Record<UpdateStatus["ci"], string> = {
-  "": "", passed: "CI passed", pending: "CI is still running", failed: "CI failed",
-  none: "no CI result", unknown: "GitHub could not be asked about CI",
+const CI_WORDS = {
+  passed: "left.updates.ci.passed", pending: "left.updates.ci.pending", failed: "left.updates.ci.failed",
+  none: "left.updates.ci.none", unknown: "left.updates.ci.unknown",
+} as const;
+
+const SOURCE_WORDS = { installed: "left.updates.installed", other: "left.updates.notGithub" } as const;
+
+const NOTE_WORDS: Record<string, "left.updates.note.frontendPackages"> = {
+  frontend_packages: "left.updates.note.frontendPackages",
 };
 
+/** What stops an update (self_update's blocker codes), with what it names
+ *  (a branch, files) as it came. A code the page does not know keeps the
+ *  server's sentence. */
+function blockerWords(t: Translate, b: UpdateStatus["blockers"][number]): { text: string; detail: string } {
+  const listed = b.detail.join(", ");
+  switch (b.code) {
+    case "not_on_main": return { text: t("left.updates.blocker.notOnMain"), detail: listed };
+    case "modified": return { text: t("left.updates.blocker.modified"), detail: listed };
+    case "would_overwrite": return { text: t("left.updates.blocker.wouldOverwrite"), detail: listed };
+    case "ci_not_passed": return { text: t("left.updates.blocker.ciNotPassed"), detail: listed };
+    case "local_commits":
+      return b.values?.count !== undefined
+        ? { text: t("left.updates.blocker.localCommits", { count: b.values.count }), detail: "" }
+        : { text: b.text, detail: listed };
+    default: return { text: b.text, detail: listed };
+  }
+}
+
+/** Why an update was refused, from its code; the server's words if the
+ *  page does not know it. */
+function refusedWords(t: Translate, out: UpdateOutcome): string {
+  const s = out.status;
+  switch (out.refused_code) {
+    case "busy": return t("left.updates.busy");
+    case "source": return s.source === "github" ? out.refused : t(SOURCE_WORDS[s.source]);
+    case "cannot_check": return t("left.updates.cannotCheck");
+    case "blocked": return s.blockers.map((b) => blockerWords(t, b).text).join(" ");
+    default: return out.refused;
+  }
+}
+
+/** What an update did, kept as what happened and worded where shown. */
+type UpdateResult =
+  | { kind: "restarting"; commit: string; notes: string[] }
+  | { kind: "refused"; out: UpdateOutcome }
+  | { kind: "failed"; detail: string }
+  | { kind: "current" }
+  | { kind: "no-answer" };
+
 function UpdatesSection() {
+  const t = useT();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<UpdateResult | null>(null);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -400,7 +462,7 @@ function UpdatesSection() {
     try {
       setStatus(await getJson<UpdateStatus>("/api/update"));
     } catch (e) {
-      setProblem(`Could not ask the server (${(e as Error).message}).`);
+      setProblem((e as Error).message);
     } finally {
       setChecking(false);
     }
@@ -416,34 +478,47 @@ function UpdatesSection() {
       const out = (await res.json()) as UpdateOutcome;
       setStatus(out.status);
       if (out.restart) {
-        const said = `Updated to ${out.to_commit.slice(0, 7)}; restarting.`;
-        setResult([said, ...out.notes].join(" "));
-        reloadAfterRestart(said);
+        const commit = out.to_commit.slice(0, 7);
+        setResult({ kind: "restarting", commit, notes: out.note_codes ?? [] });
+        reloadAfterRestart(t("left.updates.updatedRestarting", { commit }));
         return;
       }
-      setResult(out.refused ? `Not updated: ${out.refused}`
-        : out.failed ? `The update failed: ${out.failed}`
-        : "Already up to date.");
+      setResult(out.refused ? { kind: "refused", out }
+        : out.failed ? { kind: "failed", detail: out.failed }
+        : { kind: "current" });
     } catch {
-      setResult("The update failed: the server did not answer.");
+      setResult({ kind: "no-answer" });
     }
     setUpdating(false);
   };
 
-  let summary = "Checking for updates…";
-  if (problem) summary = problem;
-  else if (status && status.source !== "github") summary = status.reason;
-  else if (status?.error) summary = `Could not check for updates: ${status.error}`;
-  else if (status?.up_to_date) summary = `Up to date at ${status.commit.slice(0, 7)}.`;
+  let summary: ReactNode = t("left.updates.checking");
+  if (problem) summary = t("left.updates.unasked", { error: problem });
+  else if (status && status.source !== "github") summary = t(SOURCE_WORDS[status.source]);
+  else if (status?.error) {
+    summary = <>{t("left.updates.cannotCheck")} <span data-original-detail="">{status.error}</span></>;
+  } else if (status?.up_to_date) summary = t("left.updates.upToDateAt", { commit: status.commit.slice(0, 7) });
   else if (status) {
-    summary = `${status.behind} new commit${status.behind === 1 ? "" : "s"} on main`
-      + (status.ci ? `; ${CI_WORDS[status.ci]}.` : ".");
+    summary = status.ci
+      ? t("left.updates.behindCi", { count: status.behind, ci: t(CI_WORDS[status.ci]) })
+      : t("left.updates.behind", { count: status.behind });
   }
   const showCommits = status && status.source === "github" && !status.error && status.behind > 0;
 
+  let said: ReactNode = null;
+  if (result?.kind === "restarting") {
+    said = [t("left.updates.updatedRestarting", { commit: result.commit }),
+            ...result.notes.map((n) => NOTE_WORDS[n] ? t(NOTE_WORDS[n]) : n)].join(" ");
+  } else if (result?.kind === "refused") {
+    said = t("left.updates.notUpdated", { reason: refusedWords(t, result.out) });
+  } else if (result?.kind === "failed") {
+    said = <>{t("left.updates.failed")} <span data-original-detail="">{result.detail}</span></>;
+  } else if (result?.kind === "current") said = t("left.updates.alreadyUpToDate");
+  else if (result?.kind === "no-answer") said = t("left.updates.noAnswer");
+
   return (
     <>
-      <p className="settings-hint">{checking && status ? "Checking again…" : summary}</p>
+      <p className="settings-hint">{checking && status ? t("left.updates.checkingAgain") : summary}</p>
       {showCommits && (
         <ul className="update-commits">
           {status.commits.map((c) => (
@@ -451,18 +526,21 @@ function UpdatesSection() {
           ))}
         </ul>
       )}
-      {showCommits && status.blockers.map((b) => (
-        <p key={b.code} className="settings-hint read-failure">
-          {b.text}{b.detail.length ? ` ${b.detail.join(", ")}` : ""}
-        </p>
-      ))}
-      {result && <p className="settings-restart-notice">{result}</p>}
+      {showCommits && status.blockers.map((b) => {
+        const { text, detail } = blockerWords(t, b);
+        return (
+          <p key={b.code} className="settings-hint read-failure">
+            {text}{detail && <> <span data-original-detail="">{detail}</span></>}
+          </p>
+        );
+      })}
+      {said && <p className="settings-restart-notice">{said}</p>}
       <div className="settings-actions">
         <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}>
-          Check again</button>
+          {t("left.updates.checkAgain")}</button>
         {status?.can_update && (
           <button data-ui-action="restart" className="settings-btn primary" onClick={update} disabled={updating || checking}>
-            {updating ? "Updating…" : "Update and restart"}</button>
+            {t(updating ? "left.updates.updating" : "left.updates.update")}</button>
         )}
       </div>
     </>
@@ -470,21 +548,23 @@ function UpdatesSection() {
 }
 
 function SystemSection({ status, statusFailed }: { status: Status | null; statusFailed: boolean }) {
-  const detail = statusFailed ? "no answer from the server"
-    : status ? `port ${status.server_port} | up ${formatUptime(status.uptime_seconds)}` : "";
+  const t = useT();
+  const detail = statusFailed ? t("left.system.noAnswer")
+    : status ? t("left.system.detail", { port: String(status.server_port),
+                                         uptime: formatUptime(t, status.uptime_seconds) }) : "";
   return (
     <>
       <div className="status-grid">
         <div className="status-row">
           <StatusDot status={statusFailed ? "red" : status ? "green" : "off"} />
-          <span>Server</span><span className="status-detail">{detail}</span>
+          <span>{t("left.common.server")}</span><span className="status-detail">{detail}</span>
         </div>
       </div>
       <div className="sysinfo-grid">
-        <div className="sysinfo-row"><span className="sysinfo-label">Server port</span>
+        <div className="sysinfo-row"><span className="sysinfo-label">{t("left.system.port")}</span>
           <span>{status && !statusFailed ? status.server_port : "—"}</span></div>
-        <div className="sysinfo-row"><span className="sysinfo-label">Uptime</span>
-          <span>{status && !statusFailed ? formatUptime(status.uptime_seconds) : "—"}</span></div>
+        <div className="sysinfo-row"><span className="sysinfo-label">{t("left.system.uptime")}</span>
+          <span>{status && !statusFailed ? formatUptime(t, status.uptime_seconds) : "—"}</span></div>
       </div>
     </>
   );

@@ -124,7 +124,7 @@ def _language(language: str) -> str:
     if language not in spoken_words.VOCABULARIES:
         raise Refused(404, "JARVIS speaks "
                       + " and ".join(f"{NAMES[k]} ({k})" for k in spoken_words.VOCABULARIES)
-                      + " only.")
+                      + " only.", code="unknown-language")
     return language
 
 
@@ -202,7 +202,7 @@ async def api_choose(language: str = Body(embed=True)):
     try:
         await choose(language)
     except Refused as refused:
-        return JSONResponse(status_code=refused.status, content={"error": refused.message})
+        return JSONResponse(status_code=refused.status, content=refused.to_json())
     return status()
 
 

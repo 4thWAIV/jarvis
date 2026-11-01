@@ -22,9 +22,16 @@
  * the page measured (voiceHealth.takeTelemetry, with the frames captured and
  * sent and the audio waiting here), and the server answers with the health
  * the Diagnostics views draw.
+ *
+ * What it says is kept as its message (`InputWords`), not as text, so the
+ * health dot says it in the interface's language whenever it is shown; the
+ * status also carries the text as it was first shown, for the record. A
+ * server's or the browser's own words are passed on as they came, marked
+ * as detail.
  */
 
 import protocol from "../../jarvis/transcribeProtocol.json";
+import { language, t, translate, type MessageKey, type Translate } from "./locale";
 import { healthHeard, healthLost, takeTelemetry } from "./voiceHealth";
 import workletUrl from "./pcm-worklet.ts?worker&url";
 
@@ -40,9 +47,78 @@ export type InputState =
   | "interrupted"   // something was said that was not sent; listening again
   | "unavailable";  // no microphone, no recogniser, or no AudioWorklet
 
+/** Words voice input says: their message, said again in whichever
+ *  language is in force when they are shown. */
+export interface InputWords {
+  readonly key: string;
+  readonly say: (tr: Translate) => string;
+}
+
+type AfterTwo<T> = T extends [unknown, unknown, ...infer R] ? R : never;
+
+/** One message and its named values, as words to say later. */
+export function inputWords<K extends MessageKey>(key: K,
+                                                 ...args: AfterTwo<Parameters<typeof translate<K>>>): InputWords {
+  return { key, say: (tr) => (tr as (k: string, ...a: unknown[]) => string)(key, ...args) };
+}
+
+/** The words, followed by the server's or the browser's own detail as it came. */
+function withDetail(words: InputWords, detail: string): InputWords {
+  if (!detail) return words;
+  return { key: `${words.key}+detail`,
+           say: (tr) => tr("left.input.withDetail", { message: words.say(tr), detail }) };
+}
+
 export interface InputStatus {
   state: InputState;
+  /** What it said, as first shown (empty when nothing): for the record. */
   message: string;
+  /** What it says, in the language in force: for showing. */
+  words: InputWords | null;
+}
+
+/** What the recogniser refuses, by its error code (transcribeProtocol.json
+ *  `errors`), apart from busy and model-unavailable, which have their own
+ *  states. */
+const SERVER_ERRORS: Record<string, InputWords> = {
+  overload: inputWords("left.input.overload"),
+  "decoder-failed": inputWords("left.input.decoderFailed"),
+  interrupted: inputWords("left.input.interrupted"),
+  "invalid-format": inputWords("left.input.invalidFormat"),
+};
+
+/** A language's name in the interface's language ("Spanish", "español"). */
+function languageName(code: string | undefined): string {
+  if (!code) return "";
+  try {
+    return new Intl.DisplayNames([language.get()], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** A refusal of a language or speech model change, or of a model's
+ *  download (speech_models.Refused: its `code` and `values`; an install's
+ *  `errorCode`), in the language in force, with the server's own words
+ *  after it as detail where they say more. A refusal whose code the page
+ *  does not know is shown as it came. */
+export function speechRefusal(tr: Translate, refusal: {
+  code?: string; values?: Record<string, string>; error?: string; detail?: string;
+}): string {
+  const v = refusal.values ?? {};
+  const said: Record<string, () => string> = {
+    "unknown-language": () => tr("left.speech.unknownLanguage"),
+    "not-running": () => tr("left.speech.notRunning"),
+    "not-installed": () => tr("left.speech.notInstalled", { language: languageName(v.language) }),
+    "load-failed": () => tr("left.speech.loadFailed"),
+    "switched-meanwhile": () => tr("left.speech.switchedMeanwhile",
+                                   { language: languageName(v.language), wanted: languageName(v.wanted) }),
+    "install-refused": () => tr("left.speech.installRefused"),
+    "download-failed": () => tr("left.speech.downloadFailed"),
+  };
+  const words = refusal.code ? said[refusal.code] : undefined;
+  if (!words) return refusal.detail || refusal.error || "";
+  return refusal.detail ? tr("left.input.withDetail", { message: words(), detail: refusal.detail }) : words();
 }
 
 export interface VoiceInput {
@@ -62,7 +138,7 @@ export interface VoiceInput {
   /** Take the microphone again after mic off; still muted if mute is on. */
   micOn(): void;
   /** The words in flight cannot be delivered: drop them and say so. */
-  interrupt(message: string): void;
+  interrupt(words: InputWords): void;
 }
 
 export interface VoiceInputHooks {
@@ -126,7 +202,7 @@ export function createVoiceInput(
   let closing: Session | null = null;   // the muted session, finishing
   let retryDelay = 1000;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let status: InputStatus = { state: "starting", message: "" };
+  let status: InputStatus = { state: "starting", message: "", words: null };
   let framesCaptured = 0;    // since the last telemetry
   let framesSent = 0;
 
@@ -138,18 +214,24 @@ export function createVoiceInput(
     onMicEvent(what);
   };
 
-  function setStatus(state: InputState, message = "") {
+  function setStatus(state: InputState, words: InputWords | null = null) {
+    const message = words ? words.say(t) : "";
     if (state === status.state && message === status.message) return;
-    status = { state, message };
+    status = { state, message, words };
     hooks.onStatus?.(status);
   }
+
+  /** The words as the server's log has them: always in English. */
+  const logged = (words: InputWords) =>
+    words.say(((key: string, ...args: unknown[]) =>
+      (translate as (lang: "en", k: string, ...a: unknown[]) => string)("en", key, ...args)) as Translate);
 
   // ── the microphone ────────────────────────────────────────────────────
 
   async function openMicrophone() {
     if (mic || micOpening) return;
     const mine = ++micOpening;
-    setStatus("starting", "Asking for the microphone…");
+    setStatus("starting", inputWords("left.input.asking"));
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -160,13 +242,12 @@ export function createVoiceInput(
       const name = (e as Error)?.name;
       mark(`microphone refused: ${name}`);
       if (name === "NotAllowedError" || name === "SecurityError") {
-        setStatus("permission", "The microphone is blocked for this page. Allow it in the " +
-                  "address bar, then reload. Typing still works.");
+        setStatus("permission", inputWords("left.input.blocked"));
       } else if (name === "NotFoundError" || name === "OverconstrainedError") {
-        setStatus("unavailable", "No microphone found. Connect one; typing still works.");
+        setStatus("unavailable", inputWords("left.input.noMicrophone"));
         scheduleRetry(openMicrophone);
       } else {
-        setStatus("unavailable", `The microphone could not be opened (${name}).`);
+        setStatus("unavailable", inputWords("left.input.cannotOpen", { name: String(name) }));
         scheduleRetry(openMicrophone);
       }
       return;
@@ -187,7 +268,7 @@ export function createVoiceInput(
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
       micOpening = 0;
-      setStatus("unavailable", "This browser cannot stream the microphone (no AudioWorklet).");
+      setStatus("unavailable", inputWords("left.input.noWorklet"));
       return;
     }
     try {
@@ -196,7 +277,7 @@ export function createVoiceInput(
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
       micOpening = 0;
-      setStatus("unavailable", `The audio worklet failed to load (${(e as Error)?.message}).`);
+      setStatus("unavailable", inputWords("left.input.workletFailed", { error: String((e as Error)?.message) }));
       return;
     }
     if (mine !== micOpening || !wanted || off) {
@@ -234,7 +315,7 @@ export function createVoiceInput(
       track.onended = () => {
         mark("microphone track ended");
         closeMicrophone();
-        dropSession("The microphone was disconnected, so what was being said was not sent.");
+        dropSession(inputWords("left.input.disconnected"));
         if (wanted && !off) scheduleRetry(openMicrophone);
       };
     }
@@ -245,7 +326,7 @@ export function createVoiceInput(
     if (ctx.state !== "running") {
       // Not silence: the browser has not let audio run yet. Say so, and
       // start on the first click or key.
-      setStatus("permission", "Click anywhere to start listening.");
+      setStatus("permission", inputWords("left.input.clickToStart"));
       const resume = () => ctx.resume().then(() => {
         if (mic?.ctx !== ctx) return;
         if (muted) setStatus("muted"); else beginSession();
@@ -301,7 +382,7 @@ export function createVoiceInput(
     if (status.state !== "interrupted") setStatus("loading");
     setTimeout(() => {
       if (session === s && !s.ready && status.state === "loading" && !status.message) {
-        setStatus("loading", "Connecting to speech recognition…");
+        setStatus("loading", inputWords("left.input.connecting"));
       }
     }, SAY_CONNECTING_AFTER_MS);
 
@@ -322,7 +403,7 @@ export function createVoiceInput(
       if (type === "health") {
         if (session === s) healthHeard(msg);
       } else if (type === "loading") {
-        setStatus("loading", "Speech recognition is loading; keep talking, it is being held.");
+        setStatus("loading", inputWords("left.input.loading"));
       } else if (type === "ready") {
         s.ready = true;
         retryDelay = 1000;
@@ -342,8 +423,7 @@ export function createVoiceInput(
         const text = String(msg.text ?? "").trim();
         if (!text) return;
         if (hooks.canDeliver && !hooks.canDeliver()) {
-          interruptWith("Lost the connection to JARVIS, so that was not sent. " +
-                        "Say it again once it reconnects.");
+          interruptWith(inputWords("left.input.lostJarvis"));
           return;
         }
         onTranscript(text);
@@ -370,14 +450,14 @@ export function createVoiceInput(
       if (!wanted || paused || quiet()) return;
       // The server went away mid-session (a restart): what was in flight is lost.
       if (s.ready) {
-        setStatus("interrupted", "Lost the connection to speech recognition; reconnecting.");
+        setStatus("interrupted", inputWords("left.input.lostRecognition"));
       }
       scheduleRetry(beginSession);
     };
   }
 
   function onServerError(s: Session, code: string, message: string) {
-    mark(`speech recognition error: ${code}`);
+    mark(`speech recognition error: ${code}${message ? ` (${message})` : ""}`);
     s.closed = true;
     if (session === s) session = null;
     if (closing === s) {
@@ -385,12 +465,15 @@ export function createVoiceInput(
       beginSession();
     }
     s.ws.close();
+    // Said by its code; the server's own words follow as detail where they
+    // say more than the code does.
     if (code === "busy") {
-      setStatus("busy", message || "Another JARVIS page is listening. Typing still works here.");
+      setStatus("busy", inputWords("left.input.busy"));
     } else if (code === "model-unavailable") {
-      setStatus("unavailable", message);
+      setStatus("unavailable", withDetail(inputWords("left.input.modelUnavailable"), message));
     } else {
-      setStatus("interrupted", `${message} Listening again.`);
+      setStatus("interrupted", withDetail(SERVER_ERRORS[code] ?? inputWords("left.input.interrupted"),
+                                          code === "overload" ? "" : message));
     }
     if (wanted && !paused && !quiet()) scheduleRetry(beginSession);
   }
@@ -402,10 +485,7 @@ export function createVoiceInput(
     if (!s || (paused && !quiet())) return;
     s.outbox.push({ pcm, at: performance.now() });
     if (s === session && s.outbox.length > HOLD_FRAMES) {
-      dropSession(s.ready
-        ? "Speech recognition fell behind, so that was not sent. Listening again."
-        : "Speech recognition took too long to start, so what you said was not sent. " +
-          "Say it again once it is listening.");
+      dropSession(inputWords(s.ready ? "left.input.fellBehind" : "left.input.tooSlow"));
       scheduleRetry(beginSession);
       return;
     }
@@ -426,8 +506,7 @@ export function createVoiceInput(
     if (!s.ready || s.ws.readyState !== WebSocket.OPEN) return;
     while (s.outbox.length && s.credit >= 1) {
       if (s.ws.bufferedAmount > SOCKET_LIMIT_BYTES) {
-        dropSession("The connection to speech recognition is backed up, so that was not " +
-                    "sent. Listening again.");
+        dropSession(inputWords("left.input.backedUp"));
         scheduleRetry(beginSession);
         return;
       }
@@ -442,7 +521,7 @@ export function createVoiceInput(
   }
 
   /** Discard the session's audio without sending it. */
-  function dropSession(message?: string) {
+  function dropSession(words?: InputWords) {
     const s = session;
     session = null;
     if (s) {
@@ -452,9 +531,9 @@ export function createVoiceInput(
         s.ws.close();
       } catch { /* closing anyway */ }
     }
-    if (message) {
-      mark(`input interrupted: ${message}`);
-      setStatus("interrupted", message);
+    if (words) {
+      mark(`input interrupted: ${logged(words)}`);
+      setStatus("interrupted", words);
     }
   }
 
@@ -475,8 +554,7 @@ export function createVoiceInput(
         if (closing === s) closing = null;
         try { s.ws.close(); } catch { /* closing anyway */ }
         mark("muted session could not finish");
-        setStatus("interrupted", "The last words before mute could not be finished, so " +
-                  "they were not sent.");
+        setStatus("interrupted", inputWords("left.input.muteUnfinished"));
       }, FINISH_WAIT_MS);
     }
     if (mic) {
@@ -503,8 +581,8 @@ export function createVoiceInput(
     }
   }
 
-  function interruptWith(message: string) {
-    dropSession(message);
+  function interruptWith(words: InputWords) {
+    dropSession(words);
     if (wanted && !paused && !quiet()) scheduleRetry(beginSession);
   }
 
@@ -592,8 +670,8 @@ export function createVoiceInput(
       if (muted) setStatus("muted");
       else if (paused) setStatus("paused");
     },
-    interrupt(message: string) {
-      interruptWith(message);
+    interrupt(words: InputWords) {
+      interruptWith(words);
     },
   };
 }

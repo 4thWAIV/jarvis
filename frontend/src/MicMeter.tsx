@@ -6,6 +6,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT } from "./locale";
 import { micLevel } from "./mic";
 
 const SEGMENTS = 16;
@@ -32,9 +33,10 @@ function zone(index: number): string {
 }
 
 export function MicMeter({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
+  const t = useT();
   const lit = litSegments(useSyncExternalStore(micLevel.subscribe, micLevel.get));
   return (
-    <div id="mic-meter" title="microphone input" ref={partRef}>
+    <div id="mic-meter" title={t("left.mic.meter")} ref={partRef}>
       {Array.from({ length: SEGMENTS }, (_, i) => (
         <span key={i} className={`mic-segment ${zone(i)}${i < lit ? " on" : ""}`} />
       ))}

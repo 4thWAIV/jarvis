@@ -18,7 +18,7 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted, micOff } from "./mic";
-import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
+import { sendTyped, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
@@ -33,17 +33,6 @@ export function startJarvis(orb: Orb): void {
   let currentState: State = "idle";
   let isMuted = false;
   let isOff = false;
-
-  function updateStatus(state: State) {
-    const labels: Record<State, string> = {
-      idle: "",
-      listening: "listening...",
-      thinking: "thinking...",
-      speaking: "",
-      compacting: "",          // the notice banner carries the words; the orb carries the state
-    };
-    statusText.set(labels[state]);
-  }
 
   // ---------------------------------------------------------------------------
   // Init components
@@ -68,7 +57,6 @@ export function startJarvis(orb: Orb): void {
     currentState = newState;
     voiceState.set(newState);
     orb.setState(newState as OrbState);
-    updateStatus(newState);
     micFollowsState();
   }
 

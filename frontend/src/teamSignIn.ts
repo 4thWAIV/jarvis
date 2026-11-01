@@ -9,9 +9,13 @@
  * a new tab, where the code JARVIS shows is checked and this Mac approved.
  */
 
+import { t } from "./locale";
 import type { Connection } from "./network";
 
-/** One /api/team* request; a refusal is thrown with the backend's words. */
+/** One /api/team* request; a refusal is thrown with the backend's words
+ *  (team_client's TeamError, or the team server's own refusal), which the
+ *  page shows as they came; with none, the page's own, in the language in
+ *  force. */
 export async function teamCall<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method, headers: body === undefined ? undefined : { "Content-Type": "application/json" },
@@ -21,7 +25,7 @@ export async function teamCall<T>(method: string, url: string, body?: unknown): 
   try { payload = await res.json(); } catch { /* not JSON */ }
   if (!res.ok) {
     const err = (payload as { error?: { message?: string } } | null)?.error;
-    throw new Error(err?.message || `The request failed (${res.status}).`);
+    throw new Error(err?.message || t("left.team.requestFailed", { status: String(res.status) }));
   }
   return payload as T;
 }
