@@ -17,3 +17,11 @@ html #menu-dropdown {
 #footer #jarvis-label {
   pointer-events: auto;
 }
+
+/* Settings' list of sections is as wide as its longest name, never less
+   than before: a section's name in Spanish ("Actualizaciones") is longer
+   than in English and must not run out of its button. */
+html .settings-nav {
+  width: auto;
+  min-width: 150px;
+}

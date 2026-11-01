@@ -24,15 +24,13 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { reconnected } from "./liveRead";
+import { useT } from "./locale";
 import { needsSignIn, network } from "./network";
 import { createStore } from "./store";
 import { ServerIcon } from "./TeamServerTile";
 import { signInAgain } from "./teamSignIn";
 import { bind, bindingProps } from "./uiNavigation";
 import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
-
-export const REMINDER_TEXT =
-  "Sign in to your team server: messages between people and the Network view need it";
 
 // The space kept between the reminder and the view below it.
 const GAP_PX = 8;
@@ -51,6 +49,7 @@ registerCommand("reminder.later", {
 });
 
 export function TeamSignInReminder() {
+  const t = useT();
   const live = useSyncExternalStore(network.subscribe, network.get);
   const hidden = useSyncExternalStore(later.subscribe, later.get);
   const [busy, setBusy] = useState(false);
@@ -85,13 +84,14 @@ export function TeamSignInReminder() {
   return (
     <div id="team-reminder" role="status" ref={(el) => { box.current = el; ui.whole(el); }}>
       <ServerIcon />
-      <p ref={ui.part("text")}>{REMINDER_TEXT}</p>
+      <p ref={ui.part("text")}>{t("left.reminder.text")}</p>
       <button type="button" className="settings-btn primary" disabled={busy} data-ui-action="sign-in"
               ref={ui.part("signIn")} onClick={start}>
-        Sign in</button>
+        {t("left.reminder.signIn")}</button>
       <button type="button" className="settings-btn" ref={ui.part("later")}
-              {...bindingProps(bind("reminder.later", {}))}>Later</button>
-      {problem && <p className="team-reminder-problem">{problem}</p>}
+              {...bindingProps(bind("reminder.later", {}))}>{t("left.reminder.later")}</button>
+      {/* The backend's own words, as they came: original detail. */}
+      {problem && <p className="team-reminder-problem" data-original-detail="">{problem}</p>}
     </div>
   );
 }

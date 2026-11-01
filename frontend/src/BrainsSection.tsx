@@ -16,18 +16,23 @@ import { useState } from "react";
 import { addBrain, brainsChanged, brainsMayHaveChanged, listBrains, removeBrain, setDefault,
          setModel, startSignIn, type BrainCard, type BrainCheck } from "./brains";
 import { useLiveRead } from "./liveRead";
+import { useT, type Translate } from "./locale";
 import { PROVIDERS } from "./providers";
 import { StatusDot } from "./StatusDot";
 
-// How each setup check is named on its card.
-const CHECK_LABEL: Record<string, string> = {
-  claude_cli: "Claude Code", claude_login: "Signed in", anthropic_key_leftover: "No API key",
-  codex_cli: "Codex", codex_login: "Signed in",
+// How each setup check is named on its card, by the check's name; a
+// product's own name is kept as it is. A check's message and remedy are
+// preflight's own words, shown as they came.
+const CHECK_LABEL: Record<string, (t: Translate) => string> = {
+  claude_cli: () => "Claude Code", claude_login: (t) => t("left.brains.check.signedIn"),
+  anthropic_key_leftover: (t) => t("left.brains.check.noApiKey"),
+  codex_cli: () => "Codex", codex_login: (t) => t("left.brains.check.signedIn"),
 };
 
 const DOT = { ok: "green", warn: "yellow", fail: "red" } as const;
 
 export function BrainsSection() {
+  const t = useT();
   // Read when Settings opens, on every reconnect and whenever the brains
   // change, and retried until read.
   const live = useLiveRead(() => listBrains(), [brainsChanged]);
@@ -42,7 +47,7 @@ export function BrainsSection() {
 
   if (!cards) {
     return <p className="settings-hint read-failure">
-      {live.error ? `The brains could not be read (${live.error}); trying again.` : "Reading the brains…"}
+      {live.error ? t("left.brains.unreadable", { error: live.error }) : t("left.brains.reading")}
     </p>;
   }
   const added = cards.filter((c) => c.added);
@@ -50,7 +55,7 @@ export function BrainsSection() {
   return (
     <div className="brains">
       {live.error && <p className="settings-hint read-failure">
-        The brains could not be read again ({live.error}); what is shown may be out of date.</p>}
+        {t("left.brains.staleRead", { error: live.error })}</p>}
       {problem && <p className="settings-hint">{problem}</p>}
       <div className="brain-cards">
         {added.map((card) => (
@@ -62,7 +67,7 @@ export function BrainsSection() {
           {others.map((card) => (
             <button data-ui-action="domain" key={card.name} className="settings-btn"
                     onClick={() => act(addBrain(card.name))}>
-              + Add {card.title}
+              {t("left.brains.add", { brain: card.title })}
             </button>
           ))}
         </div>
@@ -76,6 +81,7 @@ function BrainCardView({ card, act, onProblem }: {
   act: (work: Promise<unknown>) => void;
   onProblem: (problem: string) => void;
 }) {
+  const t = useT();
   const logo = PROVIDERS[card.name]?.logo;
   const [signing, setSigning] = useState(false);
   const signedIn = card.account?.signed_in ?? false;
@@ -93,15 +99,15 @@ function BrainCardView({ card, act, onProblem }: {
 
   return (
     <div className={`brain-card${card.active ? " active" : ""}`} data-brain={card.name}>
-      {card.active && <span className="brain-card-state">in use</span>}
+      {card.active && <span className="brain-card-state">{t("left.brains.inUse")}</span>}
       <div className="brain-card-head">
         {logo && <img className="brain-card-logo" src={logo} alt="" />}
         <span className="brain-card-title">{card.title}</span>
-        {card.account?.plan && <span className="brain-card-plan">{card.account.plan} plan</span>}
+        {card.account?.plan && <span className="brain-card-plan">{t("left.brains.plan", { plan: card.account.plan })}</span>}
       </div>
 
       <div className="settings-field">
-        <label>Model</label>
+        <label>{t("left.brains.model")}</label>
         <select data-ui-action="domain" value={card.model} onChange={(e) => act(setModel(card.name, e.target.value))}>
           {(card.models ?? [card.model]).map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
@@ -114,19 +120,19 @@ function BrainCardView({ card, act, onProblem }: {
 
       {card.signs_in_here && !signedIn && (
         <button data-ui-action="sign-in" className="settings-btn primary" onClick={signIn} disabled={signing}>
-          {signing ? "Finish signing in in the new tab…" : "Sign in with ChatGPT"}
+          {t(signing ? "left.brains.signingIn" : "left.brains.signInChatGpt")}
         </button>
       )}
 
       <label className="brain-default">
         <input data-ui-action="domain" type="radio" name="brain-default" checked={card.default}
                onChange={() => act(setDefault(card.name))} />
-        Start with this brain
+        {t("left.brains.startWith")}
       </label>
 
       {!card.default && card.name !== "anthropic" && (
         <button data-ui-action="domain" className="settings-btn brain-remove" onClick={() => act(removeBrain(card.name))}>
-          Remove
+          {t("left.brains.remove")}
         </button>
       )}
     </div>
@@ -134,12 +140,13 @@ function BrainCardView({ card, act, onProblem }: {
 }
 
 function CheckRow({ check }: { check: BrainCheck }) {
+  const t = useT();
   return (
     <div className="check-row" title={check.remedy ?? ""}>
       <StatusDot status={DOT[check.status]} />
-      <span>{CHECK_LABEL[check.name] ?? check.name}</span>
-      <span className="status-detail">{check.message}</span>
-      {check.status !== "ok" && check.remedy && <p className="settings-hint">{check.remedy}</p>}
+      <span>{CHECK_LABEL[check.name]?.(t) ?? check.name}</span>
+      <span className="status-detail" data-original-detail="">{check.message}</span>
+      {check.status !== "ok" && check.remedy && <p className="settings-hint" data-original-detail="">{check.remedy}</p>}
     </div>
   );
 }

@@ -12,4 +12,4 @@ import type { InputStatus } from "./voiceInput";
 export const micLevel = createStore(0);
 export const micMuted = createStore(false);
 export const micOff = createStore(false);
-export const inputStatus = createStore<InputStatus>({ state: "starting", message: "" });
+export const inputStatus = createStore<InputStatus>({ state: "starting", message: "", words: null });

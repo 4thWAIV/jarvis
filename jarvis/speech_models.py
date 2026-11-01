@@ -140,12 +140,26 @@ def install(model: SpeechModel, archive: Optional[Path] = None,
 # ── the service the page and the brain share ─────────────────────────────
 
 class Refused(Exception):
-    """Why a request was not carried out, with the HTTP status it maps to."""
+    """Why a request was not carried out, with the HTTP status it maps to.
+    `code` and `values` say it apart from the words, so the page words it
+    in its own language (left.speech.*); `message` stays English, for the
+    brain and the log, and `detail` is anything said by something else (a
+    failed load's own reason), which the page shows as it came."""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, code: str = "",
+                 values: Optional[dict] = None, detail: str = "") -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        self.code = code
+        self.values = values or {}
+        self.detail = detail
+
+    def to_json(self) -> dict:
+        """The routes' refusal body: the English words as `error`, as
+        before, and the code, its values and any detail."""
+        return {"error": self.message, "code": self.code, "values": self.values,
+                "detail": self.detail}
 
 
 @dataclass
@@ -155,6 +169,8 @@ class Install:
     done_bytes: int = 0
     total_bytes: int = 0
     error: Optional[str] = None
+    # Why it failed, apart from the words: install-refused or download-failed.
+    error_code: Optional[str] = None
 
 
 RUNNING = frozenset({"downloading", "verifying", "installing"})
@@ -167,7 +183,7 @@ def _model(language: str) -> SpeechModel:
     if model is None:
         raise Refused(404, "There is a speech model for "
                       + " and ".join(f"{m.label} ({m.language})" for m in transcriber.MODELS)
-                      + " only.")
+                      + " only.", code="unknown-language")
     return model
 
 
@@ -179,7 +195,8 @@ def model_json(model: SpeechModel) -> dict:
             "problem": problem,
             "install": None if install is None else {
                 "state": install.state, "doneBytes": install.done_bytes,
-                "totalBytes": install.total_bytes, "error": install.error}}
+                "totalBytes": install.total_bytes, "error": install.error,
+                "errorCode": install.error_code}}
 
 
 def models() -> dict:
@@ -218,9 +235,11 @@ async def _install(model: SpeechModel, progress: Install) -> None:
         await asyncio.to_thread(install, model, None, report)
     except InstallRefused as refused:
         progress.state, progress.error = "failed", str(refused)
+        progress.error_code = "install-refused"
     except Exception as exc:
         log.exception("speech model %s did not install", model.name)
         progress.state, progress.error = "failed", f"The download failed: {exc}"
+        progress.error_code = "download-failed"
     else:
         progress.state = "installed"
     log.info("speech model %s: %s", model.name, progress.state)
@@ -232,9 +251,10 @@ async def switch(language: str) -> dict:
     model = _model(language)
     service = transcription_api.service
     if service is None or service.status == "closed":
-        raise Refused(503, "Speech input is not running.")
+        raise Refused(503, "Speech input is not running.", code="not-running")
     if transcriber.model_problem(model=model) is not None:
-        raise Refused(409, f"The {model.label} speech model is not installed yet.")
+        raise Refused(409, f"The {model.label} speech model is not installed yet.",
+                      code="not-installed", values={"language": model.language})
     previous = service.model
     if model == previous and service.status == "ready":
         return models()
@@ -244,11 +264,12 @@ async def switch(language: str) -> dict:
     except TranscriptionError as error:
         await voice_diagnostics.record(voice_diagnostics.Event(
             at=time.time(), kind="model-unavailable", text=error.message))
-        raise Refused(500, error.message) from error
+        raise Refused(500, error.message, code="load-failed", detail=error.message) from error
     if service.model != model:
         # Another switch was asked for while this one loaded, and won.
         raise Refused(409, f"Speech input was switched to {service.model.label} "
-                           f"before {model.label} had loaded.")
+                           f"before {model.label} had loaded.", code="switched-meanwhile",
+                      values={"language": service.model.language, "wanted": model.language})
     await voice_diagnostics.record(voice_diagnostics.Event(
         at=time.time(), kind="model-load",
         text=(f"Speech input switched from {previous.label} to {model.label} "
@@ -259,7 +280,7 @@ async def switch(language: str) -> dict:
 # ── the page's routes ────────────────────────────────────────────────────
 
 def _refused(refused: Refused) -> JSONResponse:
-    return JSONResponse(status_code=refused.status, content={"error": refused.message})
+    return JSONResponse(status_code=refused.status, content=refused.to_json())
 
 
 async def api_models():

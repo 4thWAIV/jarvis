@@ -69,9 +69,20 @@ def _save(cfg: dict) -> None:
         raise
 
 
+class Refused(ValueError):
+    """A brains change that was not made. The words are English, for the
+    brain and the route's `detail`; `code` and `values` say it apart from
+    them, so the page words it in its own language (left.brains.refused.*)."""
+
+    def __init__(self, message: str, code: str, **values: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.values = values
+
+
 def add(name: str) -> dict:
     if name not in KNOWN:
-        raise ValueError(f"no brain called {name!r}")
+        raise Refused(f"no brain called {name!r}", "unknown-brain", name=name)
     cfg = load()
     cfg["brains"].setdefault(name, {})
     _save(cfg)
@@ -81,9 +92,9 @@ def add(name: str) -> dict:
 def remove(name: str) -> dict:
     cfg = load()
     if name == ALWAYS:
-        raise ValueError("Claude is always there")
+        raise Refused("Claude is always there", "always-there")
     if cfg["default"] == name:
-        raise ValueError("choose another brain to start with first")
+        raise Refused("choose another brain to start with first", "default-first")
     cfg["brains"].pop(name, None)
     _save(cfg)
     return cfg
@@ -92,7 +103,7 @@ def remove(name: str) -> dict:
 def set_model(name: str, model: str) -> dict:
     cfg = load()
     if name not in cfg["brains"]:
-        raise ValueError(f"{name} has not been added")
+        raise Refused(f"{name} has not been added", "not-added", name=name)
     cfg["brains"][name] = {"model": model}
     _save(cfg)
     return cfg
@@ -101,7 +112,7 @@ def set_model(name: str, model: str) -> dict:
 def set_default(name: str) -> dict:
     cfg = load()
     if name not in cfg["brains"]:
-        raise ValueError(f"{name} has not been added")
+        raise Refused(f"{name} has not been added", "not-added", name=name)
     cfg["default"] = name
     _save(cfg)
     return cfg

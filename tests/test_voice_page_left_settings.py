@@ -10,6 +10,12 @@ exactly as the brain's request for that command does, with the side
 effects the contract declares. Pointing inside Settings while it covers the
 orb is refused as blocked, never drawn from a second orb.
 
+In Spanish (the language setting's, on the sessions socket's snapshot) the
+same words are Spanish, nothing in the column, the tile, the reminder or
+Settings' list of sections runs out of its box, every target and part is
+reached exactly as in English, and a change back to English rewords it all
+in place (frontend/src/messages/left.*.ts).
+
 Headless Chromium on the built page; /ws/voice is a stand-in backend that
 sends `ui_request` frames (tests/test_voice_page_pipeline.py), and the
 team, settings, brains and usage endpoints are fixtures.
@@ -23,7 +29,8 @@ import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
-from tests.test_voice_page_network import HEALTHY, SIGNED_OUT, _Sessions, _Team
+from tests.test_voice_page_language import _Sessions as _LanguageSessions
+from tests.test_voice_page_network import FITS, HEALTHY, SIGNED_OUT, _Sessions, _Team
 from tests.test_voice_page_pipeline import _UiServer
 from tests.test_voice_page_settings import _Server
 
@@ -42,7 +49,7 @@ def _week(provider="anthropic"):
             "points": [{"at": start + 86400, "used": 10.0}, {"at": now, "used": 30.0}]}
 
 
-async def _open(p, url, *, team=HEALTHY, reduced=True):
+async def _open(p, url, *, team=HEALTHY, reduced=True, language=None):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -52,7 +59,10 @@ async def _open(p, url, *, team=HEALTHY, reduced=True):
     await page.add_init_script(FAKE_TRANSCRIPTION)
     # The settings and brains endpoints first: their catch-all socket route
     # is then overridden by the voice and sessions stand-ins below.
-    await _Server().install(page)
+    server = _Server()
+    if language:
+        server.language, server.spanish_installed = language, True
+    await server.install(page)
 
     async def week(route):
         await route.fulfill(status=200, content_type="application/json", body=json.dumps(_week()))
@@ -60,7 +70,8 @@ async def _open(p, url, *, team=HEALTHY, reduced=True):
     await page.route("**/api/usage/week**", week)
     ui = _UiServer()
     await page.route_web_socket("**/ws/voice", ui)
-    await page.route_web_socket("**/ws/sessions", _Sessions())
+    sessions = _LanguageSessions(language) if language else _Sessions()
+    await page.route_web_socket("**/ws/sessions", sessions)
     await _Team(team).install(page)
     await page.goto(url)
     for _ in range(200):
@@ -69,6 +80,9 @@ async def _open(p, url, *, team=HEALTHY, reduced=True):
         await asyncio.sleep(0.05)
     assert ui.client, "the page never said ui_hello"
     await page.wait_for_selector("#team-server-tile")
+    if language:
+        page.sessions, page.settings_server = sessions, server
+        await page.wait_for_function("(lang) => document.documentElement.lang.startsWith(lang)", arg=language)
     return browser, page, ui
 
 
@@ -124,6 +138,33 @@ async def _marks(page, selector):
     return await el.get_attribute("data-ui-command"), json.loads(await el.get_attribute("data-ui-args"))
 
 
+LEFT_TARGETS = [
+    ({"kind": "orb"}, [None, "canvas", "logo"]),
+    ({"kind": "status"}, [None]),
+    ({"kind": "mic"}, [None, "meter", "mute", "off"]),
+    ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
+    ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
+]
+# A part beside another on the side its leaf comes from cannot be reached
+# without crossing that part (uiPipeline.ts leafEdge runs straight in from
+# the facing edge): refused truthfully, never drawn across. Waiting on leaf
+# routing around sibling parts.
+LEFT_MISSED = [["mic", "mute", "blocked", "no-route"], ["mic", "off", "blocked", "no-route"],
+               ["teamServer", "lastWrite", "blocked", "no-route"]]
+
+
+async def _left_missed(ui):
+    """Every left target and part pointed at: those not reached, and why."""
+    missed = []
+    for ref, parts in LEFT_TARGETS:
+        for part in parts:
+            target = {**LEFT, **ref, **({"part": part} if part else {})}
+            result = await _point(ui, target)
+            if (result["status"], result.get("arrival")) != ("completed", "static-reduced-motion"):
+                missed.append([ref["kind"], part, result["status"], result.get("reason")])
+    return missed
+
+
 @pytest.mark.asyncio
 async def test_every_left_column_object_and_part_is_reached_from_the_left_rail(page_url):
     async with async_api.async_playwright() as p:
@@ -131,29 +172,86 @@ async def test_every_left_column_object_and_part_is_reached_from_the_left_rail(p
         try:
             await page.wait_for_selector(".weekly-usage .weekly-figure")
             await page.wait_for_selector("#brain-logo")
-            targets = [
-                ({"kind": "orb"}, [None, "canvas", "logo"]),
-                ({"kind": "status"}, [None]),
-                ({"kind": "mic"}, [None, "meter", "mute", "off"]),
-                ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
-                ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
-            ]
-            missed = []
-            for ref, parts in targets:
-                for part in parts:
-                    target = {**LEFT, **ref, **({"part": part} if part else {})}
-                    result = await _point(ui, target)
-                    if (result["status"], result.get("arrival")) != ("completed", "static-reduced-motion"):
-                        missed.append([ref["kind"], part, result["status"], result.get("reason")])
-            # A part beside another on the side its leaf comes from cannot be
-            # reached without crossing that part (uiPipeline.ts leafEdge runs
-            # straight in from the facing edge): refused truthfully, never
-            # drawn across. Waiting on leaf routing around sibling parts.
-            assert missed == [["mic", "mute", "blocked", "no-route"], ["mic", "off", "blocked", "no-route"],
-                              ["teamServer", "lastWrite", "blocked", "no-route"]], json.dumps(missed)
+            missed = await _left_missed(ui)
+            assert missed == LEFT_MISSED, json.dumps(missed)
             footer = await _point(ui, {"region": "footer", "view": "footer.fixed", "kind": "footer",
                                        "part": "label"})
             assert footer["status"] == "completed", footer
+        finally:
+            await browser.close()
+
+
+# What the left column says, by its fixed parts.
+LEFT_WORDS = """() => ({
+  tile: document.querySelector('#team-server-tile .tile-title').textContent,
+  rows: [...document.querySelectorAll('#team-server-tile .health-row')].map(r =>
+          [r.dataset.row, r.querySelector(':scope > span').textContent]),
+  role: document.querySelector('.weekly-usage')?.title ?? null,
+  meter: document.getElementById('mic-meter')?.title ?? null,
+  mute: document.getElementById('btn-mute').title,
+  off: document.getElementById('btn-mic-off').title,
+  reminder: document.querySelector('#team-reminder p')?.textContent ?? null,
+  reminderButtons: [...document.querySelectorAll('#team-reminder button')].map(b => b.textContent.trim()),
+})"""
+
+# Nothing in Settings' list of sections or its header runs past its own box.
+SETTINGS_FITS = """() => {
+  const bad = [];
+  for (const el of document.querySelectorAll('.settings-nav button, .settings-header h2, .settings-section h3')) {
+    if (el.scrollWidth > el.clientWidth + 0.5) bad.push(['clipped', el.textContent]);
+    const p = el.parentElement.getBoundingClientRect(), r = el.getBoundingClientRect();
+    if (r.left < p.left - 0.5 || r.right > p.right + 0.5) bad.push(['outside', el.textContent]);
+  }
+  return bad;
+}"""
+
+
+@pytest.mark.asyncio
+async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is_reached(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, team=SIGNED_OUT, language="es")
+        try:
+            await page.wait_for_selector(".weekly-usage .weekly-figure")
+            await page.wait_for_selector("#team-reminder")
+            words = await page.evaluate(LEFT_WORDS)
+            assert words["tile"] == "SERVIDOR DEL EQUIPO", words
+            # The rows keep their identities; only their words change.
+            assert words["rows"] == [["Server", "Servidor"], ["Database", "Base de datos"],
+                                     ["Last write", "Escritura"]], words
+            assert "de la semana transcurrido" in words["role"], words
+            assert (words["meter"], words["mute"], words["off"]) == (
+                "entrada del micrófono", "Silenciar/Activar sonido", "Apagar el micrófono"), words
+            assert words["reminder"].startswith("Inicie sesión en el servidor de su equipo"), words
+            assert words["reminderButtons"] == ["Iniciar sesión", "Más tarde"], words
+            assert await page.locator(".weekly-days").text_content() in ("4,0 días", "4.0 días")
+            assert await page.evaluate(FITS, "#team-server-tile") == []
+
+            # The same targets and parts as in English, reached the same way.
+            assert await _left_missed(ui) == LEFT_MISSED
+            later = await _point(ui, {"region": "main", "view": "main.notice", "kind": "teamReminder",
+                                      "part": "later"})
+            assert later["status"] == "completed", later
+
+            await page.click("#btn-menu")
+            await page.click("#menu-dropdown button >> nth=0")
+            await page.wait_for_selector(".settings-view")
+            nav = await page.locator(".settings-nav button").all_text_contents()
+            assert nav == ["Cerebros", "Voz", "Usted", "Equipo", "Actualizaciones", "Sistema"], nav
+            assert await page.evaluate(SETTINGS_FITS) == []
+            await async_api.expect(page.get_by_placeholder("Su nombre")).to_have_value("Tim")
+            section = await _navigate(ui, "settings.section", {"section": "updates"})
+            assert section["status"] == "completed", section
+            await async_api.expect(page.locator("#settings-updates")).to_contain_text("commits nuevos en main")
+
+            # Back to English from elsewhere: reworded in place, Settings still open.
+            page.settings_server.language = "en"
+            page.sessions.send({"type": "language", "language": "en"})
+            await async_api.expect(page.locator(".settings-nav button").first).to_have_text("Brains")
+            assert await page.locator(".settings-view").count() == 1
+            await page.click(".settings-close")
+            words = await page.evaluate(LEFT_WORDS)
+            assert words["tile"] == "TEAM SERVER" and words["reminderButtons"] == ["Sign in", "Later"], words
+            assert await _left_missed(ui) == LEFT_MISSED
         finally:
             await browser.close()
 
@@ -352,5 +450,19 @@ async def test_the_signal_reaches_the_team_servers_database_row_animated(page_ur
             events = [e["event"] for e in ui.events[rid]]
             assert events[:4] == ["resolving", "emitting", "travelling", "arrived"], events
             assert await page.locator(".ui-contour").count() == 1
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_in_spanish_a_healthy_team_server_tile_fits_its_figures(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, team=HEALTHY, language="es")
+        try:
+            await page.wait_for_function(
+                "() => document.querySelector('#team-server-tile [data-row=\"Last write\"] .ago')")
+            assert await page.evaluate(FITS, "#team-server-tile") == []
+            label = await page.get_attribute("#team-server-tile", "aria-label")
+            assert label.startswith("Servidor del equipo:") and "Base de datos conectada" in label, label
         finally:
             await browser.close()

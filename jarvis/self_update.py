@@ -76,6 +76,13 @@ _CI_WORDS = {
 
 CANNOT_CHECK = "Could not check for updates."
 
+# Why an update was refused, apart from the words (`Outcome.refused_code`),
+# so the page says it in its own language.
+REFUSED_BUSY, REFUSED_SOURCE, REFUSED_CANNOT_CHECK, REFUSED_BLOCKED = (
+    "busy", "source", "cannot_check", "blocked")
+# A note after an update, by code (`Outcome.note_codes`), beside its words.
+NOTE_FRONTEND_PACKAGES = "frontend_packages"
+
 GIT_TIMEOUT_SEC = 60
 STEP_TIMEOUT_SEC = 900
 GITHUB_TIMEOUT_SEC = 10
@@ -99,6 +106,8 @@ class Commit:
 class Blocker:
     code: str
     detail: list[str] = field(default_factory=list)
+    # What the page needs to word it itself (local_commits: its count).
+    values: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -138,7 +147,7 @@ class Status:
                    behind=int(data.get("behind") or 0),
                    commits=[Commit(c["sha"], c["subject"]) for c in data.get("commits") or []],
                    ci=data.get("ci", ""),
-                   blockers=[Blocker(b["code"], b.get("detail") or [])
+                   blockers=[Blocker(b["code"], b.get("detail") or [], b.get("values") or {})
                              for b in data.get("blockers") or [] if b.get("code") in BLOCKER_WORDS])
 
 
@@ -152,11 +161,13 @@ class Outcome:
     ok: bool = False
     updated: bool = False
     refused: str = ""
+    refused_code: str = ""
     failed: str = ""
     from_commit: str = ""
     to_commit: str = ""
     steps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    note_codes: list[str] = field(default_factory=list)
 
     @property
     def restart(self) -> bool:
@@ -164,18 +175,21 @@ class Outcome:
 
     def to_json(self) -> dict:
         return {"status": self.status.to_json(), "ok": self.ok, "updated": self.updated,
-                "refused": self.refused, "failed": self.failed,
+                "refused": self.refused, "refused_code": self.refused_code, "failed": self.failed,
                 "from_commit": self.from_commit, "to_commit": self.to_commit,
-                "steps": self.steps, "notes": self.notes, "restart": self.restart}
+                "steps": self.steps, "notes": self.notes, "note_codes": self.note_codes,
+                "restart": self.restart}
 
     @classmethod
     def from_json(cls, data: dict) -> "Outcome":
         """`to_json` read back."""
         return cls(status=Status.from_json(data.get("status") or {}),
                    ok=bool(data.get("ok")), updated=bool(data.get("updated")),
-                   refused=data.get("refused", ""), failed=data.get("failed", ""),
+                   refused=data.get("refused", ""), refused_code=data.get("refused_code", ""),
+                   failed=data.get("failed", ""),
                    from_commit=data.get("from_commit", ""), to_commit=data.get("to_commit", ""),
-                   steps=list(data.get("steps") or []), notes=list(data.get("notes") or []))
+                   steps=list(data.get("steps") or []), notes=list(data.get("notes") or []),
+                   note_codes=list(data.get("note_codes") or []))
 
 
 # --- where JARVIS's source is -------------------------------------------
@@ -309,7 +323,7 @@ def check(root: Optional[Path] = None) -> Status:
     if modified:
         status.blockers.append(Blocker(MODIFIED, modified))
     if ahead:
-        status.blockers.append(Blocker(LOCAL_COMMITS, [f"{ahead} commits"]))
+        status.blockers.append(Blocker(LOCAL_COMMITS, [f"{ahead} commits"], {"count": ahead}))
     if overwrite:
         status.blockers.append(Blocker(WOULD_OVERWRITE, overwrite))
     if status.behind:
@@ -340,7 +354,7 @@ def update(root: Optional[Path] = None) -> Outcome:
     root = root or repo_root()
     if not _updating.acquire(blocking=False):
         return Outcome(status=Status(source=GITHUB),
-                       refused="An update is already under way.")
+                       refused="An update is already under way.", refused_code=REFUSED_BUSY)
     try:
         return _update(root)
     finally:
@@ -351,13 +365,14 @@ def _update(root: Path) -> Outcome:
     status = check(root)
     out = Outcome(status=status, from_commit=status.commit)
     if status.source != GITHUB:
-        out.refused = status.reason
+        out.refused, out.refused_code = status.reason, REFUSED_SOURCE
         return out
     if status.error:
-        out.refused = CANNOT_CHECK
+        out.refused, out.refused_code = CANNOT_CHECK, REFUSED_CANNOT_CHECK
         return out
     if status.blockers:
         out.refused = " ".join(BLOCKER_WORDS[b.code] for b in status.blockers)
+        out.refused_code = REFUSED_BLOCKED
         return out
     if not status.behind:
         out.ok = True
@@ -381,6 +396,7 @@ def _update(root: Path) -> Outcome:
             out.steps.append("Installed the frontend's packages.")
             if not serves_built_page():
                 out.notes.append("The frontend's packages changed: restart npm run dev.")
+                out.note_codes.append(NOTE_FRONTEND_PACKAGES)
         if serves_built_page() and any(p.startswith("frontend/") for p in changed):
             _step(["npm", "run", "build"], frontend)
             out.steps.append("Built the page.")

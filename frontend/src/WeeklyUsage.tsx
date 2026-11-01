@@ -17,6 +17,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { activeBrain, brains } from "./brains";
+import { formatDateTime, formatNumber, formatPercent, t as say, useT, type Translate } from "./locale";
 import { PROVIDERS, type ReportProvider } from "./providers";
 import { shortAgo } from "./timeFormat";
 import type { TargetRef } from "./uiContract";
@@ -52,6 +53,21 @@ interface Week {
 
 const REFRESH_MS = 60_000;
 
+/** Why the last read failed: the route is missing (an old server), the
+ *  server answered with an error, or it did not answer. Kept as what
+ *  happened, and worded where it is shown. */
+type Failure = { kind: "no-route" } | { kind: "status"; status: number } | { kind: "no-answer" };
+
+class ReadFailed extends Error {
+  constructor(readonly failure: Failure) { super(failure.kind); }
+}
+
+function failureWords(t: Translate, failure: Failure): string {
+  if (failure.kind === "no-route") return t("left.usage.noRoute");
+  if (failure.kind === "status") return t("left.common.serverAnswered", { status: String(failure.status) });
+  return t("left.usage.noAnswer");
+}
+
 /** The over/under figure without its sign, always four places: two digits,
  *  the point, one digit ("05.2", "15.0", "00.0"); past 99.9 it is held at
  *  99.9. Its sign is shown apart, as a superscript (`sign`). */
@@ -70,23 +86,22 @@ export function sign(value: number): "+" | "-" {
  *  brain, as the brain in use or the one standing by. */
 export function WeeklyUsage({ provider, role }: { provider?: string;
                                                   role?: "brain" | "standby" } = {}) {
+  const t = useT();
   const [week, setWeek] = useState<Week | null>(null);
   // Why the last request failed, if it did. A failed request is said as one:
   // it used to fall through to "not measured yet", which was untrue for as
   // long as the server lacked the route.
-  const [failed, setFailed] = useState<string | null>(null);
+  const [failed, setFailed] = useState<Failure | null>(null);
 
   useEffect(() => {
     const load = () =>
       fetch(provider ? `/api/usage/week?provider=${encodeURIComponent(provider)}` : "/api/usage/week")
         .then((r) => {
-          if (!r.ok) throw new Error(r.status === 404
-            ? "the server has no weekly usage yet: restart JARVIS"
-            : `the server answered ${r.status}`);
+          if (!r.ok) throw new ReadFailed(r.status === 404 ? { kind: "no-route" } : { kind: "status", status: r.status });
           return r.json();
         })
         .then((body: Week) => { setWeek(body); setFailed(null); })
-        .catch((e: Error) => setFailed(e.message || "the server did not answer"));
+        .catch((e: Error) => setFailed(e instanceof ReadFailed ? e.failure : { kind: "no-answer" }));
     load();
     const timer = setInterval(load, REFRESH_MS);
     return () => clearInterval(timer);
@@ -94,13 +109,13 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const ui = useAccountTarget(provider, week);
 
   const roleTag = role &&
-    <span className={`weekly-role ${role}`}>{role === "brain" ? "BRAIN" : "STANDBY"}</span>;
+    <span className={`weekly-role ${role}`}>{t(role === "brain" ? "left.usage.roleBrain" : "left.usage.roleStandby")}</span>;
   const box = `weekly-usage${role ? ` role-${role}` : ""}`;
 
   // A dash stands in for each figure when there is none to show (red if the
   // request failed), with the reason on hover.
   if (failed || !week || !week.measured) {
-    const why = failed ? `Couldn't read it: ${failed}` : "Not measured yet";
+    const why = failed ? t("left.usage.failed", { error: failureWords(t, failed) }) : t("left.usage.notMeasured");
     const cls = failed ? "behind" : "none";
     return (
       <section className={box} title={why} data-provider={provider} ref={ui.whole}>
@@ -125,7 +140,9 @@ export function WeeklyUsage({ provider, role }: { provider?: string;
   const left = Math.max(0, 100 - week.used!);
   return (
     <section className={box} data-provider={provider} ref={ui.whole}
-             title={`${Math.round(week.expected_used!)}% of the week gone, ${Math.round(week.used!)}% used, reading ${shortAgo(week.age_sec! * 1000, 90_000)}`}>
+             title={t("left.usage.reading", { gone: formatPercent(Math.round(week.expected_used!) / 100),
+                                             used: formatPercent(Math.round(week.used!) / 100),
+                                             age: shortAgo(week.age_sec! * 1000, 90_000) })}>
       {roleTag}
       <div className="account-rows">
         <div className="account-row available" ref={ui.part("remaining")}>
@@ -180,25 +197,28 @@ function Provider({ provider, partRef }: { provider?: ReportProvider; partRef: P
 }
 
 /** Days from now until `resetsAt` (epoch seconds), one decimal place,
- *  never below zero: "6.2 days", "1.0 day". */
+ *  never below zero: "6.2 days", "1.0 day" ("6,2 días" where that is the
+ *  language's decimal mark). */
 export function daysLeft(resetsAt: number, nowMs: number = Date.now()): string {
-  const days = Math.max(0, (resetsAt * 1000 - nowMs) / 86_400_000);
-  const shown = days.toFixed(1);
-  return `${shown} ${shown === "1.0" ? "day" : "days"}`;
+  const days = Number(Math.max(0, (resetsAt * 1000 - nowMs) / 86_400_000).toFixed(1));
+  // The count as shown, one decimal place in the language's own figures;
+  // its plural form is chosen by its value.
+  return say("left.usage.daysLeft", {
+    count: formatNumber(days, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** The local day `at` (epoch seconds) falls on: "Fri 23 Oct". */
+/** The local day `at` (epoch seconds) falls on, in the interface's
+ *  language in force: "Fri 23 Oct", "vie, 23 oct". A component showing it
+ *  takes useT(), so it is drawn again when the language changes. */
 export function resetDay(at: number): string {
-  const d = new Date(at * 1000);
-  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const piece = (options: Intl.DateTimeFormatOptions) => formatDateTime(at * 1000, options);
+  return say("left.usage.resetDay", { weekday: piece({ weekday: "short" }), day: piece({ day: "numeric" }),
+                                    month: piece({ month: "short" }) });
 }
 
 /** The burn-down with the days left above it and the reset day below it. */
 function BurnDown({ week, good, partRef }: { week: Week; good: boolean; partRef: PartRef }) {
+  useT();   // drawn again in a new language: daysLeft and resetDay say it in the one in force
   const state = good ? "ahead" : "behind";
   return (
     <div className="weekly-burn" ref={partRef}>
@@ -212,6 +232,7 @@ function BurnDown({ week, good, partRef }: { week: Week; good: boolean; partRef:
 /** Remaining (100% down to 0%) across the week: the straight line, and the
  *  readings so far. */
 function Chart({ week, good }: { week: Week; good: boolean }) {
+  const tr = useT();
   const W = 280, H = 40;
   const start = week.week_start!, end = week.resets_at!;
   const x = (t: number) => ((t - start) / (end - start)) * W;
@@ -226,7 +247,7 @@ function Chart({ week, good }: { week: Week; good: boolean }) {
   const state = good ? "ahead" : "behind";
   return (
     <svg className="weekly-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-         aria-label="Burn-down of the week">
+         aria-label={tr("left.usage.burnDown")}>
       <polygon className={`weekly-gap ${state}`} points={gap} />
       <line className="weekly-ideal" x1={0} y1={0} x2={W} y2={H} />
       <polyline className={`weekly-actual ${state}`} points={path} />

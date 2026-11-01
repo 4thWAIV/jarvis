@@ -10,15 +10,17 @@
 
 import { useSyncExternalStore } from "react";
 import { brains } from "./brains";
+import { useT } from "./locale";
 import { WeeklyUsage } from "./WeeklyUsage";
 
 export function BrainUsage() {
+  const t = useT();
   const live = useSyncExternalStore(brains.subscribe, brains.get);
   const added = live.value?.filter((b) => b.added) ?? null;
   const several = added !== null && added.length > 1;
   return (
-    <div id="brain-usage" aria-label="Brains">
-      {live.error && <p className="read-failure">Couldn't read the brains ({live.error}); trying again.</p>}
+    <div id="brain-usage" aria-label={t("left.usage.brains")}>
+      {live.error && <p className="read-failure">{t("left.usage.unreadable", { error: live.error })}</p>}
       {several
         ? added!.map((b) => <WeeklyUsage key={b.name} provider={b.name}
                                          role={b.active ? "brain" : "standby"} />)

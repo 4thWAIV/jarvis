@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { activeBrain, brains } from "./brains";
+import { useT } from "./locale";
 import { createOrb, type Orb } from "./orb";
 import { mainOrb } from "./orbSource";
 import { PROVIDERS } from "./providers";
@@ -46,6 +47,7 @@ export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
  *  same providers table the usage card uses; nothing shows for a provider
  *  with no logo, or when no brain is known to be running. */
 function BrainLogo({ partRef }: { partRef: PartRef }) {
+  const t = useT();
   const live = useSyncExternalStore(brains.subscribe, brains.get);
   const provider = activeBrain(live.value);
   const [missing, setMissing] = useState(false);
@@ -53,7 +55,7 @@ function BrainLogo({ partRef }: { partRef: PartRef }) {
   const info = provider ? PROVIDERS[provider] : undefined;
   if (!info?.logo || missing) return null;
   return (
-    <img id="brain-logo" ref={partRef} src={info.logo} alt={info.name} title={`${info.name} brain`}
+    <img id="brain-logo" ref={partRef} src={info.logo} alt={info.name} title={t("left.orb.brainLogo", { provider: info.name })}
          data-provider={provider} onError={() => setMissing(true)} />
   );
 }

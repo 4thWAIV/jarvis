@@ -5,9 +5,11 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT } from "./locale";
 import { micOff } from "./mic";
 
 export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
+  const t = useT();
   const off = useSyncExternalStore(micOff.subscribe, micOff.get);
   return (
     <button
@@ -15,7 +17,7 @@ export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => vo
       ref={partRef}
       data-ui-action="microphone"
       className={`control-button small${off ? " muted" : ""}`}
-      title={off ? "Turn the microphone on" : "Turn the microphone off"}
+      title={t(off ? "left.mic.turnOn" : "left.mic.turnOff")}
       onClick={(e) => {
         e.stopPropagation();
         micOff.set(!micOff.get());
