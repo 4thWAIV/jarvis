@@ -2676,7 +2676,10 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .server-beacon.readiness-ready, .readiness-ready .server-beacon { color: #4ade80; }
 .server-beacon svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 1.5; fill: none; }
-.server-beacon strong { font-size: 11px; font-weight: 700; line-height: 13px; white-space: nowrap; color: currentColor; }
+/* A readiness word longer than the column (Spanish "Iniciar sesión") goes
+   on two centred lines rather than being cut. */
+.server-beacon strong { font-size: 11px; font-weight: 700; line-height: 13px; max-width: 62px;
+                        text-align: center; overflow-wrap: break-word; color: currentColor; }
 .health-rows { display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
 .health-row {
   display: grid;
