@@ -12,7 +12,12 @@
  * Human input wins: a request that expected a navigation revision the page
  * has moved past is refused as stale, and between a journey's steps the
  * revision is checked again. A dropped connection clears every cue and
- * forgets the epoch, so nothing timed out is replayed.
+ * forgets the epoch, and a request still queued for the old epoch is
+ * dropped, so nothing timed out is replayed. A request's `expiresAt` is
+ * its one deadline: never started after it, abandoned (answered `expired`
+ * with whatever it had already done) if still running at it. A hidden page
+ * refuses navigation and pointing (`not_visible`): it paints nothing, so
+ * neither could be confirmed.
  */
 
 import type { JarvisSocket } from "./ws";
@@ -29,6 +34,8 @@ import {
 
 const CLIENT_ID = `page-${crypto.randomUUID().slice(0, 18)}`;
 const SEEN_MAX = 200;
+/** Operations that need the page painting: refused while it is hidden. */
+const VISIBLE_ONLY: ReadonlySet<Operation["kind"]> = new Set(["navigate", "indicate", "journey"]);
 
 type Answer = Omit<UIResult, "type" | "requestId" | "clientId" | "epoch" | "navigationRevision" | "layoutRevision">;
 
@@ -129,17 +136,34 @@ export function startUiClient(socket: JarvisSocket): void {
   }
 
   async function carryOut(req: UIRequest): Promise<void> {
+    // Queued behind another request when the connection dropped: that
+    // epoch is over, and nothing meant for it is replayed on the next.
+    if (req.epoch !== epoch) return;
     if (req.expiresAt <= Date.now()) return answer(req, { status: "expired", effects: [], reason: "expired" });
     if (req.expectedNavigationRevision !== null && req.expectedNavigationRevision !== navigationRevision.get()) {
       return answer(req, { status: "stale", effects: [], reason: "the page has moved on" });
     }
+    // A hidden page paints nothing (no animation frames), so a navigation
+    // could never be confirmed and a signal never seen: refused, not left
+    // to run out the clock.
+    if (VISIBLE_ONLY.has(req.operation.kind) && document.visibilityState !== "visible") {
+      return answer(req, { status: "not_visible", effects: [], reason: "the page is hidden (another tab or minimised)" });
+    }
     const control = new AbortController();
     live.set(req.requestId, control);
+    // One deadline: what is still running at it is abandoned, so nothing
+    // happens on the page after the server has stopped waiting.
+    let pastDeadline = false;
+    const deadline = setTimeout(() => { pastDeadline = true; control.abort(); },
+                                Math.max(0, req.expiresAt - Date.now()));
     try {
-      answer(req, await step(req, req.operation, control.signal));
+      const done = await step(req, req.operation, control.signal);
+      answer(req, pastDeadline && done.status !== "completed"
+        ? { ...done, status: "expired", reason: "the request's deadline passed" } : done);
     } catch (e) {
       answer(req, { status: "blocked", effects: [], reason: String(e instanceof Error ? e.message : e).slice(0, 200) });
     } finally {
+      clearTimeout(deadline);
       live.delete(req.requestId);
     }
   }

@@ -10928,7 +10928,7 @@ async def voice_handler(ws: WebSocket):
                     continue
                 # His words came from this page: the brain's UI requests in
                 # the turn they start go to it and no other.
-                ui_clients.note_turn(ws)
+                ui_clients.note_turn(ws, _transcript_id(msg))
                 if typed:
                     await utterance.now()
                     await take_utterance(text, _transcript_id(msg), typed=True)
@@ -11310,6 +11310,9 @@ def _ui_origin() -> str | None:
 
 
 UI_SAID_MAX = 1200
+# A map page leaves room for the status lines above it and the untrusted
+# block's own wrapping, inside the one tool-result cap.
+UI_MAP_BUDGET = _WRAP_CONTENT_CAP - 200
 
 
 def _ui_pair(key: str, value) -> str:
@@ -11320,19 +11323,22 @@ def _ui_pair(key: str, value) -> str:
     return f"{key}: {value}"
 
 
-def _ui_said(result: dict, *, map_wrapped: bool = False) -> str:
+def _ui_said(result: dict, *, map_cursor: int | None = None) -> str:
     """A UI result for the brain, as `field: value` pairs: its status,
     reason, effects and the page's ids. A map's labels (agents', folders',
-    instances' names) come back in an untrusted block."""
-    lines = [_ui_pair(k, result[k]) for k in ("status", "arrival", "reason", "effects", "cueId",
+    instances' names) come back in an untrusted block, one page of it that
+    fits the tool-result cap, with the cursor for the next."""
+    lines = [_ui_pair(k, result[k]) for k in ("status", "arrival", "reason", "claimed", "effects", "cueId",
                                            "resolvedTarget", "navigationRevision", "delivery", "events")
              if result.get(k) not in (None, [], "")]
     for n, step in enumerate(result.get("steps") or [], 1):
-        lines.append(_ui_pair(f"step {n}", {k: step.get(k) for k in ("status", "arrival", "reason") if step.get(k)}))
-    if map_wrapped and result.get("map") is not None:
+        lines.append(_ui_pair(f"step {n}", {k: step.get(k) for k in ("status", "arrival", "reason", "effects")
+                                            if step.get(k)}))
+    if map_cursor is not None and result.get("map") is not None:
         # Labels on the page are other people's words: the whole map in
         # the untrusted block.
-        return _wrap_untrusted("ui_map", "\n".join(lines) + "\n" + json.dumps(result["map"], separators=(",", ":")))
+        return _wrap_untrusted("ui_map", "\n".join(lines) + "\n"
+                               + ui_control.map_page(result["map"], map_cursor, UI_MAP_BUDGET))
     # A reason can quote what was asked for: walled like any echo.
     return _safe_label(" / ".join(lines), UI_SAID_MAX)
 
@@ -11343,39 +11349,65 @@ def _ui_client_arg(args: dict) -> tuple[str | None, str | None]:
     client = args.get("client")
     if client is not None and not isinstance(client, str):
         return None, "client must be a page's client ID"
-    origin = _ui_origin()
-    if client and origin == "user":
-        bound, _ = ui_clients.target_page(None, origin)
+    if client and _ui_origin() == "user":
+        bound, _ = ui_clients.bound_page(_turn_heard)
         if bound is not None and bound.client_id != client:
             return None, "only the page you are speaking from can be changed on your turn"
     return client, None
 
 
 async def _ui_request(operation: dict, args: dict) -> dict:
+    """One request to the page of this turn (or the one named), bound to
+    this turn: its caller, the id of the words that started it and the
+    speech turn answering them."""
     client, problem = _ui_client_arg(args)
     if problem:
         return {"status": "invalid", "reason": problem}
     return await ui_clients.request(operation, client=client, origin=_ui_origin(),
-                                    turn=getattr(_turn_utt, "id", None) if _turn_utt else None)
+                                    heard=_turn_heard,
+                                    turn=str(_turn_utt.id) if _turn_utt is not None else None)
+
+
+def _ui_indicate_op(args: dict) -> dict:
+    return {"kind": "indicate", "target": args.get("target"),
+            **{k: args[k] for k in ("reveal", "style", "holdMs", "label") if k in args}}
+
+
+def _ui_navigate_op(args: dict) -> dict:
+    return {"kind": "navigate", "commandId": args.get("command"), "args": args.get("args") or {}}
 
 
 async def tool_ui_map(args: dict) -> str:
-    """What the page shows, its commands and its targets (bounded)."""
+    """What the page shows, its commands and its targets, one bounded page."""
+    cursor = args.get("cursor", 0)
+    if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
+        return _ui_said({"status": "invalid", "reason": "cursor must be a whole number from 0"})
     op = {"kind": "map", **{k: args[k] for k in ("region", "view") if k in args}}
-    return _ui_said(await _ui_request(op, args), map_wrapped=True)
+    return _ui_said(await _ui_request(op, args), map_cursor=cursor)
 
 
 async def tool_ui_navigate(args: dict) -> str:
     """Run one registered navigation command on the page of this turn."""
-    op = {"kind": "navigate", "commandId": args.get("command"), "args": args.get("args") or {}}
-    return _ui_said(await _ui_request(op, args))
+    return _ui_said(await _ui_request(_ui_navigate_op(args), args))
 
 
 async def tool_ui_indicate(args: dict) -> str:
     """Point at one exact target with the white signal; answered at arrival."""
-    op = {"kind": "indicate", "target": args.get("target"),
-          **{k: args[k] for k in ("reveal", "style", "holdMs", "label") if k in args}}
-    return _ui_said(await _ui_request(op, args))
+    return _ui_said(await _ui_request(_ui_indicate_op(args), args))
+
+
+async def tool_ui_journey(args: dict) -> str:
+    """Navigate and point in order, each signal from the orb once the step
+    before it has finished; a person's own navigation ends the rest. Each
+    step is a ui_navigate (`command`) or a ui_indicate (`target`)."""
+    steps = args.get("steps")
+    if not isinstance(steps, list):
+        return _ui_said({"status": "invalid", "reason": "steps must be a list"})
+    ops = [_ui_navigate_op(s) if isinstance(s, dict) and "command" in s
+           else _ui_indicate_op(s) if isinstance(s, dict) and "target" in s
+           else s                     # refused, with its position, by the contract
+           for s in steps]
+    return _ui_said(await _ui_request({"kind": "journey", "steps": ops}, args))
 
 
 async def tool_ui_clear(args: dict) -> str:
