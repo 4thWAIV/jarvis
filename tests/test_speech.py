@@ -485,7 +485,7 @@ async def test_synth_failure_emits_text_and_continues(h):
     await asyncio.sleep(0.15)
     await h.ack_all()
     assert [t for _, _, t in h.audio()] == ["First one.", "Third one."]
-    assert {"type": "text", "text": "Second one."} in h.msgs
+    assert {"type": "text", "text": "Second one.", "utt": u.id, "idx": 1} in h.msgs
     assert u.done
 
 
@@ -1631,3 +1631,18 @@ async def test_the_quiet_room_bar_returns_once_his_audio_has_ended(h):
     await h.ack_all()
     await asyncio.sleep(0.05)
     assert not s.is_speaking
+
+
+@pytest.mark.asyncio
+async def test_text_only_turn_emits_identified_text_and_returns_to_idle(h):
+    h.fail_texts.add("Text response.")
+    u = h.sched.begin_turn()
+    h.sched.feed(u, "Text response.")
+    await h.sched.end_turn(u)
+    assert await h.sched.wait_for(u, timeout=1)
+    await asyncio.sleep(0.05)
+    text = next(m for m in h.msgs if m["type"] == "text")
+    assert text["text"] == "Text response."
+    assert text["utt"] == u.id and text["idx"] == 0
+    assert not h.audio()
+    assert h.msgs[-1] == {"type": "status", "state": "idle"}

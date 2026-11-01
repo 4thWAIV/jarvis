@@ -20,6 +20,8 @@ export interface Turn {
   sentences: string[];
   /** A user turn still being heard: the next thing heard replaces its text. */
   open: boolean;
+  /** Typed submissions belong in history, never in the microphone caption. */
+  typed?: boolean;
   /** When it began, in seconds: where it falls among the conversation's
    *  record (conversation.ts), which is in the server's seconds. */
   at?: number;
@@ -121,7 +123,7 @@ export function userHeard(text: string, final: boolean): number {
  *  new turn after this one. Returns the turn's id, as `userHeard` does. */
 export function userTyped(text: string): number {
   const { turns, speaking } = conversation.get();
-  const turn: Turn = { id: nextId++, at: Date.now() / 1000, speaker: "user", sentences: [text], open: false };
+  const turn: Turn = { id: nextId++, at: Date.now() / 1000, speaker: "user", sentences: [text], open: false, typed: true };
   commit([...turns.map((t) => (t.speaker === "user" && t.open ? { ...t, open: false } : t)), turn],
          speaking);
   return turn.id;
@@ -173,6 +175,20 @@ export function jarvisSpeaking(utt: number, text: string, seconds: number): void
       commit(now, [turn.id, sentence, word]);
     }
   });
+}
+
+/** A reply with no playable audio still belongs in the conversation. */
+export function jarvisText(utt: number, text: string): void {
+  const { turns, speaking } = conversation.get();
+  const { last, at } = lastWords(turns);
+  if (last?.speaker === "jarvis" && last.utt === utt) {
+    commit(turns.map((t, i) => i === at
+      ? { ...last, sentences: [...last.sentences, text] } : t), speaking);
+  } else {
+    commit([...turns, { id: nextId++, at: Date.now() / 1000, speaker: "jarvis",
+      sentences: [text], open: false, utt }], speaking);
+  }
+  flush(utt);
 }
 
 /** Nothing is being spoken any more. */

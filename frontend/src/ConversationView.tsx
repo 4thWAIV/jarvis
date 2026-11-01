@@ -21,7 +21,8 @@
  * it, Answered), opening to the agent's answer. An agent's name opens that
  * agent's thread in the centre area. "Earlier" at the top reads further back.
  *
- * What is live is in the two boxes. Tim's finished words stay in the white
+ * Typed submissions go straight into history; the editor stays ready.
+ * What is live is in the two boxes. Tim's finished spoken words stay in the white
  * box until the brain answers: they go to a capture if it makes one of them
  * (and the history shows a collapsed item for them), and otherwise into the
  * history when JARVIS starts to reply. JARVIS's reply moves into the history
@@ -50,7 +51,7 @@ export function placeTurns(turns: Turn[], voice: OrbState):
   // once; the words stay in their box until they are said.
   const last = [...turns].reverse().find((t) => !t.display);
   const speaking = last && last.speaker === "jarvis" && voice === "speaking" ? last : null;
-  const hearing = last && last.speaker === "user" && !last.capture ? last : null;
+  const hearing = last && last.speaker === "user" && !last.capture && !last.typed ? last : null;
   const history = turns.filter((t) => t !== speaking && t !== hearing);
   return { history, speaking, hearing };
 }
@@ -251,6 +252,7 @@ function HearingBox({ turn }: { turn: Turn | null }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
   // What was heard shows until he starts typing; a draft keeps the box.
   const heard = turn && !typing && !draft ? turn.sentences.join(" ") : null;
   useLayoutEffect(() => {
@@ -262,14 +264,19 @@ function HearingBox({ turn }: { turn: Turn | null }) {
   function send() {
     const text = draft.trim();
     if (!text) return;
-    sendTyped.current(text);
+    if (!sendTyped.current(text)) {
+      setError("Not connected. Your message has not been sent. Try again after reconnecting.");
+      return;
+    }
+    setError("");
     setDraft("");
-    // Sent, his words wait in the box as spoken ones do.
-    input.current?.blur();
+    // Sent text lives in history; the editor is ready for the next draft.
+    input.current?.focus();
   }
   return (
     <div className="conversation-hearing" ref={ref} aria-label="You are saying"
          onClick={() => setTyping(true)}>
+      {error && <p role="alert">{error}</p>}
       {heard !== null && <p className="caption-turn user">{heard}</p>}
       <textarea ref={input} className="hearing-input" rows={1} hidden={heard !== null}
                 aria-label="Type instead of speaking" placeholder="Speak, or click to type"

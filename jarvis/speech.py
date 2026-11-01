@@ -413,6 +413,7 @@ class SpeechScheduler:
         self._cancel_window_open = False
         self._cancel_event = asyncio.Event()
         self._speaking = False
+        self._text_status_pending = False
         self._wake = asyncio.Event()
         self._tick_task: Optional[asyncio.Task] = None
         self._tasks: set[asyncio.Task] = set()
@@ -1070,6 +1071,7 @@ class SpeechScheduler:
     async def _set_speaking(self, on: bool) -> None:
         if on != self._speaking:
             self._speaking = on
+            self._text_status_pending = False
             await self._emit({"type": "status", "state": "speaking" if on else "idle"})
 
     def _release_gated(self, now: float) -> None:
@@ -1178,8 +1180,12 @@ class SpeechScheduler:
                 self._pending.remove(nxt)
                 self._current = nxt
                 return True
-            if self._speaking and self._nothing_in_flight():
-                await self._set_speaking(False)
+            if self._nothing_in_flight():
+                if self._speaking:
+                    await self._set_speaking(False)
+                elif self._text_status_pending:
+                    self._text_status_pending = False
+                    await self._emit({"type": "status", "state": "idle"})
             return False
 
         cur = self._current
@@ -1235,8 +1241,11 @@ class SpeechScheduler:
                 else:
                     u.held_ack = max(u.held_ack, idx)
                     self._kick_later(chunk.earliest_ack - now)
-                if not await self._send({"type": "text", "text": chunk.text}, u):
+                if not await self._send({"type": "text", "text": chunk.text,
+                                         "utt": u.id, "idx": idx,
+                                         **({"capture": chunk.capture} if chunk.capture is not None else {})}, u):
                     return False
+                self._text_status_pending = True
                 if chunk.notice:
                     await self._send({"type": "text", "text": "My voice is failing, sir."}, u)
                 progressed = True

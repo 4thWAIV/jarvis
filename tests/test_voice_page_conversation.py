@@ -184,8 +184,7 @@ async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_url):
 @pytest.mark.asyncio
 async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
     """Clicked, the white box takes typing. Shift+Enter starts a new line;
-    Enter sends it, marked typed, and the words wait in the box as spoken
-    ones do until JARVIS answers."""
+    Enter sends it, marked typed, into history and clears the editor."""
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, voice)
@@ -204,10 +203,10 @@ async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
         (sent,) = [m for m in voice.got if m.get("type") == "transcript"]
         assert sent["text"] == "check the build\nand the tests" and sent["typed"] is True, sent
         assert sent["isFinal"] is True and isinstance(sent["id"], int), sent
-        assert await page.evaluate("document.activeElement.tagName") == "BODY"
+        assert await page.evaluate("document.activeElement.className") == "hearing-input"
         got = await page.evaluate(BOXES)
-        assert got["hearing"] == "check the build\nand the tests", got
-        assert got["history"] == ["something half heard"], got
+        assert got["hearing"] == "", got
+        assert got["history"] == ["something half heard", "check the build\nand the tests"], got
 
         # Heard words start a new turn after the typed one.
         await page.evaluate("window.__hear('and deploy', false)")
@@ -490,4 +489,45 @@ async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_
         await page.click(".record-restore")
         await page.wait_for_selector(".record-restore", state="detached", timeout=10000)
         assert posted == ["capture/3/restore?notice=2"], posted
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_text_only_reply_and_sent_draft_stay_visible_without_audio(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        editor = page.get_by_role("textbox", name="Type instead of speaking")
+        await editor.fill("Please reply in text.")
+        await editor.press("Enter")
+        await page.wait_for_function("document.querySelector('.history-turn.user')?.textContent === 'Please reply in text.'")
+        assert await editor.input_value() == ""
+        await editor.click()
+        await editor.press("Tab")
+        assert await editor.input_value() == ""
+        assert await page.locator('.conversation-history').inner_text() == "Please reply in text."
+        voice.send({"type": "status", "state": "thinking"},
+                   {"type": "text", "utt": 17, "idx": 0, "text": "Text works."},
+                   {"type": "text", "utt": 17, "idx": 1, "text": "No audio needed."},
+                   {"type": "status", "state": "idle"})
+        await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('No audio needed.')")
+        got = await page.evaluate(BOXES)
+        assert got["history"] == ["Please reply in text.", "Text works. No audio needed."]
+        assert got["hearing"] == "" and got["speaking"] == ""
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_disconnected_submission_preserves_draft_with_error(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        editor = page.get_by_role("textbox", name="Type instead of speaking")
+        await editor.fill("Keep this draft")
+        await voice.ws.close()
+        await asyncio.sleep(0.1)
+        await editor.press("Enter")
+        assert await editor.input_value() == "Keep this draft"
+        assert "has not been sent" in await page.get_by_role("alert").inner_text()
+        assert not [m for m in voice.got if m.get("type") == "transcript"]
         await browser.close()

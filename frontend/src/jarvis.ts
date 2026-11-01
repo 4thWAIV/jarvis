@@ -10,7 +10,7 @@
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
-import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped } from "./captions";
+import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped, jarvisText } from "./captions";
 import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
@@ -138,8 +138,10 @@ export function startJarvis(orb: Orb): void {
   // What Tim types into the white box goes the way a final transcript does,
   // marked typed: the server neither corrects it nor takes it for echo.
   sendTyped.current = (text: string) => {
+    if (!socket.isConnected()) return false;
     const id = userTyped(text);
     socket.send({ type: "transcript", text, isFinal: true, typed: true, id });
+    return true;
   };
 
   // ── captions ─────────────────────────────────────────────────────────
@@ -238,7 +240,10 @@ export function startJarvis(orb: Orb): void {
       else if (state === "compacting") transition("compacting");
       else if (state === "idle") transition("listening");
     } else if (type === "text") {
-      // A chunk TTS could not voice: kept in Messages instead of lost.
+      // Text replies must remain visible even when voice output is unavailable.
+      if (msg.text && typeof msg.capture !== "number") {
+        jarvisText(Number(msg.utt ?? -1), String(msg.text));
+      }
       console.log("[JARVIS]", msg.text);
       notice("Unvoiced speech", String(msg.text ?? ""));
     } else if (type === "notice") {
