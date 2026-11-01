@@ -934,6 +934,114 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "navigation"
+    },
+    {
+      "id": "menu.toggle",
+      "label": "Open or close the menu (top right)",
+      "view": "overlay.controls",
+      "args": {
+        "open": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "open"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "menu.opened",
+          "when": {
+            "open": true
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "id": "settings.open",
+      "label": "Open Settings, at one section if one is named; the menu closes",
+      "view": "overlay.settings",
+      "args": {
+        "section": {
+          "type": "enum",
+          "values": [
+            "brains",
+            "voice",
+            "you",
+            "team",
+            "updates",
+            "system"
+          ]
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "settings.opened"
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "id": "settings.section",
+      "label": "Go to one section of Settings while it is open",
+      "view": "overlay.settings",
+      "args": {
+        "section": {
+          "type": "enum",
+          "values": [
+            "brains",
+            "voice",
+            "you",
+            "team",
+            "updates",
+            "system"
+          ]
+        }
+      },
+      "required": [
+        "section"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "settings"
+    },
+    {
+      "id": "settings.close",
+      "label": "Close Settings (first-time setup ends with it)",
+      "view": "overlay.settings",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "settings"
+    },
+    {
+      "id": "reminder.later",
+      "label": "Hide the sign-in reminder until the page or its connection to JARVIS starts again",
+      "view": "main.notice",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "settings"
     }
   ],
   "kinds": [
@@ -1202,7 +1310,13 @@ export const UI_CONTRACT = {
             "settings",
             "updates",
             "restart"
-          ]
+          ],
+          "reveal": {
+            "command": "menu.toggle",
+            "args": {
+              "open": true
+            }
+          }
         }
       ],
       "family": "settings"
@@ -1217,7 +1331,11 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "overlay.settings"
+          "view": "overlay.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {}
+          }
         }
       ],
       "family": "settings"
@@ -1232,7 +1350,13 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "overlay.settings"
+          "view": "overlay.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {
+              "section": "$key"
+            }
+          }
         }
       ],
       "family": "settings"
@@ -2144,6 +2268,7 @@ export interface CommandArgs {
   "folders.close": { };
   "folders.open": { folderId: string; };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue"; };
+  "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
   "queue.back": { };
@@ -2151,7 +2276,11 @@ export interface CommandArgs {
   "queue.follow": { threadId: string; };
   "queue.next": { };
   "queue.open": { threadId: string; };
+  "reminder.later": { };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
+  "settings.close": { };
+  "settings.open": { section?: "brains" | "voice" | "you" | "team" | "updates" | "system"; };
+  "settings.section": { section: "brains" | "voice" | "you" | "team" | "updates" | "system"; };
   "subagent.open": { sessionId: string; agentId: string; };
   "subsystem.close": { };
   "subsystem.open": { subsystemId: string; };

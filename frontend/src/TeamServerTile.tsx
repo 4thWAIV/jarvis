@@ -9,10 +9,14 @@
  *
  * Everything but the round trip comes from the team server's own answer
  * (network.ts); the round trip is the one figure only this JARVIS can time.
- * A click opens the full health detail in the centre (TeamServerView.tsx).
+ * A click opens the full health detail in the centre (TeamServerView.tsx):
+ * the registered `network.open {kind: server}`, as the brain's request is.
+ * The tile is a target the brain can point at from the left rail, with the
+ * readiness word and each row as parts.
  */
 
-import { byHand } from "./uiRegistry";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore, type ReactNode } from "react";
 import {
   network, openNetwork, serverReading, sinceMs, type RowState, type ServerReading,
@@ -52,11 +56,13 @@ function spoken(r: ServerReading): string {
   return parts.join(" ");
 }
 
-function HealthRow({ name, state, title, children }: {
-  name: string; state: RowState; title: string; children: ReactNode;
+type PartRef = (el: Element | null) => void;
+
+function HealthRow({ name, state, title, partRef, children }: {
+  name: string; state: RowState; title: string; partRef: PartRef; children: ReactNode;
 }) {
   return (
-    <span className={`health-row ${state}`} title={title} data-row={name}>
+    <span className={`health-row ${state}`} title={title} data-row={name} ref={partRef}>
       <i aria-hidden="true" />
       <span>{name}</span>
       <strong>{children}</strong>
@@ -71,29 +77,33 @@ export function TeamServerTile() {
   const r = serverReading(live.value);
   const contact = sinceMs(live.value?.last_contact_at);
   const dash = <b>—</b>;
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "teamServer" }, label: "Team server",
+                           socket: { rail: "rail.left", side: "left" } });
   return (
-    <button type="button" id="team-server-tile"
+    <button type="button" id="team-server-tile" ref={ui.whole}
             className={`compact-tile server-tile readiness-${readinessClass(r.readiness)}${
               open?.kind === "server" ? " selected" : ""}`}
             aria-label={spoken(r)} aria-pressed={open?.kind === "server"}
-            onClick={() => byHand("network.open", { kind: "server" })}>
+            {...bindingProps(bind("network.open", { kind: "server" }))}>
       <span className="tile-title" aria-hidden="true">TEAM SERVER</span>
       <span className="tile-body">
         <span className="server-beacon" aria-hidden="true">
           <ServerIcon />
-          <strong className="readiness-word">{r.readiness}</strong>
+          <strong className="readiness-word" ref={ui.part("readiness")}>{r.readiness}</strong>
         </span>
         <span className="health-rows" aria-hidden="true">
-          <HealthRow name="Server" state={r.server.state}
+          <HealthRow name="Server" state={r.server.state} partRef={ui.part("server")}
                      title={`Round trip to the team server; last contact ${
                        contact === null ? "never" : spokenAgo(contact)}`}>
             {r.server.ms === null ? dash : <><b>{Math.round(r.server.ms)}</b> ms</>}
           </HealthRow>
-          <HealthRow name="Database" state={r.database.state} title="The team server's database; its ping">
+          <HealthRow name="Database" state={r.database.state} title="The team server's database; its ping"
+                     partRef={ui.part("database")}>
             {r.database.state === "bad" ? <b>down</b>
               : r.database.ms === null ? dash : <><b>{Math.round(r.database.ms)}</b> ms</>}
           </HealthRow>
-          <HealthRow name="Last write" state={r.write.state} title="The last successful database write">
+          <HealthRow name="Last write" state={r.write.state} title="The last successful database write"
+                     partRef={ui.part("lastWrite")}>
             {r.write.ageMs === null ? (r.write.state === "bad" ? <b>down</b> : dash)
               : <><b>{shortAge(r.write.ageMs)}</b><small className="ago"> ago</small></>}
           </HealthRow>

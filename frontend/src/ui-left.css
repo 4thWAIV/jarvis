@@ -1,0 +1,19 @@
+/* The pipeline's needs in the left column, the menu and the footer
+   (MenuControl.tsx, Footer.tsx): what each object keeps clear so its
+   socket and leaves have room (uiPipeline.ts, --ui-corridor in style.css).
+   The page loads this before style.css, so each rule is one step more
+   specific than the one it overrides there. */
+
+/* The open menu hangs from the right rail and its socket enters on its
+   right edge: its buttons stop short of the corridor along that edge. */
+html #menu-dropdown {
+  padding-right: calc(4px + var(--ui-corridor));
+}
+
+/* The JARVIS label is the footer's one object. Clicking it does nothing,
+   but it must be found where it is drawn: a box that lets the pointer through is
+   not seen at its own point, and so could never be pointed at. Nothing
+   else is under it (everything else stops above the footer). */
+#footer #jarvis-label {
+  pointer-events: auto;
+}

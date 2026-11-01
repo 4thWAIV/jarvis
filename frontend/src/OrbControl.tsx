@@ -1,5 +1,9 @@
 /**
  * The orb as one control on the page: it fills the box the page gives it.
+ * It is also a target the brain can point at (the whole orb, its canvas or
+ * the brain's logo), hung from the left rail. The canvas is pointed at
+ * whole, since its 3D insides have no projection adapter: it fills this box,
+ * so the box draws it, and the logo lying on it is inside it, not beside it.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -7,9 +11,14 @@ import { activeBrain, brains } from "./brains";
 import { createOrb, type Orb } from "./orb";
 import { mainOrb } from "./orbSource";
 import { PROVIDERS } from "./providers";
+import { useUiTarget } from "./uiRegistry";
+
+type PartRef = (el: Element | null) => void;
 
 export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "orb" }, label: "The orb",
+                           socket: { rail: "rail.left", side: "left" } });
 
   useEffect(() => {
     // Transparent, so a ray drawn behind it shows through, as if it came from
@@ -24,9 +33,9 @@ export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
   }, [onReady]);
 
   return (
-    <div id="orb-control">
+    <div id="orb-control" ref={(el) => { ui.whole(el); ui.part("canvas")(el); }}>
       <canvas id="orb-canvas" ref={canvasRef} />
-      <BrainLogo />
+      <BrainLogo partRef={ui.part("logo")} />
     </div>
   );
 }
@@ -36,7 +45,7 @@ export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
  *  read again on every reconnect and whenever a brain becomes ready) and the
  *  same providers table the usage card uses; nothing shows for a provider
  *  with no logo, or when no brain is known to be running. */
-function BrainLogo() {
+function BrainLogo({ partRef }: { partRef: PartRef }) {
   const live = useSyncExternalStore(brains.subscribe, brains.get);
   const provider = activeBrain(live.value);
   const [missing, setMissing] = useState(false);
@@ -44,7 +53,7 @@ function BrainLogo() {
   const info = provider ? PROVIDERS[provider] : undefined;
   if (!info?.logo || missing) return null;
   return (
-    <img id="brain-logo" src={info.logo} alt={info.name} title={`${info.name} brain`}
+    <img id="brain-logo" ref={partRef} src={info.logo} alt={info.name} title={`${info.name} brain`}
          data-provider={provider} onError={() => setMissing(true)} />
   );
 }
