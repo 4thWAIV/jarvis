@@ -394,10 +394,11 @@ def test_restart_does_not_hardcode_host_and_port():
     """It used to re-exec with --host 0.0.0.0 --port 8340 regardless of how the
     server was actually started, so a restart moved the UI to a different
     origin — and Chrome scopes microphone permission per origin INCLUDING the
-    port, so the user silently lost their mic."""
+    port, so the user silently lost their mic. The re-exec is in the one
+    restart, `_restart_server`, which /api/restart and the update share."""
     from jarvis import server
     source = pathlib.Path(server.__file__).read_text()
-    i = source.index("async def api_restart")
+    i = source.index("def _restart_server")
     body = source[i:i + 1200]
     assert "sys.argv" in body, "restart must re-exec with the real arguments"
     assert '"0.0.0.0"' not in body and '"8340"' not in body

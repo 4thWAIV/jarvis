@@ -87,6 +87,7 @@ from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
 from jarvis import session_messages
+from jarvis import spoken_words
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -98,6 +99,7 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import work_packages
+from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
 from jarvis import specs
@@ -763,7 +765,6 @@ ROTATION_BUSY_LINE = "Gathering my thoughts — one moment, sir."
 # This is that fresh conversation. It discards the tainted generation rather
 # than carrying anything across, which is the whole point — he restates the
 # fact in his own words to a brain that has read nothing.
-FRESH_START_COMMAND = "start fresh"
 FRESH_START_LINE = "Cleared, sir — nothing of that conversation left. Go ahead."
 # Clearing takes TWO turns. The command alone only asks; the very next
 # utterance must be an unambiguous yes (`_rotation_answer`) or nothing is
@@ -776,20 +777,21 @@ FRESH_START_CONFIRM_TIMEOUT = 20.0      # seconds he has to say yes
 def _is_fresh_start(text: str) -> bool:
     """Whether the ENTIRE utterance is the one command that clears the context.
 
-    Lowercased, punctuation stripped, one optional leading "jarvis" dropped,
-    and what is left must equal "start fresh" exactly. A longer sentence that
-    merely contains the words never counts: a misheard "start over" once
-    wiped a live conversation, and nothing may do that again.
+    Lowercased, punctuation and accents stripped, one optional leading
+    "jarvis" dropped, and what is left must equal the active language's clear
+    command ("start fresh"; in Spanish "empezar de cero") exactly. A longer
+    sentence that merely contains the words never counts: a misheard "start
+    over" once wiped a live conversation, and nothing may do that again.
     """
     words = _action_words(text)
     if words and words[0] == "jarvis":
         words = words[1:]
-    return " ".join(words) == FRESH_START_COMMAND
+    return " ".join(words) == spoken_words.vocabulary().clear_command
 
 
 def _action_words(text: str) -> list[str]:
-    import re as _re
-    return _re.findall(r"[a-z]+", text.lower())
+    """Letters only, accents folded: "Don't" is "don", "t"; "Sí." is "si"."""
+    return spoken_words.folded_words(text, digits=False)
 
 
 # The brain states the page shows (which brain runs, on the orb and in
@@ -1301,17 +1303,8 @@ async def _start_fresh(utterance: str = "") -> None:
 ROTATION_ASK_AGAIN_AFTER_TURNS = 10
 ROTATION_DECLINED_LINE = "Very good, sir. I'll carry on as I am."
 
-ROTATION_YES_WORDS = frozenset({
-    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "certainly",
-    "absolutely", "affirmative", "proceed", "compact", "rotate",
-})
+# The yes and no words are the active language's (`spoken_words`).
 ROTATION_YES_MAX_WORDS = 4
-ROTATION_YES_PHRASES = ("go ahead", "do it", "go for it", "sounds good")
-ROTATION_NO_WORDS = frozenset({
-    # `_action_words` splits "don't" into "don" and "t".
-    "no", "nope", "nah", "not", "don", "dont", "wait", "later", "hold", "stop",
-    "never", "negative",
-})
 
 # Whether the question is waiting on his answer, the brain's
 # `turns_since_rotation` when it was last asked (None: never asked), and
@@ -1337,15 +1330,16 @@ def _rotation_answer(text: str) -> Optional[bool]:
     words = _action_words(text)
     if not words:
         return None
-    if any(w in ROTATION_NO_WORDS for w in words):
+    vocabulary = spoken_words.vocabulary()
+    if any(w in vocabulary.no_words for w in words):
         return False
     joined = " ".join(words)
     # A short reply only: a long sentence that happens to open with "okay" is
     # not a yes to a question about wiping his context.
     if len(words) > ROTATION_YES_MAX_WORDS:
         return None
-    if words[0] in ROTATION_YES_WORDS or any(joined.startswith(p)
-                                            for p in ROTATION_YES_PHRASES):
+    if words[0] in vocabulary.yes_words or any(joined.startswith(p)
+                                              for p in vocabulary.yes_phrases):
         return True
     return None
 
@@ -1622,18 +1616,20 @@ def _message_number(message: dict) -> int:
         return 0
 
 
-async def _say_notice(line: str, note: str, what: str, **links) -> None:
+async def _say_notice(line: str, note: str, what: str, **links):
     """Say `line`, and tell the brain at its next turn that it was said. The
     line goes in the conversation as a notice with `links`. The one notice
-    path for agents' messages and people's arrivals alike."""
+    path for agents' messages and people's arrivals alike. Returns the
+    utterance, for a caller that waits until it has been heard, or None."""
     _notes_for_brain.append(note)
     _record(conversation_log.ItemKind.NOTICE, line, **links)
     if speech is None:
-        return
+        return None
     try:
-        await speech.say(line, Priority.NORMAL, label="announcement")
+        return await speech.say(line, Priority.NORMAL, label="announcement")
     except Exception as e:
         log.warning(f"{what} announcement failed: {e}")
+        return None
 
 
 async def _say_about_message(line: str, note: str, what: str,
@@ -11215,12 +11211,17 @@ async def api_save_preferences(body: PreferencesUpdate):
 # Control endpoints (restart)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/restart")
-async def api_restart():
-    """Restart the JARVIS server."""
-    log.info("Restart requested — shutting down in 2 seconds")
+RESTART_AFTER_SEC = 2
+
+
+def _restart_server(why: str) -> None:
+    """Restart the JARVIS server in RESTART_AFTER_SEC, long enough for the
+    reply that asked for it to go out. The one restart: /api/restart and the
+    update (/api/update, the brain's update_jarvis) both come here."""
+    log.info("Restart requested (%s) — shutting down in %s seconds", why, RESTART_AFTER_SEC)
+
     async def _restart():
-        await asyncio.sleep(2)
+        await asyncio.sleep(RESTART_AFTER_SEC)
         # Re-exec with the ARGUMENTS WE WERE GIVEN, not hardcoded defaults.
         # This used to force --host 0.0.0.0 --port 8340, so a server started
         # on ::1:8341 came back on a different origin — and Chrome scopes
@@ -11229,7 +11230,109 @@ async def api_restart():
         # so JARVIS_DATA_DIR and friends carry over on their own.
         os.execv(sys.executable, [sys.executable, "-m", "jarvis", *sys.argv[1:]])
     asyncio.create_task(_restart())
+
+
+@app.post("/api/restart")
+async def api_restart():
+    """Restart the JARVIS server."""
+    _restart_server("the page's Restart Server")
     return {"status": "restarting"}
+
+
+# ---------------------------------------------------------------------------
+# Self-update (self_update.py). The Settings Updates section and the menu's
+# Check for updates, the brain's update_status and update_jarvis, and
+# `python -m jarvis.update` with the server running all reach the same
+# self_update functions through here. Page origin or tool token; no
+# access-key category covers these routes.
+# ---------------------------------------------------------------------------
+
+async def _update_and_restart(why: str) -> self_update.Outcome:
+    """Update the checkout and, once the new code is in, restart."""
+    out = await asyncio.to_thread(self_update.update)
+    if out.restart:
+        _restart_server(why)
+    return out
+
+
+@app.get("/api/update")
+async def api_update_status():
+    """Where this checkout stands against origin/main, and what stops an update."""
+    return (await asyncio.to_thread(self_update.check)).to_json()
+
+
+@app.post("/api/update")
+async def api_update():
+    """Update to origin/main's latest commit, when its CI passed, and restart."""
+    out = await _update_and_restart("the page's Update and restart")
+    code = 409 if out.refused else 500 if out.failed else 200
+    return JSONResponse(status_code=code, content=out.to_json())
+
+
+_UPDATE_WRAP_NAME = "update"
+UPDATE_SPEECH_WAIT_SEC = 30
+
+
+def _update_said(head: str, details: list[str]) -> str:
+    """A self_update head, in fixed words, with its commits and files walled
+    below it: a commit subject is a teammate's words."""
+    if not details:
+        return head
+    return head + "\n" + _wrap_untrusted(_UPDATE_WRAP_NAME, "\n".join(details))
+
+
+async def tool_update_status(args: dict) -> str:
+    """Whether JARVIS is up to date with GitHub: the Updates section."""
+    status = await asyncio.to_thread(self_update.check)
+    return _update_said(*self_update.describe(status))
+
+
+UPDATE_BEGUN = ("The update has begun. JARVIS says so out loud itself and restarts once it "
+                 "is in, or says that it did not go through; say nothing more.")
+
+
+async def _update_by_voice() -> None:
+    """The update the brain asked for, after its turn: say it is updating,
+    update, and restart once that has been heard; or say it did not go
+    through. Never raises out."""
+    try:
+        heard = await _say_notice(
+            "Updating myself from GitHub, sir; I'll restart once it's in.",
+            "Since your last turn you told him you were updating yourself from GitHub "
+            "and would restart.", "update")
+        out = await asyncio.to_thread(self_update.update)
+        head, _details = self_update.describe_outcome(out)
+        if out.restart:
+            if heard is not None and speech is not None:
+                await speech.wait_for(heard, timeout=UPDATE_SPEECH_WAIT_SEC)
+            _restart_server("the brain's update_jarvis")
+            return
+        await _say_notice(
+            "The update did not go through, sir; Settings, under Updates, says why.",
+            "Since your last turn you told him the update did not go through. "
+            + head, "update")
+    except Exception as e:
+        log.error("update by voice failed: %s", e, exc_info=True)
+
+
+async def tool_update_jarvis(args: dict) -> str:
+    """Update JARVIS from GitHub and restart: the Updates section's Update
+    and restart. An ACTING tool. Checked here; the update itself (minutes,
+    with pip and npm) runs after the turn, in `_update_by_voice`."""
+    status = await asyncio.to_thread(self_update.check)
+    if not status.can_update:
+        return _update_said(*self_update.describe(status))
+    asyncio.create_task(_update_by_voice())
+    return UPDATE_BEGUN
+
+
+TOOL_HANDLERS.update({
+    "update_status": tool_update_status,
+    "update_jarvis": tool_update_jarvis,
+})
+ACTING_TOOLS.add("update_jarvis")
+TAINTING_TOOLS["update_status"] = "the new commits' messages, written by the team"
+TAINT_EXEMPT_TOOLS["update_jarvis"] = "it updates and restarts JARVIS, it does not read"
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,12 @@ TIMEOUT_SEC = 20.0
 # Attaching copies up to a message's 100 MiB of files before it saves the
 # draft; a copy that outlives the wait still ends in one save or none, and a
 # retry at the same revision is refused (draft_files.py).
-TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0}
+# Checking for an update fetches from GitHub and asks it about CI (each with
+# its own limit, self_update.GIT_TIMEOUT_SEC and GITHUB_TIMEOUT_SEC);
+# update_jarvis checks the same way and leaves the update itself to run after
+# the turn.
+TIMEOUT_FOR = {"read_capture": 75.0, "attach_message_files": 60.0, "draft_message": 60.0,
+               "update_status": 90.0, "update_jarvis": 90.0}
 
 TOOL_SPECS = [
     {
@@ -1613,6 +1618,22 @@ TOOL_SPECS = [
             },
             "required": ["run"],
         },
+    },
+    {
+        "name": "update_status",
+        "description": (
+            "Settings' Updates section: whether JARVIS is up to date with GitHub, the new "
+            "commits on main, whether their CI passed, and what (if anything) stops the "
+            "update. THE way to answer \"are you up to date\" or \"is there an update\"."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "update_jarvis",
+        "description": (
+            "Update JARVIS from GitHub and restart on the new code, only when he asks: "
+            "Settings' Update and restart. It says out loud that it is updating and "
+            "restarts by itself; if something stops the update it says what instead."),
+        "inputSchema": {"type": "object", "properties": {}},
     },
 ]
 

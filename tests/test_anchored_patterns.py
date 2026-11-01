@@ -261,6 +261,7 @@ def test_there_are_gates_to_check():
 # below would SKIP, and a skipped check is a check that is not being made.
 SAMPLES = {
     "_SOURCES_HEADER": "**Sources:**",
+    "_GITHUB_URL": "https://github.com/owner/name.git",
     "FULL_NAME_RE": "owner/name",
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_URL_RE": "https://github.com/owner/name",

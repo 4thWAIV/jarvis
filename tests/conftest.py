@@ -65,6 +65,13 @@ def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
 
 
 @pytest.fixture
+def spanish(monkeypatch):
+    """Speak Spanish to JARVIS for one test: the active language is "es"."""
+    from jarvis import spoken_words
+    monkeypatch.setattr(spoken_words, "active_language", lambda: spoken_words.SPANISH)
+
+
+@pytest.fixture
 def refusal_on(monkeypatch):
     """Opt in to the untrusted-content refusal for one test or module."""
     monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
@@ -149,6 +156,22 @@ def _never_touch_the_real_keychain(monkeypatch):
     monkeypatch.setattr(team_client, "connection",
                         team_client.TeamConnection(store=MemorySecrets()))
     monkeypatch.setattr(team_client, "KeychainStore", MemorySecrets)
+
+
+@pytest.fixture(autouse=True)
+def _never_update_or_restart_the_real_checkout(monkeypatch, tmp_path):
+    """No test may fetch, merge or install in the developer's checkout, nor
+    re-exec the test run as a JARVIS server.
+
+    self_update reads the checkout from `repo_root()`; under test that is a
+    folder that does not exist, so every check says "not on GitHub" unless a
+    test points it at a temporary repository of its own. The restart's
+    `os.execv` is patched on the `os` module itself, so the
+    `importlib.reload(server)` several fixtures do cannot hand it back.
+    """
+    from jarvis import self_update
+    monkeypatch.setattr(self_update, "repo_root", lambda: tmp_path / "no-checkout")
+    monkeypatch.setattr(os, "execv", lambda *a: None)
 
 
 @pytest.fixture(autouse=True)

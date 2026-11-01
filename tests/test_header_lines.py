@@ -359,6 +359,11 @@ EXEMPT = {
         "its `state` is the download's own step, set from the installer's fixed "
         "progress words, and its f-string is a log line naming a model from "
         "transcriber.MODELS; nothing a session wrote reaches it"),
+    "self_update.ci_state": (
+        "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
+        "to compare them with fixed values, and returns one of five fixed CI "
+        "words (passed, pending, failed, none, unknown); no text from GitHub "
+        "reaches the string it returns, a header, a spoken line or the brain"),
     "folder_discovery.claude_history": (
         "it reads a transcript record's `cwd` and `sessionId` only to store them "
         "as an observation in the folder catalog; its one f-string is the "

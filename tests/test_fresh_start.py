@@ -135,3 +135,20 @@ async def test_a_timeout_cancels_and_says_so(wired, monkeypatch):
 
 def test_the_old_phrase_list_is_gone():
     assert not hasattr(server, "FRESH_START_PHRASES")
+
+
+# ── in Spanish ─────────────────────────────────────────────────────────────
+
+def test_the_spanish_clear_command_is_one_exact_whole_utterance(spanish):
+    for said in ("empezar de cero", "Empezar de cero.", "Jarvis, empezar de cero",
+                 "  EMPEZAR  de  cero!  "):
+        assert server._is_fresh_start(said), said
+    for said in ("empezar de nuevo", "vamos a empezar de cero", "empezar de cero ya",
+                 "quiero empezar de cero con el build", "start fresh", "",
+                 "jarvis jarvis empezar de cero", "borra la conversación"):
+        assert not server._is_fresh_start(said), said
+
+
+def test_the_spanish_clear_command_does_nothing_while_the_language_is_english():
+    assert not server._is_fresh_start("empezar de cero")
+    assert server._is_fresh_start("start fresh")

@@ -88,6 +88,25 @@ cancels and says nothing was cleared. Context rotation likewise waits for a
 yes to its own question. Every clear or rotation is logged with its trigger
 and the exact utterance. The one involuntary replacement is the crash/stall
 restart in `brain.py`, which is recovery, not a decision, and is logged.
+In Spanish the one clear command is exactly `empezar de cero`, under the
+same rules.
+
+## Spoken words
+Every matcher of what the user said against fixed words splits and folds it
+with `spoken_words.py`: the yes and no to clearing and compaction
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+command, the cancel and replay words and echo rejection (`speech._tokens`),
+agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
+(`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
+"s") and `fold` takes accents off before comparing; on ASCII text both give
+exactly what the old `[a-z0-9]` splitters gave. Each language's word lists
+are one `Vocabulary` there, English and Latin American Spanish (yes: sí, si,
+claro, adelante, hazlo, dale, "de acuerdo"; no: no, espera, luego, después,
+nunca, negativo, todavía; cancel: espera, espérate, cancela, alto, detente,
+never "para"; replay: repite, otra vez). Which list counts is
+`spoken_words.active_language()`, the one place the language is decided; it
+returns English until the language setting exists, so the Spanish words
+match nothing yet. Tests switch it with the `spanish` fixture.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -435,6 +454,39 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## Self-update
+A checkout whose `origin` is on github.com updates itself from GitHub through
+one service, `self_update.py`: `check` fetches origin and says the branch,
+this commit, origin/main's latest, the new commits and the latest commit's
+CI (its latest run of the `ci` workflow alone, from GitHub's Actions runs,
+read without a login; the scheduled team server health check does not
+count, and a commit with no `ci` run has no CI result); `update` checks
+again, moves to the checked commit (`git merge --ff-only`, so only a commit
+whose CI passed), then runs `.venv/bin/pip install -r requirements.txt` if
+that file changed, `npm ci` if `frontend/package-lock.json` changed, and
+`npm run build` if the page is served from built files (`jarvis/web`) and
+anything under `frontend/` changed; under Vite a changed lock file says to
+restart `npm run dev`. A step that fails moves the checkout back (`git reset
+--keep`), so the update is offered again and runs every step. It is refused,
+with the reason, when not on main, with modified tracked files, with local
+commits not on origin/main, with untracked files the update would add
+(renames included), or when the latest commit's CI has not passed; an
+installed copy or another origin is told why it is not offered.
+`GET /api/update` is the check and `POST /api/update` the update, then the
+restart (page origin or tool token; no access-key category). The restart is
+one function, `server._restart_server`, shared with `/api/restart`. The
+command `python -m jarvis.update` (`update.py`) asks a running server to do
+it, so it restarts itself, and with the server stopped only updates;
+`--check` only reports. It looks at `JARVIS_URL`, else `JARVIS_TOOL_URL`'s
+address, else 127.0.0.1:8340; only a refused connection there counts as
+stopped, and an answer that is not an update outcome (a 403, a 404) stops
+it without updating. The page's side is Settings, Updates, which the ⋮
+menu's Check for updates opens; the brain's is `update_status` and the
+acting `update_jarvis`, which says it is updating, updates after the turn
+and restarts once that has been heard (`_update_by_voice`). Tests point
+`self_update.repo_root` at temporary repositories
+(`conftest._never_update_or_restart_the_real_checkout`).
+
 ## Turn-taking
 JARVIS waits for Tim to finish. The server gathers what he says
 (`server._Utterance`) until he has been quiet for `speech.END_OF_TURN_SEC`, so
@@ -644,6 +696,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/folders.ts` / `FoldersView.tsx` / `FolderDetail.tsx` /
   `FoldersPanel.tsx` — The Folders store, the centre's Folders view and one
   folder in full, and the right panel's Folders tab
+- `self_update.py` / `update.py` — Updating a checkout from GitHub, and the
+  `python -m jarvis.update` command (see "Self-update")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -768,8 +822,9 @@ needs the network, a real window, or a real `claude`, mark it.
   same service or function as its route (`tests/test_brain_page_parity.py`).
   Changes are ACTING_TOOLS; reads carrying other people's words are wrapped
   as untrusted. Left out on purpose: settings that hold secrets (API keys and
-  the Fish key test), `/api/restart`, and the sign-in and connect flows that
-  need a browser approval
+  the Fish key test), `/api/restart` on its own (`update_jarvis` restarts,
+  through the same `_restart_server`, once an update is in), and the sign-in
+  and connect flows that need a browser approval
 - AppleScript for Terminal and Chrome control (no OAuth needed)
 - SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
   long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
