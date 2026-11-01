@@ -1,0 +1,12 @@
+{
+  "name": "mic-check-page",
+  "version": "1.0.0",
+  "purpose": "Record three seconds through JARVIS's microphone, measure how loud it is, and send the clip, the levels and a note back.",
+  "runs": "page",
+  "entry": "index.html",
+  "returns": [
+    "results/clip.wav",
+    "results/level.json",
+    "results/note.txt"
+  ]
+}
