@@ -603,7 +603,10 @@ Gates the integration adds: every `label-unlocalized` count zero; the acceptance
 ### Localization test evidence (foundation)
 
 - `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
-- `pytest tests/test_ui_locale.py tests/test_ui_coverage_rules.py tests/test_ui_pipeline.py tests/test_ui_navigation.py tests/test_language_setting.py`: pass (see the commit's run below for the full targeted set).
+- Contract `--check`: exit 0.
+- Targeted pytest at 1eb6213 (the 19 coverage-integration files, `test_ui_locale`, `test_language_setting`, `test_spanish_speaking`, `test_speech_models`, `test_spoken_words`, `test_data_paths`, `test_system_prompt_header`, `test_brain`, `test_runs_are_not_conversations`, `test_web_security`, `test_access_keys`): 885 passed, 2 skipped.
+- `pytest -m page` at 1eb6213 on language, right, centre_nav, navigation, rays, human_rays, queue, workflows, layout, left_settings, settings, pipeline, network, diagnostics, subsystems: 137 passed.
+- Left for CI: the full `pytest` run, the remaining page tests, the wheel build.
 - `pytest -m page tests/test_voice_page_language.py tests/test_voice_page_settings.py`: 16 passed.
 - Corridor change, `pytest -m page` on every page file but refresh, screen and speech_input: 186 passed.
 
