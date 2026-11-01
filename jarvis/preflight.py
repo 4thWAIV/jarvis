@@ -764,7 +764,8 @@ def _phrase_for(check: Check) -> str:
     if name == "cross_session_inbound":
         return "cross-session steering isn't enabled"
     if name == "speech_input":
-        if "sherpa-onnx" in msg:
+        # Not just "sherpa-onnx": every model's folder name starts with it.
+        if msg.startswith("sherpa-onnx is not installed"):
             return "the speech recognition package isn't installed, so I can't hear you"
         return "the speech model isn't installed, so I can't hear you"
     if name == "session_skill":

@@ -113,6 +113,7 @@ from jarvis import dialog
 from jarvis import jarvis_memory
 from jarvis import notifier
 from jarvis import transcription_api
+from jarvis import speech_models
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -2941,6 +2942,7 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 # See web_auth.OriginGuard for what replaces it.
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
+speech_models.mount(app)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging)
 human_activity.mount(app)
@@ -7391,6 +7393,76 @@ def _hint_voice(_event=None) -> None:
 
 
 voice_diagnostics.listeners.append(_hint_voice)
+
+
+# --- Speech models (speech_models.py) -------------------------------------
+#
+# The brain's side of /api/speech/models*: the same service functions the
+# routes call. Every word here is JARVIS's own (model names, sizes, states
+# and the installer's fixed refusals), so none of them taints a turn.
+
+def _megabytes(n: int) -> str:
+    return f"{round(n / 1_000_000)} MB"
+
+
+def _speech_model_line(m: dict) -> str:
+    install = m.get("install") or {}
+    if m["installed"]:
+        return f"{m['label']}: installed."
+    if install.get("state") in speech_models.RUNNING:
+        return (f"{m['label']}: {install['state']}, {_megabytes(install['doneBytes'])} "
+                f"of {_megabytes(install['totalBytes'])}.")
+    if install.get("state") == "failed":
+        return f"{m['label']}: the last install failed. {install.get('error') or ''}".strip()
+    return f"{m['label']}: not installed, {_megabytes(m['archiveBytes'])} to download."
+
+
+async def tool_speech_models(args: dict) -> str:
+    """Which language speech input hears, and each model's install state."""
+    status = speech_models.models()
+    labels = {m["language"]: m["label"] for m in status["models"]}
+    head = (f"Speech input hears {labels.get(status['language'], 'nothing yet')} "
+            f"({status['state']}).")
+    if status.get("failure"):
+        head += f" {status['failure']}"
+    return "\n".join([head] + [_speech_model_line(m) for m in status["models"]])
+
+
+async def tool_install_speech_model(args: dict) -> str:
+    """Download and install one language's speech model: the install route's
+    `start_install`. An ACTING tool: it downloads."""
+    try:
+        m = speech_models.start_install(str(args.get("language") or ""))
+    except speech_models.Refused as refused:
+        return f"Nothing was downloaded, sir: {refused.message}"
+    if m["installed"]:
+        return f"The {m['label']} speech model is already installed, sir."
+    return (f"Installing the {m['label']} speech model, sir; it is checked against the "
+            f"release's SHA-256 first. {_speech_model_line(m)}")
+
+
+async def tool_switch_speech_model(args: dict) -> str:
+    """Make speech input hear another language: the switch route's `switch`.
+    An ACTING tool: it reloads the speech model."""
+    try:
+        status = await speech_models.switch(str(args.get("language") or ""))
+    except speech_models.Refused as refused:
+        return f"Speech input was not switched, sir: {refused.message}"
+    label = next(m["label"] for m in status["models"] if m["language"] == status["language"])
+    return f"Speech input hears {label} now, sir."
+
+
+TOOL_HANDLERS.update({
+    "speech_models": tool_speech_models,
+    "install_speech_model": tool_install_speech_model,
+    "switch_speech_model": tool_switch_speech_model,
+})
+ACTING_TOOLS.update({"install_speech_model", "switch_speech_model"})
+TAINT_EXEMPT_TOOLS.update({
+    "speech_models": "it reads JARVIS's own speech models: fixed names, sizes and states",
+    "install_speech_model": "it starts a download of a fixed model, it does not read",
+    "switch_speech_model": "it reloads speech input with a fixed model, it does not read",
+})
 
 
 # --- Subagents in the Workflows area ------------------------------------------
