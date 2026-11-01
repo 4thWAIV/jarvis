@@ -25,9 +25,8 @@
  */
 
 import { captures } from "./capture";
-import { codeWords, saidShown, type Said } from "./conversation";
 import { liveRead, type LiveStore } from "./liveRead";
-import { formatNumber, t } from "./locale";
+import { codeWords, formatNumber, saidShown, t, type Said } from "./locale";
 import { messagingApi, MessagingError } from "./messagingApi";
 import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkCommand } from "./messagingContract";
 import { network } from "./network";

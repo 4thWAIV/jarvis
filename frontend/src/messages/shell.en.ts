@@ -48,6 +48,10 @@ export const shellEn = {
   "language.unreadable": "The language could not be read ({error}); trying again.",
   "language.reading": "Reading the language…",
 
+  // An agent's subagents at work (agents.ts workingCount, on the Agents tab).
+  "agents.working": "{count} working",
+  "agents.workingCapped": "{count}+ working",
+
   // Sizes and ages (LanguageControl.tsx, timeFormat.ts).
   "units.megabytes": "{amount} MB",
   "time.justNow": "just now",

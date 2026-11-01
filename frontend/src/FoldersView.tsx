@@ -19,8 +19,7 @@
  */
 
 import { useState, useSyncExternalStore, type FormEvent } from "react";
-import { CENTRE_SOCKET, SaidText } from "./ConversationView";
-import type { Said } from "./conversation";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { FolderDetail } from "./FolderDetail";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
@@ -28,7 +27,7 @@ import {
   PROVIDER_WORDS, readerWords, registerFolder, resolvePath, ROLES, roleWords, selectedFolder,
   type Availability, type Candidate, type Folder, type Resolved, type Role,
 } from "./folders";
-import { t as tNow, useT } from "./locale";
+import { SaidText, t as tNow, useT, type Said } from "./locale";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
 import type { CommandArgs } from "./uiContract";

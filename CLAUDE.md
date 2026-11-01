@@ -387,7 +387,13 @@ figures); `_watch_subsystems` looks every five seconds, sends a
 "Communications with the agents are down, sir." and once that they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
-opens the voice view).
+opens the voice view). Every name and line JARVIS writes itself is sent as a
+code and its values (`name_said`, `said`: `subsystem_diagnostics.say` and
+`named`, from `SAID` and `NAMES`) beside its English, which the brain reads;
+the page words the code in its own language (`subsystems.ts` `subsystemName`,
+`subsystemSummary`, `checkName`, `checkDetail`, catalog `right.subsystem.*`)
+and shows a line with no code (another program's words) as it came. A test
+keeps the Python English and the catalog's English word for word the same.
 
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay

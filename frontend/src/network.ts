@@ -17,13 +17,12 @@
  */
 
 import { liveRead } from "./liveRead";
-import { formatDateTime, formatNumber, t } from "./locale";
+import { formatDateTime, formatNumber, t, wordsOf } from "./locale";
 import { createStore } from "./store";
 import { spokenAgo } from "./timeFormat";
 import { sign } from "./WeeklyUsage";
 import { registerCommand } from "./uiRegistry";
 import { detailSlot, registerClose } from "./uiNavigation";
-import { wordsOf } from "./workflows";
 
 // ── The team server's snapshot ───────────────────────────────────────────
 

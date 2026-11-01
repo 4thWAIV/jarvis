@@ -18,13 +18,12 @@
  */
 
 import { liveRead } from "./liveRead";
-import { t, type MessageKey } from "./locale";
+import { t, wordsOf, type MessageKey } from "./locale";
 import { rightEn } from "./messages/right.en";
 import { createStore } from "./store";
 import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
 import { diagnosticsSlot } from "./voiceHealth";
-import { wordsOf } from "./workflows";
 
 export type SubsystemState = "ok" | "degraded" | "down" | "idle" | "unknown";
 

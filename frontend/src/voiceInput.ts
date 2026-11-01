@@ -31,7 +31,7 @@
  */
 
 import protocol from "../../jarvis/transcribeProtocol.json";
-import { language, t, translate, type MessageKey, type Translate } from "./locale";
+import { language, t, translate, type MessageKey, type Said, type Translate } from "./locale";
 import { healthHeard, healthLost, takeTelemetry } from "./voiceHealth";
 import workletUrl from "./pcm-worklet.ts?worker&url";
 
@@ -97,15 +97,18 @@ function languageName(code: string | undefined): string {
   }
 }
 
-/** A refusal of a language or speech model change, or of a model's
- *  download (speech_models.Refused: its `code` and `values`; an install's
- *  `errorCode`), in the language in force, with the server's own words
- *  after it as detail where they say more. A refusal whose code the page
- *  does not know is shown as it came. */
-export function speechRefusal(tr: Translate, refusal: {
-  code?: string; values?: Record<string, string>; error?: string; detail?: string;
-}): string {
+/** What a refusal of a language or speech model change, or of a model's
+ *  download, says (speech_models.Refused's body: its `code`, `values`,
+ *  English `error` and `detail`; an install's `errorCode` as `code`). */
+export interface SpeechRefusal { code?: string; values?: Record<string, string>; error?: string; detail?: string }
+
+/** A speech refusal as words for the person: in the language in force
+ *  each time they are shown, with the server's own words after them as
+ *  detail where they say more. A refusal whose code the page does not know
+ *  is shown as it came, as original detail. */
+export function speechRefusal(refusal: SpeechRefusal): Said {
   const v = refusal.values ?? {};
+  const tr = t;
   const said: Record<string, () => string> = {
     "unknown-language": () => tr("left.speech.unknownLanguage"),
     "not-running": () => tr("left.speech.notRunning"),
@@ -117,8 +120,9 @@ export function speechRefusal(tr: Translate, refusal: {
     "download-failed": () => tr("left.speech.downloadFailed"),
   };
   const words = refusal.code ? said[refusal.code] : undefined;
-  if (!words) return refusal.detail || refusal.error || "";
-  return refusal.detail ? tr("left.input.withDetail", { message: words(), detail: refusal.detail }) : words();
+  if (!words) return { original: refusal.detail || refusal.error || "" };
+  const detail = refusal.detail;
+  return { words: detail ? () => tr("left.input.withDetail", { message: words(), detail }) : words };
 }
 
 export interface VoiceInput {

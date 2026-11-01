@@ -71,7 +71,7 @@ export const CONTROL_CLASSES: Record<string, string> = {
 /** Names shown as they are in every language: products, providers and
  *  each language's own name. Adding one is a review decision. */
 export const KEPT_AS_IS = ["JARVIS", "Claude Code", "Claude", "Codex", "GitHub", "Fish Audio", "Fish",
-                           "English", "Español", "MB", "GB", "KB", "CPU", "SHA-256", "OK"];
+                           "English", "Español", "MB", "GB", "KB", "ms", "CPU", "SHA-256", "OK"];
 
 /** The attributes whose value is words a person reads or hears. */
 const LABELLED = new Set(["aria-label", "title", "placeholder", "alt", "label", "aria-description"]);

@@ -12,14 +12,14 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { useT, type Translate } from "./locale";
+import { codeWords, useT, type Translate } from "./locale";
 import { inputStatus, micMuted, micOff } from "./mic";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { health, HEALTH_WORDS } from "./voiceHealth";
+import { health } from "./voiceHealth";
 import type { InputStatus } from "./voiceInput";
 
 const QUIET_STATES = new Set(["listening", "paused", "muted", "off"]);
@@ -33,7 +33,8 @@ export function inputProblem(t: Translate, status: InputStatus, h: { state: stri
     return { text: status.words.say(t), bad: LOST_STATES.has(status.state) };
   }
   if (h && h.state !== "healthy") {
-    const words = HEALTH_WORDS[h.state as keyof typeof HEALTH_WORDS] ?? h.state;
+    // healthWords' words, by a state that may be one this page does not know.
+    const words = codeWords("main.voice.health", h.state) ?? h.state;
     return { text: h.cause ? t("left.mic.healthCause", { state: words, cause: h.cause }) : words,
              bad: h.state === "no-frames" };
   }

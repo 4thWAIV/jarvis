@@ -18,9 +18,9 @@
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore, type ReactNode } from "react";
-import { useT, type Translate } from "./locale";
+import { placed, useT, type Translate } from "./locale";
 import {
-  network, openNetwork, serverReading, sinceMs, type RowState, type ServerReading,
+  network, openNetwork, READINESS_WORDS, serverReading, sinceMs, type RowState, type ServerReading,
 } from "./network";
 import { shortAge, spokenAge, spokenAgo } from "./timeFormat";
 import { useTick } from "./WorkflowsView";
@@ -40,22 +40,11 @@ export function ServerIcon() {
   );
 }
 
-const MARK = "\u0001";
-
-/** A message with one of its values drawn as an element (a bold figure, a
- *  name): `said` gives the message with `mark` in that value's place, so
- *  the words around it stay whole and in the language's own order; `text`
- *  draws the words on either side. */
-export function placed(said: (mark: string) => string, element: ReactNode,
-                       text: (words: string) => ReactNode = (words) => words): ReactNode {
-  const [before, after = ""] = said(MARK).split(MARK);
-  return <>{before && text(before)}{element}{after && text(after)}</>;
-}
 
 /** The whole tile in words, changing with its state: whole sentences, one
  *  after another. */
 function spoken(t: Translate, r: ServerReading): string {
-  const parts = [t("left.tile.spoken.readiness", { readiness: r.readiness })];
+  const parts = [t("left.tile.spoken.readiness", { readiness: READINESS_WORDS[r.readiness] })];
   parts.push(r.server.ms === null ? t("left.tile.spoken.roundTripUnknown")
     : t("left.tile.spoken.roundTrip", { ms: Math.round(r.server.ms) }));
   if (r.database.state === "bad") {
@@ -108,7 +97,7 @@ export function TeamServerTile() {
       <span className="tile-body">
         <span className="server-beacon" aria-hidden="true">
           <ServerIcon />
-          <strong className="readiness-word" ref={ui.part("readiness")}>{r.readiness}</strong>
+          <strong className="readiness-word" ref={ui.part("readiness")}>{READINESS_WORDS[r.readiness]}</strong>
         </span>
         <span className="health-rows" aria-hidden="true">
           <HealthRow name="Server" label={t("left.common.server")} state={r.server.state} partRef={ui.part("server")}

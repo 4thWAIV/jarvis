@@ -8,8 +8,7 @@
  */
 
 import { downloadFile, messagingSaid, revealFile } from "./queue";
-import { saidShown } from "./conversation";
-import { formatPercent, t as tNow, useT } from "./locale";
+import { formatPercent, saidShown, t as tNow, useT } from "./locale";
 import type { AttachmentRef, LocalFile } from "./messagingContract";
 import { QueueIcon } from "./QueueIcons";
 import { sizeText } from "./queueStore";

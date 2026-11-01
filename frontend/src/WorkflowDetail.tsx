@@ -52,10 +52,10 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { CENTRE_SOCKET, earlierPages, SaidText } from "./ConversationView";
-import { agentStateWords, codeWords, type Said } from "./conversation";
+import { CENTRE_SOCKET, earlierPages } from "./ConversationView";
+import { agentStateWords } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { formatDateTime, t as tNow, useT } from "./locale";
+import { codeWords, formatDateTime, SaidText, t as tNow, useT, type Said } from "./locale";
 import { createStore } from "./store";
 import { TabRow, type Tab } from "./Tabs";
 import type { CommandArgs, TargetRef } from "./uiContract";

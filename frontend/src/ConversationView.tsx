@@ -33,10 +33,10 @@ import { conversation, turnKey, useRecordOpen, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
-import { conversationChanged, fromRecord, getConversation, saidShown, restoreCapture,
-         statusWords, type ConversationItem, type Said } from "./conversation";
+import { conversationChanged, fromRecord, getConversation, restoreCapture,
+         statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { useT, type Translate } from "./locale";
+import { SaidText, useT, type Said, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
 import type { OrbState } from "./orb";
 import { createStore } from "./store";
@@ -355,14 +355,6 @@ function kindClass(turn: Turn): string {
   return kind ? ` kind-${kind}` : "";
 }
 
-/** Words for the person, in an inline element: the server's own marked as
- *  original detail, or the page's in the language in force. */
-export function SaidText({ said, className, as: Tag = "span", role }: {
-  said: Said; className: string; as?: "span" | "p" | "div"; role?: "alert" | "status" }) {
-  useT();
-  const { text, mark } = saidShown(said);
-  return <Tag className={className} role={role} {...mark}>{text}</Tag>;
-}
 
 function HistoryTurn({ turn }: { turn: Turn }) {
   const t = useT();

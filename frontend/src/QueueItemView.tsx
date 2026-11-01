@@ -31,8 +31,7 @@
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { codeWords, saidShown } from "./conversation";
-import { t as tNow, useT } from "./locale";
+import { codeWords, saidShown, SaidText, t as tNow, useT } from "./locale";
 import type { Draft } from "./messagingContract";
 import { MessageComposer } from "./MessageComposer";
 import { MessageReview } from "./MessageReview";
@@ -50,7 +49,7 @@ import {
   type Directory, type QueueState, type ShownMessage,
 } from "./queueStore";
 import { clockTime } from "./network";
-import { CENTRE_SOCKET, SaidText } from "./ConversationView";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 

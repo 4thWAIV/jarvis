@@ -18,8 +18,8 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { heardText } from "./captions";
 import { captureAction, captures, reading, type Capture, type CaptureAction } from "./capture";
 import { SpokenWords } from "./SpokenWords";
-import { CENTRE_SOCKET, SaidText } from "./ConversationView";
-import type { Said } from "./conversation";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { SaidText, type Said } from "./locale";
 import { useT } from "./locale";
 import { useUiTarget } from "./uiRegistry";
 

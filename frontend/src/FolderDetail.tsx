@@ -14,9 +14,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { CENTRE_SOCKET, SaidText } from "./ConversationView";
-import { codeWords, type Said } from "./conversation";
-import { formatDateTime, t as tNow, useT } from "./locale";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { codeWords, formatDateTime, SaidText, t as tNow, useT, type Said } from "./locale";
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome } from "./uiRegistry";

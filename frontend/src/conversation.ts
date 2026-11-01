@@ -11,8 +11,7 @@
  * opened, and what only the server sees (messages and their answers).
  */
 
-import { t } from "./locale";
-import { en } from "./messages/en";
+import { codeWords, t, type Said } from "./locale";
 import { createStore } from "./store";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
@@ -113,15 +112,6 @@ export const getThread = (sessionId: string, before?: number | null) =>
   getJson<ConversationPage>(`/api/conversation/agents/${encodeURIComponent(sessionId)}`
     + (before != null ? `?before=${before}` : "")).then(noteAgents);
 
-/** A code's words (a status, a state, a refusal's code): the catalog's
- *  `<prefix>.<code>` in the language in force, or null when the catalog has
- *  no words for that code (one this page does not know), for the caller to
- *  show the code or the server's own words instead. */
-export function codeWords(prefix: string, code: string): string | null {
-  const key = `${prefix}.${code}`;
-  return Object.prototype.hasOwnProperty.call(en, key) ? (t as (key: string) => string)(key) : null;
-}
-
 /** What a message's status is called on the page. */
 export const statusWords = (status: string): string => codeWords("main.message.status", status) ?? status;
 
@@ -153,13 +143,3 @@ export async function restoreCapture(item: ConversationItem): Promise<Said | nul
   return body.detail ? { original: body.detail } : { words: () => t("main.conversation.restoreRefused", { status: res.status }) };
 }
 
-/** Something to tell the person (a refusal, a result): the server's own
- *  words, shown as they came and marked as original detail, or the page's,
- *  worded in the language in force each time they are shown. */
-export type Said = { readonly original: string } | { readonly words: () => string };
-
-/** Its text, and the mark that says it is the server's original
- *  detail, for the element that shows it. */
-export function saidShown(r: Said): { text: string; mark: { "data-original-detail"?: "" } } {
-  return "original" in r ? { text: r.original, mark: { "data-original-detail": "" } } : { text: r.words(), mark: {} };
-}

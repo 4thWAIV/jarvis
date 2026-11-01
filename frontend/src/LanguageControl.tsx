@@ -20,13 +20,17 @@
 
 import { useEffect, useState } from "react";
 import { useLiveRead } from "./liveRead";
-import { formatNumber, guardedRead, language as interfaceLanguage, useLanguage, useT, type Translate } from "./locale";
+import {
+  formatNumber, guardedRead, language as interfaceLanguage, SaidText, useLanguage, useT, type Said, type Translate,
+} from "./locale";
+import { speechRefusal, type SpeechRefusal } from "./voiceInput";
 
 interface Install {
   state: "downloading" | "verifying" | "installing" | "installed" | "failed";
   doneBytes: number;
   totalBytes: number;
   error: string | null;
+  errorCode: string | null;
 }
 
 interface Model {
@@ -55,11 +59,24 @@ const PROGRESS_EVERY_MS = 1000;
 const megabytes = (t: Translate, bytes: number) =>
   t("units.megabytes", { amount: formatNumber(Math.round(bytes / 1_000_000)) });
 
+/** A refusal's body (speech_models.Refused), thrown by `readJson`. */
+class Refusal extends Error {
+  constructor(readonly body: SpeechRefusal) { super(body.error); }
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string }).error || `${res.status}`);
+  if (!res.ok) {
+    const refusal = body as SpeechRefusal;
+    throw new Refusal({ ...refusal, error: refusal.error || `${res.status}` });
+  }
   return body as T;
 }
+
+/** What a failed change or download says: the refusal's words, or what
+ *  the browser said when the server could not be reached. */
+const problemSaid = (e: unknown): Said =>
+  e instanceof Refusal ? speechRefusal(e.body) : { original: (e as Error).message };
 
 // What it reads is the language in force too, so the interface takes it
 // (unless a newer pushed report came first).
@@ -87,7 +104,7 @@ export function LanguageControl() {
   // brain or the spoken phrase changed it): the models' state goes with it.
   const live = useLiveRead(readStatus, [interfaceLanguage]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const status = live.value;
   const spanish = status?.speech.models.find((m) => m.language === SPANISH) ?? null;
   const downloading = Boolean(spanish?.install && RUNNING.has(spanish.install.state));
@@ -110,7 +127,7 @@ export function LanguageControl() {
       }).then(readJson<LanguageStatus>);
       take(done.language);
     } catch (e) {
-      setProblem((e as Error).message);
+      setProblem(problemSaid(e));
     } finally {
       setBusy(null);
       live.refresh();
@@ -122,12 +139,14 @@ export function LanguageControl() {
     try {
       await fetch(`/api/speech/models/${SPANISH}/install`, { method: "POST" }).then(readJson);
     } catch (e) {
-      setProblem((e as Error).message);
+      setProblem(problemSaid(e));
     }
     live.refresh();
   };
 
-  const failed = spanish?.install?.state === "failed" ? spanish.install.error : null;
+  const install = spanish?.install;
+  const failed = install?.state === "failed"
+    ? speechRefusal({ code: install.errorCode ?? undefined, detail: install.error ?? undefined }) : null;
   return (
     <>
       <div className="settings-field">
@@ -155,11 +174,10 @@ export function LanguageControl() {
               </button>
             )}
           </div>
-          {/* The server's own words, shown as they came: original detail. */}
-          {failed && <p className="settings-hint read-failure" data-original-detail="">{failed}</p>}
+          {failed && <SaidText said={failed} as="p" className="settings-hint read-failure" />}
         </div>
       )}
-      {problem && <p className="settings-hint read-failure" data-original-detail="">{problem}</p>}
+      {problem && <SaidText said={problem} as="p" className="settings-hint read-failure" />}
       {!status && (
         <p className="settings-hint read-failure">
           {live.error ? t("language.unreadable", { error: live.error }) : t("language.reading")}

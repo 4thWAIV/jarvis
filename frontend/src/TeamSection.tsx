@@ -22,9 +22,8 @@
 
 import { useEffect, useState } from "react";
 import { useLiveRead } from "./liveRead";
-import { formatDateTime, useT, type Translate } from "./locale";
+import { formatDateTime, placed, useT, type Translate } from "./locale";
 import { StatusDot, type Dot } from "./StatusDot";
-import { placed } from "./TeamServerTile";
 import { connectTeam, openApproval, teamCall as call } from "./teamSignIn";
 
 interface Me { github_id: number; login: string; name?: string | null; role: "admin" | "member";

@@ -12,7 +12,7 @@
  */
 
 import { claimTurns } from "./captions";
-import type { Said } from "./conversation";
+import type { Said } from "./locale";
 import { t } from "./locale";
 import { createStore } from "./store";
 import { speakWords, stopWords, words } from "./wordClock";

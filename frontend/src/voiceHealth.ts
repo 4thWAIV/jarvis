@@ -68,17 +68,8 @@ export interface Summary {
   now: number;
 }
 
-const HEALTH_STATES = ["healthy", "no-frames", "browser-behind", "connection-behind", "server-starved",
-                       "decoder-slow", "idle"] as const;
-
 /** A health state in words, in the language in force. */
 export const healthWords = (state: HealthState | "idle"): string => t(`main.voice.health.${state}`);
-
-/** The same words by state, each read in the language in force when it is
- *  read: kept for MicControl.tsx, which indexes it, until it calls
- *  `healthWords`. */
-export const HEALTH_WORDS = Object.defineProperties({} as Record<HealthState | "idle", string>,
-  Object.fromEntries(HEALTH_STATES.map((s) => [s, { get: () => healthWords(s), enumerable: true }])));
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 

@@ -26,7 +26,7 @@
  * document's `lang` follows the language.
  */
 
-import { useSyncExternalStore } from "react";
+import { createElement, Fragment, useSyncExternalStore, type ReactNode } from "react";
 import { liveRead } from "./liveRead";
 import { en } from "./messages/en";
 import { es } from "./messages/es";
@@ -193,4 +193,56 @@ export function formatPercent(fraction: number, lang: Language = current.get(), 
 export function formatDateTime(when: Date | number, options: Intl.DateTimeFormatOptions,
                                lang: Language = current.get()): string {
   return new Intl.DateTimeFormat(INTL[lang], options).format(when);
+}
+
+// ── words kept by code, and words kept to be said later ──────────────────
+
+/** Words by a record's own code, in the language in force whenever one is
+ *  read: `WORDS[state]` stays the one way to say a state, and a component
+ *  that renders it with `useT()` is drawn again when the language changes. */
+export function wordsOf<C extends string>(codes: readonly C[], say: (code: C) => string): Readonly<Record<C, string>> {
+  const words = {} as Record<C, string>;
+  for (const code of codes) Object.defineProperty(words, code, { get: () => say(code), enumerable: true });
+  return words;
+}
+
+/** A code's words (a status, a state, a refusal's code): the catalog's
+ *  `<prefix>.<code>` in the language in force, or null when the catalog has
+ *  no words for that code (one this page does not know), for the caller to
+ *  show the code or the server's own words instead. */
+export function codeWords(prefix: string, code: string): string | null {
+  const key = `${prefix}.${code}`;
+  return Object.prototype.hasOwnProperty.call(en, key) ? (t as (key: string) => string)(key) : null;
+}
+
+/** Something to tell the person (a refusal, a result): the server's own
+ *  words, shown as they came and marked as original detail, or the page's,
+ *  worded in the language in force each time they are shown. */
+export type Said = { readonly original: string } | { readonly words: () => string };
+
+/** Its text, and the mark that says it is the server's original
+ *  detail, for the element that shows it. */
+export function saidShown(r: Said): { text: string; mark: { "data-original-detail"?: "" } } {
+  return "original" in r ? { text: r.original, mark: { "data-original-detail": "" } } : { text: r.words(), mark: {} };
+}
+
+/** Words for the person, in an inline element: the server's own marked as
+ *  original detail, or the page's in the language in force. */
+export function SaidText({ said, className, as = "span", role }: {
+  said: Said; className: string; as?: "span" | "p" | "div"; role?: "alert" | "status" }): ReactNode {
+  useT();
+  const { text, mark } = saidShown(said);
+  return createElement(as, { className, role, ...mark }, text);
+}
+
+const MARK = "\u0001";
+
+/** A message with one of its values drawn as an element (a bold figure, a
+ *  name): `said` gives the message with `mark` in that value's place, so
+ *  the words around it stay whole and in the language's own order; `text`
+ *  draws the words on either side. */
+export function placed(said: (mark: string) => string, element: ReactNode,
+                       text: (words: string) => ReactNode = (words) => words): ReactNode {
+  const [before, after = ""] = said(MARK).split(MARK);
+  return createElement(Fragment, null, before && text(before), element, after && text(after));
 }

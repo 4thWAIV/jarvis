@@ -82,8 +82,12 @@ def test_the_model_and_the_startup_brain_are_saved_and_read_at_start(server, tmp
 
 def test_claude_cannot_be_removed_nor_the_brain_jarvis_starts_with(server):
     client = TestClient(server.app)
-    assert client.post("/api/brains/anthropic", json={"action": "remove"}, headers=ORIGIN).status_code == 400
-    # Each refusal carries its code apart from the words, for the page's own language.
+    refusal = client.post("/api/brains/anthropic", json={"action": "remove"}, headers=ORIGIN)
+    assert refusal.status_code == 400
+    # Each refusal carries its code apart from the words, for the page's own
+    # language, on the route as from the module.
+    detail = refusal.json()["detail"]
+    assert detail["code"] == "always-there" and detail["message"]
     with pytest.raises(brains_config.Refused) as refused:
         brains_config.remove("anthropic")
     assert refused.value.code == "always-there"

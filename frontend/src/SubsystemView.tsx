@@ -15,7 +15,9 @@ import { CENTRE_SOCKET } from "./ConversationView";
 import { statusWords } from "./conversation";
 import { useT } from "./locale";
 import { useSubsystems } from "./SubsystemList";
-import { STATE_WORDS, type Check, type SentMessage } from "./subsystems";
+import {
+  checkDetail, checkName, STATE_WORDS, subsystemName, subsystemSummary, type Check, type SentMessage,
+} from "./subsystems";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
@@ -27,15 +29,15 @@ export function SubsystemView({ id }: { id: string }) {
   const { list, error } = useSubsystems();
   const s = list.find((x) => x.id === id);
   const ui = useUiTarget({ ref: { region: "main", view: "main.subsystem", kind: "subsystem", key: id },
-                           label: s?.name ?? t("tabs.main.subsystem"), socket: CENTRE_SOCKET });
+                           label: s ? subsystemName(s) : t("tabs.main.subsystem"), socket: CENTRE_SOCKET });
   return (
     <div id="subsystem-detail" data-subsystem={id} ref={ui.whole}>
       <section className="subsystem-head" ref={ui.part("header")}>
         <span className={`subsystem-dot big state-${s?.state ?? "unknown"}`} aria-hidden="true" />
         <div className="subsystem-head-words">
-          <h2>{s?.name ?? t("tabs.main.subsystem")}</h2>
+          <h2>{s ? subsystemName(s) : t("tabs.main.subsystem")}</h2>
           <p className={`subsystem-head-state state-${s?.state ?? "unknown"}`}>
-            {s ? `${STATE_WORDS[s.state]}: ${s.summary}`
+            {s ? `${STATE_WORDS[s.state]}: ${subsystemSummary(s)}`
                : t("main.subsystem.notOnRecord")}
           </p>
         </div>
@@ -58,14 +60,15 @@ export function SubsystemView({ id }: { id: string }) {
 }
 
 function CheckRow({ subsystem, c }: { subsystem: string; c: Check }) {
+  useT();
   const ui = useUiTarget({ ref: { region: "main", view: "main.subsystem", kind: "subsystemCheck", key: `${subsystem}/${c.id}` },
-                           label: c.name, socket: CENTRE_SOCKET });
+                           label: checkName(c), socket: CENTRE_SOCKET });
   return (
     <li className={`state-${c.state}`} data-check={c.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <span className={`subsystem-dot state-${c.state}`} aria-hidden="true" />
-      <span className="subsystem-name">{c.name}</span>
+      <span className="subsystem-name">{checkName(c)}</span>
       <span className="subsystem-state">{STATE_WORDS[c.state]}</span>
-      <span className="subsystem-summary">{c.detail}</span>
+      <span className="subsystem-summary">{checkDetail(c)}</span>
     </li>
   );
 }

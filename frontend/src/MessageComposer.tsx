@@ -12,8 +12,7 @@
  */
 
 import { useState, useSyncExternalStore } from "react";
-import { SaidText } from "./ConversationView";
-import { formatNumber, useT } from "./locale";
+import { formatNumber, SaidText, useT } from "./locale";
 import { LIMITS, type Draft } from "./messagingContract";
 import {
   addFiles, directory, discard, edit, editors, keepMine, queue, removeFile, review, roster, takeTheirs,

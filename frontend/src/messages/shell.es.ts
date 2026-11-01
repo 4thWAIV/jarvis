@@ -42,6 +42,9 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "language.unreadable": "No se pudo leer el idioma ({error}); reintentando.",
   "language.reading": "Leyendo el idioma…",
 
+  "agents.working": "{count} trabajando",
+  "agents.workingCapped": "{count}+ trabajando",
+
   "units.megabytes": "{amount} MB",
   "time.justNow": "justo ahora",
   "time.ago": "hace {age}",

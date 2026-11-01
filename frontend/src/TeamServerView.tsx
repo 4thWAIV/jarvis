@@ -14,7 +14,7 @@ import { useSyncExternalStore } from "react";
 import { formatNumber, formatPercent, t, useT } from "./locale";
 import { useTick } from "./WorkflowsView";
 import {
-  bytesText, cpuPercent, MEASURED_WORDS, memoryPercent, network, serverReading,
+  bytesText, cpuPercent, MEASURED_WORDS, memoryPercent, network, READINESS_WORDS, serverReading,
   whenText, type HealthPoint, type NetworkStatus, type ServerHealth,
 } from "./network";
 import { CENTRE_SOCKET } from "./ConversationView";
@@ -113,7 +113,7 @@ export function TeamServerView() {
   ];
   return (
     <div id="network-detail" className="network-detail" data-node="server" ref={ui.whole}>
-      <DetailHead title={t("tabs.main.teamServer")} state={r.readiness} className={`readiness-${readinessClass(r.readiness)}`}
+      <DetailHead title={t("tabs.main.teamServer")} state={READINESS_WORDS[r.readiness]} className={`readiness-${readinessClass(r.readiness)}`}
                   icon={<span className={`server-beacon readiness-${readinessClass(r.readiness)}`}><ServerIcon /></span>} />
       <section aria-label={t("main.server.database")} ref={ui.part("database")}>
         <h3>{t("main.server.database")}</h3>

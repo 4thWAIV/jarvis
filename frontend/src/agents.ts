@@ -3,6 +3,7 @@
  * the user has activated it (server: run_store.sync_agents, /api/agents).
  */
 
+import { t } from "./locale";
 import { createStore } from "./store";
 
 /** The latest message JARVIS sent to an agent, for the ray (RayLane.tsx).
@@ -71,7 +72,8 @@ export async function setAgentActive(sessionId: string, active: boolean): Promis
   if (!res.ok) throw new Error(`POST active: ${res.status}`);
 }
 
-/** "2 working", or "2+ working" when the count is a floor. */
+/** "2 working", or "2+ working" when the count is a floor, in the
+ *  language in force. */
 export function workingCount(n: number, capped: boolean): string {
-  return `${n}${capped ? "+" : ""} working`;
+  return capped ? t("agents.workingCapped", { count: n }) : t("agents.working", { count: n });
 }

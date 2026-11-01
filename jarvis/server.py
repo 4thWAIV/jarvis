@@ -3090,8 +3090,14 @@ async def api_brains(brief: bool = False):
 
 
 def _brains_change(change) -> dict:
+    """A brains change; a refusal's `detail` carries its English words and,
+    for `brains_config.Refused`, its code and values, which the page words
+    in its own language (brains.ts)."""
     try:
         change()
+    except brains_config.Refused as e:
+        raise HTTPException(status_code=400,
+                            detail={"message": str(e), "code": e.code, "values": e.values})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True}

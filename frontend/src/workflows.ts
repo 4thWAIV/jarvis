@@ -7,7 +7,7 @@
  */
 
 import { liveRead } from "./liveRead";
-import { t } from "./locale";
+import { t, wordsOf } from "./locale";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
@@ -95,17 +95,6 @@ export interface SubagentRow {
 export const SUBAGENT_LOOK: Record<SubagentState, WorkflowState> = {
   working: "running", finished: "succeeded", stale: "silent",
 };
-
-/** Words by a record's own code, in the language in force whenever one is
- *  read: `WORDS[state]` stays the one way to say a state, and a component
- *  that renders it with `useT()` is drawn again when the language changes.
- *  The right panel's modules (workflows.ts, subsystems.ts, network.ts) say
- *  their codes this way. */
-export function wordsOf<C extends string>(codes: readonly C[], say: (code: C) => string): Readonly<Record<C, string>> {
-  const words = {} as Record<C, string>;
-  for (const code of codes) Object.defineProperty(words, code, { get: () => say(code), enumerable: true });
-  return words;
-}
 
 export const SUBAGENT_WORDS = wordsOf<SubagentState>(["working", "finished", "stale"],
   (s) => t(`right.workflows.subagentState.${s}`));

@@ -17,9 +17,9 @@
  * jarvis/folder_contract.py's ERRORS.
  */
 
-import { codeWords, type Said } from "./conversation";
+
 import { liveRead } from "./liveRead";
-import { formatNumber, t } from "./locale";
+import { codeWords, formatNumber, t, type Said } from "./locale";
 import { createStore } from "./store";
 import { bind, readForOpen, routeStore, runBinding, showStatic } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
