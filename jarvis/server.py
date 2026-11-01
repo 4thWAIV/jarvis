@@ -87,6 +87,7 @@ from jarvis import projects_view
 from jarvis import history_read
 from jarvis import repo_read
 from jarvis import session_messages
+from jarvis import spoken_words
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -763,7 +764,6 @@ ROTATION_BUSY_LINE = "Gathering my thoughts — one moment, sir."
 # This is that fresh conversation. It discards the tainted generation rather
 # than carrying anything across, which is the whole point — he restates the
 # fact in his own words to a brain that has read nothing.
-FRESH_START_COMMAND = "start fresh"
 FRESH_START_LINE = "Cleared, sir — nothing of that conversation left. Go ahead."
 # Clearing takes TWO turns. The command alone only asks; the very next
 # utterance must be an unambiguous yes (`_rotation_answer`) or nothing is
@@ -776,20 +776,21 @@ FRESH_START_CONFIRM_TIMEOUT = 20.0      # seconds he has to say yes
 def _is_fresh_start(text: str) -> bool:
     """Whether the ENTIRE utterance is the one command that clears the context.
 
-    Lowercased, punctuation stripped, one optional leading "jarvis" dropped,
-    and what is left must equal "start fresh" exactly. A longer sentence that
-    merely contains the words never counts: a misheard "start over" once
-    wiped a live conversation, and nothing may do that again.
+    Lowercased, punctuation and accents stripped, one optional leading
+    "jarvis" dropped, and what is left must equal the active language's clear
+    command ("start fresh"; in Spanish "empezar de cero") exactly. A longer
+    sentence that merely contains the words never counts: a misheard "start
+    over" once wiped a live conversation, and nothing may do that again.
     """
     words = _action_words(text)
     if words and words[0] == "jarvis":
         words = words[1:]
-    return " ".join(words) == FRESH_START_COMMAND
+    return " ".join(words) == spoken_words.vocabulary().clear_command
 
 
 def _action_words(text: str) -> list[str]:
-    import re as _re
-    return _re.findall(r"[a-z]+", text.lower())
+    """Letters only, accents folded: "Don't" is "don", "t"; "Sí." is "si"."""
+    return spoken_words.folded_words(text, digits=False)
 
 
 # The brain states the page shows (which brain runs, on the orb and in
@@ -1301,17 +1302,8 @@ async def _start_fresh(utterance: str = "") -> None:
 ROTATION_ASK_AGAIN_AFTER_TURNS = 10
 ROTATION_DECLINED_LINE = "Very good, sir. I'll carry on as I am."
 
-ROTATION_YES_WORDS = frozenset({
-    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "certainly",
-    "absolutely", "affirmative", "proceed", "compact", "rotate",
-})
+# The yes and no words are the active language's (`spoken_words`).
 ROTATION_YES_MAX_WORDS = 4
-ROTATION_YES_PHRASES = ("go ahead", "do it", "go for it", "sounds good")
-ROTATION_NO_WORDS = frozenset({
-    # `_action_words` splits "don't" into "don" and "t".
-    "no", "nope", "nah", "not", "don", "dont", "wait", "later", "hold", "stop",
-    "never", "negative",
-})
 
 # Whether the question is waiting on his answer, the brain's
 # `turns_since_rotation` when it was last asked (None: never asked), and
@@ -1337,15 +1329,16 @@ def _rotation_answer(text: str) -> Optional[bool]:
     words = _action_words(text)
     if not words:
         return None
-    if any(w in ROTATION_NO_WORDS for w in words):
+    vocabulary = spoken_words.vocabulary()
+    if any(w in vocabulary.no_words for w in words):
         return False
     joined = " ".join(words)
     # A short reply only: a long sentence that happens to open with "okay" is
     # not a yes to a question about wiping his context.
     if len(words) > ROTATION_YES_MAX_WORDS:
         return None
-    if words[0] in ROTATION_YES_WORDS or any(joined.startswith(p)
-                                            for p in ROTATION_YES_PHRASES):
+    if words[0] in vocabulary.yes_words or any(joined.startswith(p)
+                                              for p in vocabulary.yes_phrases):
         return True
     return None
 

@@ -65,6 +65,13 @@ def _start_from_the_shipped_untrusted_actions_default(monkeypatch):
 
 
 @pytest.fixture
+def spanish(monkeypatch):
+    """Speak Spanish to JARVIS for one test: the active language is "es"."""
+    from jarvis import spoken_words
+    monkeypatch.setattr(spoken_words, "active_language", lambda: spoken_words.SPANISH)
+
+
+@pytest.fixture
 def refusal_on(monkeypatch):
     """Opt in to the untrusted-content refusal for one test or module."""
     monkeypatch.setenv("JARVIS_REFUSE_UNTRUSTED_ACTIONS", "1")
