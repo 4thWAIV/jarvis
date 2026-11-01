@@ -3470,3 +3470,16 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 @media (forced-colors: active) {
   .folder-row, .folders-panel-row, .candidate-row, .folder-availability-dot { forced-color-adjust: auto; border: 1px solid CanvasText; }
 }
+
+/* Settings, Updates: the new commits on main (Settings.tsx). */
+.update-commits {
+  margin: 6px 0 0 0;
+  padding-left: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.75);
+  overflow-wrap: anywhere;
+}
+.update-commits code { color: rgba(0, 212, 255, 0.7); }

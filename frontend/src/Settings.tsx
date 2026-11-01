@@ -1,13 +1,15 @@
 /**
  * The Settings view, opened from the ⋮ menu (MenuControl.tsx): a large view
  * over the page with its sections listed down the left and stacked in one
- * scrolling body — Brains, Voice, You, Team, System.
+ * scrolling body — Brains, Voice, You, Team, Updates, System.
  *
  * With no Fish Audio key set it opens by itself, two seconds after the page
  * loads, as first-time setup: Voice first, then You, then it closes.
  *
  * Everything is read from and written to the same endpoints the dialog
- * before it used (/api/settings/*), plus /api/brains for the Brains section.
+ * before it used (/api/settings/*), plus /api/brains for the Brains section
+ * and /api/update for Updates (self_update.py), which the menu's Check for
+ * updates opens.
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -16,13 +18,14 @@ import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
+import { notice } from "./voiceHealth";
 
 export const settingsOpen = createStore(false);
 // The section to scroll to once Settings is open, when one was asked for.
 const settingsSection = createStore<SectionId | null>(null);
 
 /** Open Settings, at `section` if one is given (the sign-in reminder opens
- *  it at Team). */
+ *  it at Team, the menu's Check for updates at Updates). */
 export function openSettings(section: SectionId | null = null): void {
   settingsSection.set(section);
   settingsOpen.set(true);
@@ -40,12 +43,23 @@ const SECTIONS = [
   { id: "voice", title: "Voice" },
   { id: "you", title: "You" },
   { id: "team", title: "Team" },
+  { id: "updates", title: "Updates" },
   { id: "system", title: "System" },
 ] as const;
 export type SectionId = (typeof SECTIONS)[number]["id"];
 
 const SETUP_STEPS = ["voice", "you"] as const;
 const SETUP_DELAY_MS = 2000;
+
+// How long a restart is given before the page reloads itself.
+const RELOAD_AFTER_MS = 4000;
+
+/** The server is restarting: say so, and reload the page once it is back.
+ *  The menu's Restart Server and Updates' Update and restart both end here. */
+export function reloadAfterRestart(said: string): void {
+  notice("Status", said);
+  setTimeout(() => window.location.reload(), RELOAD_AFTER_MS);
+}
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -151,6 +165,8 @@ export function Settings() {
             {shown("you") && <YouSection reload={loadStatus} />}
             {shown("team") && <section className="settings-section" id="settings-team">
               <h3>Team</h3><TeamSection /></section>}
+            {shown("updates") && <section className="settings-section" id="settings-updates">
+              <h3>Updates</h3><UpdatesSection /></section>}
             {shown("system") && <SystemSection status={status} statusFailed={statusFailed} />}
             {setup !== null && (
               <div className="setup-nav">
@@ -278,6 +294,120 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
         <button className="settings-btn primary" onClick={save} disabled={!filled}>Save Preferences</button>
       </div>
     </section>
+  );
+}
+
+// GET /api/update (self_update.Status.to_json) and POST /api/update
+// (self_update.Outcome.to_json).
+interface UpdateStatus {
+  source: "github" | "installed" | "other";
+  reason: string;
+  error: string;
+  branch: string;
+  commit: string;
+  behind: number;
+  commits: { sha: string; subject: string }[];
+  ci: "" | "passed" | "pending" | "failed" | "none" | "unknown";
+  blockers: { code: string; text: string; detail: string[] }[];
+  up_to_date: boolean;
+  can_update: boolean;
+}
+
+interface UpdateOutcome {
+  status: UpdateStatus;
+  ok: boolean;
+  updated: boolean;
+  refused: string;
+  failed: string;
+  to_commit: string;
+  notes: string[];
+  restart: boolean;
+}
+
+const CI_WORDS: Record<UpdateStatus["ci"], string> = {
+  "": "", passed: "CI passed", pending: "CI is still running", failed: "CI failed",
+  none: "no CI result", unknown: "GitHub could not be asked about CI",
+};
+
+function UpdatesSection() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    setProblem(null);
+    try {
+      setStatus(await getJson<UpdateStatus>("/api/update"));
+    } catch (e) {
+      setProblem(`Could not ask the server (${(e as Error).message}).`);
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { check(); }, [check]);
+
+  const update = async () => {
+    setUpdating(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/update", { method: "POST" });
+      const out = (await res.json()) as UpdateOutcome;
+      setStatus(out.status);
+      if (out.restart) {
+        const said = `Updated to ${out.to_commit.slice(0, 7)}; restarting.`;
+        setResult([said, ...out.notes].join(" "));
+        reloadAfterRestart(said);
+        return;
+      }
+      setResult(out.refused ? `Not updated: ${out.refused}`
+        : out.failed ? `The update failed: ${out.failed}`
+        : "Already up to date.");
+    } catch {
+      setResult("The update failed: the server did not answer.");
+    }
+    setUpdating(false);
+  };
+
+  let summary = "Checking for updates…";
+  if (problem) summary = problem;
+  else if (status && status.source !== "github") summary = status.reason;
+  else if (status?.error) summary = `Could not check for updates: ${status.error}`;
+  else if (status?.up_to_date) summary = `Up to date at ${status.commit.slice(0, 7)}.`;
+  else if (status) {
+    summary = `${status.behind} new commit${status.behind === 1 ? "" : "s"} on main`
+      + (status.ci ? `; ${CI_WORDS[status.ci]}.` : ".");
+  }
+  const showCommits = status && status.source === "github" && !status.error && status.behind > 0;
+
+  return (
+    <>
+      <p className="settings-hint">{checking && status ? "Checking again…" : summary}</p>
+      {showCommits && (
+        <ul className="update-commits">
+          {status.commits.map((c) => (
+            <li key={c.sha}><code>{c.sha.slice(0, 7)}</code> {c.subject}</li>
+          ))}
+        </ul>
+      )}
+      {showCommits && status.blockers.map((b) => (
+        <p key={b.code} className="settings-hint read-failure">
+          {b.text}{b.detail.length ? ` ${b.detail.join(", ")}` : ""}
+        </p>
+      ))}
+      {result && <p className="settings-restart-notice">{result}</p>}
+      <div className="settings-actions">
+        <button className="settings-btn" onClick={check} disabled={checking || updating}>
+          Check again</button>
+        {status?.can_update && (
+          <button className="settings-btn primary" onClick={update} disabled={updating || checking}>
+            {updating ? "Updating…" : "Update and restart"}</button>
+        )}
+      </div>
+    </>
   );
 }
 
