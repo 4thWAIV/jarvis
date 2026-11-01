@@ -83,10 +83,11 @@ def opened_dir(root: Path, relative: Path) -> Iterator[int]:
         os.close(fd)
 
 
-@contextmanager
-def opened_file(root: Path, relative: Path) -> Iterator[tuple[int, os.stat_result]]:
+def open_file(root: Path, relative: Path) -> tuple[int, os.stat_result]:
     """(descriptor, its stat) for the regular file `relative` inside
-    `root`, by the same walk."""
+    `root`, by the same walk. The caller owns the descriptor and closes it:
+    `opened_file` for a read here, a message attachment's held source
+    (draft_files.py) for a read that outlives one call."""
     if not relative.name or relative.name in (".", ".."):
         raise FolderError("forbidden")
     with opened_dir(root, relative.parent) as parent:
@@ -98,6 +99,18 @@ def opened_file(root: Path, relative: Path) -> Iterator[tuple[int, os.stat_resul
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise FolderError("unsupported")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, info
+
+
+@contextmanager
+def opened_file(root: Path, relative: Path) -> Iterator[tuple[int, os.stat_result]]:
+    """(descriptor, its stat) for the regular file `relative` inside
+    `root`, closed when the read is done."""
+    fd, info = open_file(root, relative)
+    try:
         yield fd, info
     finally:
         os.close(fd)

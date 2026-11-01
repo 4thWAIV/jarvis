@@ -34,20 +34,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import mimetypes
 import time
-from pathlib import Path
 from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI
 
 from jarvis import data_paths
+from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
 from jarvis import messaging_ports as ports
-from jarvis import messaging_wire as wire
-from jarvis import work_packages
 from jarvis.arrival_announcer import ArrivalAnnouncer, Wording, serve_labels
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, Identity,
                                       MessageApprovals, MessagingTools, Reviews)
@@ -128,7 +125,9 @@ class MessagingRuntime:
             self.human, self.reviews,
             lambda who, message_id, save, agent: self.local.write_draft(message_id, save,
                                                                         agent),
-            check_file=work_packages.attachable, attach=self._attach_file)
+            files=draft_files.DraftFileAttacher(
+                self.store, self.files, self.delivery.pairing,
+                lambda message_id, save: self.local.write_draft(message_id, save, True)))
         self.announcer = ArrivalAnnouncer(
             store=self.store, presentation=self.presentation, scope=self._scope,
             labels=lambda: serve_labels(current, network_raw), notify=notify,
@@ -147,14 +146,6 @@ class MessagingRuntime:
         if pairing is None:
             raise ports.TransportError("session_missing", status=401)
         return self.delivery.transport(pairing)
-
-    async def _attach_file(self, who: Identity, message_id: UUID,
-                           path: Path) -> wire.AttachmentRef:
-        """A file on this Mac added to a draft by the brain, through the
-        page's own upload step."""
-        return await self.files.add_to_draft(
-            *who.ns, message_id, path.name, mimetypes.guess_type(path.name)[0],
-            messaging_files.file_chunks(path))
 
     def identity(self) -> Optional[Identity]:
         pairing = self.delivery.pairing()

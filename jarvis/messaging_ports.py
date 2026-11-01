@@ -156,6 +156,8 @@ _IDEMPOTENT = {("awaiting_approval", "review"), ("approved", "approve"),
                ("submitting", "submit"), ("accepted", "accepted"), ("cancelled", "cancel")}
 
 SEND_UNRESOLVED = frozenset({"approved", "submitting", "accept_unknown", "failed"})
+# A draft that may still be edited as it stands: an item has at most one.
+SEND_EDITABLE = frozenset({"draft", "awaiting_approval"})
 
 
 class SendRefused(Exception):
@@ -312,6 +314,20 @@ class DraftSave(_Local):
     subject: str = Field(default="", max_length=wire.SUBJECT_MAX_CHARS)
     text: str = Field(default="", max_length=wire.TEXT_MAX_CHARS)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=wire.ATTACHMENTS_MAX)
+
+    @classmethod
+    def keeping(cls, current: "Draft", **changes) -> "DraftSave":
+        """A save of `current` at its own revision that keeps everything of
+        it but `changes`: an agent's edit (new text, more files) never drops
+        what the page or an earlier edit put there."""
+        kept = {"expected_draft_revision": current.draft_revision,
+                "thread_id": current.thread_id,
+                "in_reply_to_message_id": current.in_reply_to_message_id,
+                "related_message_ids": list(current.related_message_ids),
+                "recipient_github_id": current.recipient_github_id,
+                "subject": current.subject, "text": current.text,
+                "attachment_ids": [a.attachment_id for a in current.attachments]}
+        return cls(**{**kept, **changes})
 
 
 class DraftAction(_Local):

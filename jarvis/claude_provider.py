@@ -113,6 +113,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__mark_people_message_read",
     "mcp__jarvis__set_people_thread",
     "mcp__jarvis__change_people_draft",
+    "mcp__jarvis__attach_message_files",
     # Work packages a teammate sends: opening one and running its steps are
     # ACTING_TOOLS; the results go back through draft_message's files.
     "mcp__jarvis__open_package",

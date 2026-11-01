@@ -170,17 +170,6 @@ def _hash_file(path: Path) -> Optional[tuple[int, str]]:
         os.close(fd)
 
 
-async def file_chunks(path: Path) -> AsyncIterator[bytes]:
-    """A file on this Mac in upload-sized chunks, never through a link: what
-    `add_to_draft` copies when the brain attaches a file by its path."""
-    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        while chunk := os.read(fd, wire.UPLOAD_CHUNK_BYTES):
-            yield chunk
-    finally:
-        os.close(fd)
-
-
 def reveal_in_finder(path: Path) -> None:
     """Show the file selected in a Finder window. `-R` reveals; it never
     opens or runs the file."""
@@ -339,10 +328,10 @@ class FileSnapshots:
     async def add_to_draft(self, server_id: str, owner_github_id: int, message_id: UUID,
                            filename: str, media_type: Optional[str],
                            chunks: AsyncIterator[bytes]) -> wire.AttachmentRef:
-        """The one way a file joins a draft, the page's upload and the
-        brain's `draft_message` `files` alike: the draft must be there, then
-        the file is snapshotted for it. The draft names it once it is saved
-        with its `attachment_ids`."""
+        """The one way a file joins a draft, the page's upload and a file
+        on this Mac the brain names (draft_files.py) alike: the draft must
+        be there, then the file is snapshotted for it. The draft names it
+        once it is saved with its `attachment_ids`."""
         if self.store.draft(server_id, owner_github_id, message_id) is None:
             raise wire.ContractError("draft_not_found")
         return await self.snapshot(server_id, owner_github_id, message_id, filename,

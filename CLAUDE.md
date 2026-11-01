@@ -608,6 +608,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `messaging_api.py` — The page's `/api/team/messages*` routes
 - `messaging_files.py` — A message's files: private snapshots, upload,
   verified downloads (quarantined, never opened) and their routes
+- `draft_files.py` — Files on this Mac, named by path, onto a draft (the
+  brain's `attach_message_files` and `draft_message`'s `files`): the folder
+  catalog's ordinary-file rule, a held descriptor reached without links,
+  and one save at the exact revision under the same sign-in, all or none
 - `work_packages.py` — Work packages: unpacking a received zip, finding,
   running a step, its results, and which files the brain may attach (see
   "Work packages")

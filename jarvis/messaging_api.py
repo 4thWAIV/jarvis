@@ -134,7 +134,7 @@ class LocalMessaging:
         messages = [m.model_copy(update={"files": self._files(ns, m.message.message_id)})
                     for m in item.messages]
         drafts = [self._draft_view(ns, d) for d in item.drafts]
-        editable = [d for d in drafts if d.send.state in ("draft", "awaiting_approval")]
+        editable = [d for d in drafts if d.send.state in ports.SEND_EDITABLE]
         return item.model_copy(update={
             "messages": messages, "drafts": drafts,
             "dismiss_blockers": ports.dismiss_blockers(
@@ -234,7 +234,7 @@ class LocalMessaging:
     def _editable_on(self, ns, thread_id: UUID) -> Optional[ports.Draft]:
         item = self.store.item(*ns, thread_id)
         return next((d for d in (item.drafts if item else [])
-                     if d.send.state in ("draft", "awaiting_approval")), None)
+                     if d.send.state in ports.SEND_EDITABLE), None)
 
     def create_draft(self, save: ports.DraftSave, agent_drafted: bool = False) -> ports.Draft:
         ns = self.pairing().ns

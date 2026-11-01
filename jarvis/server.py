@@ -6153,13 +6153,20 @@ TOOL_HANDLERS.update({
     "send_message": tool_send_message,
     "draft_message": _messaging_tool("draft_message"),
     "request_message_review": _messaging_tool("request_message_review"),
+    "attach_message_files": _messaging_tool("attach_message_files"),
 })
-ACTING_TOOLS.update({"send_message", "draft_message", "request_message_review"})
+ACTING_TOOLS.update({"send_message", "draft_message", "request_message_review",
+                     "attach_message_files"})
 READ_BACK_TOOLS.add("send_message")
 TAINT_EXEMPT_TOOLS.update({
     "send_message": "it sends a reviewed message, it does not read",
-    "draft_message": "it writes a draft, it does not read",
+    "draft_message": ("it writes a draft, and copies any files he named into it through "
+                      "attach_message_files's step, giving back no file content"),
     "request_message_review": "it opens a draft's read-back for review, it does not read",
+    "attach_message_files": (
+        "it copies files he named into his own draft and gives back only their "
+        "names and sizes, never their content; as an acting tool it runs only on "
+        "his own turn, under the same untrusted-content rule as the others"),
 })
 
 
@@ -6491,7 +6498,9 @@ async def tool_people_messages(args: dict) -> str:
     await _with_roster(local)
     lines = [_item_line(local, i) for i in items]
     lines += [f"new message {d.message_id} to {_label_of(local, d.recipient_github_id)}, "
-              f"not sent ({d.send.state.replace('_', ' ')}): {d.subject or d.text[:80]}"
+              f"revision {d.draft_revision}, not sent ({d.send.state.replace('_', ' ')}): "
+              f"{d.subject or d.text[:80]}"
+              + "".join(f"; {line}" for line in _file_lines(d.attachments))
               for d in unsent]
     which = "dismissed" if dismissed else "in the Queue"
     if not lines:
@@ -6501,6 +6510,12 @@ async def tool_people_messages(args: dict) -> str:
     if more:
         head += f" Older ones: pass continuation {more}."
     return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
+
+
+def _file_lines(attachments) -> list[str]:
+    """A message's or a draft's files, one line each: name, size and id."""
+    return [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
+            f"attachment {a.attachment_id}" for a in attachments]
 
 
 def _thread_text(local, item) -> str:
@@ -6517,12 +6532,12 @@ def _thread_text(local, item) -> str:
         if msg.subject:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
-        out += [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
-                f"attachment {a.attachment_id}" for a in msg.attachments]
+        out += _file_lines(msg.attachments)
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
                    f"{d.send.state.replace('_', ' ')}: {d.text}")
+        out += _file_lines(d.attachments)
     return "\n".join(out).strip()
 
 
