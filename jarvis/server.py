@@ -6904,29 +6904,32 @@ async def tool_open_package_page(args: dict) -> str:
 
 async def _announce_package_run(run: dict) -> None:
     """An agent package's run has ended: say so, and tell the brain what
-    comes next."""
-    package_id = str(run.get("package_id") or "")
+    comes next. The package is named only as it is found here: its id is
+    JARVIS's own folder name (letters, digits, '.', '_' and '-'), never the
+    run row's text as written, and its own name is walled; a package no
+    longer here is "a work package"."""
     try:
-        name = work_packages.find(package_id).manifest.name
+        package = work_packages.find(str(run.get("package_id") or ""))
+        said, which = (_plain_name(package.manifest.name, "a work package"),
+                       f"work package {package.id}")
     except work_packages.PackageError:
-        name = package_id
-    said = _plain_name(name, "a work package")
+        said, which = "a work package", "a work package that is no longer here"
     if run.get("status") == run_store.RunStatus.SUCCEEDED:
         await _say_notice(
             f"The work package {said} has finished, sir. Shall I draft the reply with its "
             f"results?",
-            f"Since your last turn you told him the agent run of work package {package_id} "
-            f"finished, and asked whether to draft the reply with its results. If he says "
-            f"yes: package_results with package {package_id}, then draft_message with "
-            f"reply_to the message the package came in on and those paths in files, then "
+            f"Since your last turn you told him the agent run of {which} finished, and "
+            f"asked whether to draft the reply with its results. If he says yes: "
+            f"package_results with that package, then draft_message with reply_to the "
+            f"message the package came in on and those paths in files, then "
             f"request_message_review.", "package run")
         return
     ended = ("ran out of time" if run.get("status") == run_store.RunStatus.TIMED_OUT
              else "failed")
     await _say_notice(
         f"The work package {said} {ended}, sir.",
-        f"Since your last turn you told him the agent run of work package {package_id} "
-        f"{ended}. Nothing was drafted; retry_run runs it again on his word.",
+        f"Since your last turn you told him the agent run of {which} {ended}. Nothing was "
+        f"drafted; retry_run runs it again on his word.",
         "package run")
 
 

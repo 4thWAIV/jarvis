@@ -1575,6 +1575,7 @@ def _blank_run(**over):
         "requested_model": "sonnet",
         "exit_code": 0, "pid": 0, "is_error": 0,
         "folder_id": None,
+        "package_id": None,
         "created_at": now - 300, "started_at": now - 290, "ended_at": now - 10,
     }
     run.update(over)
@@ -1599,6 +1600,7 @@ ALT_RUN = {
     "model": "opus",
     "requested_model": "opus",
     "folder_id": "33333333-3333-4333-8333-333333333333",
+    "package_id": "text-stats-agent-1.0.0-ab12cd34",
 }
 
 
@@ -1741,6 +1743,20 @@ def _drive_announce_run_failure(server, run, monkeypatch):
     return list(speech.said)
 
 
+def _drive_announce_package_run(server, run, monkeypatch):
+    """What JARVIS says, and tells the brain, when an agent package's run
+    ends: each line spoken and each note."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    for status in (server.run_store.RunStatus.SUCCEEDED, server.run_store.RunStatus.FAILED,
+                   server.run_store.RunStatus.TIMED_OUT):
+        asyncio.run(server._announce_package_run(dict(run, status=status)))
+    return list(speech.said) + list(server._notes_for_brain)
+
+
 def _drive_format_runs_for_prompt(server, run, monkeypatch):
     """The brain's system prompt. Not a tool result and not a spoken line —
     trusted operator prose, like `brain.launch_prompt`."""
@@ -1762,6 +1778,7 @@ RUN_DRIVERS = {
     "server.tool_cancel_run": _drive_cancel_run,
     "server._announce_run_stalled": _drive_announce_run_stalled,
     "server._announce_run_failure": _drive_announce_run_failure,
+    "server._announce_package_run": _drive_announce_package_run,
     "server.format_runs_for_prompt": _drive_format_runs_for_prompt,
 }
 

@@ -152,7 +152,7 @@ async def test_an_agent_package_runs_through_the_pipeline_in_its_folder(agent_ru
     assert speech.said == ["The work package stats has finished, sir. Shall I draft the "
                            "reply with its results?"]
     (note,) = server._notes_for_brain
-    assert f"package_results with package {package.id}" in note and "draft_message" in note
+    assert f"work package {package.id} finished" in note and "draft_message" in note
     assert [p.name for p in package.results()] == ["summary.md"]
 
 
