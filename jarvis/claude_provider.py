@@ -121,6 +121,11 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",
     "mcp__jarvis__diagnostics",
+    # Speech input's models (speech_models.py): reading them, and the acting
+    # install and switch the page's routes also call.
+    "mcp__jarvis__speech_models",
+    "mcp__jarvis__install_speech_model",
+    "mcp__jarvis__switch_speech_model",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",

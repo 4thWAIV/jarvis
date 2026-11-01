@@ -1,6 +1,6 @@
 # The new JARVIS workspace
 
-Updated 2026-10-31. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
 ## Conversation is the main view
 
@@ -71,6 +71,10 @@ Speech input currently uses local Kroko streaming recognition through sherpa-onn
 ![Voice diagnostics in the current interface, using fictional sample data.](images/workspace-diagnostics.png)
 
 These captures render the real frontend with sample records; they are not production measurements.
+
+## A Spanish speech model, ready for the language setting
+
+Speech input now knows two models, English and Spanish, and holds one in memory at a time. The Spanish model (124 MB) can be installed with `.venv/bin/python scripts/setup_speech_input.py --language es`, or by asking JARVIS; the download is checked against the SHA-256 the sherpa-onnx release publishes before anything is unpacked. Switching speech input to the other language reloads the model, which takes a few seconds: whatever was being said at that moment is not heard, the page says speech recognition is switching and listens again once it has loaded, and the voice record notes the switch and how long it took. JARVIS can say which models are installed, install one and switch speech input when you ask. The Settings control to choose the language, and JARVIS answering in Spanish, come in the next steps; English remains the default and works as before.
 
 ## More than one conversational provider
 
