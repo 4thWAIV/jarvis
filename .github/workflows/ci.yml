@@ -20,6 +20,10 @@
 # One job, so a run waits for one macOS runner and sets up once:
 #   Test suite   the default selection (`pytest`)
 #   Page tests   the voice page and dashboard in headless Chromium (`pytest -m page`)
+#   Timing       both pytest steps write --durations and a junit XML; the runner's
+#                size, a timed bare vite build and Chromium launch, and the
+#                runner's load sampled every 30 s through the page step are
+#                uploaded with the XML as `test-timing`, failed runs included.
 #   Package      on main and by hand only: the wheel and the sdist, installed
 #                into a clean venv to prove they run, then uploaded as
 #                `jarvis-dist`. A pull request does not need the package.
@@ -44,16 +48,46 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+      - name: Runner size
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-timing"
+          { sysctl -n hw.ncpu hw.memsize; sw_vers; } | tee "$RUNNER_TEMP/test-timing/runner-size.txt"
       - uses: ./.github/actions/setup
       - name: Test suite
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
-        run: pytest -v -o faulthandler_timeout=300 -p no:cacheprovider
+        run: pytest -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/unit.xml"
+      - name: Time a bare vite build
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: frontend
+        run: time npx vite build --outDir "$RUNNER_TEMP/vite-timing" --emptyOutDir --logLevel error
+      - name: Time a bare Chromium launch
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: time python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch(headless=True).close(); p.stop()"
       - name: Page tests
         if: ${{ !cancelled() }}   # still runs when the test suite fails, as its own job did
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
-        run: pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider
+        run: |
+          # The runner's load every 30 s while the page tests run; it can never fail the step.
+          load="$RUNNER_TEMP/test-timing/page-step-load.txt"
+          ( while true; do
+              { echo "=== $(date -u +%FT%TZ)"; vm_stat; top -l 1 | head -15; } >> "$load" 2>&1 || true
+              sleep 30
+            done ) &
+          sampler=$!
+          trap 'pkill -P "$sampler" 2>/dev/null; kill "$sampler" 2>/dev/null; true' EXIT
+          pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/page.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-timing
+          path: ${{ runner.temp }}/test-timing/
+          retention-days: 14
+          if-no-files-found: warn
       - name: Build the wheel and the sdist
         if: github.event_name != 'pull_request'
         run: |
