@@ -23,13 +23,15 @@
  * first point on its facing edge clear of the object's controls; a branch
  * or leaf that would cross another object, a control or another part, a
  * junction that cannot be measured, or a source the page covers, makes the
- * route unavailable rather than inventing a shortcut.
+ * route unavailable rather than inventing a shortcut. Every turn a route
+ * takes, between edges or inside one, is a 45-degree bevel of BEVEL_PX
+ * (uiSignal.ts bevelled()), drawn and travelled alike.
  */
 
 import { rayStart, rightChannelX, TOP_LANE_PX } from "./rayGeometry";
 import { lanes } from "./transferEndpoints";
 import { elementOf, mountedTargets, presentationId, visibilityOf, type VisualTarget } from "./uiRegistry";
-import { joined, type Point } from "./uiSignal";
+import { BEVEL_PX, bevelled, joined, type Point } from "./uiSignal";
 import {
   UI_CONTRACT, type AvailabilityReason, type JunctionId, type RailId, type TargetRef, type Visibility,
 } from "./uiContract";
@@ -61,9 +63,10 @@ export const INNER_MARGIN_PX = 6;
 const SOCKET_DROP_PX = 14;
 /** The gap a socket or leaf keeps from a control it passes. */
 const CLEAR_PX = 4;
-/** The corridor along an object's facing edge: its inner margin and the
- *  gap kept from anything beside it. */
-export const CORRIDOR_PX = INNER_MARGIN_PX + CLEAR_PX;
+/** The corridor along an object's facing edge: its inner margin, the gap
+ *  kept from anything beside it, and room for a leaf's bevel as it turns
+ *  in from the margin (uiSignal.ts BEVEL_PX). */
+export const CORRIDOR_PX = INNER_MARGIN_PX + CLEAR_PX + BEVEL_PX;
 /** How far outside an open modal its rail runs. */
 const OVERLAY_GAP_PX = 8;
 
@@ -148,11 +151,19 @@ export function junctionPoint(id: JunctionId): Point | null {
   return line ? railStart(line) : null;
 }
 
-/** Right-angled points from `a` to `b`: across first when they share
- *  neither coordinate (the top pipeline runs across, rails run down). */
+/** Points from `a` to `b`: across first when they share neither
+ *  coordinate (the top pipeline runs across, rails run down), the turn
+ *  bevelled at 45 degrees. */
 function corner(a: Point, b: Point): Point[] {
   if (a[0] === b[0] || a[1] === b[1]) return [a, b];
-  return [a, [b[0], a[1]], b];
+  return bevelled([[a, [b[0], a[1]], b]])[0];
+}
+
+/** Edges with every turn between and inside them bevelled (bevelled()),
+ *  each keeping its id, layer and host. */
+function bevelEdges(edges: RouteEdge[]): RouteEdge[] {
+  const runs = bevelled(edges.map((e) => e.points));
+  return edges.map((e, i) => ({ ...e, points: runs[i] }));
 }
 
 // ── the fixed map ───────────────────────────────────────────────────────
@@ -250,19 +261,19 @@ function socketEdges(target: VisualTarget): RouteEdge[] | null {
   const start = railStart(line);
   if (line.axis === "down") {
     if (entry[1] < line.from || entry[1] > line.to) return null;
-    return [
+    return bevelEdges([
       { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, [line.at, entry[1]]] },
       { id: `socket:${id}`, layer: "branch", host, points: [[line.at, entry[1]], entry] },
-    ];
+    ]);
   }
   // Across (the footer): along the rail to just outside the socket, then
   // to the socket's height and in.
   const cx = entry[0] + (target.socket.side === "right" ? INNER_MARGIN_PX : -INNER_MARGIN_PX);
   if (cx < Math.min(line.from, line.to) || cx > Math.max(line.from, line.to)) return null;
-  return [
+  return bevelEdges([
     { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, [cx, line.at]] },
     { id: `socket:${id}`, layer: "branch", host, points: [[cx, line.at], [cx, entry[1]], entry] },
-  ];
+  ]);
 }
 
 /** Whether a horizontal or vertical run crosses a box. */
@@ -353,11 +364,11 @@ export function resolveRoute(target: VisualTarget, ref: TargetRef): RouteOutcome
   edges.push(...socket);
   const branch = socket[socket.length - 1].points;
   const entry = branch[branch.length - 1];
-  if (!ref.part) return { route: { edges, end: entry, socket: entry } };
+  if (!ref.part) return { route: { edges: bevelEdges(edges), end: entry, socket: entry } };
   const leaf = leafEdge(target, ref.part, entry);
   if (typeof leaf === "string") return { route: null, reason: leaf };
   edges.push(leaf);
-  return { route: { edges, end: leaf.points[leaf.points.length - 1], socket: entry } };
+  return { route: { edges: bevelEdges(edges), end: leaf.points[leaf.points.length - 1], socket: entry } };
 }
 
 /** The edges a route uses, in order: its topology. Geometry may move under

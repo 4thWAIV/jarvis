@@ -5,7 +5,7 @@
 // non-zero on the first that fails and prints what it checked otherwise.
 import assert from "node:assert/strict";
 import {
-  fadeAt, leaving, length, orbEmission, phaseAt, pointAlong, pulseFractions, ringProgress, routeLit,
+  BEVEL_PX, bevelled, fadeAt, leaving, length, orbEmission, phaseAt, pointAlong, pulseFractions, ringProgress, routeLit,
   scheduleFor, TIMING,
 } from "../frontend/src/uiSignal.ts";
 import {
@@ -87,6 +87,20 @@ const timing = [
     assert.deepEqual(pointAlong(pts, 1), [50, 0]);
     assert.deepEqual(leaving(pts), [0, -1]);
     assert.deepEqual(leaving([[0, 0], [0, 0], [-4, 0]]), [-1, 0]);
+  }),
+  check("every right-angled turn is a 45-degree bevel, between runs and inside one", () => {
+    assert.equal(BEVEL_PX, 6);
+    // Up the orb's rise, across the top, then down a rail: two runs.
+    const [rise, top] = bevelled([[[0, 100], [0, 0]], [[0, 0], [50, 0], [50, 40]]]);
+    assert.deepEqual(rise, [[0, 100], [0, 6]]);                       // the earlier run stops short
+    assert.deepEqual(top, [[0, 6], [6, 0], [44, 0], [50, 6], [50, 40]]); // the later one takes the bevel
+    // A short leg shared by two turns gives each half of it.
+    assert.deepEqual(bevelled([[[0, 0], [10, 0], [10, 4], [20, 4]]])[0], [[0, 0], [8, 0], [10, 2], [12, 4], [20, 4]]);
+    // Straight runs and turns already bevelled are left alone.
+    assert.deepEqual(bevelled([[[0, 0], [0, 50]], [[0, 50], [0, 80]]]), [[[0, 0], [0, 50]], [[0, 50], [0, 80]]]);
+    assert.deepEqual(bevelled([top]), [top]);
+    // A bevel's length is its true length.
+    assert.equal(length([[0, 0], [6, 6]]), Math.hypot(6, 6));
   }),
 ];
 

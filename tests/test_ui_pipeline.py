@@ -80,9 +80,10 @@ def test_the_css_corridor_is_the_pipeline_s():
     pipe = _code("uiPipeline.ts")
     margin = int(re.search(r"INNER_MARGIN_PX = (\d+)", pipe).group(1))
     clear = int(re.search(r"CLEAR_PX = (\d+)", pipe).group(1))
+    bevel = int(re.search(r"BEVEL_PX = (\d+)", _code("uiSignal.ts")).group(1))
     css = (SRC / "style.css").read_text()
     corridor = int(re.search(r"--ui-corridor:\s*(\d+)px", css).group(1))
-    assert corridor == margin + clear
+    assert bevel == 6 and corridor == margin + clear + bevel == 16
 
 
 def test_no_effect_writes_html():

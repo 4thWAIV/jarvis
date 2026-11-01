@@ -104,12 +104,64 @@ export function joined(runs: readonly (readonly Point[])[]): Point[] {
   return out;
 }
 
-/** Length along right-angled runs. */
+/** How far back from a right-angled turn its 45-degree bevel starts, on
+ *  each leg: every turn the pipeline takes is cut this way, never square.
+ *  The corridor kept along an object's edge (uiPipeline.ts CORRIDOR_PX)
+ *  is widened by it, so a bevel never reaches content. */
+export const BEVEL_PX = 6;
+
+/** The unit step from `a` to `b` along one axis, or null when the run is
+ *  not straight across or down (or has no length). */
+function axisStep(a: Point, b: Point): Point | null {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  if (dx === 0 && dy !== 0) return [0, Math.sign(dy)];
+  if (dy === 0 && dx !== 0) return [Math.sign(dx), 0];
+  return null;
+}
+
+const run = (a: Point, b: Point): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
+
+/** Runs that follow one another, with every right-angled turn between and
+ *  inside them cut by a 45-degree bevel of BEVEL_PX (less when a leg is
+ *  too short: half a leg another turn shares, the whole of an end leg).
+ *  Each run keeps its own points and the runs still meet end to start; at
+ *  a turn where two runs meet, the bevel belongs to the later one. A turn
+ *  already bevelled is left as it is. */
+export function bevelled(runs: readonly (readonly Point[])[]): Point[][] {
+  const flat: Point[] = [];
+  const owned = runs.map((r) => r.map((p) => {
+    const last = flat[flat.length - 1];
+    if (!last || last[0] !== p[0] || last[1] !== p[1]) flat.push(p);
+    return flat.length - 1;
+  }));
+  const end = flat.length - 1;
+  const cut = flat.map((p, i): [Point, Point] | null => {
+    if (i === 0 || i === end) return null;
+    const into = axisStep(flat[i - 1], p), out = axisStep(p, flat[i + 1]);
+    if (!into || !out || into[0] * out[0] + into[1] * out[1] !== 0) return null;
+    const c = Math.min(BEVEL_PX, run(flat[i - 1], p) / (i - 1 > 0 ? 2 : 1), run(p, flat[i + 1]) / (i + 1 < end ? 2 : 1));
+    return [[p[0] - c * into[0], p[1] - c * into[1]], [p[0] + c * out[0], p[1] + c * out[1]]];
+  });
+  return owned.map((idx) => {
+    const out: Point[] = [];
+    const add = (p: Point) => {
+      const last = out[out.length - 1];
+      if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
+    };
+    idx.forEach((k, j) => {
+      const at = cut[k];
+      if (!at) add(flat[k]);
+      else if (j === idx.length - 1 && idx.length > 1) add(at[0]);         // the next run takes the bevel
+      else { add(at[0]); add(at[1]); }
+    });
+    return out;
+  });
+}
+
+/** Length along a route's runs, bevels included. */
 export function length(points: readonly Point[]): number {
   let n = 0;
-  for (let i = 1; i < points.length; i++) {
-    n += Math.abs(points[i][0] - points[i - 1][0]) + Math.abs(points[i][1] - points[i - 1][1]);
-  }
+  for (let i = 1; i < points.length; i++) n += run(points[i - 1], points[i]);
   return n;
 }
 
@@ -118,12 +170,12 @@ export function pointAlong(points: readonly Point[], fraction: number): Point {
   let left = Math.max(0, Math.min(1, fraction)) * length(points);
   for (let i = 1; i < points.length; i++) {
     const [a, b] = [points[i - 1], points[i]];
-    const run = Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]);
-    if (left <= run && run > 0) {
-      const t = left / run;
+    const r = run(a, b);
+    if (left <= r && r > 0) {
+      const t = left / r;
       return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
     }
-    left -= run;
+    left -= r;
   }
   return points[points.length - 1];
 }

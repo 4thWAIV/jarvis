@@ -127,9 +127,17 @@ def _segments(d):
     return list(zip(pts, pts[1:]))
 
 
+BEVEL = 6                                           # uiSignal.ts BEVEL_PX
+
+
 def _on(seg, lines, tol=1.0):
-    """Whether a right-angled segment lies within one of the map's lines."""
+    """Whether a segment lies within one of the map's lines, or is the
+    45-degree bevel of a turn between two of them (both ends on the map,
+    at most BEVEL along each axis)."""
     (ax, ay), (bx, by) = seg
+    if abs(ax - bx) > tol and abs(ay - by) > tol:
+        return (abs(abs(ax - bx) - abs(ay - by)) < tol and abs(ax - bx) <= BEVEL + tol
+                and _on(((ax, ay), (ax, ay)), lines, tol) and _on(((bx, by), (bx, by)), lines, tol))
     for (cx, cy), (dx, dy) in lines:
         if abs(ax - bx) < tol and abs(cx - dx) < tol and abs(ax - cx) < tol:          # both vertical
             lo, hi = sorted((cy, dy))
