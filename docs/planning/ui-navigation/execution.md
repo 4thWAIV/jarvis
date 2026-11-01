@@ -401,3 +401,7 @@ wheel build, and `tests/ui_validate_cases.mts` beyond what
 Start the coverage workers (right, main, left-settings) from the
 integration commit with the ownership above and the notes in "For the
 coverage workers"; resolve the corridor-centring blocker with Tim.
+
+## Scope update: Spanish interface (2026-11-01)
+
+Tim's instruction (JARVIS message 733, capture 4): when the language is switched to Spanish, the words in the user interface change to Spanish too. Plan: `docs/planning/ui-navigation/localization.md` (copied from the source checkout). Folded into this workflow as phase `localization`, after the coverage merge and before the independent review: first merge origin/main (the merged Spanish PRs 33-36: `jarvis/language_setting.py`, `LanguageControl.tsx`, `spoken_words.py`) into this branch, then the shared catalogs, locale store and language-state sync, then per-region localization by the same ownership split as coverage, then integration. The review and the local candidate include the localization acceptance list and Spanish screenshots. Estimate added: about 15 to 25 agent-hours on top of the plan's 82 to 132.
