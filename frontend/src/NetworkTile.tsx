@@ -14,7 +14,9 @@
  * the centre (NodeView.tsx).
  */
 
-import { byHand, useUiTarget } from "./uiRegistry";
+import { RIGHT_SOCKET } from "./uiRight";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useSyncExternalStore } from "react";
 import {
   cpuPercent, memoryPercent, openNetwork, paceText, paceWidth, paceWords, PRESENCE_WORDS,
@@ -110,13 +112,13 @@ export function NetworkTile({ node, self, current }: { node: NodeView; self: boo
   // This presentation of the node, for the brain to point at: the tile,
   // entered from the right-hand lane, and each reading on it.
   const ui = useUiTarget({ ref: { region: "right", view: "right.network", kind: "node", key: node.node_id },
-                           label: node.label, socket: { rail: "rail.right", side: "right" } });
+                           label: node.label, socket: RIGHT_SOCKET });
   return (
     <button type="button" data-node={node.node_id} ref={ui.whole}
             className={`compact-tile node-tile${self ? " self-tile" : ""}${
               current ? "" : " stale"}${selected ? " selected" : ""}`}
             aria-label={spoken(node, self, current, human.words)} aria-pressed={selected}
-            onClick={() => byHand("network.open", { kind: "node", nodeId: node.node_id })}>
+            {...bindingProps(bind("network.open", { kind: "node", nodeId: node.node_id }))}>
       <span className="tile-title" aria-hidden="true">
         <i ref={ui.part("presence")} className={`online-marker ${marker}`} />
         <span ref={ui.part("name")} className="tile-name">{node.label.toUpperCase()}</span>

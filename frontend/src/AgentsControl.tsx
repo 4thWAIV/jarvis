@@ -18,17 +18,29 @@
  * something further in its direction; their space is always kept, so nothing
  * moves when they appear or disappear. An up or down gesture on the list does the same: a
  * mouse wheel or trackpad swipe, or a finger swiped on a touch screen.
+ *
+ * The Active/All switch, the chevrons and the gestures are navigation, so
+ * they run registered commands (`agents.filter`, `agents.page`; uiRight.ts
+ * holds the list's state and their handlers), as the brain's requests do.
+ * Each row is a target the brain can point at (`agent`, keyed by session),
+ * and so are the list's switch and chevrons (`agentsList`). A row's
+ * activation switch chooses who a message goes to: it is not navigation
+ * and stays its own action.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AgentOrb } from "./AgentOrb";
 import { agentName } from "./agentName";
 import { PROVIDERS } from "./providers";
 import { agentMessage, agentsChanged, agentsLaidOut, listAgents, RAY_MS, setAgentActive,
          workingCount, type AgentRow } from "./agents";
+import { bind, bindingProps, runBinding } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
+import {
+  agentRows, agentsFirst, agentsFit, agentsListLeft, agentsShow, bringAgentIntoView, firstShown, lastFirst,
+  listedAgents, RIGHT_SOCKET, row,
+} from "./uiRight";
 
-type Show = "active" | "all";
-const SHOW_KEY = "jarvis.agents.show";
 // How far a gesture travels to move the list one agent. Trackpads send many
 // small wheel steps, so movement is added up until it reaches this.
 const GESTURE_STEP_PX = 40;
@@ -45,50 +57,40 @@ function rowsThatFit(space: HTMLElement, list: HTMLElement, downChevron: HTMLEle
   return Math.max(1, Math.floor((room + gap) / (row + gap)));
 }
 
-function readShow(): Show {
-  try {
-    return localStorage.getItem(SHOW_KEY) === "all" ? "all" : "active";
-  } catch {
-    return "active";
-  }
-}
-
-function writeShow(show: Show): void {
-  try {
-    localStorage.setItem(SHOW_KEY, show);
-  } catch {
-    // No storage here: the choice lasts until the page closes.
-  }
-}
-
 export function AgentsControl() {
-  const [agents, setAgents] = useState<AgentRow[]>([]);
-  const [show, setShow] = useState<Show>(readShow);
-  const [first, setFirst] = useState(0);
+  const agents = useSyncExternalStore(agentRows.subscribe, agentRows.get);
+  const showing = useSyncExternalStore(agentsShow.subscribe, agentsShow.get);
+  useSyncExternalStore(agentsFirst.subscribe, agentsFirst.get);
   // The agent JARVIS last sent a message to, kept in view while its ray
   // shows.
   const [messaged, setMessaged] = useState<string | null>(null);
-  const [visible, setVisible] = useState(1);
+  const visible = Math.max(1, useSyncExternalStore(agentsFit.subscribe, agentsFit.get));
   const spaceRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const gesture = useRef({ travel: 0, touchY: 0 });
-  const downRef = useRef<HTMLButtonElement>(null);
+  const downRef = useRef<HTMLButtonElement | null>(null);
+  const ui = useUiTarget({ ref: { region: "right", view: "right.agents", kind: "agentsList" },
+                           label: "Agents list", socket: RIGHT_SOCKET });
 
   // The space changes with the window and with anything above it; the list
-  // changes when its rows change size. Either re-measures.
+  // changes when its rows change size. Either re-measures. Leaving the page,
+  // the list goes back to its top.
   useLayoutEffect(() => {
     const space = spaceRef.current, list = listRef.current, down = downRef.current;
     if (!space || !list || !down) return;
-    const measure = () => setVisible(rowsThatFit(space, list, down));
+    const measure = () => agentsFit.set(rowsThatFit(space, list, down));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(space);
     observer.observe(list);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      agentsListLeft();
+    };
   }, []);
 
   const reconcile = useCallback(() => {
-    listAgents().then(setAgents).catch(() => {});
+    listAgents().then(agentRows.set).catch(() => {});
   }, []);
 
   // Read when the list opens, and again on every "agents" hint and
@@ -107,12 +109,6 @@ export function AgentsControl() {
     setTimeout(() => setMessaged((now) => (now === sessionId ? null : now)), RAY_MS);
   }), []);
 
-  const choose = (next: Show) => {
-    setShow(next);
-    setFirst(0);
-    writeShow(next);
-  };
-
   const toggle = (agent: AgentRow) => {
     // Refused or not, the list is read again, so the switch shows what is
     // true rather than what was asked for.
@@ -122,12 +118,12 @@ export function AgentsControl() {
     });
   };
 
-  const listed = show === "all" ? agents : agents.filter((a) => a.active);
+  const listed = listedAgents();
   const overflows = listed.length > visible;
   // The first row showing, held between the top and the last place that
   // still fills every row, as the list changes size.
-  const last = Math.max(0, listed.length - visible);
-  const start = Math.min(Math.max(first, 0), last);
+  const last = lastFirst();
+  const start = firstShown();
   // Down (wheel down, or a finger swiped up) shows the next agents, as
   // scrolling would; up shows the previous ones.
   const gestureMoved = (dy: number) => {
@@ -135,7 +131,7 @@ export function AgentsControl() {
     while (Math.abs(gesture.current.travel) >= GESTURE_STEP_PX) {
       const step = Math.sign(gesture.current.travel);
       gesture.current.travel -= step * GESTURE_STEP_PX;
-      cycle(step);
+      cycle(step > 0 ? "next" : "previous");
     }
   };
 
@@ -147,13 +143,8 @@ export function AgentsControl() {
   // user's own up and down, so he can still move the list. Before the page
   // paints, so the agent is never seen out of view.
   useLayoutEffect(() => {
-    if (!messaged) return;
-    const at = listed.findIndex((a) => a.session_id === messaged);
-    if (at >= 0 && overflows && !shown.some((a) => a.session_id === messaged)) {
-      setFirst(Math.min(at, last));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messaged, agents, show, visible]);
+    if (messaged) bringAgentIntoView(messaged);
+  }, [messaged, agents, showing, visible]);
 
   // Before the page paints this commit, so the ray is never seen ending at
   // a row that now shows another agent.
@@ -161,26 +152,26 @@ export function AgentsControl() {
     agentsLaidOut.set(agentsLaidOut.get() + 1);
   });
 
-  // From the latest position, so two quick presses move two places; it stops
-  // at either end.
-  const cycle = (step: number) => {
-    if (!overflows) return;
-    setFirst((f) => Math.min(Math.max(Math.min(Math.max(f, 0), last) + step, 0), last));
+  // From the latest position (the command reads it as it runs), so two quick
+  // presses move two places; it stops at either end.
+  const cycle = (direction: "previous" | "next") => {
+    if (overflows) runBinding(bind("agents.page", { direction }));
   };
 
   return (
-    <div id="agents-control">
-      <div className="agents-show" role="group" aria-label="Show agents">
+    <div id="agents-control" ref={ui.whole}>
+      <div className="agents-show" role="group" aria-label="Show agents" ref={ui.part("filter")}>
         {(["active", "all"] as const).map((option) => (
           <button key={option} type="button"
-                  className={show === option ? "selected" : ""}
-                  aria-pressed={show === option}
-                  onClick={() => choose(option)}>
+                  className={showing === option ? "selected" : ""}
+                  aria-pressed={showing === option}
+                  {...bindingProps(bind("agents.filter", { show: option }))}>
             {option === "active" ? "Active" : "All"}
           </button>
         ))}
       </div>
-      <Chevron direction="up" hidden={!overflows || start === 0} onClick={() => cycle(-1)} />
+      <Chevron direction="up" hidden={!overflows || start === 0} onClick={() => cycle("previous")}
+               ref={ui.part("previous")} />
       <div className="agents-space" ref={spaceRef}>
         <ul className="agents-list" ref={listRef}
             onWheel={(e) => gestureMoved(e.deltaY)}
@@ -197,34 +188,54 @@ export function AgentsControl() {
               shows instead of rebuilding it, so each row's orb (a WebGL
               canvas) is made once rather than on every press. */}
           {shown.map((agent, row) => (
-            <li key={row} className={agent.active ? "active" : ""}
-                data-session-id={agent.session_id}>
-              <button type="button" className="agent-entry" disabled>
-                <AgentOrb agent={agent} />
-                <span className="agent-name">{agentName(agent)}</span>
-                {/* Its needs-board count, in the upper right, zero included. */}
-                <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
-                <AgentProvider provider={agent.provider} />
-                {(agent.subagents_working ?? 0) > 0 && (
-                  <span className="agent-subagents">
-                    {workingCount(agent.subagents_working!, !!agent.subagents_capped)}</span>
-                )}
-              </button>
-              {/* Only in the All view; in Active the agent's box takes the
-                  whole row. */}
-              {show === "all" && (
-                <button type="button" role="switch" aria-checked={agent.active}
-                        className="agent-switch"
-                        title={agent.active ? "Deactivate" : "Activate"}
-                        onClick={() => toggle(agent)} />
-              )}
-            </li>
+            <AgentItem key={row} agent={agent} switchable={showing === "all"} onToggle={toggle} />
           ))}
         </ul>
-        <Chevron direction="down" hidden={!overflows || start >= last} onClick={() => cycle(1)}
-                 ref={downRef} />
+        <Chevron direction="down" hidden={!overflows || start >= last} onClick={() => cycle("next")}
+                 ref={(el) => { downRef.current = el; ui.part("next")(el); }} />
       </div>
     </div>
+  );
+}
+
+/** One agent's row, and its presentation for the brain to point at: the
+ *  row, its name, and its orb, which draws its state. A row that shows
+ *  another agent after the list moves registers as that agent. */
+function AgentItem({ agent, switchable, onToggle }: {
+  agent: AgentRow; switchable: boolean; onToggle: (agent: AgentRow) => void;
+}) {
+  const ui = useUiTarget({ ref: { region: "right", view: "right.agents", kind: "agent", key: agent.session_id },
+                           label: agentName(agent), socket: RIGHT_SOCKET });
+  // The agent's box is the whole; its orb is AgentOrb's own canvas, looked
+  // for in this row only.
+  const entry = (el: HTMLButtonElement | null) => {
+    row(ui)(el);
+    const canvas = el?.querySelector("canvas.agent-orb") ?? null;
+    ui.part("orb")(canvas);
+    ui.part("state")(canvas);
+  };
+  return (
+    <li className={agent.active ? "active" : ""} data-session-id={agent.session_id}>
+      <button type="button" className="agent-entry" disabled ref={entry}>
+        <AgentOrb agent={agent} />
+        <span className="agent-name" ref={ui.part("name")}>{agentName(agent)}</span>
+        {/* Its needs-board count, in the upper right, zero included. */}
+        <span className={agent.needs > 0 ? "agent-needs" : "agent-needs none"}>{agent.needs}</span>
+        <AgentProvider provider={agent.provider} />
+        {(agent.subagents_working ?? 0) > 0 && (
+          <span className="agent-subagents">
+            {workingCount(agent.subagents_working!, !!agent.subagents_capped)}</span>
+        )}
+      </button>
+      {/* Only in the All view; in Active the agent's box takes the
+          whole row. */}
+      {switchable && (
+        <button type="button" role="switch" aria-checked={agent.active}
+                className="agent-switch"
+                title={agent.active ? "Deactivate" : "Activate"}
+                onClick={() => onToggle(agent)} />
+      )}
+    </li>
   );
 }
 
@@ -239,6 +250,8 @@ function Chevron({ direction, hidden, onClick, ref }: {
             title={direction === "up" ? "Previous agents" : "More agents"}
             aria-hidden={hidden} tabIndex={hidden ? -1 : 0}
             style={{ visibility: hidden ? "hidden" : "visible" }}
+            data-ui-command="agents.page"
+            data-ui-args={JSON.stringify({ direction: direction === "up" ? "previous" : "next" })}
             onClick={onClick}>
       <svg width="32" height="14" viewBox="0 0 32 14" fill="none" stroke="currentColor"
            strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

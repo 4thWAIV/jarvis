@@ -396,6 +396,50 @@ wheel build, and `tests/ui_validate_cases.mts` beyond what
     the hidden view is made inert (true before this work; the plan does not
     say).
 
+## coverage-right (branch `ui-nav-coverage-right`)
+
+Rows and their states are in coverage.md, "Right panel". New files:
+`frontend/src/uiRight.ts` (the right socket, the row ref, the Agents
+list's state, `agents.*` handlers and revealer, node-testable),
+`tests/ui_right_cases.mts`, `tests/test_ui_right.py`,
+`tests/test_voice_page_right.py`. Declared: `agents.filter`,
+`agents.page`, `agents.reveal`, `queue.history`, `queue.history.more`, and
+the main.* reveals of `queueThread`, `subsystem` and `voice`.
+`uiContract.ts` regenerated.
+
+Tests (local): `npx tsc --noEmit` pass; `pytest tests/test_ui_right.py`
+2 passed; `pytest -m page tests/test_voice_page_right.py` 5 passed;
+`pytest -m page` agents_list_fits, queue, folders, workflows, subsystems,
+voice_health, network, navigation, pipeline, rays, human_rays, subagents,
+diagnostics: 119 passed; test_ui_contract, test_ui_tools, test_header_lines,
+test_brain_page_parity, test_dead_code_removed, test_anchored_patterns:
+pass; test_ui_navigation: 1 failure, fixed by request 1 below.
+
+Shared changes requested (not made by this worker):
+
+1. `tests/ui_navigation_cases.mts`: add
+   `await import("../frontend/src/uiRight.ts");` after the agents.ts import,
+   so "no declared command without a handler" sees the agents handlers
+   (checked: the cases then pass). Until then
+   `test_navigation_cases_pass_as_a_person_and_as_the_brain` fails on this
+   branch listing `agents.filter`, `agents.page`, `agents.reveal`.
+2. workflows.json (coverage-main): declare `workflows.showDone {shown:
+   boolean}` (view right.workflows, effect list.filtered); key the
+   `subagent` kind `keyOf ["session", "subagent"]`. Then WorkflowsView's
+   toggle binds it (the `showDone` store is ready) and subagent rows
+   register.
+3. folders.json (coverage-main): declare `folders.panel.search {text:
+   string, may be empty}` (view right.folders, effect list.filtered);
+   FoldersPanel's `search` store is ready. The string type needs a
+   0-length allowance or a separate clear.
+4. uiPipeline.ts `leafEdge` (pipeline-animation): reserved controls that
+   are the addressed part, or inside it, should not block its leaf
+   (`agentsList` filter/previous/next are refused `no-route` today); and a
+   leaf to a part beside its whole (the workflow row's Dismiss ×).
+5. uiRegistry.ts (integrator, optional): `useUiTarget` throws on a key that
+   fails its pattern, which would take the page down; a warning and no
+   target would be safer for data-derived keys.
+
 ## Next action
 
 Start the coverage workers (right, main, left-settings) from the
