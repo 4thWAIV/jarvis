@@ -8,6 +8,7 @@
  * The same four files back frontend/dashboard-preview.html, so the preview
  * page can never drift from what ships. */
 @import "./theme/tokens.css";
+@import "../theme.css";
 @import "./theme/shell.css";
 @import "./theme/primitives.css";
 @import "./theme/views.css";

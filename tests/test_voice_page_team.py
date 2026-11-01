@@ -99,7 +99,7 @@ async def test_connecting_shows_the_code_and_opens_the_approval_page(page_url):
         # Read by eye against the team server's page: light text, not the
         # panel's dark default.
         colour = await page.evaluate("getComputedStyle(document.querySelector('.team-code')).color")
-        assert colour == "rgb(248, 250, 252)", colour
+        assert colour == "rgb(228, 237, 247)", colour  # Classic primary text
         assert ("POST /connect", {"server_url": "https://team.example"}) in server.team_posts
         await browser.close()
 
@@ -134,7 +134,7 @@ async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page
         assert await team.locator(".team-member b").count() == 0
         # Text with no colour of its own is light, not the browser's black.
         name = await team.locator(".team-member-name").first.evaluate("e => getComputedStyle(e).color")
-        assert name == "rgba(255, 255, 255, 0.85)", name
+        assert name == "rgb(228, 237, 247)", name  # Themed light default
         await team.get_by_role("button", name="Make administrator").first.click()
         # Refused, it says so in that member's own row.
         refusal = team.locator(".team-member", has_text="<b>bold</b>").get_by_role("alert")

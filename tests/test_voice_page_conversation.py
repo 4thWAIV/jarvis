@@ -176,7 +176,8 @@ async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_url):
         assert got["historyWho"] == ["user", "jarvis"], got
         colours = await page.evaluate("""() => [...document.querySelectorAll('.history-turn')]
           .map(e => getComputedStyle(e).color)""")
-        assert colours[0].startswith("rgba(255, 255, 255") and colours[1].startswith("rgba(14, 165, 233"), colours
+        # Primary and assistant roles stay distinct in the default theme.
+        assert colours == ["rgb(228, 237, 247)", "rgb(115, 200, 250)"], colours
         await browser.close()
 
 
@@ -249,7 +250,7 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         (said, sent) = opened
         assert said[0] == "tell hammer to ship it" and sent[0] == "Ship it.", opened
         assert said[2] < sent[2], "what he said comes first, then the capture"
-        assert said[1].startswith("rgba(210, 214, 222"), said        # quiet grey
+        assert said[1] == "rgb(167, 181, 198)", said                # readable secondary text
         assert sent[1].startswith("rgba(251, 191, 36"), sent          # the transmission's amber
         await page.wait_for_timeout(400)           # the crossfade from his words
         text = await page.evaluate("document.querySelector('.capture-box .capture-body').textContent")

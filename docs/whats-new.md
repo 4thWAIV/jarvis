@@ -1,6 +1,19 @@
 # The new JARVIS workspace
 
-Updated 2026-10-31. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
+
+## Two appearances across the app
+
+Settings → System → Appearance offers Classic Refined, a quiet navy palette, and
+Graphite, a neutral dark palette with a soft blue-violet accent. Conversation,
+folders, agent threads, Queue/review, workflows, Network, Diagnostics, settings
+and the run dashboard share readable text, surfaces and focus treatments. Tim's
+layout, type sizes, controls and interactions remain in place. The orbs and
+semantic state colors keep their identities.
+
+The choice is saved in this browser, applies before the page is drawn and follows
+changes made in another JARVIS tab on the same origin. It does not change server
+settings or anyone else's appearance.
 
 ## Conversation is the main view
 

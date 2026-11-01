@@ -1,0 +1,57 @@
+/* Paint only. Layout, type metrics, animation and semantic state hues stay in
+   their existing stylesheets. Both entry points apply the preference in <head>. */
+:root, :root[data-theme="classic"] {
+  color-scheme: dark;
+  --ui-ground: #080d14;
+  --ui-ground-rgb: 8, 13, 20;
+  --ui-surface: #0e1622;
+  --ui-raised: #162234;
+  --ui-text: #e4edf7;
+  --ui-text-rgb: 228, 237, 247;
+  --ui-secondary: #a7b5c6;
+  --ui-muted: #8190a3;
+  --ui-accent: #73c8fa;
+  --ui-accent-rgb: 115, 200, 250;
+  --ui-edge: #607892;
+  --ui-divider: #34485f;
+  --ui-inset: #090f18;
+}
+:root[data-theme="graphite"] {
+  --ui-ground: #101114;
+  --ui-ground-rgb: 16, 17, 20;
+  --ui-surface: #181a1f;
+  --ui-raised: #22252c;
+  --ui-text: #e6e8ec;
+  --ui-text-rgb: 230, 232, 236;
+  --ui-secondary: #b2b7c2;
+  --ui-muted: #929ba9;
+  --ui-accent: #a8bfff;
+  --ui-accent-rgb: 168, 191, 255;
+  --ui-edge: #768293;
+  --ui-divider: #4e5663;
+  --ui-inset: #121419;
+}
+/* The run dashboard already has a semantic vocabulary. Bridge colors only;
+   keep its spacing, type, radius, tone states and shell geometry untouched. */
+:root {
+  /* Team owner cyan remains an identity, separate from the chosen theme. */
+  --ui-owner-rgb: 14, 165, 233;
+  --ui-on-owner: #02131f;
+  --ui-on-signal: #0b0b10;
+  --ground: var(--ui-ground);
+  --ground-lift: var(--ui-surface);
+  --surface: var(--ui-surface);
+  --surface-raised: var(--ui-raised);
+  --surface-sunk: var(--ui-inset);
+  --scrim: rgba(var(--ui-ground-rgb), 0.96);
+  --scrim-soft: rgba(var(--ui-ground-rgb), 0.75);
+  --edge: var(--ui-divider);
+  --edge-strong: var(--ui-edge);
+  --edge-hot: var(--ui-accent);
+  --accent: var(--ui-accent);
+  --accent-bright: var(--ui-text);
+  --text: var(--ui-text);
+  --text-dim: var(--ui-secondary);
+  --text-faint: var(--ui-muted);
+  --tone-soft: rgba(var(--ui-accent-rgb), 0.12);
+}

@@ -1,14 +1,14 @@
-# Workspace visual polish proposal
+# Workspace visual polish
 
-Status: researched proposal; no visual implementation approved or delivered.
-Matt requested a headless review of the **entire JARVIS interface**, preserving
-Tim's layout, composition and interaction model. The conversation screenshot is
-an example of the problem, not the scope boundary.
+Status: implemented in this checkout; visual acceptance remains with the user.
+The pass covers the **entire JARVIS interface**, preserving Tim's layout,
+composition and interaction model. The conversation screenshot supplied for the
+review was an example of the problem, not the scope boundary.
 
 ## Recommendation
 
-Use the existing React and CSS, with semantic color tokens. Add no component
-library for this pass. The main workspace has many individually specified colors;
+The implementation uses the existing React and CSS, with semantic color tokens
+and no new component library or dependencies. The main workspace had many individually specified colors;
 the separate dashboard already demonstrates useful token roles in
 `frontend/src/dashboard/theme/tokens.css`. Reuse its principles, not its stylesheet:
 its font metrics and geometry differ from the main workspace.
@@ -25,8 +25,9 @@ No chat bubbles, new layout, replacement icon suite, font download or new motion
 - Speaking/composer/captures/sources: consistent surfaces and edges, visible
   focus-within treatment, restrained inactive borders and existing semantic tints.
 - Header/tabs/menu: consistent selected, hover, disabled and keyboard focus states.
-- Orb/microphone/voice controls: preserve animation/state hues and transfer colors;
-  match canvas background to theme ground, without recreating the renderer.
+- Orb/microphone/voice controls: preserve animation/state hues and transfer colors.
+  The canvases were already transparent and inherit the themed ground; no renderer
+  or animation changes were necessary.
 - Brains/usage/agent rows: improve numeric and secondary-label contrast within the
   existing measured row geometry and provider marks.
 - Folders/files: consistent field, row, chip, loading/empty/error treatment.
@@ -39,7 +40,7 @@ No chat bubbles, new layout, replacement icon suite, font download or new motion
   consistent scrims, unchanged modal and navigation geometry.
 - Footer/dashboard: compatible color roles without rewriting dashboard structure.
 
-## Theme candidates for review
+## Theme choices
 
 | Role | Classic Refined | Graphite |
 |---|---|---|
@@ -53,22 +54,24 @@ No chat bubbles, new layout, replacement icon suite, font download or new motion
 | Functional edge | `#607892` | `#768293` |
 | Decorative divider | `#34485F` | `#4E5663` |
 
-These are proposals, not selected product colors. Shared success/warning/error
-colors and recognizable blue JARVIS orb remain in both themes. Actual composited
-colors must be checked; solid palette contrast is not whole-app accessibility.
+Classic Refined is the default. Settings → System → Appearance switches to
+Graphite or back without remounting the app. The preference is local to the
+browser, applies before the first paint and follows changes in other tabs on the
+same origin, including the run dashboard. Unknown saved values fall back to
+Classic; unavailable storage still permits a choice for the current page.
 
-## Bounded delivery sequence
+Shared success/warning/error colors, owner/correspondent identity colors and the
+recognizable blue JARVIS orb remain in both themes. Saturated owner and failure
+badges use dark foregrounds; cancelled badges use light secondary text. Actual
+composited colors matter; palette checks are not whole-app accessibility certification.
 
-1. Capture baseline screenshots and bounding boxes. Introduce semantic color
-   tokens without changing geometry or type metrics.
-2. Apply consistent surface and control states across every surface above.
-3. Preview both palettes on full workspace, Conversation, Queue review, Settings
-   and Diagnostics for Matt's judgment before completing token replacement.
-4. If accepted, add a native theme select inside existing Settings/System. Persist
-   locally in the browser, apply before React mounts, tolerate unknown values and
-   storage errors. No new backend route or team synchronization.
-5. Bridge the selected ground color into the orb canvas without changing its
-   state mapping, renderer lifetime, animation loop or reduced-motion behavior.
+## Implementation boundaries
+
+`frontend/src/theme.css` holds shared paint roles and bridges the dashboard's
+existing roles. All original geometry and typography declarations are retained.
+The Appearance select is appended after existing System controls so their
+positions stay intact. Theme changes make no backend request. Orb/ray palettes,
+renderer lifetime, animation loops and reduced-motion behavior are unchanged.
 
 ## Library research
 
@@ -79,13 +82,21 @@ specific deficient interaction later, but won't supply this visual polish.
 variables; adopting its tooling/components would create a larger migration and
 make preserving geometry harder. Retain current controls for this pass.
 
-## Acceptance
+## Verification and visual review
 
-Compare bounding boxes for columns, header, composer/speaking boxes, agent rows,
-footer and overlays. Run existing layout/overflow tests; inspect both themes at
-normal/narrow desktop widths and 200% zoom. Exercise keyboard focus, contrast,
-loading/empty/error/disconnected states and preference reload. Theme changes must
-not add network requests, renderer recreation or animation loops.
+Baseline captures compare columns, header, composer/speaking boxes, agent rows,
+footer and existing detail panels against both themes, including typography and
+spacing metrics. The capture script accepts `--theme classic` or `--theme graphite`
+and `--metrics` writes adjacent geometry JSON. Browser tests cover preference reload,
+unknown/denied storage, dashboard tab updates, narrow widths, focus, draft and
+panel preservation, canvas identity and stable connections. Existing browser
+journeys cover layout/overflow, conversation, settings, folders, Queue/review,
+workflow, Network and diagnostic states. Screenshots use fictional fixtures and
+include empty and failed states; they are not live account evidence.
+
+Human judgment on the finished appearance and OS/browser-specific rendering
+remains a review step. This pass deliberately retains existing responsive layout
+behavior, including tight space at extreme zoom, rather than redesigning it.
 
 Use W3C targets for [normal text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),
 [meaningful control/state contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html)

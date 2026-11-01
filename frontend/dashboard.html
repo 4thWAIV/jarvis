@@ -2,6 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Before styles/first paint; storage can be unavailable in private contexts.
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("jarvis.theme") === "graphite" ? "graphite" : "classic";
+      } catch { document.documentElement.dataset.theme = "classic"; }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>JARVIS · Run Control</title>
     <link rel="stylesheet" href="/src/dashboard/style.css" />

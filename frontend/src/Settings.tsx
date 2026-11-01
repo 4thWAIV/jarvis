@@ -15,6 +15,7 @@ import { BrainsSection } from "./BrainsSection";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { StatusDot, type Dot } from "./StatusDot";
+import { theme, setTheme, type Theme } from "./theme";
 import { createStore } from "./store";
 
 export const settingsOpen = createStore(false);
@@ -345,6 +346,7 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
 }
 
 function SystemSection({ status, statusFailed }: { status: Status | null; statusFailed: boolean }) {
+  const selectedTheme = useSyncExternalStore(theme.subscribe, theme.get);
   const detail = statusFailed ? "no answer from the server"
     : status ? `port ${status.server_port} | up ${formatUptime(status.uptime_seconds)}` : "";
   return (
@@ -361,6 +363,15 @@ function SystemSection({ status, statusFailed }: { status: Status | null; status
           <span>{status && !statusFailed ? status.server_port : "—"}</span></div>
         <div className="sysinfo-row"><span className="sysinfo-label">Uptime</span>
           <span>{status && !statusFailed ? formatUptime(status.uptime_seconds) : "—"}</span></div>
+      </div>
+      <div className="settings-field">
+        <label htmlFor="workspace-theme">Appearance</label>
+        <select id="workspace-theme" value={selectedTheme}
+                onChange={(e) => setTheme(e.target.value as Theme)}>
+          <option value="classic">Classic Refined</option>
+          <option value="graphite">Graphite</option>
+        </select>
+        <p className="settings-hint">Choose the colors for this browser.</p>
       </div>
     </section>
   );

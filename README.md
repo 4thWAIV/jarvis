@@ -39,6 +39,10 @@ The [full roadmap](docs/roadmap.md) separates current capabilities, next develop
 
 Workflow details include phases, tasks, progress, attached transcripts, waits, blockers, decisions and events. Voice diagnostics show pipeline health and incident history, with notification analysis and a quiet-page comparison. See [what's new](docs/whats-new.md) for a short guide.
 
+Choose **Classic Refined** or **Graphite** in Settings → System → Appearance.
+Both cover the workspace and run dashboard while preserving their layout and
+controls. The choice stays in this browser and applies on reload.
+
 These are fresh captures of the actual React interface, rendered with fictional conversation, workflow, agent and diagnostic data. They do not show a live account or production measurements.
 
 ### Conversation and agents

@@ -8,6 +8,7 @@ or into the folder given as its one argument.
 No physical microphone, model, external service or live user data is used.
 """
 import asyncio
+import argparse
 import functools
 import http.server
 import json
@@ -79,7 +80,7 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-async def capture(url, output):
+async def capture(url, output, theme=None, capture_metrics=False):
     summary,history,workflow,week,conversation=fixtures()
     now=time.time()
     inside,lone=workflow_subagents(now),lone_subagents(now)
@@ -87,6 +88,30 @@ async def capture(url, output):
         browser=await p.chromium.launch(headless=True,args=BROWSER_ARGS)
         try:
             page=await browser.new_page(viewport={'width':1600,'height':1000},device_scale_factor=1)
+            if theme:
+                await page.add_init_script("localStorage.setItem('jarvis.theme', " + json.dumps(theme) + ");")
+            async def snapshot(name):
+                await page.screenshot(path=str(output/name))
+                if not capture_metrics:
+                    return
+                metrics = await page.evaluate("""() => {
+                  const selectors = ['#left-column','#orb-control','#orb-canvas','#right-column',
+                    '.centre-tabs','#conversation','.conversation-speaking','.conversation-hearing',
+                    '#footer','.agents-list li:first-child','#workflow-detail','#voice-diagnostics',
+                    '.agent-thread','.settings-panel.settings-view','.settings-nav'];
+                  const props = ['display','position','boxSizing','fontFamily','fontSize','fontWeight',
+                    'lineHeight','letterSpacing','paddingTop','paddingRight','paddingBottom','paddingLeft',
+                    'marginTop','marginRight','marginBottom','marginLeft','borderTopWidth',
+                    'borderRightWidth','borderBottomWidth','borderLeftWidth','gap','gridTemplateColumns',
+                    'gridTemplateRows','whiteSpace','overflowX','overflowY','transform'];
+                  return Object.fromEntries(selectors.flatMap(s => {
+                    const e=document.querySelector(s); if(!e || !e.getClientRects().length) return [];
+                    const r=e.getBoundingClientRect(), c=getComputedStyle(e);
+                    return [[s,{rect: ['x','y','width','height'].map(k=>Math.round(r[k]*10)/10),
+                      style: Object.fromEntries(props.map(k=>[k,c[k]]))}]];
+                  }));
+                }""")
+                (output/(name+'.json')).write_text(json.dumps(metrics,indent=2))
             errors=[]
             page.on('pageerror',lambda e:errors.append(str(e)))
             # Chromium's synthetic microphone and the test recognition socket.
@@ -142,26 +167,26 @@ async def capture(url, output):
             await page.wait_for_selector('.agents-list li')
             await page.evaluate('document.fonts.ready')
             await page.wait_for_timeout(1200)
-            await page.screenshot(path=str(output/'workspace-conversation.png'))
+            await snapshot('workspace-conversation.png')
             await page.locator('#agents-control').screenshot(path=str(output/'workspace-agents.png'))
             await page.click('.right-tabs [role=tab][title=Workflows]')
             await page.click('.workflow-row')
             await page.wait_for_selector('#workflow-detail .workflow-detail-name')
             await page.wait_for_timeout(700)
-            await page.screenshot(path=str(output/'workspace-workflow.png'))
+            await snapshot('workspace-workflow.png')
             await page.click('.workflow-tabs [role=tab][title=Transcript]')
             await page.wait_for_selector('.workflow-transcript .transcript-entry.role-agent')
             await page.wait_for_timeout(500)
-            await page.screenshot(path=str(output/'workspace-workflow-transcript.png'))
+            await snapshot('workspace-workflow-transcript.png')
             await page.click('.subagent-row')
             await page.wait_for_selector('.subagent-detail .transcript-entry.role-agent')
             await page.wait_for_timeout(700)
-            await page.screenshot(path=str(output/'workspace-subagent.png'))
+            await snapshot('workspace-subagent.png')
             await page.click('.right-tabs [role=tab][title=Diagnostics]')
             await page.click('.voice-summary-open')
             await page.wait_for_selector('#voice-diagnostics')
             await page.wait_for_timeout(700)
-            await page.screenshot(path=str(output/'workspace-diagnostics.png'))
+            await snapshot('workspace-diagnostics.png')
             if errors: raise RuntimeError('\n'.join(errors))
             print('Captured Conversation, Agents, Workflow, its Transcript, a Subagent and '
                   'Diagnostics from the current frontend.')
@@ -170,7 +195,12 @@ async def capture(url, output):
 
 
 def main():
-    output=Path(sys.argv[1]) if len(sys.argv)>1 else ROOT/'docs/images'
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output',nargs='?',type=Path,default=ROOT/'docs/images')
+    parser.add_argument('--theme',choices=['classic','graphite'])
+    parser.add_argument('--metrics',action='store_true',help='Write geometry/type JSON beside each capture')
+    args=parser.parse_args()
+    output=args.output
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='jarvis-docs-') as tmp:
         subprocess.run(['npx','vite','build','--outDir',tmp,'--emptyOutDir','--logLevel','error'],
@@ -178,7 +208,7 @@ def main():
         server=http.server.ThreadingHTTPServer(('127.0.0.1',0),
             functools.partial(QuietHandler,directory=tmp))
         threading.Thread(target=server.serve_forever,daemon=True).start()
-        try: asyncio.run(capture(f'http://127.0.0.1:{server.server_address[1]}/',output))
+        try: asyncio.run(capture(f'http://127.0.0.1:{server.server_address[1]}/',output,args.theme,args.metrics))
         finally: server.shutdown();server.server_close()
 
 if __name__=='__main__': main()

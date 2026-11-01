@@ -39,10 +39,12 @@ Windows local onboarding remains backlog work. Tim has supplied a native Windows
 Windows VM or port is implemented here. The handoff is for the operator's Claude
 session through JARVIS. A Mac ARM VM would not establish x64 desktop support.
 
-The [whole-workspace visual polish proposal](planning/ui-polish.md) covers all
+The [whole-workspace visual polish](planning/ui-polish.md) covers all
 panels, settings and states while preserving Tim's composition, geometry and
-interactions. Two restrained themes are proposed for review; no theme, layout or
-component-framework migration is implemented by this plan.
+interactions. Classic Refined and Graphite are available in Settings → System →
+Appearance, with a browser-local preference shared by the workspace and dashboard.
+The implementation changes paint and focus treatments; human visual review
+remains open. No layout or component-framework migration is part of this pass.
 
 ## From the prototype to Denice
 

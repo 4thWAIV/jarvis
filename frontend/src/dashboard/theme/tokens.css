@@ -50,7 +50,7 @@
 
   /* -- Default tone. Overridden by the tone-* classes below. ------------- */
   --tone:            var(--accent);
-  --tone-soft:       rgba(76, 168, 232, 0.14);
+  --tone-soft:       rgba(var(--ui-accent-rgb), 0.14);
 
   /* -- Glow. Restrained on purpose: a hologram is thin light, not neon. -- */
   --glow-sm:         0 0 6px -1px var(--tone);
@@ -112,12 +112,12 @@
 /* -- Tone classes ------------------------------------------------------------
    Apply to any primitive to recolour its state-carrying parts. `--tone-soft`
    is the same hue at fill strength (backgrounds, tracks, wash).             */
-.tone-accent { --tone: var(--accent);      --tone-soft: rgba(76, 168, 232, 0.14); }
+.tone-accent { --tone: var(--accent);      --tone-soft: rgba(var(--ui-accent-rgb), 0.14); }
 .tone-ok     { --tone: var(--signal-ok);   --tone-soft: rgba(62, 224, 166, 0.13); }
 .tone-warn   { --tone: var(--signal-warn); --tone-soft: rgba(255, 182, 72, 0.13); }
 .tone-bad    { --tone: var(--signal-bad);  --tone-soft: rgba(255, 90, 110, 0.13); }
 .tone-idle   { --tone: var(--signal-idle); --tone-soft: rgba(127, 143, 166, 0.12); }
-.tone-dim    { --tone: var(--text-faint);  --tone-soft: rgba(219, 232, 245, 0.07); }
+.tone-dim    { --tone: var(--text-faint);  --tone-soft: rgba(var(--ui-text-rgb), 0.07); }
 
 /* -- Reduced motion ----------------------------------------------------------
    Nothing in this UI depends on movement to be understood: every animated
