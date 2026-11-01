@@ -175,6 +175,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "7151dd997fe89a1cfbc2aa2eb04a8bf7277e856e6da7744f42dcaaeeddc96004",  # attach_message_files: files onto a saved draft
     "9cf23b8d034d94dc4494f5f6d3a445c1fdc198f19798a87c89fd001bcd45861a",  # Spanish clear command: empezar de cero, then sí
     "c13810ab6c2f8d40d4203738e54a5506ddbd2d5bea81663c79966a220c9623ac",  # update_status, update_jarvis
+    "50c30b27676ea842b717d8e82d24b95db95f7eb073d8baf18a18a51b9f33c79e",  # Spanish clear command with update_status, update_jarvis
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
