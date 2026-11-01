@@ -106,6 +106,7 @@ def readable_text(text: str, known: set[str]) -> tuple[str, list[str]]:
     Numeric identifiers are read digit by digit; text shown to the user is
     unchanged. This is deliberately an English preset, not transliteration.
     """
+    text = re.sub(r"(?<=\d)\.(?=\d)", " point ", text).replace("%", " percent ")
     spelled = []
     def word(match):
         value = match.group().replace("’", "'")

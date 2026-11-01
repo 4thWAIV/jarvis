@@ -109,3 +109,10 @@ def test_unknown_names_and_numbers_are_spelled_instead_of_skipped():
     assert spelled == ['42', 'Denice', 'and', 'i9']
     with pytest.raises(ValueError, match='cannot pronounce'):
         local_tts.readable_text('日本語', known)
+
+
+
+def test_decimal_and_percent_keep_their_meaning():
+    known = set('four two five point percent'.split())
+    text, _ = local_tts.readable_text('42.5%', known)
+    assert text.strip() == 'four two point five percent'
