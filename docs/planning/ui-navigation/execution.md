@@ -407,6 +407,14 @@ list's state, `agents.*` handlers and revealer, node-testable),
 the main.* reveals of `queueThread`, `subsystem` and `voice`.
 `uiContract.ts` regenerated.
 
+Tests (local): `npx tsc --noEmit` pass; `pytest tests/test_ui_right.py`
+2 passed; `pytest -m page tests/test_voice_page_right.py` 5 passed;
+`pytest -m page` agents_list_fits, queue, folders, workflows, subsystems,
+voice_health, network, navigation, pipeline, rays, human_rays, subagents,
+diagnostics: 119 passed; test_ui_contract, test_ui_tools, test_header_lines,
+test_brain_page_parity, test_dead_code_removed, test_anchored_patterns:
+pass; test_ui_navigation: 1 failure, fixed by request 1 below.
+
 Shared changes requested (not made by this worker):
 
 1. `tests/ui_navigation_cases.mts`: add
