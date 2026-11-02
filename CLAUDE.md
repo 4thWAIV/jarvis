@@ -315,6 +315,32 @@ voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent) and `mic-check-page/` (page).
 
+## Collaboration bundles
+Under construction (branch `feature/collaboration-bundles`): any file a
+teammate sends, a ZIP with no manifest included, can be inspected and read
+without running anything. The shared contract is `bundle_contract.py`: the
+typed JSON of every bundle route (Classification, MemberPage, TextPage,
+Preview, PreflightResult, ReviewState), the fixed formats, operations,
+support and reason codes, the opaque `member_id` (from the attachment's
+SHA-256 and the member's checked path) and continuation, and `BRAIN_TOOLS`,
+which says for each bundle tool whether it is an ACTING_TOOL, what it
+taints and which route calls the same service. The page's copy is
+generated into `frontend/src/bundleContract.ts` by
+`scripts/generate_messaging_contract.py`. The pieces, each a skeleton until
+its lane fills it: `bundle_readers/` (one reader per format and the
+registry; PDF through PDFKit in JXA, no new dependency), `bundle_cache.py`
+(derived output keyed by owner, attachment hash, member, reader version
+and options), `bundle_inspection.py` (the one service: open, classify,
+list, read, preview, render, reached only through `messaging_files`),
+`bundle_api.py` (the routes under
+`/api/team/messages/{message_id}/attachments/{attachment_id}/bundle`),
+`bundle_capabilities.py` (what this node can read, on its node update),
+`bundle_preflight.py` (the sender's readiness), `bundle_status.py` (the
+recipient's openability, reported as a technical receipt) and
+`bundle_tasks.py` (a one-off request's task context, review checklist,
+companions and repair). Inspection never clears quarantine, keeps no
+execute bit, runs no script, loads no macro and executes no HTML.
+
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
 seconds while paired, `team_client` sends one node update to the team
@@ -841,6 +867,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `server_address.py` — This server's own address (`own`), recorded with
   its pid at startup and removed on shutdown, and the one reader of that
   record (`running`) that `python -m jarvis.update` uses (see "Self-update")
+- `bundle_contract.py` / `bundle_inspection.py` / `bundle_readers/` — Reading a
+  file someone sent (see "Collaboration bundles")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
