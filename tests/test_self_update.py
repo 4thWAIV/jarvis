@@ -51,10 +51,30 @@ HEALTH = ".github/workflows/team-server-health.yml"
 
 class Repos(SimpleNamespace):
     def push(self, files: dict[str, str], subject: str) -> str:
-        """A teammate's commit, merged to main on GitHub."""
+        """A teammate's commit, pushed straight to main on GitHub."""
         sha = _commit(self.upstream, files, subject)
         _git(self.upstream, "push", "origin", "main")
         return sha
+
+    def merge(self, pr: int | None, title: str, files: dict[str, str] | None = None) -> str:
+        """A pull request merged on GitHub: its branch's commit, then the
+        merge commit GitHub makes, with the title as its body. `pr` None is
+        a merge of a branch that is no pull request."""
+        branch = f"pr-{pr or 'x'}-{len(self.merged)}"
+        _git(self.upstream, "checkout", "-q", "-b", branch)
+        _commit(self.upstream, files or {f"pr{len(self.merged)}.py": "x\n"}, f"Work for {title}")
+        _git(self.upstream, "checkout", "-q", "main")
+        subject = (f"Merge pull request #{pr} from 4thWAIV/{branch}" if pr is not None
+                   else f"Merge branch '{branch}'")
+        _git(self.upstream, "merge", "--no-ff", "-q", "-m", subject, "-m", title, branch)
+        _git(self.upstream, "push", "-q", "origin", "main")
+        sha = _git(self.upstream, "rev-parse", "HEAD").strip()
+        self.merged.append(sha)
+        return sha
+
+    def set_ci(self, sha: str, *runs: dict) -> None:
+        """That commit's runs, instead of the default for every commit."""
+        self.ci.setdefault("by_sha", {})[sha] = list(runs)
 
     def head(self) -> str:
         return _git(self.checkout, "rev-parse", "HEAD").strip()
@@ -88,17 +108,21 @@ def repos(tmp_path, monkeypatch):
     ci = {"workflow_runs": [_run("completed", "success")]}
     asked: list[tuple] = []
 
-    def fake_workflow_runs(owner, repo, sha):
-        asked.append((owner, repo, sha))
+    def fake_ci_runs(owner, repo):
+        """One request for every commit: the ci workflow's runs on main,
+        each commit given the default runs unless `set_ci` gave it its own."""
+        asked.append((owner, repo))
         if isinstance(ci.get("raise"), Exception):
             raise ci["raise"]
-        # Every run is of the commit asked about, as GitHub's head_sha filter gives.
-        return {"workflow_runs": [{"head_sha": sha, **r} for r in ci["workflow_runs"]]}
+        shas = _git(remote, "rev-list", "main").split()
+        by_sha = ci.get("by_sha", {})
+        return {"workflow_runs": [{"head_sha": sha, **r} for sha in shas
+                                  for r in by_sha.get(sha, ci["workflow_runs"])]}
 
     monkeypatch.setattr(self_update, "repo_root", lambda: checkout)
     monkeypatch.setattr(self_update, "is_checkout", lambda: True)
     monkeypatch.setattr(self_update, "serves_built_page", lambda: False)
-    monkeypatch.setattr(self_update, "fetch_workflow_runs", fake_workflow_runs)
+    monkeypatch.setattr(self_update, "fetch_ci_runs", fake_ci_runs)
 
     # pip and npm at the subprocess seam: recorded, and answered as told.
     steps: list[tuple[list[str], str]] = []
@@ -114,7 +138,7 @@ def repos(tmp_path, monkeypatch):
 
     monkeypatch.setattr(self_update.subprocess, "run", fake_run)
     return Repos(remote=remote, upstream=upstream, checkout=checkout, ci=ci, asked=asked,
-                 steps=steps, failing=failing)
+                 steps=steps, failing=failing, merged=[])
 
 
 # --- where it comes from -------------------------------------------------
@@ -157,24 +181,215 @@ def test_up_to_date(repos):
     assert status.up_to_date and not status.can_update and status.behind == 0
     assert status.branch == "main" and status.commit == repos.head()
     assert status.ci == "" and repos.asked == [], "nothing new, nothing to ask GitHub"
+    assert status.versions == []
     head, details = self_update.describe(status)
-    assert head == "Up to date." and details == [f"At {repos.head()[:7]} on main."]
+    assert head == "Up to date."
+    # HEAD is no pull request's merge: its short sha and subject.
+    assert details[0].startswith(f"Running {repos.head()[:7]} First, ")
+    assert details[0].endswith(", on main.")
 
 
-def test_new_commits_whose_ci_passed_can_be_updated(repos):
-    repos.push({"a.py": "1\n"}, "Add a")
+def test_the_versions_are_the_merged_pull_requests_newest_first(repos):
+    first = repos.merge(39, "Find the running server")
+    _git(repos.checkout, "pull", "-q", "--ff-only")
+    a = repos.merge(41, "Draw every small orb")
+    b = repos.merge(40, "Record test timings in CI")
+    latest = repos.merge(42, "Agent and page work packages")
+    status = self_update.check()
+    assert status.current.sha == first and status.current.pr == 39
+    assert status.current.title == "Find the running server"
+    assert [(v.pr, v.title, v.sha) for v in status.versions] == [
+        (42, "Agent and page work packages", latest), (40, "Record test timings in CI", b),
+        (41, "Draw every small orb", a)]
+    assert all(v.date and v.ci == self_update.CI_PASSED for v in status.versions)
+    # The work commits inside each pull request are not versions.
+    assert status.behind == 6 and len(status.versions) == 3
+    assert status.target == latest and status.chosen.pr == 42 and status.can_update
+    assert repos.asked == [("4thWAIV", "jarvis")], "one request to GitHub for every version"
+    head, details = self_update.describe(status)
+    assert head == "3 newer versions on origin/main. PR 42 can be installed."
+    assert details[0].startswith(f"Running PR 39: Find the running server ({first[:7]}), ")
+    assert details[1].startswith(f"PR 42: Agent and page work packages ({latest[:7]}), ")
+    assert details[1].endswith("; its CI passed.")
+    body = status.to_json()
+    assert body["current"]["name"] == "PR 39" and body["versions"][0]["name"] == "PR 42"
+    assert body["versions"][0]["can_choose"] and body["versions"][0]["unchosen"] == ""
+
+
+def test_a_merge_that_is_no_pull_request_and_a_pushed_latest_are_named_by_sha(repos):
+    merged = repos.merge(None, "ignored body")
     latest = repos.push({"b.py": "2\n"}, "Add b")
     status = self_update.check()
-    assert status.behind == 2 and status.latest == latest
-    assert [c.subject for c in status.commits] == ["Add b", "Add a"]
-    assert status.ci == self_update.CI_PASSED and status.blockers == []
-    assert status.can_update
-    assert repos.asked == [("4thWAIV", "jarvis", latest)]
-    head, details = self_update.describe(status)
-    assert head == "2 new commits on origin/main; its CI passed. It can be updated."
-    assert details == [f"{latest[:7]} Add b", f"{status.commits[1].sha[:7]} Add a"]
-    body = status.to_json()
-    assert body["can_update"] and body["commits"][0] == {"sha": latest, "subject": "Add b"}
+    assert [(v.pr, v.title, v.sha) for v in status.versions] == [
+        (None, "Add b", latest), (None, "Merge branch 'pr-x-0'", merged)]
+    assert status.versions[0].name == latest[:7]
+    assert status.target == latest and status.can_update
+
+
+def test_each_version_has_its_own_ci_from_the_one_request(repos):
+    a = repos.merge(41, "Orbs")
+    b = repos.merge(40, "Timings")
+    c = repos.merge(42, "Packages")
+    repos.set_ci(b, _run("completed", "failure"))
+    repos.set_ci(c, _run("in_progress", None),
+                 _run("completed", "success", HEALTH))
+    status = self_update.check()
+    assert [(v.pr, v.ci, v.can_choose, v.unchosen) for v in status.versions] == [
+        (42, "pending", False, "can be chosen once its tests pass"),
+        (40, "failed", False, "can't be chosen: its tests failed"),
+        (41, "passed", True, "")]
+    assert len(repos.asked) == 1
+    # The latest has not passed, so the default update is refused, and the
+    # newest that can be chosen is named.
+    assert [b.code for b in status.blockers] == [self_update.CI_NOT_PASSED]
+    head, _details = self_update.describe(status)
+    assert head == ("3 newer versions on origin/main. The update is refused: The latest "
+                    "commit's CI has not passed. The newest that can be installed is PR 41.")
+    chosen = self_update.check(version="41")
+    assert chosen.can_update and chosen.target == a and chosen.blockers == []
+
+
+def test_github_unreachable_makes_every_version_unknown(repos):
+    repos.merge(41, "Orbs")
+    repos.ci["raise"] = OSError("offline")
+    status = self_update.check()
+    assert [v.ci for v in status.versions] == ["unknown"]
+    assert status.versions[0].unchosen == "can be chosen once GitHub can be asked about its tests"
+    assert not status.can_update
+
+
+def test_ci_state_judges_the_latest_ci_run_of_that_commit_only():
+    runs = [{"head_sha": "a", **_run("completed", "failure", created="2026-11-01T10:00:00Z")},
+            {"head_sha": "a", **_run("completed", "success", created="2026-11-01T11:00:00Z")},
+            {"head_sha": "b", **_run("completed", "success", HEALTH)},
+            {"head_sha": "c", **_run("completed", "success")}]
+    assert self_update.ci_state(runs, "a") == "passed"
+    assert self_update.ci_state(runs, "b") == "none"
+    assert self_update.ci_state(runs, "d") == "none"
+
+
+def test_the_one_request_is_the_ci_workflows_runs_on_main(monkeypatch):
+    seen = []
+
+    class _Answer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"workflow_runs": []}'
+
+    def fake_urlopen(req, timeout):
+        seen.append(req.full_url)
+        return _Answer()
+
+    monkeypatch.setattr(self_update.urllib.request, "urlopen", fake_urlopen)
+    assert self_update.fetch_ci_runs("4thWAIV", "jarvis") == {"workflow_runs": []}
+    assert seen == ["https://api.github.com/repos/4thWAIV/jarvis/actions/workflows/ci.yml/"
+                    "runs?branch=main&per_page=100"]
+
+
+# --- choosing a version ----------------------------------------------------
+
+@pytest.mark.parametrize("asked", ["41", "PR 41", "pr41", "#41", "pull request 41"])
+def test_a_version_is_named_by_its_pull_request(repos, asked):
+    a = repos.merge(41, "Orbs")
+    repos.merge(42, "Packages")
+    status = self_update.check(version=asked)
+    assert status.target == a and status.chosen.pr == 41 and status.can_update
+
+
+def test_a_version_is_named_by_its_sha(repos):
+    a = repos.merge(41, "Orbs")
+    repos.merge(42, "Packages")
+    assert self_update.check(version=a[:7]).target == a
+    assert self_update.check(version=a.upper()).target == a
+
+
+def test_an_older_version_is_refused(repos):
+    old = repos.merge(38, "Older")
+    _git(repos.checkout, "pull", "-q", "--ff-only")
+    repos.merge(41, "Orbs")
+    for asked in ("38", old[:8], repos.head()):
+        status = self_update.check(version=asked)
+        assert [(b.code, b.detail) for b in status.blockers] == [
+            (self_update.NOT_NEWER, [asked])]
+        assert not status.can_update and status.target == ""
+    out = self_update.update(version="38")
+    assert out.refused == ("That version is not newer than the one running here; going back "
+                           "to an older version is not offered.")
+
+
+@pytest.mark.parametrize("asked", ["99", "deadbeef", "next", "x" * 7])
+def test_an_unknown_version_is_refused(repos, asked):
+    repos.merge(41, "Orbs")
+    status = self_update.check(version=asked)
+    assert [b.code for b in status.blockers] == [self_update.NOT_OFFERED]
+    before = repos.head()
+    out = self_update.update(version=asked)
+    assert out.refused == "That is not one of the versions offered." and repos.head() == before
+
+
+def test_a_commit_not_on_origin_main_is_refused(repos):
+    repos.merge(41, "Orbs")
+    _git(repos.upstream, "checkout", "-q", "-b", "side")
+    side = _commit(repos.upstream, {"side.py": "x\n"}, "Side")
+    _git(repos.upstream, "push", "-q", "origin", "side")
+    status = self_update.check(version=side)
+    assert [b.code for b in status.blockers] == [self_update.NOT_OFFERED]
+
+
+def test_a_commit_inside_a_pull_request_is_not_a_version(repos):
+    repos.merge(41, "Orbs")
+    inside = _git(repos.upstream, "rev-parse", "main^2").strip()
+    status = self_update.check(version=inside)
+    assert [b.code for b in status.blockers] == [self_update.NOT_OFFERED]
+
+
+def test_a_version_whose_ci_did_not_pass_is_refused_and_named(repos):
+    failed = repos.merge(40, "Timings")
+    repos.merge(42, "Packages")
+    repos.set_ci(failed, _run("completed", "failure"))
+    before = repos.head()
+    status = self_update.check(version="40")
+    assert [(b.code, b.detail) for b in status.blockers] == [
+        (self_update.VERSION_CI_NOT_PASSED, ["PR 40"])]
+    out = self_update.update(version="40")
+    assert out.refused == "That version's CI has not passed." and repos.head() == before
+
+
+def test_update_to_a_chosen_version_moves_there_only(repos):
+    before = repos.head()
+    a = repos.merge(41, "Orbs", {"requirements.txt": "fastapi\nhttpx\n"})
+    repos.merge(42, "Packages", {"frontend/package-lock.json": '{"v": 9}\n'})
+    out = self_update.update(version="41")
+    assert out.ok and out.updated and out.restart
+    assert (out.from_commit, out.to_commit) == (before, a) and repos.head() == a
+    assert out.version.pr == 41 and out.steps[0] == "Moved to PR 41."
+    assert [cmd[1:] for cmd, _cwd in repos.steps] == [["install", "-r", "requirements.txt"]]
+    assert self_update.describe_outcome(out)[0] == "Updated to PR 41."
+    # PR 42 is still offered afterwards, and PR 41 no longer is.
+    status = self_update.check()
+    assert [v.pr for v in status.versions] == [42] and status.current.pr == 41
+
+
+def test_the_chosen_versions_ci_is_read_again_at_update_time(repos):
+    a = repos.merge(41, "Orbs")
+    assert self_update.check(version="41").can_update
+    repos.set_ci(a, _run("completed", "failure", created="2026-11-02T10:00:00Z"))
+    before = repos.head()
+    out = self_update.update(version="41")
+    assert out.refused == "That version's CI has not passed." and repos.head() == before
+
+
+def test_untracked_files_are_judged_against_the_chosen_version(repos):
+    repos.merge(41, "Orbs")
+    repos.merge(42, "Notes", {"notes.md": "theirs\n"})
+    (repos.checkout / "notes.md").write_text("mine\n")
+    assert [b.code for b in self_update.check().blockers] == [self_update.WOULD_OVERWRITE]
+    assert self_update.check(version="41").blockers == []
 
 
 @pytest.mark.parametrize("ci,state", [
@@ -271,7 +486,7 @@ def test_update_moves_to_the_checked_commit_and_installs_what_changed(repos):
     head, steps = self_update.describe_outcome(out)
     assert head == (f"Updated to {latest[:7]}. "
                     "The frontend's packages changed: restart npm run dev.")
-    assert steps[0] == "Moved to the latest commit."
+    assert steps[0] == f"Moved to {latest[:7]}."
 
 
 def test_a_page_served_from_built_files_is_built_again(repos, monkeypatch):
@@ -328,7 +543,7 @@ def test_a_step_that_fails_and_cannot_move_back_says_so(repos, monkeypatch):
     assert out.updated and not out.ok and not out.restart and repos.head() == latest
     assert out.failed.endswith("failed too: cannot reset")
     head, _details = self_update.describe_outcome(out)
-    assert head.startswith("The update failed. The checkout was moved to the latest commit")
+    assert head.startswith("The update failed. The checkout was moved to the new version")
 
 
 def test_a_refused_update_changes_nothing(repos):
@@ -387,14 +602,33 @@ def test_get_api_update_is_the_check(server, repos):
     repos.push({"a.py": "1\n"}, "Add a")
     body = server.client.get("/api/update").json()
     assert body["behind"] == 1 and body["can_update"] and body["ci"] == "passed"
-    assert body["commits"][0]["subject"] == "Add a"
+    assert body["versions"][0]["title"] == "Add a" and body["current"]["title"] == "First"
 
 
 def test_post_api_update_updates_then_restarts(server, repos):
     latest = repos.push({"a.py": "1\n"}, "Add a")
     r = server.client.post("/api/update", headers=server.auth)
     assert r.status_code == 200 and r.json()["restart"] and r.json()["to_commit"] == latest
-    assert server.restarts == ["the page's Update and restart"]
+    assert server.restarts == ["the page's Install and restart"]
+
+
+def test_post_api_update_installs_the_version_asked_for(server, repos):
+    a = repos.merge(41, "Orbs")
+    repos.merge(42, "Packages")
+    r = server.client.post("/api/update", headers=server.auth, json={"version": 41})
+    assert r.status_code == 200 and r.json()["to_commit"] == a
+    assert r.json()["version"]["name"] == "PR 41" and repos.head() == a
+    assert server.restarts == ["the page's Install and restart"]
+
+
+def test_post_api_update_refuses_an_older_version_with_409(server, repos):
+    repos.merge(38, "Older")
+    _git(repos.checkout, "pull", "-q", "--ff-only")
+    repos.merge(41, "Orbs")
+    before = repos.head()
+    r = server.client.post("/api/update", headers=server.auth, json={"version": "38"})
+    assert r.status_code == 409 and r.json()["refused"].startswith("That version is not newer")
+    assert repos.head() == before and server.restarts == []
 
 
 def test_post_api_update_refused_is_409_and_does_not_restart(server, repos):
@@ -480,12 +714,63 @@ def test_the_command_checks_only(repos, capsys):
     before = repos.head()
     assert update_cli.main(["--check"]) == 0
     printed = capsys.readouterr().out
-    assert printed.startswith("1 new commit on origin/main; its CI passed. It can be updated.")
+    latest = _git(repos.checkout, "rev-parse", "origin/main").strip()
+    assert printed.startswith(f"1 newer version on origin/main. {latest[:7]} can be installed.")
     assert "Add a" in printed and repos.head() == before
 
 
+def test_by_voice_it_installs_the_version_he_chose(server, repos, monkeypatch):
+    monkeypatch.setattr(server.module, "speech", _Speech())
+    a = repos.merge(41, "Orbs")
+    repos.merge(42, "Packages")
+    asyncio.run(server.module._update_by_voice("41"))
+    assert repos.head() == a and server.restarts == ["the brain's update_jarvis"]
+
+
+def test_the_command_lists_the_versions(repos, capsys):
+    repos.merge(41, "Orbs")
+    latest = repos.merge(42, "Packages")
+    assert update_cli.main(["--check"]) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[0] == "2 newer versions on origin/main. PR 42 can be installed."
+    assert printed[2].startswith(f"  PR 42: Packages ({latest[:7]}), ")
+    assert printed[3].startswith("  PR 41: Orbs (")
+
+
+def test_the_command_updates_to_the_version_given(repos, monkeypatch, capsys):
+    monkeypatch.setattr(update_cli, "ask_server", lambda url, version=None: None)
+    a = repos.merge(41, "Orbs")
+    repos.merge(42, "Packages")
+    assert update_cli.main(["--to", "41"]) == 0
+    assert repos.head() == a and "Updated to PR 41." in capsys.readouterr().out
+    assert update_cli.main(["--to", "41"]) == 1, "PR 41 is the one running now"
+
+
+def test_the_command_asks_the_server_for_the_version_given(monkeypatch):
+    sent = []
+
+    class _Answer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"status": {}}'
+
+    def fake_urlopen(req, timeout, context):
+        sent.append(json.loads(req.data))
+        return _Answer()
+
+    monkeypatch.setattr(update_cli.urllib.request, "urlopen", fake_urlopen)
+    update_cli.ask_server("https://127.0.0.1:8340", "41")
+    update_cli.ask_server("https://127.0.0.1:8340")
+    assert sent == [{"version": "41"}, {}]
+
+
 def test_with_the_server_stopped_the_command_only_updates(repos, monkeypatch, capsys):
-    monkeypatch.setattr(update_cli, "ask_server", lambda url: None)
+    monkeypatch.setattr(update_cli, "ask_server", lambda url, version=None: None)
     latest = repos.push({"a.py": "1\n"}, "Add a")
     assert update_cli.main([]) == 0
     assert repos.head() == latest
@@ -496,7 +781,7 @@ def test_with_the_server_running_the_command_asks_it(repos, monkeypatch, capsys)
     asked = []
     latest = "e" * 40
 
-    def server_answers(url):
+    def server_answers(url, version=None):
         asked.append(url)
         return self_update.Outcome(status=self_update.Status(source="github"), ok=True,
                                    updated=True, to_commit=latest).to_json()
@@ -643,7 +928,8 @@ def test_a_stale_record_is_ignored(monkeypatch, repos, capsys):
     _record(_dead_pid())
     assert server_address.running() is None
     asked = []
-    monkeypatch.setattr(update_cli, "ask_server", lambda url: asked.append(url))
+    monkeypatch.setattr(update_cli, "ask_server",
+                        lambda url, version=None: asked.append(url))
     monkeypatch.delenv("JARVIS_URL", raising=False)
     monkeypatch.delenv("JARVIS_TOOL_URL", raising=False)
     latest = repos.push({"a.py": "1\n"}, "Add a")
@@ -658,7 +944,7 @@ def test_the_command_asks_the_server_where_it_recorded_itself(monkeypatch, repos
     monkeypatch.setenv("JARVIS_TOOL_URL", "http://127.0.0.1:8340/internal/tool")
     asked = []
 
-    def server_answers(url):
+    def server_answers(url, version=None):
         asked.append(url)
         return self_update.Outcome(status=self_update.Status(source="github"), ok=True,
                                    updated=True, to_commit="e" * 40).to_json()
