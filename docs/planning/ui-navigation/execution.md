@@ -35,9 +35,10 @@ navigation, and no command or UI-control infrastructure on the base.
 | `pipeline-animation` | finished | `ui-nav-pipeline-animation` c198962, merged 9cdfe1e |
 | `brain-transport` | finished | `ui-nav-brain-transport` 043b35a, merged afdb36c; its pending items 1–3 applied in the integration commit |
 | `component-coverage` | finished | `ui-nav-coverage-right` 45f7fd9, `ui-nav-coverage-main` b51ba75, `ui-nav-coverage-left-settings` e0eed32; merged (see "Coverage integration") |
-| `integration-review` | started: coverage merged and shared changes applied (see "Coverage integration"); corridor centring answered and applied (76eb517); blocker open: leaf sibling routing; the independent review still to run | |
+| `integration-review` | finished: review findings fixed (80e9a5e), matrix gaps closed where the plan covers them (18a08e9, cfae481, af9b499 and the workflow-detail wait; see "Integration review"); open: blockers `leaf-sibling-routing`, `spanish-register` | targeted 722 passed; page 189 + layout 11 passed |
 | `localization` | finished, with recorded gaps: origin/main merged (2b0cfb3), foundation (1eb6213), regions merged (`ui-nav-loc-right` 35ae800, `ui-nav-loc-main` d5ac820, `ui-nav-loc-left-settings` e6fb9ae; merges 39d1589, 4e7aea3, 76ca15a), shared changes 7d8401e, c6247c2, 682b1bb; acceptance run on the isolated candidate passed (see "Localization integration") | `ui-nav-run/evidence/loc-integration/` |
-| `local-validation-ready`, `human-validation` | later | |
+| `local-validation-ready` | finished: candidate running on 8350/5183, evidence recorded | `validation.md`, `ui-nav-run/evidence/local-validation/` |
+| `human-validation` | waiting for Tim (decision `human-validation`) | |
 
 ## The contract (what workers build against)
 
@@ -202,21 +203,9 @@ menu and Settings.
 
 ## Isolated preview instance
 
-| | |
-|---|---|
-| Backend | `ui-nav-run/backend.sh` → `https://localhost:8350` (fresh self-signed `cert.pem`/`key.pem` in the worktree root, git-ignored; the live key was not copied) |
-| Frontend | `ui-nav-run/frontend.sh` → Vite `http://localhost:5183`, proxy `JARVIS_API_TARGET=https://localhost:8350` |
-| Data / env | `JARVIS_DATA_DIR=ui-nav-run/data`, `JARVIS_ENV_FILE=ui-nav-run/.env` (empty, mode 600) |
-| Provider homes | `HOME`, `CLAUDE_CONFIG_DIR`, `JARVIS_CLAUDE_CONFIG_DIRS`, `CODEX_HOME`, `JARVIS_CODEX_SESSIONS_HOME` all under `ui-nav-run/home` |
-| Switches | `JARVIS_BRAIN_AUTOSTART=0`, `JARVIS_FOLDER_DISCOVERY=0`, `JARVIS_PORT=8350`, `JARVIS_ALLOWED_ORIGINS=http://localhost:5183,http://127.0.0.1:5183`; no team-server sign-in |
-| Logs | `ui-nav-run/logs/backend.log`, `ui-nav-run/logs/frontend.log` |
-| PIDs | `ui-nav-run/backend.pid`, `ui-nav-run/frontend.pid` |
-| Start | `nohup ui-nav-run/backend.sh > ui-nav-run/logs/backend.log 2>&1 & echo $! > ui-nav-run/backend.pid` (same for frontend) |
-| Stop | `kill $(cat ui-nav-run/backend.pid) $(cat ui-nav-run/frontend.pid)`, then any listener left: `kill $(lsof -tiTCP:5183 -sTCP:LISTEN) $(lsof -tiTCP:8350 -sTCP:LISTEN)` (npm exec leaves Vite as a child) |
+The local validation candidate (from 2026-11-01, local-validation-ready) is in `validation.md`, "The running candidate": `ui-nav-run/start.sh` starts `ui-nav-run/tools/candidate.py serve` (backend, `https://127.0.0.1:8350`, fresh data `ui-nav-run/candidate/data`, `.env` `ui-nav-run/candidate/.env`, homes `ui-nav-run/candidate/home`) and Vite on 5183 proxying to 8350, each detached in its own session; PIDs `ui-nav-run/candidate/backend.pid`, `vite.pid`; logs `ui-nav-run/logs/candidate-backend.log`, `candidate-vite.log`; stop `ui-nav-run/stop.sh`; restart `ui-nav-run/stop.sh && ui-nav-run/start.sh`. Certificates: fresh self-signed `cert.pem`/`key.pem` in the worktree root, git-ignored; the live key was not copied. No team-server sign-in; no brain spawned.
 
-State now: Vite on 5183 is running (PID file `frontend.pid`, child process
-listening on 5183); the backend on 8350 is stopped (the slice driver runs
-its own copy of the real server on 8350 while it runs).
+The earlier development instance (`ui-nav-run/backend.sh`, `frontend.sh`, data `ui-nav-run/data`) is stopped and kept only for its earlier evidence.
 
 `JARVIS_PORT=8350` matters: without it the isolated data directory's
 `mcp.json` points the brain's tool child at 8340, the live JARVIS.
@@ -520,7 +509,7 @@ page` (refresh, screen, speech_input), the wheel build.
 
 ## Next action
 
-The independent review, on the candidate at 682b1bb, with the localization gaps listed under "Localization integration". Tim to decide the open blocker `leaf-sibling-routing`.
+Waiting for Tim's answer to `human-validation` on the local candidate (http://localhost:5183/, see `validation.md`). Also open for Tim: blockers `leaf-sibling-routing` and `spanish-register`. On feedback: repair this candidate, rerun the affected checks, restart with `ui-nav-run/stop.sh && ui-nav-run/start.sh`.
 
 ## Scope update: Spanish interface (2026-11-01)
 
@@ -673,3 +662,21 @@ Stale responses (a read answered after a pushed frame) and the refused-change pa
 - The browser's own file picker words ("Choose Files") follow Chrome's language.
 - Recorded content (stored conversation notices, the voice record) is shown as it was written.
 
+
+## Integration review
+
+Review findings, both real:
+
+1. Stale navigation could not be detected: the brain's requests always went with `expectedNavigationRevision: null`. Now `ui_navigate`, `ui_indicate` and `ui_journey` take `expectedNavigationRevision` (request-level, not per journey step), `_ui_request` passes it (a whole number from 0, else invalid), the tool descriptions and the persona say to pass `ui_map`'s `navigationRevision` (persona hash `493370b…` listed). Tests: `test_ui_tools.py` (forwarded, page answers stale, bad value invalid, every acting tool's schema), `test_voice_page_navigation.py` (a real page: map, his click, the planned request answers stale and leaves his tab; at the current revision it runs). 80e9a5e.
+2. With `JARVIS_REFUSE_UNTRUSTED_ACTIONS` on, `ui_map` (tainting) blocked every UI tool after it. `UI_TAINT_EXEMPT_ACTING` (`ui_navigate`, `ui_indicate`, `ui_journey`; `ui_clear` is not acting) survives a tainted turn unless the commands it would run declare `queue.item-activated` or `queue.read-marked` (`ui_contract.declared_effects`: a navigation's command, an indication's reveal command, each journey step's). `TAINT_EXEMPT_ACTING` is unchanged. Test: `test_untrusted_turn.py::test_pointing_after_reading_the_map_survives_but_opening_his_messages_does_not`. 80e9a5e.
+
+Matrix gaps:
+
+- Layout footer: `test_voice_page_layout.py` 11 passed on the current branch (the corridor change 76eb517 had already closed it).
+- Health dot: page test `test_voice_page_voice_health.py::test_the_health_dot_is_named_and_reached_only_while_it_shows` (a named button while shown; pointing refused when hidden; `blocked / no-route` beside the meter: the leaf blocker). 18a08e9.
+- Spanish cut words: the Team Server tile's row gap 5→4 px fits "Escritura" with "hace 1 min" / "hace 20 h" (test parametrized by write age); subsystem names wrap in the Diagnostics list (test asserts no `subsystem-name` cut in either language, with voice input falling behind; fails without the CSS). 18a08e9.
+- Workflow detail flake: the test waits for the record's words, not the element (6 passed).
+- Hidden targets: revealers may run registered commands through `RevealerContext.navigate` (dispatch as the caller, effects reported, its own revision move not taken for a person's). `main.workflow` revealers open the workflow named by the key and select the tab that draws a phase, task, decision, wait, blocker, transcript or events; a subagent's detail parts open by `subagent.open`. Page test `test_voice_page_centre_nav.py::test_a_workflows_hidden_item_is_revealed_by_opening_it_on_its_tab`. cfae481.
+- Controls: 51 non-navigation controls classified (`data-ui-action`: domain, input, recipient, file, refresh); `PENDING` 73 → 22, all navigation needing commands. af9b499.
+- Register: raised as blocker `spanish-register` (recommend usted); not changed.
+- Not done: the 22 navigation commands; localization item 7 (team server error codes, voice cause codes); task card progress and right subagent row targets.
