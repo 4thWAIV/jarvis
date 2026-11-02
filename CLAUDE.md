@@ -341,6 +341,29 @@ recipient's openability, reported as a technical receipt) and
 companions and repair). Inspection never clears quarantine, keeps no
 execute bit, runs no script, loads no macro and executes no HTML.
 
+The routes and the brain's tools share one set of calls,
+`bundle_api.Calls`, over the context the messaging runtime gives
+(`MessagingRuntime.bundle_context`: its `BundleInspection` and the owner
+signed in now). A tool answers with the route's own JSON text
+(`bundle_api.answer`), a page of it at a time within the tool cap
+(`server._paged(..., exact=True)`, so the pages join back), walled as the
+sender's words. `look_at_bundle_page` hands the brain the PNG as an image
+block, as `look_at_screen` does. The Codex brain reaches the same MCP
+server and the same tools. `show_bundle_member` and the page's Open share
+the show route's call, which checks the member and sends ids only in a
+`bundle_view` frame on the voice socket. A member's static HTML is served
+with `web_auth.BUNDLE_PREVIEW_HEADERS` (framed by JARVIS only, `sandbox`
+with no permissions, nothing from outside the bundle) and framed with
+`sandbox=""`. Downloading or revealing a file is not reading it. The
+page's side: `bundles.ts` (the routes, the open member and `bundleWords`,
+every string shown), `BundleInventory.tsx` (Open on a checked incoming
+file's card: a document opens in the centre, an archive lists a folder at
+a time), `BundleMemberView.tsx` (the centre's File view: a PDF's pages
+beside its text, text with More, rows as a table, images, the static
+preview) and `BundleLines.tsx` (a message's request line, the thread's
+review progress, a draft's readiness, each shown only when there is
+something to say).
+
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
 seconds while paired, `team_client` sends one node update to the team
