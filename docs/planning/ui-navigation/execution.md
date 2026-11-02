@@ -940,3 +940,66 @@ previous chevron); not refusals.
   orb's software WebGL) at over 600 % CPU; the reduced-motion tests pass.
   Left for CI with the full suite.
 - Not run, by rule: the full suite, the wheel build.
+
+## No map at rest (2026-11-02)
+
+Tim, on the second candidate, approved as written: "The current build does
+nothing when I look at it: nothing moves or lights up, so I cannot evaluate
+it. Visible lines must not appear on the map; it should look as it does
+now. Make the navigation demonstrable and preserve the current appearance,
+then show me something I can assess."
+
+This supersedes the plan's "the background pipeline remains"
+(implementation.md, step 8) and every earlier note here about a faint map
+that is always there.
+
+### What changed (e0fdb95)
+
+- `UiPipelineLayer.tsx` draws nothing while no cue runs: the always-on
+  map (the orb's rise, the top pipeline, the rails and each object's
+  branch) is gone, with its measuring hook. While a cue runs it draws that
+  cue's route alone (faint route, three pulses, rings, the contour) and
+  fades it to nothing when the cue ends. Amber transmission rays are
+  untouched.
+- The map stays as data: `mapEdges()` still feeds `resolveRoute`, and
+  hit-testing is unchanged. `socketBranches`, used only to draw the map, is
+  removed. The `.ui-map` rule is removed from `uiPipeline.css`.
+- Each cue's group carries `data-edges`, the ids of the edges it walks in
+  that layer, so a test can check the route is on registered edges without
+  a drawn map.
+
+### The page at rest against main
+
+origin/main (e20d6c9) and this branch built with `vite build` to scratch
+folders, served on loopback with the page tests' fixtures (sessions, team
+network, workflows, folders, conversation record), 1440x900, reduced
+motion, Settings closed: the start (conversation), each of the six right
+tabs, a workflow's detail, and the detail closed again. Shots, diffs and
+the two scripts are in `.claude/worktrees/ui-nav-run/evidence/at-rest/`
+(`main/`, `branch/`, `diff/`, `comparison.txt`, `tools/`).
+
+- On the branch every view has the three pipeline layers with 0 elements
+  drawn in them.
+- main against itself (the orb and the microphone meter animate): 0.8 to
+  1.5 % of pixels differ. Branch against main: 2.3 to 5.0 %.
+- Every difference beyond that noise is a box or line of text shifted by
+  the spacing already approved: the conversation and centre views inset
+  16 px on each side (the corridor), the right column 16 px narrower, the
+  left column below the microphone row 8 px lower (its leaf lane), message
+  cards and folder rows 2 px taller (leaf lanes). None is a pipeline line.
+- Two differences are not spacing: the voice summary's headroom reads
+  "2.0 s drop" where main reads "2 s drop" (the localization's number
+  format), and the ⋮ glyph renders a few pixels differently (largest
+  channel difference 44 of 255, in a 4 by 15 px area).
+
+### No map at rest test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+- `pytest -m page tests/test_voice_page_pipeline.py`: 10 passed. Nothing is
+  drawn at rest; during a cue its route is drawn on registered edges only,
+  out of the orb's rise; after it ends, and after a clear or his own
+  navigation, nothing remains.
+- `pytest -m page` navigation, centre_nav, remaining_nav, layout, right:
+  31 passed. `pytest` ui_pipeline, ui_navigation, dead_code_removed: 41
+  passed.
+- Not run, by rule: the full suite.
