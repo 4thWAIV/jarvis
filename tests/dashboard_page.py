@@ -80,14 +80,22 @@ def _newest_source() -> float:
     return newest
 
 
+# The pages `npm run build` writes into DIST: the voice page and the dashboard.
+BUILT_PAGES = ("index.html", "dashboard.html")
+
+
 def build_bundle() -> Path:
-    """`jarvis/web`, rebuilt only if a source file is newer than it.
+    """`jarvis/web`, rebuilt only if a source file is newer than one of its
+    pages (or one is missing).
 
     The same `npm run build` a developer runs — never a bespoke bundling
-    path, or the thing under test stops being the thing that ships.
+    path, or the thing under test stops being the thing that ships. The one
+    build both the dashboard tests and the voice page tests (`page_url` in
+    conftest.py) are served from.
     """
-    target = DIST / "dashboard.html"
-    if not target.is_file() or target.stat().st_mtime < _newest_source():
+    newest = _newest_source()
+    if any(not (DIST / page).is_file() or (DIST / page).stat().st_mtime < newest
+           for page in BUILT_PAGES):
         subprocess.run(["npm", "run", "build"], cwd=FRONTEND, check=True,
                        capture_output=True, text=True,
                        timeout=BUILD_TIMEOUT_SEC)
