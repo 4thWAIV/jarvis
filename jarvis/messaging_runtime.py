@@ -19,6 +19,10 @@ exactly one instance and one source for who this JARVIS is:
     announcer      arrival_announcer.ArrivalAnnouncer, through server.py's
                    notice path
     local          messaging_api.LocalMessaging, behind /api/team/messages
+    bundles        bundle_inspection.BundleInspection over the same files,
+                   its derived cache, and bundle_status's observer: what
+                   a received file is and holds, behind bundle_api's
+                   routes and the brain's bundle tools
     human, tools   message_approvals.HumanMessaging and MessagingTools: the
                    capture path and the brain's draft and review tools
 
@@ -40,12 +44,16 @@ from uuid import UUID
 
 from fastapi import FastAPI
 
+from jarvis import bundle_api
+from jarvis import bundle_status
 from jarvis import data_paths
 from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
 from jarvis import messaging_ports as ports
 from jarvis.arrival_announcer import ArrivalAnnouncer, Wording, serve_labels
+from jarvis.bundle_cache import DerivedCache
+from jarvis.bundle_inspection import BundleInspection, Observation, Owner
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, Identity,
                                       MessageApprovals, MessagingTools, Reviews)
 from jarvis.messaging_client import Delivery, Pairing, TeamCalls, TeamTransport
@@ -103,6 +111,7 @@ class MessagingRuntime:
         self.store.forget_captures()
         self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
                                                    on_change=self.hint)
+        self.bundles = BundleInspection(self.files, DerivedCache(), observer=_observing)
         self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(), clock=clock)
         current = _CurrentTransport(self._transport_now)
         self.presentation = ServePresentation(transport=current, node_id=self.node,
@@ -167,6 +176,12 @@ class MessagingRuntime:
         if who is None:
             return None
         return messaging_files.FilesContext(self.files, who.server_id, who.owner_github_id)
+
+    def bundle_context(self) -> Optional[bundle_api.BundleContext]:
+        who = self.identity()
+        if who is None:
+            return None
+        return bundle_api.BundleContext(self.bundles, Owner(who.server_id, who.owner_github_id))
 
     def hint(self) -> None:
         """Tell every open page the queue changed (it reads it again)."""
@@ -278,6 +293,15 @@ class MessagingRuntime:
         await self.delivery.stop()
 
 
+def _observing(observation: Observation) -> None:
+    """bundle_status's observer, which keeps the openability record. A
+    failure to record never fails the read the owner asked for."""
+    try:
+        bundle_status.observe(observation)
+    except Exception as e:
+        log.warning("bundles: openability not recorded (%s)", type(e).__name__)
+
+
 class _NotStarted:
     """The page's routes before the runtime is built: messaging is not
     available, and nothing else answers."""
@@ -292,9 +316,11 @@ class _NotStarted:
         return getattr(runtime.local, name)
 
 
-def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> None:
-    """The page's messaging routes and the files routes beside them, on the
-    app as it is made; each request finds the runtime built at startup."""
+def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]],
+          show: Optional[bundle_api.Show] = None) -> None:
+    """The page's messaging routes, and the files and bundle routes beside
+    them, on the app as it is made; each request finds the runtime built at
+    startup. `show` hands a bundle_view frame to every open page."""
     messaging_api.mount(app, _NotStarted(runtime))
 
     def context() -> Optional[messaging_files.FilesContext]:
@@ -303,3 +329,8 @@ def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> No
     # Its routes themselves, as every other JARVIS route is registered (an
     # included router would be one opaque entry among the app's routes).
     app.router.routes.extend(messaging_files.router(context).routes)
+
+    def bundles() -> Optional[bundle_api.BundleContext]:
+        found = runtime()
+        return found.bundle_context() if found is not None else None
+    bundle_api.mount(app, bundles, show)
