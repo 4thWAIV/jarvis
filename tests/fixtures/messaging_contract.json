@@ -12,6 +12,8 @@
         "related_message_ids": [],
         "schema_version": 1,
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       },
@@ -33,6 +35,8 @@
         ],
         "schema_version": 1,
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Friday works.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       },
@@ -60,6 +64,8 @@
         "related_message_ids": [],
         "schema_version": 1,
         "subject": "",
+        "supersedes": [],
+        "task": null,
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000003"
       },
@@ -94,15 +100,114 @@
         "related_message_ids": [],
         "schema_version": 1,
         "subject": "Files",
+        "supersedes": [],
+        "task": null,
         "text": "Both attached.",
         "thread_id": "00000000-0000-4000-8000-000000000004"
       },
       "digest": "sha256:b609af3a3d275224c03c05806f02c45271ed561c51161403c5c0b90797dbef6f",
       "sender_github_id": 863470,
       "server_id": "00000000-0000-4000-8000-0000000000aa"
+    },
+    {
+      "canonical": "{\"attachments\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000021\",\"filename\":\"review-bundle.zip\",\"media_type\":\"application/zip\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"size_bytes\":179692}],\"content_revision\":1,\"digest_version\":1,\"in_reply_to_message_id\":null,\"message_id\":\"00000000-0000-4000-8000-00000000000b\",\"recipient_github_id\":1001,\"related_message_ids\":[],\"schema_version\":1,\"sender_github_id\":863470,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"Summary review\",\"task\":{\"outcome_kind\":\"notes\",\"primary\":{\"attachment_id\":\"00000000-0000-4000-8000-000000000021\",\"member_path\":\"review/summary.pdf\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},\"reply_audience\":\"sender_only\",\"requested_outcome\":\"Notes on the two-page summary: support for its claims, wording and layout.\",\"supporting\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000021\",\"member_path\":\"review/sources.md\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"}]},\"text\":\"Could you review the summary?\",\"thread_id\":\"00000000-0000-4000-8000-00000000000b\"}",
+      "case": "review_with_task",
+      "content": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_revision": 1,
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      },
+      "digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+      "sender_github_id": 863470,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
+    },
+    {
+      "canonical": "{\"attachments\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000022\",\"filename\":\"review-bundle-flat.zip\",\"media_type\":\"application/zip\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"size_bytes\":179001}],\"content_revision\":1,\"digest_version\":1,\"in_reply_to_message_id\":\"00000000-0000-4000-8000-00000000000b\",\"message_id\":\"00000000-0000-4000-8000-00000000000c\",\"recipient_github_id\":1001,\"related_message_ids\":[],\"schema_version\":1,\"sender_github_id\":863470,\"server_id\":\"00000000-0000-4000-8000-0000000000aa\",\"subject\":\"Summary review\",\"supersedes\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000021\",\"by_attachment_id\":\"00000000-0000-4000-8000-000000000022\",\"message_id\":\"00000000-0000-4000-8000-00000000000b\",\"reason\":\"repair\"}],\"task\":{\"outcome_kind\":\"notes\",\"primary\":{\"attachment_id\":\"00000000-0000-4000-8000-000000000022\",\"member_path\":\"summary.pdf\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\"},\"reply_audience\":\"sender_only\",\"requested_outcome\":\"Notes on the two-page summary: support for its claims, wording and layout.\",\"supporting\":[{\"attachment_id\":\"00000000-0000-4000-8000-000000000022\",\"member_path\":\"sources.md\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\"}]},\"text\":\"The same files without the wrapper folder.\",\"thread_id\":\"00000000-0000-4000-8000-00000000000b\"}",
+      "case": "repair_supersedes",
+      "content": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "filename": "review-bundle-flat.zip",
+            "media_type": "application/zip",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "size_bytes": 179001
+          }
+        ],
+        "content_revision": 1,
+        "in_reply_to_message_id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "subject": "Summary review",
+        "supersedes": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "reason": "repair"
+          }
+        ],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "member_path": "summary.pdf",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000022",
+              "member_path": "sources.md",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "text": "The same files without the wrapper folder.",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      },
+      "digest": "sha256:546ddbec8a07509a343dd566469f0086fb8a9ac6777b473049cdb3a13ab4f11b",
+      "sender_github_id": 863470,
+      "server_id": "00000000-0000-4000-8000-0000000000aa"
     }
   ],
-  "interface_revision": "messaging.v1-contract.3",
+  "interface_revision": "messaging.v1-contract.4",
   "invalid": [
     {
       "case": "unknown_field",
@@ -120,6 +225,8 @@
         "sender_github_id": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -139,6 +246,8 @@
         "schema_version": 2,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -158,6 +267,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -177,6 +288,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "a\r\nb",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -196,6 +309,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "a\u0007b",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -215,6 +330,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "a\nb",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -234,6 +351,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -253,6 +372,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -272,6 +393,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -293,6 +416,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Friday works.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -314,6 +439,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -345,6 +472,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -364,6 +493,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -383,6 +514,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -480,6 +613,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -634,6 +769,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       }
@@ -1137,6 +1274,847 @@
         "thread_id": "00000000-0000-4000-8000-000000000003",
         "unread_reminder": true
       }
+    },
+    {
+      "case": "task_names_a_file_not_in_the_message",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000063",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "task_names_a_file_by_another_hash",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "task_outcome_empty",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "task_outcome_not_normalized",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "a\r\nb",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "task_audience_widened",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "everyone",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "superseded_by_a_file_not_in_the_message",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "filename": "review-bundle-flat.zip",
+            "media_type": "application/zip",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "size_bytes": 179001
+          }
+        ],
+        "content_digest": "sha256:546ddbec8a07509a343dd566469f0086fb8a9ac6777b473049cdb3a13ab4f11b",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000109",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000063",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "reason": "repair"
+          }
+        ],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "member_path": "summary.pdf",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000022",
+              "member_path": "sources.md",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "text": "The same files without the wrapper folder.",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "supersedes_its_own_message",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "filename": "review-bundle-flat.zip",
+            "media_type": "application/zip",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "size_bytes": 179001
+          }
+        ],
+        "content_digest": "sha256:546ddbec8a07509a343dd566469f0086fb8a9ac6777b473049cdb3a13ab4f11b",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000109",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "reason": "repair"
+          }
+        ],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "member_path": "summary.pdf",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000022",
+              "member_path": "sources.md",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "text": "The same files without the wrapper folder.",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "supersedes_the_same_file_twice",
+      "model": "SendRequest",
+      "value": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "filename": "review-bundle-flat.zip",
+            "media_type": "application/zip",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "size_bytes": 179001
+          }
+        ],
+        "content_digest": "sha256:546ddbec8a07509a343dd566469f0086fb8a9ac6777b473049cdb3a13ab4f11b",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000109",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "reason": "repair"
+          },
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "reason": "repair"
+          }
+        ],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "member_path": "summary.pdf",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000022",
+              "member_path": "sources.md",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "text": "The same files without the wrapper folder.",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
+      }
+    },
+    {
+      "case": "openability_without_a_report",
+      "model": "ReceiptBatch",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "openability",
+            "message_id": "00000000-0000-4000-8000-00000000000b"
+          }
+        ]
+      }
+    },
+    {
+      "case": "read_with_a_report",
+      "model": "ReceiptBatch",
+      "value": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "read",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "openability": {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "checked_at": "2026-10-29T12:15:00Z",
+              "content_revision": 1,
+              "failed_member": "review/summary.pdf",
+              "failed_operation": "read_text",
+              "members_readable": 9,
+              "members_total": 10,
+              "reason": "reader_unavailable",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+              "status": "partial"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "case": "more_readable_than_members",
+      "model": "OpenabilityReport",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-000000000021",
+        "checked_at": "2026-10-29T12:15:00Z",
+        "content_revision": 1,
+        "failed_member": "review/summary.pdf",
+        "failed_operation": "read_text",
+        "members_readable": 11,
+        "members_total": 10,
+        "reason": "reader_unavailable",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "status": "partial"
+      }
+    },
+    {
+      "case": "unknown_status",
+      "model": "OpenabilityReport",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-000000000021",
+        "checked_at": "2026-10-29T12:15:00Z",
+        "content_revision": 1,
+        "failed_member": "review/summary.pdf",
+        "failed_operation": "read_text",
+        "members_readable": 9,
+        "members_total": 10,
+        "reason": "reader_unavailable",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "status": "reviewed"
+      }
+    },
+    {
+      "case": "reason_with_words",
+      "model": "OpenabilityReport",
+      "value": {
+        "attachment_id": "00000000-0000-4000-8000-000000000021",
+        "checked_at": "2026-10-29T12:15:00Z",
+        "content_revision": 1,
+        "failed_member": "review/summary.pdf",
+        "failed_operation": "read_text",
+        "members_readable": 9,
+        "members_total": 10,
+        "reason": "it said: hello",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "status": "partial"
+      }
+    },
+    {
+      "case": "format_twice",
+      "model": "AttachmentCapabilities",
+      "value": {
+        "formats": [
+          {
+            "format": "zip",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "list_archive"
+            ]
+          },
+          {
+            "format": "pdf",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text",
+              "render"
+            ]
+          },
+          {
+            "format": "markdown",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text"
+            ]
+          },
+          {
+            "format": "zip",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "list_archive"
+            ]
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 120000,
+        "version": 1,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
+      }
+    },
+    {
+      "case": "older_than_a_week",
+      "model": "AttachmentCapabilities",
+      "value": {
+        "formats": [
+          {
+            "format": "zip",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "list_archive"
+            ]
+          },
+          {
+            "format": "pdf",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text",
+              "render"
+            ]
+          },
+          {
+            "format": "markdown",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text"
+            ]
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 604800001,
+        "version": 1,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
+      }
+    },
+    {
+      "case": "unknown_operation",
+      "model": "AttachmentCapabilities",
+      "value": {
+        "formats": [
+          {
+            "format": "pdf",
+            "operations": [
+              "print"
+            ]
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 120000,
+        "version": 1,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
+      }
+    },
+    {
+      "case": "newer_version",
+      "model": "AttachmentCapabilities",
+      "value": {
+        "formats": [
+          {
+            "format": "zip",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "list_archive"
+            ]
+          },
+          {
+            "format": "pdf",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text",
+              "render"
+            ]
+          },
+          {
+            "format": "markdown",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text"
+            ]
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 120000,
+        "version": 2,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
+      }
+    },
+    {
+      "case": "too_many_formats",
+      "model": "AttachmentCapabilities",
+      "value": {
+        "formats": [
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          },
+          {
+            "format": "pdf",
+            "operations": []
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 120000,
+        "version": 1,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
+      }
     }
   ],
   "local_valid": {
@@ -1256,6 +2234,8 @@
                   "server_id": "00000000-0000-4000-8000-0000000000aa",
                   "source_node_id": "00000000-0000-4000-8000-000000000065",
                   "subject": "Deploy window",
+                  "supersedes": [],
+                  "task": null,
                   "text": "Can we move the deploy to Friday?\nThe staging run is green.",
                   "thread_id": "00000000-0000-4000-8000-000000000001"
                 },
@@ -1267,6 +2247,7 @@
                       "received_at": "2026-10-29T12:01:00Z"
                     }
                   ],
+                  "openability": [],
                   "read_at": "2026-10-29T12:03:00Z",
                   "received_at": "2026-10-29T12:01:00Z",
                   "recipient_github_id": 1001,
@@ -1347,6 +2328,8 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "Deploy window",
+              "supersedes": [],
+              "task": null,
               "text": "Can we move the deploy to Friday?\nThe staging run is green.",
               "thread_id": "00000000-0000-4000-8000-000000000001"
             },
@@ -1358,6 +2341,7 @@
                   "received_at": "2026-10-29T12:01:00Z"
                 }
               ],
+              "openability": [],
               "read_at": "2026-10-29T12:03:00Z",
               "received_at": "2026-10-29T12:01:00Z",
               "recipient_github_id": 1001,
@@ -1429,6 +2413,8 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "Deploy window",
+              "supersedes": [],
+              "task": null,
               "text": "Can we move the deploy to Friday?\nThe staging run is green.",
               "thread_id": "00000000-0000-4000-8000-000000000001"
             },
@@ -1440,6 +2426,7 @@
                   "received_at": "2026-10-29T12:01:00Z"
                 }
               ],
+              "openability": [],
               "read_at": "2026-10-29T12:03:00Z",
               "received_at": "2026-10-29T12:01:00Z",
               "recipient_github_id": 1001,
@@ -1467,12 +2454,15 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "Deploy window",
+              "supersedes": [],
+              "task": null,
               "text": "Friday works.",
               "thread_id": "00000000-0000-4000-8000-000000000001"
             },
             "receipts": {
               "message_id": "00000000-0000-4000-8000-000000000002",
               "nodes": [],
+              "openability": [],
               "read_at": "2026-10-29T12:06:00Z",
               "received_at": null,
               "recipient_github_id": 863470,
@@ -1533,6 +2523,8 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "",
+              "supersedes": [],
+              "task": null,
               "text": "",
               "thread_id": "00000000-0000-4000-8000-000000000003"
             },
@@ -1544,6 +2536,7 @@
                   "received_at": "2026-10-29T12:10:00Z"
                 }
               ],
+              "openability": [],
               "read_at": null,
               "received_at": "2026-10-29T12:10:00Z",
               "recipient_github_id": 863470,
@@ -1604,6 +2597,8 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "",
+              "supersedes": [],
+              "task": null,
               "text": "",
               "thread_id": "00000000-0000-4000-8000-000000000003"
             },
@@ -1619,6 +2614,7 @@
                   "received_at": "2026-10-29T12:11:00Z"
                 }
               ],
+              "openability": [],
               "read_at": null,
               "received_at": "2026-10-29T12:10:00Z",
               "recipient_github_id": 863470,
@@ -1664,12 +2660,15 @@
           "server_id": "00000000-0000-4000-8000-0000000000aa",
           "source_node_id": "00000000-0000-4000-8000-000000000065",
           "subject": "Deploy window",
+          "supersedes": [],
+          "task": null,
           "text": "Friday works.",
           "thread_id": "00000000-0000-4000-8000-000000000001"
         },
         "receipts": {
           "message_id": "00000000-0000-4000-8000-000000000002",
           "nodes": [],
+          "openability": [],
           "read_at": "2026-10-29T12:06:00Z",
           "received_at": null,
           "recipient_github_id": 863470,
@@ -1710,6 +2709,8 @@
           "server_id": "00000000-0000-4000-8000-0000000000aa",
           "source_node_id": "00000000-0000-4000-8000-000000000065",
           "subject": "",
+          "supersedes": [],
+          "task": null,
           "text": "",
           "thread_id": "00000000-0000-4000-8000-000000000003"
         },
@@ -1721,6 +2722,7 @@
               "received_at": "2026-10-29T12:10:00Z"
             }
           ],
+          "openability": [],
           "read_at": null,
           "received_at": "2026-10-29T12:10:00Z",
           "recipient_github_id": 863470,
@@ -1761,6 +2763,8 @@
           "server_id": "00000000-0000-4000-8000-0000000000aa",
           "source_node_id": "00000000-0000-4000-8000-000000000065",
           "subject": "",
+          "supersedes": [],
+          "task": null,
           "text": "",
           "thread_id": "00000000-0000-4000-8000-000000000003"
         },
@@ -1776,6 +2780,7 @@
               "received_at": "2026-10-29T12:11:00Z"
             }
           ],
+          "openability": [],
           "read_at": null,
           "received_at": "2026-10-29T12:10:00Z",
           "recipient_github_id": 863470,
@@ -1855,6 +2860,8 @@
                   "server_id": "00000000-0000-4000-8000-0000000000aa",
                   "source_node_id": "00000000-0000-4000-8000-000000000065",
                   "subject": "",
+                  "supersedes": [],
+                  "task": null,
                   "text": "",
                   "thread_id": "00000000-0000-4000-8000-000000000003"
                 },
@@ -1866,6 +2873,7 @@
                       "received_at": "2026-10-29T12:10:00Z"
                     }
                   ],
+                  "openability": [],
                   "read_at": null,
                   "received_at": "2026-10-29T12:10:00Z",
                   "recipient_github_id": 863470,
@@ -1937,6 +2945,8 @@
                   "server_id": "00000000-0000-4000-8000-0000000000aa",
                   "source_node_id": "00000000-0000-4000-8000-000000000065",
                   "subject": "Deploy window",
+                  "supersedes": [],
+                  "task": null,
                   "text": "Can we move the deploy to Friday?\nThe staging run is green.",
                   "thread_id": "00000000-0000-4000-8000-000000000001"
                 },
@@ -1948,6 +2958,7 @@
                       "received_at": "2026-10-29T12:01:00Z"
                     }
                   ],
+                  "openability": [],
                   "read_at": "2026-10-29T12:03:00Z",
                   "received_at": "2026-10-29T12:01:00Z",
                   "recipient_github_id": 1001,
@@ -1975,12 +2986,15 @@
                   "server_id": "00000000-0000-4000-8000-0000000000aa",
                   "source_node_id": "00000000-0000-4000-8000-000000000065",
                   "subject": "Deploy window",
+                  "supersedes": [],
+                  "task": null,
                   "text": "Friday works.",
                   "thread_id": "00000000-0000-4000-8000-000000000001"
                 },
                 "receipts": {
                   "message_id": "00000000-0000-4000-8000-000000000002",
                   "nodes": [],
+                  "openability": [],
                   "read_at": "2026-10-29T12:06:00Z",
                   "received_at": null,
                   "recipient_github_id": 863470,
@@ -2101,6 +3115,8 @@
         "server_id": "00000000-0000-4000-8000-0000000000aa",
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       },
@@ -2121,6 +3137,8 @@
         "server_id": "00000000-0000-4000-8000-0000000000aa",
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Friday works.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
       },
@@ -2147,6 +3165,8 @@
         "server_id": "00000000-0000-4000-8000-0000000000aa",
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "",
+        "supersedes": [],
+        "task": null,
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000003"
       }
@@ -2181,6 +3201,61 @@
         "lease_token": "00000000-0000-4000-8000-00000000012d",
         "node_id": "00000000-0000-4000-8000-000000000065",
         "step": "completed"
+      }
+    },
+    "AttachmentCapabilities": {
+      "download_only": {
+        "formats": [],
+        "max_archive_entries": 0,
+        "max_expanded_bytes": 0,
+        "max_file_bytes": 26214400,
+        "observed_age_ms": 0,
+        "version": 1,
+        "work_packages": null
+      },
+      "mac_reads_pdf_zip_text": {
+        "formats": [
+          {
+            "format": "zip",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "list_archive"
+            ]
+          },
+          {
+            "format": "pdf",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text",
+              "render"
+            ]
+          },
+          {
+            "format": "markdown",
+            "max_bytes": null,
+            "operations": [
+              "download",
+              "read_text"
+            ]
+          }
+        ],
+        "max_archive_entries": 10000,
+        "max_expanded_bytes": 1073741824,
+        "max_file_bytes": 268435456,
+        "observed_age_ms": 120000,
+        "version": 1,
+        "work_packages": {
+          "manifest_versions": [
+            1
+          ],
+          "modes": [
+            "conversation",
+            "agent",
+            "page"
+          ]
+        }
       }
     },
     "AttachmentCreate": {
@@ -2229,17 +3304,66 @@
         "state": "verified"
       }
     },
+    "OpenabilityReport": {
+      "partial_failed_member": {
+        "attachment_id": "00000000-0000-4000-8000-000000000021",
+        "checked_at": "2026-10-29T12:15:00Z",
+        "content_revision": 1,
+        "failed_member": "review/summary.pdf",
+        "failed_operation": "read_text",
+        "members_readable": 9,
+        "members_total": 10,
+        "reason": "reader_unavailable",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "status": "partial"
+      },
+      "verified": {
+        "attachment_id": "00000000-0000-4000-8000-000000000022",
+        "checked_at": "2026-10-29T12:20:00Z",
+        "content_revision": 1,
+        "failed_member": null,
+        "failed_operation": null,
+        "members_readable": 10,
+        "members_total": 10,
+        "reason": null,
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "status": "verified"
+      }
+    },
     "ReceiptBatch": {
+      "openability": {
+        "node_id": "00000000-0000-4000-8000-000000000066",
+        "receipts": [
+          {
+            "kind": "openability",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "openability": {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "checked_at": "2026-10-29T12:15:00Z",
+              "content_revision": 1,
+              "failed_member": "review/summary.pdf",
+              "failed_operation": "read_text",
+              "members_readable": 9,
+              "members_total": 10,
+              "reason": "reader_unavailable",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+              "status": "partial"
+            }
+          }
+        ]
+      },
       "received_and_read": {
         "node_id": "00000000-0000-4000-8000-000000000066",
         "receipts": [
           {
             "kind": "received",
-            "message_id": "00000000-0000-4000-8000-000000000001"
+            "message_id": "00000000-0000-4000-8000-000000000001",
+            "openability": null
           },
           {
             "kind": "read",
-            "message_id": "00000000-0000-4000-8000-000000000001"
+            "message_id": "00000000-0000-4000-8000-000000000001",
+            "openability": null
           }
         ]
       }
@@ -2255,6 +3379,7 @@
                 "received_at": "2026-10-29T12:01:00Z"
               }
             ],
+            "openability": [],
             "read_at": "2026-10-29T12:03:00Z",
             "received_at": "2026-10-29T12:01:00Z",
             "recipient_github_id": 1001,
@@ -2270,6 +3395,7 @@
       "none_yet": {
         "message_id": "00000000-0000-4000-8000-000000000001",
         "nodes": [],
+        "openability": [],
         "read_at": null,
         "received_at": null,
         "recipient_github_id": 1001,
@@ -2278,6 +3404,7 @@
       "read_before_received": {
         "message_id": "00000000-0000-4000-8000-000000000002",
         "nodes": [],
+        "openability": [],
         "read_at": "2026-10-29T12:06:00Z",
         "received_at": null,
         "recipient_github_id": 863470,
@@ -2291,8 +3418,36 @@
             "received_at": "2026-10-29T12:01:00Z"
           }
         ],
+        "openability": [],
         "read_at": "2026-10-29T12:03:00Z",
         "received_at": "2026-10-29T12:01:00Z",
+        "recipient_github_id": 1001,
+        "revision": 3
+      },
+      "received_with_openability": {
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "nodes": [
+          {
+            "node_id": "00000000-0000-4000-8000-000000000066",
+            "received_at": "2026-10-29T12:14:00Z"
+          }
+        ],
+        "openability": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "checked_at": "2026-10-29T12:15:00Z",
+            "content_revision": 1,
+            "failed_member": "review/summary.pdf",
+            "failed_operation": "read_text",
+            "members_readable": 9,
+            "members_total": 10,
+            "reason": "reader_unavailable",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "status": "partial"
+          }
+        ],
+        "read_at": null,
+        "received_at": "2026-10-29T12:14:00Z",
         "recipient_github_id": 1001,
         "revision": 3
       }
@@ -2326,8 +3481,58 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Can we move the deploy to Friday?\nThe staging run is green.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "repair_supersedes": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "filename": "review-bundle-flat.zip",
+            "media_type": "application/zip",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+            "size_bytes": 179001
+          }
+        ],
+        "content_digest": "sha256:546ddbec8a07509a343dd566469f0086fb8a9ac6777b473049cdb3a13ab4f11b",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000109",
+        "in_reply_to_message_id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
+            "reason": "repair"
+          }
+        ],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000022",
+            "member_path": "summary.pdf",
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000022",
+              "member_path": "sources.md",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "text": "The same files without the wrapper folder.",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
       },
       "reply_with_related": {
         "attachments": [],
@@ -2343,8 +3548,51 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Friday works.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "review_with_task": {
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "content_digest": "sha256:ac70be732b8911397c9cbcd3e4634da5df911ab1ba13008bd3bdcd2c33277e8e",
+        "content_revision": 1,
+        "idempotency_key": "00000000-0000-4000-8000-000000000108",
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "schema_version": 1,
+        "source_node_id": "00000000-0000-4000-8000-000000000065",
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
       },
       "self_files_only": {
         "attachments": [
@@ -2366,6 +3614,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "",
+        "supersedes": [],
+        "task": null,
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000003"
       },
@@ -2396,6 +3646,8 @@
         "schema_version": 1,
         "source_node_id": "00000000-0000-4000-8000-000000000065",
         "subject": "Files",
+        "supersedes": [],
+        "task": null,
         "text": "Both attached.",
         "thread_id": "00000000-0000-4000-8000-000000000004"
       }
@@ -2418,12 +3670,15 @@
           "server_id": "00000000-0000-4000-8000-0000000000aa",
           "source_node_id": "00000000-0000-4000-8000-000000000065",
           "subject": "Deploy window",
+          "supersedes": [],
+          "task": null,
           "text": "Can we move the deploy to Friday?\nThe staging run is green.",
           "thread_id": "00000000-0000-4000-8000-000000000001"
         },
         "receipts": {
           "message_id": "00000000-0000-4000-8000-000000000001",
           "nodes": [],
+          "openability": [],
           "read_at": null,
           "received_at": null,
           "recipient_github_id": 1001,
@@ -2460,6 +3715,8 @@
           "server_id": "00000000-0000-4000-8000-0000000000aa",
           "source_node_id": "00000000-0000-4000-8000-000000000065",
           "subject": "Deploy window",
+          "supersedes": [],
+          "task": null,
           "text": "Can we move the deploy to Friday?\nThe staging run is green.",
           "thread_id": "00000000-0000-4000-8000-000000000001"
         },
@@ -2471,6 +3728,7 @@
               "received_at": "2026-10-29T12:01:00Z"
             }
           ],
+          "openability": [],
           "read_at": "2026-10-29T12:03:00Z",
           "received_at": "2026-10-29T12:01:00Z",
           "recipient_github_id": 1001,
@@ -2489,6 +3747,14 @@
           "thread_id": "00000000-0000-4000-8000-000000000001",
           "unread_reminder": false
         }
+      }
+    },
+    "Supersedes": {
+      "repair": {
+        "attachment_id": "00000000-0000-4000-8000-000000000021",
+        "by_attachment_id": "00000000-0000-4000-8000-000000000022",
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "reason": "repair"
       }
     },
     "SyncPage": {
@@ -2513,12 +3779,15 @@
               "server_id": "00000000-0000-4000-8000-0000000000aa",
               "source_node_id": "00000000-0000-4000-8000-000000000065",
               "subject": "Deploy window",
+              "supersedes": [],
+              "task": null,
               "text": "Friday works.",
               "thread_id": "00000000-0000-4000-8000-000000000001"
             },
             "receipts": {
               "message_id": "00000000-0000-4000-8000-000000000002",
               "nodes": [],
+              "openability": [],
               "read_at": "2026-10-29T12:06:00Z",
               "received_at": null,
               "recipient_github_id": 863470,
@@ -2549,6 +3818,25 @@
         "epoch": "e1",
         "scan_complete": true,
         "server_time": "2026-10-29T12:11:00Z"
+      }
+    },
+    "TaskContext": {
+      "notes_on_primary": {
+        "outcome_kind": "notes",
+        "primary": {
+          "attachment_id": "00000000-0000-4000-8000-000000000021",
+          "member_path": "review/summary.pdf",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "reply_audience": "sender_only",
+        "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+        "supporting": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/sources.md",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ]
       }
     },
     "WorkCommandRequest": {

@@ -85,9 +85,41 @@ def _examples(w) -> dict:
         return w.SendRequest(**content.model_dump(), source_node_id=_id(101),
                              idempotency_key=_id(201 + content.message_id.int % 100),
                              content_digest=digest)
+    # Bundles (messaging.bundles.v1): a review request whose task names its
+    # primary and supporting files by hash, and a repair in the same thread
+    # whose new file supersedes the old one, which is kept.
+    bundle = w.AttachmentRef(attachment_id=_id(33), filename="review-bundle.zip",
+                             media_type="application/zip", size_bytes=179692,
+                             sha256="2" * 64)
+    flat = w.AttachmentRef(attachment_id=_id(34), filename="review-bundle-flat.zip",
+                           media_type="application/zip", size_bytes=179001, sha256="3" * 64)
+    task = w.TaskContext(requested_outcome="Notes on the two-page summary: support for its "
+                                           "claims, wording and layout.",
+                         outcome_kind="notes",
+                         primary=w.ArtifactRef(attachment_id=_id(33), sha256="2" * 64,
+                                               member_path="review/summary.pdf"),
+                         supporting=[w.ArtifactRef(attachment_id=_id(33), sha256="2" * 64,
+                                                   member_path="review/sources.md")])
+    review = w.MessageContent(message_id=_id(11), thread_id=_id(11), recipient_github_id=MATT,
+                              content_revision=1, subject="Summary review",
+                              text="Could you review the summary?", attachments=[bundle],
+                              task=task)
+    repair = w.MessageContent(
+        message_id=_id(12), thread_id=_id(11), in_reply_to_message_id=_id(11),
+        recipient_github_id=MATT, content_revision=1, subject="Summary review",
+        text="The same files without the wrapper folder.", attachments=[flat],
+        task=task.model_copy(update={
+            "primary": w.ArtifactRef(attachment_id=_id(34), sha256="3" * 64,
+                                     member_path="summary.pdf"),
+            "supporting": [w.ArtifactRef(attachment_id=_id(34), sha256="3" * 64,
+                                         member_path="sources.md")]}),
+        supersedes=[w.Supersedes(message_id=_id(11), attachment_id=_id(33),
+                                 by_attachment_id=_id(34), reason="repair")])
     requests = {"new_thread": request(root, TIM), "reply_with_related": request(reply, MATT),
                 "self_files_only": request(files_only, TIM),
-                "two_files_in_order": request(two_files, TIM)}
+                "two_files_in_order": request(two_files, TIM),
+                "review_with_task": request(review, TIM),
+                "repair_supersedes": request(repair, TIM)}
 
     def accepted(req, sender, minutes):
         return w.AcceptedMessage(**req.model_dump(), server_id=SERVER_ID, sender_github_id=sender,
@@ -104,6 +136,36 @@ def _examples(w) -> dict:
             revision=3),
         "read_before_received": w.ReceiptFacts(message_id=_id(2), recipient_github_id=TIM,
                                                read_at=T0 + timedelta(minutes=6), revision=2),
+    }
+    openability = {
+        "verified": w.OpenabilityReport(attachment_id=_id(34), sha256="3" * 64,
+                                        content_revision=1, status="verified",
+                                        members_total=10, members_readable=10,
+                                        checked_at=T0 + timedelta(minutes=20)),
+        "partial_failed_member": w.OpenabilityReport(
+            attachment_id=_id(33), sha256="2" * 64, content_revision=1, status="partial",
+            failed_operation="read_text", failed_member="review/summary.pdf",
+            reason="reader_unavailable", members_total=10, members_readable=9,
+            checked_at=T0 + timedelta(minutes=15)),
+    }
+    receipts["received_with_openability"] = w.ReceiptFacts(
+        message_id=_id(11), recipient_github_id=MATT, received_at=T0 + timedelta(minutes=14),
+        nodes=[w.NodeReceipt(node_id=_id(102), received_at=T0 + timedelta(minutes=14))],
+        openability=[openability["partial_failed_member"]], revision=3)
+    capabilities = {
+        "mac_reads_pdf_zip_text": w.AttachmentCapabilities(
+            observed_age_ms=120_000, max_file_bytes=256 * 1024 * 1024,
+            max_archive_entries=10_000, max_expanded_bytes=1024 * 1024 * 1024,
+            formats=[w.FormatCapability(format="zip", operations=["download", "list_archive"]),
+                     w.FormatCapability(format="pdf", operations=["download", "read_text",
+                                                                  "render"]),
+                     w.FormatCapability(format="markdown", operations=["download",
+                                                                       "read_text"])],
+            work_packages=w.WorkPackageCapability(manifest_versions=[1],
+                                                  modes=["conversation", "agent", "page"])),
+        "download_only": w.AttachmentCapabilities(
+            observed_age_ms=0, max_file_bytes=25 * 1024 * 1024, max_archive_entries=0,
+            max_expanded_bytes=0, formats=[]),
     }
     tim_item = w.new_work_state(server_id=SERVER_ID, owner_github_id=TIM,
                                 message=messages["new_thread"])
@@ -158,7 +220,14 @@ def _examples(w) -> dict:
                                                         work_state=tim_item, duplicate=True))],
         "ReceiptBatch": [("received_and_read", w.ReceiptBatch(node_id=_id(102), receipts=[
             w.ReceiptItem(message_id=_id(1), kind="received"),
-            w.ReceiptItem(message_id=_id(1), kind="read")]))],
+            w.ReceiptItem(message_id=_id(1), kind="read")])),
+            ("openability", w.ReceiptBatch(node_id=_id(102), receipts=[
+                w.ReceiptItem(message_id=_id(11), kind="openability",
+                              openability=openability["partial_failed_member"])]))],
+        "OpenabilityReport": list(openability.items()),
+        "AttachmentCapabilities": list(capabilities.items()),
+        "TaskContext": [("notes_on_primary", task)],
+        "Supersedes": [("repair", repair.supersedes[0])],
         "ReceiptBatchResult": [("one_settled_one_not_found", w.ReceiptBatchResult(
             facts=[receipts["received_and_read"]], not_found=[_id(9)]))],
         "ReceiptFacts": list(receipts.items()),
@@ -187,6 +256,10 @@ def _invalid(valid: dict) -> list[dict]:
     req = valid["SendRequest"]["new_thread"]
     reply = valid["SendRequest"]["reply_with_related"]
     att = valid["AttachmentRef"]["pdf"]
+    task_req = valid["SendRequest"]["review_with_task"]
+    repair_req = valid["SendRequest"]["repair_supersedes"]
+    report = valid["OpenabilityReport"]["partial_failed_member"]
+    caps = valid["AttachmentCapabilities"]["mac_reads_pdf_zip_text"]
     cases = [
         ("SendRequest", "unknown_field", {**req, "sender_github_id": 1}),
         ("SendRequest", "newer_schema_version", {**req, "schema_version": 2}),
@@ -234,6 +307,45 @@ def _invalid(valid: dict) -> list[dict]:
         ("WorkCommandRequest", "no_expected_revision", {"change": {"command": "open"}}),
         ("WorkState", "unknown_placement",
          {**valid["WorkState"]["self_message"], "placement": "archived"}),
+        ("SendRequest", "task_names_a_file_not_in_the_message",
+         {**task_req, "task": {**task_req["task"], "primary": {
+             **task_req["task"]["primary"], "attachment_id": str(_id(99))}}}),
+        ("SendRequest", "task_names_a_file_by_another_hash",
+         {**task_req, "task": {**task_req["task"], "primary": {
+             **task_req["task"]["primary"], "sha256": "f" * 64}}}),
+        ("SendRequest", "task_outcome_empty",
+         {**task_req, "task": {**task_req["task"], "requested_outcome": ""}}),
+        ("SendRequest", "task_outcome_not_normalized",
+         {**task_req, "task": {**task_req["task"], "requested_outcome": "a\r\nb"}}),
+        ("SendRequest", "task_audience_widened",
+         {**task_req, "task": {**task_req["task"], "reply_audience": "everyone"}}),
+        ("SendRequest", "superseded_by_a_file_not_in_the_message",
+         {**repair_req, "supersedes": [{**repair_req["supersedes"][0],
+                                        "by_attachment_id": str(_id(99))}]}),
+        ("SendRequest", "supersedes_its_own_message",
+         {**repair_req, "supersedes": [{**repair_req["supersedes"][0],
+                                        "message_id": repair_req["message_id"]}]}),
+        ("SendRequest", "supersedes_the_same_file_twice",
+         {**repair_req, "supersedes": repair_req["supersedes"] * 2}),
+        ("ReceiptBatch", "openability_without_a_report",
+         {"node_id": str(_id(102)), "receipts": [{"message_id": str(_id(11)),
+                                                  "kind": "openability"}]}),
+        ("ReceiptBatch", "read_with_a_report",
+         {"node_id": str(_id(102)), "receipts": [{"message_id": str(_id(11)), "kind": "read",
+                                                  "openability": report}]}),
+        ("OpenabilityReport", "more_readable_than_members",
+         {**report, "members_readable": report["members_total"] + 1}),
+        ("OpenabilityReport", "unknown_status", {**report, "status": "reviewed"}),
+        ("OpenabilityReport", "reason_with_words", {**report, "reason": "it said: hello"}),
+        ("AttachmentCapabilities", "format_twice",
+         {**caps, "formats": caps["formats"] + caps["formats"][:1]}),
+        ("AttachmentCapabilities", "older_than_a_week",
+         {**caps, "observed_age_ms": 7 * 86_400_000 + 1}),
+        ("AttachmentCapabilities", "unknown_operation",
+         {**caps, "formats": [{"format": "pdf", "operations": ["print"]}]}),
+        ("AttachmentCapabilities", "newer_version", {**caps, "version": 2}),
+        ("AttachmentCapabilities", "too_many_formats",
+         {**caps, "formats": [{"format": "pdf", "operations": []}] * 41}),
     ]
     return [{"model": m, "case": c, "value": v} for m, c, v in cases]
 
@@ -244,7 +356,7 @@ def fixtures_data(w) -> dict:
              for model, items in examples.items()}
     vectors = []
     for case, req in examples["SendRequest"]:
-        sender = TIM if case != "reply_with_related" else MATT
+        sender = TIM if case != "reply_with_related" else MATT  # the bundle cases are Tim's
         content = w.content_of(req)
         vectors.append({"case": case, "server_id": SERVER_ID, "sender_github_id": sender,
                         "content": content.model_dump(mode="json"),
@@ -384,7 +496,9 @@ def types_text(w, local) -> str:
                    w.SendResult, w.NodeReceipt, w.ReceiptFacts, w.ReceiptItem, w.ReceiptBatch,
                    w.ReceiptBatchResult, w.WorkState, w.WorkCommandRequest, w.SyncEntry,
                    w.SyncPage, w.TeamMember, w.RecipientList, w.AnnouncementRequest,
-                   w.AnnouncementLease, w.AttachmentCreate, w.AttachmentStatus]
+                   w.AnnouncementLease, w.AttachmentCreate, w.AttachmentStatus,
+                   w.FormatCapability, w.WorkPackageCapability, w.AttachmentCapabilities,
+                   w.OpenabilityReport, w.ArtifactRef, w.TaskContext, w.Supersedes]
     local_models = [local.LocalFile, local.LocalSend, local.Draft, local.DraftSave,
                     local.DraftAction, local.LocalMessage, local.LocalItem,
                     local.QueueSnapshot, local.HistoryPage, local.WorkCommandResult,
@@ -395,6 +509,7 @@ def types_text(w, local) -> str:
     from typing import get_args
     unions = {
         "Placement": get_args(w.Placement), "ReceiptKind": get_args(w.ReceiptKind),
+        "Openability": get_args(w.Openability),
         "StagingState": get_args(w.StagingState),
         "AnnouncementStep": get_args(w.AnnouncementStep),
         "AnnouncementState": get_args(w.AnnouncementState),
@@ -411,6 +526,7 @@ def types_text(w, local) -> str:
         "// count Unicode code points (`[...text].length`), not UTF-16 units.",
         "",
         f"export const CAPABILITY = {json.dumps(w.CAPABILITY)};",
+        f"export const BUNDLES_CAPABILITY = {json.dumps(w.BUNDLES_CAPABILITY)};",
         f"export const INTERFACE_REVISION = {json.dumps(w.INTERFACE_REVISION)};",
         f"export const SCHEMA_VERSION = {w.SCHEMA_VERSION};",
         f"export const MESSAGES_HINT = {json.dumps(local.MESSAGES_HINT)};",
