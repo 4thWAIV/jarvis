@@ -256,6 +256,33 @@ history), `read_people_thread` (one item; no read receipt), and the acting
 command) and `change_people_draft` (discard, cancel, retry). A refusal is worded by `messaging_api.Refused.shown`; names,
 subjects and bodies come back in an untrusted block.
 
+## Received file locations
+Where a file a person sent is on this Mac has one answer,
+`attachment_locations.py`: `AttachmentLocations` over the messaging-files
+service (its record and its downloads folder), by message and attachment
+id for the owner signed in, never by name. `lookup` reads only; its
+`AttachmentLocation` has `local_path` only for a file here whose size and
+SHA-256 are the manifest's now, and otherwise its state (`remote_only`,
+`downloading`, `missing`, `changed`, `moved`, `failed`) with `intended_path`,
+which is never a saved file. `ensure_local` fetches through the existing
+downloader and verifies again, on the owner's word; nothing is unpacked,
+opened or run. Its table `attachment_locations` keeps where each file was
+verified (how a changed downloads folder reads as `moved`) and, when a work
+package was unpacked from it, the zip's hash, the folder and the members
+its manifest names; `attachment_leases` keeps a file an agent holds (a run
+while active, a message to a session while open) from `FileSnapshots.cleanup`.
+`GET`/`POST /api/team/messages/{m}/files/{a}/location`, the brain's
+`attachment_location` and the acting `make_attachment_local` and
+`reveal_attachment` give the same JSON (name and path in the untrusted
+block); the Queue shows a downloaded file's path with Copy and Reveal
+(`QueueFileLocation.tsx`, `attachmentLocation.ts`). Handing files to an agent
+(`spawn_run`'s and `steer_session`'s `attachments`, and a package's agent,
+given the zip it came from) goes through `handoff`: the verified path where
+that agent can read it (a run with permissions skipped, or a path inside its
+folder), else a verified copy in its folder under `.jarvis-attachments/<id>/`
+with where it came from, else nothing is started or sent and the reason is
+said; an agent on another node gets only the message and attachment ids.
+
 ## Work packages
 A teammate sends runnable work as a zip with `package.json` at its root,
 attached to an ordinary message between people (format:
@@ -790,6 +817,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   brain's `attach_message_files` and `draft_message`'s `files`): the folder
   catalog's ordinary-file rule, a held descriptor reached without links,
   and one save at the exact revision under the same sign-in, all or none
+- `attachment_locations.py` — Where a received file is: the location
+  result, lookup and ensure-local, leases, extraction records, the two
+  routes and the hand-over to agents (see "Received file locations")
 - `work_packages.py` — Work packages: unpacking a received zip, finding,
   running a step, its results, and which files the brain may attach; the
   three ways a package runs, an agent package's brief, and a page package's

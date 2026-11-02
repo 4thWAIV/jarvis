@@ -392,7 +392,10 @@ def test_the_brain_has_no_way_to_write_a_message_itself():
     from jarvis import brain
     from jarvis import jarvis_mcp
     steer = {t["name"]: t for t in jarvis_mcp.TOOL_SPECS}["steer_session"]["inputSchema"]
-    assert set(steer["properties"]) == {"name", "capture", "priority"}
+    # `attachments` names received files by id; JARVIS writes their lines.
+    assert set(steer["properties"]) == {"name", "capture", "priority", "attachments"}
+    files = steer["properties"]["attachments"]["items"]["properties"]
+    assert set(files) == {"message", "attachment"}
     assert not {"SendMessage", "ListAgents"} & set(claude_provider.ALLOWED_TOOLS)
 
 

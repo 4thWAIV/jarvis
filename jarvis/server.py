@@ -5978,10 +5978,19 @@ async def tool_steer_session(args: dict) -> str:
     global last_mentioned_session
     last_mentioned_session = session.session_id
 
+    # A session reads its own folder; elsewhere it would ask him first, so
+    # a received file goes as a verified copy there, never a path it cannot read.
+    workspace = Path(session.cwd) if session.cwd else None
+    handed, problem = await _hand_over(args.get("attachments"),
+                                       (workspace,) if workspace else (), False, workspace)
+    if problem:
+        return f"{problem} Nothing was sent."
     priority = args.get("priority") is True
-    message_id, problem = _stage_capture(session, capture, priority)
+    message_id, problem = _stage_capture(session, capture, priority,
+                                         extra=_handed_text(handed))
     if problem:
         return problem
+    _hold(handed, f"message:{message_id}")
     if priority:
         staged_note = (f"staged as message {message_id}, PRIORITY: it goes to "
                        f"{_said_name(session)} the moment this turn ends, ahead of "
@@ -6009,20 +6018,21 @@ async def tool_steer_session(args: dict) -> str:
     return staged_note
 
 
-def _stage_capture(session, capture: dict,
-                   priority: bool = False) -> tuple[Optional[int], Optional[str]]:
+def _stage_capture(session, capture: dict, priority: bool = False,
+                   extra: str = "") -> tuple[Optional[int], Optional[str]]:
     """Record a capture as a message to `session` and stage it to send:
     (its message id, None), or (None, why it cannot go), recorded as failed.
-    steer_session and the capture box's Send button both come through here."""
-    return transmission.stage(_AgentRecipient(session, capture, priority), capture,
+    steer_session and the capture box's Send button both come through here.
+    `extra` is JARVIS's own lines sent after his words (the files handed over)."""
+    return transmission.stage(_AgentRecipient(session, capture, priority, extra), capture,
                               voice=speech, put=_stage_steer)
 
 
 class _AgentRecipient:
     """An agent session a capture is for, as `transmission.stage` asks it."""
 
-    def __init__(self, session, capture: dict, priority: bool):
-        self.session, self.prompt, self.priority = session, capture["text"], priority
+    def __init__(self, session, capture: dict, priority: bool, extra: str = ""):
+        self.session, self.prompt, self.priority = session, capture["text"] + extra, priority
         self.capture_id = capture["id"]
 
     def refusal(self) -> Optional[tuple[str, str]]:
@@ -6826,6 +6836,63 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+def _refusal_words(code: str) -> str:
+    return messaging_api.Refused(code).shown()
+
+
+async def _hand_over(wanted, roots: tuple[Path, ...], reads_anywhere: bool,
+                     workspace: Optional[Path]) -> tuple[list, Optional[str]]:
+    """Received files for an agent on this JARVIS (spawn_run, steer_session,
+    a package's agent): each made local and checked, then handed as a path
+    the agent can read, or a verified copy in its workspace
+    (attachment_locations.handoff). (the hand-overs, None), or ([], why not)."""
+    if not wanted:
+        return [], None
+    context = _location_context()
+    if context is None:
+        return [], MESSAGING_OFF
+    if not isinstance(wanted, list):
+        return [], _WHICH_FILE
+    access = context.here(roots, reads_anywhere, workspace)
+    handed = []
+    for item in wanted:
+        message_id, attachment_id = _file_ids(item if isinstance(item, dict) else {})
+        if message_id is None or attachment_id is None:
+            return [], _WHICH_FILE
+        try:
+            found = await context.ensure_local(message_id, attachment_id)
+        except Exception as e:
+            return [], messaging_api.refused_by(e).shown()
+        handed.append(await asyncio.to_thread(attachment_locations.handoff, found, access))
+    refused = [h for h in handed if h.handed == "unavailable"]
+    if refused:
+        return [], "; ".join(f"attachment {h.attachment_id} cannot be handed over: "
+                             f"{attachment_locations.handoff_reason(h, _refusal_words)}"
+                             for h in refused) + "."
+    return handed, None
+
+
+def _handed_text(handed: list) -> str:
+    return ("\n\n" + attachment_locations.handoff_text(handed, _refusal_words)) if handed else ""
+
+
+def _hold(handed: list, holder: str) -> None:
+    """Keep each handed file from cleanup while its agent has it."""
+    context = _location_context()
+    for h in handed:
+        if context is not None and h.handed in ("original", "copy"):
+            context.hold(h.attachment_id, holder)
+
+
+def _files_said(handed: list) -> str:
+    """How many received files went with it, and how."""
+    if not handed:
+        return ""
+    copies = sum(1 for h in handed if h.handed == "copy")
+    return (f" {len(handed)} file{'s' if len(handed) != 1 else ''} handed over"
+            + (f", {copies} as a verified copy in its folder" if copies else "") + ".")
+
+
 # --- Work packages -------------------------------------------------------
 #
 # A zip a teammate sends in an ordinary message, with a package.json at its
@@ -6965,15 +7032,25 @@ async def tool_run_package_agent(args: dict) -> str:
         brief = work_packages.agent_brief(package)
     except (work_packages.PackageError, OSError) as e:
         return f"{e} Nothing was started."
+    # The zip it was unpacked from, found by the folder JARVIS unpacked it
+    # into (its location's extraction record), handed over as any file is.
+    context = _location_context()
+    source = context.extracted_from(package.folder) if context is not None else None
+    handed, problem = await _hand_over(
+        [{"message": str(source[0]), "attachment": str(source[1])}] if source else [],
+        (package.folder,), _SKIP_PERMISSIONS, package.folder)
+    if problem:
+        return f"{problem} Nothing was started."
     try:
         run_id = await run_executor_instance.spawn(
-            compose_run_prompt(brief), package.id, str(package.folder), "voice",
-            package_id=package.id)
+            compose_run_prompt(brief + _handed_text(handed)), package.id, str(package.folder),
+            "voice", package_id=package.id)
     except Exception as e:
         log.error(f"run_package_agent failed for {package.id}: {e}", exc_info=True)
         return f"I couldn't start {package.id}, sir."
     global last_started_run
     last_started_run = run_id
+    _hold(handed, f"run:{run_id}")
     return (f"Started {package.id} as an agent run in its folder, sir. You will be told when "
             f"it has finished.")
 
@@ -7355,9 +7432,17 @@ async def tool_spawn_run(args: dict) -> str:
         previous = _last_run_to_resume(name, path)
         resume_from = previous["id"] if previous else None
 
+    # Received files he named go with it as paths it can read (a run whose
+    # permissions are skipped reads anywhere; otherwise a verified copy in
+    # its folder).
+    handed, problem = await _hand_over(args.get("attachments"), (Path(path),),
+                                       _SKIP_PERMISSIONS, Path(path))
+    if problem:
+        return f"{problem} Nothing was started."
+
     # The user's own words, framed for a process nobody can answer. See
     # UNATTENDED_PREAMBLE.
-    composed = compose_run_prompt(prompt)
+    composed = compose_run_prompt(prompt + _handed_text(handed))
 
     try:
         run_id = await run_executor_instance.spawn(
@@ -7372,6 +7457,7 @@ async def tool_spawn_run(args: dict) -> str:
     # for a back-reference. Same idea as `last_mentioned_session`.
     global last_started_run
     last_started_run = run_id
+    _hold(handed, f"run:{run_id}")
 
     run = run_store.get_run(run_id) or {}
     started_on = run.get("requested_model") or model
@@ -7381,7 +7467,8 @@ async def tool_spawn_run(args: dict) -> str:
         where = f"Nothing to pick up in {name}, so I started fresh"
     else:
         where = f"Started on {name}"
-    return f"{where}, running {started_on}." if started_on else f"{where}, sir."
+    said = f"{where}, running {started_on}." if started_on else f"{where}, sir."
+    return said + _files_said(handed)
 
 
 TOOL_HANDLERS.update({

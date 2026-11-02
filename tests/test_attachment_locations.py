@@ -372,3 +372,179 @@ async def test_reading_a_thread_says_where_each_received_file_is(wired):
     lines = [wired.server._where_line(message_id, r.attachment_id) for r in refs]
     here = loc.lookup(SERVER, MATT, message_id, refs[0].attachment_id).local_path
     assert lines == [f"; on this Mac at {here}", "; not downloaded"]
+
+
+# -- handing a file to an agent ------------------------------------------------------------
+
+from jarvis.attachment_locations import AgentAccess, handoff, handoff_text  # noqa: E402
+
+HERE = uuid.UUID(NODE)
+
+
+async def _verified(w: World, name="plain archive.zip", data=None):
+    data = data if data is not None else zip_bytes()
+    message_id, (ref,) = await received(w, [(name, data)])
+    loc = locations(w)
+    return loc, await loc.ensure_local(SERVER, MATT, message_id, ref.attachment_id), data
+
+
+@pytest.mark.asyncio
+async def test_an_agent_that_may_read_it_gets_the_exact_verified_path(tmp_path):
+    w = World()
+    _loc, found, data = await _verified(w)
+    for access in (AgentAccess(node_id=HERE, reads_anywhere=True),
+                   AgentAccess(node_id=HERE, roots=(data_paths.data_dir(),))):
+        h = handoff(found, access)
+        assert (h.handed, h.agent_path, h.original_path) == \
+            ("original", found.local_path, found.local_path)
+        assert Path(h.agent_path).read_bytes() == data      # the agent reads the same bytes
+    assert not any(data_paths.packages_dir().iterdir())
+
+
+@pytest.mark.asyncio
+async def test_a_sandboxed_agent_gets_a_verified_copy_in_its_workspace(tmp_path):
+    w = World()
+    _loc, found, data = await _verified(w, name="Résumé final.pdf", data=b"%PDF synthetic")
+    workspace = tmp_path / "agent workspace"
+    workspace.mkdir()
+    access = AgentAccess(node_id=HERE, roots=(workspace,), workspace=workspace)
+    h = handoff(found, access)
+    assert h.handed == "copy" and h.original_path == found.local_path
+    assert h.agent_path == str(workspace / ".jarvis-attachments" / str(found.attachment_id)
+                               / "Résumé final.pdf")
+    assert Path(h.agent_path).read_bytes() == data
+    assert Path(found.local_path).read_bytes() == data, "the original is unchanged"
+    assert handoff(found, access) == h, "an existing right copy is reused"
+    text = handoff_text([h], str)
+    assert h.agent_path in text and f"a verified copy of {found.local_path}" in text
+    assert f"attachment {found.attachment_id} of message {found.message_id}" in text
+
+
+@pytest.mark.asyncio
+async def test_no_path_is_claimed_where_the_agent_cannot_read_it(tmp_path):
+    w = World()
+    _loc, found, _data = await _verified(w)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    nowhere = handoff(found, AgentAccess(node_id=HERE, roots=(elsewhere,)))
+    assert (nowhere.handed, nowhere.agent_path, nowhere.reason) == \
+        ("unavailable", None, "no_access")
+    trap = tmp_path / "trap"
+    trap.mkdir()
+    (tmp_path / "ws").mkdir()
+    (tmp_path / "ws" / ".jarvis-attachments").symlink_to(trap)
+    linked = handoff(found, AgentAccess(node_id=HERE, roots=(), workspace=tmp_path / "ws"))
+    assert (linked.handed, linked.reason) == ("unavailable", "copy_failed")
+    assert list(trap.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_another_node_gets_only_the_reference(tmp_path):
+    w = World()
+    _loc, found, _data = await _verified(w)
+    h = handoff(found, AgentAccess(node_id=uuid.uuid4(), reads_anywhere=True,
+                                   workspace=tmp_path))
+    assert (h.handed, h.agent_path, h.original_path, h.reason) == \
+        ("reference", None, None, "other_node")
+    text = handoff_text([h], str)
+    assert found.local_path not in text and "not local to you" in text
+    assert str(found.attachment_id) in text and str(found.message_id) in text
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_is_not_here_is_never_handed_as_a_path():
+    w = World()
+    message_id, (ref,) = await received(w, [("plan.pdf", b"x")])
+    found = locations(w).lookup(SERVER, MATT, message_id, ref.attachment_id)
+    h = handoff(found, AgentAccess(node_id=HERE, reads_anywhere=True))
+    assert (h.handed, h.agent_path, h.reason) == ("unavailable", None, "not_downloaded")
+
+
+def _spawn_world(wired, monkeypatch, project: Path, skip: bool):
+    import asyncio
+    w = World()
+    message_id, (ref,) = asyncio.run(received(w, [("brief notes.pdf", b"%PDF brief")]))
+    loc = _signed_in(wired, w)
+    server = wired.server
+    spawned = []
+
+    async def fake_spawn(prompt, name, path, origin, **kw):
+        spawned.append(prompt)
+        return "run-1"
+    monkeypatch.setattr(server.run_executor_instance, "spawn", fake_spawn)
+    monkeypatch.setattr(server, "_resolve_project_or_explain",
+                        lambda ref: ("proj", str(project), None))
+    monkeypatch.setattr(server, "_live_session_redirect", lambda *a: None)
+    monkeypatch.setattr(server, "_SKIP_PERMISSIONS", skip)
+    return w, loc, message_id, ref, spawned
+
+
+@pytest.mark.parametrize("skip", [True, False])
+def test_spawn_run_carries_each_file_s_path_it_can_read(wired, monkeypatch, tmp_path, skip):
+    project = tmp_path / "proj"
+    project.mkdir()
+    w, loc, message_id, ref, spawned = _spawn_world(wired, monkeypatch, project, skip)
+    got = _call(wired, "spawn_run", project="proj", prompt="Summarise the brief.",
+                attachments=[{"message": str(message_id), "attachment": str(ref.attachment_id)}])
+    original = loc.lookup(SERVER, MATT, message_id, ref.attachment_id).local_path
+    (prompt,) = spawned
+    if skip:
+        assert got["text"].endswith(" 1 file handed over.") and f": {original} [" in prompt
+    else:
+        copy = project / ".jarvis-attachments" / str(ref.attachment_id) / "brief notes.pdf"
+        assert got["text"].endswith(" 1 file handed over, 1 as a verified copy in its folder.")
+        assert f": {copy} [a verified copy of {original};" in prompt
+        assert copy.read_bytes() == b"%PDF brief"
+    # Its lease is the run's: "run-1" is no run in the store, so it is released.
+    assert loc.held(SERVER, MATT) == set()
+    refused = _call(wired, "spawn_run", project="proj", prompt="x",
+                    attachments=[{"message": str(uuid.uuid4()), "attachment": str(uuid.uuid4())}])
+    assert refused["text"] == "That file is not available. Nothing was started."
+    assert len(spawned) == 1
+
+
+def test_a_steered_session_gets_a_copy_in_its_own_folder(wired, tmp_path):
+    import asyncio
+    w = World()
+    message_id, (ref,) = asyncio.run(received(w, [("data.csv", b"a,b\n1,2\n")]))
+    loc = _signed_in(wired, w)
+    cwd = tmp_path / "session cwd"
+    cwd.mkdir()
+    handed, problem = asyncio.run(wired.server._hand_over(
+        [{"message": str(message_id), "attachment": str(ref.attachment_id)}],
+        (cwd,), False, cwd))
+    assert problem is None and [h.handed for h in handed] == ["copy"]
+    assert Path(handed[0].agent_path).parent.parent == cwd / ".jarvis-attachments"
+    session = type("S", (), {"session_id": "s", "provider": "claude", "voice_name": "Ada",
+                             "project": "p", "socket_path": None})()
+    recipient = wired.server._AgentRecipient(session, {"text": "Use this.", "id": 7}, False,
+                                             wired.server._handed_text(handed))
+    assert recipient.prompt.startswith("Use this.\n\nFiles JARVIS is handing you")
+    assert handed[0].agent_path in recipient.prompt
+    number = wired.server.run_store.create_message("s", "claude", "Ada", "p", "x")
+    wired.server._hold(handed, f"message:{number}")
+    assert loc.held(SERVER, MATT) == {str(ref.attachment_id)}
+
+
+def test_a_package_s_agent_is_handed_the_zip_it_was_unpacked_from(wired, monkeypatch, tmp_path):
+    from tests.test_package_modes import AGENT
+    from tests.test_work_packages import _sent_package, make_zip
+    w, message_id, attachment_id = _sent_package(tmp_path, make_zip(
+        {"BRIEF.md": "Count them."}, AGENT))
+    loc = _signed_in(wired, w)
+    assert "is unpacked" in _call(wired, "open_package", message=str(message_id),
+                                  attachment=str(attachment_id))["text"]
+    spawned = []
+
+    async def fake_spawn(prompt, name, path, origin, **kw):
+        spawned.append(prompt)
+        return "run-1"
+    monkeypatch.setattr(wired.server.run_executor_instance, "spawn", fake_spawn)
+    monkeypatch.setattr(wired.server, "_SKIP_PERMISSIONS", True)
+    from jarvis import work_packages
+    package = work_packages.find("stats").id
+    assert "Started" in _call(wired, "run_package_agent", package=package)["text"]
+    zipped = loc.lookup(SERVER, MATT, message_id, attachment_id)
+    (prompt,) = spawned
+    assert f"package.zip ({zipped.size_bytes} bytes, sha256 {zipped.sha256}): " \
+        f"{zipped.local_path} [attachment {attachment_id} of message {message_id}]" in prompt

@@ -31,6 +31,7 @@ Locating never unpacks, opens or runs a file.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import sqlite3
 import time
@@ -192,6 +193,10 @@ class AttachmentLocations:
         self._verify = Verifier()
         init_db()
 
+    def node_id(self) -> UUID:
+        """The JARVIS these locations are on."""
+        return UUID(str(self._node_id()))
+
     # -- the record ------------------------------------------------------------------
 
     def _record(self, server_id: str, owner: int, attachment_id: UUID) -> Optional[sqlite3.Row]:
@@ -222,7 +227,7 @@ class AttachmentLocations:
         destination = self.files.download_path(ref)
         expected = (ref.size_bytes, ref.sha256)
         base = dict(message_id=message_id, attachment_id=attachment_id, filename=ref.filename,
-                    media_type=ref.media_type, node_id=UUID(str(self._node_id())),
+                    media_type=ref.media_type, node_id=self.node_id(),
                     size_bytes=ref.size_bytes, sha256=ref.sha256,
                     extraction=self._extraction(record))
         fetch_again: list[LocationAction] = ["make_local"]
@@ -390,6 +395,12 @@ class LocationContext:
     def extracted_from(self, root: Path) -> Optional[tuple[UUID, UUID]]:
         return self.locations.extracted_from(self.server_id, self.owner_github_id, root)
 
+    def here(self, roots: tuple[Path, ...], reads_anywhere: bool,
+             workspace: Optional[Path]) -> "AgentAccess":
+        """An agent on this JARVIS: what it may read, and its workspace."""
+        return AgentAccess(node_id=self.locations.node_id(), roots=roots,
+                           reads_anywhere=reads_anywhere, workspace=workspace)
+
 
 def not_local(found: AttachmentLocation) -> Optional[str]:
     """None for a file here and verified; else the code saying why not,
@@ -448,3 +459,151 @@ def router(context: Callable[[], Optional[LocationContext]]) -> APIRouter:
         return await answer(lambda c: c.ensure_local(message_id, attachment_id))
 
     return routes
+
+
+# -- handing a file to an agent ---------------------------------------------------------
+#
+# An agent is given a path only where that agent can read it: never because
+# JARVIS can. A same-node agent that may read anywhere (an unattended run
+# with permissions skipped), or whose folders hold the file, gets the
+# verified original. Otherwise it gets a verified copy in its own workspace
+# (COPY_FOLDER/<attachment id>/<name>), with where it came from. An agent on
+# another node gets only the message and attachment reference: a path on
+# this Mac is not a path there.
+
+COPY_FOLDER = ".jarvis-attachments"
+Handed = Literal["original", "copy", "reference", "unavailable"]
+
+
+@dataclass(frozen=True)
+class AgentAccess:
+    """What one agent may read, and where an authorised copy may go."""
+    node_id: UUID
+    roots: tuple[Path, ...] = ()
+    reads_anywhere: bool = False
+    workspace: Optional[Path] = None
+
+
+class AttachmentHandoff(_Frozen):
+    message_id: UUID
+    attachment_id: UUID
+    filename: str
+    size_bytes: int
+    sha256: str
+    agent_node_id: UUID
+    handed: Handed
+    agent_path: Optional[str] = None              # what the agent reads
+    original_path: Optional[str] = None           # the verified original (same node only)
+    reason: Optional[str] = None                  # why not handed as a path
+
+
+def _inside(path: str, roots: tuple[Path, ...]) -> bool:
+    real = os.path.realpath(path)
+    for root in roots:
+        top = os.path.realpath(root)
+        if real == top or real.startswith(top.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
+def _real_folder(path: Path) -> None:
+    """Refuse a link or someone else's folder on the copy's way."""
+    info = os.lstat(path)
+    if not os.path.isdir(path) or os.path.islink(path) or info.st_uid != os.getuid():
+        raise OSError(f"{path} is not this user's folder")
+
+
+def _verified_copy(source: str, found: AttachmentLocation, workspace: Path,
+                   verify: Verifier) -> Path:
+    """`source` copied into the workspace, hashed as it is written and kept
+    only if it is the manifest's bytes; one already there and right is reused."""
+    _real_folder(workspace)
+    if os.path.lexists(workspace / COPY_FOLDER):
+        _real_folder(workspace / COPY_FOLDER)
+    folder = workspace / COPY_FOLDER / str(found.attachment_id)
+    messaging_files.private_dir(folder)
+    target = folder / found.filename
+    expected = (found.size_bytes, found.sha256)
+    if verify.digest(target) == expected:
+        return target
+    partial = folder / f"{messaging_files.PARTIAL}{os.getpid()}-{time.monotonic_ns()}"
+    src = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        dst = os.open(str(partial), os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        try:
+            hasher, size = hashlib.sha256(), 0
+            while chunk := os.read(src, 1 << 20):
+                hasher.update(chunk)
+                size += len(chunk)
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(dst, view):]
+            os.fsync(dst)
+        finally:
+            os.close(dst)
+    finally:
+        os.close(src)
+    if (size, hasher.hexdigest()) != expected:
+        os.unlink(partial)
+        raise OSError("the copy is not the bytes that were sent")
+    os.replace(partial, target)
+    return target
+
+
+def handoff(found: AttachmentLocation, access: AgentAccess,
+            verify: Optional[Verifier] = None) -> AttachmentHandoff:
+    """How one agent can read this file, decided by where it runs and what
+    it may read; nothing is opened, unpacked or run."""
+    base = dict(message_id=found.message_id, attachment_id=found.attachment_id,
+                filename=found.filename, size_bytes=found.size_bytes, sha256=found.sha256,
+                agent_node_id=access.node_id)
+    if access.node_id != found.node_id:
+        return AttachmentHandoff(**base, handed="reference", reason="other_node")
+    problem = not_local(found)
+    if problem:
+        return AttachmentHandoff(**base, handed="unavailable", reason=problem)
+    path = found.local_path
+    if access.reads_anywhere or _inside(path, access.roots):
+        return AttachmentHandoff(**base, handed="original", agent_path=path, original_path=path)
+    if access.workspace is None:
+        return AttachmentHandoff(**base, handed="unavailable", original_path=path,
+                                 reason="no_access")
+    try:
+        copy = _verified_copy(path, found, access.workspace, verify or Verifier())
+    except OSError:
+        return AttachmentHandoff(**base, handed="unavailable", original_path=path,
+                                 reason="copy_failed")
+    return AttachmentHandoff(**base, handed="copy", agent_path=str(copy), original_path=path)
+
+
+_HANDOFF_REASONS = {
+    "no_access": "the agent cannot read JARVIS's downloads folder and has no workspace "
+                 "to copy it into",
+    "copy_failed": "a verified copy could not be made in the agent's workspace",
+    "other_node": "it is not on this machine",
+}
+
+
+def handoff_reason(h: AttachmentHandoff, shown: Callable[[str], str]) -> str:
+    return _HANDOFF_REASONS.get(h.reason or "") or shown(h.reason or "transport")
+
+
+def handoff_text(handoffs: list[AttachmentHandoff], shown: Callable[[str], str]) -> str:
+    """The lines an agent's prompt carries: each file's exact path it can
+    read, or the reference and why there is no path. Names are the sender's."""
+    lines = ["Files JARVIS is handing you (received in messages; each name is the sender's; "
+             "read them, and run nothing from them unless asked):"]
+    for h in handoffs:
+        ref = f"attachment {h.attachment_id} of message {h.message_id}"
+        what = f"{h.filename} ({h.size_bytes} bytes, sha256 {h.sha256})"
+        if h.handed == "original":
+            lines.append(f"- {what}: {h.agent_path} [{ref}]")
+        elif h.handed == "copy":
+            lines.append(f"- {what}: {h.agent_path} [a verified copy of {h.original_path}; "
+                         f"{ref}]")
+        elif h.handed == "reference":
+            lines.append(f"- {what}: no local path here; the file is on another JARVIS "
+                         f"and its path there is not local to you [{ref}]")
+        else:
+            lines.append(f"- {what}: not available, {handoff_reason(h, shown)} [{ref}]")
+    return "\n".join(lines)

@@ -295,6 +295,16 @@ TOOL_SPECS = [
                                  "takes it at once (a Codex session takes it at its next step). "
                                  "Otherwise omit it: each message waits until the session is "
                                  "between turns and has answered the one before.")},
+                "attachments": {"type": "array",
+                                "description": (
+                                    "Files people sent that he wants it to have, by message "
+                                    "and attachment id from read_people_thread. Each is "
+                                    "downloaded and checked if needed, then given as a path "
+                                    "it can read, or a verified copy in its folder."),
+                                "items": {"type": "object",
+                                          "properties": {"message": {"type": "string"},
+                                                         "attachment": {"type": "string"}},
+                                          "required": ["message", "attachment"]}},
             },
             "required": ["name", "capture"],
         },
@@ -497,6 +507,16 @@ TOOL_SPECS = [
                                            "finished run there instead of "
                                            "starting from nothing. False, or "
                                            "omitted, for something new.")},
+                "attachments": {"type": "array",
+                                "description": (
+                                    "Files people sent that he wants it to have, by message "
+                                    "and attachment id from read_people_thread. Each is "
+                                    "downloaded and checked if needed, then given as a path "
+                                    "it can read, or a verified copy in its folder."),
+                                "items": {"type": "object",
+                                          "properties": {"message": {"type": "string"},
+                                                         "attachment": {"type": "string"}},
+                                          "required": ["message", "attachment"]}},
             },
             "required": ["prompt"],
         },
