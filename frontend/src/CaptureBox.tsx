@@ -114,19 +114,19 @@ export function CaptureButtons({ capture, actionsRef }: {
       {refused && <SaidText said={refused} as="div" className="capture-refused" role="alert" />}
       <div className="capture-buttons" ref={actionsRef}>
         {/* Read aloud; heard to the end, it counts as read back. */}
-        <button type="button" className="capture-read" disabled={busy || sending || beingRead}
+        <button data-ui-action="domain" type="button" className="capture-read" disabled={busy || sending || beingRead}
                 title={t("main.capture.readAloud")} onClick={() => act("read")}>
           {beingRead ? t("main.capture.reading") : t("main.capture.read")}
         </button>
-        <button type="button" className={`capture-accept${capture.accepted ? " done" : ""}`}
+        <button data-ui-action="domain" type="button" className={`capture-accept${capture.accepted ? " done" : ""}`}
                 disabled={busy || sending || capture.accepted}
                 title={capture.accepted ? t("main.capture.acceptedTitle") : t("main.capture.acceptTitle")}
                 onClick={() => act("accept")}>
           {capture.accepted ? t("main.capture.accepted") : t("main.capture.accept")}
         </button>
-        <button type="button" className="capture-delete" disabled={busy || sending}
+        <button data-ui-action="domain" type="button" className="capture-delete" disabled={busy || sending}
                 onClick={() => act("delete")}>{t("main.capture.delete")}</button>
-        <button type="button" className="capture-send" disabled={busy || sending || !capture.to}
+        <button data-ui-action="domain" type="button" className="capture-send" disabled={busy || sending || !capture.to}
                 title={capture.to ? t("main.capture.sendTitle", { to: capture.to }) : t("main.capture.unaddressed")}
                 onClick={() => act("send")}>{t("main.capture.send")}</button>
       </div>

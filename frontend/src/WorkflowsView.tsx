@@ -166,7 +166,7 @@ function WorkflowItem({ workflow: w, selected }: { workflow: Workflow; selected:
     <li className={`workflow-item${finished ? " dismissible" : ""}`}>
       <WorkflowRow workflow={w} selected={selected} ui={ui} />
       {finished && (
-        <button type="button" className="workflow-dismiss" aria-label={t("right.workflows.dismiss")}
+        <button data-ui-action="domain" type="button" className="workflow-dismiss" aria-label={t("right.workflows.dismiss")}
                 title={t("right.workflows.dismiss")} onClick={() => void dismissWorkflow(w.id)}>×</button>
       )}
     </li>

@@ -198,13 +198,22 @@ effects; the overlay map; pointing inside Settings blocked).
 
 ## Gaps left after the coverage merge (integrator)
 
-- Unclassified controls (73, held in `PENDING` in
-  `tests/test_ui_coverage_rules.py`): most are domain or form input and need
-  only a reviewed `data-ui-action`; these look like navigation and need a
-  command: FolderDetail's mode switches (Reconnect, Remove, Cancel, Keep
-  it), FoldersView's Add form Cancel, QueueItemView's related-message links
-  (`jump`) and Reply/Respond, VoiceDiagnosticsView's range and the spark
-  marks' zoom (VoiceVisuals), WorkflowDetail's transcript scroll.
+- Unclassified controls: 22 left in `PENDING` (`tests/test_ui_coverage_rules.py`),
+  all navigation that needs a registered command: FolderDetail's mode
+  switches (Edit, Reconnect, Remove, Cancel, Keep it), FoldersView's Add
+  form Cancel, MessageComposer's discard confirmation (Discard, Keep it),
+  QueueItemView's related-message links (`jump`), Reply, Respond, Edit
+  again and the leave confirmation (Discard reply, Keep working),
+  QueuePanel's New message, VoiceDiagnosticsView's range and quiet toggle
+  and the spark marks' zoom (VoiceVisuals), WorkflowDetail's transcript
+  scroll. The other 51 were classified at the integration review
+  (`data-ui-action`): `domain` (capture read/accept/delete/send, record
+  restore, agent switch, folder replace/edit/remove/register/ignore/restore,
+  draft keep-mine/take-theirs/discard/review, Queue turn, put back,
+  addressed, unread, restore, done, retry, cancel send, workflow answer and
+  dismiss), `input` (form fields, the typing box), `recipient` (the
+  composer's recipient), `file` (attach, download, reveal, remove, save the
+  voice record), `refresh` (a folder's Refresh).
 - Parts a leaf cannot reach past a sibling (`blocked / no-route`): workflow
   Decisions tab and other tabs left of the last, phase steps, Folders tabs,
   microphone mute and off, Team Server last write, reminder text and Sign

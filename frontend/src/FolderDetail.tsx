@@ -362,17 +362,17 @@ function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
     }
   };
   return (
-    <form className="folder-add" onSubmit={(e) => { e.preventDefault(); void go(false); }}
+    <form data-ui-action="domain" className="folder-add" onSubmit={(e) => { e.preventDefault(); void go(false); }}
           aria-label={t("main.folder.reconnectLocation")}>
       <label className="folder-field">
         <span>{t("main.folder.newLocation")}</span>
-        <input type="text" value={path} spellCheck={false} autoFocus
+        <input data-ui-action="input" type="text" value={path} spellCheck={false} autoFocus
                onChange={(e) => { setPath(e.target.value); setMismatch(null); }} />
       </label>
       {mismatch ? (
         <div role="alert">
           <p className="folder-note">{t("main.folder.mismatch", { path: mismatch })}</p>
-          <button type="button" className="folder-button" disabled={busy} onClick={() => void go(true)}>{t("main.folder.replaceLocation")}</button>
+          <button data-ui-action="domain" type="button" className="folder-button" disabled={busy} onClick={() => void go(true)}>{t("main.folder.replaceLocation")}</button>
         </div>
       ) : (
         <button type="submit" className="folder-button" disabled={busy || !path.trim()}>{t("main.folder.reconnect")}</button>
@@ -428,12 +428,12 @@ export function FolderDetail({ id }: { id: string }) {
     <div className="folder-detail" data-folder={f.id} ref={(el) => { ui.whole(el); ui.part("detail")(el); }}>
       <header className="folder-detail-head">
         {mode === "edit" ? (
-          <form className="folder-edit" aria-label={t("main.folder.editLabel")}
+          <form data-ui-action="domain" className="folder-edit" aria-label={t("main.folder.editLabel")}
                 onSubmit={(e) => { e.preventDefault(); void act(() => editFolder(f, { display_name: name, role }), () => tNow("main.folder.saved")); }}>
             <label className="folder-field"><span>{t("main.folders.nameLabel")}</span>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
+              <input data-ui-action="input" type="text" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
             <label className="folder-field"><span>{t("main.folders.roleLabel")}</span>
-              <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
+              <select data-ui-action="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
                 {ROLES.map((r) => <option key={r} value={r}>{roleWords(r)}</option>)}
               </select></label>
             <button type="submit" className="folder-button" disabled={busy || !name.trim()}>{t("main.folder.save")}</button>
@@ -455,7 +455,7 @@ export function FolderDetail({ id }: { id: string }) {
 
       {mode === "view" && !removed && (
         <div className="folder-actions">
-          <button type="button" className="folder-button" disabled={busy}
+          <button data-ui-action="refresh" type="button" className="folder-button" disabled={busy}
                   onClick={() => void act(() => refreshFolder(f), () => tNow("main.folder.refreshed"))}>{t("main.folder.refresh")}</button>
           <button type="button" className="folder-button quiet" disabled={busy}
                   onClick={() => { setName(f.display_name); setRole(f.role); setMode("edit"); }}>{t("main.folder.editLabel")}</button>
@@ -467,7 +467,7 @@ export function FolderDetail({ id }: { id: string }) {
         <div className="folder-confirm" role="alertdialog" aria-label={t("main.folder.remove")}>
           <p>{t("main.folder.removeQuestion", { name: f.display_name })} <strong>{t("main.folder.noFileDeleted")}</strong>{" "}
             {t("main.folder.filesStay")}</p>
-          <button type="button" className="folder-button danger" disabled={busy}
+          <button data-ui-action="domain" type="button" className="folder-button danger" disabled={busy}
                   onClick={() => void act(() => unregisterFolder(f), () => tNow("main.folder.removed"))}>{t("main.folder.remove")}</button>
           <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>{t("main.common.keepIt")}</button>
         </div>

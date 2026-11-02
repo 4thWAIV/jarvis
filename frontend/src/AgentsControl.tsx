@@ -233,7 +233,7 @@ function AgentItem({ agent, switchable, onToggle }: {
       {/* Only in the All view; in Active the agent's box takes the
           whole row. */}
       {switchable && (
-        <button type="button" role="switch" aria-checked={agent.active}
+        <button data-ui-action="domain" type="button" role="switch" aria-checked={agent.active}
                 className="agent-switch"
                 title={agent.active ? t("right.agents.deactivate") : t("right.agents.activate")}
                 onClick={() => onToggle(agent)} />

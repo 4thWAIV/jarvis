@@ -29,19 +29,18 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # coverage-main's. `label-unlocalized` counts are the localization
 # workers' (execution.md, LOCALIZATION OWNERSHIP): each reaches zero.
 PENDING = {
-    ("AgentsControl.tsx", "control-unclassified"): 1,
-    ("CaptureBox.tsx", "control-unclassified"): 4,
-    ("ConversationView.tsx", "control-unclassified"): 3,
-    ("FolderDetail.tsx", "control-unclassified"): 14,
-    ("FoldersView.tsx", "control-unclassified"): 7,
-    ("MessageComposer.tsx", "control-unclassified"): 10,
-    ("QueueFiles.tsx", "control-unclassified"): 3,
-    ("QueueItemView.tsx", "control-unclassified"): 19,
-    ("QueuePanel.tsx", "control-unclassified"): 2,
-    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 3,
+    # Navigation still to be given a registered command (coverage.md, "Gaps"):
+    # form and confirmation open/cancel modes, the Queue's related links and
+    # Reply/Respond/Edit, New message, voice range, quiet and zoom, and the
+    # transcript's scroll. Everything else is classified (`data-ui-action`).
+    ("FolderDetail.tsx", "control-unclassified"): 6,
+    ("FoldersView.tsx", "control-unclassified"): 1,
+    ("MessageComposer.tsx", "control-unclassified"): 2,
+    ("QueueItemView.tsx", "control-unclassified"): 8,
+    ("QueuePanel.tsx", "control-unclassified"): 1,
+    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 2,
     ("VoiceVisuals.tsx", "control-unclassified"): 1,
-    ("WorkflowDetail.tsx", "control-unclassified"): 5,
-    ("WorkflowsView.tsx", "control-unclassified"): 1,
+    ("WorkflowDetail.tsx", "control-unclassified"): 1,
 }
 
 

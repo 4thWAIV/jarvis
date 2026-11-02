@@ -146,7 +146,7 @@ function Stretch({ window: span, onZoom, partRef }: { window: () => [number, num
       <Incidents events={events} partRef={partRef("incidents")} />
       <Notifications samples={samples} events={events} partRef={partRef("notifications")} />
       <Messages events={events} local={local.filter((n) => n.at / 1000 >= from)} partRef={partRef("messages")} />
-      <button type="button" className="voice-save" disabled={!read.value}
+      <button data-ui-action="file" type="button" className="voice-save" disabled={!read.value}
               onClick={() => save(from, to, samples, events)}>{t("main.voice.save")}</button>
     </>
   );

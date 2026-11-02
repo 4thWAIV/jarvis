@@ -63,19 +63,19 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
       <span className="file-meta">{sizeText(fileRef.size_bytes)} · {fileRef.media_type}</span>
       <span className="file-state">{stateWords(file, fileRef, incoming)}</span>
       {canDownload && (
-        <button type="button" className="file-action"
+        <button data-ui-action="file" type="button" className="file-action"
                 onClick={() => void downloadFile(messageId!, fileRef.attachment_id)}>
           {state === "failed" ? t("main.queue.file.tryAgain") : t("main.queue.file.download")}
         </button>
       )}
       {incoming && messageId && state === "verified" && (
-        <button type="button" className="file-action"
+        <button data-ui-action="file" type="button" className="file-action"
                 onClick={() => void revealFile(messageId, fileRef.attachment_id)}>
           {t("main.queue.file.reveal")}
         </button>
       )}
       {onRemove && (
-        <button type="button" className="file-action" onClick={onRemove}
+        <button data-ui-action="file" type="button" className="file-action" onClick={onRemove}
                 aria-label={t("main.queue.file.removeNamed", { name: fileRef.filename })}>{t("main.queue.file.remove")}</button>
       )}
     </div>

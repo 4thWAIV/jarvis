@@ -158,12 +158,12 @@ function CandidateRow({ c }: { c: Candidate }) {
                     })}>
               {t("main.folders.register")}
             </button>
-            <button type="button" className="folder-button quiet" disabled={busy}
+            <button data-ui-action="domain" type="button" className="folder-button quiet" disabled={busy}
                     onClick={() => act(() => candidateAction(c, "ignore"))}>{t("main.folders.ignore")}</button>
           </>
         )}
         {c.state === "ignored" && (
-          <button type="button" className="folder-button quiet" disabled={busy}
+          <button data-ui-action="domain" type="button" className="folder-button quiet" disabled={busy}
                   onClick={() => act(() => candidateAction(c, "restore"))}>{t("main.folders.restore")}</button>
         )}
       </div>
@@ -215,10 +215,10 @@ function AddFolder({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <form className="folder-add" onSubmit={check} aria-label={t("main.folders.addExisting")}>
+    <form data-ui-action="domain" className="folder-add" onSubmit={check} aria-label={t("main.folders.addExisting")}>
       <label className="folder-field">
         <span>{t("main.folders.pathField")}</span>
-        <input type="text" value={path} spellCheck={false} autoFocus
+        <input data-ui-action="input" type="text" value={path} spellCheck={false} autoFocus
                onChange={(e) => { setPath(e.target.value); setChecked(null); }} />
       </label>
       <div className="folder-add-actions">
@@ -242,10 +242,10 @@ function AddFolder({ onDone }: { onDone: () => void }) {
             <>
               <label className="folder-field">
                 <span>{t("main.folders.nameLabel")}</span>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+                <input data-ui-action="input" type="text" value={name} onChange={(e) => setName(e.target.value)} />
               </label>
               <p className="folder-note">{t("main.folders.registering")}</p>
-              <button type="button" className="folder-button" disabled={busy} onClick={save}>
+              <button data-ui-action="domain" type="button" className="folder-button" disabled={busy} onClick={save}>
                 {checked.existing ? t("main.folders.registerAgain") : t("main.folders.register")}
               </button>
             </>

@@ -51,7 +51,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
           : (
             <label>
               {t("main.queue.toLead")}{" "}
-              <select value={ed.recipient ?? ""} disabled={locked}
+              <select data-ui-action="recipient" value={ed.recipient ?? ""} disabled={locked}
                       onChange={(e) => edit(editorKey, { recipient: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t("main.queue.composer.choose")}</option>
                 {[...members].sort((a, b) => Number(b.github_id === dir.owner) - Number(a.github_id === dir.owner))
@@ -71,13 +71,13 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
       )}
       <label className="composer-field">
         <span>{t("main.queue.subject")}</span>
-        <input type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
+        <input data-ui-action="input" type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
                onChange={(e) => edit(editorKey, { subject: e.target.value })} />
       </label>
       <label className="composer-field" htmlFor={id}>
         <span>{t("main.queue.composer.message")}</span>
       </label>
-      <textarea id={id} className="composer-text" value={ed.text} rows={6} disabled={locked}
+      <textarea data-ui-action="input" id={id} className="composer-text" value={ed.text} rows={6} disabled={locked}
                 maxLength={LIMITS.TEXT_MAX_CHARS}
                 onChange={(e) => edit(editorKey, { text: e.target.value })} />
       <div className="composer-files">
@@ -89,7 +89,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         {ed.adding > 0 && <p className="composer-adding" role="status">{t("main.queue.composer.adding", { count: ed.adding })}</p>}
         <label className="composer-attach">
           {t("main.queue.composer.attach")}
-          <input type="file" multiple disabled={locked || ed.recipient === null}
+          <input data-ui-action="file" type="file" multiple disabled={locked || ed.recipient === null}
                  onChange={(e) => { void addFiles(editorKey, [...(e.target.files ?? [])]); e.target.value = ""; }} />
         </label>
         <span className="composer-limits">
@@ -100,8 +100,8 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
       {ed.error && <SaidText said={ed.error} as="p" className="composer-error" role="alert" />}
       {ed.conflict && (
         <div className="composer-conflict">
-          <button type="button" onClick={() => keepMine(editorKey)}>{t("main.queue.composer.keepMine")}</button>
-          <button type="button" onClick={() => takeTheirs(editorKey)}>{t("main.queue.composer.takeTheirs")}</button>
+          <button data-ui-action="domain" type="button" onClick={() => keepMine(editorKey)}>{t("main.queue.composer.keepMine")}</button>
+          <button data-ui-action="domain" type="button" onClick={() => takeTheirs(editorKey)}>{t("main.queue.composer.takeTheirs")}</button>
         </div>
       )}
       <div className="composer-actions">
@@ -109,7 +109,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         {confirmDiscard ? (
           <>
             <span className="composer-confirm">{t("main.queue.composer.discardQuestion")}</span>
-            <button type="button" className="composer-discard" onClick={() => { setConfirmDiscard(false); void discard(editorKey); }}>
+            <button data-ui-action="domain" type="button" className="composer-discard" onClick={() => { setConfirmDiscard(false); void discard(editorKey); }}>
               {t("main.queue.composer.discardDraft")}
             </button>
             <button type="button" onClick={() => setConfirmDiscard(false)}>{t("main.common.keepIt")}</button>
@@ -119,7 +119,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
             {t("main.queue.composer.discard")}
           </button>
         )}
-        <button type="button" className="composer-review" disabled={!canReview}
+        <button data-ui-action="domain" type="button" className="composer-review" disabled={!canReview}
                 onClick={() => void review(editorKey)}>{t("main.queue.composer.review")}</button>
       </div>
     </section>

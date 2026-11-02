@@ -242,7 +242,7 @@ function OneWorkflow({ id }: { id: string }) {
           </span>}
         </span>
         {w && FINISHED.has(w.state) && !gone && (
-          <button type="button" className="workflow-detail-dismiss" ref={ui.part("dismiss")}
+          <button data-ui-action="domain" type="button" className="workflow-detail-dismiss" ref={ui.part("dismiss")}
                   onClick={() => void dismissWorkflow(w.id)}>{t("main.workflow.dismiss")}</button>
         )}
         <button type="button" className="workflow-close" title={t("main.common.close")} aria-label={t("main.common.close")}
@@ -539,17 +539,17 @@ function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
       {options.length > 0 && (
         <div className="workflow-options" ref={ui.part("options")}>
           {options.map((option) => (
-            <button key={option} type="button" disabled={sending}
+            <button data-ui-action="domain" key={option} type="button" disabled={sending}
                     className={`workflow-option${isRecommended(option) ? " recommended" : ""}`}
                     onClick={() => answer(option)}>{option}</button>
           ))}
         </div>
       )}
       <div className="workflow-answer" ref={ui.part("answer")}>
-        <input type="text" value={text} placeholder={t("main.workflow.anotherAnswer")}
+        <input data-ui-action="input" type="text" value={text} placeholder={t("main.workflow.anotherAnswer")}
                onChange={(e) => setText(e.target.value)}
                onKeyDown={(e) => { if (e.key === "Enter") answer(text); }} />
-        <button type="button" disabled={sending || !text.trim()} onClick={() => answer(text)}>{t("main.workflow.answer")}</button>
+        <button data-ui-action="domain" type="button" disabled={sending || !text.trim()} onClick={() => answer(text)}>{t("main.workflow.answer")}</button>
       </div>
       {refused && <SaidText said={refused} as="p" className="read-failure workflow-refused" />}
     </li>

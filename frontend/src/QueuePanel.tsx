@@ -352,7 +352,7 @@ function DismissedRow({ item, state, dir, current }: {
         <span className="row-subject" ref={ui.part("subject")}>{subject || t("right.queue.noSubject")}</span>
         <Cue kind="dismissed">{t("right.queue.dismissed")}</Cue>
       </button>
-      <button type="button" className="queue-restore" onClick={() => void restore(thread)}>
+      <button data-ui-action="domain" type="button" className="queue-restore" onClick={() => void restore(thread)}>
         {t("right.queue.restore")}
       </button>
     </li>

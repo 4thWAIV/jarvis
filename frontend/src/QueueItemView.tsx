@@ -161,11 +161,11 @@ function OneItem({ thread }: { thread: string }) {
           {c.addressed && <Cue kind="addressed">{t("main.queue.addressed")}</Cue>}
           {c.dismissed && <Cue kind="dismissed">{t("main.queue.dismissed")}</Cue>}
           {!self && !c.dismissed && (c.turn === "mine"
-            ? <button type="button" className="item-turn" disabled={busy}
+            ? <button data-ui-action="domain" type="button" className="item-turn" disabled={busy}
                       onClick={() => void setTurn(thread, correspondent)}>
                 {t("main.queue.waitingOn", { person: personName(dir, correspondent) })}
               </button>
-            : <button type="button" className="item-turn" disabled={busy}
+            : <button data-ui-action="domain" type="button" className="item-turn" disabled={busy}
                       onClick={() => void setTurn(thread, work.owner_github_id)}>{t("main.queue.moveToMe")}</button>)}
         </div>
         <div className="item-actions" role="group" aria-label={t("main.queue.thisItem")}>
@@ -174,20 +174,20 @@ function OneItem({ thread }: { thread: string }) {
           )}
           <button type="button" onClick={next} ref={ui.part("next")} data-ui-command="queue.next">{t("main.queue.next")}</button>
           {!c.dismissed && work.placement !== "queued" && (
-            <button type="button" disabled={busy} onClick={() => void putBack(thread)}>{t("main.queue.putBack")}</button>
+            <button data-ui-action="domain" type="button" disabled={busy} onClick={() => void putBack(thread)}>{t("main.queue.putBack")}</button>
           )}
           {!c.dismissed && (
-            <button type="button" disabled={busy} aria-pressed={c.addressed}
+            <button data-ui-action="domain" type="button" disabled={busy} aria-pressed={c.addressed}
                     onClick={() => void setAddressed(thread, !c.addressed)}>
               {c.addressed ? t("main.queue.notAddressed") : t("main.queue.markAddressed")}
             </button>
           )}
           {!c.dismissed && !c.unread && (
-            <button type="button" disabled={busy} onClick={() => void setUnread(thread, true)}>{t("main.queue.markUnread")}</button>
+            <button data-ui-action="domain" type="button" disabled={busy} onClick={() => void setUnread(thread, true)}>{t("main.queue.markUnread")}</button>
           )}
           {c.dismissed
-            ? <button type="button" disabled={busy} onClick={() => void restore(thread)}>{t("main.queue.restore")}</button>
-            : <button type="button" disabled={busy} onClick={done}>{t("main.queue.done")}</button>}
+            ? <button data-ui-action="domain" type="button" disabled={busy} onClick={() => void restore(thread)}>{t("main.queue.restore")}</button>
+            : <button data-ui-action="domain" type="button" disabled={busy} onClick={done}>{t("main.queue.done")}</button>}
           <button type="button" onClick={close} ref={ui.part("close")} data-ui-command="queue.close">{t("main.common.close")}</button>
         </div>
         {noneWaiting && <p className="item-note" role="status">{t("main.queue.noneWaiting")}</p>}
@@ -265,13 +265,13 @@ function DismissBlockers({ thread, blockers, onClose }: {
       </ul>
       <div className="item-actions">
         {blockers.includes("unsent_text") && !blockers.includes("send_unresolved") && (sure ? (
-          <button type="button" onClick={async () => { if (await discard(thread)) { onClose(); void dismiss(thread); } }}>
+          <button data-ui-action="domain" type="button" onClick={async () => { if (await discard(thread)) { onClose(); void dismiss(thread); } }}>
             {t("main.queue.discardAndDismiss")}
           </button>
         ) : (
           <button type="button" onClick={() => setSure(true)}>{t("main.queue.discardReply")}</button>
         ))}
-        <button type="button" onClick={() => { onClose(); void putBack(thread); }}>{t("main.queue.putBackInstead")}</button>
+        <button data-ui-action="domain" type="button" onClick={() => { onClose(); void putBack(thread); }}>{t("main.queue.putBackInstead")}</button>
         <button type="button" onClick={onClose}>{t("main.queue.keepWorking")}</button>
       </div>
     </div>
@@ -419,10 +419,10 @@ function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; d
       )}
       <div className="item-actions">
         {(s === "failed" || s === "accept_unknown") && (
-          <button type="button" onClick={() => void retrySend(draft)}>{t("main.queue.retry")}</button>
+          <button data-ui-action="domain" type="button" onClick={() => void retrySend(draft)}>{t("main.queue.retry")}</button>
         )}
         {(s === "approved" || s === "failed") && (
-          <button type="button" onClick={() => void cancelSend(draft)}>{t("main.queue.cancelSend")}</button>
+          <button data-ui-action="domain" type="button" onClick={() => void cancelSend(draft)}>{t("main.queue.cancelSend")}</button>
         )}
         {(s === "failed" || s === "cancelled") && (
           <button type="button" onClick={() => editAgain(thread, draft)}>{t("main.queue.edit")}</button>

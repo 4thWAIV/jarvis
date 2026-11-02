@@ -336,7 +336,7 @@ export function RecordItem({ item, answer, restorable, place }: {
     return (
       <div className="history-turn record-notice record-cleared" ref={ui.whole}>
         <span ref={text}>{item.text}</span>
-        {restorable && <button type="button" className="record-restore" ref={ui.part("restore")}
+        {restorable && <button data-ui-action="domain" type="button" className="record-restore" ref={ui.part("restore")}
                                onClick={async () => setRefused(await restoreCapture(item))}>
           {t("main.conversation.restore")}</button>}
         {refused && <SaidText said={refused} className="read-failure" />}
@@ -432,11 +432,11 @@ function HearingBox({ turn, partRef }: { turn: Turn | null; partRef: (el: Elemen
     input.current?.blur();
   }
   return (
-    <div className="conversation-hearing" aria-label={t("main.conversation.hearing")}
+    <div data-ui-action="input" className="conversation-hearing" aria-label={t("main.conversation.hearing")}
          ref={(el) => { ref.current = el; partRef(el); }}
          onClick={() => setTyping(true)}>
       {heard !== null && <p className="caption-turn user">{heard}</p>}
-      <textarea ref={input} className="hearing-input" rows={1} hidden={heard !== null}
+      <textarea data-ui-action="input" ref={input} className="hearing-input" rows={1} hidden={heard !== null}
                 aria-label={t("main.conversation.typeInstead")} placeholder={t("main.conversation.typePlaceholder")}
                 value={draft} onChange={(e) => setDraft(e.target.value)}
                 onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
