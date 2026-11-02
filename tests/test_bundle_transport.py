@@ -637,6 +637,8 @@ def test_a_repair_resumes_only_what_was_not_done(tmp_path, serve, clock):
     matt.inspection.read_member(matt.me, key, member_id(ZIP.sha256, "review/summary.pdf"))
     before = matt.tasks.review_state(SERVER, MATT, m.thread_id)
     flat = bf.ref(32, "review (flattened).zip")
+    matt.specs[flat.attachment_id] = bf.Spec(flat, members=(
+        ("summary.pdf", "pdf", "readable"), ("sources.md", "markdown", "readable")))
     task = bf.task_on(flat, primary="summary.pdf", supporting=("sources.md",))
     repair = bf.accepted(TIM, MATT, [flat], n=2, task=task, reply_to=m, supersedes=[
         wire.Supersedes(message_id=m.message_id, attachment_id=ZIP.attachment_id,
@@ -654,6 +656,38 @@ def test_a_repair_resumes_only_what_was_not_done(tmp_path, serve, clock):
     bf.hold(matt.store, MATT, revised)
     assert [i.state for i in matt.tasks.review_state(SERVER, MATT, m.thread_id).items] == \
         ["unread"], "a revision's changed sources are read again"
+
+
+def test_a_repair_carries_a_read_only_to_the_same_bytes(tmp_path, serve, clock):
+    """A repair naming the same path is not the same evidence: what was
+    read carries over only when the repaired member's bytes match, and a
+    copy that cannot be compared starts again."""
+    matt, m = received(tmp_path, serve, clock)
+    key = AttachmentKey(m.message_id, ZIP.attachment_id)
+    for path in ("review/summary.pdf", "review/sources.md"):
+        matt.inspection.read_member(matt.me, key, member_id(ZIP.sha256, path))
+    matt.tasks.review_state(SERVER, MATT, m.thread_id)
+    flat = bf.ref(32, "review (flattened).zip")
+    matt.specs[flat.attachment_id] = bf.Spec(flat, members=(
+        ("summary.pdf", "pdf", "readable"), ("sources.md", "markdown", "readable")),
+        contents={"sources.md": b"different sources"})
+    repair = bf.accepted(TIM, MATT, [flat], n=2, reply_to=m, supersedes=[
+        wire.Supersedes(message_id=m.message_id, attachment_id=ZIP.attachment_id,
+                        by_attachment_id=flat.attachment_id, reason="repair")],
+        task=bf.task_on(flat, primary="summary.pdf", supporting=("sources.md",)))
+    bf.hold(matt.store, MATT, repair)
+    after = matt.tasks.review_state(SERVER, MATT, m.thread_id)
+    assert [(i.path, i.state) for i in after.items] == [
+        ("summary.pdf", "read"), ("sources.md", "unread")], "changed bytes are read again"
+
+    gone = bf.ref(34, "review (flattened 2).zip")
+    again = bf.accepted(TIM, MATT, [gone], n=3, reply_to=m, supersedes=[
+        wire.Supersedes(message_id=repair.message_id, attachment_id=flat.attachment_id,
+                        by_attachment_id=gone.attachment_id, reason="repair")],
+        task=bf.task_on(gone, primary="summary.pdf", supporting=()))
+    bf.hold(matt.store, MATT, again)
+    assert [i.state for i in matt.tasks.review_state(SERVER, MATT, m.thread_id).items] == \
+        ["unread"], "a copy whose bytes cannot be compared is not taken as read"
 
 
 # -- downloads ---------------------------------------------------------------------------------

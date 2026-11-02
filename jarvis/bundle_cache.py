@@ -30,7 +30,7 @@ from jarvis import data_paths
 
 CACHE_MAX_BYTES = 512 * 1024 * 1024
 
-DerivedKind = Literal["describe", "listing", "text", "render", "preview"]
+DerivedKind = Literal["describe", "listing", "text", "render", "preview", "digest"]
 
 PARTIAL = ".partial-"
 SCRATCH = "scratch"

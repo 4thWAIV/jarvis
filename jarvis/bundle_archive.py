@@ -11,6 +11,7 @@ ordinary bundles.
     read_member    one member's bytes, its budgets enforced on what is
                    actually decompressed, not on what the archive claims
     read_head      a member's first bytes, for telling its format
+    digest         a member's SHA-256, decompressed under the same budgets
     extract        the members under one folder of the archive into a new
                    folder: written into a private staging folder beside it
                    and renamed into place only once every member is read,
@@ -21,6 +22,7 @@ bits unless the caller asks (`keep_modes`, the work-package path only).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -324,6 +326,17 @@ def read_member(archive: zipfile.ZipFile, member: Member,
     out = bytearray()
     _read_into(archive, member, _Spent(budgets), out.extend)
     return bytes(out)
+
+
+def digest(archive: zipfile.ZipFile, member: Member,
+           budgets: Optional[Budgets] = None) -> str:
+    """A file member's SHA-256, hex, decompressed under the budgets as
+    read_member's bytes are, without holding them."""
+    if member.is_dir:
+        raise ArchiveError("not-file", f"{member.info.filename!r} is a folder.")
+    found = hashlib.sha256()
+    _read_into(archive, member, _Spent(budgets or DEFAULT_BUDGETS), found.update)
+    return found.hexdigest()
 
 
 def read_head(archive: zipfile.ZipFile, member: Member, size: int) -> bytes:

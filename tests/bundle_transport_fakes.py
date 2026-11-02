@@ -3,6 +3,7 @@ answers from a table (the readers lane's BundleInspection is tested on its
 own), messages put straight into a store, and team network snapshots."""
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -24,12 +25,15 @@ T0 = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
 
 class Spec:
     """One file as the fake inspection sees it. `members` are (path,
-    format, support) of an archive's files; a plain file is its own member."""
+    format, support) of an archive's files; a plain file is its own member.
+    `contents` gives a member's bytes by path; one not named holds its own
+    file name, so the same name in two archives is the same bytes."""
 
     def __init__(self, ref: wire.AttachmentRef, *, fmt: str = "zip", container: str = "zip",
                  support: str = "readable", reason: Optional[str] = None,
                  members: tuple = (), runs: Optional[str] = None, wrapper: str = "",
-                 pages: int = 2):
+                 pages: int = 2, contents: Optional[dict] = None):
+        self.contents = dict(contents or {})
         self.ref, self.fmt, self.container = ref, fmt, container
         self.support, self.reason, self.members = support, reason, list(members)
         self.runs, self.wrapper, self.pages = runs, wrapper, pages
@@ -123,6 +127,14 @@ class FakeInspection:
             spec, mid)), reader=ReaderId(name="fake", version=1),
             chunks=[TextChunk(location=location, text=f"text of {path or spec.ref.filename}")],
             chars=10, extent=Extent(pages=spec.pages), complete=True)
+
+    def member_digest(self, owner, key, mid) -> str:
+        spec = self._spec(key)
+        path, _fmt, support = self._find(spec, mid)
+        if support == "blocked":
+            raise InspectionRefused("unsupported", "No bytes to compare.")
+        data = spec.contents.get(path, (path.rsplit("/", 1)[-1] or spec.ref.filename).encode())
+        return hashlib.sha256(data).hexdigest()
 
     def render_page(self, owner, key, mid, page, options=None) -> RenderedPage:
         spec = self._spec(key)

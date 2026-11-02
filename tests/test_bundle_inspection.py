@@ -576,3 +576,40 @@ def test_text_has_an_empty_preview_and_asking_for_it_is_no_failure(world):
     assert got.refs == [] and got.extent.lines == 3
     assert not [o for o in world.seen if o.member_id == notes.member_id
                 and o.support in ("unsupported", "blocked")], "no failure observed"
+
+
+def test_a_preview_names_what_can_be_shown_and_claims_no_read(world):
+    """Asking for a preview draws and reads nothing, so it is never a read:
+    a PDF counts once a page is drawn, an image once its page is fetched."""
+    key = world.files.add(MATT, zip_bytes({"summary.pdf": two_page_pdf(),
+                                           "shot.png": png_bytes(7, 5),
+                                           "page.html": b"<p>Hello</p>"}), "mixed.zip")
+    members = [find(world.service, MATT, key, p) for p in ("summary.pdf", "shot.png",
+                                                             "page.html")]
+    world.seen.clear()
+    for m in members:
+        assert world.service.preview_member(MATT, key, m.member_id).refs
+    assert world.seen == [], "a preview is no read"
+    world.service.render_page(MATT, key, members[0].member_id, 1)
+    assert [(o.operation, o.member_id, o.support) for o in world.seen] == [
+        ("render", members[0].member_id, "readable")]
+
+
+def test_a_member_s_digest_is_its_bytes_wherever_it_sits(world):
+    wrapped = world.files.add(MATT, zip_bytes({"w/sources.md": b"evidence\n",
+                                               "w/other.md": b"other\n"}), "w.zip")
+    flat = world.files.add(MATT, zip_bytes({"sources.md": b"evidence\n",
+                                            "other.md": b"changed\n"}), "flat.zip")
+    single = world.files.add(MATT, b"evidence\n", "sources.md")
+    world.seen.clear()
+
+    def digest(key, path):
+        return world.service.member_digest(MATT, key, find(world.service, MATT, key,
+                                                           path).member_id)
+    expected = hashlib.sha256(b"evidence\n").hexdigest()
+    assert digest(wrapped, "w/sources.md") == digest(flat, "sources.md") == expected
+    c = world.service.classify(MATT, single)
+    assert world.service.member_digest(MATT, single, c.root_member_id) == expected
+    assert digest(wrapped, "w/other.md") != digest(flat, "other.md")
+    assert not [o for o in world.seen if o.operation in ("read_text", "render")], \
+        "comparing bytes is no read"

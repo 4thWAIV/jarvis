@@ -366,7 +366,9 @@ itself, and so is its one rendered page, served with its own type
 JPEG, GIF or WebP as sent; an image is never shrunk to `max_edge`, since
 that would mean decoding it. A member with text and nothing to draw
 (Markdown, CSV, an Office file) has an empty preview (no refs): asking for
-it is not a failed read and is not observed. docx, xlsx and pptx
+it is not a failed read and is not observed. No preview is a read: it only
+names what can be shown, so its success is never observed; a page counts
+once `render_page` draws it and words once `read_member` reads them. docx, xlsx and pptx
 (`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
 and row (saved values with the formula beside them,
 `formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
@@ -420,7 +422,10 @@ on; a review of a draft with files stores it with the revision
 (`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
 thread with a flattened copy checked member by member, or companions,
 from `FileSnapshots.original_bytes`), and keeps the recipient's review
-checklist (`human_review`, never sent), resumed across a repair; each
+checklist (`human_review`, never sent), resumed across a repair: an item
+read on the replaced file carries to the repaired copy's member only when
+`BundleInspection.member_digest` (the member's SHA-256, under the archive
+budgets) is the same on both, never on the path alone; each
 item keeps where it was read (`read`: the pages and line ranges an
 `Observation`'s `locations` carried, ranges that touch joined,
 `bundle_tasks.read_locations`). Nothing marks an item `cited` yet. A received

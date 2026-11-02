@@ -714,7 +714,10 @@ class BundleInspection:
                           "reader_unavailable")
             raise InspectionRefused("unsupported", "There is no preview for it; read its "
                                                    "text instead.", "reader_unavailable")
-        self._observe(owner, key, info.sha256, "render", member_id, "readable")
+        # A preview only names what can be shown (page addresses, an image's
+        # size, the frame's address): nothing has been drawn or read yet, so
+        # success is not observed. A page counts once render_page draws it,
+        # and words once read_member reads them.
         return Preview(attachment=info, member=entry.info, refs=refs,
                        extent=description.extent, blocked_resources=blocked,
                        continuation=more)
@@ -744,6 +747,36 @@ class BundleInspection:
         self._observe(owner, key, info.sha256, "render", member_id, "readable",
                       locations=(PageLocation(page=page),))
         return rendered
+
+    def member_digest(self, owner: Owner, key: AttachmentKey, member_id: str) -> str:
+        """A file member's SHA-256 (hex): the attachment's own, verified,
+        for a file that is not an archive; an archive member's bytes hashed
+        under the budgets. Whether two members hold the same bytes, so work
+        done on one may count for the other (a repair's flattened copy).
+        Nothing is read for review, so nothing is observed."""
+        info, path = self._verified(owner, key)
+        entry = self._entry(self._survey(owner, info, path), member_id)
+        if entry.info.is_dir or entry.info.support == "blocked":
+            raise InspectionRefused("unsupported", "It has no bytes to compare.",
+                                    entry.info.reason)
+        if entry.info.path == "":
+            return info.sha256.lower()
+        cache_key = self._key(owner, info, member_id, "inspection", LISTING_VERSION, "digest")
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached.decode("ascii")
+        try:
+            with bundle_archive.open_archive(path) as archive:
+                listing = bundle_archive.list_members(archive, self.budgets, per_entry=True)
+                member = listing.files().get(entry.info.path)
+                if member is None:
+                    raise InspectionRefused("member_not_found", "There is no such member.")
+                found = bundle_archive.digest(archive, member, self.budgets)
+        except bundle_archive.ArchiveError as e:
+            raise _refusal_for(archive_reason(e), "It could not be read within the safe "
+                                                  "limits.") from None
+        self.cache.put(cache_key, found.encode("ascii"))
+        return found
 
     def html_asset(self, owner: Owner, key: AttachmentKey, member_id: str,
                    relative: str) -> tuple[bytes, str]:

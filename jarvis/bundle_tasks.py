@@ -413,17 +413,36 @@ class BundleTasks:
         items += self._briefs(ns, message, {i.member_id for i in items})
         return items[:CHECKLIST_MAX]
 
-    @staticmethod
-    def _carry(old: list[ChecklistItem], new: list[ChecklistItem]) -> list[ChecklistItem]:
+    def _carry(self, ns, old: list[ChecklistItem], new: list[ChecklistItem],
+               repair: wire.AcceptedMessage) -> list[ChecklistItem]:
         """Items done on the file a repair replaced (read or cited),
-        carried to the same member of its flattened copy (the same bytes,
-        checked); an item not done, unreadable ones included, starts again."""
+        carried to the same member of its repaired copy only when that
+        member holds the same bytes (member_digest on both, checked here,
+        never taken from the repair's word); an item not done, unreadable
+        ones included, or whose bytes changed or cannot be compared, starts
+        again."""
+        replaced = {s.by_attachment_id: s for s in repair.supersedes if s.reason == "repair"}
+        owner = Owner(*ns)
+
+        def digest(message_id: UUID, item: ChecklistItem) -> Optional[str]:
+            try:
+                return self.messages.member_digest(
+                    owner, AttachmentKey(message_id, item.attachment_id), item.member_id)
+            except (InspectionRefused, wire.ContractError):
+                return None
+
         def same(a: str, b: str) -> bool:
             return a == b or (a.endswith("/" + b) and a.count("/") == b.count("/") + 1)
         carried = []
         for item in new:
-            done = next((o for o in old if o.role == item.role
-                         and o.state in ("read", "cited") and same(o.path, item.path)), None)
+            link = replaced.get(item.attachment_id)
+            done = None if link is None else next(
+                (o for o in old if o.attachment_id == link.attachment_id and o.role == item.role
+                 and o.state in ("read", "cited") and same(o.path, item.path)), None)
+            if done is not None:
+                before = digest(link.message_id, done)
+                if before is None or before != digest(repair.message_id, item):
+                    done = None
             carried.append(item.model_copy(update={"state": done.state, "read": done.read})
                            if done else item)
         return carried
@@ -464,7 +483,7 @@ class BundleTasks:
                 repair = any(s.reason == "repair" for s in source.message.supersedes)
                 items = self._seed(ns, source)
                 if stored is not None and repair:
-                    items = self._carry(stored.items, items)
+                    items = self._carry(ns, stored.items, items, source.message)
                 state = state.model_copy(update={"items": items,
                                                  "scope": state.scope if repair else None})
             state = change(state)
