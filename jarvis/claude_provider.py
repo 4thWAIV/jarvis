@@ -114,6 +114,11 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_people_thread",
     "mcp__jarvis__change_people_draft",
     "mcp__jarvis__attach_message_files",
+    # Where a received file is (attachment_locations.py): the read-only
+    # lookup, and the acting make-local and Reveal in Finder.
+    "mcp__jarvis__attachment_location",
+    "mcp__jarvis__make_attachment_local",
+    "mcp__jarvis__reveal_attachment",
     # Work packages a teammate sends: opening one, running its steps, starting
     # its agent run and opening its page are ACTING_TOOLS; the results go back
     # through draft_message's files.

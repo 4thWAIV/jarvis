@@ -1,6 +1,14 @@
 """Where a received file is on this JARVIS: the one answer the page, the
 brain's tools and an agent's hand-over all read.
 
+    GET  /api/team/messages/{message_id}/files/{attachment_id}/location
+         -> AttachmentLocation (lookup: read only)
+    POST /api/team/messages/{message_id}/files/{attachment_id}/location
+         -> AttachmentLocation (ensure_local: download and verify if needed)
+
+The brain's `attachment_location` and acting `make_attachment_local` call
+the same two, and `reveal_attachment` the existing reveal.
+
 A file is named by its message and attachment ids, for the owner signed in
 now, never by its name: two files called report.pdf are two attachments.
 The answer (`AttachmentLocation`) comes from the messaging-files service's
@@ -22,6 +30,7 @@ Locating never unpacks, opens or runs a file.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import time
@@ -32,10 +41,12 @@ from pathlib import Path
 from typing import Callable, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from jarvis import data_paths, run_store
-from jarvis import messaging_files
+from jarvis import messaging_api, messaging_files
 
 LocationState = Literal["remote_only", "downloading", "verified", "missing", "changed",
                         "moved", "failed"]
@@ -86,6 +97,12 @@ class AttachmentLocation(_Frozen):
     reason: Optional[str] = None                  # a state's code, or the failure's
     actions: list[LocationAction] = Field(default_factory=list)
     extraction: Optional[AttachmentExtraction] = None
+
+    @computed_field
+    @property
+    def shown(self) -> str:
+        """The state in the owner's words (STATE_SHOWN), for the page."""
+        return STATE_SHOWN[self.state]
 
 
 _SCHEMA = """
@@ -383,3 +400,51 @@ def not_local(found: AttachmentLocation) -> Optional[str]:
     if found.state == "downloading":
         return "attachment_not_ready"
     return found.reason or "transport"
+
+
+def spoken(found: AttachmentLocation, shown: Callable[[str], str]) -> str:
+    """JARVIS's own sentence for a location (no name, no path: those are
+    the sender's and go in the untrusted block). `shown` words a failure code."""
+    if found.state == "verified":
+        return ("On this Mac and checked. Its exact path is local_path below; offer to show "
+                "it in Finder or copy it rather than reading it aloud.")
+    said = STATE_SHOWN[found.state]
+    if found.state == "downloading":
+        return f"{said}, {found.bytes_done} of {found.size_bytes} bytes so far; not usable yet."
+    if found.state == "failed":
+        said = f"{said}: {shown(found.reason or 'transport')}"
+    elif found.state == "moved":
+        said += "; previous_path below is where it was checked before"
+    return (f"{said}. It is not usable here yet; intended_path below is only where a "
+            f"download would save it. make_attachment_local fetches and checks it on his word.")
+
+
+PREFIX = messaging_files.PREFIX
+
+
+def router(context: Callable[[], Optional[LocationContext]]) -> APIRouter:
+    """The two location routes, beside the files routes. `context` is None
+    while messaging is unavailable (`messaging_unavailable`)."""
+    routes = APIRouter()
+
+    async def answer(work):
+        try:
+            found = context()
+            if found is None:
+                raise messaging_api.Refused("messaging_unavailable")
+            result = work(found)
+            if hasattr(result, "__await__"):
+                result = await result
+        except Exception as e:
+            return messaging_api.refused_by(e).response()
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @routes.get(PREFIX + "/{message_id}/files/{attachment_id}/location")
+    async def where(message_id: UUID, attachment_id: UUID):
+        return await answer(lambda c: asyncio.to_thread(c.lookup, message_id, attachment_id))
+
+    @routes.post(PREFIX + "/{message_id}/files/{attachment_id}/location")
+    async def make_local(message_id: UUID, attachment_id: UUID):
+        return await answer(lambda c: c.ensure_local(message_id, attachment_id))
+
+    return routes

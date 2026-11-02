@@ -30,7 +30,7 @@ const eye = (
   </>
 );
 
-const DRAWN: Record<CueKind | "queue" | "new", ReactNode> = {
+const DRAWN: Record<CueKind | "queue" | "new" | "copy" | "reveal" | "download", ReactNode> = {
   // Solid: the owner has the next action.
   "your-turn": (
     <>
@@ -83,6 +83,20 @@ const DRAWN: Record<CueKind | "queue" | "new", ReactNode> = {
     </>
   ),
   new: <path d="M12 5v14M5 12h14" {...STROKE} />,
+  // A received file's location (QueueFileLocation.tsx).
+  copy: (
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" {...STROKE} />
+      <path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" {...STROKE} />
+    </>
+  ),
+  reveal: (
+    <>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" {...STROKE} />
+      <circle cx="12" cy="13" r="2.2" {...STROKE} />
+    </>
+  ),
+  download: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" {...STROKE} />,
 };
 
 export function QueueIcon({ kind, size = 14 }: { kind: keyof typeof DRAWN; size?: number }) {

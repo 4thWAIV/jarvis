@@ -3203,6 +3203,22 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
 .queue-file.state-verified .file-state { color: #86efac; }
 .file-action { font-size: 11px; padding: 2px 8px; }
+/* A received file's place on this Mac (QueueFileLocation.tsx): the path,
+   then icon-sized Copy and Reveal. */
+.file-location { display: flex; align-items: center; gap: 4px; flex-basis: 100%; min-width: 0; }
+.file-path {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 255, 255, 0.75);
+  user-select: all;
+}
+.file-icon-action {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; color: rgba(255, 255, 255, 0.75);
+  background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+}
+.file-icon-action:hover, .file-icon-action:focus-visible { color: #fff; border-color: rgba(14, 165, 233, 0.7); }
+.file-icon-action:disabled { opacity: 0.4; cursor: wait; }
+.file-state.attention { color: #fca5a5; }
 
 /* The response being written, and its inline review (MessageComposer.tsx,
    MessageReview.tsx). */

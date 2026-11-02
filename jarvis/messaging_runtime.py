@@ -316,3 +316,8 @@ def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> No
     # Its routes themselves, as every other JARVIS route is registered (an
     # included router would be one opaque entry among the app's routes).
     app.router.routes.extend(messaging_files.router(context).routes)
+
+    def locations() -> Optional[attachment_locations.LocationContext]:
+        found = runtime()
+        return found.location_context() if found is not None else None
+    app.router.routes.extend(attachment_locations.router(locations).routes)

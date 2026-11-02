@@ -6548,6 +6548,20 @@ def _file_lines(attachments) -> list[str]:
             f"attachment {a.attachment_id}" for a in attachments]
 
 
+def _where_line(message_id: uuid.UUID, attachment_id: uuid.UUID) -> str:
+    """A received file's location, as attachment_location gives it."""
+    context = _location_context()
+    if context is None:
+        return ""
+    try:
+        found = context.lookup(message_id, attachment_id)
+    except Exception:
+        return ""
+    if found.local_path:
+        return f"; on this Mac at {found.local_path}"
+    return f"; {attachment_locations.STATE_SHOWN[found.state].lower()}"
+
+
 def _thread_text(local, item) -> str:
     """Every message in one conversation, oldest first, with each one's
     receipts and files, then any unsent draft: what the Queue's item shows."""
@@ -6562,7 +6576,9 @@ def _thread_text(local, item) -> str:
         if msg.subject:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
-        out += _file_lines(msg.attachments)
+        received = m.direction == "incoming" or m.self_message
+        out += [line + (_where_line(msg.message_id, a.attachment_id) if received else "")
+                for line, a in zip(_file_lines(msg.attachments), msg.attachments)]
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
@@ -6731,6 +6747,83 @@ def _location_context() -> Optional["attachment_locations.LocationContext"]:
     """Where received files are, for whoever is signed in now; None while
     messaging is off or signed out."""
     return messaging.location_context() if messaging is not None else None
+
+
+# --- Where a received file is ---------------------------------------------
+#
+# The Queue's file location as the brain's tools, over the one resolver
+# (attachment_locations.py) the page's routes call: the read-only lookup,
+# the acting make-local (download and verify on his word), and the existing
+# Reveal in Finder. The name and path are the sender's words: they come
+# back in the untrusted block as the route's own JSON.
+
+_FILE_WRAP_NAME = "received file"
+
+
+def _location_reply(found: "attachment_locations.AttachmentLocation") -> str:
+    head = attachment_locations.spoken(found, lambda code: messaging_api.Refused(code).shown())
+    return head + "\n" + _wrap_untrusted(_FILE_WRAP_NAME, found.model_dump_json(indent=1))
+
+
+def _file_ids(args: dict) -> tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
+    return _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+
+
+_WHICH_FILE = ("Which file, sir? Give me its message id and attachment id from "
+               "read_people_thread.")
+
+
+async def _on_located_file(args: dict, work) -> str:
+    context = _location_context()
+    if context is None:
+        return MESSAGING_OFF
+    message_id, attachment_id = _file_ids(args)
+    if message_id is None or attachment_id is None:
+        return _WHICH_FILE
+    try:
+        return await work(context, message_id, attachment_id)
+    except Exception as e:
+        return messaging_api.refused_by(e).shown()
+
+
+async def tool_attachment_location(args: dict) -> str:
+    """Where a received file is on this Mac, read only (the Queue file's
+    own location): its exact verified path, or its state and why not."""
+    async def work(context, message_id, attachment_id):
+        found = await asyncio.to_thread(context.lookup, message_id, attachment_id)
+        return _location_reply(found)
+    return await _on_located_file(args, work)
+
+
+async def tool_make_attachment_local(args: dict) -> str:
+    """Download and verify a received file if it is not here (the Queue
+    file's Download): its location once checked. Nothing is opened."""
+    async def work(context, message_id, attachment_id):
+        return _location_reply(await context.ensure_local(message_id, attachment_id))
+    return await _on_located_file(args, work)
+
+
+async def tool_reveal_attachment(args: dict) -> str:
+    """Show a verified received file in Finder (the Queue file's Reveal)."""
+    async def work(context, message_id, attachment_id):
+        await asyncio.to_thread(context.reveal, message_id, attachment_id)
+        return "It is selected in a Finder window, sir; nothing was opened."
+    return await _on_located_file(args, work)
+
+
+TOOL_HANDLERS.update({
+    "attachment_location": tool_attachment_location,
+    "make_attachment_local": tool_make_attachment_local,
+    "reveal_attachment": tool_reveal_attachment,
+})
+ACTING_TOOLS.update({"make_attachment_local", "reveal_attachment"})
+TAINTING_TOOLS.update({
+    "attachment_location": "a file name a person on the team chose",
+    "make_attachment_local": "a file name a person on the team chose",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "reveal_attachment": "it shows his own received file in Finder, it does not read it",
+})
 
 
 # --- Work packages -------------------------------------------------------

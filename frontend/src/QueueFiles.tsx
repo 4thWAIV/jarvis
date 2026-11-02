@@ -3,14 +3,15 @@
  * declared type (the type is what was declared, never guessed from the
  * name, and nothing is opened), and where it is. Sending: prepared,
  * uploading, uploaded. Receiving: on the team server (Download), being
- * downloaded, downloaded and checked (Reveal in Finder, and Open page once
- * JARVIS has opened it as a page work package, packages.ts). Either side:
- * failed, with the reason, or missing.
+ * downloaded, then its exact path with Copy and Reveal in Finder
+ * (QueueFileLocation.tsx; and Open page once JARVIS has opened it as a page
+ * work package, packages.ts). Either side: failed, with the reason, or missing.
  */
 
 import { useState, useSyncExternalStore } from "react";
 import { openPackagePage, packageList, pagePackageFrom } from "./packages";
-import { downloadFile, revealFile } from "./queue";
+import { downloadFile } from "./queue";
+import { FileLocation } from "./QueueFileLocation";
 import { shownFor } from "./messagingApi";
 import type { AttachmentRef, LocalFile } from "./messagingContract";
 import { QueueIcon } from "./QueueIcons";
@@ -27,7 +28,7 @@ function stateWords(file: LocalFile | undefined, ref: AttachmentRef, incoming: b
     case "uploading": return `Uploading${percent(file, ref)}`;
     case "available": return incoming ? "On the team server" : "Uploaded";
     case "downloading": return `Downloading${percent(file, ref)}`;
-    case "verified": return "Downloaded and checked";
+    case "verified": return "";
     case "failed": return `Failed: ${shownFor(file.failure ?? "transport", "it did not complete.")}`;
     case "missing": return incoming ? "Missing" : "Missing: attach it again";
   }
@@ -48,7 +49,9 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
       <QueueIcon kind="files" size={16} />
       <span className="file-name">{fileRef.filename}</span>
       <span className="file-meta">{sizeText(fileRef.size_bytes)} · {fileRef.media_type}</span>
-      <span className="file-state">{stateWords(file, fileRef, incoming)}</span>
+      {!(incoming && state === "verified") && (
+        <span className="file-state">{stateWords(file, fileRef, incoming)}</span>
+      )}
       {canDownload && (
         <button type="button" className="file-action"
                 onClick={() => void downloadFile(messageId!, fileRef.attachment_id)}>
@@ -56,10 +59,7 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
         </button>
       )}
       {incoming && messageId && state === "verified" && (
-        <button type="button" className="file-action"
-                onClick={() => void revealFile(messageId, fileRef.attachment_id)}>
-          Reveal in Finder
-        </button>
+        <FileLocation messageId={messageId} attachmentId={fileRef.attachment_id} />
       )}
       {incoming && state === "verified" && <OpenPage attachmentId={fileRef.attachment_id} />}
       {onRemove && (
