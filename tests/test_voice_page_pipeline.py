@@ -21,7 +21,9 @@ import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
-from tests.test_voice_page_network import MINI_ID, _Sessions, _Team
+from tests.test_voice_page_folders import _Api as _Folders
+from tests.test_voice_page_network import MINI_ID, SIGNED_OUT, _Sessions, _Team
+from tests.test_voice_page_workflows import _finished, _workflow
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -77,7 +79,7 @@ class _UiServer:
         return self.results[rid]
 
 
-async def _open(p, url, *, reduced=False, sessions=None):
+async def _open(p, url, *, reduced=False, sessions=None, team=None, routes=(), network=True):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -88,15 +90,18 @@ async def _open(p, url, *, reduced=False, sessions=None):
     ui = _UiServer()
     await page.route_web_socket("**/ws/voice", ui)
     await page.route_web_socket("**/ws/sessions", sessions or _Sessions())
-    await _Team().install(page)
+    await _Team(team).install(page)
+    for pattern, handler in routes:
+        await page.route(pattern, handler)
     await page.goto(url)
     for _ in range(200):
         if ui.client:
             break
         await asyncio.sleep(0.05)
     assert ui.client, "the page never said ui_hello"
-    await page.click(".right-tabs [data-ui-tab=network]")
-    await page.wait_for_selector(f".node-tile[data-node='{MINI_ID}']")
+    if network:
+        await page.click(".right-tabs [data-ui-tab=network]")
+        await page.wait_for_selector(f".node-tile[data-node='{MINI_ID}']")
     return browser, page, ui
 
 
@@ -131,10 +136,14 @@ BEVEL = 6                                           # uiSignal.ts BEVEL_PX
 
 
 def _on(seg, lines, tol=1.0):
-    """Whether a segment lies within one of the map's lines, or is the
+    """Whether a segment lies within one of the map's lines, is one the map
+    draws (a socket branch whose bevel takes its whole length), or is the
     45-degree bevel of a turn between two of them (both ends on the map,
     at most BEVEL along each axis)."""
     (ax, ay), (bx, by) = seg
+    near = lambda p, q: abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol  # noqa: E731
+    if any(near(seg[0], c) and near(seg[1], d) for c, d in lines):            # a segment the map draws
+        return True
     if abs(ax - bx) > tol and abs(ay - by) > tol:
         return (abs(abs(ax - bx) - abs(ay - by)) < tol and abs(ax - bx) <= BEVEL + tol
                 and _on(((ax, ay), (ax, ay)), lines, tol) and _on(((bx, by), (bx, by)), lines, tol))
@@ -358,3 +367,125 @@ async def test_a_real_transmission_keeps_the_orb_and_attention_waits_then_says_b
         assert ray == "#fbbf24", ray                              # the message's own colour, untouched
         assert (await page.evaluate(DRAWN))["cues"] == 0
         await browser.close()
+
+
+class _Workflows:
+    """The workflow routes: wf-1 needs him; wf-2 has finished and lingers
+    with its Dismiss ×."""
+
+    async def __call__(self, route):
+        path = route.request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+        if path == "api/workflows":
+            await route.fulfill(json={"workflows": [_workflow(), _finished("wf-2", "Old build")]})
+        elif path.endswith("/events"):
+            await route.fulfill(json={"events": []})
+        elif path.endswith("/transcript"):
+            await route.fulfill(json={"agents": []})
+        else:
+            await route.fulfill(json={"workflow": _workflow() if "/wf-1" in path else _finished("wf-2", "Old build")})
+
+
+# Parts that sit beside others in one row, on the side their leaf comes
+# from: (the navigation that shows it, the part's target, its whole's
+# selector, the part's selector). The finished workflow's × straddles its
+# row's inner margin, so its leaf runs straight into it.
+WORKFLOW = {"region": "main", "view": "main.workflow", "kind": "workflow", "key": "wf-1"}
+BESIDE = [
+    (("workflow.open", {"workflowId": "wf-1"}), {**WORKFLOW, "part": "tab.decisions"},
+     "#workflow-detail", ".workflow-tabs [role=tab][data-ui-args*='decisions']"),
+    (("main.tab.select", {"tab": "folders"}),
+     {"region": "main", "view": "main.folders", "kind": "foldersList", "part": "registered"},
+     ".folders-catalog", ".folder-tab[data-ui-args*='registered']"),
+    (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "lastWrite"},
+     "#team-server-tile", "#team-server-tile .health-row:last-child"),
+    (None, {"region": "main", "view": "main.notice", "kind": "teamReminder", "part": "signIn"},
+     "#team-reminder", "#team-reminder .settings-btn.primary"),
+    (None, {"region": "main", "view": "main.notice", "kind": "teamReminder", "part": "text"},
+     "#team-reminder", "#team-reminder p"),
+    (("right.tab.select", {"tab": "workflows"}),
+     {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-2", "part": "dismiss"},
+     ".workflow-row[data-workflow-id=wf-2]", ".workflow-item:has([data-workflow-id=wf-2]) .workflow-dismiss"),
+]
+
+# What a leaf inside an object may not cross: its controls and the lines of
+# its text, outside the part it points at.
+KEPT = """([whole, part]) => {
+  const w = document.querySelector(whole), p = document.querySelector(part);
+  const box = (r) => [r.left, r.top, r.right, r.bottom];
+  const kept = [];
+  w.querySelectorAll("button, a[href], input, select, textarea, summary, [role='button'], [role='tab'], [role='link']")
+    .forEach((c) => { if (!p.contains(c)) kept.push(box(c.getBoundingClientRect())); });
+  const walk = document.createTreeWalker(w, NodeFilter.SHOW_TEXT), range = document.createRange();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!n.textContent.trim() || p.contains(n)) continue;
+    range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width && r.height) kept.push(box(r));
+  }
+  return {kept, part: box(p.getBoundingClientRect())};
+}"""
+
+
+def _bevel_or_straight(seg, tol=0.6):
+    (ax, ay), (bx, by) = seg
+    dx, dy = abs(ax - bx), abs(ay - by)
+    return dx < tol or dy < tol or (abs(dx - dy) < tol and dx <= BEVEL + tol)
+
+
+def _inside(x, y, box, tol=0.5):
+    left, top, right, bottom = box
+    return left + tol < x < right - tol and top + tol < y < bottom - tol
+
+
+@pytest.mark.asyncio
+async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(page_url):
+    """The workflow's Decisions tab, a phase step's dot, the Folders tabs,
+    the microphone's mute and off, the reminder's Sign in and a finished
+    workflow's Dismiss each sit beside another part on the side their leaf
+    comes from. Each is reached: along the fixed map to its object's
+    socket, then a leaf over or under its row (or, for the ×, down the
+    margin it straddles), every turn a 45-degree bevel, never across a
+    control, another part or a line of text, ending at the part's top or
+    bottom edge."""
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, reduced=True, team=SIGNED_OUT, network=False,
+                                        routes=[("**/api/workflows**", _Workflows()),
+                                                ("**/api/folders**", _Folders())])
+        try:
+            await page.wait_for_selector("#team-reminder")
+            for show, target, whole, part in BESIDE:
+                if show:
+                    rid, _ = ui.request({"kind": "navigate", "commandId": show[0], "args": show[1]})
+                    assert (await ui.result(rid))["status"] == "completed", show
+                await page.wait_for_selector(part)
+                rid, _ = ui.indicate(target, reveal="never")
+                result = await ui.result(rid)
+                assert result["status"] == "completed", (target, result)
+                await page.wait_for_function("document.querySelector('.ui-contour')")
+                drawn = await page.evaluate(DRAWN)
+                lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
+                # Nothing leaves the registered map but its bevels.
+                for seg in _segments(drawn["route"][0]):
+                    assert _on(seg, lines), (target["part"], seg, drawn["route"][0],
+                                             [e["id"] for e in await page.evaluate(MAP)])
+                leaf = _points(drawn["leaf"][0])
+                around = await page.evaluate(KEPT, [whole, part])
+                for seg in zip(leaf, leaf[1:]):
+                    assert _bevel_or_straight(seg), (target["part"], seg, leaf)
+                    middle = ((seg[0][0] + seg[1][0]) / 2, (seg[0][1] + seg[1][1]) / 2)
+                    for x, y in (seg[0], seg[1], middle):
+                        for box in around["kept"]:
+                            assert not _inside(x, y, box), (target["part"], (x, y), box, leaf)
+                left, top, right, bottom = around["part"]
+                (_, before_y), (end_x, end_y) = leaf[-2], leaf[-1]
+                # It ends at the part: down or up into its top or bottom
+                # edge, or (the ×) straight in where it straddles the margin.
+                assert left - 4 <= end_x <= right + 4 and top - 4 <= end_y <= bottom + 4, \
+                    (target["part"], leaf, around["part"])
+                if target["part"] != "dismiss":
+                    assert left <= end_x <= right and not top <= before_y <= bottom, \
+                        (target["part"], leaf, around["part"])
+                clear, _ = ui.request({"kind": "clear"})
+                await ui.result(clear)
+                await page.wait_for_function("!document.querySelector('[data-cue]')")
+        finally:
+            await browser.close()

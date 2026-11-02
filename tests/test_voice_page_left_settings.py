@@ -146,12 +146,12 @@ LEFT_TARGETS = [
     ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
-# A part beside another on the side its leaf comes from cannot be reached
-# without crossing that part (uiPipeline.ts leafEdge runs straight in from
-# the facing edge): refused truthfully, never drawn across. Waiting on leaf
-# routing around sibling parts.
-LEFT_MISSED = [["mic", "mute", "blocked", "no-route"], ["mic", "off", "blocked", "no-route"],
-               ["teamServer", "lastWrite", "blocked", "no-route"]]
+# A part beside another on the side its leaf comes from is reached over or
+# under its row (uiPipeline.ts leafEdge; the Team Server's last write goes
+# under its row). The microphone's row has no gap above it and too little
+# below for the leaf to stay clear, so mute and off are refused truthfully,
+# never drawn across (blocker sibling-routing-remainder).
+LEFT_MISSED = [["mic", "mute", "blocked", "no-route"], ["mic", "off", "blocked", "no-route"]]
 
 
 async def _left_missed(ui):
@@ -395,11 +395,10 @@ async def test_the_reminders_later_is_the_same_by_hand_and_by_request(page_url):
                 result = await _point(ui, {"region": "main", "view": "main.notice", "kind": "teamReminder",
                                            **({"part": part} if part else {})})
                 reached[part] = (result["status"], result.get("reason"))
-            # Its parts lie in one row; the leaf comes in from the right, so
-            # only the rightmost is reached without crossing another
-            # (see the left column's sweep above).
+            # Its parts lie in one row; the leaf comes in from the right and
+            # reaches those left of Later under the row.
             assert reached == {None: ("completed", None), "later": ("completed", None),
-                               "signIn": ("blocked", "no-route"), "text": ("blocked", "no-route")}, reached
+                               "signIn": ("completed", None), "text": ("completed", None)}, reached
             assert await _marks(page, "#team-reminder button:has-text('Later')") == ("reminder.later", {})
             await page.click("#team-reminder button:has-text('Later')")
             await page.wait_for_selector("#team-reminder", state="detached")

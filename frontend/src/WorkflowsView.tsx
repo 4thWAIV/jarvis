@@ -154,10 +154,10 @@ function useWorkflowTarget(w: Workflow) {
 }
 
 /** A listed workflow: its row and, once it has finished, its Dismiss ×
- *  (recording a dismissal: not navigation). The × sits over the row's edge,
- *  beside the whole the branch enters, so it is not registered as the
- *  `dismiss` part until the pipeline can reach a part beside its whole
- *  (coverage.md). */
+ *  (recording a dismissal: not navigation), registered as the `dismiss`
+ *  part. The × sits over the row's edge, beside the whole the branch
+ *  enters; its leaf comes down the row's inner margin into its top edge
+ *  (uiPipeline.ts leafEdge). */
 function WorkflowItem({ workflow: w, selected }: { workflow: Workflow; selected: boolean }) {
   const t = useT();
   const finished = FINISHED.has(w.state);
@@ -167,7 +167,8 @@ function WorkflowItem({ workflow: w, selected }: { workflow: Workflow; selected:
       <WorkflowRow workflow={w} selected={selected} ui={ui} />
       {finished && (
         <button data-ui-action="domain" type="button" className="workflow-dismiss" aria-label={t("right.workflows.dismiss")}
-                title={t("right.workflows.dismiss")} onClick={() => void dismissWorkflow(w.id)}>×</button>
+                title={t("right.workflows.dismiss")} ref={ui.part("dismiss")}
+                onClick={() => void dismissWorkflow(w.id)}>×</button>
       )}
     </li>
   );
