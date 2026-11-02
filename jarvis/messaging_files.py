@@ -555,6 +555,12 @@ class FileSnapshots:
             raise wire.ContractError("attachment_not_found")
         return ref
 
+    def attachment_ref(self, server_id: str, owner_github_id: int, message_id: UUID,
+                       attachment_id: UUID) -> wire.AttachmentRef:
+        """One file's entry in the message's manifest (name, type hint, size,
+        SHA-256), or ContractError("attachment_not_found")."""
+        return self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
+
     def _download_file(self, server_id: str, owner: int, attachment_id: UUID) -> ports.LocalFile:
         row = self._row(server_id, owner, attachment_id, DOWNLOAD)
         return self._local(row) if row else ports.LocalFile(attachment_id=attachment_id,
