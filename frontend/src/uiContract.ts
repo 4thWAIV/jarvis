@@ -555,12 +555,26 @@ export const UI_CONTRACT = {
     },
     {
       "id": "workflow.open",
-      "label": "Open one workflow's detail in the centre",
+      "label": "Open one workflow's detail in the centre, on its first tab or the one named",
       "view": "main.workflow",
       "args": {
         "workflowId": {
           "type": "key",
           "entity": "workflow"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "phases",
+            "tasks",
+            "transcript",
+            "progress",
+            "waits",
+            "decisions",
+            "blockers",
+            "events"
+          ]
         }
       },
       "required": [
@@ -1165,6 +1179,142 @@ export const UI_CONTRACT = {
       "family": "queue"
     },
     {
+      "id": "queue.new",
+      "label": "Open a new message, blank, in the centre (nothing is saved until it is written)",
+      "view": "main.queue",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "queue.reply",
+      "label": "Open the reply editor on the open item, answering one of its messages (nothing is saved until it is written)",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        }
+      },
+      "required": [
+        "messageId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "queue"
+    },
+    {
+      "id": "queue.draft.edit",
+      "label": "Put a failed or cancelled response of the open item back in its editor (nothing is sent or saved)",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        }
+      },
+      "required": [
+        "messageId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "queue"
+    },
+    {
+      "id": "queue.message.show",
+      "label": "Show one message: scrolled to in the open item, or its own item opened, with Back to this one",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        }
+      },
+      "required": [
+        "messageId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "queue.read-marked"
+        },
+        {
+          "effect": "queue.draft-saved"
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "id": "queue.discard.ask",
+      "label": "Ask, or stop asking, whether to discard the open item's draft (nothing is discarded)",
+      "view": "main.queue",
+      "args": {
+        "open": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "open"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "queue"
+    },
+    {
+      "id": "queue.done.ask",
+      "label": "Show why the open item cannot be marked done yet, ask whether to discard its reply, or close that (nothing is discarded or dismissed)",
+      "view": "main.queue",
+      "args": {
+        "step": {
+          "type": "enum",
+          "values": [
+            "closed",
+            "blockers",
+            "discard"
+          ]
+        }
+      },
+      "required": [
+        "step"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "queue"
+    },
+    {
       "id": "workflows.showDone",
       "label": "Show or hide the finished workflows under Done in the right panel's Workflows tab",
       "view": "right.workflows",
@@ -1277,6 +1427,67 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "workflows"
+    },
+    {
+      "id": "voice.range",
+      "label": "Show the last 15 minutes, hour or day of the voice record in the Diagnostics view (zooming out)",
+      "view": "main.diagnostics",
+      "args": {
+        "range": {
+          "type": "enum",
+          "values": [
+            "15m",
+            "1h",
+            "1d"
+          ]
+        }
+      },
+      "required": [
+        "range"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "diagnostics"
+    },
+    {
+      "id": "voice.zoom",
+      "label": "Zoom the voice timeline to the half minute before a moment (seconds since 1970); without one, zoom out",
+      "view": "main.diagnostics",
+      "args": {
+        "at": {
+          "type": "integer",
+          "min": 0
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "diagnostics"
+    },
+    {
+      "id": "voice.quiet",
+      "label": "Start or end the quiet page: fewer notifications for a while, to compare drops with and without them",
+      "view": "main.diagnostics",
+      "args": {
+        "quiet": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "quiet"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "diagnostics"
     },
     {
       "id": "folders.list",
@@ -1501,6 +1712,36 @@ export const UI_CONTRACT = {
           "effect": "list.paged"
         }
       ],
+      "family": "folders"
+    },
+    {
+      "id": "folder.mode",
+      "label": "Show the selected folder as it is, or open its Edit, Reconnect or Remove form (nothing is checked or saved)",
+      "view": "main.folders",
+      "args": {
+        "folderId": {
+          "type": "key",
+          "entity": "folder"
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "view",
+            "edit",
+            "reconnect",
+            "remove"
+          ]
+        }
+      },
+      "required": [
+        "folderId",
+        "mode"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
       "family": "folders"
     },
     {
@@ -2925,6 +3166,7 @@ export interface CommandArgs {
   "conversation.earlier": { };
   "conversation.record.expand": { recordId: string; open: boolean; };
   "folder.browse": { folderId: string; path?: string; revision?: number; };
+  "folder.mode": { folderId: string; mode: "view" | "edit" | "reconnect" | "remove"; };
   "folder.more": { folderId: string; list: "entries" | "preview"; };
   "folder.preview": { folderId: string; path?: string; revision?: number; };
   "folders.add.open": { open: boolean; };
@@ -2940,11 +3182,17 @@ export interface CommandArgs {
   "network.open": { kind: "node" | "server"; nodeId?: string; };
   "queue.back": { };
   "queue.close": { };
+  "queue.discard.ask": { open: boolean; };
+  "queue.done.ask": { step: "closed" | "blockers" | "discard"; };
+  "queue.draft.edit": { messageId: string; };
   "queue.follow": { threadId: string; };
   "queue.history": { shown: boolean; };
   "queue.history.more": { };
+  "queue.message.show": { messageId: string; };
+  "queue.new": { };
   "queue.next": { };
   "queue.open": { threadId: string; };
+  "queue.reply": { messageId: string; };
   "reminder.later": { };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
   "settings.close": { };
@@ -2958,9 +3206,12 @@ export interface CommandArgs {
   "thread.open": { sessionId: string; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
+  "voice.quiet": { quiet: boolean; };
+  "voice.range": { range: "15m" | "1h" | "1d"; };
+  "voice.zoom": { at?: number; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
-  "workflow.open": { workflowId: string; };
+  "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };
   "workflow.tab.select": { workflowId: string; tab: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };
   "workflow.transcript.earlier": { sessionId: string; agentId?: string; };
   "workflows.showDone": { shown: boolean; };

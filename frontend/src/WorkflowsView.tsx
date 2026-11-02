@@ -173,10 +173,13 @@ function WorkflowItem({ workflow: w, selected }: { workflow: Workflow; selected:
   );
 }
 
-export function TaskBar({ done, total }: { done: number; total: number }) {
+/** How far a task or phase has got; `barRef` registers the bar as a part
+ *  (a task card's `progress`). */
+export function TaskBar({ done, total, barRef }: {
+  done: number; total: number; barRef?: (el: Element | null) => void }) {
   const share = total > 0 ? Math.min(1, done / total) : 0;
   return (
-    <span className="workflow-bar" role="progressbar" aria-valuemin={0}
+    <span className="workflow-bar" role="progressbar" aria-valuemin={0} ref={barRef}
           aria-valuemax={total} aria-valuenow={done}>
       <span className="workflow-bar-fill" style={{ width: `${share * 100}%` }} />
     </span>
@@ -223,19 +226,21 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
   const look = SUBAGENT_LOOK[a.state];
   const ended = a.state === "finished";
   const name = a.description || a.type || t("right.workflows.subagent");
+  // Keyed by its session and its own id, as its detail in the centre is.
+  const ui = useUiTarget({ ref: { region: "right", view: "right.workflows", kind: "subagent", key: `${a.session_id}/${a.id}` },
+                           label: name, socket: RIGHT_SOCKET });
   return (
     <button type="button" data-subagent-key={a.key} data-state={a.state}
             className={`workflow-row subagent-row${ended ? " finished outcome-succeeded" : ""}${
               selected ? " selected" : ""}`}
             title={`${name}: ${SUBAGENT_WORDS[a.state]}`}
-            // Not yet a target: the subagent kind's key does not take the
-            // real `agent:<session>/<id>` (coverage.md).
+            ref={(el) => { ui.whole(el); ui.part("row")(el); }}
             {...bindingProps(bind("subagent.open", { sessionId: a.session_id, agentId: a.id }))}>
       <WorkflowOrb state={look} size={30} />
       <span className="workflow-name">{name}</span>
       {ended
-        ? <span className="workflow-outcome outcome-succeeded">{SUBAGENT_WORDS[a.state]}</span>
-        : <span className="workflow-age">{ago(a.written)}</span>}
+        ? <span className="workflow-outcome outcome-succeeded" ref={ui.part("state")}>{SUBAGENT_WORDS[a.state]}</span>
+        : <span className="workflow-age" ref={ui.part("state")}>{ago(a.written)}</span>}
       <span className="workflow-strip subagent-parent">
         {t(a.background ? "right.workflows.backgroundSubagentOf" : "right.workflows.subagentOf",
            { session: a.session_name })}

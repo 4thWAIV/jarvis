@@ -223,7 +223,8 @@ function AddFolder({ onDone }: { onDone: () => void }) {
       </label>
       <div className="folder-add-actions">
         <button type="submit" className="folder-button" disabled={busy || !path.trim()}>{t("main.folders.check")}</button>
-        <button type="button" className="folder-button quiet" onClick={onDone}>{t("main.common.cancel")}</button>
+        <button type="button" className="folder-button quiet"
+                {...bindingProps(bind("folders.add.open", { open: false }))}>{t("main.common.cancel")}</button>
       </div>
       {checked && (
         <div className="folder-add-checked" role="status">

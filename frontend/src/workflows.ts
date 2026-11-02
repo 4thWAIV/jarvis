@@ -12,6 +12,7 @@ import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
+import type { CommandArgs } from "./uiContract";
 
 export type WorkflowState = "running" | "waiting" | "blocked" | "needs_you" | "succeeded"
   | "failed" | "cancelled" | "silent";
@@ -185,16 +186,28 @@ function listed(key: string): boolean {
   return !!now && (now.workflows.some((w) => w.id === key) || now.subagents.some((a) => a.key === key));
 }
 
+export type WorkflowTab = NonNullable<CommandArgs["workflow.open"]["tab"]>;
+
+/** How workflow.open's `tab` is put in force: by the detail, which keeps
+ *  the open workflow's tab (WorkflowDetail.tsx, `openOnTab`). */
+let selectTab: (workflowId: string, tab: WorkflowTab) => void = () => {};
+export function openOnTab(select: typeof selectTab): void {
+  selectTab = select;
+}
+
 registerCommand("workflow.open", {
   availability: () => ({ available: true }),
-  async execute({ workflowId }, { signal }) {
+  async execute({ workflowId, tab }, { signal }) {
     if (!listed(workflowId)) {
       const read = await readForOpen(`/api/workflows/${encodeURIComponent(workflowId)}`, signal);
       if ("refused" in read) return read.refused;
     }
-    return { status: "completed", effects: workflowSlot.show(workflowId) };
+    const effects = workflowSlot.show(workflowId);
+    if (tab) selectTab(workflowId, tab);
+    return { status: "completed", effects };
   },
 });
+
 
 registerCommand("subagent.open", {
   availability: () => ({ available: true }),

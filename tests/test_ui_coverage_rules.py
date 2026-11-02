@@ -29,17 +29,11 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # coverage-main's. `label-unlocalized` counts are the localization
 # workers' (execution.md, LOCALIZATION OWNERSHIP): each reaches zero.
 PENDING = {
-    # Navigation still to be given a registered command (coverage.md, "Gaps"):
-    # form and confirmation open/cancel modes, the Queue's related links and
-    # Reply/Respond/Edit, New message, voice range, quiet and zoom, and the
-    # transcript's scroll. Everything else is classified (`data-ui-action`).
-    ("FolderDetail.tsx", "control-unclassified"): 6,
-    ("FoldersView.tsx", "control-unclassified"): 1,
-    ("MessageComposer.tsx", "control-unclassified"): 2,
-    ("QueueItemView.tsx", "control-unclassified"): 8,
-    ("QueuePanel.tsx", "control-unclassified"): 1,
-    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 2,
-    ("VoiceVisuals.tsx", "control-unclassified"): 1,
+    # The transcript's scroll (whether it follows the newest entries): a
+    # command run on scroll would also fire on the reveal's own scroll and
+    # cancel it, so how it is covered waits for Tim (blocker
+    # transcript-scroll-command, execution.md "Remaining gaps").
+    # Everything else runs a registered command or is classified.
     ("WorkflowDetail.tsx", "control-unclassified"): 1,
 }
 

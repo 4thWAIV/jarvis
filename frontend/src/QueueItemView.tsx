@@ -26,8 +26,12 @@
  * run `queue.back`, `queue.next`, `queue.close` and `queue.follow`
  * (queue.ts), the same commands the brain runs, with their side effects:
  * the next item becomes Active, leaving a reply saves its draft, and a
- * body shown sends its read receipt. The item's work commands, replies,
- * sends and files are his own acts, never navigation.
+ * body shown sends its read receipt. Respond and Reply (`queue.reply`),
+ * Edit on a failed response (`queue.draft.edit`), a link to another
+ * message (`queue.message.show`) and the questions before Done and before
+ * discarding (`queue.done.ask`, `queue.discard.ask`) are commands too: they
+ * open or show, and save nothing. The item's work commands, sends,
+ * discards and files are his own acts, never navigation.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -36,10 +40,10 @@ import type { Draft } from "./messagingContract";
 import { MessageComposer } from "./MessageComposer";
 import { MessageReview } from "./MessageReview";
 import {
-  blockersOf, bodyShown, cancelSend, closeItem, directory, discard, dismiss, editAgain, editors,
-  editableDraft, followLink, goBack, itemNotes, messagesChanged, messagingSaid, NEW, nextItem, openQueue,
+  askedNoMore, asking, blockersOf, bodyShown, cancelSend, closeItem, directory, discard, dismiss, editors,
+  editableDraft, itemNotes, messagesChanged, messagingSaid, NEW, nextItem, openQueue,
   pendingCommands, putBack, queue, readItem, restore, resumeDraft, retrySend, setAddressed,
-  setTurn, setUnread, startReply,
+  setTurn, setUnread,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
 import { Cue, DELIVERY_CUE } from "./QueueIcons";
@@ -50,7 +54,7 @@ import {
 } from "./queueStore";
 import { clockTime } from "./network";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { bind, bindingProps } from "./uiNavigation";
+import { bind, bindingProps, runBinding, type Binding } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 
 /** A part's callback ref, from a registered target. */
@@ -92,7 +96,8 @@ function OneItem({ thread }: { thread: string }) {
   const hint = useSyncExternalStore(messagesChanged.subscribe, messagesChanged.get);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [noneWaiting, setNoneWaiting] = useState(false);
-  const [dismissing, setDismissing] = useState(false);
+  const asked = useSyncExternalStore(asking.subscribe, asking.get);
+  const doneStep = asked.thread === thread ? asked.done : "closed";
 
   // Read the item in full on opening it and on every hint while it is open.
   useEffect(() => {
@@ -134,11 +139,10 @@ function OneItem({ thread }: { thread: string }) {
     requestAnimationFrame(() => document.querySelector<HTMLElement>(
       `.queue-view li[data-thread-id="${CSS.escape(thread)}"] .queue-row`)?.focus());
   };
-  const respond = (parentId: string) =>
-    startReply(thread, parentId, correspondent, subject);
+  const reply = (messageId: string) => bind("queue.reply", { messageId });
   const next = () => setNoneWaiting(!nextItem());
   const done = () => {
-    if (blockers.length) { setDismissing(true); return; }
+    if (blockers.length) { runBinding(bind("queue.done.ask", { step: "blockers" })); return; }
     void dismiss(thread);
   };
 
@@ -170,7 +174,7 @@ function OneItem({ thread }: { thread: string }) {
         </div>
         <div className="item-actions" role="group" aria-label={t("main.queue.thisItem")}>
           {!c.dismissed && parentForReply && !ed && !editable && (
-            <button type="button" onClick={() => respond(parentForReply.message_id)}>{t("main.queue.respond")}</button>
+            <button type="button" {...bindingProps(reply(parentForReply.message_id))}>{t("main.queue.respond")}</button>
           )}
           <button type="button" onClick={next} ref={ui.part("next")} data-ui-command="queue.next">{t("main.queue.next")}</button>
           {!c.dismissed && work.placement !== "queued" && (
@@ -194,8 +198,8 @@ function OneItem({ thread }: { thread: string }) {
         {busy && <p className="item-note" role="status">{t("main.queue.saving")}</p>}
         {notes[thread] && <SaidText said={notes[thread]} as="p" className="item-note warn" role="alert" />}
         {loadError && <p className="read-failure" role="status">{t("main.queue.unreadableAgain", { error: loadError })}</p>}
-        {dismissing && blockers.length > 0 && (
-          <DismissBlockers thread={thread} blockers={blockers} onClose={() => setDismissing(false)} />
+        {doneStep !== "closed" && blockers.length > 0 && (
+          <DismissBlockers thread={thread} blockers={blockers} sure={doneStep === "discard"} />
         )}
       </header>
 
@@ -204,7 +208,7 @@ function OneItem({ thread }: { thread: string }) {
           {messages.map((m) => (
             <li key={m.message.message_id}>
               <MessageCard m={m} state={state} dir={dir} thread={thread}
-                           onReply={c.dismissed || editable || ed ? undefined : () => respond(m.message.message_id)} />
+                           reply={c.dismissed || editable || ed ? undefined : reply(m.message.message_id)} />
             </li>
           ))}
           {outgoing.map((d) => (
@@ -251,12 +255,9 @@ function UnsentConversation({ thread }: { thread: string }) {
 }
 
 /** Why Done has to wait, each reason in the contract's words, and the ways
- *  out that are really there. */
-function DismissBlockers({ thread, blockers, onClose }: {
-  thread: string; blockers: string[]; onClose: () => void;
-}) {
+ *  out that are really there; `sure` once he asked to discard the reply. */
+function DismissBlockers({ thread, blockers, sure }: { thread: string; blockers: string[]; sure: boolean }) {
   const t = useT();
-  const [sure, setSure] = useState(false);
   return (
     <div className="item-blockers" role="alert">
       <p>{t("main.queue.blockers")}</p>
@@ -265,22 +266,22 @@ function DismissBlockers({ thread, blockers, onClose }: {
       </ul>
       <div className="item-actions">
         {blockers.includes("unsent_text") && !blockers.includes("send_unresolved") && (sure ? (
-          <button data-ui-action="domain" type="button" onClick={async () => { if (await discard(thread)) { onClose(); void dismiss(thread); } }}>
+          <button data-ui-action="domain" type="button" onClick={async () => { if (await discard(thread)) { askedNoMore(); void dismiss(thread); } }}>
             {t("main.queue.discardAndDismiss")}
           </button>
         ) : (
-          <button type="button" onClick={() => setSure(true)}>{t("main.queue.discardReply")}</button>
+          <button type="button" {...bindingProps(bind("queue.done.ask", { step: "discard" }))}>{t("main.queue.discardReply")}</button>
         ))}
-        <button data-ui-action="domain" type="button" onClick={() => { onClose(); void putBack(thread); }}>{t("main.queue.putBackInstead")}</button>
-        <button type="button" onClick={onClose}>{t("main.queue.keepWorking")}</button>
+        <button data-ui-action="domain" type="button" onClick={() => { askedNoMore(); void putBack(thread); }}>{t("main.queue.putBackInstead")}</button>
+        <button type="button" {...bindingProps(bind("queue.done.ask", { step: "closed" }))}>{t("main.queue.keepWorking")}</button>
       </div>
     </div>
   );
 }
 
-/** One accepted message of the exchange. */
-function MessageCard({ m, state, dir, thread, onReply }: {
-  m: ShownMessage; state: QueueState; dir: Directory; thread: string; onReply?: () => void;
+/** One accepted message of the exchange; `reply` starts a reply to it. */
+function MessageCard({ m, state, dir, reply }: {
+  m: ShownMessage; state: QueueState; dir: Directory; thread: string; reply?: Binding;
 }) {
   const t = useT();
   const msg = m.message;
@@ -304,14 +305,8 @@ function MessageCard({ m, state, dir, thread, onReply }: {
     return () => seen.disconnect();
   }, [toMe, m.receipts?.read_at, msg.message_id]);
 
-  const jump = (messageId: string) => {
-    const there = threadOf(state, messageId);
-    if (there === thread) {
-      document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)?.scrollIntoView({ block: "nearest" });
-    } else if (there) {
-      followLink(there);
-    }
-  };
+  /** A link to another message: scrolled to here, or its own item opened. */
+  const show = (messageId: string) => bindingProps(bind("queue.message.show", { messageId }));
 
   return (
     <article className={`queue-message ${fromMe ? "outgoing" : "incoming"}${m.self_message ? " self" : ""}`}
@@ -330,7 +325,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
         <p className="message-link">
           {parent
             ? <>{t("main.queue.inReplyTo")}{" "}
-              <button type="button" className="link-button" onClick={() => jump(parent.message_id)}>
+              <button type="button" className="link-button" {...show(parent.message_id)}>
                 {personName(dir, parent.sender_github_id)}: “{previewOf(parent) || parent.subject}”
               </button></>
             : <span>{t("main.queue.inReplyToMissing")}</span>}
@@ -362,7 +357,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
           <span className="message-replies">
             <Cue kind="replied">{t("main.queue.replies", { count: replies.length })}</Cue>
             {replies.map((r) => (
-              <button key={r.message_id} type="button" className="link-button" onClick={() => jump(r.message_id)}>
+              <button key={r.message_id} type="button" className="link-button" {...show(r.message_id)}>
                 {r.sender_github_id === owner ? t("main.queue.you") : personName(dir, r.sender_github_id)}:{" "}
                 {DELIVERY_WORDS(dir, r.recipient_github_id)[delivery(r, state.receipts[r.message_id])]}
               </button>
@@ -376,14 +371,14 @@ function MessageCard({ m, state, dir, thread, onReply }: {
               const there = threadOf(state, id);
               const related = state.messages[id]?.message;
               return there
-                ? <button key={id} type="button" className="link-button" onClick={() => jump(id)}>
+                ? <button key={id} type="button" className="link-button" {...show(id)}>
                     {subjectOf(state, there) || previewOf(related) || t("main.queue.aMessage")}
                   </button>
                 : <span key={id} className="link-missing">{t("main.queue.messageMissing")}</span>;
             })}
           </span>
         )}
-        {onReply && <button type="button" className="message-reply" onClick={onReply}>{t("main.queue.replyToThis")}</button>}
+        {reply && <button type="button" className="message-reply" {...bindingProps(reply)}>{t("main.queue.replyToThis")}</button>}
       </footer>
     </article>
   );
@@ -425,7 +420,8 @@ function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; d
           <button data-ui-action="domain" type="button" onClick={() => void cancelSend(draft)}>{t("main.queue.cancelSend")}</button>
         )}
         {(s === "failed" || s === "cancelled") && (
-          <button type="button" onClick={() => editAgain(thread, draft)}>{t("main.queue.edit")}</button>
+          <button type="button" {...bindingProps(bind("queue.draft.edit", { messageId: draft.message_id }))}>{t("main.queue.edit")}</button>
+
         )}
       </div>
     </article>

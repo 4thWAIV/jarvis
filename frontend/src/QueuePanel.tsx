@@ -24,8 +24,8 @@
  * Show dismissed `queue.history` and Show more `queue.history.more`. The
  * panel (`queuePanel`) and each row (`queueThread`) are targets the brain
  * can point at; pointing at a row never opens it, so it is neither
- * activated nor read. New and Restore change drafts and placement: they
- * are not navigation and stay their own actions.
+ * activated nor read. New message opens a blank one by `queue.new`, as the
+ * brain does; Restore changes placement and stays his own action.
  */
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
@@ -34,7 +34,6 @@ import { useT } from "./locale";
 import type { Draft } from "./messagingContract";
 import {
   directory, historyError, NEW, openQueue, pendingCommands, queue, queueReadError, readHistory, restore,
-  startNew,
 } from "./queue";
 import { Cue, DELIVERY_CUE, QueueIcon } from "./QueueIcons";
 import {
@@ -156,7 +155,8 @@ export function QueuePanel() {
         <p className="queue-notice stale" role="status">{t("right.queue.stale")}</p>
       )}
       <div className="queue-head">
-        <button type="button" className="queue-new" onClick={startNew} ref={ui.part("new")}
+        <button type="button" className="queue-new" {...bindingProps(bind("queue.new", {}))} ref={ui.part("new")}
+
                 disabled={state.availability !== "available"}
                 aria-current={open === NEW ? "true" : undefined}>
           <QueueIcon kind="new" /> {t("right.queue.new")}

@@ -22,16 +22,18 @@
  * Registered for pointing at: the view (`voice`: its overview, range,
  * zoom, timeline, incidents, notifications, messages and Close) and each
  * incident (`voiceIncident`, by its record id). Close is
- * `voice.diagnostics.close`, as the brain runs it. The range and the zoom
- * are still this view's own state until their commands are declared
- * (`voice.range`, `voice.zoom`, in the diagnostics family). Save and the
- * quiet page are his own acts, not navigation.
+ * `voice.diagnostics.close`, as the brain runs it. The range, the zoom and
+ * the quiet page are `voice.range`, `voice.zoom` and `voice.quiet`, the
+ * same commands the brain runs; the range and the zoom are kept here, so
+ * they stay as left while the view is closed. Save is his own act.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { bind, bindingProps } from "./uiNavigation";
-import { useUiTarget } from "./uiRegistry";
+import { createStore } from "./store";
+import type { CommandArgs } from "./uiContract";
+import { bind, bindingProps, type Binding } from "./uiNavigation";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 import { useLiveRead } from "./liveRead";
 import { formatNumber, useT, type Translate } from "./locale";
 import { useTick } from "./WorkflowsView";
@@ -55,10 +57,41 @@ const decimals = (value: number, digits: number) =>
 const ZOOM_BEFORE_SEC = 30;
 const ZOOM_AFTER_SEC = 5;
 
+// ── how far back the view looks ─────────────────────────────────────────
+//
+// The range and the zoom (the moment zoomed to, or null), changed only by
+// voice.range and voice.zoom, a click and the brain alike; choosing a
+// range zooms out. voice.quiet starts or ends the quiet page.
+
+type RangeId = CommandArgs["voice.range"]["range"];
+
+const stretch = createStore<{ range: RangeId; zoom: number | null }>({ range: RANGES[0].id, zoom: null });
+
+const always = () => ({ available: true }) as const;
+
+registerCommand("voice.range", {
+  availability: always,
+  execute({ range }) { stretch.set({ range, zoom: null }); return { status: "completed", effects: [] }; },
+});
+
+registerCommand("voice.zoom", {
+  availability: always,
+  execute({ at }) { stretch.set({ ...stretch.get(), zoom: at ?? null }); return { status: "completed", effects: [] }; },
+});
+
+registerCommand("voice.quiet", {
+  availability: always,
+  execute({ quiet }) { setQuiet(quiet); return { status: "completed", effects: [] }; },
+});
+
+/** Zooming to the half minute before `at` (seconds), as a binding. */
+const zoomTo = (at: number): Binding => bind("voice.zoom", { at: Math.round(at) });
+
 export function VoiceDiagnosticsView() {
   const t = useT();
-  const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[0]);
-  const [zoom, setZoom] = useState<number | null>(null);
+  const shown = useSyncExternalStore(stretch.subscribe, stretch.get);
+  const range = RANGES.find((r) => r.id === shown.range) ?? RANGES[0];
+  const zoom = shown.zoom;
   // Read again whenever the range, the zoom or the record changes; the
   // window ends now, so it is worked out at read time.
   const key = `${range.id}:${zoom ?? ""}`;
@@ -70,14 +103,14 @@ export function VoiceDiagnosticsView() {
       <div className="voice-range" role="group" aria-label={t("main.voice.howFarBack")} ref={ui.part("range")}>
         {RANGES.map((r) => (
           <button key={r.id} type="button" className={`voice-range-button${!zoom && r.id === range.id ? " selected" : ""}`}
-                  onClick={() => { setRange(r); setZoom(null); }}>{t(`main.voice.range.${r.id}`)}</button>
+                  {...bindingProps(bind("voice.range", { range: r.id }))}>{t(`main.voice.range.${r.id}`)}</button>
         ))}
         {zoom !== null && <span className="voice-zoomed" ref={ui.part("zoom")}>{t("main.voice.zoomed", { at: clock(zoom) })}</span>}
       </div>
       <Stretch key={key} window={() => {
         const now = Date.now() / 1000;
         return zoom !== null ? [zoom - ZOOM_BEFORE_SEC, zoom + ZOOM_AFTER_SEC] : [now - range.sec, now];
-      }} onZoom={setZoom} partRef={ui.part} />
+      }} onZoom={zoomTo} partRef={ui.part} />
     </div>
   );
 }
@@ -132,7 +165,7 @@ function Overview({ partRef }: { partRef: PartRef }) {
 }
 
 function Stretch({ window: span, onZoom, partRef }: { window: () => [number, number];
-                                                       onZoom: (t: number) => void; partRef: PartRef }) {
+                                                       onZoom: (t: number) => Binding; partRef: PartRef }) {
   const t = useT();
   const [from, to] = span();
   const read = useLiveRead(() => { const [f, until] = span(); return getHistory(f, until); }, [voiceChanged]);
@@ -156,7 +189,7 @@ function Stretch({ window: span, onZoom, partRef }: { window: () => [number, num
 type SectionRef = (el: Element | null) => void;
 
 function Timeline({ samples, events, from, to, onZoom, partRef }: {
-  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => void;
+  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => Binding;
   partRef: SectionRef }) {
   const t = useT();
   const series = (f: (s: Sample) => number | null): Point[] => samples.map((s) => ({ t: s.at, v: f(s) }));
@@ -173,7 +206,8 @@ function Timeline({ samples, events, from, to, onZoom, partRef }: {
         <div key={r.id} className="voice-timeline-row">
           <span className="voice-timeline-label">{r.label}</span>
           <Sparkline label={r.label} points={r.points} from={from} to={to} max={r.max}
-                     lines={r.lines} marks={drops} onMark={onZoom} kind={r.bars ? "bars" : "line"} />
+                     lines={r.lines} marks={drops} markBinding={onZoom} kind={r.bars ? "bars" : "line"} />
+
         </div>
       ))}
       <div className="voice-axis"><span>{clock(from)}</span><span>{clock(to)}</span></div>
@@ -270,7 +304,8 @@ function Notifications({ samples, events, partRef }: { samples: Sample[]; events
       )}
       <div className="voice-quiet">
         <button type="button" className={`voice-quiet-button${quiet ? " on" : ""}`} aria-pressed={quiet}
-                onClick={() => setQuiet(!quiet)}>
+                {...bindingProps(bind("voice.quiet", { quiet: !quiet }))}>
+
           {quiet ? t("main.voice.endQuiet") : t("main.voice.startQuiet")}
         </button>
         <span>{t("main.voice.dropsPerHour", { quiet: perHour(q.quiet), usual: perHour(q.usual) })}</span>

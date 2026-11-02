@@ -3,8 +3,11 @@
   "owner": "navigation",
   "views": [],
   "commands": [
-    {"id": "workflow.open", "label": "Open one workflow's detail in the centre",
-     "view": "main.workflow", "args": {"workflowId": {"type": "key", "entity": "workflow"}},
+    {"id": "workflow.open", "label": "Open one workflow's detail in the centre, on its first tab or the one named",
+     "view": "main.workflow",
+     "args": {"workflowId": {"type": "key", "entity": "workflow"},
+              "tab": {"type": "enum", "values": ["overview", "phases", "tasks", "transcript", "progress", "waits",
+                                                 "decisions", "blockers", "events"]}},
      "required": ["workflowId"], "actors": ["human", "brain"],
      "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}]},
     {"id": "subagent.open", "label": "Open one subagent's detail in the centre, in the workflow slot",

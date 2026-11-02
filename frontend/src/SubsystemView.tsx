@@ -16,12 +16,22 @@ import { statusWords } from "./conversation";
 import { useT } from "./locale";
 import { useSubsystems } from "./SubsystemList";
 import {
-  checkDetail, checkName, STATE_WORDS, subsystemName, subsystemSummary, type Check, type SentMessage,
+  checkDetail, checkName, openSubsystem, STATE_WORDS, subsystemName, subsystemSummary, type Check, type SentMessage,
 } from "./subsystems";
 import { bind, bindingProps } from "./uiNavigation";
+import { registerRevealer } from "./uiNavigationReveal";
 import { useUiTarget } from "./uiRegistry";
+import { kindDecl, splitKey } from "./uiValidate";
 import { useTick } from "./WorkflowsView";
 import { ago } from "./workflows";
+
+// A check not drawn: its subsystem (the key's first part) is opened by its
+// registered command, run as the caller. Nothing else.
+registerRevealer("main.subsystem", "subsystemCheck", async (ref, { navigate }) => {
+  const [subsystemId] = splitKey(kindDecl("subsystemCheck")!, ref.key!);
+  if (openSubsystem.get() === subsystemId) return true;
+  return await navigate("subsystem.open", { subsystemId }) ? true : "no-entity";
+});
 
 export function SubsystemView({ id }: { id: string }) {
   useTick(5000);
