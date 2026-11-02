@@ -71,6 +71,9 @@ jobs:
         if: ${{ !cancelled() }}   # still runs when the test suite fails, as its own job did
         env:
           JARVIS_BRAIN_AUTOSTART: "0"
+          # Measurement only: the first page test's setup, phase by phase.
+          PYTHONPATH: scripts
+          CI_PROFILE_OUT: ${{ runner.temp }}/test-timing/first-test-profile.jsonl
         run: |
           # The runner's load every 30 s while the page tests run; it can never fail the step.
           load="$RUNNER_TEMP/test-timing/page-step-load.txt"
@@ -80,7 +83,7 @@ jobs:
             done ) &
           sampler=$!
           trap 'pkill -P "$sampler" 2>/dev/null; kill "$sampler" 2>/dev/null; true' EXIT
-          pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/page.xml"
+          pytest -m page -p ci_first_test_profile -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/page.xml"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
