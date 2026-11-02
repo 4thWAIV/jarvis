@@ -2,6 +2,54 @@
 
 Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validation` waiting for Tim. Nothing is merged, pushed or deployed.
 
+## Fourth candidate: tour routing (2026-11-02)
+
+Tim, through JARVIS, after watching the third candidate: "keep the route on the main line, the primary channel, for as long as possible; reduce the early cut-ins and branch off only when needed. Use the border or box around a control as an intermediate point: first draw attention to the box, then move from its border toward the controls inside it. Use surrounding controls as transition points where that improves the route. Make the movement clearer and better."
+
+What changed (`9184754`; the rules in full are in `execution.md`, "Tour routing"):
+- Trunk first. The signal stays on the primary channel (the orb's rise, the top pipeline, then the target's rail down its corridor) to the latest branch point that still reaches the target. That is level with the target, straight in, when that run crosses no control, line of text or other object anywhere on the page. Otherwise it is level with the gap beside the neighbouring row, along that gap past the row, and into the target's top or bottom edge. The third candidate cut in at each object's top and ran down inside it. None of the nine tour routes does that now.
+- Boxes as waypoints. Each box holding the target is marked in turn, outermost first: the right panel, a tile, the node's or the workflow's detail, a tab strip, the phase stepper. As the signal reaches a box's border it stops for 450 ms and the box is outlined, fading over 900 ms. Then the signal runs on from that border toward the control.
+- Neighbouring rows as transition points. Where the straight way in is blocked, the route passes the row before (or after) the target in the gap beside it, never across it. Nothing is marked on the neighbouring row.
+- Clearer movement. The line grows behind the first pulse instead of appearing whole. Travel is slower: 2.0 s of movement instead of 1.4 s, plus 0.45 s per box. A stop arrives 2.2 to 3.1 s after it leaves the orb. Nothing is drawn at rest, as before.
+- Kept: lines never cross text or controls (now checked across the whole page, not only inside the target's object), the lanes, corridor and 45-degree bevels, usted, stable semantic IDs.
+
+Tour length: the tour is 9 signals for 7 showings, 2.5 s apart. Typed "tour" to "That was the tour, sir." took 43.5 s. "recorrido" to "Ese fue el recorrido, señor." took 44.2 s. The third candidate's tour was about 30 s.
+
+| | |
+|---|---|
+| URL | http://localhost:5183/ (open in Chrome) |
+| Code | `9184754` on `feature/ui-navigation-pipeline` (local only) |
+| Backend | https://localhost:8350, restarted on this code with `stop.sh` and `start.sh`; the page, `/api/workflows` and `/api/settings/language` answer through 5183 |
+
+The tour's stops, each route in order:
+
+| Stop | Route |
+|---|---|
+| Mac mini CPU, right | down the right rail to the CPU row's level; marks the right panel, then the tile; into the CPU row |
+| Mac mini CPU, centre | down the main rail to the value's level; marks the node's detail; into the value |
+| Database | down the left rail to the row's level; marks the Team Server tile; into the row |
+| Mute | down the left rail to the lane under the mic row; marks the mic control; up into the mute button |
+| Design phase step | down the main rail to the lane between the tabs and the stepper; marks the workflow's detail, then the phase stepper; down into the step |
+| Decisions tab | down the main rail to the lane over the tab strip; marks the workflow's detail, then the tab strip; down into the tab |
+| Folders' Registered tab | down the main rail to the lane under the Folders tabs, under the folder pane's text; marks the folders list, then the tab strip; up into the tab |
+| Workflow row (right) | down the right rail to the row's level; marks the right panel; into the row |
+| Import entries task | down the main rail to the task's level; marks the workflow's detail; into the task |
+
+Coverage (reach sweep, 259 contract target/parts): 213 reached, 6 refused, 26 mounted with the part not on show, 14 never registered. The figures are the same in English and Spanish at 1440x900 and 1280x800. The third candidate reached 211 with 8 refused. Two more are reached now: the right panel's agent name, over its row and never across the agent's orb, and the network tile's presence dot. The six refused are Settings' targets, while Settings covers the orb.
+
+Evidence in `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/evidence/demo/`:
+- `tour-routing-en-es.mp4` (also `.webm`, 2 min 15 s): the page at rest, the tour in English, "switch to Spanish", the recorrido, and back to English.
+- `tour-routing/stills/`: for each stop, `<en|es>-<nn>-mark<k>.png` as each box is marked, and `<en|es>-<nn>-arrival.png` at arrival (44 stills).
+- `tour-routing/tour-routing.json`: each signal's edges, the boxes it marked in order, its paths and its timings. 0 console errors; 0 pipeline elements drawn at rest and after.
+- `tour-routing/at-rest.png`.
+- Sweep: `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/evidence/tour-routing/sweep/` (`summary.txt`).
+- Recorder: `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/tools/tour_routing.py` (the same method as `demo_check.py`, headless Chromium at 1440x900, recording video).
+
+What Tim does:
+1. Open http://localhost:5183/ in Chrome. Close the first-time setup if it shows. Nothing of the pipeline is drawn.
+2. Click the Conversation box, type `tour`, and press Enter. For each stop, the white line runs from the orb along the top and down the edge channel. It leaves the channel only level with the target, or with the gap beside its row. Each box it enters (the panel, the tile or view, the tab strip) is outlined in turn while the pulses wait at its border. Then the line goes in to the control, with rings and an outline.
+3. Type `switch to Spanish`, then `recorrido`. Type `cambia a inglés` to go back.
+
 ## Third candidate (2026-11-02)
 
 Tim on the second candidate: "The current build does nothing when I look at it: nothing moves or lights up, so I cannot evaluate it. Visible lines must not appear on the map; it should look as it does now. Make the navigation demonstrable and preserve the current appearance, then show me something I can assess."
@@ -55,7 +103,7 @@ What Tim does:
 4. Click the Conversation tab to read "That was the tour, sir." and to type again. Try any single phrase from the table.
 5. Type `switch to Spanish`, then `recorrido`. Type `cambia a inglés` to go back.
 
-The first candidate's walkthrough below (step 2, "the faint white map") no longer applies: there is no map at rest.
+The first and second candidates' notes below describe a faint white map that stayed drawn at rest. There is no map at rest now; those lines are marked where they occur.
 
 The candidate is left running. Stop it with `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/stop.sh`.
 
@@ -107,7 +155,7 @@ Open http://localhost:5183/ in Chrome and close the first-time setup if it shows
    - With the workflow still open, its Decisions tab: `R/point.sh '{"region":"main","view":"main.workflow","kind":"workflow","key":"wf-2548254143a3","part":"tab.decisions"}'`
    - Click Folders in the centre's tabs. Its Registered tab: `R/point.sh '{"region":"main","view":"main.folders","kind":"foldersList","part":"registered"}'`
 
-   Each answer should start `status: completed / arrival: animated`. On the page, the white signal leaves the orb, runs along the faint map, goes over or under the row and drops into the part's edge with 45-degree corners. It never crosses the neighbouring button, step or line of text, then rings and outlines the part. The reminder's Sign in does not show in this candidate, because its network fixture says signed in. Its arrival is in the clip and in `{en,es}-arrive-reminder-sign-in-*.png`.
+   Each answer should start `status: completed / arrival: animated`. On the page, the white signal leaves the orb, runs along the pipeline (in this second candidate a faint map drawn at rest; since the third, nothing is drawn at rest), goes over or under the row and drops into the part's edge with 45-degree corners. It never crosses the neighbouring button, step or line of text, then rings and outlines the part. The reminder's Sign in does not show in this candidate, because its network fixture says signed in. Its arrival is in the clip and in `{en,es}-arrive-reminder-sign-in-*.png`.
 2. Usted wording. Switch to Español (step 4) and look for these, word for word:
    - the typing box: "Hable, o haga clic para escribir"
    - the workflow's badge, in the Workflows tab and its header: "Requiere su atención"
@@ -185,7 +233,7 @@ Each journey has five timed frames from when its signal leaves the orb: `-emit` 
 | Main: a workflow task | `ui_journey`: Workflows tab, the workflow's row, `workflow.open`, Tasks tab, the task "Import entries" | completed; both signals animated | `en-main-workflow-task-*`, `es-main-workflow-task-*` |
 | Hidden target | `ui_indicate` the blocker "Staging credentials", reveal navigate, workflow closed | completed, animated; effects `centre.view-shown`; Blockers tab shown | `en-hidden-before.png`, `en-hidden-blocker-*` |
 | Real transmission at the same time | JARVIS's own `_message_went` (the steer path's "a message went to this session") draws the amber ray; `ui_indicate` asked at once | the ray kept `#fbbf24`; the attention waited for the orb (dashed), then answered `busy / source-busy`; asked again once the orb was free, completed | `en-transmission-attention-waits.png`, `en-transmission-after.png`, `en-after-transmission-*` |
-| Idle map | | backbone, rails and sockets drawn with nothing running | `00-idle-map.png` |
+| Idle map (first candidate only; since the third, nothing is drawn at rest) | | backbone, rails and sockets drawn with nothing running | `00-idle-map.png` |
 
 Spanish: every region opened by its registered command, each `completed`, no page scrolling sideways: right `es-right-{folders,agents,queue,workflows,network,diagnostics}.png`; centre `es-main-{conversation,folders,voice-diagnostics,subsystem,node,team-server}.png` and the nine workflow tabs `es-main-workflow-*.png`; Settings `es-settings-{brains,voice,you,team,updates,system}.png`; menu `es-menu-open.png` (and `en-menu-open.png`). No missing-translation warning and no console error.
 
@@ -213,7 +261,7 @@ Left for CI: the full `pytest` run, `pytest -m page` for refresh, screen and spe
 ## Walkthrough for Tim (about ten minutes)
 
 1. Open http://localhost:5183/ in Chrome. Close the first-time setup if it shows (no Fish key here, so JARVIS stays silent).
-2. Look at the faint white map: the line from the orb up to the top, the rails down each side, and the small branches into each tile. It stays while nothing is happening.
+2. (Superseded: there is no map at rest now. Nothing of the pipeline is drawn while nothing is happening; a route is drawn only while a cue runs. See "Fourth candidate: tour routing" above.)
 3. The three region journeys are in the recording (`video/local-validation.webm`): the left Team Server tile's Database figure, the Network tab's Mac mini CPU, and the workflow's Import entries task. Each one is a white signal leaving the orb, running along the map, rings at the target, an outline, then fading.
 4. Nested navigation by hand: Workflows tab, click "Ledger migration", go through its nine tabs. Network tab, click the Mac mini tile. Diagnostics tab, click a row. The menu (⋮), Settings and its sections.
 5. Hidden target: in the recording, the Blockers tab opens by itself from a closed workflow before the signal arrives.

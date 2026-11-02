@@ -1003,3 +1003,126 @@ the two scripts are in `.claude/worktrees/ui-nav-run/evidence/at-rest/`
   31 passed. `pytest` ui_pipeline, ui_navigation, dead_code_removed: 41
   passed.
 - Not run, by rule: the full suite.
+
+## Tour routing (2026-11-02)
+
+Tim, through JARVIS, after watching the third candidate's tour: "keep the
+route on the main line, the primary channel, for as long as possible;
+reduce the early cut-ins and branch off only when needed. Use the border or
+box around a control as an intermediate point: first draw attention to the
+box, then move from its border toward the controls inside it. Use
+surrounding controls as transition points where that improves the route.
+Make the movement clearer and better."
+
+### The rules as implemented
+
+**Primary channel.** From the existing layout model: a target's primary
+channel is the declared trunk from the orb to its region's rail (the orb's
+rise, the top pipeline and, for the right, its run on past the main rail's
+top; `UI_CONTRACT.pipeline`), followed by that rail down its corridor (left:
+the lane at the page's left edge; main: the gutter left of the right column;
+right: the rays' channel; overlay: outside an open modal's left edge).
+
+**Latest branch point** (`uiPipeline.ts` `lateBranch()`). The route stays on
+the rail until the latest point that still reaches the target:
+
+1. level with the target (a part's middle, or a whole object's), straight
+   in to its facing edge, when that run crosses no line of text, no control
+   and no other object anywhere on the page between the rail and the
+   target (`obstaclesIn()`: the whole page, limited to the run's span and
+   the outermost box's height);
+2. otherwise level with the lane beside the neighbouring row: the gap over
+   or under the target's row (`lane()`), across in it, passing the row
+   before (or after) the target, then down or up into the target's top or
+   bottom edge; the shorter of the two that clear. This is the
+   "surrounding controls as transition points" rule: the neighbouring row
+   is passed, never crossed, and nothing is marked on it;
+3. only when neither is clear, the earlier entry the second and third
+   candidates used for everything: the object's socket near its top and a
+   leaf down its inner margin (`socketRoute()`), so nothing reached before
+   is lost.
+
+**Boxes as waypoints** (`boxesAround()`, `marksOn()`). Every box holding the
+target is a waypoint, outermost first: the registered boxes
+(`uiRegistry.ts` `BOX_IDS`: `right.panel`, `right.tabs`, `main.tabs`,
+`main.workflow.tabs`, `main.workflow.phases`, `main.folders.tabs`,
+registered with `useUiBox` by `RightPanel`, `TabRow`, `WorkflowDetail` and
+`FoldersView`), every other registered target holding it (a tile, a centre
+view, a workflow's detail, a list), and, for a part, its own object. A box
+drawn where another holding it is (within 2 px on every side) is marked
+once. Each box is marked where the route last passes into it (its border,
+counted from 4 px outside, since a leaf ends 3 px short of its part). The
+route's topology now includes its marks, so a cue whose boxes change under
+it is cancelled like one whose edges change.
+
+**Timing** (`protocol.json` `timing`, `uiSignal.ts`). The signal moves at an
+even pace over `travelMs` 2,000 ms (was 1,400) and stops `stopMs` 450 ms at
+each box border while that box is outlined (`boxMarkMs` 900 ms, fading);
+the pulses behind it gather at the border and stream on. The line is drawn
+growing behind the first pulse (`drawnTo()`), not all at once. Arrival is
+`arrivalAtMs` (2,220 ms) plus 450 ms per box; the hold (to `holdUntilMs`
+5,000 ms) and the reset (`resetByMs` 5,600 ms) move with it. Reduced motion
+still shows the whole connection at once with no marks.
+
+### Each tour stop's route (1440x900, from the recording)
+
+| Stop | Route, in order |
+|---|---|
+| Mac mini CPU, right | rise, top pipeline, on past the main rail's top, down the right rail to the CPU row's level; in: mark the right panel, mark the tile, into the CPU row's edge |
+| Mac mini CPU, centre | rise, top pipeline, down the main rail to the CPU value's level; in: mark the node's detail, into the value's edge |
+| Database, left | rise, top pipeline left, down the left rail to the Database row's level; in: mark the Team Server tile, into the row's edge |
+| Mute, left | down the left rail to the lane under the mic row; in under the meter: mark the mic control, up into the mute button's bottom edge |
+| Design phase step | down the main rail to the lane between the tab strip and the stepper; in: mark the workflow's detail, along the lane past the tabs above, mark the phase stepper, down into the step's top edge |
+| Decisions tab | down the main rail to the lane over the tab strip; in: mark the workflow's detail, along the lane, mark the tab strip, down into the Decisions tab's top edge |
+| Folders' Registered tab | down the main rail to the lane under the Folders tab strip, across under the folder pane's text; mark the folders list, mark the tab strip, up into the Registered tab's bottom edge |
+| Workflow row, right | down the right rail to the row's level; in: mark the right panel, into the row's edge |
+| Import entries task | down the main rail to the task's level; in: mark the workflow's detail, into the task's edge |
+
+The third candidate's routes left the rail at each object's socket, 14 px
+below its top, and ran down inside it along its inner margin (the node's
+CPU: at the detail's top, about 200 px above the value; the task: at the detail's
+top). None of the nine does that now.
+
+### Coverage
+
+The reach sweep (`ui-nav-run/tools/test_reach_sweep.py`, as before, results
+in `ui-nav-run/evidence/tour-routing/sweep/`, `summary.txt`), 259 contract
+target/parts:
+
+| Run | Reached | Refused | Mounted, part not on show | Never registered |
+|---|---|---|---|---|
+| en 1440x900 | 213 | 6 | 26 | 14 |
+| en 1280x800 | 213 | 6 | 26 | 14 |
+| es 1440x900 | 213 | 6 | 26 | 14 |
+| es 1280x800 | 213 | 6 | 26 | 14 |
+
+Up from 211 and 8: the right panel's agent `name` (reached over its row,
+in the gap past the agent before it, dropping into the name's top edge,
+never across the agent's orb) and the network tile's `presence` dot. The
+six left are Settings' targets, refused while Settings covers the orb.
+
+### Tour routing test evidence
+
+- `npx tsc --noEmit`: pass. `npm run build` (scratch `--outDir`): pass.
+  `scripts/generate_ui_contract.py --check`: exit 0.
+- `node tests/ui_signal_cases.mts` (through `test_ui_pipeline.py`): 21
+  checks, including the stops at each box, the even pace, the line drawn
+  behind the first pulse, the marks in turn and the new timing.
+- `pytest` ui_contract, ui_control, ui_tools, ui_pipeline, ui_navigation,
+  ui_right, ui_coverage_rules, ui_locale, dead_code_removed,
+  brain_page_parity: 142 passed.
+- `pytest -m page tests/test_voice_page_pipeline.py`: 14 passed, among them
+  the new `test_each_tour_stop_stays_on_the_trunk_marks_its_boxes_in_order_and_crosses_no_text`
+  (English and Spanish, 1440 and 1280: for each tour stop, the route leaves
+  its rail within 40 px of the target's row, its boxes are the expected
+  ones outermost first, and from the rail to the target no sampled point,
+  every 2 px, lies on any control or line of text on the page). The first
+  test now also checks the tile's route goes in from the rail without a
+  socket, marks the panel then the tile in that order, and arrives after
+  both stops.
+- `pytest -m page` right, navigation (with pipeline): 24 passed; earlier in
+  the same change, centre_nav, left_settings, navigation, remaining_nav,
+  right, layout, rays: 59 passed, 1 failed (the agent's name, now reached;
+  the test was changed to check the route over the row and never across
+  the orb, then passed).
+- Not run, by rule: the full suite.
