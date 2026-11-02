@@ -1,7 +1,9 @@
 """Update this checkout of JARVIS from GitHub.
 
-    .venv/bin/python -m jarvis.update            check, update, restart
-    .venv/bin/python -m jarvis.update --check    only say where it stands
+    .venv/bin/python -m jarvis.update            check, update to the latest, restart
+    .venv/bin/python -m jarvis.update --to 41    the same, to pull request 41's version
+    .venv/bin/python -m jarvis.update --check    only say where it stands and list the
+                                                 newer versions
 
 With the server running it asks the server to update itself
 (`POST /api/update` with the tool token), so the server restarts on the new
@@ -46,13 +48,15 @@ def server_url() -> str:
     return f"{'https' if certs else 'http'}://127.0.0.1:{web_auth.DEFAULT_API_PORT}"
 
 
-def ask_server(url: str) -> dict | None:
-    """The server's update outcome, or None when the connection there is
-    refused (no server listening). Any other failure exits: something is
-    there, and the checkout must not be changed under it."""
+def ask_server(url: str, version: str | None = None) -> dict | None:
+    """The server's outcome of an update to `version` (origin/main's latest
+    when None), or None when the connection there is refused (no server
+    listening). Any other failure exits: something is there, and the
+    checkout must not be changed under it."""
     endpoint = f"{url}/api/update"
+    body = json.dumps({"version": version} if version else {}).encode()
     req = urllib.request.Request(
-        endpoint, data=b"{}", method="POST",
+        endpoint, data=body, method="POST",
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
     try:
@@ -88,30 +92,34 @@ def _print(head: str, details: list[str]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jarvis.update",
                                      description="Update JARVIS from GitHub.")
-    parser.add_argument("--check", action="store_true", help="only report; change nothing")
+    parser.add_argument("--check", action="store_true",
+                        help="only report and list the newer versions; change nothing")
+    parser.add_argument("--to", metavar="VERSION", default=None,
+                        help="the version to update to: its pull request number, or its "
+                             "commit's sha (default: origin/main's latest)")
     args = parser.parse_args(argv)
 
     if args.check:
-        status = self_update.check()
+        status = self_update.check(version=args.to)
         _print(*self_update.describe(status))
         return 0 if status.source == self_update.GITHUB and not status.error else 1
 
     recorded = server_address.running()
     if recorded is not None:
-        answered = ask_server(recorded.url)
+        answered = ask_server(recorded.url, args.to)
         if answered is None:
             raise SystemExit(
                 f"JARVIS (process {recorded.pid}) recorded {recorded.url} as its "
                 "address but refused the connection there; not updating under it.")
     else:
-        answered = ask_server(server_url())
+        answered = ask_server(server_url(), args.to)
     if answered is not None:
         out = self_update.Outcome.from_json(answered)
         _print(*self_update.describe_outcome(out))
         if out.restart:
             print("JARVIS is restarting on the new code.")
     else:
-        out = self_update.update()
+        out = self_update.update(version=args.to)
         _print(*self_update.describe_outcome(out))
         if out.restart:
             print("JARVIS is not running; start it to use the new code.")

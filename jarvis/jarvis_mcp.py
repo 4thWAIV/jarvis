@@ -1652,18 +1652,28 @@ TOOL_SPECS = [
     {
         "name": "update_status",
         "description": (
-            "Settings' Updates section: whether JARVIS is up to date with GitHub, the new "
-            "commits on main, whether their CI passed, and what (if anything) stops the "
-            "update. THE way to answer \"are you up to date\" or \"is there an update\"."),
+            "Settings' Updates section: whether JARVIS is up to date with GitHub, the "
+            "version running here, the newer versions on main (each a merged pull request, "
+            "PR number and title, newest first) with whether each one's CI passed, and what "
+            "(if anything) stops the update. Only a version whose CI passed can be "
+            "installed, and only newer ones are offered. THE way to answer \"are you up to "
+            "date\", \"is there an update\" or \"what versions can I update to\"."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "update_jarvis",
         "description": (
             "Update JARVIS from GitHub and restart on the new code, only when he asks: "
-            "Settings' Update and restart. It says out loud that it is updating and "
-            "restarts by itself; if something stops the update it says what instead."),
-        "inputSchema": {"type": "object", "properties": {}},
+            "Settings' Install and restart. Without `version` it installs origin/main's "
+            "latest; with one, that version (a newer one whose CI passed). It says out loud "
+            "that it is updating and restarts by itself; if something stops the update it "
+            "says what instead."),
+        "inputSchema": {"type": "object", "properties": {
+            "version": {"type": "string",
+                        "description": "The version he chose: its pull request number "
+                                       "(\"42\") or its commit's short sha. Leave it out "
+                                       "for the latest."},
+        }},
     },
 ]
 
