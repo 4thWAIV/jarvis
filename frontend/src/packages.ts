@@ -19,8 +19,11 @@ export interface PackageInfo {
   purpose: string;
   runs: "conversation" | "agent" | "page";
   entry: string | null;
-  /** The start of the attachment id it was unpacked from. */
+  /** The start of the attachment id it was first unpacked from. */
   source: string;
+  /** Every attachment it was opened from (an id's letters and digits,
+   *  lowercase), or only the start of the first for an older package. */
+  sources: string[];
 }
 
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
@@ -50,8 +53,8 @@ export function packageList(): LiveStore<PackageInfo[]> {
 
 /** The page package unpacked from this attachment, if there is one. */
 export function pagePackageFrom(list: PackageInfo[] | null, attachmentId: string) {
-  const source = attachmentId.replace(/-/g, "").slice(0, 8);
-  return list?.find((p) => p.runs === "page" && p.source === source);
+  const key = attachmentId.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return list?.find((p) => p.runs === "page" && p.sources.some((s) => s && key.startsWith(s)));
 }
 
 /** Show it, unless it is already showing. */
