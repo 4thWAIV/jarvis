@@ -28,7 +28,10 @@ It works on the current pairing's records only.
             page stored with its continuation in one transaction; an expired
             continuation starts a new scan. Absence never prunes.
   receipts  owed receipts go in batches of RECEIPT_BATCH_MAX; the answer
-            settles them, `not_found` included.
+            settles them, `not_found` included. An openability receipt
+            (bundle_status) goes as one item per file opened, and only to a
+            team server offering messaging.bundles.v1; to any other it stays
+            owed, and local.
   commands  the latest work command per item, with its expected revision;
             a conflict keeps the team server's latest and drops it.
 
@@ -284,7 +287,10 @@ class Delivery:
                  rand: ports.RandomSource = random.Random(), faults: wire.Faults = wire.NO_FAULTS,
                  on_change: Callable[[], None] = lambda: None,
                  transport_for: Callable[[TeamCalls, Pairing], Any] = TeamTransport,
-                 interval: float = SYNC_INTERVAL_SEC):
+                 interval: float = SYNC_INTERVAL_SEC, openability=None):
+        """`openability` is bundle_status.OpenabilityStatus: the reports an
+        owed openability receipt sends, and where it hears they went."""
+        self.openability = openability
         self.store, self.connection, self.guard = store, connection, guard
         self.snapshots, self.presentation = snapshots, presentation
         self.node_id, self.clock, self.rand, self.faults = node_id, clock, rand, faults
@@ -323,6 +329,15 @@ class Delivery:
         known = self._capabilities.get(pairing.server_id) if pairing else None
         caps = known[2] if known and known[0] == pairing.generation else []
         return ports.availability(paired=pairing is not None, capabilities=caps)
+
+    def bundles_offered(self) -> bool:
+        """Whether the current team server takes task context, supersedes
+        links and openability receipts (messaging.bundles.v1), from what is
+        already known: nothing known yet is no."""
+        pairing = self.pairing()
+        known = self._capabilities.get(pairing.server_id) if pairing else None
+        return bool(known and known[0] == pairing.generation
+                    and wire.bundles_offered(known[2]))
 
     async def _capabilities_of(self, pairing: Pairing) -> list[str]:
         known = self._capabilities.get(pairing.server_id)
@@ -518,15 +533,41 @@ class Delivery:
             continuation = page.continuation
         return changed
 
+    def _items(self, pairing: Pairing, owed: ports.OwedReceipt) -> list[wire.ReceiptItem]:
+        """The receipt items one owed receipt sends: itself, or one per file
+        for openability (none when there is no report to send)."""
+        if owed.kind != "openability":
+            return [wire.ReceiptItem(message_id=owed.message_id, kind=owed.kind)]
+        if self.openability is None:
+            return []
+        return [wire.ReceiptItem(message_id=owed.message_id, kind="openability", openability=r)
+                for r in self.openability.reports(*pairing.ns, owed.message_id)]
+
     async def _send_receipts(self, t, pairing: Pairing) -> bool:
-        owed = self.store.receipts_owed(*pairing.ns)
+        owed = [o for o in self.store.receipts_owed(*pairing.ns)
+                if o.kind != "openability" or self.bundles_offered()]
         node = self.node_id()
-        for start in range(0, len(owed), wire.RECEIPT_BATCH_MAX):
-            batch = owed[start:start + wire.RECEIPT_BATCH_MAX]
-            self.faults.check("client_before_receipt_ack")
-            result = await t.receipts(wire.ReceiptBatch(node_id=node, receipts=[
-                wire.ReceiptItem(message_id=o.message_id, kind=o.kind) for o in batch]))
-            self.store.settle_receipts(*pairing.ns, batch, result)
+        batches: list[list[tuple[ports.OwedReceipt, list[wire.ReceiptItem]]]] = [[]]
+        for o in owed:
+            items = self._items(pairing, o)
+            if sum(len(i) for _, i in batches[-1]) + len(items) > wire.RECEIPT_BATCH_MAX:
+                batches.append([])
+            batches[-1].append((o, items))
+        for batch in batches:
+            items = [item for _, group in batch for item in group]
+            settled = [o for o, _ in batch]
+            if not settled:
+                continue
+            if items:
+                self.faults.check("client_before_receipt_ack")
+                result = await t.receipts(wire.ReceiptBatch(node_id=node, receipts=items))
+            else:
+                result = wire.ReceiptBatchResult(facts=[])
+            self.store.settle_receipts(*pairing.ns, settled, result)
+            for o, group in batch:
+                if o.kind == "openability" and self.openability is not None:
+                    self.openability.reported(*pairing.ns, o.message_id,
+                                              [i.openability for i in group])
         return bool(owed)
 
     def _present(self, pairing: Pairing, message: wire.AcceptedMessage) -> None:

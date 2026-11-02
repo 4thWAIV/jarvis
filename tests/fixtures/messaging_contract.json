@@ -2154,6 +2154,8 @@
           "state": "approved"
         },
         "subject": "",
+        "supersedes": [],
+        "task": null,
         "text": "",
         "thread_id": "00000000-0000-4000-8000-000000000006"
       },
@@ -2177,8 +2179,59 @@
           "state": "submitting"
         },
         "subject": "Deploy window",
+        "supersedes": [],
+        "task": null,
         "text": "Friday it is.",
         "thread_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "review_with_task": {
+        "agent_drafted": false,
+        "attachments": [
+          {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "filename": "review-bundle.zip",
+            "media_type": "application/zip",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "size_bytes": 179692
+          }
+        ],
+        "capture_id": null,
+        "draft_revision": 2,
+        "files": [],
+        "in_reply_to_message_id": null,
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_github_id": 1001,
+        "related_message_ids": [],
+        "send": {
+          "attempts": 0,
+          "content_digest": null,
+          "content_revision": 1,
+          "failure": null,
+          "message_id": "00000000-0000-4000-8000-00000000000b",
+          "next_attempt_at": null,
+          "state": "draft"
+        },
+        "subject": "Summary review",
+        "supersedes": [],
+        "task": {
+          "outcome_kind": "notes",
+          "primary": {
+            "attachment_id": "00000000-0000-4000-8000-000000000021",
+            "member_path": "review/summary.pdf",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "reply_audience": "sender_only",
+          "requested_outcome": "Notes on the two-page summary: support for its claims, wording and layout.",
+          "supporting": [
+            {
+              "attachment_id": "00000000-0000-4000-8000-000000000021",
+              "member_path": "review/sources.md",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "text": "Could you review the summary?",
+        "thread_id": "00000000-0000-4000-8000-00000000000b"
       }
     },
     "DraftAction": {
@@ -2390,6 +2443,8 @@
               "state": "submitting"
             },
             "subject": "Deploy window",
+            "supersedes": [],
+            "task": null,
             "text": "Friday it is.",
             "thread_id": "00000000-0000-4000-8000-000000000001"
           }
@@ -2922,6 +2977,8 @@
                   "state": "submitting"
                 },
                 "subject": "Deploy window",
+                "supersedes": [],
+                "task": null,
                 "text": "Friday it is.",
                 "thread_id": "00000000-0000-4000-8000-000000000001"
               }
@@ -3058,6 +3115,8 @@
               "state": "approved"
             },
             "subject": "",
+            "supersedes": [],
+            "task": null,
             "text": "",
             "thread_id": "00000000-0000-4000-8000-000000000006"
           }

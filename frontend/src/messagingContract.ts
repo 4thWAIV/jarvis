@@ -197,6 +197,8 @@ export interface Draft {
   send: LocalSend;
   capture_id: number | null;
   agent_drafted: boolean;
+  task: TaskContext | null;
+  supersedes: Supersedes[];
 }
 
 /** Review, cancel or retry the draft as it was at this revision. */

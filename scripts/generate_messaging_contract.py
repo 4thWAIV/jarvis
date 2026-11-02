@@ -407,6 +407,13 @@ def _local_examples(w, local) -> dict:
                                                  state="approved",
                                                  content_digest="sha256:" + "c" * 64),
                             capture_id=7)
+    review_req = dict(ex["SendRequest"])["review_with_task"]
+    review_draft = local.Draft(
+        message_id=review_req.message_id, thread_id=review_req.thread_id,
+        recipient_github_id=MATT, draft_revision=2, subject=review_req.subject,
+        text=review_req.text, attachments=list(review_req.attachments), task=review_req.task,
+        send=local.LocalSend(message_id=review_req.message_id, content_revision=1,
+                             state="draft"))
     exchange = local.LocalItem(work_state=work["reply_arrived_your_turn"],
                                messages=[root, reply], drafts=[reply_draft],
                                dismiss_blockers=["send_unresolved"])
@@ -424,7 +431,8 @@ def _local_examples(w, local) -> dict:
         "LocalFile": [("uploading", new_draft.files[0]), ("verified", local.LocalFile(
             attachment_id=pdf.attachment_id, state="verified", bytes_done=48213))],
         "LocalSend": [("submitting", sending), ("failed_transport", failed)],
-        "Draft": [("reply_submitting", reply_draft), ("new_files_only_approved", new_draft)],
+        "Draft": [("reply_submitting", reply_draft), ("new_files_only_approved", new_draft),
+                  ("review_with_task", review_draft)],
         "DraftSave": [("new_conversation", local.DraftSave(recipient_github_id=MATT,
                                                            subject="Deploy window",
                                                            text="Friday?")),
