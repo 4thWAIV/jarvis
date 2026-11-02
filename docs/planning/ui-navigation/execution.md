@@ -36,7 +36,7 @@ navigation, and no command or UI-control infrastructure on the base.
 | `brain-transport` | finished | `ui-nav-brain-transport` 043b35a, merged afdb36c; its pending items 1–3 applied in the integration commit |
 | `component-coverage` | finished | `ui-nav-coverage-right` 45f7fd9, `ui-nav-coverage-main` b51ba75, `ui-nav-coverage-left-settings` e0eed32; merged (see "Coverage integration") |
 | `integration-review` | started: coverage merged and shared changes applied (see "Coverage integration"); corridor centring answered and applied (76eb517); blocker open: leaf sibling routing; the independent review still to run | |
-| `localization` | started: origin/main merged (2b0cfb3), foundation built (see "Localization"); per-region localization by loc-right, loc-main, loc-left-settings next (see "LOCALIZATION OWNERSHIP") | |
+| `localization` | finished, with recorded gaps: origin/main merged (2b0cfb3), foundation (1eb6213), regions merged (`ui-nav-loc-right` 35ae800, `ui-nav-loc-main` d5ac820, `ui-nav-loc-left-settings` e6fb9ae; merges 39d1589, 4e7aea3, 76ca15a), shared changes 7d8401e, c6247c2, 682b1bb; acceptance run on the isolated candidate passed (see "Localization integration") | `ui-nav-run/evidence/loc-integration/` |
 | `local-validation-ready`, `human-validation` | later | |
 
 ## The contract (what workers build against)
@@ -520,7 +520,7 @@ page` (refresh, screen, speech_input), the wheel build.
 
 ## Next action
 
-Per-region localization by loc-right, loc-main and loc-left-settings (see "LOCALIZATION OWNERSHIP"), then the localization integration, then the independent review. Tim to decide the open blocker `leaf-sibling-routing`.
+The independent review, on the candidate at 682b1bb, with the localization gaps listed under "Localization integration". Tim to decide the open blocker `leaf-sibling-routing`.
 
 ## Scope update: Spanish interface (2026-11-01)
 
@@ -609,4 +609,67 @@ Gates the integration adds: every `label-unlocalized` count zero; the acceptance
 - Left for CI: the full `pytest` run, the remaining page tests, the wheel build.
 - `pytest -m page tests/test_voice_page_language.py tests/test_voice_page_settings.py`: 16 passed.
 - Corridor change, `pytest -m page` on every page file but refresh, screen and speech_input: 186 passed.
+
+## Localization integration
+
+### What each region did (from the workers' reports)
+
+- `loc-right` (35ae800): the right panel's 8 components, catalog `right.*` (273 keys); `workflows.ts`, `subsystems.ts`, `network.ts`, `queueStore.ts` give their words in the language in force under the same export names; `subsystem_diagnostics.py` sends every name and line as a code and values (`name_said`, `said`) beside the English the brain reads, with a test that the Python English and the catalog English are word for word the same (CLAUDE.md, "Subsystem diagnostics"). Layout wordings: Diagnostics rows "Herramientas", "Carpetas", "Equipo"; node tile "RAM", "IA". Page test: Spanish case in `test_voice_page_right.py`. It also taught `tests/test_header_lines.py` to count `say(...)` as building text; reviewed and kept (it makes the check stricter).
+- `loc-main` (d20e4f0, d5ac820): the centre views and their modules, catalog `main.*` (Latin American Spanish, `tú`); backend words reaching the centre are worded by their code on the page (message status, agent state, folder and messaging refusals, dismiss blockers, folder reader, voice incident kind, workflow event and item kinds, folder location events), and a code the page does not know is shown as it came, marked `data-original-detail`. Page test: the node-detail cue in English and Spanish (`test_voice_page_pipeline.py`).
+- `loc-left-settings` (e6fb9ae): the left column, Settings, the sign-in reminder, catalog `left.*` (220 keys); `jarvis.ts` stores the state and `StatusControl` words it; voice input keeps its notices as messages (`InputWords`); refusals carry codes beside their unchanged English (`speech_models.Refused` and `language_setting`: `code`, `values`, `detail`; an install's `errorCode`; `brains_config.Refused`; `self_update`'s `refused_code`, `note_codes`). Settings' section list widens to its longest name. Page tests: two Spanish cases in `test_voice_page_left_settings.py`.
+
+### Merge
+
+`git merge --no-ff` of each branch in turn. Conflicts only in `tests/test_ui_coverage_rules.py` `PENDING`: each side had removed its own `label-unlocalized` lines; resolved by keeping every removal. After the merges no `label-unlocalized` line is left in `PENDING`; the rule now finds none in `frontend/src` (73 `control-unclassified` remain, the coverage ratchet).
+
+### Shared changes applied (7d8401e, c6247c2, 682b1bb)
+
+- `locale.ts` holds the shared wording helpers: `wordsOf` (from `workflows.ts`), `codeWords`, `Said`, `saidShown`, `SaidText` (from `conversation.ts` and `ConversationView.tsx`), `placed` (from `TeamServerTile.tsx`). Every importer points there.
+- Not moved: `inputWords` / `InputWords` stay in `voiceInput.ts`, their one user; moving them would put a second "message kept for later" shape beside `Said` in the shared module. Unifying the two (an `InputWords` can be said in any language, for the English log) is a follow-up.
+- Readiness: the Team Server tile, its spoken label and `TeamServerView` show `network.READINESS_WORDS`; readiness codes stay English for classes and tests. "ms" is on `KEPT_AS_IS`. The readiness word may wrap to two centred lines in the tile's 62px column (Spanish "Iniciar sesión" was cut, found by the left-settings Spanish page test).
+- `SubsystemView.tsx` and the subsystem's centre tab (`CentreArea.tsx`) word names, summaries and checks through `subsystemName`, `subsystemSummary`, `checkName`, `checkDetail` (the tab was found in English by the acceptance run).
+- `agents.ts` `workingCount`: `agents.working` / `agents.workingCapped` in the shell catalog.
+- `MicControl.tsx` words a health state by code (`codeWords("main.voice.health", …)`); `HEALTH_WORDS` is gone.
+- `LanguageControl.tsx` words a refused change, a failed load and a failed download by code through `voiceInput.speechRefusal`, which now returns a `Said` (original detail when the code is unknown).
+- `messagingApi.ts`: the unused `shownFor` and `MessagingError.shown` are gone; the Queue words refusals through `queue.messagingSaid`.
+- `server.py` `_brains_change`: a `brains_config.Refused` answers `detail={"message", "code", "values"}` (asserted in `test_brains_api.py`); `brains.ts` already read both shapes.
+- `test_voice_page_speech_input.py`: the model-unavailable expectation is the coded wording ("Speech recognition is not available. Detail: …").
+- CLAUDE.md, "Subsystem diagnostics": the codes.
+
+### Acceptance on the isolated candidate (localization.md, "Acceptance")
+
+The real backend on 8350 with the isolated data, `.env` and homes, both real Kroko models installed into the isolated data (`scripts/setup_speech_input.py --language all`), the real page through Vite on 5183, headless Chromium; no brain (a stand-in says it is the user's turn), no team sign-in (the network snapshot is a browser fixture), workflows seeded through the real route. Drivers: `ui-nav-run/tools/loc_acceptance.py` and `loc_restart.py` (copies beside the evidence). Results: `ui-nav-run/evidence/loc-integration/acceptance.json`, `restart.json`, 69 screenshots.
+
+Switch steps and what held:
+
+1. English, a draft typed in the conversation box, the Workflows tab, a workflow open on Tasks, Settings open at Voice (`01-en-settings-voice.png`).
+2. Settings, Language, Español: page and a second open page went to `es-419`, the server says `es`; no reload (a window marker survived), the draft, the right tab, the centre view, the workflow tab and Settings all as they were (`02-es-settings-voice.png`, `02b-es-second-page.png`).
+3. The brain's `set_language` to English: both pages back to `en-US`, same state kept (`03-en-after-tool.png`).
+4. A failed change (the next model load made to fail): through Settings the interface, the server and speech input stayed English and the control said "The speech model could not be loaded. Detail: injected by the acceptance run" (`04-en-failed-switch.png`); through `set_language` the tool said the language was not changed and the page stayed English.
+5. `set_language` to Spanish, then a refresh: back in Spanish.
+6. Every family, opened by its registered command, in Spanish then English, every command `completed`, no page scrolling sideways: the six right tabs; conversation, folders, the workflow detail on each of its nine tabs, voice diagnostics, a subsystem, a node, the team server; the six Settings sections (`es-*.png`, `en-*.png`). No missing-translation warning in the console.
+7. The three pipeline demonstrations in both languages, each `completed` with an animated arrival and the same resolved target in both: the left Team Server tile's database row, a node's CPU in the centre, a workflow task's row on the Tasks tab (`*-demo-*.png`). The task demo needs the Tasks tab open first (no reveal for tasks, a gap recorded under "Gaps left after the coverage merge").
+8. Spanish at 1280×800, 1920×1080, and 1440×900 with text at 125 %: no page scrolling sideways (`es-width-*.png`).
+9. Restart and reconnect (`loc_restart.py`, backend as its own process): started in Spanish, the page Spanish; restarted, still Spanish with no reload; stopped, the saved language set to English while down, started: the open page followed to English on reconnect with no reload; a refresh stayed English (`10-*.png`, `11-*.png`).
+
+Stale responses (a read answered after a pushed frame) and the refused-change path stay covered by `test_voice_page_language.py`. Agent and queue transmissions in Spanish are covered by the region page tests (`test_voice_page_human_rays.py`, `_rays.py`, `_queue.py`), run in English; the Spanish run of the transmissions themselves was not driven on the candidate.
+
+### Localization integration test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass. Contract `--check`: exit 0.
+- Ratchet: `label-unlocalized` 0 everywhere; `test_ui_coverage_rules.py`, `test_ui_locale.py`: 8 passed.
+- Targeted pytest at 7d8401e (the 19 coverage-integration files, `test_ui_locale`, `test_language_setting`, `test_spanish_speaking`, `test_speech_models`, `test_spoken_words`, `test_data_paths`, `test_system_prompt_header`, `test_brain`, `test_runs_are_not_conversations`, `test_web_security`, `test_access_keys`, `test_subsystem_diagnostics`, `test_messaging_queue_store`, `test_brains_api`, `test_self_update`): 1055 passed, 2 skipped.
+- `pytest -m page` at 7d8401e on language, right, network, queue, workflows, subsystems, subagents, agents_list_fits, conversation, captions, centre_nav, folders, diagnostics, voice_health, human_rays, rays, pipeline, navigation, left_settings, settings, mute, team, team_reminder, layout, speech_input: 203 passed, 2 failed. `test_voice_page_left_settings.py`'s Spanish fit (the clipped readiness word, fixed in c6247c2; the file then 10 passed) and `test_voice_page_workflows.py::test_a_workflow_row_opens_its_detail_and_a_decision_is_answered` (reads the detail's name before its read lands, under load; passed alone).
+- After 682b1bb: `pytest -m page` subsystems and centre_nav: 10 passed.
+- Left for CI: the full `pytest` run, the rest of `pytest -m page` (refresh, screen), the wheel build.
+
+### Localization gaps remaining
+
+- Team server errors: `team_client.TeamError` and `last_error` (pairing, status poll, network exchange; about 30 sites) carry no code, so Settings, Team shows them in English, marked as original detail. Plan item 7 lists them; not done here.
+- Voice causes: the voice record's cause and message lines, and the live health cause ("The page was busy for 807 ms"), are English sentences, so the Diagnostics view, its summary and the voice input row show them in English in Spanish. Wording them needs codes and values in `voice_diagnostics`, including the stored events.
+- Spanish values cut by width: the tile's "Escritura" row next to "hace 1 min" ("Escritu…"), and the Diagnostics row "Entrada de voz" beside "Con problemas" ("Entrada de …").
+- Register: `left.*` addresses the person as `usted` ("Inicie sesión en el servidor de su equipo"), `main.*` as `tú`; one has to be chosen.
+- Brain discovery labels: Settings sections keep English labels (`translate("en", …)`), the centre and right panels' targets give labels in the language in force. Command and target identities never change; the plan allows either, but it is not one rule.
+- The browser's own file picker words ("Choose Files") follow Chrome's language.
+- Recorded content (stored conversation notices, the voice record) is shown as it was written.
 

@@ -214,6 +214,22 @@ effects; the overlay map; pointing inside Settings blocked).
 - Subagent rows in the right panel are not targets yet.
 - Health dot pointing is not page-tested (needs a voice fault fixture).
 
+## Localization coverage (integrator)
+
+Every row above is worded through the catalogs in English and Spanish
+(`frontend/src/messages/{shell,right,main,left}.{en,es}.ts`); the
+`label-unlocalized` rule finds no unworded label in `frontend/src`. Command
+and target identities, `data-ui-tab`, `data-row` and readiness codes stay
+English; no element is found by its words. The acceptance run opened every
+right tab, every centre family (each of the workflow detail's nine tabs) and
+every Settings section by its registered command in both languages, and
+the three pipeline demonstrations resolved the same targets and parts in
+both (execution.md, "Localization integration"). Gaps: team server error
+text and voice causes stay the server's English; two Spanish values are cut
+by width; the `usted` / `tú` register differs between `left.*` and `main.*`;
+brain discovery labels follow two rules (English in Settings, the language
+in force elsewhere). Details in execution.md, "Localization gaps remaining".
+
 ## Transmission layer (pipeline-animation)
 
 | Source | Role | State |
