@@ -597,3 +597,19 @@ def test_each_line_carries_its_code_and_values():
     # Another program's words have no code: they are shown as they came.
     s = sd.team_server({"state": "signed_out", "last_error": "session revoked"}, NOW)
     assert (s.said, s.summary) == (None, "session revoked")
+    # team_client's own words carry their code beside the English.
+    said = {"code": "sessionEnded", "values": {}, "detail": ""}
+    s = sd.team_server({"state": "signed_out", "last_error": "The team server ended this session; sign in again.",
+                        "last_error_said": said}, NOW)
+    assert s.summary == "The team server ended this session; sign in again."
+    assert s.said == sd.Said("teamError", {"error": s.summary, "errorSaid": said})
+
+
+def test_a_voice_cause_s_code_rides_beside_its_english():
+    summary = {"state": "decoder-slow", "cause": "Machine busy (load 16.9)", "causeCode": "machineBusy",
+               "causeValues": {"load": 16.9}, "lastDropAt": None,
+               "pipeline": {"mic": {"state": "ok", "value": 10}}}
+    s = sd.voice_input(summary, NOW)
+    assert s.summary == "Falling behind: Machine busy (load 16.9)"
+    assert s.said == sd.Said("voiceBehind", {"cause": "Machine busy (load 16.9)",
+                                             "causeSaid": {"code": "machineBusy", "values": {"load": 16.9}}})

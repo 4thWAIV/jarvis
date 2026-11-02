@@ -17,7 +17,7 @@
  */
 
 import { liveRead } from "./liveRead";
-import { formatDateTime, formatNumber, t, wordsOf } from "./locale";
+import { formatDateTime, formatNumber, t, wordsOf, type CodedLine } from "./locale";
 import { createStore } from "./store";
 import { spokenAgo } from "./timeFormat";
 import { sign } from "./WeeklyUsage";
@@ -120,6 +120,8 @@ export interface NetworkStatus {
   received_at: string | null;
   stale: boolean;
   last_error: string | null;
+  /** The last error by code, beside its English (older backends: absent). */
+  last_error_said?: CodedLine | null;
   round_trip_ms: number | null;
   last_contact_at: string | null;
   connection: Connection;

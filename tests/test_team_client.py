@@ -172,6 +172,7 @@ async def test_pairing_denied(conn, server):
     await asyncio.wait_for(conn.pairing.task, timeout=10)
     snap = conn.snapshot()
     assert snap["state"] == "disconnected" and "denied" in snap["last_error"]
+    assert snap["last_error_said"] == {"code": "pairingDenied", "values": {}, "detail": ""}
     assert conn.store.get(SERVER_ID) is None
 
 
@@ -232,6 +233,7 @@ async def test_outage_keeps_credential_backs_off_and_goes_stale(conn, server, mo
         await conn.poll_once()
     snap = conn.snapshot()
     assert snap["state"] == "stale" and "didn't answer" in snap["last_error"]
+    assert snap["last_error_said"]["code"] == "noAnswer"
     assert conn.store.get(SERVER_ID) == server.token
     assert conn.next_delay() == 120
     for _ in range(10):
@@ -249,6 +251,7 @@ async def test_revoked_session_stops_and_asks_for_sign_in(conn, server):
     await conn.poll_once()
     snap = conn.snapshot()
     assert snap["state"] == "signed_out" and snap["last_error"] == "Sign in again."
+    assert snap["last_error_said"] == {"code": "sessionEnded", "values": {}, "detail": "Sign in again."}
     assert conn.store.get(SERVER_ID) is None
     calls = len(server.calls)
     await conn.poll_once()
@@ -320,11 +323,48 @@ def test_routes_over_the_server(server, monkeypatch):
     assert client.post("/api/team/connect", json={"server_url": URL}).status_code == 403
     r = client.post("/api/team/connect", json={"server_url": "http://x"}, headers=origin)
     assert r.status_code == 400 and "https" in r.json()["error"]["message"]
+    # Beside the English, as before: its code, for the page to word.
+    assert r.json()["error"]["said"] == {"code": "addressNotHttps", "values": {}, "detail": ""}
     r = client.post("/api/team/connect", json={"server_url": URL}, headers=origin)
     assert r.status_code == 200 and r.json()["pairing"]["user_code"] == "BCDF-GHJK"
     assert client.post("/api/team/cancel", headers=origin).json()["state"] == "disconnected"
     r = client.get("/api/team/members")
     assert r.status_code == 409
+
+
+def test_every_team_problem_is_in_the_page_catalog_with_the_same_english():
+    """The page says each problem by its code (frontend/src/messages/
+    shell.en.ts, `team.error.<code>`, and shell.es.ts in Spanish). Its
+    English is team_client's, word for word and placeholder for
+    placeholder, so the two never drift apart."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is needed to read the page's catalog")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
+                          "import { shellEn } from './frontend/src/messages/shell.en.ts';"
+                          "console.log(JSON.stringify(shellEn))"],
+                         capture_output=True, text=True, cwd=root, timeout=60)
+    assert out.returncode == 0, out.stderr[-2000:]
+    catalog = json.loads(out.stdout)
+    said = team_client.TEAM_SAID
+    assert {code: catalog.get(f"team.error.{code}") for code in said} == said
+
+
+def test_a_problem_keeps_its_english_and_the_team_servers_own_words():
+    p = team_client.problem("pairingRefused", status=400)
+    assert p.english == "The team server refused to start pairing (400)."
+    assert p.to_json() == {"code": "pairingRefused", "values": {"status": 400}, "detail": ""}
+    # The team server's words, when it gave some, are the English, as before.
+    p = team_client.problem("pairingRefused", "Too many devices.", status=400)
+    assert p.english == "Too many devices." and p.to_json()["detail"] == "Too many devices."
+    # Bare English (another caller's) has no code: the page shows it as it came.
+    e = TeamError("down", unreachable=True)
+    assert str(e) == "down" and e.problem.to_json() is None and e.unreachable
 
 
 def test_device_name():

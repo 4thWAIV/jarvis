@@ -310,6 +310,7 @@ export const rightEn = {
   "right.subsystem.said.teamStale": "Can't reach the team server",
   "right.subsystem.said.teamStaleSince": "Can't reach the team server; last contact {age} ago",
   "right.subsystem.said.teamSignedOut": "Signed out; sign in again in Settings",
+  "right.subsystem.said.teamError": "{error}",
   "right.subsystem.said.teamConnecting": "Connecting",
   "right.subsystem.said.teamPairing": "Waiting for this Mac to be approved on the team server",
   "right.subsystem.said.teamNotConnected": "Not connected",

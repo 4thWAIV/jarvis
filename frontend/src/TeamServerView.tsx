@@ -11,7 +11,8 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { formatNumber, formatPercent, t, useT } from "./locale";
+import { formatNumber, formatPercent, saidShown, t, useT } from "./locale";
+import { teamSaid } from "./teamSignIn";
 import { useTick } from "./WorkflowsView";
 import {
   bytesText, cpuPercent, MEASURED_WORDS, memoryPercent, network, READINESS_WORDS, serverReading,
@@ -104,7 +105,9 @@ export function TeamServerView() {
     [t("main.server.lastContact"), whenText(status?.last_contact_at)],
     [t("main.server.connectionLabel"), status ? connectionWords(status.connection)
       : live.error ? t("main.server.unreadable", { error: live.error }) : t("main.server.reading")],
-    ...(status?.last_error ? [[t("main.server.lastExchangeError"), status.last_error] as [string, string]] : []),
+    ...(status?.last_error ? [[t("main.server.lastExchangeError"),
+                               saidShown(teamSaid(status.last_error_said, status.last_error)).text] as [string, string]]
+      : []),
   ];
   const service: [string, string][] = [
     [t("main.server.version"), h ? `${h.version} · ${h.commit}` : "—"],

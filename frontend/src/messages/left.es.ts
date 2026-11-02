@@ -44,7 +44,6 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.input.tooSlow": "El reconocimiento de voz tardó demasiado en iniciar, así que lo que dijo no se envió. Dígalo otra vez cuando esté escuchando.",
   "left.input.backedUp": "La conexión con el reconocimiento de voz está saturada, así que eso no se envió. Escuchando de nuevo.",
   "left.input.muteUnfinished": "Las últimas palabras antes de silenciar no se pudieron terminar, así que no se enviaron.",
-  "left.input.withDetail": "{message} Detalle: {detail}",
 
   "left.speech.unknownLanguage": "Ese no es un idioma que JARVIS hable.",
   "left.speech.notRunning": "La entrada de voz no está en funcionamiento.",

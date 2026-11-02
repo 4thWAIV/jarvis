@@ -35,11 +35,11 @@ import type { CommandArgs } from "./uiContract";
 import { bind, bindingProps, type Binding } from "./uiNavigation";
 import { registerCommand, useUiTarget } from "./uiRegistry";
 import { useLiveRead } from "./liveRead";
-import { formatNumber, useT, type Translate } from "./locale";
+import { formatNumber, SaidText, saidShown, useT, type Translate } from "./locale";
 import { useTick } from "./WorkflowsView";
 import { Chip, HeadroomBar, HeardRing, PipelineTrack, Sparkline, SpeedRing, type Point } from "./VoiceVisuals";
 import { ago } from "./workflows";
-import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, getHistory, health, heardShare, isQuiet, notices,
+import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, causeSaid, getHistory, health, heardShare, isQuiet, notices,
          quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
 import { beforeDrops, clock, DROP_KINDS, groupMessages, INCIDENT_KINDS, incidentWords,
          noticesBySource, quietComparison, sourceWords } from "./voiceAnalysis";
@@ -124,7 +124,8 @@ function Overview({ partRef }: { partRef: PartRef }) {
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get).value;
   const status = audioStatus(live?.state ?? record?.state ?? "idle", record?.lastDropAt ?? null);
-  const cause = live ? live.cause : record?.cause ?? "";
+  // Its cause in words: by its code, or a record's own English as written.
+  const cause = live ?? record;
   const pipeline = live?.pipeline ?? record?.pipeline;
   const last = record?.last2min[record.last2min.length - 1];
   const today = record?.today;
@@ -137,8 +138,7 @@ function Overview({ partRef }: { partRef: PartRef }) {
       <div className="voice-overview-words">
         <h2 className={`voice-status-word tone-${status.tone}`}>{status.word}</h2>
         <p className="voice-cause">
-          {/* The cause is the voice record's own words, shown as recorded. */}
-          {status.tone !== "ok" && cause ? <span data-original-detail="">{cause}</span> : " "}
+          {status.tone !== "ok" && cause?.cause ? <SaidText said={causeSaid(cause)} className="voice-cause-words" /> : " "}
           {record?.lastDropAt != null && <span className="voice-last-drop"> · {t("main.voice.lastDrop", { when: ago(record.lastDropAt) })}</span>}
         </p>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
@@ -195,7 +195,7 @@ function Timeline({ samples, events, from, to, onZoom, partRef }: {
   const series = (f: (s: Sample) => number | null): Point[] => samples.map((s) => ({ t: s.at, v: f(s) }));
   const drops = events.filter((e) => DROP_KINDS.has(e.kind))
     .map((e) => ({ t: e.at, title: e.cause
-      ? t("main.voice.dropAtBecause", { what: incidentWords(e.kind), at: clock(e.at), cause: e.cause })
+      ? t("main.voice.dropAtBecause", { what: incidentWords(e.kind), at: clock(e.at), cause: saidShown(causeSaid(e)).text })
       : t("main.voice.dropAt", { what: incidentWords(e.kind), at: clock(e.at) }) }));
   const rows = timelineRows(t, series);
   return (
@@ -258,8 +258,9 @@ function IncidentCard({ e }: { e: VoiceEvent }) {
   return (
     <article className={`voice-card kind-${e.kind}`} data-event={e.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <span className="voice-card-when">{clock(e.at)} · {incidentWords(e.kind)}</span>
-      {/* The cause and the line are the voice record's own words, shown as recorded. */}
-      <p>{e.cause ? <b data-original-detail="">{e.cause}</b> : <b>{t("main.voice.noCause")}</b>}
+      {/* The cause by its code (an older record's as written); the line is
+          the recogniser's own detail, shown as it came. */}
+      <p>{e.cause ? <b><SaidText said={causeSaid(e)} className="voice-card-cause" /></b> : <b>{t("main.voice.noCause")}</b>}
         {e.text ? <span data-original-detail="">{` ${e.text}`}</span> : null}</p>
       {e.topProcesses.length > 0 && (
         <p className="voice-card-busy">{t("main.voice.busiest", {

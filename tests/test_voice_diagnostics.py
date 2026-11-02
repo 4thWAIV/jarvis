@@ -46,6 +46,37 @@ def test_a_second_is_given_the_first_cause_along_the_audio_s_path(changes, state
     assert vd.classify(healthy(**changes), cpu_count=16) == (state, cause)
 
 
+def test_a_cause_carries_its_code_and_values_beside_its_english():
+    state, said = vd.diagnose(healthy(long_task_ms=807.4), cpu_count=16)
+    assert (state, said) == ("browser-behind", vd.Said("pageBusy", {"ms": 807}))
+    assert vd.cause_english(said) == "The page was busy for 807 ms"
+    assert vd.diagnose(healthy(held_sec=2.0), cpu_count=16)[1] == vd.Said("audioHeld", {"seconds": 2.0})
+    assert vd.cause_english(vd.diagnose(healthy(held_sec=2.0), cpu_count=16)[1]) == \
+        "2.0 s of audio waiting in the browser"
+    assert vd.diagnose(healthy(), cpu_count=16) == ("healthy", None)
+
+
+def test_every_cause_is_in_the_page_catalog_with_the_same_english():
+    """The page says each cause by its code (frontend/src/messages/
+    shell.en.ts, `voice.cause.<code>`, and shell.es.ts in Spanish). Its
+    English is this module's, word for word and placeholder for
+    placeholder, so the two never drift apart."""
+    import shutil
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is needed to read the page's catalog")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
+                          "import { shellEn } from './frontend/src/messages/shell.en.ts';"
+                          "console.log(JSON.stringify(shellEn))"],
+                         capture_output=True, text=True, cwd=root, timeout=60)
+    assert out.returncode == 0, out.stderr[-2000:]
+    catalog = json.loads(out.stdout)
+    assert {code: catalog.get(f"voice.cause.{code}") for code in vd.CAUSES} == vd.CAUSES
+
+
 def test_the_microphone_comes_before_everything_downstream():
     s = healthy(frames_captured=0, held_sec=3, socket_sec=3, rtf=2, loop_delay_ms=900)
     assert vd.classify(s, cpu_count=16)[0] == "no-frames"
@@ -114,6 +145,36 @@ def test_samples_and_events_come_back_as_they_were_recorded():
     assert samples == [s]
     assert [(e.kind, e.cause, e.top_processes) for e in events] == [
         ("overload", "Machine busy (load 16.9)", [{"name": "rider", "cpu": 99.1}])]
+
+
+def test_a_cause_s_code_is_recorded_and_read_back_and_reaches_the_summary():
+    now = time.time()
+    s = healthy(at=now - 0.5, rtf=1.1, load_avg=16, process_cpu=100, state="decoder-slow",
+                cause="Machine busy (load 16.0)", cause_code="machineBusy", cause_values={"load": 16.0})
+    vd.record_sample(s)
+    vd.record_event(Event(at=now - 0.4, kind="overload", cause=s.cause, cause_code="machineBusy",
+                          cause_values={"load": 16.0}))
+    samples, events = vd.history(now - 10, now)
+    assert samples == [s]
+    assert (events[0].cause_code, events[0].cause_values) == ("machineBusy", {"load": 16.0})
+    assert vd.event_json(events[0])["causeCode"] == "machineBusy"
+    got = vd.summary(now)
+    assert (got["causeCode"], got["causeValues"]) == ("machineBusy", {"load": 16.0})
+
+
+def test_a_record_from_before_the_codes_is_brought_forward_and_read_as_it_was_written():
+    from contextlib import closing
+    from jarvis import run_store
+    with closing(run_store._connect()) as conn:          # the tables as they were, no codes
+        conn.executescript(vd._SCHEMA)
+        conn.execute("INSERT INTO voice_events (at, kind, cause) VALUES (?, ?, ?)",
+                     (1000.0, "overload", "Machine busy (load 16.9)"))
+        conn.commit()
+    _, events = vd.history(900, 1100)
+    assert [(e.cause, e.cause_code, e.cause_values) for e in events] == [
+        ("Machine busy (load 16.9)", None, {})]
+    vd.record_event(Event(at=1001.0, kind="overload", cause="x", cause_code="noFrames"))
+    assert [e.cause_code for e in vd.history(900, 1100)[1]] == [None, "noFrames"]
 
 
 def test_a_long_range_is_thinned_evenly(monkeypatch):

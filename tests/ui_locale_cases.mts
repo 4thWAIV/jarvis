@@ -22,8 +22,9 @@ import {
   type Message, type MessageKey,
 } from "../frontend/src/locale.ts";
 
-/** Entries reviewed as reading the same in Spanish as in English. */
-const SAME_IN_BOTH = new Set<string>(["units.megabytes"]);
+/** Entries reviewed as reading the same in Spanish as in English. The team
+ *  row's error is nothing but its value, itself worded by its own code. */
+const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });
