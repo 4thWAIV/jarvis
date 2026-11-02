@@ -2,6 +2,63 @@
 
 Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validation` waiting for Tim. Nothing is merged, pushed or deployed.
 
+## Third candidate (2026-11-02)
+
+Tim on the second candidate: "The current build does nothing when I look at it: nothing moves or lights up, so I cannot evaluate it. Visible lines must not appear on the map; it should look as it does now. Make the navigation demonstrable and preserve the current appearance, then show me something I can assess."
+
+What changed:
+- Nothing of the pipeline is drawn at rest (`e0fdb95`, recorded in `execution.md`, "No map at rest"). A cue draws its own route alone and fades to nothing when it ends. Against main, the only differences are the approved spacing changes.
+- The candidate is now demonstrable. A demo stand-in takes the brain's place: `tools/demo_brain.py` in the run folder, started by `start.sh`, not in the repository. You type a phrase into the Conversation box and it reaches the stand-in through the page's own socket and the server's ordinary turn. The stand-in calls the brain's real tool path (`POST /internal/tool`, `ui_journey`, with the candidate's own tool token), then answers with one short line in the conversation. That line is not spoken: there is no Fish key here. The phrases are in `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/DEMO.md`.
+
+| | |
+|---|---|
+| URL | http://localhost:5183/ (open in Chrome) |
+| Code | `2677e3f` on `feature/ui-navigation-pipeline` (local only) |
+| Backend | https://localhost:8350, isolated data in `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/candidate/data` |
+
+Phrases (English / Spanish):
+
+| Phrase | What it shows |
+|---|---|
+| show me the CPU / muéstrame la CPU | Network tab, the Mac mini's CPU on the right, then the CPU line in the node's view |
+| show me the database / muéstrame la base de datos | the Team Server tile's Database value, left |
+| show me the microphone, mute button / muéstrame el micrófono, botón de silencio | the mic's mute button, left |
+| show me the phase steps / muéstrame los pasos de fase | the workflow's design phase step |
+| show me the decisions / muéstrame las decisiones | the workflow's Decisions tab |
+| show me the folders / muéstrame las carpetas | the Folders view's Registered tab |
+| show me the task / muéstrame la tarea | Workflows tab, the workflow's row, then the Import entries task |
+| tour / recorrido | all seven in turn, 2.5 s apart (about 30 s) |
+
+Anything else gets the stand-in's list of what it can show.
+
+Checked in headless Chromium at 1440x900 (`tools/demo_check.py`):
+- At rest: 0 pipeline elements drawn, 0 cues.
+- A typed "tour": 7 journeys, all completed, 9 arrivals (the CPU and the task have two each). Answer: "That was the tour, sir."
+- "switch to Spanish", then a typed "recorrido": 7 completed, 9 arrivals. Answer: "Ese fue el recorrido, señor."
+- "cambia a inglés" puts it back in English.
+- At the end: 0 pipeline elements drawn, no console errors.
+
+Evidence in `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/evidence/demo/`:
+- `tour-en-es.mp4` (also `.webm`, 1 min 40 s): the tour in English, then the recorrido in Spanish.
+- `at-rest.png`: the page at rest, with no pipeline drawn.
+- `run1/demo-check.json`: the counts above.
+- `frames/`: stills from the video.
+
+What Tim does:
+1. Open http://localhost:5183/ in Chrome. Close the first-time setup if it shows.
+2. Look at the page at rest. Nothing of the pipeline is drawn, and it looks as it does on main.
+3. Click the Conversation box ("Speak, or click to type"), type `tour` and press Enter. You should see:
+   - A white line runs from the orb along the page's edges to each target in turn: the CPU, the database, the mute button, the phase step, the Decisions tab, the Folders tab, then the task.
+   - Two rings at each arrival, an outline on the target, and the orb turning white while the signal runs.
+   - Each signal fades to nothing.
+   - Views open by themselves where a target needs them.
+4. Click the Conversation tab to read "That was the tour, sir." and to type again. Try any single phrase from the table.
+5. Type `switch to Spanish`, then `recorrido`. Type `cambia a inglés` to go back.
+
+The first candidate's walkthrough below (step 2, "the faint white map") no longer applies: there is no map at rest.
+
+The candidate is left running. Stop it with `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/stop.sh`.
+
 ## Second candidate (2026-11-02)
 
 The candidate now runs the final integration. Everything below this section is the first candidate's record (2026-11-01, code `af9b499`); where the two differ, this section is current.
