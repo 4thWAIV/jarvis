@@ -77,10 +77,10 @@ class _Sessions:
         self.ws = ws
 
 
-@pytest.mark.asyncio
-async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -150,8 +150,8 @@ def _entry(offset, role, text, tool=None):
     return {"offset": offset, "at": 1_792_886_400.0, "role": role, "text": text, "tool": tool}
 
 
-@pytest.mark.asyncio
-async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
     asked = []
 
@@ -170,7 +170,7 @@ async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(pag
             await route.fulfill(json={"session_id": "s1", "name": "guard", "state": "idle",
                                       "earlier": None, "entries": [_entry(0, "you", "Start the build.")]})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -219,8 +219,8 @@ def _finished(wid, name, state="succeeded", dismissed=False, dismiss_at=None):
     return w
 
 
-@pytest.mark.asyncio
-async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(page_playwright, page_url):
     """Finished, it stays in view with its outcome and an ×; dismissed, it
     leaves the list at once and is listed under Done; one nobody dismisses
     leaves on its own at its dismiss_at, without a hint."""
@@ -255,7 +255,7 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
             wid = path.split("/")[2]
             await route.fulfill(json={"workflow": next(w for w in state["list"] if w["id"] == wid)})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -298,14 +298,14 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("width", [1440, 1200, 900])
-async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_url, width):
+async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_playwright, page_url, width):
     """One width for both sidebars, at most 230px and shrinking with the
     window; the centre area always sits between them; a workflow row never
     runs past its panel."""
     server, sessions = _Server(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover

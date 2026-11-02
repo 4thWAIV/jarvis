@@ -105,9 +105,9 @@ async def _ready(page):
         timeout=10000)
 
 
-@pytest.mark.asyncio
-async def test_one_microphone_stream_is_streamed_from_the_start_without_gaps(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_one_microphone_stream_is_streamed_from_the_start_without_gaps(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         start = await page.evaluate("window.__framesSent")
@@ -120,9 +120,9 @@ async def test_one_microphone_stream_is_streamed_from_the_start_without_gaps(pag
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_what_is_heard_goes_to_jarvis_as_before(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_what_is_heard_goes_to_jarvis_as_before(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await page.evaluate("window.__hear('open the', false)")
@@ -135,9 +135,9 @@ async def test_what_is_heard_goes_to_jarvis_as_before(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url,
                                            {"finalOnFinish": "turn off the lights"})
         await _ready(page)
@@ -160,9 +160,9 @@ async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_mic_off_sends_the_words_already_spoken_then_releases_the_microphone(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_mic_off_sends_the_words_already_spoken_then_releases_the_microphone(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url,
                                            {"finalOnFinish": "turn off the lights"})
         await _ready(page)
@@ -181,9 +181,9 @@ async def test_mic_off_sends_the_words_already_spoken_then_releases_the_micropho
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_closed_session_cannot_submit_stale_words(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_closed_session_cannot_submit_stale_words(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await page.click("#btn-mute")
@@ -199,9 +199,9 @@ async def test_a_closed_session_cannot_submit_stale_words(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_audio_said_while_the_recogniser_loads_is_held_then_sent(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_audio_said_while_the_recogniser_loads_is_held_then_sent(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url, {"readyDelay": 3000})
         await page.wait_for_function("window.__transcribers.length === 1")
         await page.wait_for_timeout(1500)
@@ -220,9 +220,9 @@ async def test_audio_said_while_the_recogniser_loads_is_held_then_sent(page_url)
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url, {"readyDelay": 60000})
         await page.wait_for_function(
             "document.querySelector('#health-dot')?.title.includes('not sent')",
@@ -232,13 +232,13 @@ async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("code, message", [
     ("busy", "Another JARVIS page is listening. Typing still works here."),
     ("model-unavailable", "The speech model is not installed. Run setup."),
 ])
-async def test_a_busy_or_missing_recogniser_stays_on_screen(page_url, code, message):
-    async with async_api.async_playwright() as p:
+async def test_a_busy_or_missing_recogniser_stays_on_screen(page_playwright, page_url, code, message):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url, {"error": {"code": code,
                                                                    "message": message}})
         await page.wait_for_function(
@@ -249,9 +249,9 @@ async def test_a_busy_or_missing_recogniser_stays_on_screen(page_url, code, mess
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_final_heard_while_jarvis_is_disconnected_is_reported_not_lost(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_final_heard_while_jarvis_is_disconnected_is_reported_not_lost(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await voice.socket.close()

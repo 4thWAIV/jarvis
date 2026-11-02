@@ -12,6 +12,7 @@ import asyncio
 import importlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,30 +81,61 @@ class Repos(SimpleNamespace):
         return _git(self.checkout, "rev-parse", "HEAD").strip()
 
 
-@pytest.fixture
-def repos(tmp_path, monkeypatch):
-    home = tmp_path / "git-home"
+def _isolated_git(mp: pytest.MonkeyPatch, root: Path) -> None:
+    """Git as these tests run it: an empty global config under `root`, no
+    system config, and a fixed author."""
+    mp.setenv("GIT_CONFIG_GLOBAL", str(root / "git-home" / "gitconfig"))
+    mp.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for who in ("AUTHOR", "COMMITTER"):
+        mp.setenv(f"GIT_{who}_NAME", "Test")
+        mp.setenv(f"GIT_{who}_EMAIL", "test@example.invalid")
+
+
+# The folders the repositories are made of, and the two configs that name the
+# bare remote by its absolute path.
+REPO_FOLDERS = ("git-home", "remote.git", "upstream", "checkout")
+CONFIGS_NAMING_THE_REMOTE = ("upstream/.git/config", "checkout/.git/config")
+
+
+@pytest.fixture(scope="session")
+def repos_template(tmp_path_factory):
+    """The three repositories, built once per session (about ten git
+    commands) and copied into each test by `repos`."""
+    root = tmp_path_factory.mktemp("self-update-repos")
+    home = root / "git-home"
     home.mkdir()
     (home / "gitconfig").write_text("")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / "gitconfig"))
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    for who in ("AUTHOR", "COMMITTER"):
-        monkeypatch.setenv(f"GIT_{who}_NAME", "Test")
-        monkeypatch.setenv(f"GIT_{who}_EMAIL", "test@example.invalid")
+    with pytest.MonkeyPatch.context() as mp:
+        _isolated_git(mp, root)
+        remote = root / "remote.git"
+        _git(root, "init", "--bare", "-b", "main", str(remote))
+        upstream = root / "upstream"
+        _git(root, "clone", str(remote), str(upstream))
+        _git(upstream, "checkout", "-b", "main")
+        _commit(upstream, {"README.md": "jarvis\n", "requirements.txt": "fastapi\n",
+                           "frontend/package-lock.json": "{}\n", "frontend/src/a.ts": "1\n"},
+                "First")
+        _git(upstream, "push", "-u", "origin", "main")
+        checkout = root / "checkout"
+        _git(root, "clone", str(remote), str(checkout))
+        # This checkout's origin says github.com, and git fetches it from the bare one.
+        _git(checkout, "remote", "set-url", "origin", GITHUB_URL)
+        _git(checkout, "config", f"url.{remote}.insteadOf", GITHUB_URL)
+    return root
+
+
+@pytest.fixture
+def repos(repos_template, tmp_path, monkeypatch):
+    for name in REPO_FOLDERS:
+        shutil.copytree(repos_template / name, tmp_path / name, symlinks=True)
+    # upstream's origin and checkout's insteadOf name the template's remote.
+    for name in CONFIGS_NAMING_THE_REMOTE:
+        config = tmp_path / name
+        config.write_text(config.read_text().replace(str(repos_template), str(tmp_path)))
+    _isolated_git(monkeypatch, tmp_path)
     remote = tmp_path / "remote.git"
-    _git(tmp_path, "init", "--bare", "-b", "main", str(remote))
     upstream = tmp_path / "upstream"
-    _git(tmp_path, "clone", str(remote), str(upstream))
-    _git(upstream, "checkout", "-b", "main")
-    _commit(upstream, {"README.md": "jarvis\n", "requirements.txt": "fastapi\n",
-                       "frontend/package-lock.json": "{}\n", "frontend/src/a.ts": "1\n"},
-            "First")
-    _git(upstream, "push", "-u", "origin", "main")
     checkout = tmp_path / "checkout"
-    _git(tmp_path, "clone", str(remote), str(checkout))
-    # This checkout's origin says github.com, and git fetches it from the bare one.
-    _git(checkout, "remote", "set-url", "origin", GITHUB_URL)
-    _git(checkout, "config", f"url.{remote}.insteadOf", GITHUB_URL)
 
     ci = {"workflow_runs": [_run("completed", "success")]}
     asked: list[tuple] = []

@@ -43,9 +43,9 @@ async def _open(p, url, messages):
     return browser, page
 
 
-@pytest.mark.asyncio
-async def test_the_column_leaves_the_ray_lane_clear(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_column_leaves_the_ray_lane_clear(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [])
         geo = await page.evaluate("""() => {
           const c = document.getElementById('left-column').getBoundingClientRect();
@@ -69,9 +69,9 @@ def _segments(d):
     return tuple(float(x) for x in m.groups())
 
 
-@pytest.mark.asyncio
-async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_orb(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_draws_a_right_angle_ray_from_the_orb_into_that_agent_s_orb(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "agent_message", "session_id": "s25"}])
         await page.get_by_role("button", name="All", exact=True).click()
@@ -139,9 +139,9 @@ def _to(sid):
     return {"type": "agent_message", "session_id": sid}
 
 
-@pytest.mark.asyncio
-async def test_rays_share_one_channel_and_take_colours_in_order(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_rays_share_one_channel_and_take_colours_in_order(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [_to(s) for s in ("s0", "s1", "s2")])
         await page.get_by_role("button", name="All", exact=True).click()
         await page.wait_for_function(
@@ -153,11 +153,11 @@ async def test_rays_share_one_channel_and_take_colours_in_order(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_colour_follows_the_transmission_not_the_agent(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_colour_follows_the_transmission_not_the_agent(page_playwright, page_url):
     """The same agent messaged twice, alone each time, is the primary colour
     both times; and once the first ray has gone, a new one is primary again."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [
             (3.0, _to("s1")), (0.5, _to("s2")), (7.0, _to("s2"))])
         await page.get_by_role("button", name="All", exact=True).click()
@@ -172,9 +172,9 @@ async def test_the_colour_follows_the_transmission_not_the_agent(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_ray_is_behind_the_orbs(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_ray_is_behind_the_orbs(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [])
         z = await page.evaluate("""() => [getComputedStyle(document.getElementById('ray-lane')).zIndex,
                                           getComputedStyle(document.getElementById('left-column')).zIndex]""")
@@ -194,10 +194,10 @@ def _amber_pixels(png: bytes) -> int:
                if raw[i] > 120 and raw[i + 1] > 80 and raw[i + 2] < raw[i + 1] * 0.6)
 
 
-@pytest.mark.asyncio
-async def test_the_main_orb_fills_with_the_ray_s_colour_as_it_transmits(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_main_orb_fills_with_the_ray_s_colour_as_it_transmits(page_playwright, page_url):
     pytest.importorskip("PIL")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         # Sent well after the "before" picture: one screenshot can take
         # seconds on a busy machine.
         browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
@@ -220,10 +220,10 @@ def _centre(png: bytes):
     return img.getpixel((img.width // 2, img.height // 2))
 
 
-@pytest.mark.asyncio
-async def test_the_core_is_always_lit_and_takes_the_ray_s_colour(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_core_is_always_lit_and_takes_the_ray_s_colour(page_playwright, page_url):
     pytest.importorskip("PIL")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
         orb = page.locator("#orb-control")
         r, g, b = _centre(await orb.screenshot(scale="device"))
@@ -235,8 +235,8 @@ async def test_the_core_is_always_lit_and_takes_the_ray_s_colour(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_ray_follows_its_agent_when_the_list_reorders(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_ray_follows_its_agent_when_the_list_reorders(page_playwright, page_url):
     """A message moves its agent up the list; the ray ends at the agent's
     orb where it is now, not where it was when the ray was drawn."""
     reordered = {"agents": [AGENTS["agents"][3]] + [a for i, a in enumerate(AGENTS["agents"])
@@ -249,7 +249,7 @@ async def test_a_ray_follows_its_agent_when_the_list_reorders(page_url):
         return route.fulfill(status=200, content_type="application/json",
                              body=json.dumps(body))
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:                          # pragma: no cover
@@ -305,12 +305,12 @@ def _amber_halves(png: bytes) -> tuple[int, int, int]:
     return top, bottom, top + bottom
 
 
-@pytest.mark.asyncio
-async def test_transmitting_fills_the_orb_and_leans_it_toward_the_ray(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_transmitting_fills_the_orb_and_leans_it_toward_the_ray(page_playwright, page_url):
     """The ray leaves upward: while it shows, the orb takes the ray's colour
     and its particles gather at the top; afterwards it is back."""
     pytest.importorskip("PIL")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
         orb = page.locator("#orb-control")
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
@@ -385,9 +385,9 @@ async def _open_moving(p, url, list_delay_ms):
 
 
 @pytest.mark.parametrize("list_delay_ms", [0, 300, 1500])
-@pytest.mark.asyncio
-async def test_the_ray_ends_only_at_its_own_card_while_the_list_moves(page_url, list_delay_ms):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_ray_ends_only_at_its_own_card_while_the_list_moves(page_playwright, page_url, list_delay_ms):
+    async with page_playwright as p:
         browser, page = await _open_moving(p, page_url, list_delay_ms)
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=15000)
         # Every 20ms for the ray's six seconds; a frame with no ray is fine,
@@ -401,9 +401,9 @@ async def test_the_ray_ends_only_at_its_own_card_while_the_list_moves(page_url, 
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_ray_whose_card_is_moved_out_of_view_is_not_drawn_at_another(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_ray_whose_card_is_moved_out_of_view_is_not_drawn_at_another(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open_moving(p, page_url, 0)
         await page.wait_for_function(
             "document.querySelector('#ray-lane .ray')"
@@ -436,12 +436,12 @@ def _warm_pixels(png: bytes) -> int:
                if (lambda r, g, b: r > 90 and r > b + 40)(*img.getpixel((x, y))))
 
 
-@pytest.mark.asyncio
-async def test_the_agent_s_orb_takes_the_ray_s_colour_when_the_first_pulse_arrives(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_agent_s_orb_takes_the_ray_s_colour_when_the_first_pulse_arrives(page_playwright, page_url):
     """Not when the ray appears: when its first pulse has run the length of
     it (RAY_TRAVEL_MS)."""
     pytest.importorskip("PIL")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(10.0, _to("s1"))])
         orb = page.locator(_AGENT_ORB)
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
@@ -456,9 +456,9 @@ async def test_the_agent_s_orb_takes_the_ray_s_colour_when_the_first_pulse_arriv
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(4.0, _to("s1"))])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=20000)
         rings, centre = await page.evaluate("""(sel) => {
@@ -478,12 +478,12 @@ async def test_two_rings_ripple_out_from_the_agent_s_orb_as_the_message_arrives(
 
 # --- With another tab open in the right panel ---------------------------------
 
-@pytest.mark.asyncio
-async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_playwright, page_url):
     # The message is sent once the other tab is open, so the ray cannot be
     # drawn to the list before the tab changes on a slow machine.
     other_tab_open = asyncio.Event()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(other_tab_open, _to("s2"))])
         await page.click(".right-tabs [aria-label='Diagnostics']")
         other_tab_open.set()
@@ -503,8 +503,8 @@ async def test_with_another_tab_open_the_ray_ends_at_the_lit_agents_tab(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_hints_still_arrive_with_the_agents_tab_closed(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_hints_still_arrive_with_the_agents_tab_closed(page_playwright, page_url):
     """The sessions socket is the page's, not the agents list's: with the
     Workflows tab open, an "agents" hint still reaches the list the next
     time it opens, and a "workflows" hint reads the workflows again."""
@@ -516,7 +516,7 @@ async def test_hints_still_arrive_with_the_agents_tab_closed(page_url):
         await route.fulfill(status=200, content_type="application/json",
                             body=json.dumps({"workflows": []}))
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open_scripted(p, page_url, [(hint, {"type": "workflows"})])
         await page.route("**/api/workflows", workflows)
         await page.click(".right-tabs [aria-label='Workflows']")

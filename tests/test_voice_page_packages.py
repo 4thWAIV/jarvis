@@ -61,12 +61,12 @@ def _through(client, token):
     return handle
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_the_package_page_runs_without_an_origin_and_saves_through_the_bridge(
-        page_url, jarvis_app):
+        page_playwright, page_url, jarvis_app):
     client, token, package = jarvis_app
     from jarvis import packages_api
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                          # pragma: no cover

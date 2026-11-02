@@ -99,9 +99,9 @@ async def _open(p, url):
     return browser, page
 
 
-@pytest.mark.asyncio
-async def test_six_labelled_tabs_in_two_rows(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_six_labelled_tabs_in_two_rows(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         tabs = await page.evaluate("""() => [...document.querySelectorAll('.right-tabs [role=tab]')]
             .map(t => ({label: t.getAttribute('aria-label'), text: t.textContent.trim(),
@@ -115,9 +115,9 @@ async def test_six_labelled_tabs_in_two_rows(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_right_list_and_the_centre_share_one_selection(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_right_list_and_the_centre_share_one_selection(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".right-tabs [aria-label='Folders']")
         await page.click(".folders-panel-row:has-text('field-notes')")
@@ -135,9 +135,9 @@ async def test_the_right_list_and_the_centre_share_one_selection(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_filters_no_results_and_denied_say_so_in_words(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_filters_no_results_and_denied_say_so_in_words(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".centre-tabs [aria-label='Folders']")
         await page.fill(".folders-catalog input[type=search]", "no-such-folder")
@@ -154,9 +154,9 @@ async def test_filters_no_results_and_denied_say_so_in_words(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_keyboard_reaches_both_views_and_the_catalog_keeps_its_place(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_keyboard_reaches_both_views_and_the_catalog_keeps_its_place(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.focus(".right-tabs [aria-label='Folders']")
         await page.keyboard.press("Enter")

@@ -35,10 +35,10 @@ async def _peak_lit(page, ms: int) -> int:
       look(); }})""")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_microphone(
-        page_url):
-    async with async_api.async_playwright() as p:
+        page_playwright, page_url):
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=FAKE_MIC)
         except Exception as e:                          # pragma: no cover
@@ -62,9 +62,9 @@ async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_mic
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_mic_off_releases_the_microphone_and_on_asks_for_it_again(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_mic_off_releases_the_microphone_and_on_asks_for_it_again(page_playwright, page_url):
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=FAKE_MIC)
         except Exception as e:                          # pragma: no cover

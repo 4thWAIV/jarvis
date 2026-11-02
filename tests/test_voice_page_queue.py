@@ -78,9 +78,9 @@ async def _arrive(world, voice, page, name, subject):
     await page.wait_for_selector(f'.queue-view li[data-thread-id="{world.thread(name)}"]', timeout=15000)
 
 
-@pytest.mark.asyncio
-async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         tabs = await page.evaluate("() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.title)")
         assert tabs == ["Folders", "Agents", "Queue", "Workflows", "Network", "Diagnostics"], tabs
@@ -123,11 +123,11 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_open_next_and_put_back(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_open_next_and_put_back(page_playwright, page_url):
     """Open makes it Active and reads it once the body has been shown; Next
     keeps the item left in Active; Put back returns it to its place."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         before = await _rows(page, world, "waiting")
@@ -157,12 +157,12 @@ async def test_open_next_and_put_back(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_respond_review_and_send_inline(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_respond_review_and_send_inline(page_playwright, page_url):
     """A response is written on the item, reviewed exactly as it will be
     sent, approved with the existing capture's Send, and stays Active as
     Matt's turn. Editing after a review invalidates it."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(_row(world, "newest"))
@@ -203,9 +203,9 @@ async def test_respond_review_and_send_inline(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(".queue-new")
@@ -238,9 +238,9 @@ async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_url)
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_an_arrival_never_takes_focus_text_or_the_review(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_arrival_never_takes_focus_text_or_the_review(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(_row(world, "ana-numbers"))
@@ -261,9 +261,9 @@ async def test_an_arrival_never_takes_focus_text_or_the_review(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_done_waits_for_unsent_work_and_says_why(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_done_waits_for_unsent_work_and_says_why(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         # Finished work dismisses at once.
@@ -291,9 +291,9 @@ async def test_done_waits_for_unsent_work_and_says_why(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_dismissed_item_opens_for_reference_and_restores_with_its_history(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_dismissed_item_opens_for_reference_and_restores_with_its_history(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(".queue-history-toggle")
@@ -309,9 +309,9 @@ async def test_a_dismissed_item_opens_for_reference_and_restores_with_its_histor
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_failed_save_keeps_the_text_through_navigation(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_failed_save_keeps_the_text_through_navigation(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         routes.fail_saves = True
@@ -334,9 +334,9 @@ async def test_a_failed_save_keeps_the_text_through_navigation(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         routes.offline = True
@@ -350,9 +350,9 @@ async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         before = await _rows(page, world, "waiting")
@@ -371,12 +371,12 @@ async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_keyboard_only_and_narrow_and_still(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_keyboard_only_and_narrow_and_still(page_playwright, page_url):
     """A narrow window and reduced motion: rows fit, nothing in the Queue
     animates, and an item opens and closes from the keyboard with focus
     returned to the row."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url, viewport=(1024, 700), reduced=True)
         await _queue_tab(page)
         row = page.locator(_row(world, "former"))

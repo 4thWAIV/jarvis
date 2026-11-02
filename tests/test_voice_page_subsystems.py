@@ -75,10 +75,10 @@ STATE = """() => {
 }"""
 
 
-@pytest.mark.asyncio
-async def test_communications_down_is_red_in_the_list_and_on_the_tab(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_communications_down_is_red_in_the_list_and_on_the_tab(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -137,11 +137,11 @@ async def test_communications_down_is_red_in_the_list_and_on_the_tab(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_page_that_cannot_reach_jarvis_says_so(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_page_that_cannot_reach_jarvis_says_so(page_playwright, page_url):
     """No subsystems route and no sessions socket (the static server): the
     page's own row is down, with why, and the tab is red."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -176,12 +176,12 @@ async def _open_with(p, page_url, args):
     return browser, page, voice
 
 
-@pytest.mark.asyncio
-async def test_with_webgl_switched_off_the_page_still_runs_and_says_why(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_webgl_switched_off_the_page_still_runs_and_says_why(page_playwright, page_url):
     """Measured 29 October 2026: after three graphics-process crashes Chrome
     ran with --use-gl=disabled, the orb's WebGL renderer threw, and the whole
     page stopped before it connected to JARVIS; reloading did the same."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, voice = await _open_with(p, page_url, ["--disable-webgl", "--disable-3d-apis"])
         await page.click(".right-tabs [aria-label='Diagnostics']")
         row = ".subsystem-row[data-subsystem='page']"
@@ -192,9 +192,9 @@ async def test_with_webgl_switched_off_the_page_still_runs_and_says_why(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_lost_graphics_context_is_shown_until_it_comes_back(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_lost_graphics_context_is_shown_until_it_comes_back(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open_with(p, page_url, [])
         await page.click(".right-tabs [aria-label='Diagnostics']")
         row = ".subsystem-row[data-subsystem='page']"
@@ -209,9 +209,9 @@ async def test_a_lost_graphics_context_is_shown_until_it_comes_back(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_with_webgl_switched_off_the_agent_and_workflow_orbs_are_still_listed(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_webgl_switched_off_the_agent_and_workflow_orbs_are_still_listed(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, voice = await _open_with(p, page_url, ["--disable-webgl", "--disable-3d-apis"])
         await page.wait_for_selector(".agents-list li .agent-orb", timeout=10000)
         await page.click(".right-tabs [role=tab][title=Workflows]")
@@ -290,9 +290,9 @@ async def _drawn(canvas) -> int:
         .data.filter((v, i) => i % 4 === 3 && v > 0).length""")
 
 
-@pytest.mark.asyncio
-async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open_with_orbs(p, page_url)
         agent_orbs = page.locator(".agents-list li .agent-orb")
         assert await agent_orbs.count() >= 5, await agent_orbs.count()
@@ -324,9 +324,9 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open_with_orbs(p, page_url)
         # A workflow's detail in the centre keeps a small orb on the page
         # whichever tab the right panel shows.

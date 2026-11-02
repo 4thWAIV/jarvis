@@ -21,7 +21,7 @@ from tests.dashboard_page import (
 
 UNAVAILABLE = why_unavailable()
 pytestmark = [
-    pytest.mark.asyncio,
+    pytest.mark.asyncio(loop_scope="session"),
     pytest.mark.skipif(UNAVAILABLE is not None, reason=UNAVAILABLE or ""),
 ]
 
@@ -36,13 +36,13 @@ WAIT_MS = 5_000
 
 # ── the usage zone owns its whole host ─────────────────────────────────────
 
-async def test_a_recovered_usage_fetch_clears_the_failure_message():
+async def test_a_recovered_usage_fetch_clears_the_failure_message(page_playwright):
     """The failure path replaced the host's children; the success path only
     ever appended. One dropped 60-second poll therefore left "Cannot read the
     usage limits." sitting permanently above two correct gauges."""
     api = quiet_machine()
     api.fails("/api/usage/limits", 503)
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.wait_for_selector(".usage-unavailable", timeout=WAIT_MS)
 
         api.json("/api/usage/limits", usage_limits())    # the poll recovers
@@ -55,12 +55,12 @@ async def test_a_recovered_usage_fetch_clears_the_failure_message():
         assert await page.locator(".usage-gauge").count() == 2
 
 
-async def test_a_window_that_stops_being_reported_stops_being_drawn():
+async def test_a_window_that_stops_being_reported_stops_being_drawn(page_playwright):
     """Gauges were created once and never removed, so a window that
     disappeared from the payload left its last reading on screen for ever —
     a number nothing is still reporting."""
     api = quiet_machine()
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.wait_for_function(
             "document.querySelectorAll('.usage-gauge').length === 2",
             timeout=WAIT_MS)
@@ -73,9 +73,9 @@ async def test_a_window_that_stops_being_reported_stops_being_drawn():
             timeout=WAIT_MS)
 
 
-async def test_a_measured_reading_draws_its_gauges():
+async def test_a_measured_reading_draws_its_gauges(page_playwright):
     """The control: this is what the two tests above are contrasted with."""
-    async with dashboard(quiet_machine()) as page:
+    async with dashboard(page_playwright, quiet_machine()) as page:
         await page.wait_for_selector(".usage-gauge", timeout=WAIT_MS)
 
         assert await page.locator(".usage-gauge").count() == 2
@@ -84,7 +84,7 @@ async def test_a_measured_reading_draws_its_gauges():
 
 # ── a transcript we could not read is not an empty transcript ──────────────
 
-async def test_a_failed_transcript_fetch_says_so():
+async def test_a_failed_transcript_fetch_says_so(page_playwright):
     """The two fetches happen AFTER the pane is built and were outside the
     only try/catch, so a 500 left an empty `.transcript` div — visually
     identical to a run that recorded nothing — plus an unhandled rejection,
@@ -93,7 +93,7 @@ async def test_a_failed_transcript_fetch_says_so():
     api.json("/api/runs", {"runs": [run_row()]})
     api.json("/api/runs/r1", {"run": run_row()})
     api.fails("/api/runs/r1/events")
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.wait_for_selector("#history-list .row", timeout=WAIT_MS)
         await page.locator("#history-list .row").first.click()
 
@@ -104,14 +104,14 @@ async def test_a_failed_transcript_fetch_says_so():
         assert "Could not load" in await page.locator("#transcript").inner_text()
 
 
-async def test_a_run_with_no_events_says_that_instead():
+async def test_a_run_with_no_events_says_that_instead(page_playwright):
     """The other branch, so the message above cannot be mistaken for the
     empty case being renamed."""
     api = quiet_machine()
     api.json("/api/runs", {"runs": [run_row()]})
     api.json("/api/runs/r1", {"run": run_row()})
     api.json("/api/runs/r1/events", {"events": [], "total": 0})
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.wait_for_selector("#history-list .row", timeout=WAIT_MS)
         await page.locator("#history-list .row").first.click()
         await page.wait_for_function(
@@ -160,7 +160,7 @@ async def _open_specs(page):
                                  timeout=WAIT_MS)
 
 
-async def test_specs_keeps_your_place_when_the_document_is_re_read():
+async def test_specs_keeps_your_place_when_the_document_is_re_read(page_playwright):
     """`reconcile` re-fetches the open document on every socket hint, and
     during a build a ticked checkbox fires one every few seconds.
     `paintDetail` ended in an unconditional `body.scrollTop = 0`, directly
@@ -168,7 +168,7 @@ async def test_specs_keeps_your_place_when_the_document_is_re_read():
     api = quiet_machine()
     api.json("/api/specs", {"projects": [_spec_project()]})
     api.json("/api/specs/doc", _long_document())
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await _open_specs(page)
 
         body = page.locator("#specs-doc-body")
@@ -188,7 +188,7 @@ async def test_specs_keeps_your_place_when_the_document_is_re_read():
             "the page scrolled back to the top while the user was reading")
 
 
-async def test_opening_a_different_document_starts_at_the_top():
+async def test_opening_a_different_document_starts_at_the_top(page_playwright):
     """The other half of the rule: keeping your place is about the SAME
     document, not about never scrolling."""
     api = quiet_machine()
@@ -205,7 +205,7 @@ async def test_opening_a_different_document_starts_at_the_top():
         return 200, body
 
     api.routes["/api/specs/doc"] = doc_for
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await _open_specs(page)
         await page.wait_for_function(
             "document.getElementById('specs-doc-title').textContent"
@@ -222,7 +222,7 @@ async def test_opening_a_different_document_starts_at_the_top():
             "el => el.scrollTop") == 0
 
 
-async def test_two_copies_of_one_project_are_told_apart():
+async def test_two_copies_of_one_project_are_told_apart(page_playwright):
     """A project with a Claude Code worktree is listed twice under one name.
     Two identical rows would be worse than the bug that hid both."""
     api = quiet_machine()
@@ -230,7 +230,7 @@ async def test_two_copies_of_one_project_are_told_apart():
         _spec_project(where="in tmp"),
         _spec_project(path="/tmp/cb2", where="worktree runs-dashboard")]})
     api.json("/api/specs/doc", _long_document())
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-specs").click()
         await page.wait_for_selector("#specs-projects .row", timeout=WAIT_MS)
 
@@ -252,14 +252,14 @@ def _project_item(name: str = "chitauri", live: int = 1) -> dict:
     }
 
 
-async def test_a_failed_project_detail_fetch_does_not_read_as_no_selection():
+async def test_a_failed_project_detail_fetch_does_not_read_as_no_selection(page_playwright):
     """It rendered "Select a project to see more." — an instruction to do the
     thing the user had just done — with their row still highlighted."""
     api = quiet_machine()
     api.json("/api/projects/view",
              {"projects": [_project_item()], "taken_at": 0.0})
     api.fails("/api/projects/view/chitauri")
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-projects").click()
         await page.wait_for_selector("#proj-list .row", timeout=WAIT_MS)
         await page.locator("#proj-list .row").first.click()
@@ -272,13 +272,13 @@ async def test_a_failed_project_detail_fetch_does_not_read_as_no_selection():
         assert "Select a project" not in text
 
 
-async def test_a_project_whose_conversations_are_all_dead_is_not_drawn_as_idle():
+async def test_a_project_whose_conversations_are_all_dead_is_not_drawn_as_idle(page_playwright):
     """`aggregateState` returned "idle" — the green done-dot — for any
     non-zero `session_count`, and that count includes `gone` and `fresh`."""
     api = quiet_machine()
     api.json("/api/projects/view",
              {"projects": [_project_item(live=0)], "taken_at": 0.0})
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-projects").click()
         await page.wait_for_selector("#proj-list .row", timeout=WAIT_MS)
 
@@ -319,13 +319,13 @@ def _roster(rows: list[dict]) -> dict:
             "taken_at": time.time()}
 
 
-async def test_a_capped_active_agent_count_renders_as_a_floor():
+async def test_a_capped_active_agent_count_renders_as_a_floor(page_playwright):
     """`agents_seen` has rendered as "300+" all along. `agents_active` is a
     floor for exactly the same reason — the cap is taken in file-name order,
     which is uncorrelated with recency — and rendered bare."""
     api = quiet_machine()
     api.json("/api/sessions", _roster([_session_row()]))
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-sessions").click()
         await page.wait_for_selector("#sessions-view .row", timeout=WAIT_MS)
 
@@ -334,11 +334,11 @@ async def test_a_capped_active_agent_count_renders_as_a_floor():
         assert "12+ agents" in text
 
 
-async def test_an_uncapped_active_agent_count_renders_exactly():
+async def test_an_uncapped_active_agent_count_renders_exactly(page_playwright):
     api = quiet_machine()
     api.json("/api/sessions", _roster(
         [_session_row(agents_seen=12, agents_capped=False)]))
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-sessions").click()
         await page.wait_for_selector("#sessions-view .row", timeout=WAIT_MS)
 
@@ -348,7 +348,7 @@ async def test_an_uncapped_active_agent_count_renders_exactly():
 
 # ── a frozen roster reading says so ────────────────────────────────────────
 
-async def test_a_stale_roster_reading_is_visible():
+async def test_a_stale_roster_reading_is_visible(page_playwright):
     """`taken_at` was in the payload and in the type and rendered NOWHERE, so
     a watcher frozen by one bad transcript line went on serving 200s that
     looked live."""
@@ -356,7 +356,7 @@ async def test_a_stale_roster_reading_is_visible():
     stale = _roster([_session_row()])
     stale["taken_at"] = time.time() - 3600
     api.json("/api/sessions", stale)
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-sessions").click()
         await page.wait_for_selector("#sessions-banner:not([hidden])",
                                      timeout=WAIT_MS)
@@ -365,10 +365,10 @@ async def test_a_stale_roster_reading_is_visible():
             await page.locator("#sessions-banner").inner_text()
 
 
-async def test_a_fresh_roster_reading_says_nothing():
+async def test_a_fresh_roster_reading_says_nothing(page_playwright):
     api = quiet_machine()
     api.json("/api/sessions", _roster([_session_row()]))
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-sessions").click()
         await page.wait_for_selector("#sessions-view .row", timeout=WAIT_MS)
 
@@ -401,10 +401,10 @@ def _usage_body(count: int, largest_listed: int) -> dict:
     return body
 
 
-async def test_the_caption_says_smaller_only_when_it_ranked_them():
+async def test_the_caption_says_smaller_only_when_it_ranked_them(page_playwright):
     api = quiet_machine()
     api.json("/api/usage/sessions", _usage_body(count=900, largest_listed=40))
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-usage").click()
         await page.wait_for_selector(".usage-more", timeout=WAIT_MS)
 
@@ -412,13 +412,13 @@ async def test_the_caption_says_smaller_only_when_it_ranked_them():
             await page.locator(".usage-more").inner_text()
 
 
-async def test_the_caption_says_other_when_it_cannot_prove_smaller():
+async def test_the_caption_says_other_when_it_cannot_prove_smaller(page_playwright):
     """`largest_listed` below the number of rows shown means the payload
     carries no ranking that reaches the bottom row, so "smaller" would be a
     claim about conversations nothing compared."""
     api = quiet_machine()
     api.json("/api/usage/sessions", _usage_body(count=900, largest_listed=5))
-    async with dashboard(api) as page:
+    async with dashboard(page_playwright, api) as page:
         await page.locator("#tab-usage").click()
         await page.wait_for_selector(".usage-more", timeout=WAIT_MS)
 

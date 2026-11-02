@@ -3,10 +3,9 @@ import functools
 import http.server
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 import threading
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -98,6 +97,29 @@ def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
     """The session watcher reads the user's Codex sessions out of ~/.codex
     (codex_sessions.py). Under test it reads an empty Codex home instead."""
     monkeypatch.setenv("JARVIS_CODEX_SESSIONS_HOME", str(tmp_path / "codex-sessions-home"))
+
+
+@pytest.fixture(autouse=True)
+def _never_watch_this_mac_s_real_sessions(monkeypatch, tmp_path):
+    """The session watcher started by the app's lifespan reads every Claude
+    config root's rosters and transcripts (session_watch.DEFAULT_ROOTS, which
+    JARVIS_CLAUDE_CONFIG_DIRS only adds to) and lists the Codex processes
+    running on this Mac (`ps`, then `lsof` for each). Under test it reads two
+    empty roots of the same names and finds no Codex process, as on CI, so a
+    TestClient's exit no longer waits on the real machine. A test that wants
+    sessions still supplies its own roots or processes.
+
+    The processes are replaced through CodexSessions.__init__'s defaults:
+    `processes=list_processes` is bound when the class is defined, so patching
+    `codex_sessions.list_processes` would change nothing.
+    """
+    from jarvis import codex_sessions, session_watch
+    roots = tmp_path / "claude-roots"
+    monkeypatch.setattr(session_watch, "DEFAULT_ROOTS",
+                        tuple(str(roots / Path(r).name) for r in session_watch.DEFAULT_ROOTS))
+    init = codex_sessions.CodexSessions.__init__
+    home, _processes, codex = init.__defaults__
+    monkeypatch.setattr(init, "__defaults__", (home, lambda: [], codex))
 
 
 @pytest.fixture(autouse=True)
@@ -245,33 +267,201 @@ async def _no_run_left_mid_flight():
         await asyncio.wait(pending, timeout=5)
 
 
-# The voice page, built once for the whole run and served from a temporary
-# folder on loopback with 30 agents at /api/agents. Every page test module
-# shares it: building it once per module was 16 builds of the same page.
-FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+# The voice page, served on loopback from `jarvis/web` with 30 agents at
+# /api/agents. Every page test module shares it. The page is the one
+# `npm run build` makes (CI's setup has already run it), rebuilt only when a
+# source is newer, by the dashboard tests' own `build_bundle`: a second,
+# bespoke `vite build` into a temporary folder made byte-identical output.
 PAGE_AGENTS = {"agents": [{"session_id": str(i), "name": f"agent {i}", "active": True}
                           for i in range(30)]}
 
 
 @pytest.fixture(scope="session")
-def page_url(tmp_path_factory):
-    if not shutil.which("npx") or not (FRONTEND / "node_modules").is_dir():
-        pytest.skip("node and the frontend's node_modules are needed to build the page")
-    out = tmp_path_factory.mktemp("voice-page")
-    built = subprocess.run(
-        ["npx", "vite", "build", "--outDir", str(out), "--emptyOutDir", "--logLevel", "error"],
-        cwd=FRONTEND, capture_output=True, text=True, timeout=300)
-    assert built.returncode == 0, built.stderr
-    (out / "api").mkdir()
-    (out / "api" / "agents").write_text(json.dumps(PAGE_AGENTS))
-
-    handler = functools.partial(_QuietHandler, directory=str(out))
+def page_url():
+    from tests import dashboard_page
+    reason = dashboard_page.why_unavailable()
+    if reason:
+        pytest.skip(reason)
+    web = dashboard_page.build_bundle()
+    handler = functools.partial(_PageHandler, directory=str(web))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}/index.html"
     httpd.shutdown()
 
 
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+class _PageHandler(http.server.SimpleHTTPRequestHandler):
+    """The built page read-only, and /api/agents answered here, so nothing is
+    written into the package."""
+
     def log_message(self, *args):
         pass
+
+    def do_GET(self):
+        if urllib.parse.urlparse(self.path).path != "/api/agents":
+            return super().do_GET()
+        body = json.dumps(PAGE_AGENTS).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+# ── one browser for the page tests ─────────────────────────────────────────
+#
+# Every page test (and every dashboard test) used to start its own Playwright
+# driver (a Node process) and launch its own Chromium: 1.90 s a test, measured,
+# against 0.43 s for a fresh context in a browser already open. So the session
+# keeps one driver and one headless Chromium per set of launch arguments, and
+# each test borrows it through `page_playwright`: `p.chromium.launch(...)`
+# gives the test a browser whose `new_page` / `new_context` are the shared
+# browser's own (so each page has its own new context, with the viewport, init
+# scripts, routes and storage the test gives it, as before), and whose `close`
+# closes only those contexts.
+#
+# Sharing needs one event loop, so a test that takes `page_playwright` runs on
+# the session's loop: `@pytest.mark.asyncio(loop_scope="session")`.
+#
+# What sharing could spread, it does not: a Chromium whose graphics process
+# crashed switches WebGL off for every later page (see CLAUDE.md), so after
+# each test WebGL is looked for on one of its pages, and a browser without it
+# is closed and launched afresh for the next test. A failed test also has
+# every shared browser launched afresh, so nothing it left behind reaches the
+# next one.
+
+_WEBGL = """() => { try { return !!document.createElement('canvas').getContext('webgl'); }
+                    catch (e) { return false; } }"""
+_FAILED = pytest.StashKey[bool]()
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    if report.failed:
+        item.stash[_FAILED] = True
+    return report
+
+
+class _SharedChromium:
+    """The session's one Playwright driver, and one headless Chromium per set
+    of launch arguments, launched when first asked for."""
+
+    def __init__(self, driver):
+        self._driver = driver
+        self._browsers: dict[tuple, object] = {}
+        self.loop = asyncio.get_running_loop()
+
+    async def browser(self, args: tuple):
+        browser = self._browsers.get(args)
+        if browser is None or not browser.is_connected():
+            browser = await self._driver.chromium.launch(headless=True, args=list(args))
+            self._browsers[args] = browser
+        return browser
+
+    async def relaunch(self, *args_sets: tuple) -> None:
+        """Close these browsers (all, with none named), so the next test that
+        asks for one gets a new launch."""
+        for args in args_sets or tuple(self._browsers):
+            browser = self._browsers.pop(args, None)
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+
+
+class _BorrowedBrowser:
+    """The shared browser, as one test sees it: its pages and contexts are
+    new ones, and closing it closes only those."""
+
+    def __init__(self, shared: _SharedChromium, browser, args: tuple):
+        self._shared = shared
+        self._browser = browser
+        self.args = args
+        self._contexts: list = []
+
+    async def new_page(self, **options):
+        page = await self._browser.new_page(**options)
+        self._contexts.append(page.context)
+        return page
+
+    async def new_context(self, **options):
+        context = await self._browser.new_context(**options)
+        self._contexts.append(context)
+        return context
+
+    async def has_webgl(self) -> bool:
+        """Whether a new canvas still gets WebGL, asked on a page this test
+        left open (or a new one, if it left none)."""
+        pages = [page for context in self._contexts for page in context.pages
+                 if not page.is_closed()]
+        try:
+            if pages:
+                return await pages[-1].evaluate(_WEBGL)
+            context = await self.new_context()
+            return await (await context.new_page()).evaluate(_WEBGL)
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        if not self._contexts:
+            return
+        lost_webgl = "--disable-webgl" not in self.args and not await self.has_webgl()
+        contexts, self._contexts = self._contexts, []
+        for context in contexts:
+            try:
+                await context.close()
+            except Exception:
+                pass
+        if lost_webgl:
+            await self._shared.relaunch(self.args)
+
+
+class _PagePlaywright:
+    """Playwright for one page test, in the shape the tests already drive:
+    `async with page_playwright as p:` then `await p.chromium.launch(...)`."""
+
+    def __init__(self, shared: _SharedChromium):
+        self._shared = shared
+        self._borrowed: list[_BorrowedBrowser] = []
+        self.chromium = self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
+
+    async def launch(self, *, headless: bool = True, args=()):
+        assert headless, "the page tests run headless"
+        assert asyncio.get_running_loop() is self._shared.loop, \
+            'a test that takes page_playwright runs @pytest.mark.asyncio(loop_scope="session")'
+        args = tuple(args)
+        borrowed = _BorrowedBrowser(self._shared, await self._shared.browser(args), args)
+        self._borrowed.append(borrowed)
+        return borrowed
+
+    async def close(self) -> None:
+        for borrowed in self._borrowed:
+            await borrowed.close()
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _chromium_for_the_session():
+    async_api = pytest.importorskip("playwright.async_api")
+    async with async_api.async_playwright() as driver:
+        shared = _SharedChromium(driver)
+        try:
+            yield shared
+        finally:
+            await shared.relaunch()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def page_playwright(request, _chromium_for_the_session):
+    playwright = _PagePlaywright(_chromium_for_the_session)
+    yield playwright
+    await playwright.close()
+    if request.node.stash.get(_FAILED, False):
+        await _chromium_for_the_session.relaunch()
