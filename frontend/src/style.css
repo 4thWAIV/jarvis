@@ -2225,6 +2225,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   white-space: nowrap;
 }
 .subsystem-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In the list a name may be longer than its column ("Entrada de voz" beside
+   "Con problemas"): it wraps to a second line rather than being cut. */
+.subsystem-row .subsystem-name { white-space: normal; overflow-wrap: break-word; }
 .subsystem-state { font-size: 10.5px; color: rgba(255, 255, 255, 0.6); }
 .subsystem-waiting { margin: 4px 0 0; font-size: 11px; color: rgba(255, 255, 255, 0.5); }
 
@@ -2685,7 +2688,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
+  /* 4px, not 5: "Escritura" beside "hace 1 min" fits the tile in Spanish. */
+  gap: 4px;
   height: 17px;
   color: #4ade80;
 }

@@ -52,20 +52,21 @@ def record(now: float):
     return summary, {"samples": [sample], "events": events}
 
 
-async def _open(p, url):
+async def _open(p, url, ui=None, reduced=False):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
-    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    page = await browser.new_page(viewport={"width": 1440, "height": 900},
+                                  reduced_motion="reduce" if reduced else "no-preference")
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route("**/api/voice/diagnostics", lambda r: r.fulfill(
         content_type="application/json", body=json.dumps(record(time.time())[0])))
     await page.route("**/api/voice/diagnostics/samples?*", lambda r: r.fulfill(
         content_type="application/json", body=json.dumps(record(time.time())[1])))
     voice = []
-    await page.route_web_socket("**/ws/voice", lambda ws: (setattr(_open, "voice", ws),
-                                                          ws.on_message(lambda m: voice.append(m))))
+    await page.route_web_socket("**/ws/voice", ui or (lambda ws: (setattr(_open, "voice", ws),
+                                                                ws.on_message(lambda m: voice.append(m)))))
     await page.goto(url + "?view=main")
     await show_diagnostics(page)
     await page.wait_for_function(
@@ -206,3 +207,48 @@ async def test_the_health_dot_opens_the_diagnostics_view(page_url):
         await page.click("#health-dot")
         await page.wait_for_selector("#voice-diagnostics")
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url):
+    """The dot appears only while voice input has a problem. Then it is a
+    button whose accessible name is the problem in words, and a mounted
+    target, the microphone's `health` part; healthy again, it is gone and
+    pointing at it is refused, never drawn where it was."""
+    from tests.test_voice_page_pipeline import _UiServer
+    ui = _UiServer()
+    health = {"region": "left", "view": "left.fixed", "kind": "mic", "part": "health"}
+
+    async def point():
+        rid, _ = ui.request({"kind": "indicate", "target": health, "reveal": "never"})
+        result = await ui.result(rid)
+        rid, _ = ui.request({"kind": "clear"})
+        await ui.result(rid)
+        return result
+
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, ui=ui, reduced=True)
+        try:
+            await _health(page)
+            assert await page.query_selector("#health-dot") is None
+            assert (await point())["status"] != "completed"
+            await _health(page, state="no-frames", cause="No audio from the microphone",
+                          pipeline=pipeline(mic="bad"))
+            dot = page.locator("#health-dot.bad")
+            await dot.wait_for()
+            assert await dot.evaluate("el => el.tagName") == "BUTTON"
+            name = await dot.get_attribute("aria-label")
+            assert name and "No audio from the microphone" in name
+            assert await dot.get_attribute("title") == name
+            # Shown, it is a mounted target; its leaf would cross the meter
+            # beside it, so it is refused truthfully, never drawn across
+            # (the same as the mute and off buttons in
+            # test_voice_page_left_settings.LEFT_MISSED), until leaf routing
+            # around sibling parts is decided (blocker leaf-sibling-routing).
+            reached = await point()
+            assert (reached["status"], reached.get("reason")) == ("blocked", "no-route"), reached
+            await _health(page)
+            await page.wait_for_selector("#health-dot", state="detached")
+            assert (await point())["status"] != "completed"
+        finally:
+            await browser.close()

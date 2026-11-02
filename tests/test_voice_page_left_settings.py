@@ -22,6 +22,7 @@ team, settings, brains and usage endpoints are fixtures.
 """
 
 import asyncio
+from datetime import timedelta
 import json
 import time
 
@@ -30,7 +31,7 @@ import pytest
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_language import _Sessions as _LanguageSessions
-from tests.test_voice_page_network import FITS, HEALTHY, SIGNED_OUT, _Sessions, _Team
+from tests.test_voice_page_network import FITS, HEALTHY, SIGNED_OUT, _envelope, _server, _Sessions, _Team
 from tests.test_voice_page_pipeline import _UiServer
 from tests.test_voice_page_settings import _Server
 
@@ -455,9 +456,13 @@ async def test_the_signal_reaches_the_team_servers_database_row_animated(page_ur
 
 
 @pytest.mark.asyncio
-async def test_in_spanish_a_healthy_team_server_tile_fits_its_figures(page_url):
+@pytest.mark.parametrize("write_ago", [timedelta(seconds=3), timedelta(minutes=1), timedelta(hours=20)])
+async def test_in_spanish_a_healthy_team_server_tile_fits_its_figures(page_url, write_ago):
+    """The longest Spanish ages ("hace 1 min", "hace 20 h") beside the
+    row's name ("Escritura") fit, as the seconds do."""
+    team = lambda: _envelope(server=_server(write_ago=write_ago))  # noqa: E731
     async with async_api.async_playwright() as p:
-        browser, page, ui = await _open(p, page_url, team=HEALTHY, language="es")
+        browser, page, ui = await _open(p, page_url, team=team, language="es")
         try:
             await page.wait_for_function(
                 "() => document.querySelector('#team-server-tile [data-row=\"Last write\"] .ago')")

@@ -290,7 +290,10 @@ def _subsystems_said():
     contact = datetime.fromtimestamp(now - 20, timezone.utc).isoformat()
     rows = [
         sd.communications(None, [], {}, 2, now, now - 600),
-        sd.voice_input({"state": "healthy", "pipeline": {"mic": {"state": "ok", "value": 0.4}}}, now),
+        # Falling behind: the longest state word ("Con problemas") beside
+        # one of the longest names ("Entrada de voz").
+        sd.voice_input({"state": "decoder-slow", "cause": "Machine busy",
+                        "pipeline": {"mic": {"state": "ok", "value": 0.4}}}, now),
         sd.brain(None, True, now, now - 600),
         sd.voice_output(True, voiced, now),
         sd.tool_channel(None, sd.Outcomes(), now),
@@ -385,6 +388,9 @@ async def test_the_right_tabs_in_spanish_reflow_without_spilling_or_losing_a_bra
         left = [w for w in ENGLISH_LEFT if w in spanish[tab]["text"]]
         assert not left, (tab, left, spanish[tab]["text"])
     assert "registradas" in spanish["folders"]["text"] and "HUMANO" in spanish["network"]["text"]
+    for language in (english, spanish):
+        assert not [c for c in language["diagnostics"]["cut"] if "subsystem-name" in c], language["diagnostics"]["cut"]
+    assert "Entrada de voz" in spanish["diagnostics"]["text"]
     assert "Vigilante de sesiones" in spanish["diagnostics"]["text"]
     assert "Última frase dicha hace 10 s" in spanish["diagnostics"]["text"]
     assert "En línea: Tokens como tistocks" in spanish["diagnostics"]["text"]
