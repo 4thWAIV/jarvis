@@ -62,12 +62,14 @@ class FakeInspection:
                                   tuple(locations)))
 
     def _member(self, spec: Spec, path: str, fmt: str, support: str) -> MemberInfo:
+        IMAGES = ("png", "jpeg", "gif", "webp")
         return MemberInfo(member_id=member_id(spec.ref.sha256, path), path=path,
                           name=path.rsplit("/", 1)[-1] or spec.ref.filename, is_dir=False,
                           size_bytes=1000, compressed_size=500, format=fmt,
                           media_type="application/octet-stream", support=support,
                           reason=None if support == "readable" else "reader_unavailable",
-                          operations=["download", "read_text"])
+                          operations=["download", "render"] if fmt in IMAGES
+                          else ["download", "read_text"])
 
     async def open(self, owner: Owner, key: AttachmentKey) -> Classification:
         self._observe(owner, key, self._spec(key), "download", None, "readable")

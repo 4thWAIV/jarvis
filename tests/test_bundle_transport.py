@@ -187,6 +187,17 @@ def test_ready_then_partial_names_the_first_failed_member_and_never_its_text(
     assert "text of" not in text and "/Users" not in text
 
 
+def test_a_listing_that_already_has_an_unreadable_member_is_partial_not_ready(
+        tmp_path, serve, clock):
+    matt, m = received(tmp_path, serve, clock)
+    obs(matt, m, ZIP, "download")
+    obs(matt, m, ZIP, "list_archive", None, "partial", "reader_unavailable")
+    got = report(matt, m, ZIP)
+    assert (got["status"], got["failed_operation"], got["reason"]) == \
+        ("partial", "read_text", "reader_unavailable")
+    assert got["failed_member"] is None, "nothing was tried on a member yet"
+
+
 def test_every_required_member_read_is_verified_and_an_unreadable_primary_unsupported(
         tmp_path, serve, clock):
     matt, m = received(tmp_path, serve, clock)
@@ -313,6 +324,19 @@ def test_ready_when_one_of_the_recipients_nodes_can_do_everything(tmp_path, serv
     assert fits == {"LAPTOP": ("advertised", "partial", ["render"]),
                     "DESK": ("advertised", "ready", [])}, "each node judged on its own"
     assert result.gaps == []
+
+
+def test_an_image_is_needed_as_a_picture_not_as_text(tmp_path, serve, clock):
+    tim, draft, r = drafted(tmp_path, serve, clock,
+                            members=MEMBERS + (("review/chart.png", "png", "readable"),))
+    with_images = caps(("pdf", {"read_text", "render"}), ("markdown", {"read_text"}),
+                       ("text", {"read_text"}), ("png", {"render"}))
+    tim.network = {"nodes": [bf.node(MATT, 1, attachments=with_images)]}
+    result = check(tim, draft)
+    assert result.readiness == "ready", result.nodes
+    tim.network = {"nodes": [bf.node(MATT, 1, attachments=FULL)]}
+    (missing,) = check(tim, draft).nodes[0].missing
+    assert (missing.path, missing.operation) == ("review/chart.png", "render")
 
 
 def test_partial_names_the_action_the_sender_can_take(tmp_path, serve, clock):
@@ -595,6 +619,16 @@ def test_a_reply_drafted_is_notes_ready(tmp_path, serve, clock):
                                             in_reply_to_message_id=m.message_id,
                                             recipient_github_id=TIM, text="Notes: page 1 ..."))
     assert matt.tasks.review_state(SERVER, MATT, m.thread_id).progress == "notes_ready"
+
+
+def test_no_review_was_asked_so_a_draft_is_no_progress(tmp_path, serve, clock):
+    """The thread of a request he sent (or a message with no task): a draft
+    there is his own message, not notes on a review asked of him."""
+    matt, m = received(tmp_path, serve, clock, task=False)
+    matt.local.create_draft(ports.DraftSave(thread_id=m.thread_id,
+                                            in_reply_to_message_id=m.message_id,
+                                            recipient_github_id=TIM, text="Thanks."))
+    assert matt.tasks.review_state(SERVER, MATT, m.thread_id).progress is None
 
 
 def test_a_repair_resumes_only_what_was_not_done(tmp_path, serve, clock):

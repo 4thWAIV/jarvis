@@ -436,6 +436,8 @@ class BundleTasks:
         return ReviewState.model_validate(body["state"]), body.get("source")
 
     def _progress(self, ns, thread_id: UUID, state: ReviewState) -> Optional[str]:
+        if self._source(ns, thread_id) is None:
+            return None             # no review was asked of him here (he sent the request)
         item = self.store.item(*ns, thread_id)
         if item and any(d.text or d.attachments for d in item.drafts):
             return "notes_ready"

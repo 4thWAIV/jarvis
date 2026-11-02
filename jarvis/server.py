@@ -6555,7 +6555,7 @@ async def tool_people_messages(args: dict) -> str:
     return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
 
 
-_OPENED_THERE = {"verified": "opens there", "ready": "opens there",
+_OPENED_THERE = {"verified": "has been read there", "ready": "opens there",
                  "partial": "only partly readable there", "unsupported": "can't be read there",
                  "corrupt": "damaged there", "unavailable": "not opened there"}
 

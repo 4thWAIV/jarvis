@@ -209,6 +209,13 @@ class OpenabilityStatus:
                 **base, status="corrupt" if reason in CORRUPT else "unsupported",
                 failed_operation="list_archive" if ref.media_type.endswith("zip")
                 else "read_text", reason=_code(reason), members_readable=0)
+        if not failed and container and container["support"] == "partial":
+            # Listed, and the listing already says some member has no reader
+            # here, though nothing has been tried on it yet: not "opens".
+            return wire.OpenabilityReport(
+                **base, status="partial", failed_operation="read_text",
+                reason=_code(container["reason"]),
+                members_readable=min(total, sum(1 for m in members.values() if m["read"])))
         readable = max(0, total - len(failed))
         if failed:
             first = failed[0]

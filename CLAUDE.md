@@ -364,7 +364,9 @@ sized from their headers and never decoded; the preview is the file
 itself, and so is its one rendered page, served with its own type
 (`RenderedPageInfo.media_type`; a PDF page is PNG), so the brain sees a
 JPEG, GIF or WebP as sent; an image is never shrunk to `max_edge`, since
-that would mean decoding it. docx, xlsx and pptx
+that would mean decoding it. A member with text and nothing to draw
+(Markdown, CSV, an Office file) has an empty preview (no refs): asking for
+it is not a failed read and is not observed. docx, xlsx and pptx
 (`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
 and row (saved values with the formula beside them,
 `formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
@@ -401,8 +403,10 @@ review and yes is a new digest and a new review. The recipient's
 openability is a receipt kind (`openability`, one `OpenabilityReport` per
 file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
 the inspection service's observations per (message, file, revision)
-(`human_openability`, messaging store schema 3), owes the receipt when the
-report changes, and delivery sends it only to a server offering bundles.
+(`human_openability`, messaging store schema 3; a listing that already
+shows a member with no reader is `partial` before anything is tried on it,
+and a review's progress is only worked out on a thread whose task was asked
+of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
 JARVIS asks every message and receipt route for the bundle fields
 (`?bundles=1`); a team server answers a JARVIS that does not ask with the
 messaging.v1 fields only (`messaging.legacy_view`), so older nodes keep
@@ -440,7 +444,7 @@ with `web_auth.BUNDLE_PREVIEW_HEADERS`, which are the html reader's own
 `PREVIEW_HEADERS` (framed by JARVIS only, `sandbox` with no permissions,
 nothing from outside the bundle), and framed with `sandbox=""`. A sent
 file's card shows the recipient's JARVIS's report once it has opened it
-(`receipts.openability`; "Opens there", "Partly readable there" with the
+(`receipts.openability`; "Read there", "Opens there", "Partly readable there" with the
 first member that failed), and `read_people_thread` says the same on each
 file line and the thread's review progress in its head. Downloading or revealing a file is not reading it. The
 page's side: `bundles.ts` (the routes, the open member and `bundleWords`,

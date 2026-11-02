@@ -6,8 +6,9 @@ network snapshot (bundle_capabilities). One answer, `PreflightResult`:
 ready, partial, unknown or blocked, with only the gaps the sender can act on.
 
 What a message needs, per file: `download`; `list_archive` for a ZIP;
-`read_text` for every member a reader here can read (members no reader
-here can read are local problems, never requirements); `render` for the
+`read_text` for every member a reader here can read, or `render` for one
+with no text (an image) (members no reader here can read are local
+problems, never requirements); `render` for the
 task's primary PDF when the outcome is notes (a presentation review needs
 the pages, not only their text); `execute` only for a recognised work
 package (its mode).
@@ -106,6 +107,13 @@ def all_members(inspection, owner: Owner, key: AttachmentKey,
     return found[:limit]
 
 
+def _reading(m) -> str:
+    """How a member is read: its text, or, for one with no text (an
+    image), its picture."""
+    return "render" if "render" in m.operations and "read_text" not in m.operations \
+        else "read_text"
+
+
 def _gap_action(r: Requirement, legacy_wrapper: bool) -> str:
     if r.operation == "execute":
         return "flatten_wrapper" if legacy_wrapper else "ask_recipient_to_update"
@@ -174,7 +182,8 @@ class SenderPreflight:
                 if m.is_dir:
                     continue
                 req = Requirement(attachment_id=ref.attachment_id, member_id=m.member_id,
-                                  path=m.path or None, format=m.format, operation="read_text")
+                                  path=m.path or None, format=m.format,
+                                  operation=_reading(m))
                 if m.support not in READABLE:
                     problems.append(req)
                     blocked = blocked or m.member_id == primary_id

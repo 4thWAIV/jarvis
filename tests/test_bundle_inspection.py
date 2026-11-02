@@ -492,12 +492,10 @@ def test_a_single_html_file_serves_only_itself(world):
         world.service.html_asset(MATT, key, c.root_member_id, "style.css")
 
 
-def test_text_has_no_preview(world):
+def test_a_single_text_file_has_an_empty_preview(world):
     key = world.files.add(MATT, b"notes\n", "notes.txt")
     c = world.service.classify(MATT, key)
-    with pytest.raises(InspectionRefused) as e:
-        world.service.preview_member(MATT, key, c.root_member_id)
-    assert e.value.code == "unsupported"
+    assert world.service.preview_member(MATT, key, c.root_member_id).refs == []
 
 
 # -- read-only, always ----------------------------------------------------------------------
@@ -569,3 +567,12 @@ async def test_a_received_bundle_is_downloaded_once_quarantined_and_inspected(tm
         assert e.value.code in ("attachment_not_found", "not_local")
     assert [o.operation for o in seen][:2] == ["download", "list_archive"]
     assert [m.path for m in service.list_members(owner, key).members] == [WRAPPER]
+
+
+def test_text_has_an_empty_preview_and_asking_for_it_is_no_failure(world):
+    key = world.files.add(MATT, zip_bytes({"notes.md": b"# Notes\n\nline\n"}), "notes.zip")
+    notes = find(world.service, MATT, key, "notes.md")
+    got = world.service.preview_member(MATT, key, notes.member_id)
+    assert got.refs == [] and got.extent.lines == 3
+    assert not [o for o in world.seen if o.member_id == notes.member_id
+                and o.support in ("unsupported", "blocked")], "no failure observed"

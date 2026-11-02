@@ -703,6 +703,12 @@ class BundleInspection:
                                    lambda: reader.parsed(source))
             refs = [PreviewRef(kind="html", member_id=member_id,
                                url=self._asset_url(key, info, entry))]
+        elif "read_text" in description.operations:
+            # Text with nothing to draw (Markdown, CSV, an Office file): its
+            # preview is its text, so there are no refs, and having no
+            # picture is no failure to read it (nothing is observed).
+            return Preview(attachment=info, member=entry.info, refs=[],
+                           extent=description.extent)
         else:
             self._observe(owner, key, info.sha256, "render", member_id, "unsupported",
                           "reader_unavailable")

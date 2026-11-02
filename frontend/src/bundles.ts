@@ -80,7 +80,7 @@ export const bundleWords = {
   noRequest: "No request",
   /** The recipient's JARVIS's report on a file it was told to open. */
   openability: {
-    verified: "Opens there",
+    verified: "Read there",
     ready: "Opens there",
     partial: "Partly readable there",
     unsupported: "Can't be read there",

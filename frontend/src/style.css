@@ -3305,7 +3305,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .review-capture .capture-buttons { position: static; justify-content: flex-end; }
 .composer-agent { margin: 0; font-size: 12px; color: #fcd34d; }
 .composer-to { display: flex; flex-direction: column; gap: 2px; }
-.composer-to select, .composer-field input, .composer-text {
+.composer-to select, .composer-field input, .composer-text, .composer-task select, .composer-task input {
   font: inherit;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.92);
@@ -3318,7 +3318,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .composer-inbox, .composer-limits, .composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
 .composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
 .composer-text { width: 100%; resize: vertical; min-height: 96px; line-height: 1.45; }
-.composer-text:disabled, .composer-field input:disabled { opacity: 0.6; }
+.composer-text:disabled, .composer-field input:disabled, .composer-task select:disabled,
+.composer-task input:disabled { opacity: 0.6; }
 .composer-attach { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
 .composer-attach input { margin-left: 8px; font-size: 11px; }
 .composer-adding { margin: 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
