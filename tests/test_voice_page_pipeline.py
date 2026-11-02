@@ -1,9 +1,10 @@
-"""The pipeline and white attention, by what the page draws: the faint map
-that is always there (orb rise, top pipeline, a rail per region, a branch
-into each object on show), and a cue's whole life along it: white from the
-orb, three pulses on registered edges only, arrival rings and the contour,
-hold, fade and reset, with the map still there afterwards
-(UiPipelineLayer.tsx, uiAttention.ts, uiPipeline.ts, orbSource.ts).
+"""The pipeline and white attention, by what the page draws: nothing at
+rest (the map of orb rise, top pipeline, a rail per region and a branch
+into each object is data only), and a cue's whole life drawn along its own
+route alone: white from the orb, three pulses on registered edges only,
+arrival rings and the contour, hold, fade and reset, with nothing left
+afterwards (UiPipelineLayer.tsx, uiAttention.ts, uiPipeline.ts,
+orbSource.ts).
 
 Headless Chromium on the built page. /api/team/network is a fixture (the
 Network tab's tiles and the node's centre detail are the targets), and
@@ -107,8 +108,9 @@ async def _open(p, url, *, reduced=False, sessions=None, team=None, routes=(), n
     return browser, page, ui
 
 
-MAP = """() => [...document.querySelectorAll('#ui-pipeline [data-edge]')].map(p => ({
-  id: p.dataset.edge, d: p.getAttribute('d')}))"""
+# Everything the pipeline's layers draw: at rest, nothing (its one filter
+# definition draws nothing itself).
+DRAWN_AT_ALL = """() => [...document.querySelectorAll('svg.ui-pipeline > :not(defs)')].map(e => e.outerHTML)"""
 
 DRAWN = """() => ({
   cues: document.querySelectorAll('[data-cue]').length,
@@ -116,6 +118,7 @@ DRAWN = """() => ({
   rings: document.querySelectorAll('.ui-ring').length,
   contour: document.querySelectorAll('.ui-contour').length,
   queued: document.querySelectorAll('[data-cue][data-queued="true"]').length,
+  edges: [...document.querySelectorAll('[data-cue]')].flatMap(g => g.dataset.edges.split(' ').filter(Boolean)),
   route: [...document.querySelectorAll('#ui-pipeline [data-cue] .ui-route')].map(p => p.getAttribute('d')),
   leaf: [...document.querySelectorAll('#ui-pipeline-over [data-cue] .ui-route')].map(p => p.getAttribute('d')),
   source: document.getElementById('ui-pipeline').dataset.source,
@@ -137,42 +140,40 @@ def _segments(d):
 BEVEL = 6                                           # uiSignal.ts BEVEL_PX
 
 
-def _on(seg, lines, tol=1.0):
-    """Whether a segment lies within one of the map's lines, is one the map
-    draws (a socket branch whose bevel takes its whole length), or is the
-    45-degree bevel of a turn between two of them (both ends on the map,
-    at most BEVEL along each axis)."""
+# The ids the fixed map's edges take (uiPipeline.ts): the declared trunk
+# and rails, a rail's tap and branch into one object, and a part's leaf.
+REGISTERED = re.compile(r"^(edge\.[a-z-]+|rail\.[a-z]+|rail\.[a-z]+:tap:.+|socket:.+|leaf:.+)$")
+
+
+def _bevel_or_straight(seg, tol=0.6):
     (ax, ay), (bx, by) = seg
-    near = lambda p, q: abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol  # noqa: E731
-    if any(near(seg[0], c) and near(seg[1], d) for c, d in lines):            # a segment the map draws
-        return True
-    if abs(ax - bx) > tol and abs(ay - by) > tol:
-        return (abs(abs(ax - bx) - abs(ay - by)) < tol and abs(ax - bx) <= BEVEL + tol
-                and _on(((ax, ay), (ax, ay)), lines, tol) and _on(((bx, by), (bx, by)), lines, tol))
-    for (cx, cy), (dx, dy) in lines:
-        if abs(ax - bx) < tol and abs(cx - dx) < tol and abs(ax - cx) < tol:          # both vertical
-            lo, hi = sorted((cy, dy))
-            if lo - tol <= min(ay, by) and max(ay, by) <= hi + tol:
-                return True
-        if abs(ay - by) < tol and abs(cy - dy) < tol and abs(ay - cy) < tol:          # both across
-            lo, hi = sorted((cx, dx))
-            if lo - tol <= min(ax, bx) and max(ax, bx) <= hi + tol:
-                return True
-    return False
+    dx, dy = abs(ax - bx), abs(ay - by)
+    return dx < tol or dy < tol or (abs(dx - dy) < tol and dx <= BEVEL + tol)
+
+
+def _on_the_map(drawn, what):
+    """A cue's route runs on registered edges only, out of the orb: every
+    edge it draws is one of the map's, the first its rise, and every
+    segment is straight along one or a 45-degree bevel between two."""
+    assert drawn["edges"] and drawn["edges"][0] == "edge.orb-rise", (what, drawn["edges"])
+    for edge in drawn["edges"]:
+        assert REGISTERED.match(edge), (what, edge, drawn["edges"])
+    for seg in _segments(drawn["route"][0]):
+        assert _bevel_or_straight(seg), (what, seg, drawn["route"][0])
+
+
+async def _nothing_drawn(page):
+    """Nothing of the pipeline is on the page: no map, no route, no ring."""
+    await page.wait_for_function("!document.querySelector('svg.ui-pipeline > :not(defs)')", timeout=8000)
+    assert await page.evaluate(DRAWN_AT_ALL) == []
 
 
 @pytest.mark.asyncio
-async def test_the_map_stays_and_a_cue_runs_its_whole_life_on_registered_edges_only(page_url):
+async def test_nothing_at_rest_and_a_cue_runs_its_whole_life_on_registered_edges_only(page_url):
     async with async_api.async_playwright() as p:
         browser, page, ui = await _open(p, page_url)
-        await page.wait_for_function(
-            f"document.querySelector('#ui-pipeline [data-edge=\"socket:right.network|node|{MINI_ID}\"]')")
-        idle = {e["id"]: e["d"] for e in await page.evaluate(MAP)}
-        for edge in ("edge.orb-rise", "edge.trunk-left", "edge.trunk-main", "edge.trunk-right",
-                     "edge.trunk-footer", "rail.left", "rail.main", "rail.right", "rail.footer"):
-            assert edge in idle, (edge, sorted(idle))
-        assert "rail.overlay" not in idle               # no modal open: no floating rail
-        lines = [s for d in idle.values() for s in _segments(d)]
+        await page.wait_for_timeout(500)                         # the page settled, its tiles on show
+        await _nothing_drawn(page)                               # no map at rest
 
         rid, sent = ui.indicate(TILE_CPU)
         await page.wait_for_function("document.querySelector('#ui-pipeline [data-cue] .ui-route')")
@@ -180,9 +181,11 @@ async def test_the_map_stays_and_a_cue_runs_its_whole_life_on_registered_edges_o
         moving = await page.evaluate(DRAWN)
         assert moving["source"] == "attention", moving          # the orb is emitting white
         assert moving["contour"] == 0 and moving["rings"] == 0, moving   # nothing at the end yet
-        # Every segment outside the object runs along the fixed map.
-        for seg in _segments(moving["route"][0]):
-            assert _on(seg, lines), (seg, moving["route"][0])
+        # Its own route alone, out of the orb, down the right rail, into the tile.
+        _on_the_map(moving, "tile")
+        for edge in ("edge.trunk-right", f"socket:right.network|node|{MINI_ID}"):
+            assert edge in moving["edges"], (edge, moving["edges"])
+        assert not any(e.startswith(("rail.left", "rail.main", "rail.footer")) for e in moving["edges"]), moving
         assert moving["leaf"], "the part's leaf inside the tile"
 
         result = await ui.result(rid)
@@ -200,7 +203,7 @@ async def test_the_map_stays_and_a_cue_runs_its_whole_life_on_registered_edges_o
         await page.wait_for_function("!document.querySelector('[data-cue]')", timeout=6000)
         after = await page.evaluate(DRAWN)
         assert after["source"] == "free" and after["waiting"] == "0", after
-        assert {e["id"] for e in await page.evaluate(MAP)} == set(idle)   # the map is still there
+        await _nothing_drawn(page)                               # nothing of it is left
 
         events = [e["event"] for e in ui.events[rid]]
         assert events == ["resolving", "emitting", "travelling", "arrived", "holding", "fading", "cleared"], events
@@ -291,12 +294,11 @@ async def test_in_either_language_a_cue_reaches_its_part_of_the_reflowed_detail(
         arrival = await page.evaluate(ARRIVAL)
         head, status = SAID[language]
         assert arrival["head"] == head, arrival
-        lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
         drawn = await page.evaluate(DRAWN)
-        # Up the rise, along the top pipeline and down the main rail: the
-        # last turn, into the detail's own socket, is the branch.
-        for seg in _segments(drawn["route"][0])[:-1]:
-            assert _on(seg, lines), (seg, drawn["route"][0])
+        # Up the rise, along the top pipeline and down the main rail, then
+        # the branch into the detail's own socket.
+        _on_the_map(drawn, language)
+        assert "edge.trunk-main" in drawn["edges"], drawn["edges"]
         assert status in drawn["status"], drawn
         leaf = _clear_of(await page.evaluate(LEAF_AND_CLOSE))
         x0, y0, x1, y1 = arrival["contour"]
@@ -334,6 +336,7 @@ async def test_clearing_and_a_person_s_navigation_end_the_cue_and_leave_nothing(
         assert (await ui.result(clear))["status"] == "completed"
         await page.wait_for_function("!document.querySelector('[data-cue]')")
         assert (await page.evaluate(DRAWN))["source"] == "free"
+        await _nothing_drawn(page)
 
         rid, _ = ui.indicate(TILE_CPU)
         await page.wait_for_function("document.querySelector('.ui-pulse')")
@@ -343,6 +346,7 @@ async def test_clearing_and_a_person_s_navigation_end_the_cue_and_leave_nothing(
         after = await page.evaluate(DRAWN)
         assert after["source"] == "free" and after["waiting"] == "0", after
         assert ui.events[rid][-1]["event"] == "cancelled"
+        await _nothing_drawn(page)
         await browser.close()
 
 
@@ -429,12 +433,6 @@ KEPT = """([whole, part]) => {
 }"""
 
 
-def _bevel_or_straight(seg, tol=0.6):
-    (ax, ay), (bx, by) = seg
-    dx, dy = abs(ax - bx), abs(ay - by)
-    return dx < tol or dy < tol or (abs(dx - dy) < tol and dx <= BEVEL + tol)
-
-
 def _inside(x, y, box, tol=0.5):
     left, top, right, bottom = box
     return left + tol < x < right - tol and top + tol < y < bottom - tol
@@ -467,11 +465,8 @@ async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(
                 assert result["status"] == "completed", (target, result)
                 await page.wait_for_function("document.querySelector('.ui-contour')")
                 drawn = await page.evaluate(DRAWN)
-                lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
                 # Nothing leaves the registered map but its bevels.
-                for seg in _segments(drawn["route"][0]):
-                    assert _on(seg, lines), (target["part"], seg, drawn["route"][0],
-                                             [e["id"] for e in await page.evaluate(MAP)])
+                _on_the_map(drawn, target["part"])
                 leaf = _points(drawn["leaf"][0])
                 around = await page.evaluate(KEPT, [whole, part])
                 for seg in zip(leaf, leaf[1:]):
@@ -541,11 +536,8 @@ async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_ur
                     assert result["status"] == "completed", (target, result)
                     await page.wait_for_function("document.querySelector('.ui-contour')")
                     drawn = await page.evaluate(DRAWN)
-                    lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
+                    _on_the_map(drawn, (slug, part))
                     route = _points(drawn["route"][0])
-                    for seg in zip(route, route[1:]):
-                        assert _on(seg, lines), (slug, part, seg, drawn["route"][0])
-                        assert _bevel_or_straight(seg), (slug, part, seg)
                     around = await page.evaluate(AROUND_STEP, slug)
                     left, top, right, bottom = around["step"]
                     # The branch's own run: from where it leaves the rail

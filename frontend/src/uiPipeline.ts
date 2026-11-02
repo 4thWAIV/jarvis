@@ -504,16 +504,5 @@ export function resolveRoute(target: VisualTarget, ref: TargetRef): RouteOutcome
  *  a cue; this may not. */
 export const topologyOf = (route: Route): string => route.edges.map((e) => e.id).join(" ");
 
-/** Every mounted, visible object's socket branch, for the faint map. */
-export function socketBranches(visible: (t: VisualTarget) => boolean): RouteEdge[] {
-  const out: RouteEdge[] = [];
-  for (const t of mountedTargets()) {
-    if (!visible(t)) continue;
-    const s = socketEdges(t);
-    if (s) out.push(s[s.length - 1]);
-  }
-  return out;
-}
-
 /** A run of edges as one line. */
 export const polyline = (edges: RouteEdge[]): Point[] => joined(edges.map((e) => e.points));

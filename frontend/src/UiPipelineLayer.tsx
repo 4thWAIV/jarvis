@@ -1,29 +1,29 @@
 /**
- * The pipeline drawn: the faint map that is always there (the orb's rise,
- * the top pipeline, one rail per region and a branch into each object on
- * show), and over it any white attention cue under way (uiAttention.ts):
- * its whole route faint, three bright pulses running along it, two rings
- * where it arrives, the target's contour, then the fade. A cue waiting for
- * a real transmission to give the orb back shows its route dashed until it
- * can go.
+ * The pipeline drawn: nothing at rest. The fixed map (the orb's rise, the
+ * top pipeline, one rail per region, a branch into each object) is data
+ * only (uiPipeline.ts), which routing and hit-testing use; none of it is
+ * drawn while no cue runs. A white attention cue under way (uiAttention.ts)
+ * draws its own route alone: the route faint, three bright pulses running
+ * along it, two rings where it arrives, the target's contour, then the
+ * fade, after which nothing of it is left. A cue waiting for a real
+ * transmission to give the orb back shows its route dashed until it can go.
  *
- * Three layers, all pointer-transparent. The map and the routes run behind
- * the side columns, as the transmissions' rays do (so the rise comes out
- * from inside the orb). A part's leaf inside its object, the rings and the
- * contour are drawn above the columns, so they show on the object itself.
- * An open modal's rail, sockets and leaves are drawn in a layer above the
- * modal, in the same page coordinates. Every position is computed from the
- * one schedule (uiSignal.ts) that also decides when the request is answered.
+ * Three layers, all pointer-transparent. A route's run behind the side
+ * columns, as the transmissions' rays do (so it comes out from inside the
+ * orb). A part's leaf inside its object, the rings and the contour are
+ * drawn above the columns, so they show on the object itself. An open
+ * modal's rail, branch and leaf are drawn in a layer above the modal, in
+ * the same page coordinates. Every position is computed from the one
+ * schedule (uiSignal.ts) that also decides when the request is answered.
  */
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import "./uiPipeline.css";
-import { EffectLife, onGeometryChange, VISUALLY_HIDDEN } from "./effectLife";
+import { VISUALLY_HIDDEN } from "./effectLife";
 import { useT, type Translate } from "./locale";
 import { orbSource } from "./orbSource";
 import { cues, type CueFrame } from "./uiAttention";
-import { visibilityOf } from "./uiRegistry";
-import { mapEdges, polyline, socketBranches, type RouteEdge } from "./uiPipeline";
+import { polyline, type RouteEdge } from "./uiPipeline";
 import {
   fadeAt, length, pathOf, pointAlong, pulseFractions, ringProgress, routeLit, type Point,
 } from "./uiSignal";
@@ -36,35 +36,6 @@ const LAYERS: Layer[] = ["base", "over", "modal"];
 
 /** Which of the three layers an edge is drawn in. */
 const layerOf = (e: RouteEdge): Layer => e.host === "modal" ? "modal" : e.layer === "leaf" ? "over" : "base";
-
-const sameEdges = (a: RouteEdge[], b: RouteEdge[]): boolean =>
-  a.length === b.length && a.every((e, i) => e.id === b[i].id && e.host === b[i].host
-    && pathOf(e.points) === pathOf(b[i].points));
-
-/** The faint map, measured again whenever the layout may have moved (once
- *  per frame at most). */
-function useMap(): RouteEdge[] {
-  const [edges, setEdges] = useState<RouteEdge[]>([]);
-  useEffect(() => {
-    let life: EffectLife | null = null;
-    const measure = () => {
-      if (life && !life.ended) return;
-      life = new EffectLife();
-      const mine = life;
-      mine.frame(() => {
-        mine.end();
-        const next = [...mapEdges(), ...socketBranches((t) => visibilityOf(t.element()) === "visible")];
-        // Drawn again only when something moved: a list committing every
-        // frame must not redraw an unchanged map every frame.
-        setEdges((now) => sameEdges(now, next) ? now : next);
-      });
-    };
-    measure();
-    const stop = onGeometryChange(measure);
-    return () => { stop(); life?.end(); };
-  }, []);
-  return edges;
-}
 
 /** Each pulse still travelling, and the layer it is in now. */
 function pulses(cue: CueFrame): { at: Point; layer: Layer }[] {
@@ -120,7 +91,7 @@ function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
   const moving = pulses(cue).filter((p) => p.layer === layer);
   if (!line.length && !moving.length && !ends) return null;
   return (
-    <g data-cue={cue.cueId} data-queued={cue.queued ? "true" : "false"}
+    <g data-cue={cue.cueId} data-queued={cue.queued ? "true" : "false"} data-edges={edges.map((e) => e.id).join(" ")}
        data-arrived={ends ? (cue.box ? "true" : "false") : undefined}
        style={{ opacity: fadeAt(cue.elapsed, cue.schedule) }}>
       {line.length > 1 && cue.queued && <path d={pathOf(line)} className="ui-route-queued" />}
@@ -147,7 +118,6 @@ function spoken(t: Translate, showing: CueFrame[], waiting: number): string {
 
 export function UiPipelineLayer() {
   const t = useT();
-  const map = useMap();
   const showing = useSyncExternalStore(cues.subscribe, cues.get);
   const source = useSyncExternalStore(orbSource.subscribe, orbSource.get);
   return (
@@ -162,7 +132,6 @@ export function UiPipelineLayer() {
               <filter id="ui-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" /></filter>
             </defs>
           )}
-          {map.filter((e) => layerOf(e) === layer).map((e) => <path key={e.id} d={pathOf(e.points)} className="ui-map" data-edge={e.id} />)}
           {showing.map((cue) => <CueInLayer key={cue.cueId} cue={cue} layer={layer} />)}
         </svg>
       ))}
