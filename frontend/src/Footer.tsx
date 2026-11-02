@@ -6,10 +6,12 @@
  */
 
 import "./ui-left.css";
+import { useT } from "./locale";
 import { useUiTarget } from "./uiRegistry";
 
 export function Footer() {
-  const ui = useUiTarget({ ref: { region: "footer", view: "footer.fixed", kind: "footer" }, label: "Footer",
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "footer", view: "footer.fixed", kind: "footer" }, label: t("targets.footer"),
                            socket: { rail: "rail.footer", side: "left" } });
   return (
     <footer id="footer">

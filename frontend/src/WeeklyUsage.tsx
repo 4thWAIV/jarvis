@@ -30,11 +30,12 @@ type PartRef = (el: Element | null) => void;
  *  one named, else the one the figures say, else the running brain), or
  *  none while that is not known. */
 function useAccountTarget(provider: string | undefined, week: Week | null) {
+  const t = useT();
   const live = useSyncExternalStore(brains.subscribe, brains.get);
   const key = provider ?? week?.provider?.service ?? activeBrain(live.value) ?? undefined;
   const ref: TargetRef = { region: "left", view: "left.fixed", kind: "brainAccount", key };
   const valid = key !== undefined && targetProblem(ref) === null;
-  return useUiTarget(valid ? { ref, label: `${PROVIDERS[key]?.name ?? key} account`,
+  return useUiTarget(valid ? { ref, label: t("targets.account", { provider: PROVIDERS[key]?.name ?? key }),
                                socket: { rail: "rail.left", side: "left" } } : null);
 }
 

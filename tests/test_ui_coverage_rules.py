@@ -72,6 +72,10 @@ def test_the_negative_fixtures_are_rejected_rule_by_rule():
         ("UnlocalizedLabels.tsx", 14, "label-unlocalized"),
         ("UnlocalizedLabels.tsx", 15, "label-unlocalized"),
         ("UnlocalizedLabels.tsx", 16, "label-unlocalized"),
+        # A target's label, which the brain's map reads: English written in,
+        # and the catalog read in one fixed language.
+        ("UnlocalizedTargetLabels.tsx", 12, "label-unlocalized"),
+        ("UnlocalizedTargetLabels.tsx", 14, "label-unlocalized"),
         # A tab of its own, a keyboard handler, a conditional control, and a
         # classification nobody reviewed.
         ("UnregisteredControls.tsx", 13, "control-unclassified"),

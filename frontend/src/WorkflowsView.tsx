@@ -80,7 +80,7 @@ export function WorkflowsView() {
   const doneShown = useSyncExternalStore(showDone.subscribe, showDone.get);
   useEffect(() => () => showDone.set(false), []);
   const ui = useUiTarget({ ref: { region: "right", view: "right.workflows", kind: "workflowsList" },
-                           label: "Workflows", socket: RIGHT_SOCKET });
+                           label: t("tabs.right.workflows"), socket: RIGHT_SOCKET });
   const [, setNow] = useState(0);
   useTick(30000);
   const list = live.value?.workflows ?? [];

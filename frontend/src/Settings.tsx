@@ -32,7 +32,7 @@ import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
-import { translate, useT, type Translate } from "./locale";
+import { useT, type Translate } from "./locale";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
 import type { CommandArgs, SideEffect } from "./uiContract";
@@ -140,7 +140,7 @@ function formatUptime(t: Translate, seconds: number): string {
 function SettingsSection({ id, children }: { id: SectionId; children: ReactNode }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "overlay", view: "overlay.settings", kind: "settingsSection", key: id },
-                           label: `Settings, ${translate("en", sectionKey(id))}`, socket: SOCKET });
+                           label: t("targets.settingsSection", { section: t(sectionKey(id)) }), socket: SOCKET });
   return (
     <section className="settings-section" id={`settings-${id}`} ref={ui.whole}>
       <h3 ref={ui.part("heading")}>{t(sectionKey(id))}</h3>
@@ -195,7 +195,7 @@ export function Settings() {
   }, [shown, section]);
 
   const ui = useUiTarget(shown ? { ref: { region: "overlay", view: "overlay.settings", kind: "settings" },
-                                   label: "Settings", socket: SOCKET } : null);
+                                   label: t("menu.settings"), socket: SOCKET } : null);
 
   if (!shown) return null;
   const close = bindingProps(bind("settings.close", {}));

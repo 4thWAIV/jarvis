@@ -8,7 +8,8 @@ to another message (`queue.message.show`) and the questions before
 discarding and before Done (`queue.discard.ask`, `queue.done.ask`). Also the
 targets and reveals added with them: a task card's progress bar, a
 subagent's row in the right panel, a subsystem's check and a folder's entry
-brought into view by the commands their keys name.
+brought into view by the commands their keys name. And the one rule for
+the brain's map: every target's label in the language in force.
 
 Each control carries the command it runs (`data-ui-command`); clicking it
 and the brain's `ui_request` leave the view showing the same thing.
@@ -317,5 +318,62 @@ async def test_the_queues_new_reply_links_and_questions_are_the_same_by_hand_and
             # A response that did not fail cannot be put back in the editor.
             result = await voice.navigate("queue.draft.edit", {"messageId": target})
             assert (result["status"], result["reason"]) == ("unavailable", "no-entity")
+        finally:
+            await browser.close()
+
+
+class _LanguageSessions:
+    """The sessions socket: its opening snapshot, then a language frame."""
+
+    def __init__(self):
+        self.ws = None
+
+    def __call__(self, ws):
+        self.ws = ws
+        ws.send(json.dumps({"type": "snapshot", "sessions": []}))
+
+    def language(self, language):
+        self.ws.send(json.dumps({"type": "language", "language": language}))
+
+
+async def _labels(voice):
+    result = _completed(await voice.request({"kind": "map"}))
+    return {(t["ref"]["kind"], t["ref"].get("key")): t["label"] for t in result["map"]["targets"]}
+
+
+@pytest.mark.asyncio
+async def test_the_maps_labels_follow_the_language_in_force_and_identities_do_not(page_url):
+    """One rule for discovery: every target's label is in the language in
+    force (Settings' sections included); its kind and key are the same in
+    both languages."""
+    sessions = _LanguageSessions()
+    async with async_api.async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        voice = _Voice()
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route_web_socket("**/ws/sessions", sessions)
+        await page.goto(page_url)
+        await page.wait_for_selector(".right-tabs [role=tab]")
+        try:
+            _completed(await voice.navigate("settings.open", {"section": "voice"}))
+            await page.wait_for_selector("#settings-language")
+            english = await _labels(voice)
+            assert english[("orb", None)] == "The orb"
+            assert english[("settingsSection", "voice")] == "Settings, Voice"
+            assert english[("settings", None)] == "Settings"
+
+            sessions.language("es")
+            await page.wait_for_function("document.documentElement.lang === 'es-419'")
+            spanish = await _labels(voice)
+            assert set(spanish) == set(english), "the same targets, by the same identities"
+            assert spanish[("orb", None)] == "El orbe"
+            assert spanish[("settingsSection", "voice")] == "Configuración, Voz"
+            assert spanish[("settings", None)] == "Configuración"
+            assert spanish[("status", None)] == "Estado"
         finally:
             await browser.close()

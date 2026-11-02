@@ -48,6 +48,22 @@ export const shellEn = {
   "language.unreadable": "The language could not be read ({error}); trying again.",
   "language.reading": "Reading the language…",
 
+  // What the brain's map (ui_map) calls the targets that have no name of
+  // their own; a target named by its record (a folder, an agent) shows
+  // that name. In the language in force, like everything shown.
+  "targets.agentsList": "Agents list",
+  "targets.registeredFolders": "Registered folders",
+  "targets.footer": "Footer",
+  "targets.menuButton": "Menu button",
+  "targets.microphone": "Microphone",
+  "targets.orb": "The orb",
+  "targets.status": "Status",
+  "targets.teamServer": "Team server",
+  "targets.signInReminder": "Sign-in reminder",
+  "targets.voiceHealth": "Voice health",
+  "targets.account": "{provider} account",
+  "targets.settingsSection": "Settings, {section}",
+
   // An agent's subagents at work (agents.ts workingCount, on the Agents tab).
   "agents.working": "{count} working",
   "agents.workingCapped": "{count}+ working",

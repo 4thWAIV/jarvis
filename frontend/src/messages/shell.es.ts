@@ -42,6 +42,19 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "language.unreadable": "No se pudo leer el idioma ({error}); reintentando.",
   "language.reading": "Leyendo el idioma…",
 
+  "targets.agentsList": "Lista de agentes",
+  "targets.registeredFolders": "Carpetas registradas",
+  "targets.footer": "Pie de página",
+  "targets.menuButton": "Botón del menú",
+  "targets.microphone": "Micrófono",
+  "targets.orb": "El orbe",
+  "targets.status": "Estado",
+  "targets.teamServer": "Servidor del equipo",
+  "targets.signInReminder": "Recordatorio para iniciar sesión",
+  "targets.voiceHealth": "Salud de la voz",
+  "targets.account": "Cuenta de {provider}",
+  "targets.settingsSection": "Configuración, {section}",
+
   "agents.working": "{count} trabajando",
   "agents.workingCapped": "{count}+ trabajando",
 

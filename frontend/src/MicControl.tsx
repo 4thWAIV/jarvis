@@ -66,7 +66,8 @@ function MicLevel({ partRef }: { partRef: PartRef }) {
 }
 
 export function MicControl() {
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: "Microphone",
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: t("targets.microphone"),
                            socket: { rail: "rail.left", side: "left" } });
   return (
     <div id="mic-control" ref={ui.whole}>

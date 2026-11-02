@@ -125,7 +125,7 @@ export function QueuePanel() {
   const dir = useSyncExternalStore(directory.subscribe, directory.get);
   const open = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const ui = useUiTarget({ ref: { region: "right", view: "right.queue", kind: "queuePanel" },
-                           label: "Queue", socket: RIGHT_SOCKET });
+                           label: t("tabs.right.queue"), socket: RIGHT_SOCKET });
   useTick(30000);
   useLayoutEffect(() => { queueLaidOut.set(queueLaidOut.get() + 1); });
 

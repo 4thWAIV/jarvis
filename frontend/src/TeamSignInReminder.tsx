@@ -57,7 +57,7 @@ export function TeamSignInReminder() {
   const box = useRef<HTMLDivElement>(null);
   const shown = needsSignIn(live.value) && !hidden;
   const ui = useUiTarget(shown ? { ref: { region: "main", view: "main.notice", kind: "teamReminder" },
-                                   label: "Sign-in reminder", socket: { rail: "rail.main", side: "right" } }
+                                   label: t("targets.signInReminder"), socket: { rail: "rail.main", side: "right" } }
                                : null);
 
   useLayoutEffect(() => {

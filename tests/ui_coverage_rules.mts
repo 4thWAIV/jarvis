@@ -35,7 +35,10 @@
 //                         catalog (`t("key")`, frontend/src/locale.ts): JSX
 //                         text, a string in a JSX expression, a LABELLED
 //                         attribute (aria-label, title, placeholder, alt,
-//                         label), or a `title:` property in a .tsx file.
+//                         label), or a `title:` property in a .tsx file;
+//                         and a target's `label` (useUiTarget), which the
+//                         brain's map reads, in .ts files too, including
+//                         the catalog read in one fixed language.
 //                         Names that stay as they are in every language
 //                         (KEPT_AS_IS) and text with no words (symbols,
 //                         numbers, a hex id) are not words to translate; a
@@ -280,6 +283,8 @@ function checkTarget(call: ts.CallExpression): void {
   if (!ts.isIdentifier(call.expression) || symbolOf(call.expression)?.name !== "useUiTarget") return;
   const allowed = new Set<string>();
   for (const spec of call.arguments.length ? literals(call.arguments[0]) : []) {
+    const label = prop(spec, "label");
+    if (label) checkTargetLabel(label);
     const refExpr = prop(spec, "ref");
     for (const { node, pairs, key } of refExpr ? refPairs(refExpr) : []) {
       if (!pairs.length) {
@@ -347,6 +352,21 @@ function shownLiterals(e: ts.Expression, out: ts.Node[] = []): ts.Node[] {
     shownLiterals(e.right, out);
   }
   return out;
+}
+
+/** A target's label is what the brain's map reads (ui_map): the catalog's
+ *  words in the language in force, never English written in, nor the
+ *  catalog read in one fixed language (`translate("en", …)`). */
+function checkTargetLabel(e: ts.Expression): void {
+  for (const lit of shownLiterals(e)) report("label-unlocalized", lit, `target label ${lit.getText().slice(0, 40)}`);
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && symbolOf(n.expression)?.name === "translate"
+        && n.arguments[0] && ts.isStringLiteral(bare(n.arguments[0]))) {
+      report("label-unlocalized", n, `target label in one language ${n.getText().slice(0, 40)}`);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(e);
 }
 
 function checkWords(n: ts.Node): void {

@@ -51,7 +51,7 @@ export function FoldersPanel() {
   const selected = useSyncExternalStore(selectedFolder.subscribe, selectedFolder.get);
   const text = useSyncExternalStore(search.subscribe, search.get);
   const ui = useUiTarget({ ref: { region: "right", view: "right.folders", kind: "foldersList" },
-                           label: "Registered folders", socket: RIGHT_SOCKET });
+                           label: t("targets.registeredFolders"), socket: RIGHT_SOCKET });
   useLayoutEffect(() => () => search.set(""), []);
   const folders = (live.value?.folders ?? []).filter((f) => shownBy(text, f));
   const unavailable = (live.value?.folders ?? []).filter((f) => f.location.availability !== "available").length;

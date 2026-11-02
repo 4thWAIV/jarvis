@@ -53,9 +53,9 @@ export function MenuControl() {
   const tr = useT();
   const shown = useSyncExternalStore(open.subscribe, open.get);
   const button = useUiTarget({ ref: { region: "overlay", view: "overlay.controls", kind: "menu" },
-                               label: "Menu button", socket: SOCKET });
+                               label: tr("targets.menuButton"), socket: SOCKET });
   const menu = useUiTarget(shown ? { ref: { region: "overlay", view: "overlay.menu", kind: "menu" },
-                                     label: "Menu", socket: SOCKET } : null);
+                                     label: tr("menu.button"), socket: SOCKET } : null);
 
   useEffect(() => {
     if (!shown) return;

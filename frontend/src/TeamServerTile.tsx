@@ -85,7 +85,7 @@ export function TeamServerTile() {
   const r = serverReading(live.value);
   const contact = sinceMs(live.value?.last_contact_at);
   const dash = <b>—</b>;
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "teamServer" }, label: "Team server",
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "teamServer" }, label: t("targets.teamServer"),
                            socket: { rail: "rail.left", side: "left" } });
   return (
     <button type="button" id="team-server-tile" ref={ui.whole}
