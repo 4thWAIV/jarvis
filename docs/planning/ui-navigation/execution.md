@@ -673,3 +673,44 @@ Stale responses (a read answered after a pushed frame) and the refused-change pa
 - The browser's own file picker words ("Choose Files") follow Chrome's language.
 - Recorded content (stored conversation notices, the voice record) is shown as it was written.
 
+
+## Remaining gaps (2026-11-01, branch `ui-nav-remaining-gaps`)
+
+Tim's instruction (JARVIS message 775, capture 47): every remaining issue
+evaluated, recorded and addressed. Branch from `feature/ui-navigation-pipeline`
+at af9b499, not pushed. Leaf sibling routing and the Spanish register
+(`tú`/`usted`) belong to `ui-nav-routing-register` and are not touched here;
+any new Spanish string that addresses the person uses `usted`.
+
+### Inventory
+
+| # | What | Where | Fix |
+|---|---|---|---|
+| A1 | Team server errors reach the page as English sentences: `TeamError` and `last_error` from pairing, the status poll and the network exchange (about 30 sites), and the team routes' refusals. Settings, Team, the team server view and the Diagnostics team row show them in English in Spanish. | `jarvis/team_client.py`, `jarvis/team_api.py`, `jarvis/subsystem_diagnostics.py` (team row); page `TeamSection.tsx`, `teamSignIn.ts`, `TeamServerView.tsx`, `subsystems.ts` | Every message of JARVIS's own becomes a code and values (one table, `team_client.TEAM_SAID`, its English unchanged); `TeamError` carries them. Added beside the existing fields, nothing removed: `last_error_said` on `/api/team` and on `/api/team/network`, `said` inside a refusal's `error`. Words the team server itself sent are the `detail`, shown as original detail. The page words a code from the shell catalog (`shell.team.error.<code>`), else shows the English as it came. |
+| A2 | Voice causes are English sentences: the live health cause ("The page was busy for 807 ms"), each sample's and incident's cause, the summary's cause, and the model-load event's line. | `jarvis/voice_diagnostics.py` (`classify`, samples, events, health), `jarvis/speech_models.py` (model-load line), `jarvis/subsystem_diagnostics.py` (voice row); page `VoiceDiagnosticsView.tsx`, `MicControl.tsx`, `subsystems.ts` | `classify` keeps its English and gains a code and values (`voice_diagnostics.CAUSES`); samples and events store `cause_code` / `cause_values` (new columns, added to an existing database), the health frame and the summary carry `causeCode` / `causeValues`; the model-load event stores `text_code` / `text_values`. The page words them from `shell.voice.cause.<code>`; a stored record without a code is shown as written, marked original detail. |
+| A3 | An incident's own line (a `TranscriptionError` message, e.g. "Speech input is not running.") | `voice_diagnostics` events `text` | Evaluated, kept as it is: the incident's kind is already worded by its code (`incidentWords`); the line is the recogniser's detail and stays shown as original detail. Nine sites share five codes with different sentences, so a code per sentence would be a second vocabulary for one meaning. |
+| B1 | FolderDetail's mode switches: Edit, Reconnect, Remove, their Cancel and Keep it (6 controls) | `FolderDetail.tsx` | New command `folder.mode {folderId, mode: view\|edit\|reconnect\|remove}` (folders.json); the mode moves from component state into a store beside it; nothing is checked or saved by it. |
+| B2 | FoldersView's Add form Cancel | `FoldersView.tsx` | Runs the existing `folders.add.open {open: false}`. |
+| B3 | MessageComposer's discard confirmation: Discard (asks), Keep it | `MessageComposer.tsx` | New command `queue.discard.ask {open}` on the open item's composer; the store moves to `queue.ts`. The discarding itself stays `domain`. |
+| B4 | QueueItemView: Respond and Reply to this | `QueueItemView.tsx` | New command `queue.reply {messageId}`: opens the reply editor on the open item, answering that message (nothing saved until he writes). |
+| B5 | QueueItemView: the links to a replied-to, reply or related message (3 controls) | `QueueItemView.tsx` | New command `queue.message.show {messageId}`: in the open item it scrolls to the message; in another item it follows the link (as `queue.follow`). |
+| B6 | QueueItemView: Edit (a failed or cancelled response, back in the editor) | `QueueItemView.tsx` | New command `queue.draft.edit {messageId}`: puts that response back in the editor (nothing sent or saved). |
+| B7 | QueueItemView: the Done blockers' Discard reply (asks) and Keep working | `QueueItemView.tsx` | New command `queue.done.ask {step: closed\|blockers\|discard}`; the prompt's state moves to `queue.ts`. Done itself and Discard and dismiss stay `domain`. |
+| B8 | QueuePanel's New message | `QueuePanel.tsx` | New command `queue.new {}`: opens the blank composer in the centre (`queue.ts` `startNew`). |
+| B9 | VoiceDiagnosticsView's range buttons and quiet-page switch, and the timeline marks' zoom | `VoiceDiagnosticsView.tsx`, `VoiceVisuals.tsx` | New commands `voice.range {range}`, `voice.zoom {at?}` (no `at` zooms out) and `voice.quiet {quiet}` (diagnostics.json); range and zoom move into a store. |
+| B10 | WorkflowDetail's transcript scroll (whether it follows the newest entries) | `WorkflowDetail.tsx` | New command `workflow.transcript.follow {sessionId, agentId?, follow}`; a person's scroll runs it only when following starts or stops, never per scroll event. |
+| B11 | The task card's progress bar has no target (`TaskBar` takes no ref) | `WorkflowsView.tsx`, `WorkflowDetail.tsx` | `TaskBar` takes a ref; the task card registers it as its declared `progress` part. |
+| B12 | Composite-key reveals: a subsystem's check (`<subsystem>/<check>`) and a folder entry (`<folder>/<path>`) have no way to be brought into view | `SubsystemView.tsx`, `FolderDetail.tsx` | Revealers (the existing `registerRevealer` contract): `subsystem.open` from the key's first part; `folders.open` then `folder.browse` to the entry's directory. |
+| B13 | `workflow.open {tab?}` | `navigation.json`, `workflows.ts`, `WorkflowDetail.tsx` | Evaluated below (fits as an optional argument, or recorded). |
+| B14 | Subagent rows in the right panel are not targets | `WorkflowsView.tsx` | The subagent kind is keyed `[session, subagent]` now, so the row registers as `subagent` in `right.workflows` (row, state). |
+| C | Brain discovery labels follow two rules: Settings' sections and about fifteen other targets give English labels (`translate("en", …)`, literals), the rest the language in force | `Settings.tsx`, `MenuControl.tsx`, `Footer.tsx`, `MicControl.tsx`, `OrbControl.tsx`, `StatusControl.tsx`, `TeamServerTile.tsx`, `TeamSignInReminder.tsx`, `WeeklyUsage.tsx`, `AgentsControl.tsx`, `FoldersPanel.tsx`, `QueuePanel.tsx`, `VoiceSummary.tsx`, `WorkflowsView.tsx` | One rule: every target's label in the language in force, from the catalog; command and target identities unchanged. The coverage rule `label-unlocalized` also reads a target's `label:`, so a new English label fails CI. |
+| D1 | Spanish values cut by width | style.css | Already fixed (18a08e9: "Escritura", "Entrada de voz" wrap); nothing left. |
+| D2 | Register `tú` / `usted` | catalogs | `ui-nav-routing-register`'s; not touched. |
+| D3 | The browser's own file picker words ("Choose Files") | Chrome | Stays: Chrome draws them in its own language; no page can word them. |
+| D4 | Recorded content shown as written (stored conversation notices, the voice record's message lines, older voice records without a code) | records | Stays: changing the language never rewrites a record. New voice records carry codes (A2). |
+| D5 | Not applied in the core integration: a `source-occluded` reason, a `ui_state` page frame, passing the page into the turn explicitly | ui_contract, ui_control | Evaluated, kept out: each is a contract or protocol shape change the plan lists as optional; nothing fails without them. Recorded for the review. |
+| D6 | `useUiTarget` throws on a key that fails its pattern | `uiRegistry.ts` | Evaluated, kept: the contract says a bad key fails clearly, and every data-derived key now comes from the record's own identity (the `index-key` rule). |
+| D7 | `missingHandlers()` in the map answer, `visibilityOf` and `pointer-events: none` (left-settings, optional) | uiRegistry, ui_control | Evaluated, kept out: `tests/ui_navigation_cases.mts` already fails CI on a declared command without a handler; the other two were noted as optional with no failing case. |
+| D8 | `InputWords` (voice input) beside `Said` | `voiceInput.ts`, `locale.ts` | Evaluated, kept: the integration recorded it as a follow-up; one user, no wrong words shown. |
+| D9 | The health dot and other parts beside a sibling are `blocked / no-route` | uiPipeline.ts | Leaf sibling routing, `ui-nav-routing-register`'s. |
+
