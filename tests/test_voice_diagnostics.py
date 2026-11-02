@@ -266,6 +266,7 @@ def test_a_capture_s_second_combines_the_recogniser_the_server_and_the_page(monk
     monkeypatch.setattr(vd, "load_average", lambda: 15.0)
     probe = vd.LoopProbe()
     monitor = vd.CaptureMonitor(FakeCapture(), "c1", probe, None)
+    vd._take_typed()          # what earlier tests typed (the count is the process's) is not this second's
     vd.note_typed()
     asyncio.run(_feed(monitor, vd.parse_telemetry(telemetry())))
     s = monitor.sample(now=5.0)
