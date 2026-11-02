@@ -265,7 +265,7 @@ def test_a_new_pairing_never_takes_an_answer_meant_for_the_old_one(dbname, tmp_p
 
         async def re_paired_meanwhile(method, path, body=None):
             answer = await real_call(method, path, body)
-            if method == "POST" and path == "/api/v1/messages":
+            if method == "POST" and path.split("?")[0] == "/api/v1/messages":
                 tim.connection.generation += 1          # paired again while it was out
             return answer
         tim.connection.call = re_paired_meanwhile

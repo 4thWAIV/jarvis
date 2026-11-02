@@ -377,6 +377,48 @@ readable; only the entry count and total size refuse the whole archive.
 Tar, gzip, 7z, RAR and split archives are `unsupported`; a nested archive
 is a member (`nested_archive`), never expanded.
 
+The transport crosses the wire under its own capability,
+`messaging.bundles.v1`, which the team server offers beside `messaging.v1`
+(`messaging_models.bundles_offered`). A node's update carries its
+`AttachmentCapabilities` (`bundle_capabilities.local_capabilities`: the
+readers' health, checked at most every five minutes, the archive budgets
+and the work-package modes; `zip` always); the snapshot shows each node's
+own with `attachments_observed_at`, and a node judged from it is
+`advertised`, `legacy` (none: an older JARVIS), `stale` (checked over
+`CAPABILITY_FRESH_SEC` ago) or `offline`. A message may carry `task` (a
+`TaskContext`: outcome, primary and supporting artifacts by attachment id
+and hash, answer to the sender only) and `supersedes` (a file of an earlier
+message in the same thread between the same two people, which is kept);
+both are in the digest only when set, so every older digest is unchanged.
+A draft holds them (`Draft.task`, `.supersedes`); `draft_content` and the
+read-back include them only while the server offers bundles
+(`MessageApprovals(bundles=...)`, from `Delivery.bundles_offered`), else
+the read-back says the task does not go, and a change of server between
+review and yes is a new digest and a new review. The recipient's
+openability is a receipt kind (`openability`, one `OpenabilityReport` per
+file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
+the inspection service's observations per (message, file, revision)
+(`human_openability`, messaging store schema 3), owes the receipt when the
+report changes, and delivery sends it only to a server offering bundles.
+JARVIS asks every message and receipt route for the bundle fields
+(`?bundles=1`); a team server answers a JARVIS that does not ask with the
+messaging.v1 fields only (`messaging.legacy_view`), so older nodes keep
+working. `bundle_preflight.SenderPreflight` inspects the draft's own
+snapshots (`DraftFiles`) with the same inspection service, derives what
+the message needs, and judges each of the recipient's nodes on its own:
+blocked, ready, partial or unknown, with only the gaps the sender can act
+on; a review of a draft with files stores it with the revision
+(`human_preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
+`LocalMessaging.edit_bundle`), adds companions beside the original
+(`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
+thread with a flattened copy checked member by member, or companions,
+from `FileSnapshots.original_bytes`), and keeps the recipient's review
+checklist (`human_review`, never sent), resumed across a repair. A received
+file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
+transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
+`messaging_runtime` builds and binds the three records; a draft edit from a
+worker thread runs on the event loop (`MessagingRuntime.on_loop`).
+
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
 seconds while paired, `team_client` sends one node update to the team
@@ -388,9 +430,10 @@ sent; `GET /api/team/network` returns it unchanged, and a `network` hint on
 (`data_paths.node_id()`, one per data directory), the boot ID and update
 sequence (`team_api`), the machine's CPU and memory (`host_resources.py`),
 each brain's account as a keyed hash with its quota windows
-(`brain_accounts.py`; no email leaves the machine) and the last human
+(`brain_accounts.py`; no email leaves the machine), the last human
 activity (`human_activity.py`: a sequence number, an age and a source, never
-content). The team server binds each node to the member whose session first
+content) and what it can open (`bundle_capabilities.py`, see "Collaboration
+bundles"). The team server binds each node to the member whose session first
 published it, refuses an older boot or sequence, and works out presence
 (online within 15 s, delayed to 45 s, then offline), the brains' pace and
 its own health when the snapshot is built. The brain's `team_network` reads

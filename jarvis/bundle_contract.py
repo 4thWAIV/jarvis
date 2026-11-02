@@ -13,9 +13,9 @@ member says so (`complete` false, with a `continuation`), never silently
 truncated.
 
 `Operation`, `FormatId` and `Openability` cross the wire (capability
-advertisement, openability receipts). The transport lane moves them into
-`team_server/teamserver/messaging_models.py` and this module then imports
-them from `jarvis.messaging_wire`, so every name here stays where it is.
+advertisement, openability receipts), so they are defined in
+`team_server/teamserver/messaging_models.py` and imported here from
+`jarvis.messaging_wire`; every name here stays where it was.
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ from typing import Annotated, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from jarvis.messaging_wire import FormatId, Openability, Operation  # noqa: F401  (re-exported)
 
 # The shape version of everything below. A change that a page or a lane
 # already built against would misread moves it.
@@ -51,20 +53,9 @@ GAPS_MAX = 20
 
 # -- shared words ------------------------------------------------------------------------
 
-# What can be done with a file. `download` and `list_archive` are about the
-# container, `read_text` and `render` about a document, `ocr` reads text
-# from page images, `edit_export` makes a changed or converted copy, and
-# `execute` runs something (work packages only, never during inspection).
-Operation = Literal["download", "list_archive", "extract", "read_text", "render",
-                    "ocr", "edit_export", "execute"]
-
-# A file's actual format, decided from its content and then its extension.
-FormatId = Literal[
-    "folder", "zip", "tar", "gzip", "7z", "rar",
-    "pdf", "text", "markdown", "json", "csv", "tsv", "html", "svg",
-    "png", "jpeg", "gif", "webp", "heic",
-    "docx", "xlsx", "pptx", "doc", "xls", "ppt", "rtf",
-    "audio", "video", "unknown"]
+# What can be done with a file (Operation) and a file's actual format
+# (FormatId) cross the wire in capability advertisements, so they are the
+# wire's: see messaging_wire.
 
 # Whether this JARVIS can read a member: all of it, some of it (`reason`
 # says what not), not at all with the readers it has, or refused for safety.
@@ -100,13 +91,7 @@ REASONS_SHOWN: dict[str, str] = {
     "formulas_not_evaluated": "Formulas are shown as written, with their saved values.",
 }
 
-# A received file's openability on the recipient's node, reported to the
-# sender: verified (downloaded, hash checked, every required member read),
-# ready (downloaded and checked, readers for everything, not all read yet),
-# partial (some required members unreadable), unsupported (no reader for
-# the primary document), corrupt (hash or container wrong), unavailable
-# (could not be downloaded).
-Openability = Literal["verified", "ready", "partial", "unsupported", "corrupt", "unavailable"]
+# Openability (the recipient's report to the sender) is the wire's too.
 
 # The sender's prediction before sending.
 Readiness = Literal["ready", "partial", "unknown", "blocked"]

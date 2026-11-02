@@ -452,7 +452,7 @@ def test_the_transports_answers_map_onto_the_contracts_codes():
         assert e.value.code == code and check(e.value)
     assert asyncio.run(t.sync(UUID(int=1), "c/1", 5)).scan_complete
     assert conn.calls[-1][1] == (f"/api/v1/messages/sync?node_id={UUID(int=1)}"
-                                 "&limit=5&continuation=c%2F1")
+                                 "&limit=5&continuation=c%2F1&bundles=1")
 
 
 def test_the_loop_backs_off_with_jitter_and_stops_cleanly(tim):

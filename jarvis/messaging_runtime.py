@@ -19,6 +19,12 @@ exactly one instance and one source for who this JARVIS is:
     announcer      arrival_announcer.ArrivalAnnouncer, through server.py's
                    notice path
     local          messaging_api.LocalMessaging, behind /api/team/messages
+    bundle records bundle_status.OpenabilityStatus (the recipient's
+                   openability, its receipts sent by delivery),
+                   bundle_preflight.SenderPreflight (a draft's readiness,
+                   stored with the revision reviewed) and
+                   bundle_tasks.BundleTasks (task, companions, repair and
+                   the review checklist), each bound in its module
     human, tools   message_approvals.HumanMessaging and MessagingTools: the
                    capture path and the brain's draft and review tools
 
@@ -33,6 +39,7 @@ FOLLOW_EVERY_SEC); signed out, the routes still answer, saying so.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Awaitable, Callable, Optional
@@ -40,12 +47,15 @@ from uuid import UUID
 
 from fastapi import FastAPI
 
+from jarvis import bundle_preflight, bundle_status, bundle_tasks
 from jarvis import data_paths
 from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
 from jarvis import messaging_ports as ports
 from jarvis.arrival_announcer import ArrivalAnnouncer, Wording, serve_labels
+from jarvis.bundle_cache import DerivedCache
+from jarvis.bundle_inspection import BundleInspection
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, Identity,
                                       MessageApprovals, MessagingTools, Reviews)
 from jarvis.messaging_client import Delivery, Pairing, TeamCalls, TeamTransport
@@ -98,25 +108,47 @@ class MessagingRuntime:
                  node_id: Callable[[], str] = data_paths.node_id,
                  clock: ports.Clock = ports.utcnow):
         self.connection, self.send_frame = connection, send_frame
+        try:
+            self.loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:                          # built outside the server (a script)
+            self.loop = None
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
         self.store.forget_captures()
         self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
                                                    on_change=self.hint)
-        self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(), clock=clock)
+        self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(),
+                                          clock=clock, bundles=lambda: self.delivery.bundles_offered())
         current = _CurrentTransport(self._transport_now)
         self.presentation = ServePresentation(transport=current, node_id=self.node,
                                               send=send_frame, clock=clock)
         self._arrived = asyncio.Event()
         presenting = _Presenting(self.presentation, self._arrived.set)
+        cache = DerivedCache()
+        self.received = BundleInspection(bundle_tasks.MessageFiles(self.files), cache,
+                                         observer=bundle_status.observe)
+        self.openability = bundle_status.OpenabilityStatus(
+            self.store, members=bundle_status.members_of(self.received), clock=clock,
+            on_change=lambda: self.soon(self.delivery.wake))
         self.delivery = Delivery(store=self.store, connection=connection, guard=self.approvals,
                                  snapshots=self.files, presentation=presenting,
                                  node_id=lambda: self.node, clock=clock,
-                                 on_change=self.hint, transport_for=self._guarded)
+                                 on_change=self.hint, transport_for=self._guarded,
+                                 openability=self.openability)
         self.reviews = Reviews(self.approvals, captures, self.members)
+        self.preflight = bundle_preflight.SenderPreflight(
+            self.store, BundleInspection(bundle_preflight.DraftFiles(self.files, self.store),
+                                         cache),
+            network=lambda: _snapshot(network_raw), clock=clock)
         self.local = messaging_api.LocalMessaging(
             store=self.store, delivery=self.delivery, guard=self.approvals,
-            reviews=self.reviews, snapshots=self.files, clock=clock)
+            reviews=self.reviews, snapshots=self.files, clock=clock, preflight=self.preflight)
+        self.tasks = bundle_tasks.BundleTasks(
+            self.store, self.local, self.files, drafts=self.preflight.inspection,
+            messages=self.received, status=self.openability.status, on_loop=self.on_loop)
+        bundle_status.bind(self.openability, also=(self.tasks.observe,))
+        bundle_preflight.bind(self.preflight)
+        bundle_tasks.bind(self.tasks)
         self.human = HumanMessaging(
             approvals=self.approvals, identity=self.identity,
             availability=self.delivery.known_availability, recipients=self.members,
@@ -168,9 +200,36 @@ class MessagingRuntime:
             return None
         return messaging_files.FilesContext(self.files, who.server_id, who.owner_github_id)
 
+    def soon(self, fn: Callable[[], None]) -> None:
+        """Run `fn` on the event loop: at once when called on it, else
+        handed to it (a bundle read or edit runs in a worker thread)."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if self.loop is None or running is self.loop:
+            fn()
+        else:
+            self.loop.call_soon_threadsafe(fn)
+
+    def on_loop(self, fn):
+        """`fn()`'s result, run on the event loop and waited for from a
+        worker thread (a draft edit closes captures and sends hints, which
+        belong to the loop); called on the loop, it just runs."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if self.loop is None or running is self.loop:
+            return fn()
+
+        async def call():
+            return fn()
+        return asyncio.run_coroutine_threadsafe(call(), self.loop).result()
+
     def hint(self) -> None:
         """Tell every open page the queue changed (it reads it again)."""
-        self.send_frame({"type": ports.MESSAGES_HINT})
+        self.soon(lambda: self.send_frame({"type": ports.MESSAGES_HINT}))
 
     # -- the loops ------------------------------------------------------------------------
 
@@ -276,6 +335,15 @@ class MessagingRuntime:
             except (asyncio.CancelledError, Exception):
                 pass
         await self.delivery.stop()
+
+
+def _snapshot(network_raw: Callable[[], Optional[bytes]]) -> Optional[dict]:
+    """The stored team network snapshot as JSON, or None."""
+    try:
+        snapshot = json.loads(network_raw() or b"null")
+    except ValueError:
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
 
 
 class _NotStarted:

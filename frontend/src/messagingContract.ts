@@ -5,7 +5,8 @@
 // count Unicode code points (`[...text].length`), not UTF-16 units.
 
 export const CAPABILITY = "messaging.v1";
-export const INTERFACE_REVISION = "messaging.v1-contract.3";
+export const BUNDLES_CAPABILITY = "messaging.bundles.v1";
+export const INTERFACE_REVISION = "messaging.v1-contract.4";
 export const SCHEMA_VERSION = 1;
 export const MESSAGES_HINT = "messages";
 export const TRANSFER_FRAME = "human_transfer";
@@ -23,7 +24,8 @@ export const LIMITS = {
 } as const;
 
 export type Placement = "queued" | "active" | "inactive";
-export type ReceiptKind = "received" | "read";
+export type ReceiptKind = "received" | "read" | "openability";
+export type Openability = "verified" | "ready" | "partial" | "unsupported" | "corrupt" | "unavailable";
 export type StagingState = "uploading" | "verified" | "pinned" | "published" | "expired";
 export type AnnouncementStep = "claim" | "attempted" | "completed";
 export type AnnouncementState = "claimed" | "attempted" | "completed";
@@ -100,6 +102,8 @@ export interface AcceptedMessage {
   subject: string;
   text: string;
   attachments: AttachmentRef[];
+  task: TaskContext | null;
+  supersedes: Supersedes[];
   server_id: string;
   sender_github_id: number;
   source_node_id: string;
@@ -124,6 +128,24 @@ export interface AnnouncementRequest {
   node_id: string;
   step: "claim" | "attempted" | "completed";
   lease_token: string | null;
+}
+
+/** A file of this message (by id and hash, never by its name alone), or one member of it by its archive path. */
+export interface ArtifactRef {
+  attachment_id: string;
+  sha256: string;
+  member_path: string | null;
+}
+
+/** What one node can do with a received file, on its node update: the readers that answered their health check `observed_age_ms` ago, the archive budgets, and the work-package manifests and modes it runs. A node without it is an older JARVIS: unknown, never assumed able. */
+export interface AttachmentCapabilities {
+  version: 1;
+  observed_age_ms: number;
+  max_file_bytes: number;
+  max_archive_entries: number;
+  max_expanded_bytes: number;
+  formats: FormatCapability[];
+  work_packages: WorkPackageCapability | null;
 }
 
 /** POST /api/v1/attachments. Owner and server come from the session. Creating the same attachment_id again with the same binding returns the existing record; a different binding is `idempotency_conflict`. */
@@ -175,6 +197,8 @@ export interface Draft {
   send: LocalSend;
   capture_id: number | null;
   agent_drafted: boolean;
+  task: TaskContext | null;
+  supersedes: Supersedes[];
 }
 
 /** Review, cancel or retry the draft as it was at this revision. */
@@ -192,6 +216,13 @@ export interface DraftSave {
   subject: string;
   text: string;
   attachment_ids: string[];
+}
+
+/** One format a node's readers handle now, the operations its health check passed, and the largest file it takes (None: the node's limit). */
+export interface FormatCapability {
+  format: "folder" | "zip" | "tar" | "gzip" | "7z" | "rar" | "pdf" | "text" | "markdown" | "json" | "csv" | "tsv" | "html" | "svg" | "png" | "jpeg" | "gif" | "webp" | "heic" | "docx" | "xlsx" | "pptx" | "doc" | "xls" | "ppt" | "rtf" | "audio" | "video" | "unknown";
+  operations: ("download" | "list_archive" | "extract" | "read_text" | "render" | "ocr" | "edit_export" | "execute")[];
+  max_bytes: number | null;
 }
 
 /** Dismissed items, newest arrival first (`wire.item_order_key`). */
@@ -252,6 +283,8 @@ export interface MessageContent {
   subject: string;
   text: string;
   attachments: AttachmentRef[];
+  task: TaskContext | null;
+  supersedes: Supersedes[];
 }
 
 export interface NodeReceipt {
@@ -263,6 +296,20 @@ export interface NodeReceipt {
 export interface OpenItem {
   expected_revision: number;
   command: "open";
+}
+
+/** The recipient node's technical report on one file of one message, after its owner told it to open the file: never the document's text, a device path or a log. `failed_member` is the archive's own path of the first member that failed; `reason` a bundle reason code. */
+export interface OpenabilityReport {
+  attachment_id: string;
+  sha256: string;
+  content_revision: number;
+  status: "verified" | "ready" | "partial" | "unsupported" | "corrupt" | "unavailable";
+  failed_operation: "download" | "list_archive" | "extract" | "read_text" | "render" | "ocr" | "edit_export" | "execute" | null;
+  failed_member: string | null;
+  reason: string | null;
+  members_total: number;
+  members_readable: number;
+  checked_at: string;
 }
 
 export interface PutBack {
@@ -300,13 +347,15 @@ export interface ReceiptFacts {
   received_at: string | null;
   read_at: string | null;
   nodes: NodeReceipt[];
+  openability: OpenabilityReport[];
   revision: number;
 }
 
-/** One receipt. `read` only ever comes from the owner's GUI after the body was displayed (or an explicit mark-read), never from a notification, a summary or the model. */
+/** One receipt. `read` only ever comes from the owner's GUI after the body was displayed (or an explicit mark-read), never from a notification, a summary or the model. `openability` carries its report, and only it does: one item per file. */
 export interface ReceiptItem {
   message_id: string;
-  kind: "received" | "read";
+  kind: "received" | "read" | "openability";
+  openability: OpenabilityReport | null;
 }
 
 /** GET /api/v1/messages/recipients: the existing team roster's active members, readable by every member's paired JARVIS (the roster route itself stays administrators' only). It includes the caller, who is shown as Me. Not a second directory: it is that roster, read. */
@@ -331,6 +380,8 @@ export interface SendRequest {
   subject: string;
   text: string;
   attachments: AttachmentRef[];
+  task: TaskContext | null;
+  supersedes: Supersedes[];
   source_node_id: string;
   idempotency_key: string;
   content_digest: string;
@@ -363,6 +414,14 @@ export interface SetUnreadReminder {
   unread: boolean;
 }
 
+/** This message's file `by_attachment_id` replaces `attachment_id` of an earlier message in the same thread, which is kept. */
+export interface Supersedes {
+  message_id: string;
+  attachment_id: string;
+  by_attachment_id: string;
+  reason: "repair" | "revision";
+}
+
 export interface SyncEntry {
   message: AcceptedMessage;
   receipts: ReceiptFacts;
@@ -376,6 +435,15 @@ export interface SyncPage {
   continuation: string | null;
   scan_complete: boolean;
   server_time: string;
+}
+
+/** A one-off request a message carries: what the sender asks for, the primary artifact and the supporting ones, and who the answer goes to (only the sender). Task context, never an authorization: the recipient decides whether to take it on. */
+export interface TaskContext {
+  requested_outcome: string;
+  outcome_kind: "notes" | "revised_copy" | "data" | "answer" | "other";
+  primary: ArtifactRef | null;
+  supporting: ArtifactRef[];
+  reply_audience: "sender_only";
 }
 
 export interface TeamMember {
@@ -407,6 +475,11 @@ export interface WorkCommandRequest {
 export interface WorkCommandResult {
   work_state: WorkState;
   pending: boolean;
+}
+
+export interface WorkPackageCapability {
+  manifest_versions: number[];
+  modes: ("conversation" | "agent" | "page")[];
 }
 
 export interface WorkState {

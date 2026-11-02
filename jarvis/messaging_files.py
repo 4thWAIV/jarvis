@@ -84,6 +84,10 @@ PARTIAL_AFTER_SEC = 3600
 SNAPSHOT_GRACE_SEC = 3600
 # Progress is written at most this often (the state changes always are).
 PROGRESS_EVERY_SEC = 1.0
+# A received file fetched for the owner's look (`downloaded`) is tried at
+# most this many times when it fails transiently, waiting longer each time.
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_RETRY_SEC = 1.0
 ON_SERVER = ("verified", "pinned", "published")
 
 _SCHEMA = """
@@ -114,6 +118,17 @@ def init_db() -> None:
     once, with the FileSnapshots that uses it."""
     with closing(run_store._connect()) as conn:
         conn.executescript(_SCHEMA)
+
+
+def transient_download_failure(code: Optional[str]) -> bool:
+    """A download failure worth fetching again: no answer, a code the
+    contract retries, or bytes that arrived damaged (the original hash is
+    checked again). A missing file, a refusal or a quarantine failure is
+    the same every time."""
+    if code in ("transport", "attachment_mismatch"):
+        return True
+    spec = wire.ERRORS.get(code or "")
+    return spec is not None and spec.retryable
 
 
 class Corrupt(Exception):
@@ -200,6 +215,40 @@ def local_files(refs: Iterable[wire.AttachmentRef], known: list[ports.LocalFile]
                                                           state=default) for r in refs]
 
 
+class _SnapshotWriter:
+    """One private copy being written: hashed and counted as it is written
+    under a partial name, renamed into place only when complete."""
+
+    def __init__(self, folder: Path, attachment_id: UUID):
+        self.folder, self.attachment_id = folder, attachment_id
+        self.partial = folder / f"{PARTIAL}{attachment_id}"
+        self.fd: Optional[int] = _open_new(self.partial)
+        self.hasher, self.size = hashlib.sha256(), 0
+
+    def add(self, chunk: bytes) -> None:
+        self.size += len(chunk)
+        if self.size > wire.FILE_MAX_BYTES:
+            raise wire.ContractError("too_large")
+        self.hasher.update(chunk)
+        _write_all(self.fd, chunk)
+
+    def finish(self, filename: str, media_type: Optional[str]) -> wire.AttachmentRef:
+        os.fsync(self.fd)
+        os.close(self.fd)
+        self.fd = None
+        os.replace(self.partial, self.folder / str(self.attachment_id))
+        return wire.AttachmentRef(attachment_id=self.attachment_id,
+                                  filename=wire.normalize_filename(filename),
+                                  media_type=wire.normalize_media_type(media_type),
+                                  size_bytes=self.size, sha256=self.hasher.hexdigest())
+
+    def abort(self) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+        _unlink(self.partial)
+
+
 class FileSnapshots:
     """`AttachmentSnapshots` over the shared database and the two private
     folders. `store` is the messaging store (drafts, approved sends and
@@ -223,6 +272,7 @@ class FileSnapshots:
         self._downloads = downloads_dir
         self._streams = asyncio.Semaphore(wire.UPLOAD_STREAMS_MAX)
         self._downloading: set[tuple[str, int, UUID]] = set()
+        self.sleep = asyncio.sleep
         init_db()
 
     # -- places ----------------------------------------------------------------------
@@ -299,31 +349,45 @@ class FileSnapshots:
         """Copy, hash and name one chosen file. More than FILE_MAX_BYTES is
         `too_large`, whatever the request said its length was; a failed
         copy leaves nothing behind."""
-        attachment_id = self.ids.new_id()
-        folder = self.snapshots_dir()
-        partial = folder / f"{PARTIAL}{attachment_id}"
-        fd = _open_new(partial)
-        hasher, size = hashlib.sha256(), 0
+        writer = _SnapshotWriter(self.snapshots_dir(), self.ids.new_id())
         try:
             async for chunk in chunks:
-                size += len(chunk)
-                if size > wire.FILE_MAX_BYTES:
-                    raise wire.ContractError("too_large")
-                hasher.update(chunk)
-                _write_all(fd, chunk)
-            os.fsync(fd)
+                writer.add(chunk)
+            ref = writer.finish(filename, media_type)
         except BaseException:
-            os.close(fd)
-            _unlink(partial)
+            writer.abort()
             raise
-        os.close(fd)
-        os.replace(partial, folder / str(attachment_id))
-        ref = wire.AttachmentRef(attachment_id=attachment_id,
-                                 filename=wire.normalize_filename(filename),
-                                 media_type=wire.normalize_media_type(media_type),
-                                 size_bytes=size, sha256=hasher.hexdigest())
         self._insert(server_id, owner_github_id, ref, message_id, SNAPSHOT, "staged")
         return ref
+
+    def snapshot_made(self, server_id: str, owner_github_id: int, message_id: UUID,
+                      filename: str, media_type: str,
+                      chunks: Iterable[bytes]) -> wire.AttachmentRef:
+        """A file JARVIS made for a draft (a companion or a repaired copy,
+        bundle_tasks), snapshotted exactly as a chosen file is: the draft
+        must be there, and the copy is private and immutable."""
+        if self.store.draft(server_id, owner_github_id, message_id) is None:
+            raise wire.ContractError("draft_not_found")
+        writer = _SnapshotWriter(self.snapshots_dir(), self.ids.new_id())
+        try:
+            for chunk in chunks:
+                writer.add(chunk)
+            ref = writer.finish(filename, media_type)
+        except BaseException:
+            writer.abort()
+            raise
+        self._insert(server_id, owner_github_id, ref, message_id, SNAPSHOT, "staged")
+        return ref
+
+    def original_bytes(self, server_id: str, owner_github_id: int, message_id: UUID,
+                       attachment_id: UUID) -> Path:
+        """A file of a message this owner has, verified: its private copy if
+        the owner sent it and the copy is still there, else its verified
+        download (ContractError("attachment_not_ready") when neither is)."""
+        ref = self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
+        if _hash_file(self.snapshot_path(attachment_id)) == (ref.size_bytes, ref.sha256):
+            return self.snapshot_path(attachment_id)
+        return self.verified_path(server_id, owner_github_id, message_id, attachment_id)
 
     async def add_to_draft(self, server_id: str, owner_github_id: int, message_id: UUID,
                            filename: str, media_type: Optional[str],
@@ -358,6 +422,14 @@ class FileSnapshots:
                 self._set(server_id, owner, ref.attachment_id, SNAPSHOT, state="missing",
                           failure="snapshot_missing")
             raise ports.SnapshotMissing(ref.attachment_id)
+
+    def snapshot_verified(self, server_id: str, owner_github_id: int,
+                          ref: wire.AttachmentRef) -> Path:
+        """Where the private copy of a file this owner chose is, after
+        checking it is still exactly the manifest's (SnapshotMissing): the
+        sender's own look at a draft's file (bundle_preflight.DraftFiles)."""
+        self._check(server_id, owner_github_id, ref)
+        return self.snapshot_path(ref.attachment_id)
 
     def _manifest(self, server_id: str, owner: int, message_id: UUID,
                   content_revision: int) -> list[wire.AttachmentRef]:
@@ -585,10 +657,21 @@ class FileSnapshots:
     async def downloaded(self, server_id: str, owner_github_id: int, message_id: UUID,
                          attachment_id: UUID) -> Path:
         """A received file, downloaded first if it is not here yet: its
-        verified path (a work package's zip, `open_package`)."""
-        got = await self.download(server_id, owner_github_id, message_id, attachment_id)
-        if got.state == "failed":
-            raise wire.ContractError(got.failure or "transport")
+        verified path (a work package's zip, `open_package`, a bundle's
+        inspection). A transient failure (no answer, a retryable code, or
+        bytes that arrived damaged) is fetched again, at most
+        DOWNLOAD_ATTEMPTS times in all, each verified against the original
+        hash; anything else (not found, not allowed, not markable as
+        downloaded) is not retried."""
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            got = await self.download(server_id, owner_github_id, message_id, attachment_id)
+            if got.state != "failed":
+                break
+            if attempt == DOWNLOAD_ATTEMPTS or not transient_download_failure(got.failure):
+                raise wire.ContractError(got.failure or "transport")
+            log.info("download of %s failed (%s); attempt %d of %d", attachment_id,
+                     got.failure, attempt + 1, DOWNLOAD_ATTEMPTS)
+            await self.sleep(DOWNLOAD_RETRY_SEC * attempt)
         return self.verified_path(server_id, owner_github_id, message_id, attachment_id)
 
     def reveal(self, server_id: str, owner_github_id: int, message_id: UUID,

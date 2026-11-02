@@ -270,18 +270,45 @@ class Draft(_Local):
     send: LocalSend
     capture_id: Optional[int] = None              # the review's capture, while one is open
     agent_drafted: bool = False                   # shown as a draft the model wrote
+    # A one-off request's task context and the earlier files this draft's
+    # files replace (bundle_tasks). Content: setting either is an edit. Sent
+    # only to a team server offering messaging.bundles.v1.
+    task: Optional[wire.TaskContext] = None
+    supersedes: list[wire.Supersedes] = Field(default_factory=list,
+                                              max_length=wire.ATTACHMENTS_MAX)
 
 
-def draft_content(draft: Draft) -> wire.MessageContent:
+def draft_content(draft: Draft, bundles: bool = False) -> wire.MessageContent:
     """The content a draft would send, as review digests it and approval
-    binds it (refused by the wire rules if it could not be sent)."""
+    binds it (refused by the wire rules if it could not be sent). The task
+    and supersedes links go only when `bundles` (the team server offers
+    messaging.bundles.v1); without it the message goes without them, and
+    the read-back says so."""
     return wire.MessageContent(
         message_id=draft.message_id, thread_id=draft.thread_id,
         in_reply_to_message_id=draft.in_reply_to_message_id,
         related_message_ids=list(draft.related_message_ids),
         recipient_github_id=draft.recipient_github_id,
         content_revision=draft.send.content_revision, subject=draft.subject, text=draft.text,
-        attachments=list(draft.attachments))
+        attachments=list(draft.attachments),
+        task=draft.task if bundles else None,
+        supersedes=list(draft.supersedes) if bundles else [])
+
+
+def attached_only(draft: Draft) -> dict:
+    """The task and supersedes links of `draft` with every file that is no
+    longer attached left out (a removed file is never sent as named): the
+    fields a save updates with."""
+    files = {a.attachment_id: a.sha256 for a in draft.attachments}
+    task = draft.task
+    if task is not None:
+        def kept(ref: Optional[wire.ArtifactRef]) -> bool:
+            return ref is not None and files.get(ref.attachment_id) == ref.sha256
+        task = task.model_copy(update={
+            "primary": task.primary if kept(task.primary) else None,
+            "supporting": [r for r in task.supporting if kept(r)]})
+    return {"task": task,
+            "supersedes": [s for s in draft.supersedes if s.by_attachment_id in files]}
 
 
 def revise(draft: Draft) -> LocalSend:
@@ -412,8 +439,20 @@ def spoken_size(size_bytes: int) -> str:
     return f"{size_bytes} byte" + ("" if size_bytes == 1 else "s")
 
 
-def human_readback(draft: Draft, recipient_label: str) -> str:
-    """Exactly what is read back, and accepted, for a human message."""
+TASK_NOT_CARRIED = ("The team server can't carry the request's task, so the message "
+                    "goes without it.")
+
+
+def _artifact(draft: Draft, ref: wire.ArtifactRef) -> str:
+    name = next((a.filename for a in draft.attachments if a.attachment_id == ref.attachment_id),
+                "a file")
+    return f"{ref.member_path} in {name}" if ref.member_path else name
+
+
+def human_readback(draft: Draft, recipient_label: str, bundles: bool = False) -> str:
+    """Exactly what is read back, and accepted, for a human message: with
+    its task, primary file and the files it replaces when they go
+    (`bundles`), or the line saying the task does not."""
     lines = [f"To {recipient_label}."]
     if draft.subject:
         lines.append(f"Subject: {draft.subject}.")
@@ -422,6 +461,21 @@ def human_readback(draft: Draft, recipient_label: str) -> str:
     if draft.attachments:
         lines.append("Files: " + "; ".join(f"{a.filename}, {spoken_size(a.size_bytes)}"
                                            for a in draft.attachments) + ".")
+    if (draft.task is not None or draft.supersedes) and not bundles:
+        lines.append(TASK_NOT_CARRIED)
+        return "\n".join(lines)
+    if draft.task is not None:
+        lines.append(f"Task: {draft.task.requested_outcome.rstrip('.')}. "
+                     f"Answer to you only.")
+        if draft.task.primary is not None:
+            lines.append(f"Primary: {_artifact(draft, draft.task.primary)}.")
+        if draft.task.supporting:
+            lines.append("Supporting: " + "; ".join(_artifact(draft, r)
+                                                    for r in draft.task.supporting) + ".")
+    for link in draft.supersedes:
+        new = next((a.filename for a in draft.attachments
+                    if a.attachment_id == link.by_attachment_id), "a file")
+        lines.append(f"{new} replaces the earlier copy, which is kept.")
     return "\n".join(lines)
 
 

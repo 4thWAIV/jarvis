@@ -10,6 +10,10 @@ with a rising `seq`: an update from a boot the node has moved past, or a
 `seq` not above the last stored, is refused. Every write is conditional on
 the record it was checked against, so two updates can never both pass. The
 last human activity moves only for a new `activity_seq`, and never back.
+A node's attachment capabilities (messaging.bundles.v1) are replaced by
+every update, with the time its readers were checked fixed from their age
+at receipt; an update without them (an older JARVIS) leaves the node
+legacy, never carrying earlier capabilities forward.
 
 Presence, quota ages and the end-of-week projections are worked out when a
 snapshot is built, from the stored receipt and observation times; none of
@@ -143,7 +147,18 @@ def _observation(update: NodeUpdate, now: datetime) -> dict:
                                      "resets_at": w.resets_at,
                                      "observed_at": now - timedelta(milliseconds=w.age_ms)}
                                     for w in b.windows]}
-                       for b in update.brains]}
+                       for b in update.brains],
+            **_attachments(update, now)}
+
+
+def _attachments(update: NodeUpdate, now: datetime) -> dict:
+    """The node's attachment capabilities as sent, and when its readers were
+    checked; both None for a node that sent none."""
+    caps = update.attachments
+    if caps is None:
+        return {"attachments": None, "attachments_observed_at": None}
+    return {"attachments": caps.model_dump(mode="json"),
+            "attachments_observed_at": now - timedelta(milliseconds=caps.observed_age_ms)}
 
 
 def _activity(current: Optional[dict], update: NodeUpdate, now: datetime) -> dict:
@@ -211,7 +226,9 @@ def node_view(doc: dict, member: dict, now: datetime) -> NodeView:
                     brains=brain_summary(doc["brains"], now),
                     activity_state="available" if at else "never_observed",
                     last_human_activity_at=at,
-                    last_human_activity_source=doc.get("last_human_activity_source") if at else None)
+                    last_human_activity_source=doc.get("last_human_activity_source") if at else None,
+                    attachments=doc.get("attachments"),
+                    attachments_observed_at=doc.get("attachments_observed_at"))
 
 
 def brain_summary(accounts: list[dict], now: datetime) -> BrainSummary:
