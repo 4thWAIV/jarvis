@@ -140,6 +140,10 @@ async def test_open_next_and_put_back(page_playwright, page_url):
         assert await page.inner_text("#queue-item-view .item-subject") == "Can you look at this?"
         assert await page.inner_text(".centre-tabs [aria-selected=true]") == "CAN YOU LOOK AT THIS?"
         await page.wait_for_function("() => document.querySelector('.queue-message .queue-cue.cue-read-by-you')")
+        # The JARVIS a message came through is its sender's tooltip, and is
+        # still said to a screen reader.
+        head = page.locator("#queue-item-view .queue-message.incoming .message-head").first
+        assert "via Matt’s MacBook" in await head.locator(".visually-hidden").text_content()
         assert routes.reads == [world.message("newest")]
         assert "newest" in await _rows(page, world, "active")
         await async_api.expect(page.locator(_row(world, "newest"))).to_have_attribute("aria-current", "true")

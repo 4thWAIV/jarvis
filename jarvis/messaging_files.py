@@ -248,7 +248,14 @@ class FileSnapshots:
     def download_path(self, ref: wire.AttachmentRef) -> Path:
         """`<downloads>/<attachment id>/<the manifest's safe name>`: the name
         is the sender's, already free of paths and control characters."""
-        return self.downloads_dir() / str(ref.attachment_id) / ref.filename
+        self.downloads_dir()
+        return self.download_destination(ref)
+
+    def download_destination(self, ref: wire.AttachmentRef) -> Path:
+        """`download_path` without making its folder: for a read-only look
+        (attachment_locations.lookup), which must create nothing."""
+        root = self._downloads or data_paths.messaging_downloads_dir()
+        return root / str(ref.attachment_id) / ref.filename
 
     # -- records -----------------------------------------------------------------------
 

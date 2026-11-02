@@ -548,3 +548,69 @@ def test_a_package_s_agent_is_handed_the_zip_it_was_unpacked_from(wired, monkeyp
     (prompt,) = spawned
     assert f"package.zip ({zipped.size_bytes} bytes, sha256 {zipped.sha256}): " \
         f"{zipped.local_path} [attachment {attachment_id} of message {message_id}]" in prompt
+
+
+# -- review fixes ---------------------------------------------------------------------------
+
+def _on_loop() -> str:
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return "thread"
+    return "loop"
+
+
+def _rows(table: str) -> list[tuple]:
+    from contextlib import closing
+    from jarvis import run_store
+    with closing(run_store._connect()) as conn:
+        return [tuple(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+
+
+@pytest.mark.asyncio
+async def test_a_look_creates_and_writes_nothing():
+    """Lookup is read only: not even the downloads folder is made."""
+    w = World()
+    message_id, (ref,) = await received(w, [("plan.pdf", b"x")])
+    loc = locations(w)
+    downloads = data_paths.messaging_downloads_dir()
+    assert not downloads.exists()
+    before = (_rows("messaging_files"), _rows("attachment_locations"))
+    got = loc.lookup(SERVER, MATT, message_id, ref.attachment_id)
+    assert got.state == "remote_only" and got.intended_path.startswith(str(downloads))
+    assert not downloads.exists(), "a look made the downloads folder"
+    assert (_rows("messaging_files"), _rows("attachment_locations")) == before
+
+
+@pytest.mark.asyncio
+async def test_making_a_file_local_hashes_it_off_the_event_loop(monkeypatch):
+    """Each look hashes the whole file, so it never blocks the voice loop."""
+    w = World()
+    message_id, (ref,) = await received(w, [("plan.pdf", os.urandom(2000))])
+    loc, seen = locations(w), []
+    real = AttachmentLocations.lookup
+
+    def look(self, *a):
+        seen.append(_on_loop())
+        return real(self, *a)
+    monkeypatch.setattr(AttachmentLocations, "lookup", look)
+    got = await loc.ensure_local(SERVER, MATT, message_id, ref.attachment_id)
+    assert got.state == "verified" and seen and set(seen) == {"thread"}, seen
+
+
+def test_reading_a_thread_finds_its_files_off_the_event_loop(wired, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from tests.test_brain_page_parity import Page
+    page = Page(tmp_path)
+    wired.server.messaging = SimpleNamespace(local=page.local, location_context=lambda: None)
+    sent = page.matt_sends("synthetic")
+    page.tick()
+    seen, real = [], wired.server._thread_text
+
+    def text(*a):
+        seen.append(_on_loop())
+        return real(*a)
+    monkeypatch.setattr(wired.server, "_thread_text", text)
+    got = _call(wired, "read_people_thread", thread=str(sent.thread_id))
+    assert "That conversation, page 1 of 1" in got["text"] and seen == ["thread"]

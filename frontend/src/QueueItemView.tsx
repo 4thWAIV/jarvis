@@ -134,6 +134,7 @@ function OneItem({ thread }: { thread: string }) {
           <span className="item-person" title={handle(dir, correspondent) ?? undefined}>
             {personName(dir, correspondent)}
           </span>
+          {handle(dir, correspondent) && <span className="visually-hidden"> {handle(dir, correspondent)}</span>}
           {latestTheirs && <span className="item-via"> · {jarvisLabel(dir, latestTheirs.message.source_node_id)}</span>}
         </p>
         <div className="item-cues">
@@ -263,6 +264,10 @@ function MessageCard({ m, state, dir, thread, itemSubject, onReply }: {
   const body = useRef<HTMLDivElement>(null);
   const parent = msg.in_reply_to_message_id ? state.messages[msg.in_reply_to_message_id]?.message : undefined;
   const replies = repliesTo(state, msg.message_id);
+  // The sender's handle and the JARVIS it came through: the name's tooltip,
+  // and said to screen readers.
+  const senderDetail = [!fromMe && handle(dir, msg.sender_github_id), `via ${jarvisLabel(dir, msg.source_node_id)}`]
+    .filter(Boolean).join(" · ");
 
   // The read receipt: once this body has actually been on screen.
   useEffect(() => {
@@ -288,11 +293,10 @@ function MessageCard({ m, state, dir, thread, itemSubject, onReply }: {
     <article className={`queue-message ${fromMe ? "outgoing" : "incoming"}${m.self_message ? " self" : ""}`}
              data-message-id={msg.message_id} aria-label={`From ${personName(dir, msg.sender_github_id)}`}>
       <header className="message-head">
-        <span className="message-person"
-              title={[!fromMe && handle(dir, msg.sender_github_id), `via ${jarvisLabel(dir, msg.source_node_id)}`]
-                .filter(Boolean).join(" · ")}>
+        <span className="message-person" title={senderDetail}>
           {fromMe ? "You" : personName(dir, msg.sender_github_id)}
         </span>
+        <span className="visually-hidden"> · {senderDetail}</span>
         {fromMe && (
           <span className="message-to" title={recipientLabel(dir, msg.recipient_github_id)}>
             to {personName(dir, msg.recipient_github_id)}

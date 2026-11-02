@@ -6615,8 +6615,10 @@ async def tool_read_people_thread(args: dict) -> str:
     if unread:
         head += (" Once he has heard them, mark these read with mark_people_message_read: "
                  + ", ".join(unread) + ".")
-    return head + "\n" + _one_page(_thread_text(messaging.local, item), _page_arg(args),
-                                   "That conversation", "read_people_thread")
+    # Off the event loop: each received file's location hashes the file.
+    text = await asyncio.to_thread(_thread_text, messaging.local, item)
+    return head + "\n" + _one_page(text, _page_arg(args), "That conversation",
+                                   "read_people_thread")
 
 
 async def tool_mark_people_message_read(args: dict) -> str:

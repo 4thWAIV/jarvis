@@ -224,7 +224,7 @@ class AttachmentLocations:
         known, changed_at = self.files.download_record(server_id, owner_github_id,
                                                        attachment_id)
         record = self._record(server_id, owner_github_id, attachment_id)
-        destination = self.files.download_path(ref)
+        destination = self.files.download_destination(ref)
         expected = (ref.size_bytes, ref.sha256)
         base = dict(message_id=message_id, attachment_id=attachment_id, filename=ref.filename,
                     media_type=ref.media_type, node_id=self.node_id(),
@@ -269,14 +269,18 @@ class AttachmentLocations:
         """The file here and verified, fetched now through the existing
         authenticated downloader when it is not (never downloaded, failed,
         missing, changed or moved): its location, verified again. Only on
-        the owner's word. Nothing is unpacked, opened or run."""
-        found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+        the owner's word. Nothing is unpacked, opened or run. Each look
+        hashes the file, so it runs off the event loop."""
+        def look() -> AttachmentLocation:
+            return self.lookup(server_id, owner_github_id, message_id, attachment_id)
+
+        found = await asyncio.to_thread(look)
         if found.state not in ("verified", "downloading"):
             await self.files.download(server_id, owner_github_id, message_id, attachment_id)
-            found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+            found = await asyncio.to_thread(look)
         if found.state == "verified" and found.local_path:
             self._remember(server_id, owner_github_id, attachment_id, found.local_path)
-            found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+            found = await asyncio.to_thread(look)
         return found
 
     def _remember(self, server_id: str, owner: int, attachment_id: UUID, path: str) -> None:
