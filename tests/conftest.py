@@ -101,6 +101,29 @@ def _never_read_the_user_s_codex_sessions(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _never_watch_this_mac_s_real_sessions(monkeypatch, tmp_path):
+    """The session watcher started by the app's lifespan reads every Claude
+    config root's rosters and transcripts (session_watch.DEFAULT_ROOTS, which
+    JARVIS_CLAUDE_CONFIG_DIRS only adds to) and lists the Codex processes
+    running on this Mac (`ps`, then `lsof` for each). Under test it reads two
+    empty roots of the same names and finds no Codex process, as on CI, so a
+    TestClient's exit no longer waits on the real machine. A test that wants
+    sessions still supplies its own roots or processes.
+
+    The processes are replaced through CodexSessions.__init__'s defaults:
+    `processes=list_processes` is bound when the class is defined, so patching
+    `codex_sessions.list_processes` would change nothing.
+    """
+    from jarvis import codex_sessions, session_watch
+    roots = tmp_path / "claude-roots"
+    monkeypatch.setattr(session_watch, "DEFAULT_ROOTS",
+                        tuple(str(roots / Path(r).name) for r in session_watch.DEFAULT_ROOTS))
+    init = codex_sessions.CodexSessions.__init__
+    home, _processes, codex = init.__defaults__
+    monkeypatch.setattr(init, "__defaults__", (home, lambda: [], codex))
+
+
+@pytest.fixture(autouse=True)
 def _never_discover_the_user_s_folders(monkeypatch):
     """The folder catalog's discovery loop reads the user's Claude Code
     histories (folder_discovery.py). Under test it never runs on its own; a
