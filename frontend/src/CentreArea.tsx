@@ -194,7 +194,7 @@ export function CentreArea() {
   return (
     <>
       <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
-              className="centre-tabs" words />
+              className="centre-tabs" words box="main.tabs" />
       <TeamSignInReminder />
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}

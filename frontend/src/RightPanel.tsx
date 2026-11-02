@@ -18,6 +18,7 @@ import { bind, rightTab, type RightTab } from "./uiNavigation";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
 import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
+import { useUiBox } from "./uiRegistry";
 import { VoiceSummary } from "./VoiceSummary";
 import { WorkflowsView } from "./WorkflowsView";
 
@@ -117,6 +118,7 @@ export function RightPanel() {
   const t = useT();
   const laidOut: Tab[] = LAID_OUT.map((tab) => ({ ...tab, title: t(`tabs.right.${tab.id}`) }));
   const selected = useSyncExternalStore(rightTab.subscribe, rightTab.get);
+  const panel = useUiBox("right.panel");
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
   // Something waiting and unread lights the Queue tab while another is open.
   const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
@@ -125,13 +127,13 @@ export function RightPanel() {
   const tab = laidOut.find((v) => v.id === selected)!;
   return (
     <div id="right-column">
-      <TabRow tabs={laidOut} selected={selected} className="right-tabs" labelled
+      <TabRow tabs={laidOut} selected={selected} className="right-tabs" labelled box="right.tabs"
               // Selecting Agents clears its lit mark: in right.tab.select's
               // handler (uiNavigation.ts), which the brain's request runs too.
               binding={(v) => bind("right.tab.select", { tab: v.id as RightTab })}
               lit={(v) => v.id !== selected && ((v.id === "agents" && lit) || (v.id === "queue" && unread))}
               alert={(v) => v.id === "diagnostics" && down} />
-      <div className="right-panel" role="tabpanel" aria-label={tab.title}>
+      <div className="right-panel" role="tabpanel" aria-label={tab.title} ref={panel}>
         {tab.view()}
       </div>
     </div>

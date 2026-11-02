@@ -2,7 +2,7 @@
 pixels (the page test, test_voice_page_pipeline.py, checks the pixels):
 
   - one schedule: the contract's timing table drives the drawing, the orb's
-    motion and the acknowledgement alike (frontend/src/uiSignal.ts, run
+    motion, the stops at each box on the way and the acknowledgement alike (frontend/src/uiSignal.ts, run
     under node with the orb's ownership in tests/ui_signal_cases.mts);
   - one scheduler and one lifecycle: only effectLife.ts asks for animation
     frames among the effects drawn from the orb;
@@ -42,7 +42,7 @@ def test_the_schedule_and_the_orb_s_ownership_hold_under_node():
                          capture_output=True, text=True, cwd=ROOT, timeout=60)
     assert out.returncode == 0, out.stderr
     passed = json.loads(out.stdout)["passed"]
-    assert len(passed) >= 17, passed
+    assert len(passed) >= 21, passed
 
 
 def test_only_the_shared_scheduler_asks_for_animation_frames():
@@ -72,7 +72,7 @@ def test_only_orb_source_makes_the_main_orb_transmit():
 def test_timing_is_read_from_the_contract_not_written_again():
     for name in ("uiAttention.ts", "UiPipelineLayer.tsx", "orbSource.ts"):
         code = _code(name)
-        for literal in ("220", "1400", "1620", "4400", "5000", "170"):
+        for literal in ("220", "2000", "2220", "450", "900", "5000", "5600", "170"):
             assert not re.search(rf"\b{literal}\b", code), (name, literal)
 
 

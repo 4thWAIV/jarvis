@@ -32,7 +32,7 @@ import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
 import type { CommandArgs } from "./uiContract";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
-import { registerCommand, useUiTarget } from "./uiRegistry";
+import { registerCommand, useUiBox, useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
 
 type ListView = CommandArgs["folders.list"]["view"];
@@ -270,6 +270,7 @@ export function FoldersView() {
     useSyncExternalStore(listState.subscribe, listState.get);
   const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "foldersList" },
                            label: t("main.folders.catalog"), socket: CENTRE_SOCKET });
+  const tabs = useUiBox("main.folders.tabs");
 
   const all = live.value ? [...live.value.folders, ...(showRemoved ? live.value.removed : [])] : [];
   const folders = all.filter((f) => matches(search, f.display_name, f.location.canonical_path)
@@ -297,7 +298,7 @@ export function FoldersView() {
           <button type="button" className="folder-button" aria-expanded={adding} ref={ui.part("add")}
                   {...bindingProps(bind("folders.add.open", { open: !adding }))}>{t("main.folders.addExisting")}</button>
         </div>
-        <div className="folders-tabs" role="tablist" aria-label={t("main.folders.whichFolders")}>
+        <div className="folders-tabs" role="tablist" aria-label={t("main.folders.whichFolders")} ref={tabs}>
           {(["registered", "discovered"] as ListView[]).map((v) => (
             <button key={v} type="button" role="tab" aria-selected={view === v} ref={ui.part(v)}
                     className={`folder-tab${view === v ? " selected" : ""}`}

@@ -6,10 +6,17 @@
  * drawing, the orb's motion and the acknowledgement cannot drift apart.
  *
  *   0 .. emitMs              the orb emits white; nothing travels yet
- *   emitMs .. arrivalAtMs    the first pulse runs the whole route; two more
- *                            follow it, pulseOffsetMs apart
- *   arrivalAtMs              arrival: rings start, the contour appears, the
- *                            request is answered
+ *   emitMs .. arrivalAt      the first pulse runs the whole route, drawing
+ *                            the line behind it, in travelMs of movement;
+ *                            at each box it passes into on its way (a
+ *                            panel, a tile, a tab strip: uiPipeline.ts
+ *                            `marks`) it stops for stopMs while that box's
+ *                            border is marked; two more pulses follow it,
+ *                            pulseOffsetMs apart, stopping at the same
+ *                            borders
+ *   arrivalAt                arrival: rings start, the contour appears, the
+ *                            request is answered (arrivalAtMs, plus stopMs
+ *                            for each box)
  *   .. holdUntil             the route stays connected and lit
  *   .. resetBy               route and contour fade; then clear
  *
@@ -29,49 +36,87 @@ export const RING_MS = TIMING.ringMs;
 export type Point = readonly [number, number];
 
 export interface Schedule {
+  /** How far along the route (0 the orb, 1 the target) each box the
+   *  signal stops at lies, in the order it reaches them. */
+  stops: readonly number[];
+  arrivalAt: number;
   holdUntil: number;
   resetBy: number;
 }
 
-/** The schedule for a cue whose hold is extended by `extraHoldMs`. */
-export function scheduleFor(extraHoldMs = 0): Schedule {
+/** The schedule for a cue whose route stops at `stops` (fractions along
+ *  it) and whose hold is extended by `extraHoldMs`. Every stop delays the
+ *  arrival, the hold and the reset alike by stopMs. */
+export function scheduleFor(extraHoldMs = 0, stops: readonly number[] = []): Schedule {
   const extra = Math.max(0, Math.min(extraHoldMs, TIMING.maxExtraHoldMs));
-  return { holdUntil: TIMING.holdUntilMs + extra, resetBy: TIMING.resetByMs + extra };
+  const paused = stops.length * TIMING.stopMs;
+  return { stops: [...stops].sort((a, b) => a - b), arrivalAt: TIMING.arrivalAtMs + paused,
+           holdUntil: TIMING.holdUntilMs + paused + extra, resetBy: TIMING.resetByMs + paused + extra };
 }
 
 export type Phase = "emitting" | "travelling" | "holding" | "fading" | "done";
 
 /** Where a moving cue is, `elapsed` ms after emission began. Arrival is the
- *  instant travelling ends (elapsed reaches arrivalAtMs). */
+ *  instant travelling ends (elapsed reaches the schedule's arrivalAt). */
 export function phaseAt(elapsed: number, s: Schedule): Phase {
   if (elapsed < TIMING.emitMs) return "emitting";
-  if (elapsed < TIMING.arrivalAtMs) return "travelling";
+  if (elapsed < s.arrivalAt) return "travelling";
   if (elapsed < s.holdUntil) return "holding";
   if (elapsed < s.resetBy) return "fading";
   return "done";
 }
 
-/** Whether the route is drawn yet: once the orb has begun to emit it out. */
-export function routeLit(elapsed: number, still: boolean): boolean {
-  return still || elapsed >= TIMING.emitMs;
+/** How far along the route (0..1) a pulse is `moving` ms after it left
+ *  the orb: at an even pace over travelMs of movement, standing still for
+ *  stopMs at each of the schedule's stops. */
+export function along(moving: number, s: Schedule): number {
+  let at = 0;
+  let left = Math.max(0, moving);
+  for (const stop of s.stops) {
+    const need = (stop - at) * TIMING.travelMs;
+    if (left <= need) return at + left / TIMING.travelMs;
+    left -= need;
+    at = stop;
+    if (left <= TIMING.stopMs) return at;
+    left -= TIMING.stopMs;
+  }
+  return Math.min(1, at + left / TIMING.travelMs);
+}
+
+/** How much of the route is drawn (0..1): nothing before the orb emits,
+ *  then up to the first pulse, so the line grows behind it; all of it
+ *  once it has arrived, and at once when still. */
+export function drawnTo(elapsed: number, s: Schedule, still: boolean): number {
+  if (still) return 1;
+  return elapsed < TIMING.emitMs ? 0 : along(elapsed - TIMING.emitMs, s);
 }
 
 /** How far along the route (0 the orb, 1 the target) each pulse still on
- *  it is. A pulse leaves the orb at emitMs + i * pulseOffsetMs and takes
- *  travelMs to arrive. */
-export function pulseFractions(elapsed: number): number[] {
+ *  it is. A pulse leaves the orb at emitMs + i * pulseOffsetMs (along()). */
+export function pulseFractions(elapsed: number, s: Schedule): number[] {
   const out: number[] = [];
   for (let i = 0; i < TIMING.pulseCount; i++) {
-    const p = (elapsed - TIMING.emitMs - i * TIMING.pulseOffsetMs) / TIMING.travelMs;
-    if (p > 0 && p < 1) out.push(p);
+    const moving = elapsed - TIMING.emitMs - i * TIMING.pulseOffsetMs;
+    const p = along(moving, s);
+    if (moving > 0 && p < 1) out.push(p);
   }
   return out;
 }
 
+/** Each box mark's progress (0..1) while it shows, in the schedule's stop
+ *  order; null when not. A box is marked from the moment the first pulse
+ *  reaches its border, for boxMarkMs. */
+export function markProgress(elapsed: number, s: Schedule): (number | null)[] {
+  return s.stops.map((stop, k) => {
+    const t = (elapsed - TIMING.emitMs - stop * TIMING.travelMs - k * TIMING.stopMs) / TIMING.boxMarkMs;
+    return t >= 0 && t < 1 ? t : null;
+  });
+}
+
 /** Each arrival ring's progress (0..1) while it shows; null when not. */
-export function ringProgress(elapsed: number): (number | null)[] {
+export function ringProgress(elapsed: number, s: Schedule): (number | null)[] {
   return [0, 1].map((i) => {
-    const t = (elapsed - TIMING.arrivalAtMs - i * TIMING.ringGapMs) / RING_MS;
+    const t = (elapsed - s.arrivalAt - i * TIMING.ringGapMs) / RING_MS;
     return t > 0 && t < 1 ? t : null;
   });
 }
@@ -178,6 +223,21 @@ export function pointAlong(points: readonly Point[], fraction: number): Point {
     left -= r;
   }
   return points[points.length - 1];
+}
+
+/** The part of `points` from its start to `distance` along it. */
+export function upTo(points: readonly Point[], distance: number): Point[] {
+  const out: Point[] = points.length ? [points[0]] : [];
+  let left = distance;
+  for (let i = 1; i < points.length && left > 0; i++) {
+    const [a, b] = [points[i - 1], points[i]];
+    const r = run(a, b);
+    if (left >= r) { out.push(b); left -= r; continue; }
+    const t = left / r;
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    break;
+  }
+  return out;
 }
 
 /** Which way a route leaves its start, on the screen: the orb leans that

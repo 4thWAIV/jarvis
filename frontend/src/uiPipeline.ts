@@ -17,6 +17,29 @@
  *   - overlay: while a modal is open, down the margin just outside its
  *              left edge, drawn in the modal's own layer (host "modal").
  *
+ * The primary channel and where a route leaves it. A target's primary
+ * channel is the declared trunk from the orb to its region's rail (the
+ * orb's rise, the top pipeline and, for the right, the run along it past
+ * the main rail's top) followed by that rail down its corridor. A route
+ * stays on it to the latest branch point that still reaches the target
+ * (lateBranch()): level with the target (a part's middle, or an object's),
+ * straight in to its facing edge, when that run crosses no line of text,
+ * no control and no other object; otherwise level with the lane beside the
+ * neighbouring row (over or under the target's row, lane()), across in
+ * that lane, past the row before or after it, and down or up into the
+ * target's top or bottom edge. Only when neither is clear does the route
+ * leave earlier, by the object's socket near its top and a leaf down its
+ * inner margin, as described next.
+ *
+ * Boxes on the way. Every box that holds the target is a waypoint: the
+ * registered boxes (uiRegistry.ts BOX_IDS: the right panel's body, a tab
+ * strip, the phase stepper), every other target holding it (a tile, a
+ * centre view, a workflow's detail) and, for a part, its own object
+ * (boxesAround()). Where the route passes into each of them, outermost
+ * first, it marks that box's border and stops there a moment (`marks`,
+ * the stops of the schedule in uiSignal.ts), then runs on from that border
+ * toward the control inside.
+ *
  * A route is found by walking registered edges only. Geometry is a function
  * of the layout now (measured, never stored), so a resize or a scroll moves
  * the points and never the topology. A socket enters its object at the
@@ -36,7 +59,9 @@
 
 import { rayStart, rightChannelX, TOP_LANE_PX } from "./rayGeometry";
 import { lanes } from "./transferEndpoints";
-import { elementOf, mountedTargets, presentationId, undrawn, visibilityOf, type VisualTarget } from "./uiRegistry";
+import {
+  elementOf, mountedTargets, presentationId, registeredBoxes, undrawn, visibilityOf, type VisualTarget,
+} from "./uiRegistry";
 import { BEVEL_PX, bevelled, joined, length, type Point } from "./uiSignal";
 import {
   UI_CONTRACT, type AvailabilityReason, type JunctionId, type RailId, type TargetRef, type Visibility,
@@ -57,7 +82,12 @@ export interface RouteEdge {
   points: Point[];
 }
 
-export interface Route { edges: RouteEdge[]; end: Point; socket: Point }
+/** A box the route passes into on its way, marked as the signal reaches
+ *  its border: `at` is how far along the route that is (0 the orb, 1 the
+ *  end). */
+export interface BoxMark { id: string; box: DOMRect; at: number; host: Host }
+
+export interface Route { edges: RouteEdge[]; end: Point; socket: Point; marks: BoxMark[] }
 
 export type RouteOutcome = { route: Route } | { route: null; reason: AvailabilityReason };
 
@@ -228,11 +258,12 @@ function boxOf(el: Element | null): DOMRect | null {
 }
 
 /** The controls inside `el` a route keeps clear of, on show; never the
- *  addressed part `except` itself or a control inside it. */
+ *  addressed part `except` itself, a control inside it, or one holding it
+ *  (a box the route passes into). */
 function reservedIn(el: Element, except?: Element): DOMRect[] {
   const out: DOMRect[] = [];
   el.querySelectorAll(RESERVED).forEach((c) => {
-    if (except && except.contains(c)) return;
+    if (except && (except.contains(c) || c.contains(except))) return;
     const r = boxOf(c);
     if (r) out.push(r);
   });
@@ -417,6 +448,20 @@ function overTheRow(target: VisualTarget, railX: number): Point[] | null {
 const marginOf = (target: VisualTarget, box: DOMRect): number =>
   target.socket.side === "right" ? box.right - INNER_MARGIN_PX : box.left + INNER_MARGIN_PX;
 
+/** The boxes of the object's other declared parts on show, beside the
+ *  addressed part `part` (element `el`): never the whole itself (a row
+ *  registered as its own `row` part holds the leaf), nor a part holding
+ *  `el` or inside it. */
+function otherParts(target: VisualTarget, part: string, el: Element): DOMRect[] {
+  const whole = target.element();
+  const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
+  return decl.flatMap((other) => {
+    const o = other === part ? null : elementOf(target, other);
+    const box = o && o !== whole && !o.contains(el) && !el.contains(o) ? boxOf(o) : null;
+    return box ? [box] : [];
+  });
+}
+
 /** The leaf from the socket down the object's inner margin to the part's
  *  facing edge. Where that straight run would cross a control or another
  *  of the object's parts (a part beside others in one row), the leaf goes
@@ -442,17 +487,7 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
        [margin, entry[1] < r.top ? r.top - LEAF_END_PX : Math.min(entry[1], r.bottom + LEAF_END_PX)]]
     : [entry, [margin, entry[1]], [margin, r.top + r.height / 2],
        [right ? Math.min(r.right + LEAF_END_PX, margin) : Math.max(r.left - LEAF_END_PX, margin), r.top + r.height / 2]]);
-  const kept: DOMRect[] = reservedIn(whole, el);
-  const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
-  for (const other of decl) {
-    if (other === part) continue;
-    const o = elementOf(target, other);
-    // The whole itself (a row registered as its own `row` part) holds the
-    // leaf; it is never in the way.
-    if (!o || o === whole || o.contains(el) || el.contains(o)) continue;
-    const box = boxOf(o);
-    if (box) kept.push(box);
-  }
+  const kept: DOMRect[] = [...reservedIn(whole, el), ...otherParts(target, part, el)];
   if (!edgeCrosses(straight, kept)) return straight;
   const obstacles = [...kept, ...labelsIn(whole, el)];
   const clear = [true, false]
@@ -475,6 +510,160 @@ export function sourceProblem(): AvailabilityReason | null {
 
 /** The route from the orb to `target` (and `part`), along registered edges
  *  only, measured now. */
+// ── the latest branch point, and the boxes on the way ───────────────────
+
+/** Every box holding the target's addressed element (its part, or the
+ *  whole object), outermost first: the registered boxes, every other
+ *  target holding it, and, for a part, its own object. One drawn at the
+ *  same place as another holding it (within a pixel or two on each side)
+ *  is left out, so a border is marked once. */
+export function boxesAround(target: VisualTarget, part?: string): { id: string; element: Element }[] {
+  const end = part ? elementOf(target, part) : target.element();
+  if (!end) return [];
+  const found: { id: string; element: Element }[] = registeredBoxes().filter((b) => b.element.contains(end));
+  for (const other of mountedTargets()) {
+    const el = other.element();
+    if (el && (other !== target || part) && el.contains(end)) found.push({ id: presentationId(other.ref), element: el });
+  }
+  const shown = found
+    .filter((b, i) => b.element !== end && found.findIndex((o) => o.element === b.element) === i && boxOf(b.element))
+    .sort((a, b) => a.element.contains(b.element) ? -1 : b.element.contains(a.element) ? 1 : 0);
+  const same = (a: DOMRect, b: DOMRect) => Math.abs(a.left - b.left) <= 2 && Math.abs(a.right - b.right) <= 2
+    && Math.abs(a.top - b.top) <= 2 && Math.abs(a.bottom - b.bottom) <= 2;
+  return shown.filter((b, i) => !shown.slice(0, i).some((o) => same(boxOf(o.element)!, boxOf(b.element)!)));
+}
+
+/** Where along `points` (0..1) the route last passes from outside `box`
+ *  into it, or null when it never does (it starts inside and stays, or
+ *  never reaches it) or does so only at its last pixel. A route ends
+ *  LEAF_END_PX outside its part, so a box whose border is the part's own
+ *  edge (a tab strip) counts as entered within that much of it. */
+function entryAlong(points: readonly Point[], box: DOMRect): number | null {
+  const total = length(points);
+  if (!total) return null;
+  const pad = LEAF_END_PX + 1;
+  const inside = (p: Point) => p[0] > box.left - pad && p[0] < box.right + pad
+    && p[1] > box.top - pad && p[1] < box.bottom + pad;
+  let walked = 0, entry: number | null = null;
+  for (let i = 1; i < points.length; i++) {
+    const [a, b] = [points[i - 1], points[i]];
+    const run = length([a, b]);
+    // Step along the run a pixel at a time: runs are straight or 45 degrees.
+    const steps = Math.max(1, Math.ceil(run));
+    let was = inside(a);
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      const now = inside([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+      if (now && !was) entry = (walked + run * (k - 1) / steps) / total;
+      was = now;
+    }
+    walked += run;
+  }
+  return entry !== null && entry * total < total - 1 ? entry : null;
+}
+
+/** The boxes a route passes into, each where it first crosses that box's
+ *  border on its last way in, in the order the signal reaches them. */
+function marksOn(edges: RouteEdge[], target: VisualTarget, part?: string): BoxMark[] {
+  const points = polyline(edges);
+  const host = hostOf(target);
+  const marks: BoxMark[] = [];
+  for (const b of boxesAround(target, part)) {
+    const box = boxOf(b.element)!;
+    const at = entryAlong(points, box);
+    if (at !== null) marks.push({ id: b.id, box, at, host });
+  }
+  return marks.sort((a, b) => a.at - b.at);
+}
+
+/** Whether two boxes overlap. */
+const meets = (a: DOMRect, b: DOMRect) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+/** Every control and line of text on show in `area`, on the whole page,
+ *  but the addressed element's own (and a control holding it): what a
+ *  branch from the rail keeps clear of, whichever box they are in. */
+function obstaclesIn(area: DOMRect, except: Element): DOMRect[] {
+  const out = reservedIn(document.body, except).filter((r) => meets(r, area));
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const holder = n.parentElement;
+    if (!holder || !n.textContent?.trim() || except.contains(n)) continue;
+    const around = holder.getBoundingClientRect();
+    if (!around.width || !around.height || !meets(around, area) || holder.closest("#ui-pipeline-status")
+        || undrawn(holder)) continue;
+    range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0 && meets(r, area)) out.push(r);
+  }
+  return out;
+}
+
+/** What a branch from the rail at x `railX` to `el` keeps clear of: every
+ *  control and line of text between the rail and it, down the height of
+ *  `scope` (the outermost box it passes into), the target's other parts,
+ *  and every other object beside the target. */
+function obstaclesFor(target: VisualTarget, el: Element, scope: DOMRect, railX: number, part?: string): DOMRect[] {
+  const r = el.getBoundingClientRect();
+  const left = Math.min(railX, r.left) - CLEAR_PX, right = Math.max(railX, r.right) + CLEAR_PX;
+  const area = new DOMRect(left, scope.top, right - left, scope.height);
+  return [...obstaclesIn(area, el), ...objectsBeside(target), ...(part ? otherParts(target, part, el) : [])];
+}
+
+/** The route's run from its rail to the target, leaving the primary
+ *  channel at the latest branch point that still reaches it: straight in
+ *  at the target's own level, or, when that crosses anything, in the lane
+ *  over or under its row (beside the neighbouring row) and down or up into
+ *  its top or bottom edge, the shorter of the two that clear. Null when
+ *  the rail is not one that runs down, or none is clear. */
+function lateBranch(target: VisualTarget, part?: string): RouteEdge[] | null {
+  const line = railLine(target.socket.rail);
+  const el = part ? elementOf(target, part) : target.element();
+  const r = boxOf(el);
+  if (!line || line.axis !== "down" || !el || !r) return null;
+  const right = target.socket.side === "right";
+  const out = part ? LEAF_END_PX : 0;
+  const faceX = right ? r.right + out : r.left - out;
+  if (right ? line.at <= faceX : line.at >= faceX) return null;
+  const boxes = boxesAround(target, part);
+  const scopeBox = boxOf(boxes[0]?.element ?? el)!;
+  const obstacles = obstaclesFor(target, el, scopeBox, line.at, part);
+  const id = presentationId(target.ref);
+  const host = hostOf(target);
+  const fits = (y: number) => y >= line.from && y <= line.to;
+  const clear = (points: Point[]) =>
+    !edgeCrosses({ id: "", layer: "leaf", host, points }, obstacles);
+  const level = r.top + r.height / 2;
+  let points: Point[] | null = fits(level) && clear([[line.at, level], [faceX, level]])
+    ? [[line.at, level], [faceX, level]] : null;
+  if (!points) {
+    const cx = r.left + r.width / 2;
+    points = [true, false].flatMap((up): Point[][] => {
+      const y = lane(r, scopeBox, obstacles, line.at, cx, up);
+      if (y === null || !fits(y)) return [];
+      const run: Point[] = [[line.at, y], [cx, y], [cx, up ? r.top - out : r.bottom + out]];
+      return clear(run) ? [run] : [];
+    }).sort((a, b) => length(a) - length(b))[0] ?? null;
+  }
+  if (!points) return null;
+  return bevelEdges([
+    { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [railStart(line), points[0]] },
+    { id: part ? `leaf:${id}:${part}` : `socket:${id}`, layer: part ? "leaf" : "branch", host, points },
+  ]);
+}
+
+/** The route by the object's socket near its top and a leaf down its
+ *  inner margin: where the latest branch point finds no clear way in. */
+function socketRoute(target: VisualTarget, part?: string): { edges: RouteEdge[]; socket: Point } | AvailabilityReason {
+  const socket = socketEdges(target);
+  if (!socket) return "no-route";
+  if (crossesAnotherObject(socket[socket.length - 1], target)) return "no-route";
+  const branch = socket[socket.length - 1].points;
+  const entry = branch[branch.length - 1];
+  if (!part) return { edges: socket, socket: entry };
+  const leaf = leafEdge(target, part, entry);
+  return typeof leaf === "string" ? leaf : { edges: [...socket, leaf], socket: entry };
+}
+
 export function resolveRoute(target: VisualTarget, ref: TargetRef): RouteOutcome {
   const source = sourceProblem();
   if (source) return { route: null, reason: source };
@@ -487,22 +676,26 @@ export function resolveRoute(target: VisualTarget, ref: TargetRef): RouteOutcome
     if (!e) return { route: null, reason: "no-route" };
     edges.push(e);
   }
-  const socket = socketEdges(target);
-  if (!socket) return { route: null, reason: "no-route" };
-  if (crossesAnotherObject(socket[socket.length - 1], target)) return { route: null, reason: "no-route" };
-  edges.push(...socket);
-  const branch = socket[socket.length - 1].points;
-  const entry = branch[branch.length - 1];
-  if (!ref.part) return { route: { edges: bevelEdges(edges), end: entry, socket: entry } };
-  const leaf = leafEdge(target, ref.part, entry);
-  if (typeof leaf === "string") return { route: null, reason: leaf };
-  edges.push(leaf);
-  return { route: { edges: bevelEdges(edges), end: leaf.points[leaf.points.length - 1], socket: entry } };
+  const late = lateBranch(target, ref.part);
+  let socket: Point;
+  if (late) {
+    edges.push(...late);
+    socket = late[late.length - 1].points[late[late.length - 1].points.length - 1];
+  } else {
+    const early = socketRoute(target, ref.part);
+    if (typeof early === "string") return { route: null, reason: early };
+    edges.push(...early.edges);
+    socket = early.socket;
+  }
+  const drawn = bevelEdges(edges);
+  const last = drawn[drawn.length - 1].points;
+  return { route: { edges: drawn, end: last[last.length - 1], socket, marks: marksOn(drawn, target, ref.part) } };
 }
 
-/** The edges a route uses, in order: its topology. Geometry may move under
- *  a cue; this may not. */
-export const topologyOf = (route: Route): string => route.edges.map((e) => e.id).join(" ");
+/** The edges a route uses and the boxes it marks, in order: its topology.
+ *  Geometry may move under a cue; this may not. */
+export const topologyOf = (route: Route): string =>
+  [...route.edges.map((e) => e.id), ...route.marks.map((m) => `box:${m.id}`)].join(" ");
 
 /** A run of edges as one line. */
 export const polyline = (edges: RouteEdge[]): Point[] => joined(edges.map((e) => e.points));

@@ -61,7 +61,7 @@ import { TabRow, type Tab } from "./Tabs";
 import type { CommandArgs, TargetRef } from "./uiContract";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
-import { registerCommand, useUiTarget, type Availability } from "./uiRegistry";
+import { registerCommand, useUiBox, useUiTarget, type Availability } from "./uiRegistry";
 import { kindDecl, splitKey } from "./uiValidate";
 import { TaskBar, useTick } from "./WorkflowsView";
 import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
@@ -260,7 +260,7 @@ function OneWorkflow({ id }: { id: string }) {
       {live.error && <p className="read-failure">{t("main.workflow.unreadable", { error: live.error })}</p>}
       {w && selected && <>
         <div ref={row} style={{ flex: "none" }}>
-          <TabRow tabs={tabs} selected={selected.id} className="workflow-tabs" words
+          <TabRow tabs={tabs} selected={selected.id} className="workflow-tabs" words box="main.workflow.tabs"
                   binding={(t) => bind("workflow.tab.select", { workflowId: id, tab: t.id as WorkflowTab })} />
         </div>
         <div className="workflow-tab-view" role="tabpanel" aria-label={selected.title}>
@@ -398,10 +398,11 @@ function ItemIcon({ item, partRef }: { item: WorkflowItem; partRef?: (el: Elemen
 function Phases({ w }: { w: Workflow }) {
   const t = useT();
   const phases = phaseStates(w);
+  const stepper = useUiBox("main.workflow.phases");
   if (!phases.length) return <p className="workflow-empty">{t("main.workflow.noPhases")}</p>;
   const tasks = w.items.filter((i) => i.kind === "task");
   return (
-    <ol className="phase-stepper">
+    <ol className="phase-stepper" ref={stepper}>
       {phases.map(({ item, at }, n) => (
         <PhaseStep key={item.slug} workflowId={w.id} item={item} at={at} n={n}
                    own={tasks.filter((t) => t.phase === item.slug)} />

@@ -2,9 +2,10 @@
 rest (the map of orb rise, top pipeline, a rail per region and a branch
 into each object is data only), and a cue's whole life drawn along its own
 route alone: white from the orb, three pulses on registered edges only,
-arrival rings and the contour, hold, fade and reset, with nothing left
-afterwards (UiPipelineLayer.tsx, uiAttention.ts, uiPipeline.ts,
-orbSource.ts).
+down the primary channel to the latest branch point, a mark on each box it
+passes into in turn, arrival rings and the contour, hold, fade and reset,
+with nothing left afterwards (UiPipelineLayer.tsx, uiAttention.ts,
+uiPipeline.ts, orbSource.ts).
 
 Headless Chromium on the built page. /api/team/network is a fixture (the
 Network tab's tiles and the node's centre detail are the targets), and
@@ -82,12 +83,12 @@ class _UiServer:
         return self.results[rid]
 
 
-async def _open(p, url, *, reduced=False, sessions=None, team=None, routes=(), network=True):
+async def _open(p, url, *, reduced=False, sessions=None, team=None, routes=(), network=True, size=(1440, 900)):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
-    page = await browser.new_page(viewport={"width": 1440, "height": 900},
+    page = await browser.new_page(viewport={"width": size[0], "height": size[1]},
                                   reduced_motion="reduce" if reduced else "no-preference")
     await page.add_init_script(FAKE_TRANSCRIPTION)
     ui = _UiServer()
@@ -119,6 +120,8 @@ DRAWN = """() => ({
   contour: document.querySelectorAll('.ui-contour').length,
   queued: document.querySelectorAll('[data-cue][data-queued="true"]').length,
   edges: [...document.querySelectorAll('[data-cue]')].flatMap(g => g.dataset.edges.split(' ').filter(Boolean)),
+  marks: [...document.querySelectorAll('#ui-pipeline [data-cue]')].flatMap(g => g.dataset.marks.split(' ').filter(Boolean)),
+  marked: [...document.querySelectorAll('[data-mark]')].map(m => m.dataset.mark),
   route: [...document.querySelectorAll('#ui-pipeline [data-cue] .ui-route')].map(p => p.getAttribute('d')),
   leaf: [...document.querySelectorAll('#ui-pipeline-over [data-cue] .ui-route')].map(p => p.getAttribute('d')),
   source: document.getElementById('ui-pipeline').dataset.source,
@@ -181,17 +184,29 @@ async def test_nothing_at_rest_and_a_cue_runs_its_whole_life_on_registered_edges
         moving = await page.evaluate(DRAWN)
         assert moving["source"] == "attention", moving          # the orb is emitting white
         assert moving["contour"] == 0 and moving["rings"] == 0, moving   # nothing at the end yet
-        # Its own route alone, out of the orb, down the right rail, into the tile.
+        # Its own route alone, out of the orb, down the right rail, and in
+        # from the rail straight to the part: no socket near the tile's top.
         _on_the_map(moving, "tile")
-        for edge in ("edge.trunk-right", f"socket:right.network|node|{MINI_ID}"):
+        tile = f"right.network|node|{MINI_ID}"
+        for edge in ("edge.trunk-right", f"rail.right:tap:{tile}", f"leaf:{tile}:cpu"):
             assert edge in moving["edges"], (edge, moving["edges"])
+        assert f"socket:{tile}" not in moving["edges"], moving["edges"]
         assert not any(e.startswith(("rail.left", "rail.main", "rail.footer")) for e in moving["edges"]), moving
-        assert moving["leaf"], "the part's leaf inside the tile"
+        # The boxes on the way, outermost first: the panel, then the tile.
+        assert moving["marks"] == ["right.panel", tile], moving["marks"]
+        seen = []
+        while len(seen) < 2:
+            for mark in (await page.evaluate(DRAWN))["marked"]:
+                if mark not in seen:
+                    seen.append(mark)
+            assert time.monotonic() - sent < 5, seen
+            await asyncio.sleep(0.03)
+        assert seen == ["right.panel", tile], seen               # marked in turn, the panel first
 
         result = await ui.result(rid)
         took = result["received"] - sent
         assert result["status"] == "completed" and result["arrival"] == "animated", result
-        assert 1.5 < took < 3.0, took                            # answered at arrival, not at scheduling
+        assert 2.6 < took < 4.6, took                            # answered at arrival, after both stops
         arrived = await page.evaluate(DRAWN)
         assert arrived["contour"] >= 1, arrived
         assert "pointing from the orb to" in arrived["status"], arrived
@@ -200,7 +215,7 @@ async def test_nothing_at_rest_and_a_cue_runs_its_whole_life_on_registered_edges
         held = await page.evaluate(DRAWN)
         assert held["route"] and held["contour"] >= 1 and held["pulses"] == 0, held
 
-        await page.wait_for_function("!document.querySelector('[data-cue]')", timeout=6000)
+        await page.wait_for_function("!document.querySelector('[data-cue]')", timeout=8000)
         after = await page.evaluate(DRAWN)
         assert after["source"] == "free" and after["waiting"] == "0", after
         await _nothing_drawn(page)                               # nothing of it is left
@@ -208,8 +223,9 @@ async def test_nothing_at_rest_and_a_cue_runs_its_whole_life_on_registered_edges
         events = [e["event"] for e in ui.events[rid]]
         assert events == ["resolving", "emitting", "travelling", "arrived", "holding", "fading", "cleared"], events
         at = {e["event"]: e["at"] for e in ui.events[rid]}
-        assert 1400 <= at["arrived"] - at["emitting"] <= 2000, at   # 1,620 ms on the shared schedule
-        assert 4500 <= at["cleared"] - at["emitting"] <= 5800, at   # reset by 5,000 ms
+        # 2,220 ms on the shared schedule, and 450 ms at each of two boxes.
+        assert 2900 <= at["arrived"] - at["emitting"] <= 3700, at
+        assert 6000 <= at["cleared"] - at["emitting"] <= 7400, at   # reset by 5,600 + 900 ms
         await browser.close()
 
 
@@ -514,11 +530,12 @@ AROUND_STEP = """(slug) => {
 async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_url):
     """A phase step's straight branch from the rail would cross the steps
     after it, and the next step's connector line lies over its dot. The
-    connector ignores the pointer, and the branch runs over the stepper
-    and drops into the step's top edge at its inner margin, every turn a
-    45-degree bevel, on the map, never across another step, a control or a
-    line of text; the step, its dot and its count are all reached. The last
-    step is still entered straight from the rail."""
+    connector ignores the pointer, and the branch leaves the rail level
+    with the lane over the stepper, runs in it and drops into the step's
+    top edge (or its dot's), every turn a 45-degree bevel, on the map,
+    never across another step, a control or a line of text; the step, its
+    dot and its count are all reached. The last step is still entered
+    straight from the rail, level with its middle."""
     async with async_api.async_playwright() as p:
         browser, page, ui = await _open(p, page_url, reduced=True, team=SIGNED_OUT, network=False,
                                         routes=[("**/api/workflows**", _Workflows())])
@@ -550,8 +567,8 @@ async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_ur
                                 assert not _inside(x, y, box), (slug, (x, y), box, branch)
                     end_x, end_y = branch[-1] if part is None else route[-1]
                     if over and part is None:
-                        # Into the top edge, at the inner margin (6 px in).
-                        assert abs(end_y - top) < 1 and abs(end_x - (right - 6)) < 1, (branch, around["step"])
+                        # Down into its top edge, from the lane over the stepper.
+                        assert abs(end_y - top) < 1 and left < end_x < right, (branch, around["step"])
                         assert min(y for _, y in branch) < top - 1, branch
                     elif not over and part is None:
                         assert abs(end_x - right) < 1 and top < end_y < bottom, (branch, around["step"])
@@ -601,5 +618,146 @@ async def test_parts_beside_a_close_a_status_or_their_objects_edge_are_reached(p
                 assert result["status"] == "completed", (target, result)
                 clear, _ = ui.request({"kind": "clear"})
                 await ui.result(clear)
+        finally:
+            await browser.close()
+
+
+# ── the tour's routes: trunk first, boxes in order, never across text ──
+
+def _tour_workflow():
+    """The workflow, with a task in its second phase for the tour's last stop."""
+    wf = _workflow()
+    wf["items"] = wf["items"] + [{"slug": "import", "kind": "task", "phase": "deepgram-engine",
+                                  "title": "Import entries", "state": "running", "done": 1, "total": 4}]
+    return wf
+
+
+class _TourWorkflows(_Workflows):
+    async def __call__(self, route):
+        path = route.request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+        if path == "api/workflows":
+            await route.fulfill(json={"workflows": [_tour_workflow()]})
+        elif path.endswith(("/events", "/transcript")):
+            await super().__call__(route)
+        else:
+            await route.fulfill(json={"workflow": _tour_workflow()})
+
+
+TILE = f"right.network|node|{MINI_ID}"
+WORKFLOW_BOX = "main.workflow|workflow|wf-1"
+# Each stop of the demo's tour: (the navigation that shows it, the target,
+# the boxes its route marks, outermost first).
+TOUR = [
+    (("right.tab.select", {"tab": "network"}), TILE_CPU, ["right.panel", TILE]),
+    (("network.open", {"kind": "node", "nodeId": MINI_ID}), DETAIL_CPU, [f"main.network|node|{MINI_ID}"]),
+    (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "database"},
+     ["left.fixed|teamServer|"]),
+    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, ["left.fixed|mic|"]),
+    (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
+     {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
+     [WORKFLOW_BOX, "main.workflow.phases"]),
+    (None, {**WORKFLOW, "part": "tab.decisions"}, [WORKFLOW_BOX, "main.workflow.tabs"]),
+    (("main.tab.select", {"tab": "folders"}),
+     {"region": "main", "view": "main.folders", "kind": "foldersList", "part": "registered"},
+     ["main.folders|foldersList|", "main.folders.tabs"]),
+    (("right.tab.select", {"tab": "workflows"}),
+     {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-1", "part": "row"},
+     ["right.panel"]),
+    (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
+     {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
+     [WORKFLOW_BOX]),
+]
+
+# Every control and line of text on show on the page but the target's own
+# (inside its box) and the controls holding it: what a branch never crosses.
+ON_THE_PAGE = """(box) => {
+  const [l, t, r, b] = box;
+  const inside = (x) => x.left >= l - 1 && x.right <= r + 1 && x.top >= t - 1 && x.bottom <= b + 1;
+  const holds = (x) => x.left <= l + 1 && x.right >= r - 1 && x.top <= t + 1 && x.bottom >= b - 1;
+  const rect = (x) => [x.left, x.top, x.right, x.bottom];
+  const kept = [];
+  document.querySelectorAll("button, a[href], input, select, textarea, summary, [role='button'], [role='tab'], [role='link']")
+    .forEach((c) => {
+      const x = c.getBoundingClientRect();
+      if (x.width && x.height && !inside(x) && !holds(x) && getComputedStyle(c).visibility === 'visible') kept.push(rect(x));
+    });
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), range = document.createRange();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const el = n.parentElement;
+    if (!n.textContent.trim() || !el || el.closest('#ui-pipeline-status') || getComputedStyle(el).visibility !== 'visible') continue;
+    range.selectNodeContents(n);
+    for (const x of range.getClientRects()) if (x.width && x.height && !inside(x)) kept.push(rect(x));
+  }
+  return kept;
+}"""
+
+CONTOUR_PAD = 4                                     # UiPipelineLayer.tsx
+
+
+def _branch(points):
+    """Where the route leaves its rail: the end of its last long run down
+    (the rail's tap), and the run from there to its end."""
+    for i in range(len(points) - 1, 0, -1):
+        (ax, ay), (bx, by) = points[i - 1], points[i]
+        if abs(ax - bx) < 0.6 and by - ay > 40:
+            return points[i], points[i:]
+    raise AssertionError(f"no run down a rail in {points}")
+
+
+def _length(points):
+    return sum(((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5 for (ax, ay), (bx, by) in zip(points, points[1:]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(1440, 900), (1280, 800)], ids=["1440", "1280"])
+@pytest.mark.parametrize("language", ["en", "es"])
+async def test_each_tour_stop_stays_on_the_trunk_marks_its_boxes_in_order_and_crosses_no_text(
+        page_url, language, size):
+    """For every stop of the demo's tour, in English and in Spanish, at
+    1440 and 1280 wide: the route runs down its rail to the latest branch
+    point, level with the target or the lane beside its row (never an
+    early cut-in near the top of an object), marks the boxes holding the
+    target outermost first, and from the rail to the target crosses no
+    control and no line of text on the page."""
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, reduced=True, sessions=_LanguageSessions(language),
+                                        network=False, size=size,
+                                        routes=[("**/api/workflows**", _TourWorkflows()),
+                                                ("**/api/folders**", _Folders())])
+        try:
+            await page.wait_for_function(f"document.documentElement.lang === '{'es-419' if language == 'es' else 'en-US'}'")
+            for show, target, boxes in TOUR:
+                what = (language, size, target.get("part") or target["kind"])
+                if show:
+                    rid, _ = ui.request({"kind": "navigate", "commandId": show[0], "args": show[1]})
+                    assert (await ui.result(rid))["status"] == "completed", (what, show)
+                    await asyncio.sleep(0.4)
+                rid, _ = ui.indicate(target, reveal="never")
+                result = await ui.result(rid)
+                assert result["status"] == "completed", (what, result)
+                await page.wait_for_function("document.querySelector('.ui-contour')")
+                drawn = await page.evaluate(DRAWN)
+                _on_the_map(drawn, what)
+                assert drawn["marks"] == boxes, (what, drawn["marks"])
+                route = _points(drawn["route"][0]) + (_points(drawn["leaf"][0])[1:] if drawn["leaf"] else [])
+                box = await page.evaluate("""() => { const b = document.querySelector('.ui-contour').getBBox();
+                                                   return [b.x, b.y, b.x + b.width, b.y + b.height]; }""")
+                left, top, right, bottom = (box[0] + CONTOUR_PAD, box[1] + CONTOUR_PAD,
+                                            box[2] - CONTOUR_PAD, box[3] - CONTOUR_PAD)
+                (bx, by), branch = _branch(route)
+                # Trunk first: it leaves the rail level with the target, or
+                # with the lane just over or under its row.
+                assert top - 40 <= by <= bottom + 40, (what, (bx, by), (left, top, right, bottom), route)
+                assert _length(route[:route.index(branch[0]) + 1]) > by, (what, route)
+                kept = await page.evaluate(ON_THE_PAGE, [left, top, right, bottom])
+                for (ax, ay), (cx, cy) in zip(branch, branch[1:]):
+                    steps = max(1, int(max(abs(cx - ax), abs(cy - ay)) / 2))
+                    for k in range(steps + 1):
+                        x, y = ax + (cx - ax) * k / steps, ay + (cy - ay) * k / steps
+                        for keep in kept:
+                            assert not _inside(x, y, keep), (what, (x, y), keep, branch)
+                clear, _ = ui.request({"kind": "clear"})
+                await ui.result(clear)
+                await page.wait_for_function("!document.querySelector('[data-cue]')")
         finally:
             await browser.close()

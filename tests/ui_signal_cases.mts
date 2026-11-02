@@ -5,8 +5,8 @@
 // non-zero on the first that fails and prints what it checked otherwise.
 import assert from "node:assert/strict";
 import {
-  BEVEL_PX, bevelled, fadeAt, leaving, length, orbEmission, phaseAt, pointAlong, pulseFractions, ringProgress, routeLit,
-  scheduleFor, TIMING,
+  along, BEVEL_PX, bevelled, drawnTo, fadeAt, leaving, length, markProgress, orbEmission, phaseAt, pointAlong,
+  pulseFractions, ringProgress, scheduleFor, TIMING, upTo,
 } from "../frontend/src/uiSignal.ts";
 import {
   attentionTransmit, claimForAttention, holds, mainOrb, orbSource, releaseSource, transferActive,
@@ -20,64 +20,102 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ── the schedule ────────────────────────────────────────────────────────
 
 const plain = scheduleFor();
+// A route that passes into two boxes, a quarter and a half of the way along.
+const boxed = scheduleFor(0, [0.5, 0.25]);
 
 const timing = [
   check("the contract's timing is the design's", () => {
     assert.deepEqual(
       [TIMING.emitMs, TIMING.travelMs, TIMING.pulseCount, TIMING.pulseOffsetMs, TIMING.arrivalAtMs,
-       TIMING.holdUntilMs, TIMING.resetByMs],
-      [220, 1400, 3, 170, 1620, 4400, 5000]);
+       TIMING.stopMs, TIMING.boxMarkMs, TIMING.holdUntilMs, TIMING.resetByMs],
+      [220, 2000, 3, 170, 2220, 450, 900, 5000, 5600]);
   }),
   check("the first pulse arrives exactly when emission and travel are over", () => {
     assert.equal(TIMING.arrivalAtMs, TIMING.emitMs + TIMING.travelMs);
+    assert.equal(plain.arrivalAt, TIMING.arrivalAtMs);
   }),
   check("phases run emit, travel, hold, fade, done", () => {
     assert.equal(phaseAt(0, plain), "emitting");
     assert.equal(phaseAt(219, plain), "emitting");
     assert.equal(phaseAt(220, plain), "travelling");
-    assert.equal(phaseAt(1619, plain), "travelling");
-    assert.equal(phaseAt(1620, plain), "holding");
-    assert.equal(phaseAt(4399, plain), "holding");
-    assert.equal(phaseAt(4400, plain), "fading");
-    assert.equal(phaseAt(4999, plain), "fading");
-    assert.equal(phaseAt(5000, plain), "done");
+    assert.equal(phaseAt(2219, plain), "travelling");
+    assert.equal(phaseAt(2220, plain), "holding");
+    assert.equal(phaseAt(4999, plain), "holding");
+    assert.equal(phaseAt(5000, plain), "fading");
+    assert.equal(phaseAt(5599, plain), "fading");
+    assert.equal(phaseAt(5600, plain), "done");
   }),
-  check("the route is not drawn before the orb emits, and at once when still", () => {
-    assert.equal(routeLit(100, false), false);
-    assert.equal(routeLit(220, false), true);
-    assert.equal(routeLit(0, true), true);
+  check("each box on the way delays arrival, hold and reset by stopMs, in the order reached", () => {
+    assert.deepEqual(boxed.stops, [0.25, 0.5]);
+    assert.equal(boxed.arrivalAt, 2220 + 2 * 450);
+    assert.equal(boxed.holdUntil, 5000 + 900);
+    assert.equal(boxed.resetBy, 5600 + 900);
+    assert.equal(phaseAt(3119, boxed), "travelling");
+    assert.equal(phaseAt(3120, boxed), "holding");
+  }),
+  check("a pulse moves at an even pace and stands still at each box for stopMs", () => {
+    assert.equal(along(0, boxed), 0);
+    assert.equal(along(250, boxed), 0.125);
+    assert.equal(along(500, boxed), 0.25);                     // at the first box's border
+    assert.equal(along(500 + 449, boxed), 0.25);               // still there while it is marked
+    assert.equal(along(500 + 450 + 500, boxed), 0.5);           // on to the second
+    assert.equal(along(500 + 450 + 500 + 450, boxed), 0.5);
+    assert.equal(along(2000 + 900, boxed), 1);                  // arrived
+    assert.equal(along(1e6, boxed), 1);
+    assert.equal(along(1000, plain), 0.5);
+  }),
+  check("nothing is drawn before the orb emits; the line grows behind the first pulse, whole at once when still", () => {
+    assert.equal(drawnTo(100, boxed, false), 0);
+    assert.equal(drawnTo(220, boxed, false), 0);
+    assert.equal(drawnTo(220 + 500, boxed, false), 0.25);
+    assert.equal(drawnTo(boxed.arrivalAt, boxed, false), 1);
+    assert.equal(drawnTo(0, boxed, true), 1);
+  }),
+  check("each box is marked from when the first pulse reaches it, for boxMarkMs, in turn", () => {
+    assert.deepEqual(markProgress(220 + 499, boxed), [null, null]);
+    const [a, b] = markProgress(220 + 500 + 450, boxed);
+    assert.ok(a !== null && Math.abs(a - 0.5) < 1e-9 && b === null);
+    const [c, d] = markProgress(220 + 500 + 450 + 500 + 10, boxed);   // the second reached
+    assert.ok(c === null && d !== null);
+    assert.deepEqual(markProgress(1000, plain), []);
   }),
   check("three pulses leave 170 ms apart and each takes the whole travel", () => {
-    assert.deepEqual(pulseFractions(220), []);
-    assert.equal(pulseFractions(221).length, 1);
-    assert.equal(pulseFractions(220 + 170 + 1).length, 2);
-    assert.equal(pulseFractions(220 + 340 + 1).length, 3);
-    const [first] = pulseFractions(220 + 700);
+    assert.deepEqual(pulseFractions(220, plain), []);
+    assert.equal(pulseFractions(221, plain).length, 1);
+    assert.equal(pulseFractions(220 + 170 + 1, plain).length, 2);
+    assert.equal(pulseFractions(220 + 340 + 1, plain).length, 3);
+    const [first] = pulseFractions(220 + 1000, plain);
     assert.ok(Math.abs(first - 0.5) < 1e-9);
-    assert.equal(pulseFractions(1620).length, 2);            // the first has arrived
-    assert.deepEqual(pulseFractions(1620 + 340), []);         // the last has too
+    assert.equal(pulseFractions(2220, plain).length, 2);        // the first has arrived
+    assert.deepEqual(pulseFractions(2220 + 340, plain), []);     // the last has too
+    // The followers gather at a box's border while it is marked.
+    const [lead, second] = pulseFractions(220 + 500 + 300, boxed);
+    assert.equal(lead, 0.25);
+    assert.equal(second, 0.25);
   }),
   check("arrival rings start at arrival, the second ringGapMs later", () => {
-    assert.deepEqual(ringProgress(1620), [null, null]);
-    const [a, b] = ringProgress(1620 + 100);
+    assert.deepEqual(ringProgress(2220, plain), [null, null]);
+    const [a, b] = ringProgress(2220 + 100, plain);
     assert.ok(a !== null && b === null);
-    const [, c] = ringProgress(1620 + TIMING.ringGapMs + 100);
+    const [, c] = ringProgress(2220 + TIMING.ringGapMs + 100, plain);
     assert.ok(c !== null);
+    assert.deepEqual(ringProgress(2220 + 100, boxed), [null, null]);   // not before the boxes are passed
   }),
   check("the cue is whole through the hold and gone by the reset", () => {
-    assert.equal(fadeAt(4400, plain), 1);
-    assert.ok(Math.abs(fadeAt(4700, plain) - 0.5) < 1e-9);
-    assert.equal(fadeAt(5000, plain), 0);
+    assert.equal(fadeAt(5000, plain), 1);
+    assert.ok(Math.abs(fadeAt(5300, plain) - 0.5) < 1e-9);
+    assert.equal(fadeAt(5600, plain), 0);
   }),
   check("a longer explanation extends the hold, bounded, never the travel", () => {
     const long = scheduleFor(2000);
-    assert.deepEqual(long, { holdUntil: 6400, resetBy: 7000 });
-    assert.equal(phaseAt(1620, long), "holding");
-    assert.deepEqual(scheduleFor(1e9), { holdUntil: 4400 + TIMING.maxExtraHoldMs, resetBy: 5000 + TIMING.maxExtraHoldMs });
+    assert.deepEqual(long, { stops: [], arrivalAt: 2220, holdUntil: 7000, resetBy: 7600 });
+    assert.equal(phaseAt(2220, long), "holding");
+    assert.deepEqual(scheduleFor(1e9), { stops: [], arrivalAt: 2220, holdUntil: 5000 + TIMING.maxExtraHoldMs,
+                                         resetBy: 5600 + TIMING.maxExtraHoldMs });
     assert.deepEqual(scheduleFor(-5), plain);
   }),
   check("the orb rises over the emission and fades with the route", () => {
-    assert.deepEqual(orbEmission(plain), { seconds: 5, riseSeconds: 0.22, fadeSeconds: 0.6 });
+    assert.deepEqual(orbEmission(plain), { seconds: 5.6, riseSeconds: 0.22, fadeSeconds: 0.6 });
   }),
   check("a route's length and points along it follow its right angles", () => {
     const pts = [[0, 100], [0, 0], [50, 0]] as const;
@@ -87,6 +125,9 @@ const timing = [
     assert.deepEqual(pointAlong(pts, 1), [50, 0]);
     assert.deepEqual(leaving(pts), [0, -1]);
     assert.deepEqual(leaving([[0, 0], [0, 0], [-4, 0]]), [-1, 0]);
+    assert.deepEqual(upTo(pts, 0), [[0, 100]]);
+    assert.deepEqual(upTo(pts, 120), [[0, 100], [0, 0], [20, 0]]);
+    assert.deepEqual(upTo(pts, 1e3), [[0, 100], [0, 0], [50, 0]]);
   }),
   check("every right-angled turn is a 45-degree bevel, between runs and inside one", () => {
     assert.equal(BEVEL_PX, 6);

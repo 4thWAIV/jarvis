@@ -18,6 +18,7 @@ page tests), and /ws/voice is the pipeline test's stand-in backend.
 
 import asyncio
 import json
+import re
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,10 +159,25 @@ async def test_pointing_at_an_agent_on_a_later_page_from_another_tab_reveals_it(
             assert "27" in await page.evaluate(AGENT_ROWS)
             assert await page.evaluate("() => document.querySelector('.right-tabs [aria-selected=true]').title") \
                 == "Agents"
-            # The name sits behind the orb from the rail's side: the branch
-            # never crosses the orb to reach it, and says so.
+            # The name sits behind the orb from the rail's side: the route
+            # never crosses the orb. It leaves the rail level with the gap
+            # over the row, passes the row before it there and drops into
+            # the name's top edge.
             result = await ui.indicate(_agent("27", "name"))
-            assert (result["status"], result["reason"]) == ("blocked", "no-route"), json.dumps(result)
+            assert result["status"] == "completed", json.dumps(result)
+            route = await page.evaluate("""() => {
+              const d = [...document.querySelectorAll('#ui-pipeline-over [data-cue] .ui-route')].pop().getAttribute('d');
+              const orb = document.querySelector('li[data-session-id="27"] .agent-orb').getBoundingClientRect();
+              const name = document.querySelector('li[data-session-id="27"] .agent-name').getBoundingClientRect();
+              return {d, orb: [orb.left, orb.top, orb.right, orb.bottom], name: [name.left, name.top, name.right, name.bottom]};
+            }""")
+            pts = [tuple(map(float, xy)) for xy in re.findall(r"(-?[\d.]+) (-?[\d.]+)", route["d"])]
+            (ax, ay), (bx, by) = pts[-2], pts[-1]
+            assert abs(ax - bx) < 0.6 and ay < by <= route["name"][1], (pts, route)   # down into its top
+            left, top, right, bottom = route["orb"]
+            for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+                assert not (min(x1, x2) < right and max(x1, x2) > left and min(y1, y2) < bottom
+                            and max(y1, y2) > top), ((x1, y1), (x2, y2), route["orb"])
             # The list itself is a target too.
             result = await ui.indicate({"region": "right", "view": "right.agents", "kind": "agentsList"})
             assert result["status"] == "completed", json.dumps(result)

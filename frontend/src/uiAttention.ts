@@ -5,7 +5,8 @@
  * (orbSource.ts; a real transmission keeps it, and the cue waits, shown
  * as queued, for at most the contract's sourceQueueMs before it answers
  * busy), emit white from the orb, send three pulses along the registered
- * route (uiPipeline.ts), ring and outline the target on arrival, hold,
+ * route (uiPipeline.ts), stopping at each box on the way while its border
+ * is marked, ring and outline the target on arrival, hold,
  * fade and clear. Every moment comes from one schedule (uiSignal.ts), the
  * same one the drawing reads. The request is answered at arrival, never at
  * scheduling; with reduced motion the whole static connection is shown at
@@ -37,7 +38,7 @@ import {
   elementOf, findTarget, lastNavigationActor, navigationRevision, visibilityOf, type VisualTarget,
 } from "./uiRegistry";
 import { reveal } from "./uiNavigationReveal";
-import { polyline, resolveRoute, topologyOf, type Route } from "./uiPipeline";
+import { polyline, resolveRoute, topologyOf, type BoxMark, type Route } from "./uiPipeline";
 import { leaving, orbEmission, phaseAt, scheduleFor, TIMING, type Point, type Schedule } from "./uiSignal";
 import {
   type Arrival, type AvailabilityReason, type EndpointStyle, type Lifecycle, type SideEffect,
@@ -61,6 +62,9 @@ export interface CueFrame {
   still: boolean;
   route: Route;
   points: Point[];
+  /** The boxes the route passes into, measured now, in the order the
+   *  signal reaches them (the schedule's stops). */
+  marks: BoxMark[];
   /** The target's box at arrival, for its contour. */
   box: DOMRect | null;
   style: EndpointStyle;
@@ -123,8 +127,8 @@ function stillMotion(): boolean {
 function publish(now: number): void {
   cues.set([...showing.values()].map((c) => ({
     cueId: c.id, label: c.label, queued: c.started === null, elapsed: c.started === null ? 0 : now - c.started,
-    schedule: c.schedule, still: c.still, route: c.route, points: polyline(c.route.edges), box: c.box,
-    style: c.style,
+    schedule: c.schedule, still: c.still, route: c.route, points: polyline(c.route.edges), marks: c.route.marks,
+    box: c.box, style: c.style,
   })));
 }
 
@@ -260,7 +264,7 @@ export async function indicate(ref: TargetRef, options: IndicateOptions): Promis
     const life = new EffectLife();
     const cue: Cue = {
       id: cueId, ref, target: target!, started: still ? performance.now() : null,
-      schedule: scheduleFor(options.holdMs ?? 0), still, style: options.style ?? "outline",
+      schedule: scheduleFor(options.holdMs ?? 0, first.route.marks.map((m) => m.at)), still, style: options.style ?? "outline",
       label: options.label ?? target!.label, route: first.route!, topology: topologyOf(first.route!),
       box: null, token: null, arrived: false, life, onEvent: options.onEvent, lastEvent: "resolving", effects,
       answer: (outcome) => { if (!answered) { answered = true; resolve(outcome); } },

@@ -3,10 +3,13 @@
  * top pipeline, one rail per region, a branch into each object) is data
  * only (uiPipeline.ts), which routing and hit-testing use; none of it is
  * drawn while no cue runs. A white attention cue under way (uiAttention.ts)
- * draws its own route alone: the route faint, three bright pulses running
- * along it, two rings where it arrives, the target's contour, then the
- * fade, after which nothing of it is left. A cue waiting for a real
- * transmission to give the orb back shows its route dashed until it can go.
+ * draws its own route alone: three bright pulses running along it, the
+ * faint line growing behind the first, a brief outline on each box it
+ * passes into (a panel, a tile, a tab strip), outermost first, the pulses
+ * stopping at its border while it is marked, two rings where it arrives,
+ * the target's contour, then the fade, after which nothing of it is left.
+ * A cue waiting for a real transmission to give the orb back shows its
+ * route dashed until it can go.
  *
  * Three layers, all pointer-transparent. A route's run behind the side
  * columns, as the transmissions' rays do (so it comes out from inside the
@@ -25,11 +28,13 @@ import { orbSource } from "./orbSource";
 import { cues, type CueFrame } from "./uiAttention";
 import { polyline, type RouteEdge } from "./uiPipeline";
 import {
-  fadeAt, length, pathOf, pointAlong, pulseFractions, ringProgress, routeLit, type Point,
+  drawnTo, fadeAt, joined, length, markProgress, pathOf, pointAlong, pulseFractions, ringProgress, upTo, type Point,
 } from "./uiSignal";
 
 const RING_R = 26;
 const CONTOUR_PAD = 4;
+/** How far outside a box its mark is drawn. */
+const MARK_PAD = 2;
 
 type Layer = "base" | "over" | "modal";
 const LAYERS: Layer[] = ["base", "over", "modal"];
@@ -42,7 +47,7 @@ function pulses(cue: CueFrame): { at: Point; layer: Layer }[] {
   if (cue.still || cue.queued) return [];
   const runs = cue.route.edges.map((e) => ({ layer: layerOf(e), run: length(e.points) }));
   const total = length(cue.points);
-  return pulseFractions(cue.elapsed).map((p) => {
+  return pulseFractions(cue.elapsed, cue.schedule).map((p) => {
     let d = p * total;
     let layer: Layer = runs[runs.length - 1].layer;
     for (const r of runs) {
@@ -75,31 +80,69 @@ function Rings({ cue }: { cue: CueFrame }) {
   const [cx, cy] = cue.points[cue.points.length - 1];
   return (
     <>
-      {ringProgress(cue.elapsed).map((t, i) => t === null ? null
+      {ringProgress(cue.elapsed, cue.schedule).map((t, i) => t === null ? null
         : <circle key={i} cx={cx} cy={cy} r={4 + t * RING_R} className="ui-ring" style={{ opacity: 1 - t }} />)}
     </>
   );
 }
 
+/** Each box the route passes into, outlined from the moment the signal
+ *  reaches its border, fading over the contract's boxMarkMs: drawn above
+ *  the columns (or the modal), in the order the signal reaches them. */
+function Marks({ cue, layer }: { cue: CueFrame; layer: Layer }) {
+  if (cue.still || cue.queued) return null;
+  const progress = markProgress(cue.elapsed, cue.schedule);
+  return (
+    <>
+      {cue.marks.map((m, k) => {
+        const t = progress[k];
+        if (t === null || t === undefined || (m.host === "modal" ? "modal" : "over") !== layer) return null;
+        const shape = { x: m.box.left - MARK_PAD, y: m.box.top - MARK_PAD, width: m.box.width + 2 * MARK_PAD,
+                        height: m.box.height + 2 * MARK_PAD, rx: 6 };
+        return (
+          <g key={m.id} data-mark={m.id} style={{ opacity: 1 - t * t }}>
+            <rect {...shape} className="ui-under" /><rect {...shape} className="ui-box-mark" />
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
+/** The part of each edge drawn so far, by its distance along the whole
+ *  route: the line grows behind the first pulse. */
+function drawnEdges(cue: CueFrame, edges: RouteEdge[]): Point[] {
+  let reach = drawnTo(cue.elapsed, cue.schedule, cue.still) * length(cue.points);
+  const out: Point[][] = [];
+  for (const e of cue.route.edges) {
+    const run = length(e.points);
+    if (edges.includes(e) && reach > 0) out.push(upTo(e.points, reach));
+    reach -= run;
+  }
+  return joined(out);
+}
+
 /** One cue's share of one layer. */
 function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
   const edges = cue.route.edges.filter((e) => layerOf(e) === layer);
-  const line = polyline(edges);
+  const line = cue.queued ? polyline(edges) : drawnEdges(cue, edges);
   const endLayer = layerOf(cue.route.edges[cue.route.edges.length - 1]);
   const ends = layer === (endLayer === "base" ? "over" : endLayer);
-  const lit = routeLit(cue.elapsed, cue.still);
   const moving = pulses(cue).filter((p) => p.layer === layer);
-  if (!line.length && !moving.length && !ends) return null;
+  const marked = cue.marks.some((m) => (m.host === "modal" ? "modal" : "over") === layer);
+  if (!edges.length && !moving.length && !ends && !marked) return null;
   return (
     <g data-cue={cue.cueId} data-queued={cue.queued ? "true" : "false"} data-edges={edges.map((e) => e.id).join(" ")}
+       data-marks={layer === "base" ? cue.marks.map((m) => m.id).join(" ") : undefined}
        data-arrived={ends ? (cue.box ? "true" : "false") : undefined}
        style={{ opacity: fadeAt(cue.elapsed, cue.schedule) }}>
       {line.length > 1 && cue.queued && <path d={pathOf(line)} className="ui-route-queued" />}
-      {line.length > 1 && !cue.queued && lit && <>
+      {line.length > 1 && !cue.queued && <>
         <path d={pathOf(line)} className="ui-under" />
         {layer === "base" && <path d={pathOf(line)} className="ui-route-glow" filter="url(#ui-glow)" />}
         <path d={pathOf(line)} className="ui-route" />
       </>}
+      <Marks cue={cue} layer={layer} />
       {moving.map((p, i) => <circle key={i} cx={p.at[0]} cy={p.at[1]} r={3} className="ui-pulse" />)}
       {ends && <Rings cue={cue} />}
       {ends && cue.box && <Contour cue={cue} />}

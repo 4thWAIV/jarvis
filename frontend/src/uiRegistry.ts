@@ -18,7 +18,7 @@
  * and `missingHandlers` lists declared commands nothing has registered.
  */
 
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { createStore } from "./store";
 import {
   type Actor, type AvailabilityReason, type CommandArgs, type CommandId, type RailId, type SideEffect,
@@ -167,6 +167,38 @@ export function findTarget(ref: TargetRef): VisualTarget | null {
 
 export function mountedTargets(): VisualTarget[] {
   return [...targets.values()];
+}
+
+// ── boxes ───────────────────────────────────────────────────────────────
+
+/** The boxes that hold targets without being targets themselves, each by
+ *  a stable id (never its words): the right panel's tab body, the two
+ *  rows of view tabs, a workflow's tab strip and phase stepper, and the
+ *  Folders view's tab strip. A route marks every box it passes into on its
+ *  way to a target, outermost first (uiPipeline.ts `boxesAround`), these
+ *  and every registered target that holds the one it points at (a tile, a
+ *  centre view, a workflow's detail). */
+export const BOX_IDS = ["right.panel", "right.tabs", "main.tabs", "main.workflow.tabs", "main.workflow.phases",
+                        "main.folders.tabs"] as const;
+export type BoxId = typeof BOX_IDS[number];
+
+const boxes = new Map<Element, BoxId>();
+
+/** A callback ref registering its element as box `id` while it is on the
+ *  page. */
+export function useUiBox(id: BoxId): (el: Element | null) => void {
+  const held = useRef<Element | null>(null);
+  return useCallback((el: Element | null) => {
+    if (held.current) boxes.delete(held.current);
+    held.current = el;
+    if (el) boxes.set(el, id);
+    layoutRevision.set(layoutRevision.get() + 1);
+  }, [id]);
+}
+
+/** Every registered box on the page, with its id. */
+export function registeredBoxes(): { id: BoxId; element: Element }[] {
+  return [...boxes].filter(([el]) => el.isConnected).map(([element, id]) => ({ id, element }));
 }
 
 /** Whether `el` is laid out but not drawn (visibility: hidden, as a
