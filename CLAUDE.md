@@ -316,8 +316,7 @@ examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent) and `mic-check-page/` (page).
 
 ## Collaboration bundles
-Under construction (branch `feature/collaboration-bundles`): any file a
-teammate sends, a ZIP with no manifest included, can be inspected and read
+Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
 without running anything. The shared contract is `bundle_contract.py`: the
 typed JSON of every bundle route (Classification, MemberPage, TextPage,
 Preview, PreflightResult, ReviewState), the fixed formats, operations,
@@ -326,8 +325,8 @@ SHA-256 and the member's checked path) and continuation, and `BRAIN_TOOLS`,
 which says for each bundle tool whether it is an ACTING_TOOL, what it
 taints and which route calls the same service. The page's copy is
 generated into `frontend/src/bundleContract.ts` by
-`scripts/generate_messaging_contract.py`. The pieces, each a skeleton until
-its lane fills it: `bundle_readers/` (one reader per format and the
+`scripts/generate_messaging_contract.py`. The pieces:
+`bundle_readers/` (one reader per format and the
 registry, `detect` deciding a format from content before extension, and
 `health`, which asks osascript rather than assuming it), `bundle_cache.py`
 (derived output keyed by owner, attachment hash, member, reader version
