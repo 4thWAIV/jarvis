@@ -3507,15 +3507,72 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   .folder-row, .folders-panel-row, .candidate-row, .folder-availability-dot { forced-color-adjust: auto; border: 1px solid CanvasText; }
 }
 
-/* Settings, Updates: the new commits on main (Settings.tsx). */
-.update-commits {
-  margin: 6px 0 0 0;
-  padding-left: 16px;
-  max-height: 180px;
+/* Settings, Updates: the version running, the newer versions on main to
+   choose from, and the confirmation before installing (Settings.tsx). */
+.update-current { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-current b { font-weight: 600; }
+.update-current code, .update-version code {
+  color: rgba(0, 212, 255, 0.7);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.update-versions {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  max-height: 260px;
   overflow-y: auto;
+}
+.update-version { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.update-version:last-child { border-bottom: 0; }
+.update-version label {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.update-version:hover:not(.off) { background: rgba(0, 212, 255, 0.05); }
+.update-version.sel { background: rgba(0, 212, 255, 0.09); }
+.update-version.off { opacity: 0.5; }
+.update-version.off label { cursor: not-allowed; }
+.update-version input { margin: 2px 0 0 0; accent-color: #00d4ff; }
+.update-version-body { display: flex; flex-direction: column; min-width: 0; }
+.update-version-title { font-size: 13px; line-height: 1.35; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-version-meta { font-size: 11px; margin-top: 2px; color: rgba(255, 255, 255, 0.45); }
+.update-ci { font-size: 11px; white-space: nowrap; margin-top: 1px; }
+.update-ci.pass { color: rgba(74, 222, 128, 0.85); }
+.update-ci.fail { color: rgba(248, 113, 113, 0.85); }
+.update-ci.wait { color: rgba(251, 191, 36, 0.85); }
+.update-tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: rgba(0, 212, 255, 0.8);
+  vertical-align: 1px;
+}
+.update-confirm {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(0, 212, 255, 0.05);
   font-size: 12px;
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.8);
+}
+.update-confirm ul { margin: 6px 0 0 16px; padding: 0; color: rgba(255, 255, 255, 0.6); font-size: 11px; }
+.update-refused {
+  margin: 10px 0 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(248, 113, 113, 0.85);
   overflow-wrap: anywhere;
 }
-.update-commits code { color: rgba(0, 212, 255, 0.7); }

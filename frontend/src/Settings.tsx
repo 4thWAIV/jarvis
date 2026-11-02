@@ -302,6 +302,20 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
 
 // GET /api/update (self_update.Status.to_json) and POST /api/update
 // (self_update.Outcome.to_json).
+type CiState = "" | "passed" | "pending" | "failed" | "none" | "unknown";
+
+// A version: a pull request merged to main (self_update.Version.to_json).
+interface UpdateVersion {
+  sha: string;
+  pr: number | null;
+  title: string;
+  date: string;
+  ci: CiState;
+  name: string;
+  can_choose: boolean;
+  unchosen: string;
+}
+
 interface UpdateStatus {
   source: "github" | "installed" | "other";
   reason: string;
@@ -309,8 +323,9 @@ interface UpdateStatus {
   branch: string;
   commit: string;
   behind: number;
-  commits: { sha: string; subject: string }[];
-  ci: "" | "passed" | "pending" | "failed" | "none" | "unknown";
+  current: UpdateVersion | null;
+  versions: UpdateVersion[];
+  ci: CiState;
   blockers: { code: string; text: string; detail: string[] }[];
   up_to_date: boolean;
   can_update: boolean;
@@ -320,6 +335,7 @@ interface UpdateOutcome {
   status: UpdateStatus;
   ok: boolean;
   updated: boolean;
+  version: UpdateVersion | null;
   refused: string;
   failed: string;
   to_commit: string;
@@ -327,10 +343,27 @@ interface UpdateOutcome {
   restart: boolean;
 }
 
-const CI_WORDS: Record<UpdateStatus["ci"], string> = {
-  "": "", passed: "CI passed", pending: "CI is still running", failed: "CI failed",
-  none: "no CI result", unknown: "GitHub could not be asked about CI",
+// Each version's tests, as its row says them, and the colour they take.
+const CI_WORDS: Record<CiState, [string, string]> = {
+  "": ["", ""], passed: ["Tests passed", "pass"], pending: ["Tests running", "wait"],
+  failed: ["Tests failed", "fail"], none: ["No test result", "fail"],
+  unknown: ["Tests unknown", "wait"],
 };
+
+// The latest commit's CI is said on each version's row instead.
+const CI_BLOCKERS = new Set(["ci_not_passed", "version_ci_not_passed"]);
+
+function shortDate(iso: string): string {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? ""
+    : when.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function VersionTitle({ version }: { version: UpdateVersion }) {
+  return version.pr !== null
+    ? <><b>{version.name}</b>: {version.title} <code>{version.sha.slice(0, 7)}</code></>
+    : <><code>{version.sha.slice(0, 7)}</code> {version.title}</>;
+}
 
 function UpdatesSection() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -338,10 +371,15 @@ function UpdatesSection() {
   const [problem, setProblem] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const check = useCallback(async () => {
     setChecking(true);
     setProblem(null);
+    setRefusal(null);
+    setConfirming(false);
     try {
       setStatus(await getJson<UpdateStatus>("/api/update"));
     } catch (e) {
@@ -353,61 +391,125 @@ function UpdatesSection() {
 
   useEffect(() => { check(); }, [check]);
 
-  const update = async () => {
+  // The newest version that can be chosen starts chosen, and stays chosen
+  // across a check unless it can no longer be.
+  const versions = status?.versions ?? [];
+  useEffect(() => {
+    setChosen((was) => versions.some((v) => v.sha === was && v.can_choose) ? was
+      : versions.find((v) => v.can_choose)?.sha ?? null);
+  }, [status]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choice = versions.find((v) => v.sha === chosen) ?? null;
+
+  const install = async () => {
+    if (!choice) return;
+    if (!confirming) {
+      setConfirming(true);
+      setResult(null);
+      setRefusal(null);
+      return;
+    }
+    setConfirming(false);
     setUpdating(true);
-    setResult(null);
+    setResult(`Installing ${choice.name}…`);
     try {
-      const res = await fetch("/api/update", { method: "POST" });
+      const res = await fetch("/api/update", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: choice.sha }) });
       const out = (await res.json()) as UpdateOutcome;
       setStatus(out.status);
       if (out.restart) {
-        const said = `Updated to ${out.to_commit.slice(0, 7)}; restarting.`;
-        setResult([said, ...out.notes].join(" "));
+        const said = `Updated to ${out.version?.name ?? out.to_commit.slice(0, 7)}; restarting.`;
+        setResult([said, "The page reloads when JARVIS is back.", ...out.notes].join(" "));
         reloadAfterRestart(said);
         return;
       }
-      setResult(out.refused ? `Not updated: ${out.refused}`
-        : out.failed ? `The update failed: ${out.failed}`
-        : "Already up to date.");
+      setResult(null);
+      if (out.refused) setRefusal(`Not updated: ${out.refused}`);
+      else if (out.failed) setRefusal(`The update failed: ${out.failed}`);
+      else setResult("Already up to date.");
     } catch {
-      setResult("The update failed: the server did not answer.");
+      setResult(null);
+      setRefusal("The update failed: the server did not answer.");
     }
     setUpdating(false);
   };
 
+  const ready = status !== null && status.source === "github" && !status.error;
   let summary = "Checking for updates…";
   if (problem) summary = problem;
   else if (status && status.source !== "github") summary = status.reason;
   else if (status?.error) summary = `Could not check for updates: ${status.error}`;
-  else if (status?.up_to_date) summary = `Up to date at ${status.commit.slice(0, 7)}.`;
+  else if (status?.up_to_date) summary = "Up to date.";
   else if (status) {
-    summary = `${status.behind} new commit${status.behind === 1 ? "" : "s"} on main`
-      + (status.ci ? `; ${CI_WORDS[status.ci]}.` : ".");
+    summary = `${versions.length} newer version${versions.length === 1 ? "" : "s"} on main. `
+      + "Choose one to install.";
   }
-  const showCommits = status && status.source === "github" && !status.error && status.behind > 0;
+  const stopping = ready ? status.blockers.filter((b) => !CI_BLOCKERS.has(b.code)) : [];
+  const brings = choice ? versions.length - versions.indexOf(choice) : 0;
 
   return (
     <>
+      {ready && status.current && (
+        <p className="update-current">Running <VersionTitle version={status.current} /></p>
+      )}
       <p className="settings-hint">{checking && status ? "Checking again…" : summary}</p>
-      {showCommits && (
-        <ul className="update-commits">
-          {status.commits.map((c) => (
-            <li key={c.sha}><code>{c.sha.slice(0, 7)}</code> {c.subject}</li>
-          ))}
+      {ready && versions.length > 0 && (
+        <ul className="update-versions">
+          {versions.map((v, i) => {
+            const [ciText, ciClass] = CI_WORDS[v.ci];
+            return (
+              <li key={v.sha} className={"update-version" + (v.can_choose ? "" : " off")
+                                         + (v.sha === chosen ? " sel" : "")}>
+                <label>
+                  <input type="radio" name="update-version" disabled={!v.can_choose || updating}
+                         checked={v.sha === chosen}
+                         onChange={() => { setChosen(v.sha); setConfirming(false); }} />
+                  <span className="update-version-body">
+                    <span className="update-version-title">
+                      {v.pr !== null ? `${v.name}: ${v.title}` : `${v.name} ${v.title}`}
+                      {i === 0 && <span className="update-tag">LATEST</span>}
+                    </span>
+                    <span className="update-version-meta">
+                      {shortDate(v.date)} · <code>{v.sha.slice(0, 7)}</code>
+                      {v.can_choose ? "" : ` · ${v.unchosen}`}
+                    </span>
+                  </span>
+                  <span className={`update-ci ${ciClass}`}>{ciText}</span>
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
-      {showCommits && status.blockers.map((b) => (
-        <p key={b.code} className="settings-hint read-failure">
-          {b.text}{b.detail.length ? ` ${b.detail.join(", ")}` : ""}
-        </p>
-      ))}
+      {confirming && choice && (
+        <div className="update-confirm">
+          Install {choice.name} and restart JARVIS? This brings in {brings} pull
+          request{brings === 1 ? "" : "s"}.
+          <ul>
+            <li>The page reloads by itself when JARVIS is back.</li>
+            <li>If a step fails, JARVIS moves back to {status?.current?.name ?? "where it was"} and
+              nothing changes.</li>
+            <li>Going back to an older version is not offered.</li>
+          </ul>
+        </div>
+      )}
+      {refusal ? <p className="update-refused">{refusal}</p>
+        : stopping.map((b) => (
+          <p key={b.code} className="update-refused">
+            {b.text}{b.detail.length ? ` ${b.detail.join(", ")}` : ""}
+          </p>
+        ))}
       {result && <p className="settings-restart-notice">{result}</p>}
       <div className="settings-actions">
         <button className="settings-btn" onClick={check} disabled={checking || updating}>
           Check again</button>
-        {status?.can_update && (
-          <button className="settings-btn primary" onClick={update} disabled={updating || checking}>
-            {updating ? "Updating…" : "Update and restart"}</button>
+        {ready && versions.length > 0 && (
+          <button className="settings-btn primary" onClick={install}
+                  disabled={!choice || stopping.length > 0 || updating || checking}>
+            {updating && choice ? `Installing ${choice.name}…`
+              : confirming && choice ? `Yes, install ${choice.name}` : "Install and restart"}
+          </button>
         )}
       </div>
     </>

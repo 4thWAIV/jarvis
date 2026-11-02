@@ -531,44 +531,63 @@ def test_set_language_is_the_language_route_without_its_spoken_confirmation(
 # ── updates ──────────────────────────────────────────────────────────────
 
 def _behind(monkeypatch, blockers=()):
+    """One newer version, PR 42, whose title is hostile; PR 39 running."""
     from jarvis import self_update as su
+    newer = su.Version("b" * 40, 42, HOSTILE, "2026-11-01T15:00:00-06:00", su.CI_PASSED)
     status = su.Status(source=su.GITHUB, branch="main", commit="a" * 40, latest="b" * 40,
-                       behind=1, commits=[su.Commit("b" * 40, HOSTILE)], ci=su.CI_PASSED,
+                       behind=1, current=su.Version("a" * 40, 39, HOSTILE),
+                       versions=[newer], target=newer.sha, chosen=newer, ci=su.CI_PASSED,
                        blockers=list(blockers))
     checks = []
-    monkeypatch.setattr(su, "check", lambda: checks.append(1) or status)
+
+    def check(root=None, version=None):
+        checks.append(version)
+        return status
+
+    monkeypatch.setattr(su, "check", check)
     return checks
 
 
 def test_update_status_is_the_updates_section_s_check_walled(wired, monkeypatch):
     checks = _behind(monkeypatch)
     got = _call(wired, "update_status")
-    assert checks == [1]
-    assert got["text"].startswith("1 new commit on origin/main; its CI passed. "
-                                  "It can be updated.\n")
+    assert checks == [None]
+    assert got["text"].startswith("1 newer version on origin/main. PR 42 can be installed.\n")
     _walled(got["text"])
     assert wired.server.brain_instance.marks == [
         "the new commits' messages, written by the team"]
 
 
 def test_update_jarvis_starts_the_update_after_the_turn(wired, monkeypatch):
-    _behind(monkeypatch)
+    checks = _behind(monkeypatch)
     started = []
 
-    async def fake_update_by_voice():
-        started.append(1)
+    async def fake_update_by_voice(version=None):
+        started.append(version)
 
     monkeypatch.setattr(wired.server, "_update_by_voice", fake_update_by_voice)
     got = _call(wired, "update_jarvis")
     assert got["ok"] and got["text"] == wired.server.UPDATE_BEGUN
-    assert started == [1]
+    assert started == [None] and checks == [None]
+
+
+def test_update_jarvis_takes_the_version_he_chose(wired, monkeypatch):
+    checks = _behind(monkeypatch)
+    started = []
+
+    async def fake_update_by_voice(version=None):
+        started.append(version)
+
+    monkeypatch.setattr(wired.server, "_update_by_voice", fake_update_by_voice)
+    got = _call(wired, "update_jarvis", version="42")
+    assert got["ok"] and checks == ["42"] and started == ["42"]
 
 
 def test_update_jarvis_says_what_stops_it_and_starts_nothing(wired, monkeypatch):
     from jarvis import self_update as su
     _behind(monkeypatch, [su.Blocker(su.MODIFIED, ["README.md"])])
     started = []
-    monkeypatch.setattr(wired.server, "_update_by_voice", lambda: started.append(1))
+    monkeypatch.setattr(wired.server, "_update_by_voice", lambda *a: started.append(1))
     got = _call(wired, "update_jarvis")
     assert "The update is refused: Tracked files have been changed here." in got["text"]
     _walled(got["text"])

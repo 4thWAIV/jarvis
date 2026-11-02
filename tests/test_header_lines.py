@@ -364,6 +364,11 @@ EXEMPT = {
         "to compare them with fixed values, and returns one of five fixed CI "
         "words (passed, pending, failed, none, unknown); no text from GitHub "
         "reaches the string it returns, a header, a spoken line or the brain"),
+    "self_update.version_line": (
+        "it puts a merged pull request's title (a teammate's words) into one line "
+        "of `describe`'s details and never its head; the brain gets those details "
+        "only through `server._update_said`, which walls every one of them in the "
+        "untrusted block, and the command prints them to the terminal"),
     "folder_discovery.claude_history": (
         "it reads a transcript record's `cwd` and `sessionId` only to store them "
         "as an observation in the folder catalog; its one f-string is the "

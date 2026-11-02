@@ -38,14 +38,31 @@ def _card(name, title, added, default=False, active=False, signed_in=True, check
     return card
 
 
-def _update_status(behind=2, blockers=()):
-    """GET /api/update as self_update.Status.to_json answers it."""
-    commits = [{"sha": "c" * 40, "subject": "Say the weather <b>sooner</b>"},
-               {"sha": "d" * 40, "subject": "Fix the orb"}][:behind]
+_UNCHOSEN = {"passed": "", "pending": "can be chosen once its tests pass",
+             "failed": "can't be chosen: its tests failed"}
+
+
+def _version(sha, pr, title, ci="passed"):
+    """One version as self_update.Version.to_json gives it."""
+    return {"sha": sha * 40, "pr": pr, "title": title, "date": "2026-11-01T15:00:00-06:00",
+            "ci": ci, "name": f"PR {pr}", "can_choose": ci == "passed",
+            "unchosen": _UNCHOSEN[ci]}
+
+
+def _update_status(behind=3, blockers=()):
+    """GET /api/update as self_update.Status.to_json answers it: PR 39
+    running, and newest first PR 42 (tests running), PR 40 (failed) and
+    PR 41 (passed)."""
+    versions = [_version("b", 42, "Agent and page work packages", "pending"),
+                _version("d", 40, "Record test timings in CI", "failed"),
+                _version("e", 41, "Say the weather <b>sooner</b>")][:behind]
     return {"source": "github", "reason": "", "error": "", "branch": "main",
-            "commit": "a" * 40, "latest": "b" * 40, "behind": behind, "commits": commits,
-            "ci": "passed" if behind else "", "blockers": list(blockers),
-            "up_to_date": behind == 0, "can_update": behind > 0 and not blockers}
+            "commit": "a" * 40, "latest": "b" * 40, "behind": behind,
+            "current": _version("a", 39, "Find the running server from the workflow reporter"),
+            "versions": versions, "target": "b" * 40 if behind else "",
+            "chosen": versions[0] if versions else None,
+            "ci": versions[0]["ci"] if versions else "", "blockers": list(blockers),
+            "up_to_date": behind == 0, "can_update": False}
 
 
 CLAUDE_CHECKS = [{"name": "claude_cli", "status": "ok", "message": "claude 2.1.306 on PATH.", "remedy": None}]
@@ -148,11 +165,14 @@ class _Server:
 
         async def update(route):
             if route.request.method == "POST":
-                self.posts.append(("update", {}))
+                body = json.loads(route.request.post_data or "{}")
+                self.posts.append(("update", body))
+                chosen = next(v for v in self.update["versions"]
+                              if v["sha"] == body.get("version"))
                 await route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                    "status": self.update, "ok": True, "updated": True, "refused": "",
-                    "failed": "", "from_commit": "a" * 40, "to_commit": "b" * 40,
-                    "steps": [], "notes": [], "restart": True}))
+                    "status": self.update, "ok": True, "updated": True, "version": chosen,
+                    "refused": "", "failed": "", "from_commit": "a" * 40,
+                    "to_commit": chosen["sha"], "steps": [], "notes": [], "restart": True}))
                 return
             await route.fulfill(status=200, content_type="application/json",
                                 body=json.dumps(self.update))
@@ -370,21 +390,50 @@ async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_url):
 
 
 @pytest.mark.asyncio
-async def test_check_for_updates_lists_the_new_commits_and_updates_and_restarts(page_url):
+async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(page_url):
     server = _Server()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, server)
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Check for updates").click()
         section = page.locator("#settings-updates")
-        await async_api.expect(section).to_contain_text("2 new commits on main; CI passed.")
-        # A commit subject is shown as text, never as markup.
-        await async_api.expect(section.locator(".update-commits li").first).to_have_text(
-            "ccccccc Say the weather <b>sooner</b>")
-        assert await section.locator(".update-commits b").count() == 0
-        await section.get_by_role("button", name="Update and restart").click()
-        await async_api.expect(section).to_contain_text("Updated to bbbbbbb; restarting.")
-        assert ("update", {}) in server.posts
+        await async_api.expect(section.locator(".update-current")).to_have_text(
+            "Running PR 39: Find the running server from the workflow reporter aaaaaaa")
+        await async_api.expect(section).to_contain_text(
+            "3 newer versions on main. Choose one to install.")
+        rows = section.locator(".update-version")
+        await async_api.expect(rows).to_have_count(3)
+        # Newest first, the newest tagged; only one whose tests passed can
+        # be chosen, and the newest such starts chosen.
+        await async_api.expect(rows.nth(0)).to_contain_text("PR 42: Agent and page work packages")
+        await async_api.expect(rows.nth(0).locator(".update-tag")).to_have_text("LATEST")
+        await async_api.expect(rows.nth(0)).to_contain_text(
+            "1 Nov · bbbbbbb · can be chosen once its tests pass")
+        await async_api.expect(rows.nth(0)).to_contain_text("Tests running")
+        await async_api.expect(rows.nth(1)).to_contain_text("can't be chosen: its tests failed")
+        await async_api.expect(rows.nth(1)).to_contain_text("Tests failed")
+        assert await rows.nth(0).locator("input").is_disabled()
+        assert await rows.nth(1).locator("input").is_disabled()
+        assert await rows.nth(2).locator("input").is_checked()
+        await async_api.expect(rows.nth(2)).to_contain_text("Tests passed")
+        # A title is shown as text, never as markup.
+        await async_api.expect(rows.nth(2)).to_contain_text("PR 41: Say the weather <b>sooner</b>")
+        assert await section.locator(".update-version b").count() == 0
+
+        await section.get_by_role("button", name="Install and restart").click()
+        confirm = section.locator(".update-confirm")
+        await async_api.expect(confirm).to_contain_text(
+            "Install PR 41 and restart JARVIS? This brings in 1 pull request.")
+        await async_api.expect(confirm).to_contain_text(
+            "The page reloads by itself when JARVIS is back.")
+        await async_api.expect(confirm).to_contain_text(
+            "If a step fails, JARVIS moves back to PR 39 and nothing changes.")
+        await async_api.expect(confirm).to_contain_text(
+            "Going back to an older version is not offered.")
+        assert not [p for p in server.posts if p[0] == "update"], "nothing before the yes"
+        await section.get_by_role("button", name="Yes, install PR 41").click()
+        await async_api.expect(section).to_contain_text("Updated to PR 41; restarting.")
+        assert ("update", {"version": "e" * 40}) in server.posts
         await browser.close()
 
 
@@ -397,13 +446,16 @@ async def test_updates_says_up_to_date_and_what_stops_an_update(page_url):
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Check for updates").click()
         section = page.locator("#settings-updates")
-        await async_api.expect(section).to_contain_text("Up to date at aaaaaaa.")
-        assert await section.get_by_role("button", name="Update and restart").count() == 0
-        server.update = _update_status(blockers=[{
-            "code": "modified", "text": "Tracked files have been changed here.",
-            "detail": ["jarvis/server.py"]}])
+        await async_api.expect(section).to_contain_text("Up to date.")
+        assert await section.get_by_role("button", name="Install and restart").count() == 0
+        server.update = _update_status(blockers=[
+            {"code": "modified", "text": "Tracked files have been changed here.",
+             "detail": ["jarvis/server.py"]},
+            {"code": "ci_not_passed", "text": "The latest commit's CI has not passed.",
+             "detail": []}])
         await section.get_by_role("button", name="Check again").click()
-        await async_api.expect(section).to_contain_text(
+        refused = section.locator(".update-refused")
+        await async_api.expect(refused).to_have_text(
             "Tracked files have been changed here. jarvis/server.py")
-        assert await section.get_by_role("button", name="Update and restart").count() == 0
+        assert await section.get_by_role("button", name="Install and restart").is_disabled()
         await browser.close()

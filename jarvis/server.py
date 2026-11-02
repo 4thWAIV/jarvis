@@ -11410,9 +11410,10 @@ async def api_restart():
 # access-key category covers these routes.
 # ---------------------------------------------------------------------------
 
-async def _update_and_restart(why: str) -> self_update.Outcome:
-    """Update the checkout and, once the new code is in, restart."""
-    out = await asyncio.to_thread(self_update.update)
+async def _update_and_restart(why: str, version: Optional[str] = None) -> self_update.Outcome:
+    """Update the checkout to `version` (origin/main's latest when None)
+    and, once the new code is in, restart."""
+    out = await asyncio.to_thread(self_update.update, None, version)
     if out.restart:
         _restart_server(why)
     return out
@@ -11420,14 +11421,30 @@ async def _update_and_restart(why: str) -> self_update.Outcome:
 
 @app.get("/api/update")
 async def api_update_status():
-    """Where this checkout stands against origin/main, and what stops an update."""
+    """Where this checkout stands against origin/main: the version running,
+    the newer versions with their CI, and what stops an update."""
     return (await asyncio.to_thread(self_update.check)).to_json()
 
 
+async def _asked_version(request: Request) -> Optional[str]:
+    """The `version` (a PR number or a sha) a POST names, if any; no body,
+    or none named, is origin/main's latest."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    asked = body.get("version") if isinstance(body, dict) else None
+    if asked is None:
+        return None
+    return str(asked).strip() or None
+
+
 @app.post("/api/update")
-async def api_update():
-    """Update to origin/main's latest commit, when its CI passed, and restart."""
-    out = await _update_and_restart("the page's Update and restart")
+async def api_update(request: Request):
+    """Update to the version asked for (origin/main's latest when none is),
+    when its CI passed, and restart."""
+    out = await _update_and_restart("the page's Install and restart",
+                                    await _asked_version(request))
     code = 409 if out.refused else 500 if out.failed else 200
     return JSONResponse(status_code=code, content=out.to_json())
 
@@ -11445,7 +11462,8 @@ def _update_said(head: str, details: list[str]) -> str:
 
 
 async def tool_update_status(args: dict) -> str:
-    """Whether JARVIS is up to date with GitHub: the Updates section."""
+    """Whether JARVIS is up to date with GitHub, and the versions it can
+    update to: the Updates section."""
     status = await asyncio.to_thread(self_update.check)
     return _update_said(*self_update.describe(status))
 
@@ -11454,16 +11472,16 @@ UPDATE_BEGUN = ("The update has begun. JARVIS says so out loud itself and restar
                  "is in, or says that it did not go through; say nothing more.")
 
 
-async def _update_by_voice() -> None:
+async def _update_by_voice(version: Optional[str] = None) -> None:
     """The update the brain asked for, after its turn: say it is updating,
-    update, and restart once that has been heard; or say it did not go
-    through. Never raises out."""
+    update to `version` (origin/main's latest when None), and restart once
+    that has been heard; or say it did not go through. Never raises out."""
     try:
         heard = await _say_notice(
             "Updating myself from GitHub, sir; I'll restart once it's in.",
             "Since your last turn you told him you were updating yourself from GitHub "
             "and would restart.", "update")
-        out = await asyncio.to_thread(self_update.update)
+        out = await asyncio.to_thread(self_update.update, None, version)
         head, _details = self_update.describe_outcome(out)
         if out.restart:
             if heard is not None and speech is not None:
@@ -11479,13 +11497,16 @@ async def _update_by_voice() -> None:
 
 
 async def tool_update_jarvis(args: dict) -> str:
-    """Update JARVIS from GitHub and restart: the Updates section's Update
+    """Update JARVIS from GitHub to the version he chose (origin/main's
+    latest when he named none) and restart: the Updates section's Install
     and restart. An ACTING tool. Checked here; the update itself (minutes,
-    with pip and npm) runs after the turn, in `_update_by_voice`."""
-    status = await asyncio.to_thread(self_update.check)
+    with pip and npm) runs after the turn, in `_update_by_voice`, which
+    checks again."""
+    version = str(args.get("version") or "").strip() or None
+    status = await asyncio.to_thread(self_update.check, None, version)
     if not status.can_update:
         return _update_said(*self_update.describe(status))
-    asyncio.create_task(_update_by_voice())
+    asyncio.create_task(_update_by_voice(version))
     return UPDATE_BEGUN
 
 
