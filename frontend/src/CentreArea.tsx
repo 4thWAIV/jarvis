@@ -51,7 +51,7 @@ import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
-import { openSubsystem } from "./subsystems";
+import { openSubsystem, subsystemName as nameOf } from "./subsystems";
 import { network, openNetwork } from "./network";
 import { NodeView } from "./NodeView";
 import { TeamServerView } from "./TeamServerView";
@@ -155,7 +155,8 @@ export function CentreArea() {
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
-  const subsystemName = useSubsystems().list.find((s) => s.id === subsystem)?.name;
+  const open = useSubsystems().list.find((s) => s.id === subsystem);
+  const subsystemName = open ? nameOf(open) : undefined;
   const networkOpen = useSyncExternalStore(openNetwork.subscribe, openNetwork.get);
   const nodes = useSyncExternalStore(network.subscribe, network.get).value?.snapshot?.nodes;
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
