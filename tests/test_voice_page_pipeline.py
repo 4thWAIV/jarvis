@@ -655,7 +655,7 @@ TOUR = [
     (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, ["left.fixed|mic|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
-     [WORKFLOW_BOX, "main.workflow.phases"]),
+     [WORKFLOW_BOX, "main.workflow.view", "main.workflow.phases"]),
     (None, {**WORKFLOW, "part": "tab.decisions"}, [WORKFLOW_BOX, "main.workflow.tabs"]),
     (("main.tab.select", {"tab": "folders"}),
      {"region": "main", "view": "main.folders", "kind": "foldersList", "part": "registered"},
@@ -665,7 +665,7 @@ TOUR = [
      ["right.panel"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
-     [WORKFLOW_BOX]),
+     [WORKFLOW_BOX, "main.workflow.view"]),
 ]
 
 # Every control and line of text on show on the page but the target's own

@@ -221,6 +221,7 @@ function OneWorkflow({ id }: { id: string }) {
   useSyncExternalStore(dismissals.subscribe, dismissals.get);
   const gone = w ? isGone(w) : false;
   const ui = useDetailTarget("workflow", id, w?.name ?? t("main.workflow.workflow"));
+  const tabView = useUiBox("main.workflow.view");
   const views: Record<WorkflowTab, (w: Workflow) => ReactNode> = {
     overview: (w) => <Overview w={w} />,
     phases: (w) => <Phases w={w} />,
@@ -263,7 +264,7 @@ function OneWorkflow({ id }: { id: string }) {
           <TabRow tabs={tabs} selected={selected.id} className="workflow-tabs" words box="main.workflow.tabs"
                   binding={(t) => bind("workflow.tab.select", { workflowId: id, tab: t.id as WorkflowTab })} />
         </div>
-        <div className="workflow-tab-view" role="tabpanel" aria-label={selected.title}>
+        <div className="workflow-tab-view" role="tabpanel" aria-label={selected.title} ref={tabView}>
           {selected.view()}
         </div>
       </>}

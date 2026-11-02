@@ -508,8 +508,6 @@ export function sourceProblem(): AvailabilityReason | null {
   return seen === "visible" ? null : SOURCE_REASON[seen];
 }
 
-/** The route from the orb to `target` (and `part`), along registered edges
- *  only, measured now. */
 // ── the latest branch point, and the boxes on the way ───────────────────
 
 /** Every box holding the target's addressed element (its part, or the
@@ -664,6 +662,8 @@ function socketRoute(target: VisualTarget, part?: string): { edges: RouteEdge[];
   return typeof leaf === "string" ? leaf : { edges: [...socket, leaf], socket: entry };
 }
 
+/** The route from the orb to `target` (and `part`), along registered edges
+ *  only, measured now. */
 export function resolveRoute(target: VisualTarget, ref: TargetRef): RouteOutcome {
   const source = sourceProblem();
   if (source) return { route: null, reason: source };

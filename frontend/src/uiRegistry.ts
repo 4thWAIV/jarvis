@@ -173,13 +173,14 @@ export function mountedTargets(): VisualTarget[] {
 
 /** The boxes that hold targets without being targets themselves, each by
  *  a stable id (never its words): the right panel's tab body, the two
- *  rows of view tabs, a workflow's tab strip and phase stepper, and the
- *  Folders view's tab strip. A route marks every box it passes into on its
+ *  rows of view tabs, a workflow's tab strip, the bordered panel under it
+ *  holding the open tab, and its phase stepper, and the Folders view's tab
+ *  strip. A route marks every box it passes into on its
  *  way to a target, outermost first (uiPipeline.ts `boxesAround`), these
  *  and every registered target that holds the one it points at (a tile, a
  *  centre view, a workflow's detail). */
-export const BOX_IDS = ["right.panel", "right.tabs", "main.tabs", "main.workflow.tabs", "main.workflow.phases",
-                        "main.folders.tabs"] as const;
+export const BOX_IDS = ["right.panel", "right.tabs", "main.tabs", "main.workflow.tabs", "main.workflow.view",
+                        "main.workflow.phases", "main.folders.tabs"] as const;
 export type BoxId = typeof BOX_IDS[number];
 
 const boxes = new Map<Element, BoxId>();
