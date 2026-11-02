@@ -39,11 +39,10 @@ transmissions and are not used for attention.
 
 Tested by `tests/test_voice_page_left_settings.py` (every left part pointed
 at with reduced motion, the database row animated, the map, and human/brain
-parity for the tile). `no-route` below means the page answers
-`blocked / no-route` truthfully: the part sits beside another part on the
-side its leaf comes from, and `uiPipeline.ts` `leafEdge` finds no gap over
-or under its row that keeps clear of every control, part and label
-(blocker `sibling-routing-remainder`, 2026-11-01).
+parity for the tile). Every left part is reached (final integration,
+2026-11-01): a part beside another on the side its leaf comes from goes
+over or under its row (`uiPipeline.ts` `leafEdge`); the microphone's row
+keeps `--ui-leaf-lane` (8 px) below it for that.
 
 | Source / control | Command | Target / parts | Current handler / state | Availability | Side effects | Reveal | Socket | State |
 |---|---|---|---|---|---|---|---|---|
@@ -51,7 +50,7 @@ or under its row that keeps clear of every control, part and label
 | StatusControl.tsx status text, Stop | — Stop: `data-ui-action="speech"` (hush) | `status`; text, stop | `useUiTarget`; Stop `stopSpeaking.current()` | text while there is one; stop only while speaking | hush stays its own action | none | rail.left, left | done (whole tested; text/stop parts live while shown) |
 | MicControl.tsx health dot | `voice.diagnostics.open` (declared, navigation) via `bindingProps` | `mic`; meter, health, mute, off | was `openDiagnostics.set(true)` | dot only while input has a problem | `centre.view-shown` | none | rail.left, left | done (binding, target); health dot pointing not page-tested (needs an input fault fixture) |
 | MicMeter.tsx / `#mic-silenced` | — (display) | `mic` part meter | `partRef` | always | — | none | rail.left | done |
-| MuteButton.tsx, MicOffButton.tsx | — `data-ui-action="microphone"` | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify; parts `no-route` (beside the meter, and the row has no gap over or under it) |
+| MuteButton.tsx, MicOffButton.tsx | — `data-ui-action="microphone"` | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify; parts reached under the row, in the lane the mic keeps below it (`--ui-leaf-lane`) |
 | TeamServerTile.tsx tile | `network.open {kind: server}` via `bindingProps` | `teamServer` in `left.fixed`; readiness (the word), server, database, lastWrite | was `byHand("network.open")` | always | `centre.view-shown`, `centre.detail-replaced` | none | rail.left, left | done; lastWrite reached under its row |
 | BrainUsage.tsx → WeeklyUsage.tsx each account | — (display only) | `brainAccount` keyed provider (the one named, else the figures', else the running brain); name (logo), remaining, pace, reset (burn-down) | `useAccountTarget` | while its provider is known (no target before) | — | none | rail.left, left | done |
 
@@ -151,10 +150,11 @@ Known limits found while testing (pipeline geometry, not registration):
   where that would cross another part or a control (a part left of others
   in a row: the workflow's Decisions tab, the Folders tabs) it goes over
   or under the row instead and drops into the part's top or bottom edge
-  (2026-11-01). A phase step left of the last is still not reached: the
-  next step's connector line covers its dot (`occluded`) and its socket
-  branch would cross the next step, another object (blocker
-  `sibling-routing-remainder`).
+  (2026-11-01). A phase step left of the last is reached too (final
+  integration): the next step's connector ignores the pointer, and a socket
+  branch that would cross the next object in its row runs over or under the
+  row inside the object holding it and drops into the object's top or
+  bottom edge at its inner margin (`overTheRow`).
 - A part outside its object's box cannot be reached; the file preview is
   therefore the folder's part, not the entry's.
 
@@ -221,18 +221,49 @@ effects; the overlay map; pointing inside Settings blocked).
   2026-11-01 (`leaf-sibling-routing`, approved): workflow Decisions tab
   and other tabs left of the last, Folders tabs, Team Server last write,
   reminder text and Sign in; the workflow row's Dismiss × (now the
-  `dismiss` part) straight down the margin it straddles. Still
-  `blocked / no-route`: microphone mute and off (and the health dot),
-  whose row has no clear gap over or under it; phase steps left of the
-  last are `occluded` by the next step's connector. Blocker
-  `sibling-routing-remainder`.
+  `dismiss` part) straight down the margin it straddles; since the final
+  integration also microphone mute, off and the health dot, and phase
+  steps left of the last (see "Final integration reach" below).
 - Phases, tasks, open items, transcript, events and the subagent detail
   are revealed by `main.workflow` revealers that run the registered
   commands their key names (`uiNavigationReveal.ts` `RevealerContext.navigate`;
   page test `test_a_workflows_hidden_item_is_revealed_by_opening_it_on_its_tab`).
   Still no target on the task card's progress bar (`TaskBar`).
 - Subagent rows in the right panel are not targets yet.
-- Health dot: page-tested (`test_voice_page_voice_health.py`); while shown it is a named button and a mounted target, refused `blocked / no-route` beside the meter until `sibling-routing-remainder` is decided.
+- Health dot: page-tested (`test_voice_page_voice_health.py`); while shown it is a named button and a mounted target, reached under the mic row.
+
+## Final integration reach (2026-11-01)
+
+Every target and part the contract declares (259, counting each kind's
+whole once per view) pointed at with `ui_indicate` (reveal never; an
+offscreen one again with reveal navigate) on the built page, in English
+and Spanish, at 1440x900 and 1280x800, through 115 scenes per run (each right tab,
+each workflow tab, folders lists, filters and every folder, the team
+server and each node, voice diagnostics, each subsystem, the
+conversation's record, a capture and sources, an agent's thread, a
+workflow with tasks, a wait, a blocker, an attached agent and subagents,
+the menu, each Settings section, the sign-in reminder, the Queue and each
+thread). Driver `ui-nav-run/tools/test_reach_sweep.py`, results
+`ui-nav-run/evidence/final-integration/`. The same in all four runs:
+
+| Outcome | Count |
+|---|---|
+| Reached | 211 |
+| Refused | 8: Settings' six (`blocked / occluded`: Settings covers the orb, by design); the right panel's agent `name` (`no-route`: its orb sits between the rail and the name, filling the row's height); a network tile's `presence` (`no-route`: the dot is in the tile's title, set on its top border, beside the name) |
+| Mounted, part not on show in these fixtures | 26 (conditional: Stop while speaking, Load earlier, restore, a preview, a crumb, a composer, receipts, Dismiss on a finished workflow, Show done, the subagent detail's parts, the hidden previous chevron); most reached by their own page tests |
+| Never registered | 14: `rightTab`, `mainTab` and `region` kinds (declared in the contract, registered by no component) and the `main.main` capture (the `?view=main` page, not swept) |
+
+Fixed while sweeping, within the approved rules (more room, or a box that
+is not drawn or holds the part no longer counted as a cover):
+the status line's words (`occluded` by its own control), the agents
+list's next chevron (the list keeps `--ui-corridor`), a folder row's name
+(`--ui-leaf-lane` above it), a folder's contents (the detail keeps
+`--ui-corridor`), a node's name past the close × (`--ui-leaf-lane` over
+the title row, node and subsystem details), an agent's name in a thread
+record past its status, a subagent's state dot in a workflow, the voice
+view's notifications and the folders list (partly scrolled out: the
+visible part's middle is what is checked), the hidden previous chevron
+(`hidden`, no longer `occluded`, and never an obstacle).
 
 ## Localization coverage (integrator)
 

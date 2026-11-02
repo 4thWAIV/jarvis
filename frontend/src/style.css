@@ -1153,7 +1153,9 @@ html, body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0;
+  /* Its corridor on the rail's side (--ui-corridor): the chevrons and rows
+     otherwise reach the edge the list's leaves run down. */
+  padding: 0 var(--ui-corridor) 0 0;
 }
 
 /* The space the rows get: whatever is left below the switch and the up
@@ -2082,8 +2084,9 @@ html, body {
   font-size: 11px;
   cursor: pointer;
 }
+/* Room over the head for a leaf to the agent's name past the status. */
 .record-message, .record-from {
-  padding: 6px 10px;
+  padding: var(--ui-leaf-lane) 10px 6px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.03);
@@ -2280,6 +2283,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Room over the title row for a leaf to the name past the close ×. */
+  padding-top: var(--ui-leaf-lane);
   overflow-y: auto;
   z-index: 10;
   font-size: 13px;
@@ -2548,7 +2553,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px;
+  /* Room over the row for a leaf to the state dot past the words. */
+  padding: var(--ui-leaf-lane) 8px 4px;
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -2839,6 +2845,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Room over the title row for a leaf to the name past the close ×. */
+  padding-top: var(--ui-leaf-lane);
   overflow-y: auto;
   z-index: 10;
   font-size: 13px;
@@ -3360,7 +3368,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   grid-template-areas: "role name avail" "role node seen";
   gap: 2px 8px;
   align-items: center;
-  padding: 6px 8px;
+  /* Room above the name for a leaf over its row (the name sits beside the
+     availability on the side the leaf comes from). */
+  padding: var(--ui-leaf-lane) 8px 6px;
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -3410,7 +3420,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .folder-facts { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
 .folder-facts dt { color: rgba(255, 255, 255, 0.55); }
 .folder-facts dd { margin: 0; }
-.folder-detail { display: flex; flex-direction: column; gap: 12px; }
+/* Its own corridor on the side its socket enters (--ui-corridor): its
+   sections and buttons otherwise reach the edge its leaves run down. */
+.folder-detail { display: flex; flex-direction: column; gap: 12px; padding-right: var(--ui-corridor); }
 .folder-detail-head { display: flex; align-items: flex-start; gap: 12px; }
 .folder-detail-head h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; word-break: break-word; }
 .folder-detail-marks { display: flex; gap: 12px; align-items: center; margin-top: 4px; }

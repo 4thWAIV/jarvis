@@ -21,7 +21,8 @@ import pytest
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
-from tests.test_voice_page_folders import _Api as _Folders
+from tests.test_voice_page_centre_nav import _History
+from tests.test_voice_page_folders import FOLDERS, _Api as _Folders
 from tests.test_voice_page_network import MINI_ID, SIGNED_OUT, _Sessions, _Team
 from tests.test_voice_page_workflows import _finished, _workflow
 
@@ -30,6 +31,7 @@ pytestmark = pytest.mark.page
 
 TILE_CPU = {"region": "right", "view": "right.network", "kind": "node", "key": MINI_ID, "part": "cpu"}
 DETAIL_CPU = {"region": "main", "view": "main.network", "kind": "node", "key": MINI_ID, "part": "cpu"}
+FOLDER_ID = FOLDERS[0]["id"]
 
 
 class _UiServer:
@@ -564,5 +566,48 @@ async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_ur
                     clear, _ = ui.request({"kind": "clear"})
                     await ui.result(clear)
                     await page.wait_for_function("!document.querySelector('[data-cue]')")
+        finally:
+            await browser.close()
+
+
+# Parts the sweep of every registered target found refused, each reached
+# now by the room its object keeps (--ui-leaf-lane, --ui-corridor) or by
+# visibility no longer counting a holder as a cover: (the navigation that
+# shows it, the target).
+KEPT_ROOM = [
+    (None, {"region": "left", "view": "left.fixed", "kind": "status", "part": "text"}),
+    (("right.tab.select", {"tab": "agents"}),
+     {"region": "right", "view": "right.agents", "kind": "agentsList", "part": "next"}),
+    (("main.tab.select", {"tab": "folders"}),
+     {"region": "main", "view": "main.folders", "kind": "folderRow", "key": FOLDER_ID, "part": "name"}),
+    (("folders.open", {"folderId": FOLDER_ID}),
+     {"region": "main", "view": "main.folders", "kind": "folder", "key": FOLDER_ID, "part": "contents"}),
+    (("network.open", {"kind": "node", "nodeId": MINI_ID}), {**DETAIL_CPU, "part": "name"}),
+    (("thread.open", {"sessionId": "h"}),
+     {"region": "main", "view": "main.thread", "kind": "threadRecord", "key": "h/r3", "part": "agent"}),
+]
+
+
+@pytest.mark.asyncio
+async def test_parts_beside_a_close_a_status_or_their_objects_edge_are_reached(page_url):
+    record = _History()
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, reduced=True, routes=[
+            ("**/api/folders**", _Folders()),
+            ("**/api/conversation/agents/**", record.thread),
+            (re.compile(r".*/api/conversation(\?.*)?$"), record.page)])
+        try:
+            for show, target in KEPT_ROOM:
+                if show:
+                    rid, _ = ui.request({"kind": "navigate", "commandId": show[0], "args": show[1]})
+                    assert (await ui.result(rid))["status"] == "completed", show
+                    if show[1].get("tab") == "agents":
+                        await page.wait_for_selector(".agents-list li")
+                    await asyncio.sleep(0.5)
+                rid, _ = ui.indicate(target, reveal="never")
+                result = await ui.result(rid)
+                assert result["status"] == "completed", (target, result)
+                clear, _ = ui.request({"kind": "clear"})
+                await ui.result(clear)
         finally:
             await browser.close()

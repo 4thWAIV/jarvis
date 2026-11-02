@@ -169,17 +169,30 @@ export function mountedTargets(): VisualTarget[] {
   return [...targets.values()];
 }
 
+/** Whether `el` is laid out but not drawn (visibility: hidden, as a
+ *  chevron kept in place while there is nothing to page to). */
+export function undrawn(el: Element): boolean {
+  return typeof getComputedStyle === "function" && getComputedStyle(el).visibility !== "visible";
+}
+
 /** Whether `el` is on screen and not covered, hidden or inert. */
 export function visibilityOf(el: Element | null): Visibility {
   if (!el || !el.isConnected) return "unmounted";
   if (el.closest(".hidden, [inert], [hidden]")) return "hidden";
   const r = el.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return "hidden";
+  if (undrawn(el)) return "hidden";
   if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return "offscreen";
-  const x = Math.min(Math.max(r.left + r.width / 2, 0), window.innerWidth - 1);
-  const y = Math.min(Math.max(r.top + r.height / 2, 0), window.innerHeight - 1);
+  // The middle of the part of it inside the window.
+  const x = (Math.max(r.left, 0) + Math.min(r.right, window.innerWidth - 1)) / 2;
+  const y = (Math.max(r.top, 0) + Math.min(r.bottom, window.innerHeight - 1)) / 2;
   const top = document.elementFromPoint(x, y);
-  if (top && top !== el && !el.contains(top) && !top.closest("[data-ui-overlay]")) return "occluded";
+  // Something drawn over it covers it; the element that holds it does not
+  // (it is what the point finds when the element ignores the pointer, as
+  // the status line's words do).
+  if (top && top !== el && !el.contains(top) && !top.contains(el) && !top.closest("[data-ui-overlay]")) {
+    return "occluded";
+  }
   return "visible";
 }
 

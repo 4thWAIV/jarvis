@@ -23,7 +23,10 @@
  * first point on its facing edge clear of the object's controls. A leaf
  * whose straight run would cross a control or another part goes over or
  * under the part's row through the gap beside it and drops into the part's
- * top or bottom edge. A branch that would cross another object, a leaf
+ * top or bottom edge; a socket branch that would cross the next object in
+ * its row (a phase step) goes over or under the row the same way and drops
+ * into the object's top or bottom edge at its inner margin. A branch that
+ * still crosses another object, a leaf
  * with no clear way over or under, a junction that cannot be measured, or
  * a source the page covers, makes the route unavailable rather than
  * inventing a shortcut. Every turn a route
@@ -33,7 +36,7 @@
 
 import { rayStart, rightChannelX, TOP_LANE_PX } from "./rayGeometry";
 import { lanes } from "./transferEndpoints";
-import { elementOf, mountedTargets, presentationId, visibilityOf, type VisualTarget } from "./uiRegistry";
+import { elementOf, mountedTargets, presentationId, undrawn, visibilityOf, type VisualTarget } from "./uiRegistry";
 import { BEVEL_PX, bevelled, joined, length, type Point } from "./uiSignal";
 import {
   UI_CONTRACT, type AvailabilityReason, type JunctionId, type RailId, type TargetRef, type Visibility,
@@ -216,10 +219,12 @@ export function trunkTo(rail: RailId): string[] | null {
 
 const hostOf = (target: VisualTarget): Host => target.socket.rail === "rail.overlay" ? "modal" : "base";
 
+/** An element's box, or null when it has none or is not drawn
+ *  (visibility: hidden): neither a target nor in a route's way. */
 function boxOf(el: Element | null): DOMRect | null {
   if (!el) return null;
   const r = el.getBoundingClientRect();
-  return r.width === 0 && r.height === 0 ? null : r;
+  return (r.width === 0 && r.height === 0) || undrawn(el) ? null : r;
 }
 
 /** The controls inside `el` a route keeps clear of, on show; never the

@@ -773,3 +773,170 @@ Amended against the inventory:
 - `pytest -m page`, new: `test_voice_page_remaining_nav.py` (each new command by hand and by request, the new targets and reveals, the map's labels in English and Spanish) 6 passed; `test_voice_page_coded_words.py` (a coded voice cause and an older one, the team server's last error with its detail, in Spanish) 2 passed.
 - `pytest -m page`, related: centre_nav, queue, folders, workflows, voice_health, subsystems, right, navigation, subagents (53 passed); left_settings, language, settings, team_reminder, mute (34 passed); coded_words, voice_health, team, team_reminder, network, subsystems, right, speech_input, language, left_settings (73 passed); human_rays, rays, pipeline, diagnostics, layout, agents_list_fits, remaining_nav (86 passed).
 - Not run, by rule: the full suite, the rest of `pytest -m page`, the wheel build.
+
+## Final integration (2026-11-01)
+
+Branch `feature/ui-navigation-pipeline`, not pushed. Applies Tim's answers to
+`sibling-routing-remainder` ("the pipeline must reach every remaining
+control; more space or bevelling allowed") and `transcript-scroll-command`.
+
+### Merges
+
+- 781f243: `ui-nav-routing-register` (dfe52df, 36c7cac, c71a65b). Conflict
+  only in this file (both sides appended a section); both kept.
+- bc03149: `ui-nav-remaining-gaps` (429d983..2149541). Conflict only in this
+  file; both kept. `WorkflowsView.tsx` merged cleanly. The new Spanish
+  strings from remaining-gaps (`shell.es.ts` targets, `team.error.*`,
+  `voice.cause.*`) address the person as usted (Escriba, revise, actualice,
+  inténtelo, Desconéctese, Empiece, inicie);
+  `test_spanish_addresses_the_person_as_usted_everywhere` passes.
+
+### a. The microphone's row (0ab205f)
+
+- `--ui-leaf-lane` (8 px, `:root`): the lane a leaf runs along over or under
+  a row inside the object's own box. `#mic-control` keeps it below its row
+  (`padding-bottom`). Mute, off and the health dot are reached under the
+  row, dropping into their bottom edge with a bevel.
+- Measured against the 4 px the blocker proposed: the leaf's lane must be
+  inside the object's own box (`lane()` stops at the whole's edge), and the
+  mic's buttons fill its height, so the 7 px the blocker counted were below
+  the box (under the Team Server tile's title) and 4 px gives a 4 px gap,
+  short of twice `CLEAR_PX`. 8 px is the least that reaches; Tim's answer
+  allowed more space. The column moves down 8 px; the layout tests pass.
+- `LEFT_MISSED` is empty (`test_voice_page_left_settings.py`); the health dot
+  is reached (`test_voice_page_voice_health.py`); mute and off are in the
+  pipeline test's beside-the-row cases.
+
+### b. Phase steps (0ab205f)
+
+- `.phase-step::before` (the connector into a step) has
+  `pointer-events: none`, so it no longer counts as covering the step
+  before it (`occluded` gone).
+- `uiPipeline.ts`: `lane()` is the gap finder `detour()` used, shared; new
+  `overTheRow()`: a socket branch that would cross another object (the steps
+  after it) runs from the rail along the row's lane inside the object that
+  holds it (`holderOf`, the workflow's detail), clear of the other objects
+  and the holder's controls and lines of text, to above or below the
+  object's inner margin, and drops into its top or bottom edge there; the
+  shorter that clears. Its turns are bevelled with the route
+  (`bevelEdges`/`bevelled()`). Leaves start from the object's margin
+  (`marginOf`), so a part is reached from that entry as from a side one.
+  With neither way clear the straight branch stays and the route is
+  refused as before. The faint map draws the same branch.
+- Page test `test_a_phase_step_left_of_the_last_is_reached_over_the_stepper`
+  (each step, its dot; on the map, bevels only, never across another step,
+  a control or a line of text; into the top edge at the inner margin; the
+  last step still straight in).
+
+### c. The transcript's scroll (0ab205f)
+
+- `CONTROL_CLASSES.scroll` ("Remembers where a person scrolled a box
+  (whether it follows its newest entries); kept local, runs no command and
+  never moves the navigation revision"), on the transcript box
+  (`data-ui-action="scroll"`). `PENDING` in `test_ui_coverage_rules.py` is
+  empty.
+
+### d. Every registered target and part
+
+Driver `ui-nav-run/tools/test_reach_sweep.py` (with `analyze.py`), run with
+`pytest -p tests.conftest -m page`: the built page, fixtures from the page
+tests (workflows with tasks, a wait, a blocker, an attached agent and
+subagents; folders with candidates; the team network; subsystems; the voice
+record; the conversation record, a capture and sources; an agent's thread;
+the Queue's scenario), 115 scenes per run; each mounted target and every
+part the contract declares for it pointed at (reveal never; offscreen
+again with reveal navigate). Results
+`ui-nav-run/evidence/final-integration/` (one JSON per run, `summary.txt`).
+
+First run (English, 1440x900), refused beyond a. and b.: the status line's
+words, the agents list's previous and next chevrons and filter, a folder
+row's name, the folders list, a folder's contents, a node's name in the
+centre, a thread record's agent, a subagent's dot in a workflow, the voice
+view's notifications, the Queue's active section. Fixed (uncommitted at
+the sweep, committed with this record):
+
+- `uiRegistry.visibilityOf`: an element the point finds its own holder at
+  is not covered (the status words ignore the pointer); an element laid out
+  but not drawn (`visibility: hidden`, the previous chevron with nothing
+  to page to) is `hidden`, not `occluded` (`undrawn()`, shared with
+  `uiPipeline.boxOf`, so it is never an obstacle either); the point checked
+  is the middle of the part inside the window (a long list or a section
+  partly scrolled out was `occluded` by the footer).
+- Room, with the two existing variables: `--ui-corridor` on the agents
+  list's rail side and on a folder's detail (their chevrons, sections and
+  buttons reached the edge their leaves run down); `--ui-leaf-lane` above a
+  folder row's name, over a thread or conversation record's head, over a
+  workflow's subagent row, and over the title row of the node and subsystem
+  details (past the close ×).
+- Page test `test_parts_beside_a_close_a_status_or_their_objects_edge_are_reached`
+  (status words, agents next, folder row name, folder contents, node name,
+  thread record agent).
+
+Final sweep, the same in all four runs (en and es, 1440x900 and 1280x800),
+259 contract target/parts:
+
+| Run | Reached | Refused | Mounted, part not on show | Never registered |
+|---|---|---|---|---|
+| en 1440x900 | 211 | 8 | 26 | 14 |
+| en 1280x800 | 211 | 8 | 26 | 14 |
+| es 1440x900 | 211 | 8 | 26 | 14 |
+| es 1280x800 | 211 | 8 | 26 | 14 |
+
+Refused (blocker `reach-remainder`): Settings' `settings` (whole, close,
+nav) and `settingsSection` (whole, heading, body), `blocked / occluded`
+because Settings covers the orb every route starts from (by design, page
+test `test_pointing_inside_settings_is_blocked_while_it_covers_the_orb`);
+the right panel's agent `name` (`no-route`: the agent's orb, 58 px in a
+60 px row, sits between the rail and the name); a network tile's
+`presence` (`no-route`: the dot is in the tile's title, set on its top
+border, beside the name). Not more room: each needs a layout or rule
+change.
+
+Never registered (14): the contract's `rightTab`, `mainTab` and `region`
+kinds, which no component registers (the remaining-gaps record's
+"optional contract items"), and the `main.main` capture (the `?view=main`
+page, not swept). Mounted but the part not on show with these fixtures
+(26): conditional parts (Stop while speaking, Load earlier, restore, a
+file preview, a crumb, the Queue's composer and back, receipts, Dismiss on
+a finished workflow, Show done, the subagent detail's parts, the hidden
+previous chevron); not refusals.
+
+### Final integration test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+  `scripts/generate_ui_contract.py --check` and
+  `scripts/generate_messaging_contract.py --check`: exit 0.
+- Targeted pytest (the remaining-gaps list plus the localization
+  integration's: `test_ui_contract`, `test_ui_control`, `test_ui_tools`,
+  `test_ui_navigation`, `test_ui_pipeline`, `test_ui_right`,
+  `test_ui_coverage_rules`, `test_ui_locale`, `test_brain_page_parity`,
+  `test_jarvis_mcp`, `test_header_lines`, `test_dead_code_removed`,
+  `test_anchored_patterns`, `test_internal_tool`, `test_untrusted_turn`,
+  `test_tool_handlers`, `test_mcp_config`, `test_voice_ws`,
+  `test_tool_argument_echo`, `test_show_on_screen`, `test_language_setting`,
+  `test_spanish_speaking`, `test_subsystem_diagnostics`,
+  `test_voice_diagnostics`, `test_team_client`, `test_team_network`,
+  `test_team_client_stream`, `test_team_reminder`, `test_speech_models`,
+  `test_transcription_ws`, `test_messaging_client`, `test_brains_api`,
+  `test_web_security`, `test_spoken_words`, `test_data_paths`,
+  `test_system_prompt_header`, `test_brain`, `test_access_keys`,
+  `test_messaging_queue_store`, `test_self_update`): 1197 passed, 2 skipped,
+  1 failed: `test_ui_navigation` (its Node harness has no
+  `getComputedStyle`); fixed with `undrawn()` guarding it, then
+  `test_ui_navigation`, `test_ui_pipeline`, `test_ui_coverage_rules`,
+  `test_ui_right`: 16 passed.
+- `pytest -m page` at 0ab205f (a–c): pipeline, left_settings, voice_health,
+  right, layout, workflows: 52 passed. After the agents corridor:
+  agents_list_fits, rays, right: 37 passed.
+- `pytest -m page` on every voice-page file but refresh and screen, after
+  d: 200 passed, 21 failed, every failure a timeout. Rerun: settings,
+  navigation and the new pipeline tests pass; the pipeline's two animated
+  tests (`test_the_map_stays_…`, `test_clearing_…`), all of
+  `test_voice_page_voice_health.py` (it waits for the fake microphone's
+  frames) and `test_voice_page_speech_input.py` still time out. Not this
+  change: the same tests fail the same way with the d. changes stashed (at
+  0ab205f, where the pipeline and voice_health files had passed hours
+  before). The machine was at load 9–11 with Chromium's GPU process (the
+  orb's software WebGL) at over 600 % CPU; the reduced-motion tests pass.
+  Left for CI with the full suite.
+- Not run, by rule: the full suite, the wheel build.
