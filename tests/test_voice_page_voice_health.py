@@ -240,13 +240,11 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             name = await dot.get_attribute("aria-label")
             assert name and "No audio from the microphone" in name
             assert await dot.get_attribute("title") == name
-            # Shown, it is a mounted target; its leaf would cross the meter
-            # beside it, so it is refused truthfully, never drawn across
-            # (the same as the mute and off buttons in
-            # test_voice_page_left_settings.LEFT_MISSED): the mic row leaves
-            # no gap over or under it (blocker sibling-routing-remainder).
+            # Shown, it is a mounted target, reached under the mic row (its
+            # leaf would cross the meter straight across), as mute and off
+            # are (test_voice_page_left_settings.LEFT_MISSED).
             reached = await point()
-            assert (reached["status"], reached.get("reason")) == ("blocked", "no-route"), reached
+            assert reached["status"] == "completed", reached
             await _health(page)
             await page.wait_for_selector("#health-dot", state="detached")
             assert (await point())["status"] != "completed"

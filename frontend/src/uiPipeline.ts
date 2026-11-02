@@ -266,9 +266,16 @@ function socketEdges(target: VisualTarget): RouteEdge[] | null {
   const start = railStart(line);
   if (line.axis === "down") {
     if (entry[1] < line.from || entry[1] > line.to) return null;
+    const branch = (points: Point[]): RouteEdge => ({ id: `socket:${id}`, layer: "branch", host, points });
+    const straight = branch([[line.at, entry[1]], entry]);
+    // Straight in unless that crosses another object (a step beside the
+    // next in a row): then over or under the row (overTheRow()); with
+    // neither clear, the straight branch stays and the route is refused.
+    const over = crossesAnotherObject(straight, target) ? overTheRow(target, line.at) : null;
+    const points = over ?? straight.points;
     return bevelEdges([
-      { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, [line.at, entry[1]]] },
-      { id: `socket:${id}`, layer: "branch", host, points: [[line.at, entry[1]], entry] },
+      { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, points[0]] },
+      branch(points),
     ]);
   }
   // Across (the footer): along the rail to just outside the socket, then
@@ -297,8 +304,9 @@ function edgeCrosses(edge: RouteEdge, boxes: DOMRect[]): boolean {
   return false;
 }
 
-/** A branch may not cross another object on its way in. */
-function crossesAnotherObject(edge: RouteEdge, target: VisualTarget): boolean {
+/** The boxes of the other objects on show beside `target`: neither inside
+ *  it nor holding it. */
+function objectsBeside(target: VisualTarget): DOMRect[] {
   const own = target.element();
   const others: DOMRect[] = [];
   for (const other of mountedTargets()) {
@@ -308,7 +316,25 @@ function crossesAnotherObject(edge: RouteEdge, target: VisualTarget): boolean {
     const r = boxOf(el);
     if (r) others.push(r);
   }
-  return edgeCrosses(edge, others);
+  return others;
+}
+
+/** A branch may not cross another object on its way in. */
+function crossesAnotherObject(edge: RouteEdge, target: VisualTarget): boolean {
+  return edgeCrosses(edge, objectsBeside(target));
+}
+
+/** The innermost other object on show that holds `target` (a workflow's
+ *  detail holding its phase steps), or null. */
+function holderOf(target: VisualTarget): Element | null {
+  const own = target.element();
+  let best: Element | null = null;
+  for (const other of mountedTargets()) {
+    const el = other.element();
+    if (other === target || !el || !own || el === own || !el.contains(own)) continue;
+    if (!best || best.contains(el)) best = el;
+  }
+  return best;
 }
 
 /** Every line of text inside `el` but outside the addressed part `except`:
@@ -325,27 +351,66 @@ function labelsIn(el: Element, except: Element): DOMRect[] {
   return out;
 }
 
-/** The leaf over (`up`) or under the part's row: from the socket along the
- *  inner margin to the middle of the gap between that row and the next
- *  thing beyond it (or the object's own edge), across to above or below the
- *  part's centre, and down or up into its top or bottom edge. Null when
- *  there is no such gap; the caller checks what the run crosses. Its turns
- *  are bevelled with the rest of the route. */
-function detour(entry: Point, margin: number, part: DOMRect, whole: DOMRect, obstacles: DOMRect[],
-                up: boolean): Point[] | null {
-  const cx = part.left + part.width / 2;
-  const [lo, hi] = [Math.min(margin, cx) - CLEAR_PX, Math.max(margin, cx) + CLEAR_PX];
+/** The y of the lane over (`up`) or under `part`'s row, for a run across
+ *  from x `a` to x `b`: the middle of the gap between that row (the part
+ *  and whatever in the run's span shares its band) and the next thing
+ *  beyond it, or `whole`'s own edge. Null when the gap is narrower than
+ *  twice CLEAR_PX. */
+function lane(part: DOMRect, whole: DOMRect, obstacles: DOMRect[], a: number, b: number, up: boolean): number | null {
+  const [lo, hi] = [Math.min(a, b) - CLEAR_PX, Math.max(a, b) + CLEAR_PX];
   const inSpan = obstacles.filter((o) => o.left < hi && o.right > lo);
-  // The row: the part and whatever beside it in the span shares its band.
   const row = inSpan.filter((o) => o.top < part.bottom && o.bottom > part.top);
   const rowEdge = up ? Math.min(part.top, ...row.map((o) => o.top)) : Math.max(part.bottom, ...row.map((o) => o.bottom));
   const beyond = up ? Math.max(whole.top, ...inSpan.filter((o) => o.bottom <= rowEdge).map((o) => o.bottom))
                     : Math.min(whole.bottom, ...inSpan.filter((o) => o.top >= rowEdge).map((o) => o.top));
-  if (Math.abs(rowEdge - beyond) < 2 * CLEAR_PX) return null;
-  const y = (rowEdge + beyond) / 2;
-  const end = up ? part.top - LEAF_END_PX : part.bottom + LEAF_END_PX;
-  return [entry, [margin, entry[1]], [margin, y], [cx, y], [cx, end]];
+  return Math.abs(rowEdge - beyond) < 2 * CLEAR_PX ? null : (rowEdge + beyond) / 2;
 }
+
+/** Points with each repeat of the one before left out. */
+const distinct = (points: Point[]): Point[] =>
+  points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
+
+/** The leaf over (`up`) or under the part's row: from the socket along the
+ *  inner margin to the row's lane (lane()), across to above or below the
+ *  part's centre, and down or up into its top or bottom edge. Null when
+ *  there is no lane; the caller checks what the run crosses. Its turns
+ *  are bevelled with the rest of the route. */
+function detour(entry: Point, margin: number, part: DOMRect, whole: DOMRect, obstacles: DOMRect[],
+                up: boolean): Point[] | null {
+  const cx = part.left + part.width / 2;
+  const y = lane(part, whole, obstacles, margin, cx, up);
+  if (y === null) return null;
+  const end = up ? part.top - LEAF_END_PX : part.bottom + LEAF_END_PX;
+  return distinct([entry, [margin, entry[1]], [margin, y], [cx, y], [cx, end]]);
+}
+
+/** The socket branch over or under the object's row, for an object whose
+ *  straight branch would cross the next one beside it (a phase step left
+ *  of the last): from the rail at `railX` across the row's lane, inside
+ *  the object that holds it (holderOf()), clear of the other objects and
+ *  of the holder's controls and lines of text, to above or below the
+ *  object's inner margin, and down or up into its top or bottom edge
+ *  there; its leaves then run down or up that margin as from any socket.
+ *  The shorter of the two that clear, or null. Its turns are bevelled with
+ *  the rest of the route. */
+function overTheRow(target: VisualTarget, railX: number): Point[] | null {
+  const el = target.element(), holder = holderOf(target);
+  const r = boxOf(el), whole = boxOf(holder);
+  if (!el || !holder || !r || !whole) return null;
+  const margin = marginOf(target, r);
+  const obstacles = [...objectsBeside(target), ...reservedIn(holder, el), ...labelsIn(holder, el)];
+  const ways = [true, false].flatMap((up) => {
+    const y = lane(r, whole, obstacles, margin, railX, up);
+    if (y === null) return [];
+    const points: Point[] = [[railX, y], [margin, y], [margin, up ? r.top : r.bottom]];
+    return edgeCrosses({ id: "", layer: "branch", host: "base", points }, obstacles) ? [] : [points];
+  });
+  return ways.sort((a, b) => length(a) - length(b))[0] ?? null;
+}
+
+/** The x of an object's inner margin: INNER_MARGIN_PX inside its facing edge. */
+const marginOf = (target: VisualTarget, box: DOMRect): number =>
+  target.socket.side === "right" ? box.right - INNER_MARGIN_PX : box.left + INNER_MARGIN_PX;
 
 /** The leaf from the socket down the object's inner margin to the part's
  *  facing edge. Where that straight run would cross a control or another
@@ -359,9 +424,12 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
   const r = boxOf(el);
   if (!el || !r) return "no-adapter";
   const right = target.socket.side === "right";
-  const margin = entry[0] + (right ? -INNER_MARGIN_PX : INNER_MARGIN_PX);
+  const whole = target.element();
+  const box = boxOf(whole);
+  if (!whole || !box) return "no-route";
+  const margin = marginOf(target, box);
   const leaf = (points: Point[]): RouteEdge => ({ id: `leaf:${presentationId(target.ref)}:${part}`, layer: "leaf",
-                                                  host: hostOf(target), points });
+                                                  host: hostOf(target), points: distinct(points) });
   const straight = leaf(r.left < margin && margin < r.right
     // The part reaches over the margin (a part beside its whole, at its
     // edge): down or up the margin into its top or bottom edge.
@@ -369,8 +437,7 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
        [margin, entry[1] < r.top ? r.top - LEAF_END_PX : Math.min(entry[1], r.bottom + LEAF_END_PX)]]
     : [entry, [margin, entry[1]], [margin, r.top + r.height / 2],
        [right ? Math.min(r.right + LEAF_END_PX, margin) : Math.max(r.left - LEAF_END_PX, margin), r.top + r.height / 2]]);
-  const whole = target.element();
-  const kept: DOMRect[] = whole ? reservedIn(whole, el) : [];
+  const kept: DOMRect[] = reservedIn(whole, el);
   const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
   for (const other of decl) {
     if (other === part) continue;
@@ -382,8 +449,6 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
     if (box) kept.push(box);
   }
   if (!edgeCrosses(straight, kept)) return straight;
-  const box = boxOf(whole);
-  if (!whole || !box) return "no-route";
   const obstacles = [...kept, ...labelsIn(whole, el)];
   const clear = [true, false]
     .map((up) => detour(entry, margin, r, box, obstacles, up))

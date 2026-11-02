@@ -666,6 +666,7 @@ function AgentTranscript({ sessionId, workflowId, fallbackName, gone, subagent, 
       {error && <p className="read-failure">{t("main.workflow.itsTranscriptUnreadable", { error })}</p>}
       <div className="transcript-entries"
            ref={both(box, part(subagent ? "transcript" : "entries"))}
+           data-ui-action="scroll"
            onScroll={(e) => {
              const el = e.currentTarget;
              atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;

@@ -69,6 +69,8 @@ export const CONTROL_CLASSES: Record<string, string> = {
   file: "Downloads, reveals or removes a file.",
   setup: "First-time setup's own steps.",
   plumbing: "Only keeps an event from reaching the page; no action of its own.",
+  scroll: "Remembers where a person scrolled a box (whether it follows its newest entries); "
+    + "kept local, runs no command and never moves the navigation revision.",
 };
 
 /** Names shown as they are in every language: products, providers and

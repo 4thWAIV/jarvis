@@ -147,11 +147,10 @@ LEFT_TARGETS = [
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
 # A part beside another on the side its leaf comes from is reached over or
-# under its row (uiPipeline.ts leafEdge; the Team Server's last write goes
-# under its row). The microphone's row has no gap above it and too little
-# below for the leaf to stay clear, so mute and off are refused truthfully,
-# never drawn across (blocker sibling-routing-remainder).
-LEFT_MISSED = [["mic", "mute", "blocked", "no-route"], ["mic", "off", "blocked", "no-route"]]
+# under its row (uiPipeline.ts leafEdge; the Team Server's last write and the
+# microphone's mute and off go under their rows, the mic in the lane it
+# keeps below it, --ui-leaf-lane). Every left target and part is reached.
+LEFT_MISSED = []
 
 
 async def _left_missed(ui):

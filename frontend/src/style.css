@@ -43,6 +43,11 @@
      content keeps out of it. A component that registers a target and
      draws to its own edge reserves it with this. */
   --ui-corridor: 16px;
+  /* A lane a leaf runs along over or under a row of parts, inside the
+     object's own box (uiPipeline.ts lane(): the gap must be twice CLEAR_PX,
+     the leaf runs in its middle). A row that fills its object's height,
+     such as the microphone's, keeps this much below it. */
+  --ui-leaf-lane: 8px;
 }
 
 html, body {
@@ -1096,6 +1101,9 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  /* Mute, off and the health dot sit beside the meter: their leaves run
+     under the row. */
+  padding-bottom: var(--ui-leaf-lane);
   z-index: 20;
 }
 
@@ -1937,7 +1945,9 @@ html, body {
 .workflow-times { font-size: 10px; color: rgba(255, 255, 255, 0.4); }
 .phase-stepper { list-style: none; display: flex; gap: 0; }
 .phase-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; text-align: center; }
-.phase-step::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 3px; background: rgba(251, 113, 133, 0.25); }
+/* The connector into a step runs under the step before it: it ignores the
+   pointer, so it never covers that step's dot as a target. */
+.phase-step::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 3px; background: rgba(251, 113, 133, 0.25); pointer-events: none; }
 .phase-step:first-child::before { display: none; }
 .phase-step.at-done::before, .phase-step.at-current::before { background: #fb7185; }
 .phase-step-dot {

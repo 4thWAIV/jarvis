@@ -28,13 +28,11 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # The right panel's files are coverage-right's, the centre views'
 # coverage-main's. `label-unlocalized` counts are the localization
 # workers' (execution.md, LOCALIZATION OWNERSHIP): each reaches zero.
-PENDING = {
-    # The transcript's scroll (whether it follows the newest entries): a
-    # command run on scroll would also fire on the reveal's own scroll and
-    # cancel it, so how it is covered waits for Tim (blocker
-    # transcript-scroll-command, execution.md "Remaining gaps").
-    # Everything else runs a registered command or is classified.
-    ("WorkflowDetail.tsx", "control-unclassified"): 1,
+PENDING: dict[tuple[str, str], int] = {
+    # Empty: every control runs a registered command or is classified. The
+    # transcript's scroll is classified `scroll` (Tim, blocker
+    # transcript-scroll-command), so the brain's reveal scrolling the box
+    # never runs a command or cancels itself.
 }
 
 

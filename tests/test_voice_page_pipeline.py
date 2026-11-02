@@ -405,6 +405,8 @@ BESIDE = [
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-2", "part": "dismiss"},
      ".workflow-row[data-workflow-id=wf-2]", ".workflow-item:has([data-workflow-id=wf-2]) .workflow-dismiss"),
+    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
+    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "off"}, "#mic-control", "#btn-mic-off"),
 ]
 
 # What a leaf inside an object may not cross: its controls and the lines of
@@ -438,8 +440,9 @@ def _inside(x, y, box, tol=0.5):
 
 @pytest.mark.asyncio
 async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(page_url):
-    """The workflow's Decisions tab, a phase step's dot, the Folders tabs,
-    the microphone's mute and off, the reminder's Sign in and a finished
+    """The workflow's Decisions tab, the Folders tabs, the microphone's mute
+    and off (under the row, in the lane kept below it), the reminder's
+    Sign in and a finished
     workflow's Dismiss each sit beside another part on the side their leaf
     comes from. Each is reached: along the fixed map to its object's
     socket, then a leaf over or under its row (or, for the ×, down the
@@ -487,5 +490,79 @@ async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(
                 clear, _ = ui.request({"kind": "clear"})
                 await ui.result(clear)
                 await page.wait_for_function("!document.querySelector('[data-cue]')")
+        finally:
+            await browser.close()
+
+
+# Inside the workflow's detail, outside one step: its controls and lines of
+# text, and the other steps.
+AROUND_STEP = """(slug) => {
+  const w = document.querySelector('#workflow-detail'), s = document.querySelector(`.phase-step[data-phase="${slug}"]`);
+  const box = (r) => [r.left, r.top, r.right, r.bottom];
+  const kept = [...document.querySelectorAll('.phase-step')].filter((o) => o !== s)
+    .map((o) => box(o.getBoundingClientRect()));
+  w.querySelectorAll("button, a[href], input, select, textarea, summary, [role='button'], [role='tab'], [role='link']")
+    .forEach((c) => { if (!s.contains(c)) kept.push(box(c.getBoundingClientRect())); });
+  const walk = document.createTreeWalker(w, NodeFilter.SHOW_TEXT), range = document.createRange();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!n.textContent.trim() || s.contains(n)) continue;
+    range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width && r.height) kept.push(box(r));
+  }
+  return {kept, step: box(s.getBoundingClientRect())};
+}"""
+
+
+@pytest.mark.asyncio
+async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_url):
+    """A phase step's straight branch from the rail would cross the steps
+    after it, and the next step's connector line lies over its dot. The
+    connector ignores the pointer, and the branch runs over the stepper
+    and drops into the step's top edge at its inner margin, every turn a
+    45-degree bevel, on the map, never across another step, a control or a
+    line of text; the step, its dot and its count are all reached. The last
+    step is still entered straight from the rail."""
+    async with async_api.async_playwright() as p:
+        browser, page, ui = await _open(p, page_url, reduced=True, team=SIGNED_OUT, network=False,
+                                        routes=[("**/api/workflows**", _Workflows())])
+        try:
+            rid, _ = ui.request({"kind": "navigate", "commandId": "workflow.open",
+                                 "args": {"workflowId": "wf-1", "tab": "phases"}})
+            assert (await ui.result(rid))["status"] == "completed"
+            await page.wait_for_selector(".phase-step[data-phase=deepgram-engine]")
+            for slug, over in (("mic-recorder", True), ("deepgram-engine", False)):
+                for part in (None, "state"):
+                    target = {"region": "main", "view": "main.workflow", "kind": "workflowPhase",
+                              "key": f"wf-1/{slug}", **({"part": part} if part else {})}
+                    rid, _ = ui.indicate(target, reveal="never")
+                    result = await ui.result(rid)
+                    assert result["status"] == "completed", (target, result)
+                    await page.wait_for_function("document.querySelector('.ui-contour')")
+                    drawn = await page.evaluate(DRAWN)
+                    lines = [s for e in await page.evaluate(MAP) for s in _segments(e["d"])]
+                    route = _points(drawn["route"][0])
+                    for seg in zip(route, route[1:]):
+                        assert _on(seg, lines), (slug, part, seg, drawn["route"][0])
+                        assert _bevel_or_straight(seg), (slug, part, seg)
+                    around = await page.evaluate(AROUND_STEP, slug)
+                    left, top, right, bottom = around["step"]
+                    # The branch's own run: from where it leaves the rail
+                    # (the route's last point right of the step) to its end.
+                    branch = route[max(i for i, (x, _) in enumerate(route) if x > right + 1):]
+                    for seg in zip(branch, branch[1:]):
+                        middle = ((seg[0][0] + seg[1][0]) / 2, (seg[0][1] + seg[1][1]) / 2)
+                        for x, y in (seg[0], seg[1], middle):
+                            for box in around["kept"]:
+                                assert not _inside(x, y, box), (slug, (x, y), box, branch)
+                    end_x, end_y = branch[-1] if part is None else route[-1]
+                    if over and part is None:
+                        # Into the top edge, at the inner margin (6 px in).
+                        assert abs(end_y - top) < 1 and abs(end_x - (right - 6)) < 1, (branch, around["step"])
+                        assert min(y for _, y in branch) < top - 1, branch
+                    elif not over and part is None:
+                        assert abs(end_x - right) < 1 and top < end_y < bottom, (branch, around["step"])
+                    clear, _ = ui.request({"kind": "clear"})
+                    await ui.result(clear)
+                    await page.wait_for_function("!document.querySelector('[data-cue]')")
         finally:
             await browser.close()
