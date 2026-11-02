@@ -99,7 +99,7 @@ from jarvis import transmission
 from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
-from jarvis import packages_api, work_packages
+from jarvis import attachment_locations, packages_api, work_packages
 from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
@@ -6727,6 +6727,12 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+def _location_context() -> Optional["attachment_locations.LocationContext"]:
+    """Where received files are, for whoever is signed in now; None while
+    messaging is off or signed out."""
+    return messaging.location_context() if messaging is not None else None
+
+
 # --- Work packages -------------------------------------------------------
 #
 # A zip a teammate sends in an ordinary message, with a package.json at its
@@ -6741,7 +6747,7 @@ _PACKAGE_WRAP_NAME = "package"
 async def tool_open_package(args: dict) -> str:
     """Download a received zip if it is not here yet, unpack it into its own
     folder and hand the brain its package.json and skill to follow."""
-    context = messaging.files_context() if messaging is not None else None
+    context = _location_context()
     if context is None:
         return MESSAGING_OFF
     message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
@@ -6749,13 +6755,18 @@ async def tool_open_package(args: dict) -> str:
         return ("Which file, sir? Give me its message id and attachment id from "
                 "read_people_thread. Nothing was opened.")
     try:
-        archive = await context.files.downloaded(context.server_id, context.owner_github_id,
-                                                 message_id, attachment_id)
+        found = await context.ensure_local(message_id, attachment_id)
     except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
         return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
+    problem = attachment_locations.not_local(found)
+    if problem:
+        return f"{messaging_api.Refused(problem).shown()} Nothing was opened."
+    archive = Path(found.local_path)
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
                                                  attachment_id.hex[:8])
+        context.record_extraction(message_id, attachment_id, package.folder,
+                                  sorted(set(package.manifest.named_files().values())))
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
                                                 ("Brief", package.manifest.brief))

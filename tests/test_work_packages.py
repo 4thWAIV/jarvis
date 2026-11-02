@@ -184,6 +184,12 @@ def _sent_package(tmp_path, data: bytes) -> tuple[World, UUID, UUID]:
     return w, saved.message_id, ref.attachment_id
 
 
+def locations_for(files, server, owner):
+    """The messaging runtime's location context over one test's files."""
+    from jarvis.attachment_locations import AttachmentLocations, LocationContext
+    return LocationContext(AttachmentLocations(files), server, owner)
+
+
 async def _chunks(data: bytes):
     yield data
 
@@ -191,7 +197,8 @@ async def _chunks(data: bytes):
 def test_open_package_downloads_unpacks_and_hands_over_the_skill(wired, tmp_path, marks):
     w, message, attachment = _sent_package(tmp_path, make_zip({"SKILL.md": "Step one."}))
     wired.server.messaging = SimpleNamespace(
-        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT))
+        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT),
+        location_context=lambda: locations_for(w.matt.files, SERVER, MATT))
     got = _call(wired, "open_package", message=str(message), attachment=str(attachment))
     assert got["ok"], got
     text = got["text"]
@@ -200,6 +207,10 @@ def test_open_package_downloads_unpacks_and_hands_over_the_skill(wired, tmp_path
     assert '"purpose": "Measure the Spanish speech model."' in text and "Step one." in text
     assert f"reply_to {message}" in text
     assert w.matt.files.files(SERVER, MATT, message)[0].state == "verified"
+    found = locations_for(w.matt.files, SERVER, MATT).lookup(message, attachment)
+    assert found.state == "verified" and found.local_path.endswith(".zip")
+    assert found.extraction.root == str(data_paths.packages_dir() / folder)
+    assert found.extraction.members == ["SKILL.md"] and found.extraction.root_exists
     assert wired.server.brain_instance.marks == ["a work package a teammate sent"]
     listed = _call(wired, "list_packages")["text"]
     assert listed.startswith("1 package unpacked here") and folder in listed
@@ -212,7 +223,8 @@ def test_open_package_says_what_is_wrong_and_opens_nothing(wired, tmp_path, mark
     assert _call(wired, "open_package", message=str(message),
                  attachment=str(attachment))["text"] == wired.server.MESSAGING_OFF
     wired.server.messaging = SimpleNamespace(
-        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT))
+        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT),
+        location_context=lambda: locations_for(w.matt.files, SERVER, MATT))
     got = _call(wired, "open_package", message=str(message), attachment=str(attachment))
     assert got["text"] == "That file is not a zip. Nothing was opened."
     assert "Which file" in _call(wired, "open_package", message="x", attachment="y")["text"]

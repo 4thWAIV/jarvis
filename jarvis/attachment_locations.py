@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Optional
@@ -98,7 +100,32 @@ _SCHEMA = """
         extraction_members TEXT,
         PRIMARY KEY (server_id, owner_github_id, attachment_id)
     );
+    CREATE TABLE IF NOT EXISTS attachment_leases (
+        server_id       TEXT NOT NULL,
+        owner_github_id INTEGER NOT NULL,
+        attachment_id   TEXT NOT NULL,
+        holder          TEXT NOT NULL,
+        created_at      REAL NOT NULL,
+        PRIMARY KEY (server_id, owner_github_id, attachment_id, holder)
+    );
 """
+
+# A lease's holder: "run:<run id>" while that run is queued or running,
+# "message:<number>" while that message to a session is still open.
+_OPEN_MESSAGE = frozenset({run_store.MessageStatus.STAGED, run_store.MessageStatus.QUEUED,
+                           *run_store.OPEN_MESSAGE_STATUSES})
+
+
+def holder_active(holder: str) -> bool:
+    """Whether the agent a lease was given to still has the file in hand."""
+    kind, _, key = holder.partition(":")
+    if kind == "run":
+        run = run_store.get_run(key)
+        return run is not None and run["status"] in run_store.RunStatus.ACTIVE
+    if kind == "message" and key.isdigit():
+        message = run_store.get_message(int(key))
+        return message is not None and message.status in _OPEN_MESSAGE
+    return False
 
 
 def init_db() -> None:
@@ -141,8 +168,10 @@ class AttachmentLocations:
     JARVIS's network node."""
 
     def __init__(self, files: messaging_files.FileSnapshots, *,
-                 node_id: Callable[[], str] = data_paths.node_id):
-        self.files, self._node_id = files, node_id
+                 node_id: Callable[[], str] = data_paths.node_id,
+                 active: Callable[[str], bool] = holder_active,
+                 now: Callable[[], float] = time.time):
+        self.files, self._node_id, self._active, self._now = files, node_id, active, now
         self._verify = Verifier()
         init_db()
 
@@ -210,3 +239,147 @@ class AttachmentLocations:
                                       actions=fetch_again)
         return AttachmentLocation(**base, state="missing", intended_path=str(destination),
                                   reason="missing", actions=fetch_again)
+
+    # -- making it local ----------------------------------------------------------------
+
+    async def ensure_local(self, server_id: str, owner_github_id: int, message_id: UUID,
+                           attachment_id: UUID) -> AttachmentLocation:
+        """The file here and verified, fetched now through the existing
+        authenticated downloader when it is not (never downloaded, failed,
+        missing, changed or moved): its location, verified again. Only on
+        the owner's word. Nothing is unpacked, opened or run."""
+        found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+        if found.state not in ("verified", "downloading"):
+            await self.files.download(server_id, owner_github_id, message_id, attachment_id)
+            found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+        if found.state == "verified" and found.local_path:
+            self._remember(server_id, owner_github_id, attachment_id, found.local_path)
+            found = self.lookup(server_id, owner_github_id, message_id, attachment_id)
+        return found
+
+    def _remember(self, server_id: str, owner: int, attachment_id: UUID, path: str) -> None:
+        """Where it was verified, and when: how a later look knows it moved."""
+        record = self._record(server_id, owner, attachment_id)
+        if record is not None and record["path"] == path:
+            return
+        with closing(run_store._connect()) as conn:
+            conn.execute(
+                "INSERT INTO attachment_locations (server_id, owner_github_id, attachment_id, "
+                "path, verified_at) VALUES (?,?,?,?,?) ON CONFLICT (server_id, "
+                "owner_github_id, attachment_id) DO UPDATE SET path=excluded.path, "
+                "verified_at=excluded.verified_at",
+                (server_id, owner, str(attachment_id), path, self._now()))
+            conn.commit()
+
+    def record_extraction(self, server_id: str, owner_github_id: int, message_id: UUID,
+                          attachment_id: UUID, root: Path, members: list[str]) -> None:
+        """Where a verified zip was unpacked by what already unpacks one (a
+        work package): its hash, the folder and the members asked for."""
+        ref = self.files.received_ref(server_id, owner_github_id, message_id, attachment_id)
+        with closing(run_store._connect()) as conn:
+            conn.execute(
+                "INSERT INTO attachment_locations (server_id, owner_github_id, attachment_id, "
+                "extraction_root, extraction_sha256, extraction_members) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT (server_id, owner_github_id, attachment_id) DO UPDATE SET "
+                "extraction_root=excluded.extraction_root, "
+                "extraction_sha256=excluded.extraction_sha256, "
+                "extraction_members=excluded.extraction_members",
+                (server_id, owner_github_id, str(attachment_id), str(root), ref.sha256,
+                 "\n".join(m for m in members if m and "\n" not in m)))
+            conn.commit()
+
+    def extracted_from(self, server_id: str, owner_github_id: int,
+                       root: Path) -> Optional[tuple[UUID, UUID]]:
+        """(message id, attachment id) of the zip unpacked into `root`, or None."""
+        with closing(run_store._connect()) as conn:
+            row = conn.execute(
+                "SELECT attachment_id FROM attachment_locations WHERE server_id=? AND "
+                "owner_github_id=? AND extraction_root=?",
+                (server_id, owner_github_id, str(root))).fetchone()
+        if row is None:
+            return None
+        with closing(run_store._connect()) as conn:
+            msg = conn.execute(
+                "SELECT message_id FROM messaging_files WHERE server_id=? AND owner_github_id=? "
+                "AND attachment_id=? AND role=?",
+                (server_id, owner_github_id, row["attachment_id"],
+                 messaging_files.DOWNLOAD)).fetchone()
+        return (UUID(msg["message_id"]), UUID(row["attachment_id"])) if msg else None
+
+    # -- leases -------------------------------------------------------------------------
+
+    def hold(self, server_id: str, owner_github_id: int, attachment_id: UUID,
+             holder: str) -> None:
+        """An agent has this file in hand: cleanup keeps it until the holder
+        (`holder_active`) has finished."""
+        with closing(run_store._connect()) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO attachment_leases (server_id, owner_github_id, "
+                "attachment_id, holder, created_at) VALUES (?,?,?,?,?)",
+                (server_id, owner_github_id, str(attachment_id), holder, self._now()))
+            conn.commit()
+
+    def held(self, server_id: str, owner_github_id: int) -> set[str]:
+        """Attachment ids an active lease holds; leases whose holder has
+        finished are released as they are found."""
+        with closing(run_store._connect()) as conn:
+            rows = conn.execute(
+                "SELECT attachment_id, holder FROM attachment_leases WHERE server_id=? AND "
+                "owner_github_id=?", (server_id, owner_github_id)).fetchall()
+        held, done = set(), []
+        for row in rows:
+            if self._active(row["holder"]):
+                held.add(row["attachment_id"])
+            else:
+                done.append((row["attachment_id"], row["holder"]))
+        if done:
+            with closing(run_store._connect()) as conn:
+                conn.executemany(
+                    "DELETE FROM attachment_leases WHERE server_id=? AND owner_github_id=? "
+                    "AND attachment_id=? AND holder=?",
+                    [(server_id, owner_github_id, a, h) for a, h in done])
+                conn.commit()
+        return held
+
+
+@dataclass(frozen=True)
+class LocationContext:
+    """The resolver for whoever is signed in now: what the routes, the
+    brain's tools and an agent's hand-over each call."""
+    locations: AttachmentLocations
+    server_id: str
+    owner_github_id: int
+
+    def lookup(self, message_id: UUID, attachment_id: UUID) -> AttachmentLocation:
+        return self.locations.lookup(self.server_id, self.owner_github_id, message_id,
+                                     attachment_id)
+
+    async def ensure_local(self, message_id: UUID, attachment_id: UUID) -> AttachmentLocation:
+        return await self.locations.ensure_local(self.server_id, self.owner_github_id,
+                                                 message_id, attachment_id)
+
+    def reveal(self, message_id: UUID, attachment_id: UUID) -> None:
+        self.locations.files.reveal(self.server_id, self.owner_github_id, message_id,
+                                    attachment_id)
+
+    def hold(self, attachment_id: UUID, holder: str) -> None:
+        self.locations.hold(self.server_id, self.owner_github_id, attachment_id, holder)
+
+    def record_extraction(self, message_id: UUID, attachment_id: UUID, root: Path,
+                          members: list[str]) -> None:
+        self.locations.record_extraction(self.server_id, self.owner_github_id, message_id,
+                                         attachment_id, root, members)
+
+    def extracted_from(self, root: Path) -> Optional[tuple[UUID, UUID]]:
+        return self.locations.extracted_from(self.server_id, self.owner_github_id, root)
+
+
+def not_local(found: AttachmentLocation) -> Optional[str]:
+    """None for a file here and verified; else the code saying why not,
+    for the caller's refusal (a `wire.ERRORS`/`LOCAL_ERRORS` code where the
+    downloader gave one)."""
+    if found.state == "verified" and found.local_path:
+        return None
+    if found.state == "downloading":
+        return "attachment_not_ready"
+    return found.reason or "transport"

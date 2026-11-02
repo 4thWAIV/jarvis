@@ -8,6 +8,9 @@ exactly one instance and one source for who this JARVIS is:
     store          messaging_store.SqliteMessagingStore (the JARVIS database)
     files          messaging_files.FileSnapshots, sending through the
                    current pairing's transport
+    locations      attachment_locations.AttachmentLocations: where a
+                   received file is, and its agent leases (cleanup keeps
+                   what they hold)
     approvals      message_approvals.MessageApprovals, the one guard
     delivery       messaging_client.Delivery. Its transport for each pairing
                    is the team connection's, wrapped in GuardedTransport, so
@@ -40,7 +43,7 @@ from uuid import UUID
 
 from fastapi import FastAPI
 
-from jarvis import data_paths
+from jarvis import attachment_locations, data_paths
 from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
@@ -101,8 +104,11 @@ class MessagingRuntime:
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
         self.store.forget_captures()
-        self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
-                                                   on_change=self.hint)
+        self.files = messaging_files.FileSnapshots(
+            self.store, self._transport_now, on_change=self.hint,
+            held=lambda server_id, owner: self.locations.held(server_id, owner))
+        self.locations = attachment_locations.AttachmentLocations(
+            self.files, node_id=lambda: str(self.node))
         self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(), clock=clock)
         current = _CurrentTransport(self._transport_now)
         self.presentation = ServePresentation(transport=current, node_id=self.node,
@@ -167,6 +173,13 @@ class MessagingRuntime:
         if who is None:
             return None
         return messaging_files.FilesContext(self.files, who.server_id, who.owner_github_id)
+
+    def location_context(self) -> Optional[attachment_locations.LocationContext]:
+        who = self.identity()
+        if who is None:
+            return None
+        return attachment_locations.LocationContext(self.locations, who.server_id,
+                                                    who.owner_github_id)
 
     def hint(self) -> None:
         """Tell every open page the queue changed (it reads it again)."""
