@@ -2322,6 +2322,58 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
 
+/* A file a teammate sent (BundleMemberView.tsx): its name, then its pages,
+   preview or text filling the rest of the centre. A PDF's page image sits
+   beside its text. */
+#bundle-member-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#bundle-member-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe;
+  overflow-wrap: anywhere; }
+#bundle-member-view .package-head-words p { overflow-wrap: anywhere; }
+.bundle-notes { margin: 0; font-size: 12px; color: #fcd34d; }
+.bundle-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.bundle-body.with-pages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.bundle-page { margin: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-page img, .bundle-image {
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: top left;
+  background: #fff;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 6px;
+}
+.bundle-page figcaption { align-items: center; }
+.bundle-page-number { font-size: 12px; color: rgba(255, 255, 255, 0.7); }
+.bundle-html { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-text { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding-right: 4px; }
+.bundle-body:not(.with-pages) .bundle-text { flex: 1; }
+.bundle-chunk { display: flex; flex-direction: column; gap: 4px; }
+.bundle-where { margin: 0; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.5); }
+.bundle-table-wrap { overflow-x: auto; }
+.bundle-table { border-collapse: collapse; font-size: 12px; }
+.bundle-table td {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+  vertical-align: top;
+}
+
 /* ---------------------------------------------------------------------------
    Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the
    Diagnostics view (VoiceDiagnosticsView.tsx) and their pictures
@@ -3203,6 +3255,32 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
 .queue-file.state-verified .file-state { color: #86efac; }
 .file-action { font-size: 11px; padding: 2px 8px; }
+
+/* What a received file holds, on its card (BundleInventory.tsx): Open (or
+   Contents) on the card's line, an archive's folder on its own below. */
+.bundle-inventory, .bundle-line { display: contents; }
+.bundle-folder { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 0 2px 8px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.bundle-path { font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.bundle-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.bundle-member { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.bundle-name { overflow-wrap: anywhere; min-width: 0; }
+.bundle-member.support-blocked .bundle-support, .bundle-member.support-unsupported .bundle-support,
+.bundle-problem { color: #fca5a5; }
+.bundle-member.support-partial .bundle-support { color: #fcd34d; }
+.bundle-badge {
+  padding: 0 6px;
+  font-size: 11px;
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.6);
+  border-radius: 999px;
+}
+.message-task { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.message-task-primary { color: rgba(255, 255, 255, 0.55); }
+.bundle-progress { color: #7dd3fc; }
+.bundle-progress.progress-evidence_unavailable { color: #fcd34d; }
+.composer-readiness { margin: 0; font-size: 12px; color: #fcd34d; }
+.composer-readiness.readiness-blocked { color: #fca5a5; }
 
 /* The response being written, and its inline review (MessageComposer.tsx,
    MessageReview.tsx). */

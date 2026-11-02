@@ -35,6 +35,9 @@
  *     the brain's open_package_page does. Opening another replaces it. Kept
  *     on the page, hidden, while another view is shown, as Folders is, so a
  *     package part way through is not started again.
+ *   - A file a teammate sent (BundleMemberView.tsx), the same way: offered
+ *     while one is open, which its Open in the Queue or the brain's
+ *     show_bundle_member does. Opening another replaces it.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -68,6 +71,8 @@ import { QueueItemView, queueViewTitle } from "./QueueItemView";
 import { TeamSignInReminder } from "./TeamSignInReminder";
 import { openPackage } from "./packages";
 import { PackageView } from "./PackageView";
+import { openBundleMember } from "./bundles";
+import { BundleMemberView } from "./BundleMemberView";
 
 function MainView() {
   return (
@@ -156,6 +161,13 @@ const PACKAGE_VIEW: Tab = {
   view: () => null,
 };
 
+const FILE_VIEW: Tab = {
+  id: "file",
+  title: "File",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: Tab = {
   id: "workflow",
   title: "Workflow",
@@ -182,6 +194,7 @@ export function CentreArea() {
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
   const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
+  const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   // Opening a workflow or a thread shows it; closing it goes back to the
   // first view.
   useEffect(() => {
@@ -205,6 +218,9 @@ export function CentreArea() {
   useEffect(() => {
     setSelected((now) => (packageOpen ? "package" : now === "package" ? VIEWS[0].id : now));
   }, [packageOpen]);
+  useEffect(() => {
+    setSelected((now) => (fileOpen ? "file" : now === "file" ? VIEWS[0].id : now));
+  }, [fileOpen]);
   // Choosing a folder in the right panel shows the Folders view.
   const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
   useEffect(() => { if (foldersAsked) setSelected("folders"); }, [foldersAsked]);
@@ -223,6 +239,9 @@ export function CentreArea() {
     ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
                        view: () => <QueueItemView thread={queueOpen} /> }] : []),
     ...(packageOpen ? [{ ...PACKAGE_VIEW, title: packageOpen.name }] : []),
+    ...(fileOpen ? [{ ...FILE_VIEW,
+                      view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
+                                                    member={fileOpen} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
