@@ -483,13 +483,24 @@ routes and tools off and keeps the records.
 
 ## Self-update
 A checkout whose `origin` is on github.com updates itself from GitHub through
-one service, `self_update.py`: `check` fetches origin and says the branch,
-this commit, origin/main's latest, the new commits and the latest commit's
-CI (its latest run of the `ci` workflow alone, from GitHub's Actions runs,
-read without a login; the scheduled team server health check does not
-count, and a commit with no `ci` run has no CI result); `update` checks
-again, moves to the checked commit (`git merge --ff-only`, so only a commit
-whose CI passed), then runs `.venv/bin/pip install -r requirements.txt` if
+one service, `self_update.py`. A version is a pull request merged to main:
+each first-parent merge commit on origin/main newer than HEAD
+(`newer_versions`, newest first, named by the PR number in "Merge pull
+request #N" and the title on its body's first line, with its date; a merge
+that is no pull request, and origin/main's latest when it is not a merge,
+are listed by short sha and subject). The version running here is HEAD
+described the same way (`current_version`). `check` fetches origin and says
+the branch, this commit, origin/main's latest, the current version, the
+newer versions and each one's CI, all from ONE GitHub request
+(`ci_lookup`: the `ci.yml` workflow's runs on main, read without a login,
+matched by head sha, the latest run per sha; the scheduled team server
+health check does not count, and a commit with no `ci` run has no CI
+result). Only a version whose CI passed can be chosen; going back to an
+older one is not offered. `check` and `update` take an optional version (a
+PR number or a sha; origin/main's latest when none), refused when it is the
+running one or older, not one of those listed, or its CI has not passed;
+`update` checks again, moves to the chosen commit (`git merge --ff-only`),
+then runs `.venv/bin/pip install -r requirements.txt` if
 that file changed, `npm ci` if `frontend/package-lock.json` changed, and
 `npm run build` if the page is served from built files (`jarvis/web`) and
 anything under `frontend/` changed; under Vite a changed lock file says to
@@ -499,12 +510,14 @@ with the reason, when not on main, with modified tracked files, with local
 commits not on origin/main, with untracked files the update would add
 (renames included), or when the latest commit's CI has not passed; an
 installed copy or another origin is told why it is not offered.
-`GET /api/update` is the check and `POST /api/update` the update, then the
+`GET /api/update` is the check, with the versions and the current one, and
+`POST /api/update` (optional `{"version": ...}`) the update, then the
 restart (page origin or tool token; no access-key category). The restart is
 one function, `server._restart_server`, shared with `/api/restart`. The
 command `python -m jarvis.update` (`update.py`) asks a running server to do
 it, so it restarts itself, and with the server stopped only updates;
-`--check` only reports. It finds the server by the one reader,
+`--to <PR number or sha>` chooses the version and `--check` only reports,
+listing the versions. It finds the server by the one reader,
 `server_address.running()`: at startup the server writes its scheme, host,
 port and pid to `data_paths.server_address_path()` (`server-address.json`
 in its data folder; the same address the brain's tool channel dials,
@@ -515,9 +528,13 @@ without updating. With none it looks at `JARVIS_URL`, else
 `JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
 there counts as stopped. An answer that is not an update outcome (a 403, a
 404) stops it without updating. The page's side is Settings, Updates, which the ⋮
-menu's Check for updates opens; the brain's is `update_status` and the
-acting `update_jarvis`, which says it is updating, updates after the turn
-and restarts once that has been heard (`_update_by_voice`). Tests point
+menu's Check for updates opens: the version running, the newer versions
+as a radio list (newest tagged LATEST, the newest that passed chosen, the
+others disabled with why), and Install and restart, which asks once in an
+inline box before "Yes, install PR N". The brain's is `update_status`
+(the versions, titles walled) and the acting `update_jarvis` with an
+optional `version`, which says it is updating, updates after the turn and
+restarts once that has been heard (`_update_by_voice`). Tests point
 `self_update.repo_root` at temporary repositories
 (`conftest._never_update_or_restart_the_real_checkout`).
 
