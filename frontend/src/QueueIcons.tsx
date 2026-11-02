@@ -110,11 +110,16 @@ export function QueueIcon({ kind, size = 14 }: { kind: keyof typeof DRAWN; size?
 
 /** One cue: its icon and its words, always both. `title` adds detail on
  *  hover; the words alone must already say it. */
-export function Cue({ kind, children, title }: { kind: CueKind; children: ReactNode; title?: string }) {
+/** A cue: its icon and words. A `quiet` cue shows the icon alone, its
+ *  words kept for screen readers and as the tooltip. */
+export function Cue({ kind, children, title, quiet }: {
+  kind: CueKind; children: ReactNode; title?: string; quiet?: boolean;
+}) {
   return (
-    <span className={`queue-cue cue-${kind}`} data-cue={kind} title={title}>
+    <span className={`queue-cue cue-${kind}`} data-cue={kind}
+          title={title ?? (quiet && typeof children === "string" ? children : undefined)}>
       <QueueIcon kind={kind} size={12} />
-      <span className="cue-words">{children}</span>
+      <span className={quiet ? "cue-words visually-hidden" : "cue-words"}>{children}</span>
     </span>
   );
 }

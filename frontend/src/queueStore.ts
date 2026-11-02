@@ -365,8 +365,6 @@ const UNRESOLVED: SendState[] = ["awaiting_approval", "approved", "submitting", 
 export interface ItemCues {
   turn: "mine" | "theirs";
   unread: boolean;
-  /** The owner's own read of the latest message to them. */
-  readByYou: boolean;
   addressed: boolean;
   /** An accepted reply of the owner's names the latest message to them. */
   replied: boolean;
@@ -393,7 +391,6 @@ export function cues(state: QueueState, thread: string): ItemCues | null {
   return {
     turn: turn(work),
     unread: work.unread_reminder,
-    readByYou: !work.unread_reminder && !!latestToMe?.receipts?.read_at,
     addressed: work.addressed_at !== null,
     replied: !!latestToMe && fromMe.some((m) => m.message.in_reply_to_message_id === latestToMe.message.message_id),
     files: messages.reduce((n, m) => n + m.message.attachments.length, 0),
@@ -441,15 +438,15 @@ export function sendWords(draft: Draft): string {
 }
 
 const SEND_WORDS: Record<SendState, string> = {
-  draft: "Draft, not sent",
-  awaiting_approval: "Awaiting your approval",
-  approved: "Approved, about to send",
-  submitting: "Sending to the team server",
-  accept_unknown: "The team server's answer was lost",
-  accepted: "Accepted by the team server",
+  draft: "Draft",
+  awaiting_approval: "Awaiting approval",
+  approved: "Sending",
+  submitting: "Sending",
+  accept_unknown: "Unconfirmed",
+  accepted: "Sent",
   failed: "Not sent",
-  cancelled: "Cancelled, not sent",
-  superseded: "Replaced by a later edit",
+  cancelled: "Cancelled",
+  superseded: "Replaced",
 };
 
 /** "0 bytes", "812 bytes", "47.1 KB", "3.2 MB". */

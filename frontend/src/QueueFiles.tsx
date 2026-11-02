@@ -1,11 +1,12 @@
 /**
- * A file on a message or a draft, as the owner sees it: its name, size and
- * declared type (the type is what was declared, never guessed from the
- * name, and nothing is opened), and where it is. Sending: prepared,
- * uploading, uploaded. Receiving: on the team server (Download), being
- * downloaded, then its exact path with Copy and Reveal in Finder
- * (QueueFileLocation.tsx; and Open page once JARVIS has opened it as a page
- * work package, packages.ts). Either side: failed, with the reason, or missing.
+ * A file on a message or a draft, as the owner sees it: its name and size,
+ * its declared type (what was declared, never guessed from the name, and
+ * nothing is opened) shown in the review and otherwise the name's tooltip,
+ * and its state only when that is not the ordinary one. Sending: uploading.
+ * Receiving: Download while it is on the team server, downloading, then its
+ * exact path with Copy and Reveal in Finder (QueueFileLocation.tsx; and
+ * Open page once JARVIS has opened it as a page work package, packages.ts).
+ * Either side: failed, with the reason and Retry, or missing.
  */
 
 import { useState, useSyncExternalStore } from "react";
@@ -23,10 +24,10 @@ function percent(file: LocalFile, ref: AttachmentRef): string {
 
 function stateWords(file: LocalFile | undefined, ref: AttachmentRef, incoming: boolean): string {
   switch (file?.state) {
-    case undefined: return incoming ? "On the team server" : "";
-    case "staged": return "Prepared";
+    case undefined: return "";
+    case "staged": return "";
     case "uploading": return `Uploading${percent(file, ref)}`;
-    case "available": return incoming ? "On the team server" : "Uploaded";
+    case "available": return "";
     case "downloading": return `Downloading${percent(file, ref)}`;
     case "verified": return "";
     case "failed": return `Failed: ${shownFor(file.failure ?? "transport", "it did not complete.")}`;
@@ -34,28 +35,31 @@ function stateWords(file: LocalFile | undefined, ref: AttachmentRef, incoming: b
   }
 }
 
-export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
+export function FileCard({ fileRef, file, messageId, incoming, onRemove, showType }: {
   fileRef: AttachmentRef;
   file?: LocalFile;
   /** The accepted message it is on; absent on a draft. */
   messageId?: string;
   incoming: boolean;
   onRemove?: () => void;
+  /** Show the declared type beside the size (the review), not only as the tooltip. */
+  showType?: boolean;
 }) {
   const state = file?.state ?? (incoming ? "available" : "staged");
+  const words = stateWords(file, fileRef, incoming);
   const canDownload = incoming && messageId && (state === "available" || state === "failed");
   return (
     <div className={`queue-file state-${state}`} data-attachment-id={fileRef.attachment_id}>
       <QueueIcon kind="files" size={16} />
-      <span className="file-name">{fileRef.filename}</span>
-      <span className="file-meta">{sizeText(fileRef.size_bytes)} · {fileRef.media_type}</span>
-      {!(incoming && state === "verified") && (
-        <span className="file-state">{stateWords(file, fileRef, incoming)}</span>
-      )}
+      <span className="file-name" title={fileRef.media_type}>{fileRef.filename}</span>
+      <span className="file-meta">
+        {sizeText(fileRef.size_bytes)}{showType && ` · ${fileRef.media_type}`}
+      </span>
+      {words && <span className="file-state">{words}</span>}
       {canDownload && (
         <button type="button" className="file-action"
                 onClick={() => void downloadFile(messageId!, fileRef.attachment_id)}>
-          {state === "failed" ? "Try again" : "Download"}
+          {state === "failed" ? "Retry" : "Download"}
         </button>
       )}
       {incoming && messageId && state === "verified" && (

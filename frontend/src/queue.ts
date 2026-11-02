@@ -444,7 +444,7 @@ async function save(key: string): Promise<boolean> {
   if (!ed || !ed.dirty) return true;
   if (!ed.messageId && !hasContent(ed)) return true;          // nothing to keep yet
   if (ed.recipient === null) {
-    setEditor(key, { ...ed, error: "Choose who it is for, and it will be kept as a draft." });
+    setEditor(key, { ...ed, error: "Choose a recipient to save the draft." });
     return false;
   }
   const body: DraftSave = {
