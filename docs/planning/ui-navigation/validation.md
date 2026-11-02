@@ -9,7 +9,7 @@ Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validati
 | URL | http://localhost:5183/ (open in Chrome) |
 | Worktree | `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-navigation-pipeline` |
 | Branch | `feature/ui-navigation-pipeline` (local only), based on origin/main `91b13fb` |
-| Commit | the commit that adds this file (see `git log -1` in the worktree); candidate code is `af9b499` |
+| Commit | `b701d9b` adds this record; the candidate runs the code of `af9b499` (b701d9b changes only docs) |
 | Run folder | `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run` (`R` below) |
 
 ## The running candidate
