@@ -251,8 +251,14 @@ class _Transport:
             if m is None or m.recipient_github_id != self.github_id:
                 not_found.append(item.message_id)
                 continue
+            report = item.openability
+            if report is not None and (report.content_revision != m.content_revision or all(
+                    (a.attachment_id, a.sha256) != (report.attachment_id, report.sha256)
+                    for a in m.attachments)):
+                not_found.append(item.message_id)
+                continue
             merged = wire.merge_receipt(self.serve.receipts[m.message_id], item.kind,
-                                        batch.node_id, self.serve.clock())
+                                        batch.node_id, self.serve.clock(), report)
             self.serve.receipts[m.message_id] = merged
             facts.append(merged)
         return wire.ReceiptBatchResult(facts=facts, not_found=not_found)
