@@ -219,10 +219,10 @@ DOT = """(name) => {
 }"""
 
 
-@pytest.mark.asyncio
-async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         assert await page.get_by_placeholder("Your name").input_value() == "Tim"
@@ -231,10 +231,10 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         await page.get_by_placeholder("Fish Audio key...").fill("good-key")
@@ -253,10 +253,10 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_name_and_honorific_are_saved(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_name_and_honorific_are_saved(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         await page.get_by_placeholder("Your name").fill("Timothy")
@@ -267,10 +267,10 @@ async def test_name_and_honorific_are_saved(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_espanol_waits_for_its_model_then_is_chosen(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_espanol_waits_for_its_model_then_is_chosen(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         espanol = page.locator("#settings-language option[value='es']")
@@ -286,9 +286,9 @@ async def test_espanol_waits_for_its_model_then_is_chosen(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_status_dots_are_green_on_a_reading_and_not_on_a_failed_one(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_status_dots_are_green_on_a_reading_and_not_on_a_failed_one(page_playwright, page_url):
+    async with page_playwright as p:
         server = _Server()
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
@@ -306,10 +306,10 @@ async def test_the_status_dots_are_green_on_a_reading_and_not_on_a_failed_one(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_with_no_fish_key_setup_opens_by_itself_and_walks_key_then_name(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_no_fish_key_setup_opens_by_itself_and_walks_key_then_name(page_playwright, page_url):
     server = _Server(fish=False)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.get_by_text("Let's get you set up").wait_for(timeout=10000)
         assert await page.get_by_placeholder("Fish Audio key...").is_visible()
@@ -323,10 +323,10 @@ async def test_with_no_fish_key_setup_opens_by_itself_and_walks_key_then_name(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_menu_offers_settings_and_restart_and_no_fix_yourself(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_menu_offers_settings_and_restart_and_no_fix_yourself(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.click("#btn-menu")
         items = await page.evaluate("[...document.querySelectorAll('#menu-dropdown button')].map(b => b.textContent)")
@@ -336,10 +336,10 @@ async def test_the_menu_offers_settings_and_restart_and_no_fix_yourself(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         await page.get_by_role("button", name="+ Add OpenAI (Codex)").click()
@@ -365,10 +365,10 @@ async def test_codex_is_added_signed_in_from_the_page_and_chosen_to_start_with(p
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_diagnostics_shows_both_brains_with_the_one_in_use_marked(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_diagnostics_shows_both_brains_with_the_one_in_use_marked(page_playwright, page_url):
     server = _Server(codex_added=True, codex_signed_in=True)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.wait_for_function("document.querySelectorAll('.weekly-usage').length === 2",
                                      timeout=10000)
@@ -378,10 +378,10 @@ async def test_diagnostics_shows_both_brains_with_the_one_in_use_marked(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.wait_for_timeout(1500)
         assert await page.locator(".weekly-usage").count() == 1
@@ -389,10 +389,10 @@ async def test_with_one_brain_diagnostics_shows_one_box_and_no_label(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Check for updates").click()
@@ -437,11 +437,11 @@ async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_updates_says_up_to_date_and_what_stops_an_update(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_updates_says_up_to_date_and_what_stops_an_update(page_playwright, page_url):
     server = _Server()
     server.update = _update_status(behind=0)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Check for updates").click()

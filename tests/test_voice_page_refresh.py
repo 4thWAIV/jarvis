@@ -68,10 +68,10 @@ LOGO = "(document.getElementById('brain-logo')?.dataset.provider || null)"
 BOXES = "document.querySelectorAll('.weekly-usage').length"
 
 
-@pytest.mark.asyncio
-async def test_a_reload_before_the_server_is_back_says_so_and_catches_up(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_reload_before_the_server_is_back_says_so_and_catches_up(page_playwright, page_url):
     live = _Live(active="openai", fail_first=2)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _page(p, page_url, live)
         brains_failure = page.locator(".read-failure", has_text="Couldn't read the brains")
         await brains_failure.first.wait_for(timeout=10000)
@@ -82,10 +82,10 @@ async def test_a_reload_before_the_server_is_back_says_so_and_catches_up(page_ur
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_restart_with_the_page_open_shows_the_brain_that_now_runs(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_restart_with_the_page_open_shows_the_brain_that_now_runs(page_playwright, page_url):
     live = _Live(active="anthropic")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _page(p, page_url, live)
         await page.wait_for_function(f"{LOGO} === 'anthropic'", timeout=10000)
         live.active = "openai"                     # the server comes back with OpenAI
@@ -101,10 +101,10 @@ async def test_a_restart_with_the_page_open_shows_the_brain_that_now_runs(page_u
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_brain_becoming_ready_is_shown_without_a_reconnect(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_brain_becoming_ready_is_shown_without_a_reconnect(page_playwright, page_url):
     live = _Live(active="anthropic")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _page(p, page_url, live)
         await page.wait_for_function(f"{LOGO} === 'anthropic'", timeout=10000)
         live.active = "openai"
@@ -113,10 +113,10 @@ async def test_a_brain_becoming_ready_is_shown_without_a_reconnect(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_adding_a_brain_in_settings_reaches_diagnostics_at_once(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_adding_a_brain_in_settings_reaches_diagnostics_at_once(page_playwright, page_url):
     server = _Server()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
         await server.install(page)
@@ -130,11 +130,11 @@ async def test_adding_a_brain_in_settings_reaches_diagnostics_at_once(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_preferences_cannot_be_saved_until_they_have_been_read(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_preferences_cannot_be_saved_until_they_have_been_read(page_playwright, page_url):
     server = _Server()
     prefs = {"fail": True}
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1440, "height": 900})
         await server.install(page)

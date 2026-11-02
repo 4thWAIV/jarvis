@@ -255,10 +255,10 @@ FITS = """(sel) => {
 }"""
 
 
-@pytest.mark.asyncio
-async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_tiles_have_the_brain_boxes_footprint_and_this_mac_comes_first(page_playwright, page_url):
     team = _Team()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team)
         server = await page.evaluate(TILE, "#team-server-tile")
         brain = await page.evaluate(TILE, ".weekly-usage")
@@ -312,10 +312,10 @@ STATES = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_every_team_server_state_is_drawn_and_spoken(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_every_team_server_state_is_drawn_and_spoken(page_playwright, page_url):
     team, sessions = _Team(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         for name, envelope, word, rows, spoken in STATES:
             await _changed(page, sessions, team, envelope, word)
@@ -346,10 +346,10 @@ FOLLOWS_THE_EXCHANGE = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_playwright, page_url):
     team, sessions = _Team(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         for name, envelope, word in [("healthy", HEALTHY, "Ready"), *FOLLOWS_THE_EXCHANGE]:
             await _changed(page, sessions, team, envelope, word)
@@ -363,12 +363,12 @@ async def test_the_word_follows_the_network_exchange_not_the_status_poll(page_ur
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_detail_shows_stale_health_as_unknown_and_failures_as_failures(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_detail_shows_stale_health_as_unknown_and_failures_as_failures(page_playwright, page_url):
     team, sessions = _Team(STALE), _Sessions()
     facts = """() => Object.fromEntries([...document.querySelectorAll('#network-detail dt')]
                  .map(dt => [dt.textContent, dt.nextElementSibling.textContent]))"""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         await page.click("#team-server-tile")
         await page.wait_for_selector("#network-detail[data-node='server']")
@@ -387,8 +387,8 @@ async def test_the_detail_shows_stale_health_as_unknown_and_failures_as_failures
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_pace_signs_unknown_readings_and_stale_values(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_pace_signs_unknown_readings_and_stale_values(page_playwright, page_url):
     odd = "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6"
     nodes = [
         _node(SELF_ID, "Tim’s i9"),
@@ -397,7 +397,7 @@ async def test_pace_signs_unknown_readings_and_stale_values(page_url):
               human=None, pace=None, accounts=[], configured=0, measured=0, presence="delayed"),
     ]
     team, sessions = _Team(_envelope(nodes=nodes)), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         await _network_tab(page)
         mine = await page.evaluate(NODE, SELF_ID)
@@ -443,9 +443,9 @@ async def test_pace_signs_unknown_readings_and_stale_values(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("panel", [230, 210, 190, 180])
-async def test_nothing_is_clipped_at_narrow_panel_widths(page_url, panel):
+async def test_nothing_is_clipped_at_narrow_panel_widths(page_playwright, page_url, panel):
     worst = lambda: [  # noqa: E731
         _node(SELF_ID, "Tim’s extraordinarily long-named workstation", cpu=100.0, human=timedelta(minutes=59),
               pace=-12.5, resources=_resources(cpu=100.0, used=64 * 1024 ** 3)),
@@ -453,7 +453,7 @@ async def test_nothing_is_clipped_at_narrow_panel_widths(page_url, panel):
         _node("1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6", "Box", human=timedelta(hours=23), pace=-0.04),
     ]
     team, sessions = _Team(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, panel=panel, sessions=sessions)
         await _network_tab(page)
         for name, envelope, word, *_ in STATES:
@@ -486,14 +486,14 @@ def _conversation(n=60):
             "earlier": None}
 
 
-@pytest.mark.asyncio
-async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_was(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_was(page_playwright, page_url):
     team = _Team()
 
     async def conversation(route):
         await route.fulfill(json=_conversation())
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, routes=[("**/api/conversation", conversation)])
         await page.wait_for_selector(".conversation-history .history-turn")
         await page.evaluate("document.querySelector('.conversation-history').scrollTop = 120")
@@ -543,13 +543,13 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_this_machine_shows_the_team_servers_values_and_keeps_them_when_it_goes_quiet(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_this_machine_shows_the_team_servers_values_and_keeps_them_when_it_goes_quiet(page_playwright, page_url):
     """The stand-in team server's figures, not this Mac's own: CPU 77%,
     human 9m, pace −2.0. Then it stops answering: the same figures, stale."""
     nodes = [_node(SELF_ID, "Tim’s i9", cpu=77.0, human=timedelta(minutes=9), pace=-2.0)]
     team, sessions = _Team(_envelope(nodes=nodes)), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         await _network_tab(page)
         mine = await page.evaluate(NODE, SELF_ID)
@@ -565,8 +565,8 @@ async def test_this_machine_shows_the_team_servers_values_and_keeps_them_when_it
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_real_route_shows_the_stand_ins_values_and_keeps_them_stale(page_url, monkeypatch):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_real_route_shows_the_stand_ins_values_and_keeps_them_stale(page_playwright, page_url, monkeypatch):
     """The same, end to end through the backend: a stand-in team server
     answers the node update with this machine at CPU 77%, human 9m, pace
     −2.0, unlike what this Mac's sampler sent; the page shows the stand-in's
@@ -589,7 +589,7 @@ async def test_the_real_route_shows_the_stand_ins_values_and_keeps_them_stale(pa
     assert stand_in.updates[-1]["resources"].get("cpu_percent") != 77.0
 
     team, sessions = _RealRoute(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions)
         await async_api.expect(page.locator("#team-server-tile .readiness-word")).to_have_text("Ready")
         await _network_tab(page)
@@ -617,8 +617,8 @@ AGREE = [("connected", "ok", "Ready"), ("stale", "degraded", "No contact"),
          ("pairing", "idle", "Sign in"), ("disconnected", "idle", "Sign in")]
 
 
-@pytest.mark.asyncio
-async def test_the_subsystem_row_and_the_tile_agree(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_subsystem_row_and_the_tile_agree(page_playwright, page_url):
     team, sessions = _Team(), _Sessions()
     row = {"state": "ok"}
 
@@ -626,7 +626,7 @@ async def test_the_subsystem_row_and_the_tile_agree(page_url):
         await route.fulfill(json={"now": 1_000_000.0, "subsystems": [
             {"id": "team_server", "name": "Team server", "state": row["state"], "summary": "", "checks": []}]})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions,
                                     routes=[("**/api/diagnostics/subsystems", subsystems)])
         await page.click(".right-tabs [aria-label='Diagnostics']")
@@ -652,10 +652,10 @@ async def _reported(page, team, count: int, why: str) -> None:
     assert len(team.activity) == count, why
 
 
-@pytest.mark.asyncio
-async def test_activity_is_reported_from_trusted_input_only_without_content(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_activity_is_reported_from_trusted_input_only_without_content(page_playwright, page_url):
     team = _Team()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team)
         await page.clock.install()
         await page.wait_for_timeout(300)

@@ -306,3 +306,162 @@ class _PageHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+# ── one browser for the page tests ─────────────────────────────────────────
+#
+# Every page test (and every dashboard test) used to start its own Playwright
+# driver (a Node process) and launch its own Chromium: 1.90 s a test, measured,
+# against 0.43 s for a fresh context in a browser already open. So the session
+# keeps one driver and one headless Chromium per set of launch arguments, and
+# each test borrows it through `page_playwright`: `p.chromium.launch(...)`
+# gives the test a browser whose `new_page` / `new_context` are the shared
+# browser's own (so each page has its own new context, with the viewport, init
+# scripts, routes and storage the test gives it, as before), and whose `close`
+# closes only those contexts.
+#
+# Sharing needs one event loop, so a test that takes `page_playwright` runs on
+# the session's loop: `@pytest.mark.asyncio(loop_scope="session")`.
+#
+# What sharing could spread, it does not: a Chromium whose graphics process
+# crashed switches WebGL off for every later page (see CLAUDE.md), so after
+# each test WebGL is looked for on one of its pages, and a browser without it
+# is closed and launched afresh for the next test. A failed test also has
+# every shared browser launched afresh, so nothing it left behind reaches the
+# next one.
+
+_WEBGL = """() => { try { return !!document.createElement('canvas').getContext('webgl'); }
+                    catch (e) { return false; } }"""
+_FAILED = pytest.StashKey[bool]()
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    if report.failed:
+        item.stash[_FAILED] = True
+    return report
+
+
+class _SharedChromium:
+    """The session's one Playwright driver, and one headless Chromium per set
+    of launch arguments, launched when first asked for."""
+
+    def __init__(self, driver):
+        self._driver = driver
+        self._browsers: dict[tuple, object] = {}
+        self.loop = asyncio.get_running_loop()
+
+    async def browser(self, args: tuple):
+        browser = self._browsers.get(args)
+        if browser is None or not browser.is_connected():
+            browser = await self._driver.chromium.launch(headless=True, args=list(args))
+            self._browsers[args] = browser
+        return browser
+
+    async def relaunch(self, *args_sets: tuple) -> None:
+        """Close these browsers (all, with none named), so the next test that
+        asks for one gets a new launch."""
+        for args in args_sets or tuple(self._browsers):
+            browser = self._browsers.pop(args, None)
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+
+
+class _BorrowedBrowser:
+    """The shared browser, as one test sees it: its pages and contexts are
+    new ones, and closing it closes only those."""
+
+    def __init__(self, shared: _SharedChromium, browser, args: tuple):
+        self._shared = shared
+        self._browser = browser
+        self.args = args
+        self._contexts: list = []
+
+    async def new_page(self, **options):
+        page = await self._browser.new_page(**options)
+        self._contexts.append(page.context)
+        return page
+
+    async def new_context(self, **options):
+        context = await self._browser.new_context(**options)
+        self._contexts.append(context)
+        return context
+
+    async def has_webgl(self) -> bool:
+        """Whether a new canvas still gets WebGL, asked on a page this test
+        left open (or a new one, if it left none)."""
+        pages = [page for context in self._contexts for page in context.pages
+                 if not page.is_closed()]
+        try:
+            if pages:
+                return await pages[-1].evaluate(_WEBGL)
+            context = await self.new_context()
+            return await (await context.new_page()).evaluate(_WEBGL)
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        if not self._contexts:
+            return
+        lost_webgl = "--disable-webgl" not in self.args and not await self.has_webgl()
+        contexts, self._contexts = self._contexts, []
+        for context in contexts:
+            try:
+                await context.close()
+            except Exception:
+                pass
+        if lost_webgl:
+            await self._shared.relaunch(self.args)
+
+
+class _PagePlaywright:
+    """Playwright for one page test, in the shape the tests already drive:
+    `async with page_playwright as p:` then `await p.chromium.launch(...)`."""
+
+    def __init__(self, shared: _SharedChromium):
+        self._shared = shared
+        self._borrowed: list[_BorrowedBrowser] = []
+        self.chromium = self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
+
+    async def launch(self, *, headless: bool = True, args=()):
+        assert headless, "the page tests run headless"
+        assert asyncio.get_running_loop() is self._shared.loop, \
+            'a test that takes page_playwright runs @pytest.mark.asyncio(loop_scope="session")'
+        args = tuple(args)
+        borrowed = _BorrowedBrowser(self._shared, await self._shared.browser(args), args)
+        self._borrowed.append(borrowed)
+        return borrowed
+
+    async def close(self) -> None:
+        for borrowed in self._borrowed:
+            await borrowed.close()
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _chromium_for_the_session():
+    async_api = pytest.importorskip("playwright.async_api")
+    async with async_api.async_playwright() as driver:
+        shared = _SharedChromium(driver)
+        try:
+            yield shared
+        finally:
+            await shared.relaunch()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def page_playwright(request, _chromium_for_the_session):
+    playwright = _PagePlaywright(_chromium_for_the_session)
+    yield playwright
+    await playwright.close()
+    if request.node.stash.get(_FAILED, False):
+        await _chromium_for_the_session.relaunch()

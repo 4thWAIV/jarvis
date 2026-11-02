@@ -80,9 +80,9 @@ async def _health(page, **fields):
     await page.evaluate(f"window.__transcribers.find(t => t.readyState === 1)._emit({json.dumps(msg)})")
 
 
-@pytest.mark.asyncio
-async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         assert (await page.evaluate("window.__starts[0]"))["diagnostics"] is True
         await page.wait_for_function("window.__telemetry.length >= 3", timeout=8000)
@@ -94,9 +94,9 @@ async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_health_from_the_server_drives_the_tab_and_the_dot(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page)
         await page.wait_for_function(
@@ -118,9 +118,9 @@ async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_text_that_was_written_under_the_orb_goes_to_messages(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_text_that_was_written_under_the_orb_goes_to_messages(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         ws = _open.voice
         ws.send(json.dumps({"type": "notice", "text": "Rotating my context; one moment."}))
@@ -140,9 +140,9 @@ async def test_text_that_was_written_under_the_orb_goes_to_messages(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_diagnostics_view_draws_the_record_and_closes(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_diagnostics_view_draws_the_record_and_closes(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".voice-summary-open")
         await page.wait_for_selector("#voice-diagnostics .voice-card")
@@ -158,9 +158,9 @@ async def test_the_diagnostics_view_draws_the_record_and_closes(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_quiet_page_is_reported_in_telemetry(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_quiet_page_is_reported_in_telemetry(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".voice-summary-open")
         await page.click(".voice-quiet-button")
@@ -174,9 +174,9 @@ async def test_the_quiet_page_is_reported_in_telemetry(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_summary_shows_heard_share_speed_and_headroom(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page, rtf=0.95, backlogSec=1.6)
         await page.wait_for_function(
@@ -196,9 +196,9 @@ async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_health_dot_opens_the_diagnostics_view(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_health_dot_opens_the_diagnostics_view(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page, state="no-frames", cause="No audio from the microphone",
                       pipeline=pipeline(mic="bad"))

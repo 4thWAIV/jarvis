@@ -112,9 +112,9 @@ GROUPS = """() => [...document.querySelectorAll('#ray-lane .ray')].map(g => ({
 STATUS = "() => document.getElementById('ray-status').textContent"
 
 
-@pytest.mark.asyncio
-async def test_an_outgoing_message_draws_the_agents_ray_into_the_queue_row(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_outgoing_message_draws_the_agents_ray_into_the_queue_row(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _event("outgoing"))])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
         (ray,) = await page.evaluate(RAYS)
@@ -134,9 +134,9 @@ async def test_an_outgoing_message_draws_the_agents_ray_into_the_queue_row(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_an_incoming_message_travels_the_same_ray_back_to_the_main_orb(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_incoming_message_travels_the_same_ray_back_to_the_main_orb(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _event("incoming", sender=MATT,
                                                                 recipient=TIM))])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
@@ -152,9 +152,9 @@ async def test_an_incoming_message_travels_the_same_ray_back_to_the_main_orb(pag
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_with_the_row_not_on_the_page_the_ray_ends_at_the_queue_icon(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_the_row_not_on_the_page_the_ray_ends_at_the_queue_icon(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _event("outgoing"))], row=False)
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
         (ray,) = await page.evaluate(RAYS)
@@ -166,9 +166,9 @@ async def test_with_the_row_not_on_the_page_the_ray_ends_at_the_queue_icon(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_row_that_goes_while_the_ray_shows_hands_it_to_the_queue_icon(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_row_that_goes_while_the_ray_shows_hands_it_to_the_queue_icon(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _event("outgoing"))])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
         await page.evaluate(f"document.querySelector(\"{ROW}\").remove()")
@@ -180,13 +180,13 @@ async def test_a_row_that_goes_while_the_ray_shows_hands_it_to_the_queue_icon(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_replayed_or_repeated_event_draws_nothing(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_replayed_or_repeated_event_draws_nothing(page_playwright, page_url):
     replayed = _event("incoming", sender=MATT, recipient=TIM, replay=True)
     live_again = json.loads(json.dumps(replayed))
     live_again["event"]["replay"] = False
     fresh = _event("outgoing")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             (0.5, replayed), (0.2, live_again), (0.2, fresh), (0.1, fresh)])
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
@@ -197,9 +197,9 @@ async def test_a_replayed_or_repeated_event_draws_nothing(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_agent_and_person_rays_share_the_palette_and_never_share_an_id(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_agent_and_person_rays_share_the_palette_and_never_share_an_id(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _to("s1")), (0.0, _event("outgoing"))])
         await page.wait_for_function(
             "document.querySelectorAll('#ray-lane .ray').length === 2", timeout=10000)
@@ -210,11 +210,11 @@ async def test_agent_and_person_rays_share_the_palette_and_never_share_an_id(pag
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_burst_shows_five_rays_and_counts_the_rest(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_burst_shows_five_rays_and_counts_the_rest(page_playwright, page_url):
     burst = [(0.5 if i == 0 else 0.0, _event("incoming", sender=MATT, recipient=TIM))
              for i in range(8)]
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, burst)
         await page.wait_for_function(
             "document.querySelectorAll('#ray-lane .ray').length === 5", timeout=10000)
@@ -229,12 +229,12 @@ async def test_a_burst_shows_five_rays_and_counts_the_rest(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_message_to_oneself_goes_out_and_comes_back_to_its_one_row(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_to_oneself_goes_out_and_comes_back_to_its_one_row(page_playwright, page_url):
     out = _event("outgoing", recipient=TIM)
     back = _event("incoming", recipient=TIM)
     back["event"]["message_id"] = out["event"]["message_id"]
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, out), (0.0, back)])
         await page.wait_for_function(
             "document.querySelectorAll('#ray-lane .ray').length === 2", timeout=10000)
@@ -250,9 +250,9 @@ async def test_a_message_to_oneself_goes_out_and_comes_back_to_its_one_row(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_reduced_motion_draws_a_still_route_with_its_words(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_reduced_motion_draws_a_still_route_with_its_words(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _event("incoming", sender=MATT,
                                                                 recipient=TIM))], reduced=True)
         await page.wait_for_function("document.querySelector('#ray-lane .ray')", timeout=10000)
@@ -262,9 +262,9 @@ async def test_reduced_motion_draws_a_still_route_with_its_words(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_reduced_motion_stills_a_person_s_ray_and_never_an_agent_s(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_reduced_motion_stills_a_person_s_ray_and_never_an_agent_s(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [(0.5, _to("s1")), (0.0, _event("outgoing"))],
                                     reduced=True)
         await page.wait_for_function(
@@ -275,14 +275,14 @@ async def test_reduced_motion_stills_a_person_s_ray_and_never_an_agent_s(page_ur
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_an_agent_s_message_past_the_ray_limit_still_lights_the_agents_tab(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_agent_s_message_past_the_ray_limit_still_lights_the_agents_tab(page_playwright, page_url):
     """Five rays show; an agent's message counted past them draws nothing
     but still lights the Agents tab while another tab is open."""
     other_tab_open = asyncio.Event()
     burst = [(other_tab_open if i == 0 else 0.0, _event("incoming", sender=MATT, recipient=TIM))
              for i in range(5)] + [(0.0, _to("s1"))]
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, burst)
         await page.click(".right-tabs [aria-label='Diagnostics']")
         other_tab_open.set()

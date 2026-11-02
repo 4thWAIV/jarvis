@@ -274,23 +274,21 @@ def usage_limits(*keys: str) -> dict:
 
 
 @asynccontextmanager
-async def dashboard(api: Api):
+async def dashboard(playwright, api: Api):
     """The built page, loaded against `api`, as a `page` to drive.
 
-    The browser is launched per test rather than shared: a session-scoped
-    async fixture would need a session-scoped event loop, and the whole
-    point of the async API here is not to fight pytest-asyncio. A launch is
-    about half a second and the bundle is already built.
+    `playwright` is the test's `page_playwright` (conftest.py): the session's
+    one browser, with a new context for this test, so a test runs on the
+    session's event loop (`loop_scope="session"`). The bundle is already
+    built.
 
     The clock is faked BEFORE navigation, so a test can fast-forward to the
     next poll instead of sleeping through it — several of the paths under
     test are only reachable on a second fetch.
     """
-    from playwright.async_api import async_playwright
-
     dist = build_bundle()
     with StubServer(api, dist) as server:
-        async with async_playwright() as p:
+        async with playwright as p:
             browser = await p.chromium.launch(headless=True)
             try:
                 context = await browser.new_context(viewport=VIEWPORT)

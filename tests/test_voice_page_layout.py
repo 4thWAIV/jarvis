@@ -46,11 +46,11 @@ LAYOUT = """() => {
 }"""
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("view", ["", "?view=main"])
 @pytest.mark.parametrize("size", [(1440, 900), (1280, 650), (1920, 1080)])
-async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_url, size, view):
-    async with async_api.async_playwright() as p:
+async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_playwright, page_url, size, view):
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:                          # pragma: no cover
@@ -85,14 +85,14 @@ async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_url, siz
 ROWS_1440, ROWS_1920 = 9, 12
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("size, rows", [((1440, 900), ROWS_1440), ((1920, 1080), ROWS_1920)])
 async def test_the_agents_list_fills_the_right_panel_and_both_columns_end_together(
-        page_url, size, rows):
+        page_playwright, page_url, size, rows):
     """In the right panel's Agents tab the list has the panel's whole height
     below the tabs: more rows than it had under the orb in the left column
     (6 at 1440x900, 8 at 1920x1080)."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:                          # pragma: no cover
@@ -113,9 +113,9 @@ async def test_the_agents_list_fills_the_right_panel_and_both_columns_end_togeth
 
 
 
-@pytest.mark.asyncio
-async def test_neither_side_panel_draws_a_box(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_neither_side_panel_draws_a_box(page_playwright, page_url):
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:                          # pragma: no cover
@@ -130,12 +130,12 @@ async def test_neither_side_panel_draws_a_box(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("provider, shown", [("anthropic", True), (None, False)])
 async def test_the_active_brain_s_logo_sits_in_the_orb_s_lower_left_corner(
-        page_url, provider, shown):
+        page_playwright, page_url, provider, shown):
     import json
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:                          # pragma: no cover
