@@ -201,6 +201,23 @@ async def test_deleted_or_tampered_files_are_downloaded_again_on_request():
 
 
 @pytest.mark.asyncio
+async def test_a_copy_downloaded_again_is_verified_when_it_was_fetched():
+    w = World()
+    message_id, (ref,) = await received(w, [("plan.pdf", b"bytes")])
+    clock = [100.0]
+    loc = AttachmentLocations(w.matt.files, node_id=lambda: NODE, now=lambda: clock[0])
+    first = await loc.ensure_local(SERVER, MATT, message_id, ref.attachment_id)
+    assert first.verified_at.timestamp() == 100.0
+    clock[0] = 150.0
+    same = await loc.ensure_local(SERVER, MATT, message_id, ref.attachment_id)
+    assert same.verified_at.timestamp() == 100.0          # already here: nothing fetched
+    Path(first.local_path).unlink()
+    clock[0] = 200.0
+    again = await loc.ensure_local(SERVER, MATT, message_id, ref.attachment_id)
+    assert (again.local_path, again.verified_at.timestamp()) == (first.local_path, 200.0)
+
+
+@pytest.mark.asyncio
 async def test_a_changed_downloads_folder_is_moved_not_claimed(tmp_path):
     w = World()
     message_id, (ref,) = await received(w, [("plan.pdf", b"kept")])

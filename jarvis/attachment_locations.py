@@ -275,18 +275,23 @@ class AttachmentLocations:
             return self.lookup(server_id, owner_github_id, message_id, attachment_id)
 
         found = await asyncio.to_thread(look)
-        if found.state not in ("verified", "downloading"):
+        fetched = found.state not in ("verified", "downloading")
+        if fetched:
             await self.files.download(server_id, owner_github_id, message_id, attachment_id)
             found = await asyncio.to_thread(look)
         if found.state == "verified" and found.local_path:
-            self._remember(server_id, owner_github_id, attachment_id, found.local_path)
+            self._remember(server_id, owner_github_id, attachment_id, found.local_path,
+                           again=fetched)
             found = await asyncio.to_thread(look)
         return found
 
-    def _remember(self, server_id: str, owner: int, attachment_id: UUID, path: str) -> None:
-        """Where it was verified, and when: how a later look knows it moved."""
+    def _remember(self, server_id: str, owner: int, attachment_id: UUID, path: str,
+                  again: bool = False) -> None:
+        """Where it was verified, and when: how a later look knows it moved.
+        `again`: just downloaded and checked, so the time moves even at the
+        same path (a deleted or changed copy fetched again)."""
         record = self._record(server_id, owner, attachment_id)
-        if record is not None and record["path"] == path:
+        if not again and record is not None and record["path"] == path:
             return
         with closing(run_store._connect()) as conn:
             conn.execute(
