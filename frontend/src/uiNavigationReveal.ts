@@ -9,7 +9,8 @@
  *      with `$key` filled in). Nothing else is ever opened in its place.
  *   3. Still not mounted: the view's own revealer, if one is registered
  *      for that view and kind, brings the item in (pages a list, loads
- *      earlier records, expands a row), by its stable key.
+ *      earlier records, expands a row, or runs the registered navigation
+ *      its composite key names, through `navigate`), by its stable key.
  *   4. It waits for the target to register and lay out, looking again on
  *      every registration change and every frame, never by a fixed sleep,
  *      until the contract's reveal limit.
@@ -27,7 +28,7 @@ import {
   type VisualTarget,
 } from "./uiRegistry";
 import {
-  UI_CONTRACT, type Actor, type AvailabilityReason, type CommandId, type SideEffect, type Status,
+  UI_CONTRACT, type Actor, type AvailabilityReason, type CommandArgs, type CommandId, type SideEffect, type Status,
   type TargetRef, type ViewId,
 } from "./uiContract";
 import { kindDecl } from "./uiValidate";
@@ -42,10 +43,21 @@ export type RevealOutcome =
   | { status: "completed"; target: VisualTarget; effects: SideEffect[] }
   | { status: Exclude<Status, "completed">; reason: string; effects: SideEffect[] };
 
+/** What a revealer is given: the caller's context, and `navigate`, which
+ *  runs one registered command through `dispatch` as the caller, reports
+ *  its side effects with the reveal's and counts its move of the
+ *  navigation revision as the reveal's own (so it is not taken for a
+ *  person's). It resolves true, or false once the command was refused or
+ *  someone else navigated; the reveal then answers with that outcome,
+ *  whatever the revealer returns. */
+export interface RevealerContext extends RevealContext {
+  navigate<C extends CommandId>(command: C, args: CommandArgs[C]): Promise<boolean>;
+}
+
 /** A view's way of bringing one of its items onto the page once the view
  *  is shown. Resolves true once it has done what it can (the target is
  *  then waited for), or with the reason it cannot. */
-export type Revealer = (ref: TargetRef, context: RevealContext) => Promise<true | AvailabilityReason>;
+export type Revealer = (ref: TargetRef, context: RevealerContext) => Promise<true | AvailabilityReason>;
 
 const revealers = new Map<string, Revealer>();
 
@@ -125,8 +137,25 @@ export async function reveal(ref: TargetRef, context: RevealContext): Promise<Re
       expected = navigationRevision.get();
     }
     if (revealer && seen(ref).visibility === "unmounted") {
-      const brought = await revealer(ref, context);
+      let refusal: RevealOutcome | null = null;
+      const navigate: RevealerContext["navigate"] = async (id, args) => {
+        if (refusal || overtaken()) return false;
+        const before = navigationRevision.get();
+        const done = await dispatch(id, args, { actor: context.actor, requestId: context.requestId,
+                                                signal: context.signal });
+        effects.push(...done.effects);
+        if (done.status !== "completed") {
+          refusal = refuse(done.status, done.reason ?? "unavailable");
+          return false;
+        }
+        // Its own command may move the revision once; anything more is someone else.
+        if (navigationRevision.get() > before + 1) return false;
+        expected = navigationRevision.get();
+        return true;
+      };
+      const brought = await revealer(ref, { ...context, navigate });
       if (overtaken()) return refuse("cancelled", "superseded");
+      if (refusal) return refusal;
       if (brought !== true) return refuse("unavailable", brought);
     }
     // Ready once it is mounted, shown and laid out.

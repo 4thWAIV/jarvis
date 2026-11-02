@@ -123,13 +123,13 @@ brain's request leave the same state; indications arrive).
 | FolderDetail.tsx file preview | `folder.preview {folderId, path?, revision?}` (no path closes it) | `folder` part preview | same store | the folder shown | — | — | rail.main | done |
 | FolderDetail.tsx Edit / Reconnect / Remove, Refresh | — (domain) | `folder` parts | `setMode`, `act` | — | change the catalog | — | — | classify |
 | WorkflowDetail.tsx nine tabs | `workflow.tab.select {workflowId, tab}` | `workflow` in `main.workflow`; header, state, close, dismiss, `tab.overview` … `tab.events` (found by their binding's marks) | tab and kind store in WorkflowDetail.tsx; a workflow closed or replaced starts on Overview | that workflow open (`no-entity` for another) | — | `workflow.open {workflowId: $key}` | rail.main, right | done |
-| WorkflowDetail.tsx phases, tasks, progress rows | — (display) | `workflowPhase` / `workflowTask` keyed `<workflow>/<slug>`; row, state, progress (Phases, Tasks and Progress tabs) | — | on their tab | — | none: select the tab first (journey) | rail.main | done (task card `progress` needs TaskBar to take a ref) |
+| WorkflowDetail.tsx phases, tasks, progress rows | — (display) | `workflowPhase` / `workflowTask` keyed `<workflow>/<slug>`; row, state, progress (Phases, Tasks and Progress tabs) | — | on their tab | — | revealer: `workflow.open` then `workflow.tab.select` to the tab that draws it, from the key's workflow | rail.main | done (task card `progress` needs TaskBar to take a ref) |
 | WorkflowDetail.tsx waits, blockers | — (display) | `workflowWait` / `workflowBlocker` keyed `<workflow>/<key>`; row | — | on their tab | — | as above | rail.main | done |
 | WorkflowDetail.tsx decisions, options, Answer | — (domain: `_answer_workflow_decision`) | `workflowDecision` keyed `<workflow>/<key>`; row, options, answer | `answer(...)` | on its tab | answers | as above | rail.main | classify (target done) |
 | WorkflowDetail.tsx Transcript, Load earlier | `workflow.transcript.earlier {sessionId, agentId?}` | `workflowTranscript` keyed workflow (list); `workflowAgent` keyed `<workflow>/<session>` (section, entries, earlier); a subagent's as `subagent` (transcript, earlier) | `earlierPages` keyed `<session>[/<agent>]` | that transcript shown with earlier entries | `list.paged` | as above | rail.main | done |
 | WorkflowDetail.tsx events kind | `workflow.events.filter {workflowId, kind?}` | `workflowEvents` keyed workflow; list, filter | tab and kind store | that workflow open | `list.filtered` | as above | rail.main | done |
 | WorkflowDetail.tsx Close, Dismiss | `workflow.close` (binding); Dismiss — (domain) | `workflow` close, dismiss | navigation's handler; `dismissWorkflow` | open | `centre.detail-closed` | — | rail.main | done / classify |
-| WorkflowDetail.tsx subagent rows, SubagentDetail | `subagent.open {sessionId, agentId}`, `workflow.close` (bindings) | `subagent` keyed `<session>/<agent>` (`keyOf [session, subagent]`); row, state (Overview), header, state, close, transcript, earlier (detail) | navigation's handlers | listed | `centre.detail-replaced` | none in `main.workflow` (a composite key cannot fill `subagent.open`'s two arguments) | rail.main | done |
+| WorkflowDetail.tsx subagent rows, SubagentDetail | `subagent.open {sessionId, agentId}`, `workflow.close` (bindings) | `subagent` keyed `<session>/<agent>` (`keyOf [session, subagent]`); row, state (Overview), header, state, close, transcript, earlier (detail) | navigation's handlers | listed | `centre.detail-replaced` | revealer: `subagent.open` from the key's two parts for the detail's parts; the row (inside whichever workflow lists it) is not revealed | rail.main | done |
 | AgentThread.tsx thread, ×, Earlier | `thread.close`, `thread.earlier` | `agentThread` keyed session; header, state, close, earlier; `threadRecord` keyed `<session>/r<id>` with the record's parts | `earlierPages` keyed session | open | `centre.detail-closed`, `list.paged` | `thread.open {sessionId: $key}`; a record of the open thread is looked for up to 10 earlier pages | rail.main | done |
 | VoiceDiagnosticsView.tsx view, × | `voice.diagnostics.close` (binding) | `voice` in `main.diagnostics`; overview, range, zoom, timeline, incidents, notifications, messages, close | navigation's handler | open | `centre.detail-closed` | needs `voice.diagnostics.open` on the presentation (diagnostics.json, coverage-right) | rail.main | done (targets) |
 | VoiceDiagnosticsView.tsx range, zoom | proposed `voice.range {range}`, `voice.zoom {at?}` | `voice` parts range, zoom | still local `range`, `zoom` | open | — | — | rail.main | contract: the commands belong in diagnostics.json (coverage-right's); requested |
@@ -209,10 +209,13 @@ effects; the overlay map; pointing inside Settings blocked).
   Decisions tab and other tabs left of the last, phase steps, Folders tabs,
   microphone mute and off, Team Server last write, reminder text and Sign
   in, workflow Dismiss × beside its row. Blocker `leaf-sibling-routing`.
-- No reveal for phases, tasks, open items and the workflow subagent detail
-  (composite keys); no target on the task card's progress bar (`TaskBar`).
+- Phases, tasks, open items, transcript, events and the subagent detail
+  are revealed by `main.workflow` revealers that run the registered
+  commands their key names (`uiNavigationReveal.ts` `RevealerContext.navigate`;
+  page test `test_a_workflows_hidden_item_is_revealed_by_opening_it_on_its_tab`).
+  Still no target on the task card's progress bar (`TaskBar`).
 - Subagent rows in the right panel are not targets yet.
-- Health dot pointing is not page-tested (needs a voice fault fixture).
+- Health dot: page-tested (`test_voice_page_voice_health.py`); while shown it is a named button and a mounted target, refused `blocked / no-route` beside the meter until `leaf-sibling-routing` is decided.
 
 ## Localization coverage (integrator)
 

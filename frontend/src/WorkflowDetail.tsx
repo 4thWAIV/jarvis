@@ -60,7 +60,9 @@ import { createStore } from "./store";
 import { TabRow, type Tab } from "./Tabs";
 import type { CommandArgs, TargetRef } from "./uiContract";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
+import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget, type Availability } from "./uiRegistry";
+import { kindDecl, splitKey } from "./uiValidate";
 import { TaskBar, useTick } from "./WorkflowsView";
 import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
@@ -119,6 +121,38 @@ registerCommand("workflow.events.filter", {
     shown.set({ ...shownFor(workflowId), kind: kind ?? "" });
     return { status: "completed", effects: ["list.filtered"] };
   },
+});
+
+// ── bringing a workflow's item into view ────────────────────────────────
+
+/** The tab each kind of item in a workflow is drawn on. */
+const TAB_OF = {
+  workflowPhase: "phases", workflowTask: "tasks", workflowDecision: "decisions", workflowWait: "waits",
+  workflowBlocker: "blockers", workflowAgent: "transcript", workflowTranscript: "transcript",
+  workflowEvents: "events",
+} as const satisfies Partial<Record<DetailKind, WorkflowTab>>;
+
+// Pointing at a phase, task, open item, transcript or events that is not
+// drawn: its workflow (the first part of its key, or the key itself) is
+// opened and the tab that draws it selected, both by their registered
+// commands, run as the caller with their effects reported. Nothing else.
+for (const kind of Object.keys(TAB_OF) as (keyof typeof TAB_OF)[]) {
+  registerRevealer("main.workflow", kind, async (ref, { navigate }) => {
+    const decl = kindDecl(kind)!;
+    const workflowId = decl.keyOf ? splitKey(decl, ref.key!)[0] : ref.key!;
+    if (openWorkflow.get() !== workflowId && !await navigate("workflow.open", { workflowId })) return "no-entity";
+    if (!await navigate("workflow.tab.select", { workflowId, tab: TAB_OF[kind] })) return "no-entity";
+    return true;
+  });
+}
+
+// A subagent's own detail (its header, transcript and earlier page) is
+// opened by subagent.open. Its row inside a workflow belongs to whichever
+// workflow lists it, which its key does not say: not revealed.
+registerRevealer("main.workflow", "subagent", async (ref, { navigate }) => {
+  if (ref.part === "row") return "not-mounted";
+  const [sessionId, agentId] = splitKey(kindDecl("subagent")!, ref.key!);
+  return await navigate("subagent.open", { sessionId, agentId }) ? true : "no-entity";
 });
 
 // ── transcripts' earlier pages ──────────────────────────────────────────

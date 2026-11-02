@@ -145,6 +145,35 @@ async def test_every_workflow_tab_is_the_same_by_hand_and_by_request_and_its_par
 
 
 @pytest.mark.asyncio
+async def test_a_workflows_hidden_item_is_revealed_by_opening_it_on_its_tab(page_url):
+    """An item of a workflow that is not open (or open on another tab) is
+    brought into view by the registered commands its key names: the
+    workflow opened, then the tab that draws it selected, their effects
+    reported; then the signal arrives. A person's tab is never put back."""
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url, ("**/api/workflows**", _Workflows()))
+        try:
+            ref = {"region": "main", "view": "main.workflow"}
+            await page.wait_for_selector("#workflow-detail", state="detached")
+            result = await voice.request({"kind": "indicate", "reveal": "navigate", "target": {
+                **ref, "kind": "workflowDecision", "key": "wf-1/engine", "part": "options"}})
+            assert _arrived(result)
+            assert "centre.view-shown" in result["effects"], result
+            assert await _shown_tab(page) == "Decisions"
+            # Open on Decisions, a phase is brought in on Phases.
+            result = await voice.request({"kind": "indicate", "reveal": "navigate", "target": {
+                **ref, "kind": "workflowPhase", "key": "wf-1/deepgram-engine", "part": "state"}})
+            assert _arrived(result)
+            assert await _shown_tab(page) == "Phases"
+            # Without reveal it is still only looked for where it is shown.
+            result = await _indicate(voice, {**ref, "kind": "workflowDecision", "key": "wf-1/engine"})
+            assert result["status"] == "not_found", result
+            assert await _shown_tab(page) == "Phases"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
 async def test_the_folder_catalog_and_a_folders_contents_are_the_same_by_hand_and_by_request(page_url):
     aurora = FOLDERS[0]["id"]
     async with async_api.async_playwright() as p:
