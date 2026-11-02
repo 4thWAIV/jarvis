@@ -29,11 +29,11 @@ The tour's stops, each route in order:
 | Mac mini CPU, centre | down the main rail to the value's level; marks the node's detail; into the value |
 | Database | down the left rail to the row's level; marks the Team Server tile; into the row |
 | Mute | down the left rail to the lane under the mic row; marks the mic control; up into the mute button |
-| Design phase step | down the main rail to the lane between the tabs and the stepper; marks the workflow's detail, then the phase stepper; down into the step |
+| Design phase step | down the main rail to the lane between the tabs and the stepper; marks the workflow's detail, the tab panel, then the phase stepper; down into the step |
 | Decisions tab | down the main rail to the lane over the tab strip; marks the workflow's detail, then the tab strip; down into the tab |
 | Folders' Registered tab | down the main rail to the lane under the Folders tabs, under the folder pane's text; marks the folders list, then the tab strip; up into the tab |
 | Workflow row (right) | down the right rail to the row's level; marks the right panel; into the row |
-| Import entries task | down the main rail to the task's level; marks the workflow's detail; into the task |
+| Import entries task | down the main rail to the task's level; marks the workflow's detail, then the tab panel; into the task |
 
 Coverage (reach sweep, 259 contract target/parts): 213 reached, 6 refused, 26 mounted with the part not on show, 14 never registered. The figures are the same in English and Spanish at 1440x900 and 1280x800. The third candidate reached 211 with 8 refused. Two more are reached now: the right panel's agent name, over its row and never across the agent's orb, and the network tile's presence dot. The six refused are Settings' targets, while Settings covers the orb.
 
@@ -49,6 +49,37 @@ What Tim does:
 1. Open http://localhost:5183/ in Chrome. Close the first-time setup if it shows. Nothing of the pipeline is drawn.
 2. Click the Conversation box, type `tour`, and press Enter. For each stop, the white line runs from the orb along the top and down the edge channel. It leaves the channel only level with the target, or with the gap beside its row. Each box it enters (the panel, the tile or view, the tab strip) is outlined in turn while the pulses wait at its border. Then the line goes in to the control, with rings and an outline.
 3. Type `switch to Spanish`, then `recorrido`. Type `cambia a inglés` to go back.
+
+### Independent check of the fourth candidate (2026-11-02)
+
+Driven on the running candidate (http://localhost:5183) with Playwright, headless Chromium, at 1440x900 and 1280x800: `tour`, `switch to Spanish`, `recorrido`, `cambia a inglés`. A frame about every 250 ms through each stop, each route's points at arrival, and every point every 2 px from the orb to the target checked here against every line of text and control on the page (not the page's own rules). Script and frames: `/private/tmp/claude-501/-Users-timothystockstill-code-macos-4thWAIV-jarvis/a5b4be76-7b3d-4a0c-9220-817d38b9e5f3/scratchpad/check/` (`capture.py`; `after1440x900/`, `after1280x800/`).
+
+Each stop against Tim's direction (same in English and Spanish, both widths):
+
+| Stop | Route as seen | Main line until it must leave | Box, border, then in | Neighbours used | Crosses text |
+|---|---|---|---|---|---|
+| Mac mini CPU, right | top line to the right rail, down to the CPU row; panel outlined, then the tile; straight into the row | yes | yes | not needed | no |
+| Mac mini CPU, centre | main rail down to the value's level; the node's detail outlined; straight in to the value | yes | yes | not needed | no |
+| Database | left rail down to the row; the tile outlined; straight in | yes | yes | not needed | no (crosses the tile's server icon, a graphic) |
+| Mute | left rail down to the gap under the mic row; the mic control outlined; along under the meter and the mic button, ends under mute | yes | yes | yes, passes under the meter and mic | no |
+| Design phase step | main rail down to the gap over the stepper; detail, tab panel, stepper outlined in turn; along the gap over build and rollout, down into design | yes | yes (after the fix) | yes, passes over build and rollout | no |
+| Decisions tab | main rail down to the gap over the tab strip; detail, then strip outlined; along the gap over Events and Blockers, into Decisions | yes | yes | yes | no |
+| Folders' Registered tab | main rail down to the gap under the tabs (above them in Spanish); list, then strip outlined; along past Discovered, into Registered | yes | yes | yes | no |
+| Workflow row, right | right rail down to the row; panel outlined; straight in | yes | yes | not needed | no |
+| Import entries task | main rail down to the task's level; detail, then tab panel outlined; straight in | yes | yes (after the fix) | not needed | no |
+
+- Nothing drawn at rest, between stops or after the tour (0 pipeline elements each time).
+- Pace: each signal arrives 2.6 to 3.8 s after it leaves the orb, and stops visibly at each border. The line grows behind the pulse. Easy to follow. The tour took 43 to 44 s in each language.
+
+Defects found and fixed (`5305463`):
+1. The task and the phase step sit in the workflow's bordered tab panel (the red-edged box under the tabs), but the route never marked it: it outlined the whole detail and then ran across the empty panel straight to the control. The panel is now a registered box, `main.workflow.view`, marked between the detail and the stepper or task. The tour test expects it.
+2. `resolveRoute`'s doc comment had been left above the new section header, away from the function. It is back on the function.
+
+Seen and left as they are (within the approved rules):
+- On Mute, Decisions and the Folders tab, the gap beside the row is only 8 px, so the lane runs 4 px from the row and the final turn into the control is 1 px. The control is marked and ringed, but the "drop" into its edge is not visible as a drop. A wider gap would need layout space; not changed.
+- On Database the line still crosses the Team Server tile's server icon (a graphic, not text). Every way in at the Database row's height crosses the icon or the word Ready.
+
+Tests after the fix: `npx tsc --noEmit` pass; `npm run build` (scratch `--outDir`) pass; contract `--check` exit 0; ui unit tests 142 passed; `pytest -m page tests/test_voice_page_pipeline.py` 14 passed; `pytest -m page` right, navigation and workflows 16 passed. No full suite. Candidate restarted on 5183 with `stop.sh` and `start.sh`; page, `/api/workflows` and `/api/settings/language` answer 200.
 
 ## Third candidate (2026-11-02)
 

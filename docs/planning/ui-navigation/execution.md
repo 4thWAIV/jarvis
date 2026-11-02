@@ -1045,7 +1045,9 @@ the rail until the latest point that still reaches the target:
 **Boxes as waypoints** (`boxesAround()`, `marksOn()`). Every box holding the
 target is a waypoint, outermost first: the registered boxes
 (`uiRegistry.ts` `BOX_IDS`: `right.panel`, `right.tabs`, `main.tabs`,
-`main.workflow.tabs`, `main.workflow.phases`, `main.folders.tabs`,
+`main.workflow.tabs`, `main.workflow.view` (the bordered panel holding the
+open tab, added by the independent check), `main.workflow.phases`,
+`main.folders.tabs`,
 registered with `useUiBox` by `RightPanel`, `TabRow`, `WorkflowDetail` and
 `FoldersView`), every other registered target holding it (a tile, a centre
 view, a workflow's detail, a list), and, for a part, its own object. A box
@@ -1072,11 +1074,11 @@ still shows the whole connection at once with no marks.
 | Mac mini CPU, centre | rise, top pipeline, down the main rail to the CPU value's level; in: mark the node's detail, into the value's edge |
 | Database, left | rise, top pipeline left, down the left rail to the Database row's level; in: mark the Team Server tile, into the row's edge |
 | Mute, left | down the left rail to the lane under the mic row; in under the meter: mark the mic control, up into the mute button's bottom edge |
-| Design phase step | down the main rail to the lane between the tab strip and the stepper; in: mark the workflow's detail, along the lane past the tabs above, mark the phase stepper, down into the step's top edge |
+| Design phase step | down the main rail to the lane between the tab strip and the stepper; in: mark the workflow's detail, mark the tab panel, along the lane past the tabs above, mark the phase stepper, down into the step's top edge |
 | Decisions tab | down the main rail to the lane over the tab strip; in: mark the workflow's detail, along the lane, mark the tab strip, down into the Decisions tab's top edge |
 | Folders' Registered tab | down the main rail to the lane under the Folders tab strip, across under the folder pane's text; mark the folders list, mark the tab strip, up into the Registered tab's bottom edge |
 | Workflow row, right | down the right rail to the row's level; in: mark the right panel, into the row's edge |
-| Import entries task | down the main rail to the task's level; in: mark the workflow's detail, into the task's edge |
+| Import entries task | down the main rail to the task's level; in: mark the workflow's detail, mark the tab panel, into the task's edge |
 
 The third candidate's routes left the rail at each object's socket, 14 px
 below its top, and ran down inside it along its inner margin (the node's
