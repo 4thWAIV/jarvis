@@ -414,14 +414,15 @@ class BundleTasks:
 
     @staticmethod
     def _carry(old: list[ChecklistItem], new: list[ChecklistItem]) -> list[ChecklistItem]:
-        """Items done on the file a repair replaced, carried to the same
-        member of its flattened copy (the same bytes, checked)."""
+        """Items done on the file a repair replaced (read or cited),
+        carried to the same member of its flattened copy (the same bytes,
+        checked); an item not done, unreadable ones included, starts again."""
         def same(a: str, b: str) -> bool:
             return a == b or (a.endswith("/" + b) and a.count("/") == b.count("/") + 1)
         carried = []
         for item in new:
-            done = next((o for o in old if o.role == item.role and o.state != "unread"
-                         and same(o.path, item.path)), None)
+            done = next((o for o in old if o.role == item.role
+                         and o.state in ("read", "cited") and same(o.path, item.path)), None)
             carried.append(item.model_copy(update={"state": done.state, "read": done.read})
                            if done else item)
         return carried
