@@ -18,7 +18,7 @@
  */
 
 import { liveRead } from "./liveRead";
-import { t, wordsOf, type MessageKey } from "./locale";
+import { codedSaid, saidShown, t, wordsOf, type CodedLine, type MessageKey } from "./locale";
 import { rightEn } from "./messages/right.en";
 import { createStore } from "./store";
 import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
@@ -27,8 +27,29 @@ import { diagnosticsSlot } from "./voiceHealth";
 
 export type SubsystemState = "ok" | "degraded" | "down" | "idle" | "unknown";
 
-/** One of JARVIS's own names or lines: its code and the values it names. */
-export interface Said { code: string; values: Record<string, string | number> }
+/** One of JARVIS's own names or lines: its code and the values it names.
+ *  A value that is another catalog's coded line rides beside its English
+ *  (`causeSaid` beside `cause`, `errorSaid` beside `error`: NESTED). */
+export interface Said { code: string; values: Record<string, string | number | CodedLine> }
+
+/** The values that are another catalog's coded line, and that catalog:
+ *  a voice cause (voice_diagnostics.CAUSES), a team server problem
+ *  (team_client.TEAM_SAID). */
+const NESTED = [["cause", "voice.cause"], ["error", "team.error"]] as const;
+
+/** The values with each nested coded line worded in the language in force
+ *  in place of its English. */
+function worded(values: Said["values"]): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(values)) if (typeof v !== "object") out[k] = v;
+  for (const [name, prefix] of NESTED) {
+    const line = values[`${name}Said`];
+    if (typeof line === "object" && typeof out[name] === "string") {
+      out[name] = saidShown(codedSaid(prefix, line, out[name] as string)).text;
+    }
+  }
+  return out;
+}
 
 export interface Check {
   id: string; name: string; state: SubsystemState; detail: string;
@@ -62,7 +83,8 @@ function sayIn(area: "name" | "said", said: Said | null | undefined, shown: stri
   if (!said) return shown;
   const key = `right.subsystem.${area}.${said.code}`;
   if (!(key in rightEn)) return shown;
-  return (t as (key: MessageKey, values: Said["values"]) => string)(key as MessageKey, said.values);
+  return (t as (key: MessageKey, values: Record<string, string | number>) => string)(key as MessageKey,
+                                                                                       worded(said.values));
 }
 
 export const subsystemName = (s: Subsystem): string => sayIn("name", s.name_said, s.name);

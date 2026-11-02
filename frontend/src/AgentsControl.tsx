@@ -72,7 +72,7 @@ export function AgentsControl() {
   const gesture = useRef({ travel: 0, touchY: 0 });
   const downRef = useRef<HTMLButtonElement | null>(null);
   const ui = useUiTarget({ ref: { region: "right", view: "right.agents", kind: "agentsList" },
-                           label: "Agents list", socket: RIGHT_SOCKET });
+                           label: t("targets.agentsList"), socket: RIGHT_SOCKET });
 
   // The space changes with the window and with anything above it; the list
   // changes when its rows change size. Either re-measures. Leaving the page,

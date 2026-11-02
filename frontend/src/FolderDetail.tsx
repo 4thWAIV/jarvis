@@ -19,11 +19,15 @@ import { codeWords, formatDateTime, SaidText, t as tNow, useT, type Said } from 
 import { createStore } from "./store";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome } from "./uiRegistry";
+import { UI_CONTRACT, type CommandArgs } from "./uiContract";
+import { registerRevealer } from "./uiNavigationReveal";
+import { kindDecl, splitKey } from "./uiValidate";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
 import {
   catalog, editFolder, foldersChanged, FolderError, folderRefusal, nodeWords, PROVIDER_WORDS, readDetail,
-  readEntries, readerWords, readPreview, reconnectFolder, refreshFolder, ROLES, roleWords, sizeWords,
-  unregisterFolder, type Entries, type Entry, type Folder, type FolderDetail as Detail,
+  readEntries, readerWords, readPreview, reconnectFolder, refreshFolder, ROLES, roleWords, selectedFolder,
+  sizeWords, unregisterFolder,
+ type Entries, type Entry, type Folder, type FolderDetail as Detail,
   type Preview, type Role,
 } from "./folders";
 import { shortAgo } from "./timeFormat";
@@ -197,10 +201,73 @@ registerCommand("folder.more", {
   },
 });
 
+// ── the shown folder's form ─────────────────────────────────────────────
+//
+// Whether the folder is shown as it is or with its Edit, Reconnect or
+// Remove form open: kept here, changed by folder.mode (a click and the
+// brain alike), which never checks or saves anything. A folder shown
+// afresh starts as it is; a removed one has no forms.
+
+type Mode = CommandArgs["folder.mode"]["mode"];
+
+const form = createStore<{ folderId: string | null; removed: boolean; mode: Mode }>(
+  { folderId: null, removed: false, mode: "view" });
+
+/** The folder `folderId` is shown, read and (`removed`) removed or not. */
+function formShows(folderId: string | null, removed = false): void {
+  const now = form.get();
+  form.set({ folderId, removed, mode: now.folderId === folderId && !removed ? now.mode : "view" });
+}
+
+/** Back to the folder as it is, once a form's work is done. */
+const formDone = () => form.set({ ...form.get(), mode: "view" });
+
+registerCommand("folder.mode", {
+  availability: ({ folderId, mode }) => {
+    const now = form.get();
+    if (now.folderId !== folderId) return { available: false, reason: "no-entity" };
+    return mode !== "view" && now.removed ? { available: false, reason: "no-entity" } : { available: true };
+  },
+  execute({ mode }) {
+    form.set({ ...form.get(), mode });
+    return { status: "completed", effects: [] };
+  },
+});
+
+/** The folder's form as a binding: `mode` for `folderId`. */
+const formBinding = (folderId: string, mode: Mode) => bind("folder.mode", { folderId, mode });
+
 /** A directory or file of the folder, as a binding: the folder's top when
  *  `path` is "". */
 const browseTo = (folderId: string, path: string) =>
   bind("folder.browse", path ? { folderId, path } : { folderId });
+
+/** Resolves true once folder `folderId`'s contents are shown, false if that
+ *  does not happen within the reveal's limit or the reveal ends first. */
+function contentsShown(folderId: string, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ready = () => contents.get()?.folderId === folderId;
+    if (ready()) return resolve(true);
+    const finish = (ok: boolean) => { stop(); clearTimeout(timer); signal.removeEventListener("abort", end); resolve(ok); };
+    const end = () => finish(false);
+    const stop = contents.subscribe(() => { if (ready()) finish(true); });
+    const timer = setTimeout(end, UI_CONTRACT.limits.revealWaitMs);
+    signal.addEventListener("abort", end, { once: true });
+  });
+}
+
+// An entry not drawn: its folder (the key's first part) is opened and the
+// directory that lists it browsed to, both by their registered commands,
+// run as the caller. Nothing else; an entry past the first page is not
+// paged to.
+registerRevealer("main.folders", "folderEntry", async (ref, { navigate, signal }) => {
+  const [folderId, path] = splitKey(kindDecl("folderEntry")!, ref.key!);
+  if (selectedFolder.get() !== folderId && !await navigate("folders.open", { folderId })) return "no-entity";
+  if (!await contentsShown(folderId, signal)) return "not-loaded";
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  if (contents.get()!.path === dir) return true;
+  return await navigate("folder.browse", dir ? { folderId, path: dir } : { folderId }) ? true : "no-entity";
+});
 
 /** One entry of the folder or one crumb of the path, by its relative path. */
 function useEntryTarget(folderId: string, path: string, label: string) {
@@ -339,7 +406,7 @@ function FilePreview({ folder, path, preview, previewRef }: {
   );
 }
 
-function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
+function Reconnect({ folder }: { folder: Folder }) {
   const t = useT();
   const [path, setPath] = useState("");
   const [mismatch, setMismatch] = useState<string | null>(null);
@@ -350,7 +417,7 @@ function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
     setError(null);
     try {
       await reconnectFolder(folder, path.trim(), replace);
-      onDone();
+      formDone();
     } catch (e) {
       if (e instanceof FolderError && e.code === "identity_mismatch") {
         setMismatch(String(e.extra.new_path ?? path));
@@ -377,7 +444,8 @@ function Reconnect({ folder, onDone }: { folder: Folder; onDone: () => void }) {
       ) : (
         <button type="submit" className="folder-button" disabled={busy || !path.trim()}>{t("main.folder.reconnect")}</button>
       )}
-      <button type="button" className="folder-button quiet" onClick={onDone}>{t("main.common.cancel")}</button>
+      <button type="button" className="folder-button quiet"
+              {...bindingProps(formBinding(folder.id, "view"))}>{t("main.common.cancel")}</button>
       {error && <SaidText said={error} as="p" className="folder-error" role="alert" />}
     </form>
   );
@@ -387,7 +455,8 @@ export function FolderDetail({ id }: { id: string }) {
   const t = useT();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<Said | null>(null);
-  const [mode, setMode] = useState<"view" | "edit" | "reconnect" | "remove">("view");
+  const shownForm = useSyncExternalStore(form.subscribe, form.get);
+  const mode: Mode = shownForm.folderId === id ? shownForm.mode : "view";
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("data");
   const [busy, setBusy] = useState(false);
@@ -401,6 +470,14 @@ export function FolderDetail({ id }: { id: string }) {
     readDetail(id, ctl.signal).then((d) => { if (!ctl.signal.aborted) { setDetail(d); setError(null); } })
       .catch((e) => { if (!ctl.signal.aborted) setError(refusalWords(e)); });
   }, [id, hint, reconnects, latest]);
+  const removedNow = detail?.folder.lifecycle === "removed";
+  const read = detail?.folder.id === id;
+  useEffect(() => { formShows(read ? id : null, removedNow); }, [id, read, removedNow]);
+  useEffect(() => () => formShows(null), [id]);
+  // Edit starts from the folder's name and role as they are.
+  useEffect(() => {
+    if (mode === "edit" && detail) { setName(detail.folder.display_name); setRole(detail.folder.role); }
+  }, [mode]);                                          // eslint-disable-line react-hooks/exhaustive-deps
   const ui = useUiTarget({ ref: { region: "main", view: "main.folders", kind: "folder", key: id },
                            label: detail?.folder.display_name ?? t("main.folder.folder"), socket: CENTRE_SOCKET });
 
@@ -414,7 +491,7 @@ export function FolderDetail({ id }: { id: string }) {
     setNotice(null);
     try {
       await work();
-      setMode("view");
+      formDone();
       if (done) setNotice({ words: done });
     } catch (e) {
       setNotice(e instanceof FolderError && e.code === "stale_revision"
@@ -437,7 +514,8 @@ export function FolderDetail({ id }: { id: string }) {
                 {ROLES.map((r) => <option key={r} value={r}>{roleWords(r)}</option>)}
               </select></label>
             <button type="submit" className="folder-button" disabled={busy || !name.trim()}>{t("main.folder.save")}</button>
-            <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>{t("main.common.cancel")}</button>
+            <button type="button" className="folder-button quiet"
+                    {...bindingProps(formBinding(f.id, "view"))}>{t("main.common.cancel")}</button>
           </form>
         ) : (
           <>
@@ -458,9 +536,11 @@ export function FolderDetail({ id }: { id: string }) {
           <button data-ui-action="refresh" type="button" className="folder-button" disabled={busy}
                   onClick={() => void act(() => refreshFolder(f), () => tNow("main.folder.refreshed"))}>{t("main.folder.refresh")}</button>
           <button type="button" className="folder-button quiet" disabled={busy}
-                  onClick={() => { setName(f.display_name); setRole(f.role); setMode("edit"); }}>{t("main.folder.editLabel")}</button>
-          <button type="button" className="folder-button quiet" disabled={busy} onClick={() => setMode("reconnect")}>{t("main.folder.reconnectLocation")}</button>
-          <button type="button" className="folder-button danger" disabled={busy} onClick={() => setMode("remove")}>{t("main.folder.remove")}</button>
+                  {...bindingProps(formBinding(f.id, "edit"))}>{t("main.folder.editLabel")}</button>
+          <button type="button" className="folder-button quiet" disabled={busy}
+                  {...bindingProps(formBinding(f.id, "reconnect"))}>{t("main.folder.reconnectLocation")}</button>
+          <button type="button" className="folder-button danger" disabled={busy}
+                  {...bindingProps(formBinding(f.id, "remove"))}>{t("main.folder.remove")}</button>
         </div>
       )}
       {mode === "remove" && (
@@ -469,10 +549,12 @@ export function FolderDetail({ id }: { id: string }) {
             {t("main.folder.filesStay")}</p>
           <button data-ui-action="domain" type="button" className="folder-button danger" disabled={busy}
                   onClick={() => void act(() => unregisterFolder(f), () => tNow("main.folder.removed"))}>{t("main.folder.remove")}</button>
-          <button type="button" className="folder-button quiet" onClick={() => setMode("view")}>{t("main.common.keepIt")}</button>
+          <button type="button" className="folder-button quiet"
+                  {...bindingProps(formBinding(f.id, "view"))}>{t("main.common.keepIt")}</button>
         </div>
       )}
-      {mode === "reconnect" && <Reconnect folder={f} onDone={() => setMode("view")} />}
+      {mode === "reconnect" && <Reconnect folder={f} />}
+
       {notice && <SaidText said={notice} as="p" className="folder-note" role="status" />}
 
       <dl className="folder-facts">

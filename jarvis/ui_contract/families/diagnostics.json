@@ -2,7 +2,17 @@
   "family": "diagnostics",
   "owner": "coverage-right",
   "views": [],
-  "commands": [],
+  "commands": [
+    {"id": "voice.range", "label": "Show the last 15 minutes, hour or day of the voice record in the Diagnostics view (zooming out)",
+     "view": "main.diagnostics", "args": {"range": {"type": "enum", "values": ["15m", "1h", "1d"]}}, "required": ["range"],
+     "actors": ["human", "brain"], "effects": []},
+    {"id": "voice.zoom", "label": "Zoom the voice timeline to the half minute before a moment (seconds since 1970); without one, zoom out",
+     "view": "main.diagnostics", "args": {"at": {"type": "integer", "min": 0}}, "required": [],
+     "actors": ["human", "brain"], "effects": []},
+    {"id": "voice.quiet", "label": "Start or end the quiet page: fewer notifications for a while, to compare drops with and without them",
+     "view": "main.diagnostics", "args": {"quiet": {"type": "boolean"}}, "required": ["quiet"],
+     "actors": ["human", "brain"], "effects": []}
+  ],
   "kinds": [
     {"kind": "subsystem", "entity": "subsystem", "label": "Subsystem", "parts": ["row", "status", "header", "close", "checks", "messages"],
      "presentations": [{"view": "right.diagnostics", "parts": ["row", "status"], "reveal": {"command": "right.tab.select", "args": {"tab": "diagnostics"}}},

@@ -32,12 +32,12 @@ import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkComman
 import { network } from "./network";
 import {
   applyDraft, applyFile, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
-  EMPTY, removeDraft, waiting, withPending, type Directory, type QueueState,
+  cues, EMPTY, removeDraft, subjectOf, threadOf, waiting, withPending, type Directory, type QueueState,
 } from "./queueStore";
 import { createStore } from "./store";
-import type { SideEffect } from "./uiContract";
+import type { CommandArgs, SideEffect } from "./uiContract";
 import { bind, bindingAvailable, detailSlot, runBinding } from "./uiNavigation";
-import { registerCommand, type Availability, type CommandOutcome } from "./uiRegistry";
+import { elementOf, findTarget, registerCommand, type Availability, type CommandOutcome } from "./uiRegistry";
 
 const asError = (e: unknown) => (e instanceof MessagingError ? e : new MessagingError("transport", 0, String(e)));
 
@@ -173,12 +173,13 @@ export function nextItem(): boolean {
 
 export const closeItem = (): void => runBinding(bind("queue.close", {}));
 
-/** Start writing a new conversation: a draft of its own (not navigation;
- *  the New button), shown in the item's place. */
-export function startNew(): void {
-  leaveCurrent();
+/** Start writing a new conversation (`queue.new`): a blank editor of its
+ *  own, kept until it is sent or discarded, shown in the item's place;
+ *  nothing is saved until it is written. */
+function openNew(): SideEffect[] {
+  const left = leaveCurrent();
   if (!editors.get()[NEW]) setEditor(NEW, blankEditor({ recipient: null, thread: null, parent: null, subject: "" }));
-  queueSlot.show({ thread: NEW, back: [] });
+  return [...left, ...queueSlot.show({ thread: NEW, back: [] })];
 }
 
 /** Save the open item's draft as it is left: whether there was one to save. */
@@ -226,13 +227,16 @@ registerCommand("queue.open", {
   execute: ({ threadId }) => openFromQueue(threadId),
 });
 
+/** Follow a link to `thread`, with Back to the item it was followed from. */
+function follow(thread: string): CommandOutcome {
+  const now = openQueue.get();
+  const back = now && now.thread !== thread ? [...now.back, now.thread] : now?.back ?? [];
+  return { status: "completed", effects: showItem(thread, back) };
+}
+
 registerCommand("queue.follow", {
   availability: ({ threadId }) => itemAvailable(threadId),
-  execute({ threadId }) {
-    const now = openQueue.get();
-    const back = now && now.thread !== threadId ? [...now.back, now.thread] : now?.back ?? [];
-    return { status: "completed", effects: showItem(threadId, back) };
-  },
+  execute: ({ threadId }) => follow(threadId),
 });
 
 registerCommand("queue.back", {
@@ -261,6 +265,116 @@ registerCommand("queue.close", {
     const effects = leaveCurrent();
     return { status: "completed", effects: [...effects, ...queueSlot.close()] };
   },
+});
+
+// ── Within the open item: a reply, a draft again, a link, a question ─────
+//
+// Writing starts, a failed response goes back in its editor, a linked
+// message is shown and a question is asked or put away, a click and the
+// brain alike. None of them saves, sends, discards or dismisses anything:
+// those stay the owner's own acts.
+
+const nothing: Availability = { available: false, reason: "no-entity" };
+const done = (effects: SideEffect[] = []): CommandOutcome => ({ status: "completed", effects });
+
+/** The item open in the centre, when the Queue holds it (not a new
+ *  conversation being written). */
+function openThread(): string | null {
+  const thread = openQueue.get()?.thread;
+  return thread && thread !== NEW && queueRecord.get().items[thread] ? thread : null;
+}
+
+registerCommand("queue.new", {
+  availability: () => queueRecord.get().availability === "available" ? { available: true } : nothing,
+  execute: () => done(openNew()),
+});
+
+/** Whether a reply can be started on the open item, to `messageId`: one
+ *  of its messages, the item not dismissed, and nothing being written. */
+function replyAvailable(messageId: string): Availability {
+  const thread = openThread();
+  const state = queue.get();
+  if (!thread || threadOf(state, messageId) !== thread || cues(state, thread)?.dismissed) return nothing;
+  return editors.get()[thread] || editableDraft(state, thread) ? nothing : { available: true };
+}
+
+registerCommand("queue.reply", {
+  availability: ({ messageId }) => replyAvailable(messageId),
+  execute({ messageId }) {
+    const thread = openThread()!;
+    const state = queue.get();
+    startReply(thread, messageId, state.items[thread].work_state.correspondent_github_id, subjectOf(state, thread));
+    return done();
+  },
+});
+
+/** The open view's response `messageId`, when it failed or was cancelled. */
+function sentBack(messageId: string): Draft | null {
+  const open = openQueue.get()?.thread;
+  const d = queue.get().drafts[messageId];
+  return open && d && (d.thread_id === open || d.message_id === open)
+    && (d.send.state === "failed" || d.send.state === "cancelled") ? d : null;
+}
+
+// Its editor again; the next save makes a new revision (`revise` on JARVIS).
+registerCommand("queue.draft.edit", {
+  availability: ({ messageId }) => (sentBack(messageId) ? { available: true } : nothing),
+  execute({ messageId }) {
+    setEditor(openQueue.get()!.thread, fromDraft(sentBack(messageId)!));
+    return done();
+  },
+});
+
+registerCommand("queue.message.show", {
+  availability: ({ messageId }) => (openQueue.get() && threadOf(queue.get(), messageId) ? { available: true } : nothing),
+  execute({ messageId }) {
+    const there = threadOf(queue.get(), messageId)!;
+    if (there !== openQueue.get()!.thread) return follow(there);
+    const shown = findTarget({ region: "main", view: "main.queue", kind: "queueMessage", key: messageId });
+    (shown && elementOf(shown))?.scrollIntoView({ block: "nearest" });
+    return done();
+  },
+});
+
+type DoneStep = CommandArgs["queue.done.ask"]["step"];
+
+/** The open view's questions: whether to discard the draft being written,
+ *  and how far Done's prompt has got (why it must wait, then whether to
+ *  discard the reply). Forgotten once another item is shown. */
+export const asking = createStore<{ thread: string | null; discard: boolean; done: DoneStep }>(
+  { thread: null, discard: false, done: "closed" });
+function ask(change: { discard?: boolean; done?: DoneStep }): void {
+  const thread = openQueue.get()?.thread ?? null;
+  const now = asking.get();
+  asking.set({ ...(now.thread === thread ? now : { discard: false, done: "closed" as const }), ...change, thread });
+}
+openQueue.subscribe(() => {
+  if (asking.get().thread !== (openQueue.get()?.thread ?? null)) {
+    asking.set({ thread: openQueue.get()?.thread ?? null, discard: false, done: "closed" });
+  }
+});
+
+/** Put the open view's questions away, once what one offered was done. */
+export const askedNoMore = (): void => ask({ discard: false, done: "closed" });
+
+registerCommand("queue.discard.ask", {
+  availability: () => {
+    const open = openQueue.get()?.thread;
+    return open && editors.get()[open] ? { available: true } : nothing;
+  },
+  execute({ open }) { ask({ discard: open }); return done(); },
+});
+
+registerCommand("queue.done.ask", {
+  availability: ({ step }) => {
+    const thread = openThread();
+    if (!thread) return nothing;
+    const blockers = blockersOf(queue.get(), thread);
+    if (step === "blockers" && !blockers.length) return nothing;
+    if (step === "discard" && (!blockers.includes("unsent_text") || blockers.includes("send_unresolved"))) return nothing;
+    return { available: true };
+  },
+  execute({ step }) { ask({ done: step }); return done(); },
 });
 
 // ── Commands ─────────────────────────────────────────────────────────────
@@ -461,9 +575,9 @@ export function editableDraft(state: QueueState, thread: string): Draft | null {
     .find((d) => d && EDITABLE.has(d.send.state)) ?? null;
 }
 
-/** Respond on an item, to one exact message of it. An unsent response
- *  already there is taken up again, as it is. */
-export function startReply(thread: string, parent: string, recipient: number, subject: string): void {
+/** Respond on an item, to one exact message of it (`queue.reply`). An
+ *  unsent response already there is taken up again, as it is. */
+function startReply(thread: string, parent: string, recipient: number, subject: string): void {
   if (editors.get()[thread]) return;
   const draft = editableDraft(queueRecord.get(), thread);
   setEditor(thread, draft ? fromDraft(draft) : blankEditor({ recipient, thread, parent, subject }));
@@ -719,11 +833,7 @@ export function blockersOf(state: QueueState, thread: string) {
   return [...all];
 }
 
-/** Change a send that failed or was cancelled: its editor again, and the
- *  next save makes a new revision (`revise` on JARVIS). */
-export function editAgain(key: string, draft: Draft): void {
-  setEditor(key, fromDraft(draft));
-}
+
 
 // ── Files on received messages ───────────────────────────────────────────
 

@@ -15,16 +15,17 @@
  * view is open; while it is open, this view re-reads the backend's copy.
  *
  * Its words are the catalog's (left.team.*), in the interface's language.
- * What the backend or the team server says in its own words (a refusal, the
- * last error) is shown as it came, marked as original detail; names, logins
- * and addresses are never translated.
+ * What JARVIS says about the team server (a refusal, the last error) is
+ * worded by its code (teamSignIn.ts `teamSaid`); what the team server says
+ * in its own words is shown as it came, marked as original detail; names,
+ * logins and addresses are never translated.
  */
 
 import { useEffect, useState } from "react";
 import { useLiveRead } from "./liveRead";
-import { formatDateTime, placed, useT, type Translate } from "./locale";
+import { formatDateTime, placed, SaidText, saidShown, useT, type CodedLine, type Said, type Translate } from "./locale";
 import { StatusDot, type Dot } from "./StatusDot";
-import { connectTeam, openApproval, teamCall as call } from "./teamSignIn";
+import { connectTeam, openApproval, refusalSaid, teamCall as call, teamSaid } from "./teamSignIn";
 
 interface Me { github_id: number; login: string; name?: string | null; role: "admin" | "member";
                state: string }
@@ -37,6 +38,8 @@ interface TeamStatus {
   me: Me | null;
   last_contact_at: string | null;
   last_error: string | null;
+  /** The last error by code, beside its English (older backends: absent). */
+  last_error_said?: CodedLine | null;
   pairing: { user_code: string; verification_uri_complete: string; expires_at: string } | null;
 }
 interface Member { github_id: number; login: string; name?: string | null;
@@ -74,10 +77,7 @@ function when(t: Translate, iso: string | null): string {
 const roleWords = (t: Translate, role: "admin" | "member") =>
   t(role === "admin" ? "left.team.role.admin" : "left.team.role.member");
 
-/** The backend's or the team server's own words, shown as they came. */
-function Original({ text, className = "settings-hint" }: { text: string; className?: string }) {
-  return <p className={className} data-original-detail="">{text}</p>;
-}
+
 
 export function TeamSection() {
   const t = useT();
@@ -87,8 +87,8 @@ export function TeamSection() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   // What the last action said: the page's own words by key, or the
-  // backend's as they came.
-  const [note, setNote] = useState<{ remote: keyof typeof DISCONNECTED } | { original: string } | null>(null);
+  // backend's by code or as they came.
+  const [note, setNote] = useState<{ remote: keyof typeof DISCONNECTED } | { said: Said } | null>(null);
 
   // Offer the last address again once a code expires or is cancelled, so
   // starting over does not mean typing it again.
@@ -108,7 +108,7 @@ export function TeamSection() {
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true);
     setNote(null);
-    try { await work(); } catch (e) { setNote({ original: (e as Error).message }); }
+    try { await work(); } catch (e) { setNote({ said: refusalSaid(e) }); }
     setBusy(false);
     refresh();
   };
@@ -116,7 +116,8 @@ export function TeamSection() {
   const connect = (serverUrl: string) => act(() => connectTeam(serverUrl));
   const disconnect = () => act(async () => {
     const r = await call<{ remote: string; message: string }>("POST", "/api/team/disconnect");
-    setNote(r.remote in DISCONNECTED ? { remote: r.remote as keyof typeof DISCONNECTED } : { original: r.message });
+    setNote(r.remote in DISCONNECTED ? { remote: r.remote as keyof typeof DISCONNECTED }
+      : { said: { original: r.message } });
   });
 
   if (!status) {
@@ -136,9 +137,10 @@ export function TeamSection() {
         {connected && <span className="status-detail">
           {t("left.team.lastContact", { when: when(t, status.last_contact_at) })}</span>}
       </div>
-      {status.last_error && <Original text={status.last_error} />}
+      {status.last_error && <SaidText said={teamSaid(status.last_error_said, status.last_error)}
+                                      as="p" className="settings-hint" />}
       {note && ("remote" in note ? <p className="settings-hint">{t(DISCONNECTED[note.remote])}</p>
-                                 : <Original text={note.original} />)}
+                                 : <SaidText said={note.said} as="p" className="settings-hint" />)}
 
       {status.state === "disconnected" && (
         <div className="settings-field">
@@ -204,8 +206,8 @@ const GROUPS = [
 /** Where an outcome is said: beside the Add controls, or in one member's row. */
 type Where = "add" | number;
 /** `say` gives the page's own words in the language in force; `reason` is
- *  the team server's (or the backend's) as it came. */
-interface Outcome { where: Where; refused: boolean; say: (t: Translate) => string; reason?: string }
+ *  the backend's by code, or the team server's as it came. */
+interface Outcome { where: Where; refused: boolean; say: (t: Translate) => string; reason?: Said }
 
 /** One member change's outcome, said where it was asked for. A refusal says
  *  first what did not happen, then the team server's reason, as it came. */
@@ -213,14 +215,14 @@ function Said({ outcome }: { outcome: Outcome }) {
   const t = useT();
   return outcome.refused
     ? <p className="team-refused" role="alert">{outcome.say(t)}{outcome.reason
-        ? <> <span data-original-detail="">{outcome.reason}</span></> : null}</p>
+        ? <> <SaidText said={outcome.reason} className="team-refused-reason" /></> : null}</p>
     : <p className="team-done">{outcome.say(t)}</p>;
 }
 
 function MembersPanel({ me }: { me: Me }) {
   const t = useT();
   const [roster, setRoster] = useState<Roster | null>(null);
-  const [unread, setUnread] = useState<string | null>(null);
+  const [unread, setUnread] = useState<Said | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [login, setLogin] = useState("");
   const [found, setFound] = useState<Resolved | null>(null);
@@ -229,7 +231,7 @@ function MembersPanel({ me }: { me: Me }) {
 
   const load = async () => {
     try { setRoster(await call<Roster>("GET", "/api/team/members")); setUnread(null); }
-    catch (e) { setUnread((e as Error).message); }
+    catch (e) { setUnread(refusalSaid(e)); }
   };
   useEffect(() => { load(); }, []);
 
@@ -244,7 +246,7 @@ function MembersPanel({ me }: { me: Me }) {
       const done = await work();
       if (done) setOutcome({ where, refused: false, say: done });
     } catch (e) {
-      setOutcome({ where, refused: true, say: notDone, reason: (e as Error).message });
+      setOutcome({ where, refused: true, say: notDone, reason: refusalSaid(e) });
     }
     setBusy(false);
     await load();
@@ -314,7 +316,7 @@ function MembersPanel({ me }: { me: Me }) {
     <div className="team-members">
       <h4>{t("left.team.members")}</h4>
       {unread && <p className="settings-hint read-failure">
-        {t("left.team.membersUnreadable", { error: unread })}</p>}
+        {t("left.team.membersUnreadable", { error: saidShown(unread).text })}</p>}
       {!roster ? (!unread && <p className="settings-hint">{t("left.team.membersReading")}</p>) : <>
         {GROUPS.map(([state, title]) => {
           const members = roster.members.filter((m) => m.state === state);

@@ -17,8 +17,9 @@ import { useUiTarget } from "./uiRegistry";
 type PartRef = (el: Element | null) => void;
 
 export function OrbControl({ onReady }: { onReady: (orb: Orb) => void }) {
+  const t = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "orb" }, label: "The orb",
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "orb" }, label: t("targets.orb"),
                            socket: { rail: "rail.left", side: "left" } });
 
   useEffect(() => {

@@ -296,6 +296,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.subsystem.said.teamStale": "No se puede contactar al servidor del equipo",
   "right.subsystem.said.teamStaleSince": "No se puede contactar al servidor del equipo; último contacto hace {age}",
   "right.subsystem.said.teamSignedOut": "Sesión cerrada; vuelva a iniciarla en Configuración",
+  "right.subsystem.said.teamError": "{error}",
   "right.subsystem.said.teamConnecting": "Conectando",
   "right.subsystem.said.teamPairing": "Esperando que se apruebe esta Mac en el servidor del equipo",
   "right.subsystem.said.teamNotConnected": "Sin conexión",

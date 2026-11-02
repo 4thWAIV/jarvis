@@ -11,14 +11,16 @@
  * so, with the ways out.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { formatNumber, SaidText, useT } from "./locale";
 import { LIMITS, type Draft } from "./messagingContract";
 import {
-  addFiles, directory, discard, edit, editors, keepMine, queue, removeFile, review, roster, takeTheirs,
+  addFiles, askedNoMore, asking, directory, discard, edit, editors, keepMine, openQueue, queue, removeFile, review,
+  roster, takeTheirs,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
 import { personName, previewOf, recipientLabel } from "./queueStore";
+import { bind, bindingProps } from "./uiNavigation";
 
 const MB = 1024 * 1024;
 const LOCKED = new Set(["approved", "submitting", "accept_unknown", "accepted"]);
@@ -29,7 +31,10 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
   const state = useSyncExternalStore(queue.subscribe, queue.get);
   const dir = useSyncExternalStore(directory.subscribe, directory.get);
   const members = useSyncExternalStore(roster.subscribe, roster.get)?.members ?? [];
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Asked by queue.discard.ask, of the open view's composer only.
+  const asked = useSyncExternalStore(asking.subscribe, asking.get);
+  const open = useSyncExternalStore(openQueue.subscribe, openQueue.get);
+  const confirmDiscard = asked.discard && asked.thread === editorKey && open?.thread === editorKey;
   if (!ed) return null;
   const draft: Draft | undefined = ed.messageId ? state.drafts[ed.messageId] : undefined;
   const locked = !!draft && LOCKED.has(draft.send.state);
@@ -109,15 +114,18 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         {confirmDiscard ? (
           <>
             <span className="composer-confirm">{t("main.queue.composer.discardQuestion")}</span>
-            <button data-ui-action="domain" type="button" className="composer-discard" onClick={() => { setConfirmDiscard(false); void discard(editorKey); }}>
+            <button data-ui-action="domain" type="button" className="composer-discard"
+                    onClick={() => { askedNoMore(); void discard(editorKey); }}>
               {t("main.queue.composer.discardDraft")}
             </button>
-            <button type="button" onClick={() => setConfirmDiscard(false)}>{t("main.common.keepIt")}</button>
+            <button type="button" {...bindingProps(bind("queue.discard.ask", { open: false }))}>{t("main.common.keepIt")}</button>
           </>
         ) : (
-          <button type="button" className="composer-discard" disabled={locked} onClick={() => setConfirmDiscard(true)}>
+          <button type="button" className="composer-discard" disabled={locked}
+                  {...bindingProps(bind("queue.discard.ask", { open: true }))}>
             {t("main.queue.composer.discard")}
           </button>
+
         )}
         <button data-ui-action="domain" type="button" className="composer-review" disabled={!canReview}
                 onClick={() => void review(editorKey)}>{t("main.queue.composer.review")}</button>

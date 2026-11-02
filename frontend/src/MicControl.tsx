@@ -12,14 +12,14 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { codeWords, useT, type Translate } from "./locale";
+import { codeWords, saidShown, useT, type Translate } from "./locale";
 import { inputStatus, micMuted, micOff } from "./mic";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { health } from "./voiceHealth";
+import { causeSaid, health, type Cause } from "./voiceHealth";
 import type { InputStatus } from "./voiceInput";
 
 const QUIET_STATES = new Set(["listening", "paused", "muted", "off"]);
@@ -27,7 +27,7 @@ const LOST_STATES = new Set(["interrupted", "unavailable", "permission"]);
 
 /** What the dot says, in the language in force, and whether words were
  *  lost, or null when all is well. */
-export function inputProblem(t: Translate, status: InputStatus, h: { state: string; cause: string } | null):
+export function inputProblem(t: Translate, status: InputStatus, h: ({ state: string; cause: string } & Cause) | null):
     { text: string; bad: boolean } | null {
   if (!QUIET_STATES.has(status.state) && status.words) {
     return { text: status.words.say(t), bad: LOST_STATES.has(status.state) };
@@ -35,7 +35,7 @@ export function inputProblem(t: Translate, status: InputStatus, h: { state: stri
   if (h && h.state !== "healthy") {
     // healthWords' words, by a state that may be one this page does not know.
     const words = codeWords("main.voice.health", h.state) ?? h.state;
-    return { text: h.cause ? t("left.mic.healthCause", { state: words, cause: h.cause }) : words,
+    return { text: h.cause ? t("left.mic.healthCause", { state: words, cause: saidShown(causeSaid(h)).text }) : words,
              bad: h.state === "no-frames" };
   }
   return null;
@@ -66,7 +66,8 @@ function MicLevel({ partRef }: { partRef: PartRef }) {
 }
 
 export function MicControl() {
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: "Microphone",
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: t("targets.microphone"),
                            socket: { rail: "rail.left", side: "left" } });
   return (
     <div id="mic-control" ref={ui.whole}>

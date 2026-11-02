@@ -29,17 +29,11 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ui_coverage"
 # coverage-main's. `label-unlocalized` counts are the localization
 # workers' (execution.md, LOCALIZATION OWNERSHIP): each reaches zero.
 PENDING = {
-    # Navigation still to be given a registered command (coverage.md, "Gaps"):
-    # form and confirmation open/cancel modes, the Queue's related links and
-    # Reply/Respond/Edit, New message, voice range, quiet and zoom, and the
-    # transcript's scroll. Everything else is classified (`data-ui-action`).
-    ("FolderDetail.tsx", "control-unclassified"): 6,
-    ("FoldersView.tsx", "control-unclassified"): 1,
-    ("MessageComposer.tsx", "control-unclassified"): 2,
-    ("QueueItemView.tsx", "control-unclassified"): 8,
-    ("QueuePanel.tsx", "control-unclassified"): 1,
-    ("VoiceDiagnosticsView.tsx", "control-unclassified"): 2,
-    ("VoiceVisuals.tsx", "control-unclassified"): 1,
+    # The transcript's scroll (whether it follows the newest entries): a
+    # command run on scroll would also fire on the reveal's own scroll and
+    # cancel it, so how it is covered waits for Tim (blocker
+    # transcript-scroll-command, execution.md "Remaining gaps").
+    # Everything else runs a registered command or is classified.
     ("WorkflowDetail.tsx", "control-unclassified"): 1,
 }
 
@@ -78,6 +72,10 @@ def test_the_negative_fixtures_are_rejected_rule_by_rule():
         ("UnlocalizedLabels.tsx", 14, "label-unlocalized"),
         ("UnlocalizedLabels.tsx", 15, "label-unlocalized"),
         ("UnlocalizedLabels.tsx", 16, "label-unlocalized"),
+        # A target's label, which the brain's map reads: English written in,
+        # and the catalog read in one fixed language.
+        ("UnlocalizedTargetLabels.tsx", 12, "label-unlocalized"),
+        ("UnlocalizedTargetLabels.tsx", 14, "label-unlocalized"),
         # A tab of its own, a keyboard handler, a conditional control, and a
         # classification nobody reviewed.
         ("UnregisteredControls.tsx", 13, "control-unclassified"),

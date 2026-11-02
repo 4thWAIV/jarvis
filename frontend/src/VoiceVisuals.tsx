@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatNumber, formatPercent, t as tNow, useT } from "./locale";
+import { bindingProps, type Binding } from "./uiNavigation";
 import { Ring } from "./WorkflowVisuals";
 import { BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, STAGES, stageWords, type Stage, type StageState,
          type Tone } from "./voiceHealth";
@@ -90,13 +91,13 @@ export interface Point { t: number; v: number | null }
 /** `points` against time from `from` to `to` (any one unit), scaled to
  *  `max`, with dashed `lines` and a dot at each of `marks`. */
 export function Sparkline({ points, from, to, max, lines = [], marks = [], height = 56,
-                            label, kind = "line", onMark }: {
+                            label, kind = "line", markBinding }: {
   points: Point[]; from: number; to: number; max: number;
   lines?: { at: number; label: string; tone: "warn" | "bad" }[];
   marks?: { t: number; title: string }[]; height?: number; label: string;
   kind?: "line" | "bars";
-  /** Clicking a mark: the Diagnostics view zooms to it. */
-  onMark?: (t: number) => void;
+  /** What clicking a mark runs: the Diagnostics view zooms to it. */
+  markBinding?: (t: number) => Binding;
 }) {
   // Drawn at its real width, so text and dots keep their shape.
   const ref = useRef<SVGSVGElement>(null);
@@ -135,8 +136,9 @@ export function Sparkline({ points, from, to, max, lines = [], marks = [], heigh
             <circle className="spark-end" cx={x(last.t)} cy={y(last.v)} r={2.5} />
           </>}
       {marks.filter((m) => m.t >= from && m.t <= to).map((m) => (
-        <circle key={`${m.t}`} className={`spark-mark${onMark ? " clickable" : ""}`}
-                cx={x(m.t)} cy={6} r={3.5} onClick={onMark ? () => onMark(m.t) : undefined}>
+        <circle key={`${m.t}`} className={`spark-mark${markBinding ? " clickable" : ""}`}
+                cx={x(m.t)} cy={6} r={3.5} {...(markBinding ? bindingProps(markBinding(m.t)) : {})}>
+
           <title>{m.title}</title>
         </circle>
       ))}

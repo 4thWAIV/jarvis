@@ -24,11 +24,11 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { reconnected } from "./liveRead";
-import { useT } from "./locale";
+import { SaidText, useT, type Said } from "./locale";
 import { needsSignIn, network } from "./network";
 import { createStore } from "./store";
 import { ServerIcon } from "./TeamServerTile";
-import { signInAgain } from "./teamSignIn";
+import { refusalSaid, signInAgain } from "./teamSignIn";
 import { bind, bindingProps } from "./uiNavigation";
 import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
 
@@ -53,11 +53,11 @@ export function TeamSignInReminder() {
   const live = useSyncExternalStore(network.subscribe, network.get);
   const hidden = useSyncExternalStore(later.subscribe, later.get);
   const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const shown = needsSignIn(live.value) && !hidden;
   const ui = useUiTarget(shown ? { ref: { region: "main", view: "main.notice", kind: "teamReminder" },
-                                   label: "Sign-in reminder", socket: { rail: "rail.main", side: "right" } }
+                                   label: t("targets.signInReminder"), socket: { rail: "rail.main", side: "right" } }
                                : null);
 
   useLayoutEffect(() => {
@@ -78,7 +78,7 @@ export function TeamSignInReminder() {
     try {
       await signInAgain();
       byHand("settings.open", { section: "team" });   // the code to check, or the address to give
-    } catch (e) { setProblem((e as Error).message); }
+    } catch (e) { setProblem(refusalSaid(e)); }
     setBusy(false);
   };
   return (
@@ -91,7 +91,7 @@ export function TeamSignInReminder() {
       <button type="button" className="settings-btn" ref={ui.part("later")}
               {...bindingProps(bind("reminder.later", {}))}>{t("left.reminder.later")}</button>
       {/* The backend's own words, as they came: original detail. */}
-      {problem && <p className="team-reminder-problem" data-original-detail="">{problem}</p>}
+      {problem && <SaidText said={problem} as="p" className="team-reminder-problem" />}
     </div>
   );
 }

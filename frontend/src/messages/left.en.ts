@@ -54,7 +54,6 @@ export const leftEn = {
   "left.input.tooSlow": "Speech recognition took too long to start, so what you said was not sent. Say it again once it is listening.",
   "left.input.backedUp": "The connection to speech recognition is backed up, so that was not sent. Listening again.",
   "left.input.muteUnfinished": "The last words before mute could not be finished, so they were not sent.",
-  "left.input.withDetail": "{message} Detail: {detail}",
 
   // Speech model and language refusals (speech_models.Refused codes).
   "left.speech.unknownLanguage": "That is not a language JARVIS speaks.",

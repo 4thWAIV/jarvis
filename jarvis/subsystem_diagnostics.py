@@ -37,6 +37,7 @@ from typing import Optional
 
 from jarvis import (data_paths, run_store, session_messages, session_steer, voice_diagnostics,
                     workflow_store)
+from jarvis.said import Said, english as _english
 from jarvis.session_watch import DELIVERY_TIMEOUT_SEC, GONE
 
 OK, DEGRADED, DOWN, IDLE, UNKNOWN = "ok", "degraded", "down", "idle", "unknown"
@@ -201,6 +202,9 @@ SAID: dict[str, str | dict[str, str]] = {
     "teamStale": "Can't reach the team server",
     "teamStaleSince": "Can't reach the team server; last contact {age} ago",
     "teamSignedOut": "Signed out; sign in again in Settings",
+    # Why it signed out, in team_client's words; its code rides beside it
+    # as `errorSaid`, which the page words from its own catalog.
+    "teamError": "{error}",
     "teamConnecting": "Connecting",
     "teamPairing": "Waiting for this Mac to be approved on the team server",
     "teamNotConnected": "Not connected",
@@ -237,19 +241,6 @@ NAMES: dict[str, str] = {
     "discovery": "Discovery",
     "discoveryLoop": "Discovery loop",
 }
-
-
-def _english(template: str | dict[str, str], values: dict) -> str:
-    if isinstance(template, dict):
-        template = template["one" if values.get("count") == 1 else "other"]
-    return template.format(**values)
-
-
-@dataclass(frozen=True)
-class Said:
-    """One of JARVIS's own lines: its code and the values it names."""
-    code: str
-    values: dict = field(default_factory=dict)
 
 
 def say(code: str, **values) -> tuple[Said, str]:
@@ -545,11 +536,15 @@ def voice_input(summary: dict, now: float) -> Subsystem:
         return subsystem("voice_input", IDLE, say("voiceIdle"),
                          [Check(c.id, c.name, IDLE, "", c.name_said) for c in checks])
     cause = summary.get("cause") or ""
+    # The cause's own code rides beside its English (`causeSaid`), for the
+    # page to word from its catalog (voice_diagnostics.CAUSES).
+    coded = ({"causeSaid": {"code": summary["causeCode"], "values": summary.get("causeValues") or {}}}
+             if summary.get("causeCode") else {})
     if state == "no-frames" or (dropped is not None and now - dropped < VOICE_DROPPING_SEC):
         return subsystem("voice_input", DOWN,
-                         say("voiceDroppingCause", cause=cause) if cause else say("voiceDropping"), checks)
+                         say("voiceDroppingCause", cause=cause, **coded) if cause else say("voiceDropping"), checks)
     if state != "healthy":
-        return subsystem("voice_input", DEGRADED, say("voiceBehind", cause=cause), checks)
+        return subsystem("voice_input", DEGRADED, say("voiceBehind", cause=cause, **coded), checks)
     return subsystem("voice_input", OK, say("voiceOk"), checks)
 
 
@@ -720,8 +715,11 @@ def team_server(team: dict, now: float) -> Subsystem:
         shown = (DEGRADED, say("teamStaleSince" if since else "teamStale", **contact))
     elif state == "signed_out":
         error = team.get("last_error")
-        # The team server's own words, when it gave them, are shown as they came.
-        shown = (DEGRADED, (None, error) if error else say("teamSignedOut"))
+        said = team.get("last_error_said")
+        # Said by team_client's code where it has one; English with no code
+        # (another program's words) is shown as it came.
+        shown = (DEGRADED, say("teamError", error=error, errorSaid=said) if error and said
+                 else (None, error) if error else say("teamSignedOut"))
     elif state == "connecting":
         shown = (UNKNOWN, say("teamConnecting"))
     elif state == "pairing":

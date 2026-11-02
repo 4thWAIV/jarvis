@@ -22,22 +22,24 @@
  * Registered for pointing at: the view (`voice`: its overview, range,
  * zoom, timeline, incidents, notifications, messages and Close) and each
  * incident (`voiceIncident`, by its record id). Close is
- * `voice.diagnostics.close`, as the brain runs it. The range and the zoom
- * are still this view's own state until their commands are declared
- * (`voice.range`, `voice.zoom`, in the diagnostics family). Save and the
- * quiet page are his own acts, not navigation.
+ * `voice.diagnostics.close`, as the brain runs it. The range, the zoom and
+ * the quiet page are `voice.range`, `voice.zoom` and `voice.quiet`, the
+ * same commands the brain runs; the range and the zoom are kept here, so
+ * they stay as left while the view is closed. Save is his own act.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
-import { bind, bindingProps } from "./uiNavigation";
-import { useUiTarget } from "./uiRegistry";
+import { createStore } from "./store";
+import type { CommandArgs } from "./uiContract";
+import { bind, bindingProps, type Binding } from "./uiNavigation";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 import { useLiveRead } from "./liveRead";
-import { formatNumber, useT, type Translate } from "./locale";
+import { formatNumber, SaidText, saidShown, useT, type Translate } from "./locale";
 import { useTick } from "./WorkflowsView";
 import { Chip, HeadroomBar, HeardRing, PipelineTrack, Sparkline, SpeedRing, type Point } from "./VoiceVisuals";
 import { ago } from "./workflows";
-import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, getHistory, health, heardShare, isQuiet, notices,
+import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, causeSaid, getHistory, health, heardShare, isQuiet, notices,
          quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
 import { beforeDrops, clock, DROP_KINDS, groupMessages, INCIDENT_KINDS, incidentWords,
          noticesBySource, quietComparison, sourceWords } from "./voiceAnalysis";
@@ -55,10 +57,41 @@ const decimals = (value: number, digits: number) =>
 const ZOOM_BEFORE_SEC = 30;
 const ZOOM_AFTER_SEC = 5;
 
+// ── how far back the view looks ─────────────────────────────────────────
+//
+// The range and the zoom (the moment zoomed to, or null), changed only by
+// voice.range and voice.zoom, a click and the brain alike; choosing a
+// range zooms out. voice.quiet starts or ends the quiet page.
+
+type RangeId = CommandArgs["voice.range"]["range"];
+
+const stretch = createStore<{ range: RangeId; zoom: number | null }>({ range: RANGES[0].id, zoom: null });
+
+const always = () => ({ available: true }) as const;
+
+registerCommand("voice.range", {
+  availability: always,
+  execute({ range }) { stretch.set({ range, zoom: null }); return { status: "completed", effects: [] }; },
+});
+
+registerCommand("voice.zoom", {
+  availability: always,
+  execute({ at }) { stretch.set({ ...stretch.get(), zoom: at ?? null }); return { status: "completed", effects: [] }; },
+});
+
+registerCommand("voice.quiet", {
+  availability: always,
+  execute({ quiet }) { setQuiet(quiet); return { status: "completed", effects: [] }; },
+});
+
+/** Zooming to the half minute before `at` (seconds), as a binding. */
+const zoomTo = (at: number): Binding => bind("voice.zoom", { at: Math.round(at) });
+
 export function VoiceDiagnosticsView() {
   const t = useT();
-  const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[0]);
-  const [zoom, setZoom] = useState<number | null>(null);
+  const shown = useSyncExternalStore(stretch.subscribe, stretch.get);
+  const range = RANGES.find((r) => r.id === shown.range) ?? RANGES[0];
+  const zoom = shown.zoom;
   // Read again whenever the range, the zoom or the record changes; the
   // window ends now, so it is worked out at read time.
   const key = `${range.id}:${zoom ?? ""}`;
@@ -70,14 +103,14 @@ export function VoiceDiagnosticsView() {
       <div className="voice-range" role="group" aria-label={t("main.voice.howFarBack")} ref={ui.part("range")}>
         {RANGES.map((r) => (
           <button key={r.id} type="button" className={`voice-range-button${!zoom && r.id === range.id ? " selected" : ""}`}
-                  onClick={() => { setRange(r); setZoom(null); }}>{t(`main.voice.range.${r.id}`)}</button>
+                  {...bindingProps(bind("voice.range", { range: r.id }))}>{t(`main.voice.range.${r.id}`)}</button>
         ))}
         {zoom !== null && <span className="voice-zoomed" ref={ui.part("zoom")}>{t("main.voice.zoomed", { at: clock(zoom) })}</span>}
       </div>
       <Stretch key={key} window={() => {
         const now = Date.now() / 1000;
         return zoom !== null ? [zoom - ZOOM_BEFORE_SEC, zoom + ZOOM_AFTER_SEC] : [now - range.sec, now];
-      }} onZoom={setZoom} partRef={ui.part} />
+      }} onZoom={zoomTo} partRef={ui.part} />
     </div>
   );
 }
@@ -91,7 +124,8 @@ function Overview({ partRef }: { partRef: PartRef }) {
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get).value;
   const status = audioStatus(live?.state ?? record?.state ?? "idle", record?.lastDropAt ?? null);
-  const cause = live ? live.cause : record?.cause ?? "";
+  // Its cause in words: by its code, or a record's own English as written.
+  const cause = live ?? record;
   const pipeline = live?.pipeline ?? record?.pipeline;
   const last = record?.last2min[record.last2min.length - 1];
   const today = record?.today;
@@ -104,8 +138,7 @@ function Overview({ partRef }: { partRef: PartRef }) {
       <div className="voice-overview-words">
         <h2 className={`voice-status-word tone-${status.tone}`}>{status.word}</h2>
         <p className="voice-cause">
-          {/* The cause is the voice record's own words, shown as recorded. */}
-          {status.tone !== "ok" && cause ? <span data-original-detail="">{cause}</span> : " "}
+          {status.tone !== "ok" && cause?.cause ? <SaidText said={causeSaid(cause)} className="voice-cause-words" /> : " "}
           {record?.lastDropAt != null && <span className="voice-last-drop"> · {t("main.voice.lastDrop", { when: ago(record.lastDropAt) })}</span>}
         </p>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
@@ -132,7 +165,7 @@ function Overview({ partRef }: { partRef: PartRef }) {
 }
 
 function Stretch({ window: span, onZoom, partRef }: { window: () => [number, number];
-                                                       onZoom: (t: number) => void; partRef: PartRef }) {
+                                                       onZoom: (t: number) => Binding; partRef: PartRef }) {
   const t = useT();
   const [from, to] = span();
   const read = useLiveRead(() => { const [f, until] = span(); return getHistory(f, until); }, [voiceChanged]);
@@ -156,13 +189,13 @@ function Stretch({ window: span, onZoom, partRef }: { window: () => [number, num
 type SectionRef = (el: Element | null) => void;
 
 function Timeline({ samples, events, from, to, onZoom, partRef }: {
-  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => void;
+  samples: Sample[]; events: VoiceEvent[]; from: number; to: number; onZoom: (t: number) => Binding;
   partRef: SectionRef }) {
   const t = useT();
   const series = (f: (s: Sample) => number | null): Point[] => samples.map((s) => ({ t: s.at, v: f(s) }));
   const drops = events.filter((e) => DROP_KINDS.has(e.kind))
     .map((e) => ({ t: e.at, title: e.cause
-      ? t("main.voice.dropAtBecause", { what: incidentWords(e.kind), at: clock(e.at), cause: e.cause })
+      ? t("main.voice.dropAtBecause", { what: incidentWords(e.kind), at: clock(e.at), cause: saidShown(causeSaid(e)).text })
       : t("main.voice.dropAt", { what: incidentWords(e.kind), at: clock(e.at) }) }));
   const rows = timelineRows(t, series);
   return (
@@ -173,7 +206,8 @@ function Timeline({ samples, events, from, to, onZoom, partRef }: {
         <div key={r.id} className="voice-timeline-row">
           <span className="voice-timeline-label">{r.label}</span>
           <Sparkline label={r.label} points={r.points} from={from} to={to} max={r.max}
-                     lines={r.lines} marks={drops} onMark={onZoom} kind={r.bars ? "bars" : "line"} />
+                     lines={r.lines} marks={drops} markBinding={onZoom} kind={r.bars ? "bars" : "line"} />
+
         </div>
       ))}
       <div className="voice-axis"><span>{clock(from)}</span><span>{clock(to)}</span></div>
@@ -224,8 +258,9 @@ function IncidentCard({ e }: { e: VoiceEvent }) {
   return (
     <article className={`voice-card kind-${e.kind}`} data-event={e.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <span className="voice-card-when">{clock(e.at)} · {incidentWords(e.kind)}</span>
-      {/* The cause and the line are the voice record's own words, shown as recorded. */}
-      <p>{e.cause ? <b data-original-detail="">{e.cause}</b> : <b>{t("main.voice.noCause")}</b>}
+      {/* The cause by its code (an older record's as written); the line is
+          the recogniser's own detail, shown as it came. */}
+      <p>{e.cause ? <b><SaidText said={causeSaid(e)} className="voice-card-cause" /></b> : <b>{t("main.voice.noCause")}</b>}
         {e.text ? <span data-original-detail="">{` ${e.text}`}</span> : null}</p>
       {e.topProcesses.length > 0 && (
         <p className="voice-card-busy">{t("main.voice.busiest", {
@@ -270,7 +305,8 @@ function Notifications({ samples, events, partRef }: { samples: Sample[]; events
       )}
       <div className="voice-quiet">
         <button type="button" className={`voice-quiet-button${quiet ? " on" : ""}`} aria-pressed={quiet}
-                onClick={() => setQuiet(!quiet)}>
+                {...bindingProps(bind("voice.quiet", { quiet: !quiet }))}>
+
           {quiet ? t("main.voice.endQuiet") : t("main.voice.startQuiet")}
         </button>
         <span>{t("main.voice.dropsPerHour", { quiet: perHour(q.quiet), usual: perHour(q.usual) })}</span>

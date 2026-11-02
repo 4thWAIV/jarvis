@@ -66,7 +66,7 @@ export function inputWords<K extends MessageKey>(key: K,
 function withDetail(words: InputWords, detail: string): InputWords {
   if (!detail) return words;
   return { key: `${words.key}+detail`,
-           say: (tr) => tr("left.input.withDetail", { message: words.say(tr), detail }) };
+           say: (tr) => tr("said.withDetail", { message: words.say(tr), detail }) };
 }
 
 export interface InputStatus {
@@ -121,8 +121,7 @@ export function speechRefusal(refusal: SpeechRefusal): Said {
   };
   const words = refusal.code ? said[refusal.code] : undefined;
   if (!words) return { original: refusal.detail || refusal.error || "" };
-  const detail = refusal.detail;
-  return { words: detail ? () => tr("left.input.withDetail", { message: words(), detail }) : words };
+  return { words, detail: refusal.detail || undefined };
 }
 
 export interface VoiceInput {

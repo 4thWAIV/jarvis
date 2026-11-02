@@ -23,7 +23,7 @@ export function StatusControl() {
   const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   const words = STATUS_WORDS[state];
   const text = words ? t(words) : "";
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "status" }, label: "Status",
+  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "status" }, label: t("targets.status"),
                            socket: { rail: "rail.left", side: "left" } });
   return (
     <div id="status-control" ref={ui.whole}>

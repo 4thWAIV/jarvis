@@ -8,14 +8,18 @@ behind it is, how late the server's own timers fire, JARVIS's CPU and the
 machine's load, and what the page reported over /ws/transcribe that second
 (frames captured and sent, audio held, long browser stalls, notifications
 shown). Each sample is classified into one health state with one cause
-(`classify`). Every capture start and end, every failure and every line of
+(`classify`, `diagnose`): its English, and its code and values (`CAUSES`)
+that the page words in the interface's language. Every capture start and
+end, every failure and every line of
 text the page showed, and every switch of speech model, is one row of
 `voice_events`; a failure also carries
 the cause in force and the busiest processes on the machine at that moment.
 
 Counts and timings only: no audio, and no words except the text the page
 itself displayed. Samples are kept SAMPLE_KEEP_SEC, events EVENT_KEEP_SEC.
-The tables live in the same database as runs and messages.
+The tables live in the same database as runs and messages, under their own
+schema version (`voice_schema`); a record from before the codes has none,
+and the page shows its English as it was written.
 
 transcription_api.py runs one `CaptureMonitor` per connected page; the
 server's routes read `summary` and `history`.
@@ -27,12 +31,14 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from contextlib import closing
 from dataclasses import asdict, dataclass, field, fields
 from typing import Awaitable, Callable, Optional
 
 from jarvis import run_store
+from jarvis.said import Said, english
 from jarvis.transcriber import BYTES_PER_SECOND, PROTOCOL
 
 log = logging.getLogger("jarvis.voice_diagnostics")
@@ -68,6 +74,22 @@ MESSAGE_TEXT_MAX = 1000
 MESSAGES_PER_TELEMETRY = 20
 HISTORY_MAX_SAMPLES = 24 * 3600
 
+# Why a second was not healthy, by code: the English the brain and the log
+# read, and, word for word, the page's `shell.voice.cause.<code>`
+# (tests/test_voice_diagnostics.py holds the two together).
+CAUSES = {
+    "noFrames": "No audio from the microphone",
+    "tabHidden": "The JARVIS tab is hidden, so Chrome slows it",
+    "audioHeld": "{seconds} s of audio waiting in the browser",
+    "pageBusy": "The page was busy for {ms} ms",
+    "audioInConnection": "{seconds} s of audio waiting in the connection",
+    "serverLate": "JARVIS's server was {ms} ms late",
+    "machineBusy": "Machine busy (load {load})",
+    "jarvisBusy": "JARVIS busy (CPU {cpu}%)",
+}
+
+
+
 _SCHEMA = """
     CREATE TABLE IF NOT EXISTS voice_samples (
         at REAL NOT NULL,
@@ -94,10 +116,33 @@ _SCHEMA = """
     CREATE INDEX IF NOT EXISTS voice_events_by_time ON voice_events (at);
 """
 
+# Each step is appended, never changed (run_store.migrate). 2: the cause's
+# code and values beside its English.
+_MIGRATIONS = {
+    1: _SCHEMA,
+    2: """
+        ALTER TABLE voice_samples ADD COLUMN cause_code TEXT;
+        ALTER TABLE voice_samples ADD COLUMN cause_values TEXT;
+        ALTER TABLE voice_events ADD COLUMN cause_code TEXT;
+        ALTER TABLE voice_events ADD COLUMN cause_values TEXT;
+    """,
+}
+
+# The databases brought forward in this process, by path: a sample is
+# written every second, so the schema is looked at once, under a lock.
+_migrated: set[str] = set()
+_migrating = threading.Lock()
+
 
 def _connect():
     conn = run_store._connect()
-    conn.executescript(_SCHEMA)
+    path = conn.execute("PRAGMA database_list").fetchone()["file"]
+    if path not in _migrated:
+        with _migrating:
+            if path not in _migrated:
+                run_store.migrate(conn, "voice_schema", _MIGRATIONS, "voice diagnostics")
+                conn.commit()
+                _migrated.add(path)
     return conn
 
 
@@ -130,9 +175,14 @@ class Sample:
     quiet: Optional[bool] = None
     state: str = "healthy"
     cause: str = ""
+    # The cause by code (CAUSES) and its values; none for a healthy second.
+    cause_code: Optional[str] = None
+    cause_values: dict = field(default_factory=dict)
 
 
 _SAMPLE_COLUMNS = [f.name for f in fields(Sample)]
+# Stored as JSON text.
+_JSON_COLUMNS = ("notices_by_source", "cause_values")
 
 
 @dataclass(frozen=True)
@@ -145,6 +195,9 @@ class Event:
     cause: Optional[str] = None
     top_processes: list = field(default_factory=list)
     id: int = 0
+    # The cause by code (CAUSES) and its values; an older record has none.
+    cause_code: Optional[str] = None
+    cause_values: dict = field(default_factory=dict)
 
 
 # ── the page's telemetry ─────────────────────────────────────────────────
@@ -220,29 +273,41 @@ def parse_telemetry(msg: dict) -> Telemetry:
 
 # ── the diagnosis ────────────────────────────────────────────────────────
 
-def classify(s: Sample, cpu_count: int = os.cpu_count() or 1) -> tuple[str, str]:
-    """One health state for a second, with its cause in a few words. The
-    first that is true, in the order the audio travels: the microphone, the
-    browser, the connection, the server, the decoder."""
+def diagnose(s: Sample, cpu_count: int = os.cpu_count() or 1) -> tuple[str, Optional[Said]]:
+    """One health state for a second, with its cause by code (none when
+    healthy). The first that is true, in the order the audio travels: the
+    microphone, the browser, the connection, the server, the decoder.
+    Figures are rounded as the English says them."""
     if s.frames_captured == 0 and not s.tab_hidden:
-        return "no-frames", "No audio from the microphone"
+        return "no-frames", Said("noFrames")
     if s.tab_hidden:
-        return "browser-behind", "The JARVIS tab is hidden, so Chrome slows it"
+        return "browser-behind", Said("tabHidden")
     if s.held_sec is not None and s.held_sec >= HELD_WARN_SEC:
-        return "browser-behind", f"{s.held_sec:.1f} s of audio waiting in the browser"
+        return "browser-behind", Said("audioHeld", {"seconds": round(s.held_sec, 1)})
     if s.long_task_ms is not None and s.long_task_ms >= LONG_TASK_WARN_MS:
-        return "browser-behind", f"The page was busy for {s.long_task_ms:.0f} ms"
+        return "browser-behind", Said("pageBusy", {"ms": round(s.long_task_ms)})
     if s.socket_sec is not None and s.socket_sec >= SOCKET_WARN_SEC:
-        return "connection-behind", f"{s.socket_sec:.1f} s of audio waiting in the connection"
+        return "connection-behind", Said("audioInConnection", {"seconds": round(s.socket_sec, 1)})
     slow = (s.rtf is not None and s.rtf >= RTF_WARN) or s.backlog_sec >= BACKLOG_WARN_SEC
     if s.loop_delay_ms >= LOOP_DELAY_WARN_MS and not slow:
-        return "server-starved", f"JARVIS's server was {s.loop_delay_ms:.0f} ms late"
+        return "server-starved", Said("serverLate", {"ms": round(s.loop_delay_ms)})
     if slow:
         others = s.load_avg - s.process_cpu / 100
         if others > cpu_count / 2:
-            return "decoder-slow", f"Machine busy (load {s.load_avg:.1f})"
-        return "decoder-slow", f"JARVIS busy (CPU {s.process_cpu:.0f}%)"
-    return "healthy", ""
+            return "decoder-slow", Said("machineBusy", {"load": round(s.load_avg, 1)})
+        return "decoder-slow", Said("jarvisBusy", {"cpu": round(s.process_cpu)})
+    return "healthy", None
+
+
+def cause_english(cause: Optional[Said]) -> str:
+    """A cause in English: what the brain, the log and the record read."""
+    return english(CAUSES[cause.code], cause.values) if cause else ""
+
+
+def classify(s: Sample, cpu_count: int = os.cpu_count() or 1) -> tuple[str, str]:
+    """One health state for a second, with its cause in a few words."""
+    state, cause = diagnose(s, cpu_count)
+    return state, cause_english(cause)
 
 
 def pipeline(s: Optional[Sample]) -> dict:
@@ -354,7 +419,8 @@ def top_processes(limit: int = 5) -> list[dict]:
 
 def record_sample(s: Sample) -> None:
     row = asdict(s)
-    row["notices_by_source"] = json.dumps(s.notices_by_source)
+    for key in _JSON_COLUMNS:
+        row[key] = json.dumps(row[key])
     for key in ("tab_hidden", "quiet"):
         row[key] = None if row[key] is None else int(row[key])
     with closing(_connect()) as conn:
@@ -368,10 +434,11 @@ def record_event(event: Event) -> int:
     assert event.kind in EVENT_KINDS, event.kind
     with closing(_connect()) as conn:
         cur = conn.execute(
-            "INSERT INTO voice_events (at, capture, kind, source, text, cause, top_processes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO voice_events (at, capture, kind, source, text, cause, top_processes, "
+            "cause_code, cause_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (event.at, event.capture, event.kind, event.source, event.text, event.cause,
-             json.dumps(event.top_processes) if event.top_processes else None))
+             json.dumps(event.top_processes) if event.top_processes else None,
+             event.cause_code, json.dumps(event.cause_values) if event.cause_code else None))
         conn.commit()
         return cur.lastrowid
 
@@ -386,7 +453,8 @@ def prune(now: Optional[float] = None) -> None:
 
 def _sample(row) -> Sample:
     values = {c: row[c] for c in _SAMPLE_COLUMNS}
-    values["notices_by_source"] = json.loads(values["notices_by_source"] or "{}")
+    for key in _JSON_COLUMNS:
+        values[key] = json.loads(values[key] or "{}")
     for key in ("tab_hidden", "quiet"):
         if values[key] is not None:
             values[key] = bool(values[key])
@@ -396,7 +464,8 @@ def _sample(row) -> Sample:
 def _event(row) -> Event:
     return Event(at=row["at"], kind=row["kind"], capture=row["capture"], source=row["source"],
                  text=row["text"], cause=row["cause"],
-                 top_processes=json.loads(row["top_processes"] or "[]"), id=row["id"])
+                 top_processes=json.loads(row["top_processes"] or "[]"), id=row["id"],
+                 cause_code=row["cause_code"], cause_values=json.loads(row["cause_values"] or "{}"))
 
 
 def history(start: float, end: float) -> tuple[list[Sample], list[Event]]:
@@ -426,6 +495,8 @@ def summary(now: Optional[float] = None) -> dict:
     return {
         "state": latest.state if latest else "idle",
         "cause": latest.cause if latest else "",
+        "causeCode": latest.cause_code if latest else None,
+        "causeValues": latest.cause_values if latest else {},
         "pipeline": pipeline(latest),
         "last2min": [sample_json(s) for s in samples],
         "incidentsLastHour": incident_counts(hour_events),
@@ -513,6 +584,7 @@ class CaptureMonitor:
         self._telemetry: Optional[Telemetry] = None
         self._heard = asyncio.Event()       # telemetry arrived since the last sample
         self.state, self.cause = "healthy", ""
+        self.cause_said: Optional[Said] = None
 
     def telemetry(self, telemetry: Telemetry) -> None:
         """The page's latest second. Its text lines are recorded now; its
@@ -542,8 +614,10 @@ class CaptureMonitor:
             s.tab_hidden, s.quiet = t.tab_hidden, t.quiet
             s.notices, s.notices_by_source = sum(t.notices.values()), t.notices
             s.voice_msgs, s.session_msgs, s.renders = t.voice_msgs, t.session_msgs, t.renders
-        s.state, s.cause = classify(s)
-        self.state, self.cause = s.state, s.cause
+        s.state, said = diagnose(s)
+        s.cause = cause_english(said)
+        s.cause_code, s.cause_values = (said.code, said.values) if said else (None, {})
+        self.state, self.cause, self.cause_said = s.state, s.cause, said
         return s
 
     async def run(self) -> None:
@@ -567,7 +641,8 @@ class CaptureMonitor:
             except Exception:
                 log.exception("voice sample not recorded")
             await self._send_health({
-                "state": s.state, "cause": s.cause, "backlogSec": s.backlog_sec,
+                "state": s.state, "cause": s.cause, "causeCode": s.cause_code,
+                "causeValues": s.cause_values, "backlogSec": s.backlog_sec,
                 "rtf": s.rtf, "loopDelayMs": s.loop_delay_ms,
                 "processCpu": s.process_cpu, "loadAvg": s.load_avg,
                 "pipeline": pipeline(s)})
@@ -575,8 +650,10 @@ class CaptureMonitor:
     async def incident(self, kind: str, text: str = "") -> None:
         """A failure, with the cause in force and the busiest processes."""
         top = await asyncio.to_thread(top_processes)
+        said = self.cause_said
         event = Event(at=time.time(), kind=kind, capture=self._session, text=text or None,
-                      cause=self.cause or None, top_processes=top)
+                      cause=self.cause or None, top_processes=top,
+                      cause_code=said.code if said else None, cause_values=said.values if said else {})
         await asyncio.to_thread(record_event, event)
         _tell(event)
 

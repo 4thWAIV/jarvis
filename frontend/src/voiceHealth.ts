@@ -13,7 +13,7 @@
  */
 
 import { liveRead } from "./liveRead";
-import { t } from "./locale";
+import { codedSaid, t, type Said } from "./locale";
 import { createStore } from "./store";
 import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
@@ -26,7 +26,20 @@ export const STAGES: Stage[] = ["mic", "browser", "connection", "recogniser", "j
 /** A stage of the audio's way, in a short word. */
 export const stageWords = (stage: Stage): string => t(`main.voice.stage.${stage}`);
 
-export interface Health {
+/** Why a second was not healthy: its English as the record has it, and,
+ *  since voice_diagnostics gave causes codes, its code and values. */
+export interface Cause {
+  cause: string | null;
+  causeCode?: string | null;
+  causeValues?: Record<string, string | number>;
+}
+
+/** A cause in the language in force (voice_diagnostics' CAUSES); one
+ *  recorded before the codes is its English, shown as it was written. */
+export const causeSaid = (c: Cause): Said =>
+  codedSaid("voice.cause", c.causeCode ? { code: c.causeCode, values: c.causeValues } : null, c.cause ?? "");
+
+export interface Health extends Cause {
   state: HealthState;
   cause: string;
   backlogSec: number;
@@ -39,7 +52,7 @@ export interface Health {
 }
 
 /** One second of the server's record (voice_diagnostics.sample_json). */
-export interface Sample {
+export interface Sample extends Cause {
   at: number; capture: string | null;
   receivedSec: number; decodedSec: number; backlogSec: number; oldestSec: number;
   rtf: number | null; loopDelayMs: number; processCpu: number; loadAvg: number;
@@ -51,12 +64,12 @@ export interface Sample {
 }
 
 /** One event of the server's record (voice_diagnostics.event_json). */
-export interface VoiceEvent {
+export interface VoiceEvent extends Cause {
   id: number; at: number; kind: string; capture: string | null; source: string | null;
   text: string | null; cause: string | null; topProcesses: { name: string; cpu: number }[];
 }
 
-export interface Summary {
+export interface Summary extends Cause {
   state: HealthState | "idle";
   cause: string;
   pipeline: Record<Stage, { state: StageState; value: number | null }>;

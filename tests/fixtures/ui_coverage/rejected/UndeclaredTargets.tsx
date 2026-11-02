@@ -5,14 +5,14 @@ import { useUiTarget } from "../../../../frontend/src/uiRegistry";
 
 export function OrbOnTheRight() {
   // The orb is presented in the left column only.
-  const ui = useUiTarget({ ref: { region: "right", view: "right.network", kind: "orb" }, label: "Orb",
+  const ui = useUiTarget({ ref: { region: "right", view: "right.network", kind: "orb" }, label: "◯",
                            socket: { rail: "rail.right", side: "right" } });
   return <div ref={ui.whole} />;
 }
 
 export function Account({ name, index }: { name: string; index: number }) {
   const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "brainAccount", key: `row-${index}` },
-                           label: "Account", socket: { rail: "rail.left", side: "left" } });
+                           label: name, socket: { rail: "rail.left", side: "left" } });
   return (
     <section ref={ui.whole}>
       <span ref={ui.part("balance")}>{name}</span>

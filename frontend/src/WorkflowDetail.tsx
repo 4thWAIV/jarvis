@@ -68,7 +68,7 @@ import { AgeBar, OpenIcon, OpenIcons, phaseStates, PhaseTrack, Ring,
          WorkflowOrb } from "./WorkflowVisuals";
 import { ago, answerDecision, dismissals, dismissWorkflow, FINISHED, getEvents,
          getSessionTranscript, getTranscript, getWorkflow, isGone,
-         openWorkflow, STATE_WORDS, SUBAGENT_LOOK, SUBAGENT_WORDS, subagentOf, workflowsChanged,
+         openOnTab, openWorkflow, STATE_WORDS, SUBAGENT_LOOK, SUBAGENT_WORDS, subagentOf, workflowsChanged,
          type OpenItem, type SubagentRow, type SubagentState, type TranscriptEntry,
          type TranscriptPage, type Workflow, type WorkflowItem } from "./workflows";
 
@@ -107,10 +107,16 @@ openWorkflow.subscribe(() => {
 const whileOpen = (workflowId: string): Availability =>
   openWorkflow.get() === workflowId ? { available: true } : { available: false, reason: "no-entity" };
 
+/** Show `tab` of the open workflow `workflowId`. */
+const select = (workflowId: string, tab: WorkflowTab) => shown.set({ ...shownFor(workflowId), tab });
+
+// workflow.open with a tab opens it there.
+openOnTab(select);
+
 registerCommand("workflow.tab.select", {
   availability: ({ workflowId }) => whileOpen(workflowId),
   execute({ workflowId, tab }) {
-    shown.set({ ...shownFor(workflowId), tab });
+    select(workflowId, tab);
     return { status: "completed", effects: [] };
   },
 });
@@ -140,9 +146,12 @@ for (const kind of Object.keys(TAB_OF) as (keyof typeof TAB_OF)[]) {
   registerRevealer("main.workflow", kind, async (ref, { navigate }) => {
     const decl = kindDecl(kind)!;
     const workflowId = decl.keyOf ? splitKey(decl, ref.key!)[0] : ref.key!;
-    if (openWorkflow.get() !== workflowId && !await navigate("workflow.open", { workflowId })) return "no-entity";
-    if (!await navigate("workflow.tab.select", { workflowId, tab: TAB_OF[kind] })) return "no-entity";
-    return true;
+    const tab = TAB_OF[kind];
+    const opened = openWorkflow.get() === workflowId
+      ? await navigate("workflow.tab.select", { workflowId, tab })
+      : await navigate("workflow.open", { workflowId, tab });
+    return opened ? true : "no-entity";
+
   });
 }
 
@@ -442,7 +451,7 @@ function TaskCard({ workflowId, task: t }: { workflowId: string; task: WorkflowI
     <div className={`task-card item-${t.state}`} data-task={t.slug} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <ItemIcon item={t} partRef={ui.part("state")} />
       <span className="task-card-title">{t.title}</span>
-      {t.total ? <TaskBar done={t.done ?? 0} total={t.total} /> : null}
+      {t.total ? <TaskBar done={t.done ?? 0} total={t.total} barRef={ui.part("progress")} /> : null}
     </div>
   );
 }

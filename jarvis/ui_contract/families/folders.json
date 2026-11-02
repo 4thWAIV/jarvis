@@ -42,7 +42,12 @@
      "view": "main.folders",
      "args": {"folderId": {"type": "key", "entity": "folder"},
               "list": {"type": "enum", "values": ["entries", "preview"]}},
-     "required": ["folderId", "list"], "actors": ["human", "brain"], "effects": [{"effect": "list.paged"}]}
+     "required": ["folderId", "list"], "actors": ["human", "brain"], "effects": [{"effect": "list.paged"}]},
+    {"id": "folder.mode", "label": "Show the selected folder as it is, or open its Edit, Reconnect or Remove form (nothing is checked or saved)",
+     "view": "main.folders",
+     "args": {"folderId": {"type": "key", "entity": "folder"},
+              "mode": {"type": "enum", "values": ["view", "edit", "reconnect", "remove"]}},
+     "required": ["folderId", "mode"], "actors": ["human", "brain"], "effects": []}
   ],
   "kinds": [
     {"kind": "foldersList", "entity": null, "label": "Folder catalog",

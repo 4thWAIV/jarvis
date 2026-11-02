@@ -207,30 +207,59 @@ export function wordsOf<C extends string>(codes: readonly C[], say: (code: C) =>
 }
 
 /** A code's words (a status, a state, a refusal's code): the catalog's
- *  `<prefix>.<code>` in the language in force, or null when the catalog has
- *  no words for that code (one this page does not know), for the caller to
- *  show the code or the server's own words instead. */
-export function codeWords(prefix: string, code: string): string | null {
+ *  `<prefix>.<code>` in the language in force, with `values` put in, or
+ *  null when the catalog has no words for that code (one this page does not
+ *  know), for the caller to show the code or the server's own words
+ *  instead. */
+export function codeWords(prefix: string, code: string, values?: Record<string, unknown>): string | null {
   const key = `${prefix}.${code}`;
-  return Object.prototype.hasOwnProperty.call(en, key) ? (t as (key: string) => string)(key) : null;
+  return Object.prototype.hasOwnProperty.call(en, key)
+    ? (t as (key: string, values?: Record<string, unknown>) => string)(key, values) : null;
 }
 
 /** Something to tell the person (a refusal, a result): the server's own
  *  words, shown as they came and marked as original detail, or the page's,
- *  worded in the language in force each time they are shown. */
-export type Said = { readonly original: string } | { readonly words: () => string };
+ *  worded in the language in force each time they are shown, with what
+ *  another program said (`detail`) after them as it came. */
+export type Said = { readonly original: string } | { readonly words: () => string; readonly detail?: string };
+
+/** A line the server sent by code beside its English (`said` on a team
+ *  refusal or status, a voice cause): the code, the values it names, and
+ *  anything another program said, kept as it came. */
+export interface CodedLine {
+  code: string;
+  values?: Record<string, string | number>;
+  detail?: string;
+}
+
+/** A coded line in the person's words: the catalog's `<prefix>.<code>` with
+ *  its values, in the language in force, and its detail after it; a line
+ *  with no code (an older record) or one the catalog does not know is its
+ *  `english`, shown as it came. */
+export function codedSaid(prefix: string, line: CodedLine | null | undefined, english: string): Said {
+  if (!line?.code || codeWords(prefix, line.code, line.values) === null) return { original: english };
+  return { words: () => codeWords(prefix, line.code, line.values)!, detail: line.detail || undefined };
+}
 
 /** Its text, and the mark that says it is the server's original
- *  detail, for the element that shows it. */
+ *  detail, for the element that shows it. Words with a detail are one text
+ *  here; `SaidText` marks the detail on its own. */
 export function saidShown(r: Said): { text: string; mark: { "data-original-detail"?: "" } } {
-  return "original" in r ? { text: r.original, mark: { "data-original-detail": "" } } : { text: r.words(), mark: {} };
+  if ("original" in r) return { text: r.original, mark: { "data-original-detail": "" } };
+  return { text: r.detail ? t("said.withDetail", { message: r.words(), detail: r.detail }) : r.words(), mark: {} };
 }
 
 /** Words for the person, in an inline element: the server's own marked as
- *  original detail, or the page's in the language in force. */
+ *  original detail, or the page's in the language in force, with any
+ *  detail after them marked as original detail. */
 export function SaidText({ said, className, as = "span", role }: {
   said: Said; className: string; as?: "span" | "p" | "div"; role?: "alert" | "status" }): ReactNode {
-  useT();
+  const tr = useT();
+  if (!("original" in said) && said.detail) {
+    const detail = createElement("span", { "data-original-detail": "" }, said.detail);
+    return createElement(as, { className, role },
+                         placed((mark) => tr("said.withDetail", { message: said.words(), detail: mark }), detail));
+  }
   const { text, mark } = saidShown(said);
   return createElement(as, { className, role, ...mark }, text);
 }

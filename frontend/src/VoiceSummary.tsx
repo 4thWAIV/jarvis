@@ -38,7 +38,7 @@ export function VoiceSummary() {
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get);
   const ui = useUiTarget({ ref: { region: "right", view: "right.diagnostics", kind: "voice" },
-                           label: "Voice health", socket: RIGHT_SOCKET });
+                           label: t("targets.voiceHealth"), socket: RIGHT_SOCKET });
   const s = record.value;
   const status = audioStatus(live?.state ?? s?.state ?? "idle", s?.lastDropAt ?? null);
   const pipeline = live?.pipeline ?? s?.pipeline;
