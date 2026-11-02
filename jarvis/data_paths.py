@@ -184,6 +184,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "0f0743b0efd1a0a684a75cc9a5f3247c79394c51a703747c1c1744885f948339",  # packages run three ways: conversation, agent, page
     "c38c882c0d924db7b2f71a30d7d0f5a9b054073c826817562595294dfbc2cc55",  # update_jarvis takes a version: a merged pull request
     "3d993a2448e2a70f040a05b62d39016bdc6ad8b7600901330798f8e335a3487a",  # a package's package.json in its one top folder
+    "7d3af236e6905373e0ee578839cdb30bd19503b6e52fb1b559442cb8877e5521",  # files people send: inspect, read, cite
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

@@ -25,6 +25,9 @@ exactly one instance and one source for who this JARVIS is:
                    stored with the revision reviewed) and
                    bundle_tasks.BundleTasks (task, companions, repair and
                    the review checklist), each bound in its module
+    bundles        bundle_inspection.BundleInspection over the received
+                   files (the same instance as `received`), behind
+                   bundle_api's routes and the brain's bundle tools
     human, tools   message_approvals.HumanMessaging and MessagingTools: the
                    capture path and the brain's draft and review tools
 
@@ -47,7 +50,7 @@ from uuid import UUID
 
 from fastapi import FastAPI
 
-from jarvis import bundle_preflight, bundle_status, bundle_tasks
+from jarvis import bundle_api, bundle_preflight, bundle_status, bundle_tasks
 from jarvis import data_paths
 from jarvis import draft_files
 from jarvis import messaging_api
@@ -55,7 +58,7 @@ from jarvis import messaging_files
 from jarvis import messaging_ports as ports
 from jarvis.arrival_announcer import ArrivalAnnouncer, Wording, serve_labels
 from jarvis.bundle_cache import DerivedCache
-from jarvis.bundle_inspection import BundleInspection
+from jarvis.bundle_inspection import BundleInspection, Owner
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, Identity,
                                       MessageApprovals, MessagingTools, Reviews)
 from jarvis.messaging_client import Delivery, Pairing, TeamCalls, TeamTransport
@@ -227,6 +230,12 @@ class MessagingRuntime:
             return fn()
         return asyncio.run_coroutine_threadsafe(call(), self.loop).result()
 
+    def bundle_context(self) -> Optional[bundle_api.BundleContext]:
+        who = self.identity()
+        if who is None:
+            return None
+        return bundle_api.BundleContext(self.received, Owner(who.server_id, who.owner_github_id))
+
     def hint(self) -> None:
         """Tell every open page the queue changed (it reads it again)."""
         self.soon(lambda: self.send_frame({"type": ports.MESSAGES_HINT}))
@@ -360,9 +369,11 @@ class _NotStarted:
         return getattr(runtime.local, name)
 
 
-def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> None:
-    """The page's messaging routes and the files routes beside them, on the
-    app as it is made; each request finds the runtime built at startup."""
+def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]],
+          show: Optional[bundle_api.Show] = None) -> None:
+    """The page's messaging routes, and the files and bundle routes beside
+    them, on the app as it is made; each request finds the runtime built at
+    startup. `show` hands a bundle_view frame to every open page."""
     messaging_api.mount(app, _NotStarted(runtime))
 
     def context() -> Optional[messaging_files.FilesContext]:
@@ -371,3 +382,8 @@ def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]]) -> No
     # Its routes themselves, as every other JARVIS route is registered (an
     # included router would be one opaque entry among the app's routes).
     app.router.routes.extend(messaging_files.router(context).routes)
+
+    def bundles() -> Optional[bundle_api.BundleContext]:
+        found = runtime()
+        return found.bundle_context() if found is not None else None
+    bundle_api.mount(app, bundles, show)

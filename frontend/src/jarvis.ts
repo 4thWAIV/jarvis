@@ -22,6 +22,8 @@ import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startSessionsSocket } from "./sessionsSocket";
 import { showPackage, type PackageInfo } from "./packages";
+import { showMember } from "./bundles";
+import { BUNDLE_VIEW_FRAME } from "./bundleContract";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -230,6 +232,15 @@ export function startJarvis(orb: Orb): void {
       // A page package to show in the centre area (PackageView.tsx), on the
       // page's Open page or the brain's open_package_page.
       if (msg.package) showPackage(msg.package as unknown as PackageInfo);
+    } else if (type === BUNDLE_VIEW_FRAME) {
+      // A file a teammate sent, to show in the centre area
+      // (BundleMemberView.tsx), on the page's Open or the brain's
+      // show_bundle_member. The frame carries ids only.
+      if (typeof msg.message_id === "string" && typeof msg.attachment_id === "string"
+          && typeof msg.member_id === "string") {
+        showMember({ messageId: msg.message_id, attachmentId: msg.attachment_id,
+                     memberId: msg.member_id });
+      }
     } else if (type === "stop") {
       audioPlayer.stop();
       jarvisQuiet();

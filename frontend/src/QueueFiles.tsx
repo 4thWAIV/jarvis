@@ -9,6 +9,7 @@
  */
 
 import { useState, useSyncExternalStore } from "react";
+import { BundleInventory } from "./BundleInventory";
 import { openPackagePage, packageList, pagePackageFrom } from "./packages";
 import { downloadFile, revealFile } from "./queue";
 import { shownFor } from "./messagingApi";
@@ -62,6 +63,7 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
         </button>
       )}
       {incoming && state === "verified" && <OpenPage attachmentId={fileRef.attachment_id} />}
+      {incoming && messageId && state === "verified" && <BundleInventory file={{ messageId, attachmentId: fileRef.attachment_id }} filename={fileRef.filename} />}
       {onRemove && (
         <button type="button" className="file-action" onClick={onRemove}
                 aria-label={`Remove ${fileRef.filename}`}>Remove</button>
