@@ -262,3 +262,39 @@ def test_a_journey_is_carried_as_one_request_and_refused_when_malformed(wired):
                        {"status": "completed", "effects": [], "arrival": "animated"}])
         thread.join(20)
         assert "status: completed" in out["r"] and "step 2: status:completed arrival:animated" in out["r"]
+
+
+def test_a_person_navigating_after_the_map_makes_the_pointing_stale(wired):
+    """The brain reads the map at one navigation revision and points with
+    it; the page has moved on (he clicked another tab), so the request
+    carries the revision it was planned at and the page answers stale
+    instead of taking his view back (uiClient.ts `carryOut`)."""
+    c, server = wired
+    with c.websocket_connect("/ws/voice") as a:
+        _page(a, "page-a")
+        _says(c, server, a, 51)
+        reply = _tool(c, server, "ui_map", {})
+        req = _next(a, "ui_request")
+        assert req["expectedNavigationRevision"] is None
+        _result(a, req, status="completed", map={"commands": [], "targets": []})
+        assert "navigationRevision: 1" in reply()["text"]
+        reply = _tool(c, server, "ui_indicate", {"target": CPU, "reveal": "navigate",
+                                                 "expectedNavigationRevision": 1})
+        req = _next(a, "ui_request")
+        assert req["expectedNavigationRevision"] == 1
+        a.send_json({"type": "ui_result", "requestId": req["requestId"], "clientId": req["clientId"],
+                     "epoch": req["epoch"], "navigationRevision": 2, "layoutRevision": 1,
+                     "effects": [], "status": "stale", "reason": "the page has moved on"})
+        r = reply()
+        assert "status: stale" in r["text"] and "navigationRevision: 2" in r["text"], r
+        bad = _tool(c, server, "ui_navigate", {"command": "right.tab.select", "args": {"tab": "agents"},
+                                               "expectedNavigationRevision": -1})()
+        assert "status: invalid" in bad["text"], bad
+
+
+def test_every_acting_ui_tool_takes_the_revision_from_the_map():
+    specs = {s["name"]: s for s in ui_contract.tool_specs()}
+    for name in ("ui_navigate", "ui_indicate", "ui_journey"):
+        prop = specs[name]["inputSchema"]["properties"]["expectedNavigationRevision"]
+        assert prop["type"] == "integer" and prop["minimum"] == 0
+    assert "expectedNavigationRevision" in specs["ui_map"]["description"]

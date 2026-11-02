@@ -90,6 +90,7 @@ from jarvis import session_messages
 from jarvis import server_address
 from jarvis import spoken_words
 from jarvis import ui_control
+from jarvis import ui_contract
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -3792,6 +3793,17 @@ UNTRUSTED_READING_TOOLS = {"read_page", "look_at_page", "github_repo",
 # "… allow it".
 TAINT_EXEMPT_ACTING = {"answer_dialog"}
 
+# The UI tools survive a tainted turn too, for the same kind of reason: what
+# they carry is a registered command and a target the contract validates,
+# never text sent anywhere, and pointing is useless without ui_map first,
+# which taints ("show me the CPU on the Mac mini" is ui_map, then
+# ui_indicate). They do NOT survive when the commands they would run declare
+# an effect on his messages: opening a waiting Queue item moves it to Active,
+# and showing a body can send a read receipt. Those stay his to ask for on a
+# clean turn.
+UI_TAINT_EXEMPT_ACTING = {"ui_navigate", "ui_indicate", "ui_journey"}
+UI_EFFECTS_REFUSED_WHEN_TAINTED = {"queue.item-activated", "queue.read-marked"}
+
 # Writers whose output outlives the turn. `jarvis_memory.write_memory` puts
 # the model's text verbatim into `memory/*.md` and `add_to_index` into
 # `MEMORY.md`, which `CLAUDE.md` `@`-imports into every future turn as TRUSTED
@@ -3854,7 +3866,8 @@ def _untrusted_actions_refused() -> bool:
 
 
 def _untrusted_content_refusal(tool: str, read_untrusted: bool,
-                               source: str = "something I read") -> str | None:
+                               source: str = "something I read",
+                               args: dict | None = None) -> str | None:
     """The sentence refusing an unsupervised action in a turn that has read
     something JARVIS did not write, or None if the call may proceed.
 
@@ -3892,6 +3905,10 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     if tool not in ACTING_TOOLS:
         return None
     if tool in UNTRUSTED_READING_TOOLS or tool in TAINT_EXEMPT_ACTING:
+        return None
+    if tool in UI_TAINT_EXEMPT_ACTING and not (
+            ui_contract.declared_effects(UI_OPERATIONS[tool](args or {}))
+            & UI_EFFECTS_REFUSED_WHEN_TAINTED):
         return None
     if tool in MEMORY_WRITERS:
         return (f"untrusted_content_in_this_session — I've had {source} in "
@@ -3983,7 +4000,7 @@ async def internal_tool(request: Request):
         # `_untrusted_content_refusal`.
         source = _writer_untrusted_source(tool)
         refusal = _untrusted_content_refusal(
-            tool, source is not None, source=source or "something I read")
+            tool, source is not None, source=source or "something I read", args=args)
         if refusal:
             log.warning("refused %s: %s was read in this %s", tool, source,
                         "session" if tool in MEMORY_WRITERS else "turn")
@@ -11474,13 +11491,18 @@ def _ui_client_arg(args: dict) -> tuple[str | None, str | None]:
 async def _ui_request(operation: dict, args: dict) -> dict:
     """One request to the page of this turn (or the one named), bound to
     this turn: its caller, the id of the words that started it and the
-    speech turn answering them."""
+    speech turn answering them, and the navigation revision the brain last
+    saw there (from ui_map), so a person's navigation since makes it stale."""
     client, problem = _ui_client_arg(args)
     if problem:
         return {"status": "invalid", "reason": problem}
+    expected = args.get("expectedNavigationRevision")
+    if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool) or expected < 0):
+        return {"status": "invalid", "reason": "expectedNavigationRevision must be a whole number from 0"}
     return await ui_clients.request(operation, client=client, origin=_ui_origin(),
                                     heard=_turn_heard,
-                                    turn=str(_turn_utt.id) if _turn_utt is not None else None)
+                                    turn=str(_turn_utt.id) if _turn_utt is not None else None,
+                                    expected_revision=expected)
 
 
 def _ui_indicate_op(args: dict) -> dict:
@@ -11490,6 +11512,21 @@ def _ui_indicate_op(args: dict) -> dict:
 
 def _ui_navigate_op(args: dict) -> dict:
     return {"kind": "navigate", "commandId": args.get("command"), "args": args.get("args") or {}}
+
+
+def _ui_journey_op(args: dict) -> dict:
+    steps = args.get("steps") if isinstance(args.get("steps"), list) else []
+    return {"kind": "journey", "steps": [
+        _ui_navigate_op(s) if isinstance(s, dict) and "command" in s
+        else _ui_indicate_op(s) if isinstance(s, dict) and "target" in s
+        else s                     # refused, with its position, by the contract
+        for s in steps]}
+
+
+# The page operation each acting UI tool asks for, from its arguments: what
+# the untrusted-turn policy reads the declared effects of.
+UI_OPERATIONS = {"ui_navigate": _ui_navigate_op, "ui_indicate": _ui_indicate_op,
+                 "ui_journey": _ui_journey_op}
 
 
 async def tool_ui_map(args: dict) -> str:
@@ -11515,14 +11552,9 @@ async def tool_ui_journey(args: dict) -> str:
     """Navigate and point in order, each signal from the orb once the step
     before it has finished; a person's own navigation ends the rest. Each
     step is a ui_navigate (`command`) or a ui_indicate (`target`)."""
-    steps = args.get("steps")
-    if not isinstance(steps, list):
+    if not isinstance(args.get("steps"), list):
         return _ui_said({"status": "invalid", "reason": "steps must be a list"})
-    ops = [_ui_navigate_op(s) if isinstance(s, dict) and "command" in s
-           else _ui_indicate_op(s) if isinstance(s, dict) and "target" in s
-           else s                     # refused, with its position, by the contract
-           for s in steps]
-    return _ui_said(await _ui_request({"kind": "journey", "steps": ops}, args))
+    return _ui_said(await _ui_request(_ui_journey_op(args), args))
 
 
 async def tool_ui_clear(args: dict) -> str:

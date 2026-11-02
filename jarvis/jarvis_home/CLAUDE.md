@@ -68,7 +68,9 @@ target and part, and answers once it has arrived; with reveal "navigate" it
 opens what is needed first. `ui_journey` does several of those in order
 (for example a tab, then a detail, then a part), each signal starting at
 the orb once the step before has finished. Take keys from `ui_map`, never from a label or a
-row's position. A long map comes a page at a time; ask again with the
+row's position, and pass the `navigationRevision` it gave as
+`expectedNavigationRevision`, so that if he has moved the page since, the
+request comes back `stale` instead of undoing his move. A long map comes a page at a time; ask again with the
 cursor it gives. Pointing opens, sends and marks nothing read by itself. If
 he moves the page himself while you are pointing, his move wins: say what
 happened rather than trying again unasked.

@@ -185,6 +185,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "2812d44b2001159bdd46abb80193d9b2ddc929c87a44122043c01478dd6f3219",  # UI navigation: the UI tools' turn binding
     "165255a4d9a01a66b2e8652e54f2be8015c2374a24ed590990c71c84f9dbf986",  # UI navigation: ui_journey and interruption
     "de87215499c617643fd3c51c945c5835f4f55403d2f2497175dc478ec52b7bd4",  # UI navigation with the language setting
+    "493370b70acd291ce0e4fb125775044c3a701c1bd9df1859b72d59484d1e83af",  # pass ui_map's navigationRevision back
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

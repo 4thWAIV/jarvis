@@ -408,6 +408,30 @@ def operation_problem(op: Any) -> str | None:
     return None
 
 
+def declared_effects(op: Any) -> set[str]:
+    """Every side effect an operation's commands declare: a navigation's
+    command, an indication's reveal command when it may navigate, and each
+    journey step's. Only what the contract declares; an operation that is
+    not valid declares nothing (it is refused before it is sent)."""
+    c = load()
+    if not isinstance(op, dict):
+        return set()
+    kind = op.get("kind")
+    if kind == "navigate":
+        cmd = c.commands.get(op.get("commandId"))
+        return {e["effect"] for e in cmd["effects"]} if cmd else set()
+    if kind == "indicate" and op.get("reveal") == "navigate" and isinstance(op.get("target"), dict):
+        target = op["target"]
+        kind_decl = c.kinds.get(target.get("kind"))
+        pres = next((p for p in kind_decl["presentations"] if p["view"] == target.get("view")),
+                    None) if kind_decl else None
+        reveal = (pres or {}).get("reveal")
+        return declared_effects({"kind": "navigate", "commandId": reveal["command"]}) if reveal else set()
+    if kind == "journey" and isinstance(op.get("steps"), list):
+        return set().union(*(declared_effects(s) for s in op["steps"]))
+    return set()
+
+
 # -- the brain's tools, from the same declarations -------------------------------
 
 
@@ -455,6 +479,9 @@ def tool_specs() -> list[dict]:
     p = c.protocol
     client = {"type": "string", "maxLength": p["limits"]["idMax"],
               "description": "A page's client ID, only when no page is bound to this turn."}
+    revision = {"type": "integer", "minimum": 0,
+                "description": ("The navigationRevision ui_map gave. If the person has navigated "
+                                "since, the request is refused as stale and his view is left alone.")}
     return [
         {
             "name": "ui_map",
@@ -462,7 +489,9 @@ def tool_specs() -> list[dict]:
                 "What is on Tim's JARVIS page now: its regions and views, which is shown, the "
                 "navigation commands with whether each is available and why not, and the "
                 "targets you can point at (kind, key, parts). Bounded; filter by region or "
-                "view. Use it before ui_navigate or ui_indicate; never guess a key."),
+                "view. Use it before ui_navigate or ui_indicate; never guess a key. Its "
+                "navigationRevision goes back as expectedNavigationRevision, so his own "
+                "navigation in between makes the request stale instead of undoing it."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -482,7 +511,7 @@ def tool_specs() -> list[dict]:
                 "Returns what the page actually did and its declared side effects."),
             "inputSchema": {
                 "type": "object",
-                "properties": {**_navigate_properties(c), "client": client},
+                "properties": {**_navigate_properties(c), "client": client, "expectedNavigationRevision": revision},
                 "required": ["command"],
             },
         },
@@ -496,7 +525,7 @@ def tool_specs() -> list[dict]:
                 "or marks anything read by itself."),
             "inputSchema": {
                 "type": "object",
-                "properties": {**_indicate_properties(c), "client": client},
+                "properties": {**_indicate_properties(c), "client": client, "expectedNavigationRevision": revision},
                 "required": ["target"],
             },
         },
@@ -521,6 +550,7 @@ def tool_specs() -> list[dict]:
                         ]},
                     },
                     "client": client,
+                    "expectedNavigationRevision": revision,
                 },
                 "required": ["steps"],
             },

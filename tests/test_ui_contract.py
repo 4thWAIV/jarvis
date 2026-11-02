@@ -124,14 +124,16 @@ def test_the_tools_come_from_the_declarations():
     target = specs["ui_indicate"]["inputSchema"]["properties"]["target"]
     assert set(target["properties"]["kind"]["enum"]) == set(c.kinds)
     assert target["additionalProperties"] is False
-    # A journey's steps are ui_navigate's and ui_indicate's own arguments.
+    # A journey's steps are ui_navigate's and ui_indicate's own arguments,
+    # less the request's own (the page and the revision it was planned at).
+    request_level = {"client", "expectedNavigationRevision"}
     steps = specs["ui_journey"]["inputSchema"]["properties"]["steps"]
     assert steps["maxItems"] == c.protocol["limits"]["journeyMaxSteps"]
     navigate, indicate = steps["items"]["oneOf"]
     assert navigate["properties"] == {k: v for k, v in specs["ui_navigate"]["inputSchema"]["properties"].items()
-                                      if k != "client"}
+                                      if k not in request_level}
     assert indicate["properties"] == {k: v for k, v in specs["ui_indicate"]["inputSchema"]["properties"].items()
-                                      if k != "client"}
+                                      if k not in request_level}
     # No way to hand the page code, a selector, a URL or coordinates.
     def names(schema):
         for name, sub in schema.get("properties", {}).items():

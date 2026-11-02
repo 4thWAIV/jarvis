@@ -49,7 +49,7 @@ class _Voice:
         elif msg.get("type") == "ui_result":
             self.results[msg["requestId"]] = msg
 
-    async def request(self, operation: dict) -> dict:
+    async def request(self, operation: dict, expected: int | None = None) -> dict:
         for _ in range(100):
             if self.client:
                 break
@@ -58,7 +58,7 @@ class _Voice:
         rid = f"req-{self.sent}"
         self.ws.send(json.dumps({
             "type": "ui_request", "protocol": PROTOCOL, "requestId": rid, "clientId": self.client,
-            "epoch": 1, "turn": "t1", "expectedNavigationRevision": None,
+            "epoch": 1, "turn": "t1", "expectedNavigationRevision": expected,
             "expiresAt": int(time.time() * 1000) + 15000, "operation": operation}))
         for _ in range(200):
             if rid in self.results:
@@ -184,5 +184,30 @@ async def test_the_brains_navigation_leaves_focus_and_activity_alone(page_url):
                 assert await page.evaluate("() => document.activeElement?.title") == "Network"
             await asyncio.sleep(1.5)
             assert len(activity) == reports, activity[reports:]
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_request_planned_before_he_navigated_is_stale_and_leaves_his_view(page_url):
+    """The brain reads the map, he clicks another tab, then the brain's
+    request planned at the map's revision arrives: the page answers stale
+    and keeps his tab, rather than taking his view back."""
+    async with async_api.async_playwright() as p:
+        browser, page, voice, _ = await _open(p, page_url)
+        try:
+            seen = await voice.request({"kind": "map", "region": "right"})
+            assert seen["status"] == "completed", seen
+            planned = seen["navigationRevision"]
+            await page.click(".right-tabs [role=tab][title=Agents]")
+            stale = await voice.request({"kind": "navigate", "commandId": "right.tab.select",
+                                         "args": {"tab": "network"}}, expected=planned)
+            assert stale["status"] == "stale" and stale["effects"] == [], stale
+            assert (await page.evaluate(SHOWN))["right"] == "Agents"
+            # Planned at the page's revision now, the same request is carried out.
+            done = await voice.request({"kind": "navigate", "commandId": "right.tab.select",
+                                        "args": {"tab": "network"}}, expected=stale["navigationRevision"])
+            assert done["status"] == "completed", done
+            assert (await page.evaluate(SHOWN))["right"] == "Network"
         finally:
             await browser.close()
