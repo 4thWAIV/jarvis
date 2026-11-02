@@ -568,6 +568,7 @@ def test_the_checklist_comes_from_the_task_and_is_marked_by_what_was_read(
     matt.inspection.read_member(matt.me, key, member_id(ZIP.sha256, "review/summary.pdf"))
     state = matt.tasks.review_state(SERVER, MATT, m.thread_id)
     assert state.items[0].state == "read" and state.progress == "file_ready"
+    assert [loc.model_dump() for loc in state.items[0].read] == [{"kind": "page", "page": 1}]
     obs(matt, m, ZIP, "read_text", member_id(ZIP.sha256, "review/sources.md"), "blocked",
         "link")
     state = matt.tasks.review_state(SERVER, MATT, m.thread_id)
@@ -672,3 +673,15 @@ def test_a_transient_download_is_fetched_again_bounded_and_checked(tmp_path, ser
     with pytest.raises(wire.ContractError) as e:
         asyncio.run(third.files.downloaded(SERVER, MATT, sent.message_id, r.attachment_id))
     assert e.value.code == "attachment_not_found" and third.waits == [], "never retried"
+
+
+def test_where_a_member_was_read_is_kept_once_with_touching_lines_joined():
+    from jarvis.bundle_contract import LineLocation, PageLocation
+    from jarvis.bundle_tasks import READ_LOCATIONS_MAX, read_locations
+    got = read_locations([], [LineLocation(start=1, end=40), PageLocation(page=2)])
+    got = read_locations(got, [LineLocation(start=41, end=80), PageLocation(page=2),
+                               LineLocation(start=120, end=130)])
+    assert got == [LineLocation(start=1, end=80), PageLocation(page=2),
+                   LineLocation(start=120, end=130)]
+    many = read_locations([], [PageLocation(page=n) for n in range(1, 80)])
+    assert len(many) == READ_LOCATIONS_MAX and many[0] == PageLocation(page=1)

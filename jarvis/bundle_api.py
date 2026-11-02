@@ -8,7 +8,7 @@ the rest need the page's origin or the tool token like every change.
     GET  {A}/bundle/members?folder&continuation&limit -> MemberPage
     GET  {A}/bundle/members/{member_id}/text?continuation&max_chars -> TextPage
     GET  {A}/bundle/members/{member_id}/preview?continuation        -> Preview
-    GET  {A}/bundle/members/{member_id}/pages/{page}?max_edge       -> image/png
+    GET  {A}/bundle/members/{member_id}/pages/{page}?max_edge       -> the page's image
     GET  {A}/bundle/members/{member_id}/html/{path}   -> a static preview's file
     POST {A}/bundle/members/{member_id}/show          -> 204 (the bundle_view frame)
     POST {A}/repair                                   -> Draft
@@ -320,7 +320,7 @@ def router(context: Context, show: Optional[Show] = None) -> APIRouter:
                    max_edge: int = RENDER_EDGE_DEFAULT):
         return await _bytes_or_refusal(
             calls.page(key(message_id, attachment_id), member_id, page, max_edge),
-            lambda got: Response(got.png, media_type="image/png",
+            lambda got: Response(got.data, media_type=got.info.media_type,
                                  headers={"Cache-Control": "private, max-age=3600"}))
 
     @routes.get(MEMBER + BUNDLE_PREVIEW_MARK + "{path:path}")

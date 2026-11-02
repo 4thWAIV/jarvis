@@ -74,6 +74,7 @@ from starlette.responses import JSONResponse
 
 from jarvis import access_keys
 from jarvis import data_paths
+from jarvis.bundle_readers import html as bundle_html
 
 log = logging.getLogger("jarvis.auth")
 
@@ -169,14 +170,8 @@ def is_package_page(path: str) -> bool:
 # come from the same route, and every other address is refused.
 BUNDLE_PREVIEW_PREFIX = "/api/team/messages/"
 BUNDLE_PREVIEW_MARK = "/html/"
-BUNDLE_PREVIEW_HEADERS: tuple[tuple[bytes, bytes], ...] = (
-    (b"x-frame-options", b"SAMEORIGIN"),
-    (b"content-security-policy",
-     b"frame-ancestors 'self'; sandbox; default-src 'none'; img-src 'self' data:; "
-     b"style-src 'self' 'unsafe-inline'; font-src 'self'"),
-    (b"x-content-type-options", b"nosniff"),
-    (b"referrer-policy", b"no-referrer"),
-)
+# The headers themselves are the html reader's (one definition).
+BUNDLE_PREVIEW_HEADERS = bundle_html.PREVIEW_HEADERS
 
 
 def is_bundle_preview(path: str) -> bool:

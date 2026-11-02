@@ -9,19 +9,19 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Readiness, ReviewProgress } from "./bundleContract";
 import {
-  bundlesChanged, bundleWords as W, readReadiness, readReview, taskOf,
+  bundlesChanged, bundleWords as W, readReadiness, readReview, setTask,
 } from "./bundles";
-import type { AttachmentRef } from "./messagingContract";
+import { LIMITS, type AttachmentRef, type Draft, type TaskContext } from "./messagingContract";
+import type { OutcomeKind } from "./bundleContract";
 
 /** What the sender asked for, and which file is the one to review. */
-export function TaskLine({ message, attachments }: { message: object; attachments: AttachmentRef[] }) {
-  const task = taskOf(message);
+export function TaskLine({ task, attachments }: { task: TaskContext | null; attachments: AttachmentRef[] }) {
   if (!task) return null;
   const primary = task.primary && attachments.find((a) => a.attachment_id === task.primary!.attachment_id
                                                         && a.sha256 === task.primary!.sha256);
   return (
     <p className="message-task">
-      <span className="bundle-badge">{W.outcome[task.outcome_kind] ?? W.outcome.other}</span>{" "}
+      <span className="bundle-badge">{W.outcome[task.outcome_kind]}</span>{" "}
       <span className="message-task-words">{task.requested_outcome}</span>
       {primary && (
         <span className="message-task-primary" aria-label={W.primary}>
@@ -64,5 +64,65 @@ export function ReadinessLine({ messageId, revision }: { messageId: string; revi
        title={gaps.join("\n") || undefined}>
       {W.readiness[readiness!]}
     </p>
+  );
+}
+
+/** On a draft with files: what the owner asks of the recipient, and which
+ *  file is the one to review (a member inside an archive is named through
+ *  the brain's set_message_task). Saved as the draft's task when changed;
+ *  "No request" clears it. */
+export function TaskFields({ draft, disabled }: { draft: Draft; disabled: boolean }) {
+  const task = draft.task;
+  const [kind, setKind] = useState<OutcomeKind | "">(task?.outcome_kind ?? "");
+  const [words, setWords] = useState(task?.requested_outcome ?? "");
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    setKind(task?.outcome_kind ?? "");
+    setWords(task?.requested_outcome ?? "");
+  }, [task?.outcome_kind, task?.requested_outcome]);
+  const save = async (next: { kind?: OutcomeKind | ""; words?: string; primary?: string }) => {
+    const k = next.kind ?? kind;
+    const outcome = (next.words ?? words).trim();
+    const primaryId = next.primary ?? task?.primary?.attachment_id ?? draft.attachments[0]?.attachment_id;
+    const file = draft.attachments.find((a) => a.attachment_id === primaryId);
+    if (k && !outcome) return;                      // waiting for the words
+    const value: TaskContext | null = !k ? null : {
+      requested_outcome: outcome, outcome_kind: k,
+      primary: file ? {
+        attachment_id: file.attachment_id, sha256: file.sha256,
+        member_path: task?.primary?.attachment_id === file.attachment_id ? task.primary.member_path : null,
+      } : null,
+      supporting: task?.supporting ?? [], reply_audience: "sender_only",
+    };
+    if (JSON.stringify(value) === JSON.stringify(task ?? null)) return;
+    try {
+      await setTask(draft.message_id, draft.draft_revision, value);
+      setProblem(null);
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+  };
+  return (
+    <div className="composer-task">
+      <select aria-label={W.request} value={kind} disabled={disabled}
+              onChange={(e) => { const k = e.target.value as OutcomeKind | ""; setKind(k); void save({ kind: k }); }}>
+        <option value="">{W.noRequest}</option>
+        {(Object.keys(W.outcome) as OutcomeKind[]).map((k) => <option key={k} value={k}>{W.outcome[k]}</option>)}
+      </select>
+      {kind && (
+        <input type="text" aria-label={W.request} placeholder={W.request} value={words}
+               maxLength={LIMITS.TASK_OUTCOME_MAX_CHARS} disabled={disabled}
+               onChange={(e) => setWords(e.target.value)}
+               onBlur={() => void save({})} />
+      )}
+      {kind && draft.attachments.length > 1 && (
+        <select aria-label={W.primary} disabled={disabled || !task}
+                value={task?.primary?.attachment_id ?? ""}
+                onChange={(e) => void save({ primary: e.target.value })}>
+          {draft.attachments.map((a) => <option key={a.attachment_id} value={a.attachment_id}>{a.filename}</option>)}
+        </select>
+      )}
+      {problem && <span className="composer-readiness readiness-blocked" role="alert">{problem}</span>}
+    </div>
   );
 }

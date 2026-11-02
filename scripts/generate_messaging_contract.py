@@ -543,7 +543,8 @@ def types_text(w, local) -> str:
         "export const LIMITS = {",
     ]
     for name in ("SUBJECT_MAX_CHARS", "TEXT_MAX_CHARS", "RELATED_MAX", "ATTACHMENTS_MAX",
-                 "FILENAME_MAX_BYTES", "FILE_MAX_BYTES", "PACKAGE_MAX_BYTES"):
+                 "FILENAME_MAX_BYTES", "FILE_MAX_BYTES", "PACKAGE_MAX_BYTES",
+                 "TASK_OUTCOME_MAX_CHARS"):
         out.append(f"  {name}: {getattr(w, name)},")
     for name in ("HISTORY_PAGE_DEFAULT", "HISTORY_PAGE_MAX"):
         out.append(f"  {name}: {getattr(local, name)},")

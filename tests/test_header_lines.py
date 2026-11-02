@@ -347,6 +347,20 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server._bundle_reply": (
+        "its head is the refusal's own words (bundle_contract's InspectionRefused or "
+        "messaging_api's Refused, fixed text) or the paging line; the route's JSON, "
+        "which carries the sender's names, paths and text, goes only inside "
+        "_wrap_untrusted"),
+    "server.tool_show_bundle_member": (
+        "it says a refusal's own fixed words or one of its own sentences; the "
+        "member's name and path never reach the reply"),
+    "server._bundle_change": (
+        "it says a refusal's own fixed words, or its callers' sentences built from "
+        "ids, revisions, a count and the scope word, none written by a person"),
+    "bundle_tasks._carry": (
+        "it copies a checklist item's state and read locations onto the same "
+        "member of a repaired copy; it prints nothing"),
     "server._speech_model_line": (
         "its `state` is a download's own step, one of speech_models' fixed words, "
         "and every other value is from transcriber.MODELS or the installer's own "

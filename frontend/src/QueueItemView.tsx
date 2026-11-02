@@ -305,13 +305,17 @@ function MessageCard({ m, state, dir, thread, onReply }: {
         </p>
       )}
       {msg.subject && <h3 className="message-subject">{msg.subject}</h3>}
-      <TaskLine message={msg} attachments={msg.attachments} />
+      <TaskLine task={msg.task} attachments={msg.attachments} />
       <div className="message-text" ref={body}>{msg.text}</div>
       {msg.attachments.length > 0 && (
         <div className="message-files">
           {msg.attachments.map((a) => (
             <FileCard key={a.attachment_id} fileRef={a} messageId={msg.message_id} incoming={toMe && !fromMe}
-                      file={m.files.find((f) => f.attachment_id === a.attachment_id)} />
+                      file={m.files.find((f) => f.attachment_id === a.attachment_id)}
+                      report={fromMe
+                        ? m.receipts?.openability.find((r) => r.attachment_id === a.attachment_id
+                                                              && r.sha256 === a.sha256)
+                        : undefined} />
           ))}
         </div>
       )}

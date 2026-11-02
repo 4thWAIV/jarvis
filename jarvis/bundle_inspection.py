@@ -55,8 +55,9 @@ from jarvis.bundle_cache import CacheKey, DerivedCache
 from jarvis.bundle_contract import (ATTACHMENT_PREFIX, MEMBER_PAGE_DEFAULT, MEMBER_PAGE_MAX,
                                     PATH_MAX_CHARS, PREVIEW_REFS_MAX, TEXT_PAGE_DEFAULT_CHARS,
                                     TEXT_PAGE_MAX_CHARS, AttachmentInfo, Classification,
-                                    Extent, InspectionRefused, Inventory, MemberInfo,
-                                    MemberPage, Operation, PackageBadge, Preview, PreviewRef,
+                                    Extent, InspectionRefused, Inventory, Location, MemberInfo,
+                                    MemberPage, Operation, PackageBadge, PageLocation, Preview,
+                                    PreviewRef,
                                     Reason, ReaderId, RenderedPage, RenderedPageInfo,
                                     RenderOptions, Support, TextChunk, TextPage,
                                     decode_continuation, encode_continuation)
@@ -105,6 +106,8 @@ class Observation:
     member_id: Optional[str]
     support: Support
     reason: Optional[Reason] = None
+    # Where a read reached: a text page's chunks, a rendered page.
+    locations: tuple[Location, ...] = ()
 
 
 # -- where a member's bytes come from ------------------------------------------------------
@@ -226,10 +229,7 @@ def _quick_support(detected: Detected) -> tuple[Support, Optional[Reason], list[
     state = reader.health()
     if not state.available:
         return "unsupported", state.reason or "reader_unavailable", []
-    ops = set(state.operations)
-    if detected.format in image_reader.ImageReader.formats and detected.format != "png":
-        ops.discard("render")
-    return "readable", None, _operations(ops)
+    return "readable", None, _operations(set(state.operations))
 
 
 def _clip(path: str) -> str:
@@ -289,9 +289,11 @@ class BundleInspection:
         return info, Path(path)
 
     def _observe(self, owner: Owner, key: AttachmentKey, sha256: str, operation: Operation,
-                 member: Optional[str], support: Support, reason: Optional[str] = None) -> None:
+                 member: Optional[str], support: Support, reason: Optional[str] = None,
+                 locations: tuple = ()) -> None:
         try:
-            self.observer(Observation(owner, key, sha256, operation, member, support, reason))
+            self.observer(Observation(owner, key, sha256, operation, member, support, reason,
+                                      tuple(locations)))
         except Exception:                                  # noqa: BLE001 - never the caller's
             log.exception("bundle observer failed")
 
@@ -648,7 +650,8 @@ class BundleInspection:
         partial = {"page_failed", "scanned_no_text", "too_large"} & set(page.notes)
         self._observe(owner, key, info.sha256, "read_text", member_id,
                       "partial" if partial else "readable",
-                      next(iter(sorted(partial)), None) if partial else None)
+                      next(iter(sorted(partial)), None) if partial else None,
+                      tuple(c.location for c in page.chunks))
         return page
 
     def _url(self, key: AttachmentKey, member: str, tail: str) -> str:
@@ -712,7 +715,7 @@ class BundleInspection:
 
     def render_page(self, owner: Owner, key: AttachmentKey, member_id: str, page: int,
                     options: RenderOptions = RenderOptions()) -> RenderedPage:
-        """A PDF page (or a PNG image, page 1) as PNG."""
+        """A PDF page as PNG, or an image as its own page 1, as it was sent."""
         info, entry, reader, source = self._readable(owner, key, member_id, "render")
         description = self._run(owner, key, info, member_id, "render",
                                 lambda: self._describe(owner, info, source, entry.detected,
@@ -731,8 +734,9 @@ class BundleInspection:
             rendered = self._run(owner, key, info, member_id, "render",
                                  lambda: reader.render(source, entry.detected, page, options))
             head = rendered.info.model_dump_json().encode()
-            self.cache.put(cache_key, len(head).to_bytes(4, "big") + head + rendered.png)
-        self._observe(owner, key, info.sha256, "render", member_id, "readable")
+            self.cache.put(cache_key, len(head).to_bytes(4, "big") + head + rendered.data)
+        self._observe(owner, key, info.sha256, "render", member_id, "readable",
+                      locations=(PageLocation(page=page),))
         return rendered
 
     def html_asset(self, owner: Owner, key: AttachmentKey, member_id: str,

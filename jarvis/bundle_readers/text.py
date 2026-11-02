@@ -75,7 +75,10 @@ class TextReader:
 
     def read_text(self, source: MemberSource, detected: Detected, cursor: Optional[dict],
                   max_chars: int) -> TextSlice:
-        units, notes = _units(detected.format, self._text(source))
+        data = read_bounded(source, TEXT_MAX_BYTES)
+        units, notes = _units(detected.format, _paging.decode(data))
+        if _paging.encoding_of(data) == "cp1252":
+            notes = (*notes, "legacy_encoding")
         chunks, after = _paging.page(units, cursor, max_chars)
         return TextSlice(chunks, after, notes)
 

@@ -59,7 +59,8 @@ from jarvis import bundle_archive
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.bundle_contract import (CHECKLIST_MAX, TEXT_PAGE_MAX_CHARS, ChecklistItem,
-                                    InspectionRefused, ReviewState, member_id)
+                                    InspectionRefused, LineLocation, Location, ReviewState,
+                                    member_id)
 from jarvis.bundle_inspection import AttachmentKey, Observation, Owner
 from jarvis.bundle_preflight import all_members
 from jarvis.messaging_api import Refused
@@ -134,7 +135,7 @@ def page_images(inspection, owner: Owner, key: AttachmentKey,
                 rendered = inspection.render_page(owner, key, m.member_id, page)
                 count = rendered.info.page_count
                 name = f"{stem}-{page:03d}.png" if len(pdfs) > 1 else f"page-{page:03d}.png"
-                out.writestr(name, rendered.png)
+                out.writestr(name, rendered.data)
                 page, done = page + 1, done + 1
     return buffer.getvalue()
 
@@ -512,14 +513,41 @@ class BundleTasks:
         if mark is None:
             return
 
+        def changed(i: ChecklistItem) -> ChecklistItem:
+            if i.attachment_id != o.key.attachment_id or i.member_id != o.member_id:
+                return i
+            update = {}
+            if i.state not in ("cited", mark) and not (mark == "unreadable" and i.state == "read"):
+                update["state"] = mark
+            if mark == "read" and o.locations:
+                update["read"] = read_locations(i.read, o.locations)
+            return i.model_copy(update=update) if update else i
+
         def marked(state: ReviewState) -> ReviewState:
-            return state.model_copy(update={"items": [
-                i.model_copy(update={"state": mark})
-                if (i.attachment_id == o.key.attachment_id and i.member_id == o.member_id
-                    and i.state not in ("cited", mark)
-                    and not (mark == "unreadable" and i.state == "read")) else i
-                for i in state.items]})
+            return state.model_copy(update={"items": [changed(i) for i in state.items]})
         self._write(ns, held.message.thread_id, marked)
+
+
+READ_LOCATIONS_MAX = 50       # ChecklistItem.read's own bound
+
+
+def read_locations(read: list[Location], new) -> list[Location]:
+    """Where a member has been read, with `new` added: a place already
+    there is not repeated, and line ranges that touch are joined. At most
+    READ_LOCATIONS_MAX; past that, the first places read are kept."""
+    out = list(read)
+    for loc in new:
+        if loc in out:
+            continue
+        if isinstance(loc, LineLocation):
+            joined = next((i for i, o in enumerate(out) if isinstance(o, LineLocation)
+                           and o.start <= loc.end + 1 and loc.start <= o.end + 1), None)
+            if joined is not None:
+                o = out[joined]
+                out[joined] = LineLocation(start=min(o.start, loc.start), end=max(o.end, loc.end))
+                continue
+        out.append(loc)
+    return out[:READ_LOCATIONS_MAX]
 
 
 def _carried(task: Optional[wire.TaskContext], old: wire.AttachmentRef,

@@ -193,7 +193,7 @@ def test_html_is_served_as_a_sandboxed_static_preview(bundles):
     assert web_auth.is_bundle_preview(path)
     headers = dict(web_auth.apply_security_headers([(b"x-frame-options", b"ALLOW")], path))
     csp = headers[b"content-security-policy"].decode()
-    assert "sandbox;" in csp and "allow-scripts" not in csp and "default-src 'none'" in csp
+    assert "sandbox" in [d.strip() for d in csp.split(";")] and "allow-scripts" not in csp and "default-src 'none'" in csp
     assert "script-src" not in csp and "frame-ancestors 'self'" in csp
     assert headers[b"x-frame-options"] == b"SAMEORIGIN"
     for other in (f"{A}/bundle/members/{MEMBER}/text", f"{A}/bundle", "/api/team/messages/x",
@@ -207,7 +207,7 @@ def test_the_html_route_gets_the_preview_headers_through_the_web_boundary(wired)
         bundle_context=lambda: bundle_api.BundleContext(FakeInspection(), OWNER))
     r = wired.client.get(f"{A}/bundle/members/{MEMBER}/html/index.html")
     assert r.status_code == 200, r.text
-    assert "sandbox;" in r.headers["content-security-policy"]
+    assert "sandbox" in [d.strip() for d in r.headers["content-security-policy"].split(";")]
     assert r.headers["x-frame-options"] == "SAMEORIGIN"
 
 
@@ -389,3 +389,64 @@ def test_set_review_scope_sends_the_revision_it_read(brain, monkeypatch):
     joined, _ = _read_all(brain, "review_checklist", thread=str(thread))
     assert json.loads(joined) == brain.client.get(
         f"/api/team/messages/threads/{thread}/review").json()
+
+
+# ── the sender hears what the Queue's file card shows ───────────────────
+
+def test_a_sent_files_report_is_in_the_brains_thread_read(wired):
+    from jarvis import messaging_wire as wire
+    ref = SimpleNamespace(filename="review.zip", size_bytes=2048, attachment_id=AID,
+                          sha256="a" * 64)
+    report = wire.OpenabilityReport(
+        attachment_id=AID, sha256="a" * 64, content_revision=1, status="partial",
+        failed_operation="read_text", failed_member="review/summary.pdf",
+        reason="reader_unavailable", members_total=3, members_readable=2,
+        checked_at="2026-11-02T12:00:00Z")
+    (line,) = wired.server._file_lines([ref], [report])
+    assert "only partly readable there (2 of 3 readable; first failed: review/summary.pdf" \
+        in line and "no reader" in line
+    (plain,) = wired.server._file_lines([ref])
+    assert "recipient" not in plain
+    other = report.model_copy(update={"sha256": "b" * 64})
+    assert "recipient" not in wired.server._file_lines([ref], [other])[0]
+
+
+# ── the routes and tools over the real inspection service and readers ──
+
+def test_the_routes_and_tools_read_a_real_bundle_through_the_real_readers(
+        wired, tmp_path, monkeypatch):
+    """No stand-in between the routes and the readers: the readers lane's
+    BundleInspection over a synthetic manifest-free wrapper-folder zip, its
+    PDF read and drawn through the faked osascript seam."""
+    from jarvis.bundle_cache import DerivedCache
+    from jarvis.bundle_inspection import BundleInspection
+    from jarvis.bundle_readers import _quartz
+    from tests.bundle_fixtures import FakeOsascript, review_bundle
+    from tests.test_bundle_inspection import TIM, Files
+    monkeypatch.setattr(_quartz, "RUNNER", FakeOsascript())
+    _quartz.forget_health()
+    files = Files(tmp_path / "downloads")
+    key = files.add(TIM, review_bundle(manifest=None), "review.zip")
+    seen: list = []
+    service = BundleInspection(files, DerivedCache(tmp_path / "cache"), observer=seen.append)
+    wired.server.messaging = SimpleNamespace(
+        bundle_context=lambda: bundle_api.BundleContext(service, TIM))
+    base = f"/api/team/messages/{key.message_id}/attachments/{key.attachment_id}"
+    got = wired.client.get(base + "/bundle").json()
+    assert got["inventory"]["wrapper"] and got["package"] is None
+    top = wired.client.get(base + "/bundle/members").json()
+    folder = next(m for m in top["members"] if m["is_dir"])
+    inside = wired.client.get(base + "/bundle/members", params={"folder": folder["path"]}).json()
+    pdf = next(m for m in inside["members"] if m["format"] == "pdf")
+    text = wired.client.get(f"{base}/bundle/members/{pdf['member_id']}/text").json()
+    assert text["chunks"] and text["chunks"][0]["location"]["kind"] == "page"
+    r = wired.client.get(f"{base}/bundle/members/{pdf['member_id']}/pages/1")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.content.startswith(b"\x89PNG")
+    said = _call(wired, "read_bundle_member", message=str(key.message_id),
+                 attachment=str(key.attachment_id), member=pdf["member_id"])
+    assert text["chunks"][0]["text"][:20] in said["text"]
+    assert [(o.operation, o.reason, [loc.model_dump() for loc in o.locations])
+            for o in seen if o.operation == "render"] == [("render", None,
+                                                         [{"kind": "page", "page": 1}])]
+    _quartz.forget_health()

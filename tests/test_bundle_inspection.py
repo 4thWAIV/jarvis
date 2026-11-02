@@ -146,7 +146,7 @@ def test_the_primary_pdf_is_read_and_rendered_in_place(world):
     assert page.reader.name == "pdf" and page.member.path == f"{WRAPPER}/summary.pdf"
     rendered = world.service.render_page(MATT, key, pdf.member_id, 2,
                                          RenderOptions(max_edge=400))
-    assert rendered.png.startswith(b"\x89PNG") and rendered.info.height == 400
+    assert rendered.data.startswith(b"\x89PNG") and rendered.info.height == 400
     with pytest.raises(InspectionRefused) as e:
         world.service.render_page(MATT, key, pdf.member_id, 3)
     assert e.value.code == "page_out_of_range"
@@ -472,14 +472,13 @@ def test_an_image_preview_is_the_file_itself(world):
     assert ref.url.endswith("/html/shot.png")
     assert world.service.html_asset(MATT, key, shot.member_id, "shot.png") == \
         (png_bytes(7, 5), "image/png")
-    assert world.service.render_page(MATT, key, shot.member_id, 1).png == png_bytes(7, 5)
+    assert world.service.render_page(MATT, key, shot.member_id, 1).data == png_bytes(7, 5)
     photo = find(world.service, MATT, key, "photo.jpg")
-    assert photo.operations == []
+    assert photo.operations == ["render"]
     (ref,) = world.service.preview_member(MATT, key, photo.member_id).refs
     assert (ref.width, ref.height) == (800, 600)
-    with pytest.raises(InspectionRefused) as e:
-        world.service.render_page(MATT, key, photo.member_id, 1)
-    assert e.value.code == "unsupported"
+    page = world.service.render_page(MATT, key, photo.member_id, 1)
+    assert (page.data, page.info.media_type) == (jpeg_header(800, 600), "image/jpeg")
 
 
 def test_a_single_html_file_serves_only_itself(world):

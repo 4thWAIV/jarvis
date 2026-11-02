@@ -354,14 +354,17 @@ no page has text, `page_failed` for a page that cannot be read, and a page
 drawn into a raw CoreGraphics bitmap that `_quartz.png` encodes with zlib;
 never ImageIO, NSBitmapImageRep or `sips`, which crash on this Mac (ImageIO's
 GIF reader too). Text, Markdown, JSON, CSV and TSV (`text.py`): UTF-8, a
-byte order mark, else Windows-1252; CSV and TSV paged by whole rows;
-malformed JSON or CSV still read, noted `corrupt`. HTML and SVG (`html.py`):
+byte order mark, else Windows-1252 (noted `legacy_encoding`); CSV and TSV
+paged by whole rows; malformed JSON or CSV still read, noted `corrupt`. HTML and SVG (`html.py`):
 text with `html.parser`, and what it would load from outside listed as
 `blocked_resources`; its static preview's files are served only from the
 same archive with `html.PREVIEW_HEADERS` (CSP `default-src 'none'` and
 `sandbox` without `allow-scripts`). PNG, JPEG, GIF and WebP (`image.py`):
 sized from their headers and never decoded; the preview is the file
-itself, and only a PNG is a rendered page. docx, xlsx and pptx
+itself, and so is its one rendered page, served with its own type
+(`RenderedPageInfo.media_type`; a PDF page is PNG), so the brain sees a
+JPEG, GIF or WebP as sent; an image is never shrunk to `max_edge`, since
+that would mean decoding it. docx, xlsx and pptx
 (`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
 and row (saved values with the formula beside them,
 `formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
@@ -413,7 +416,10 @@ on; a review of a draft with files stores it with the revision
 (`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
 thread with a flattened copy checked member by member, or companions,
 from `FileSnapshots.original_bytes`), and keeps the recipient's review
-checklist (`human_review`, never sent), resumed across a repair. A received
+checklist (`human_review`, never sent), resumed across a repair; each
+item keeps where it was read (`read`: the pages and line ranges an
+`Observation`'s `locations` carried, ranges that touch joined,
+`bundle_tasks.read_locations`). Nothing marks an item `cited` yet. A received
 file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
 transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
 `messaging_runtime` builds and binds the three records; a draft edit from a
@@ -430,9 +436,13 @@ block, as `look_at_screen` does. The Codex brain reaches the same MCP
 server and the same tools. `show_bundle_member` and the page's Open share
 the show route's call, which checks the member and sends ids only in a
 `bundle_view` frame on the voice socket. A member's static HTML is served
-with `web_auth.BUNDLE_PREVIEW_HEADERS` (framed by JARVIS only, `sandbox`
-with no permissions, nothing from outside the bundle) and framed with
-`sandbox=""`. Downloading or revealing a file is not reading it. The
+with `web_auth.BUNDLE_PREVIEW_HEADERS`, which are the html reader's own
+`PREVIEW_HEADERS` (framed by JARVIS only, `sandbox` with no permissions,
+nothing from outside the bundle), and framed with `sandbox=""`. A sent
+file's card shows the recipient's JARVIS's report once it has opened it
+(`receipts.openability`; "Opens there", "Partly readable there" with the
+first member that failed), and `read_people_thread` says the same on each
+file line and the thread's review progress in its head. Downloading or revealing a file is not reading it. The
 page's side: `bundles.ts` (the routes, the open member and `bundleWords`,
 every string shown), `BundleInventory.tsx` (Open on a checked incoming
 file's card: a document opens in the centre, an archive lists a folder at
@@ -440,7 +450,10 @@ a time), `BundleMemberView.tsx` (the centre's File view: a PDF's pages
 beside its text, text with More, rows as a table, images, the static
 preview) and `BundleLines.tsx` (a message's request line, the thread's
 review progress, a draft's readiness, each shown only when there is
-something to say).
+something to say, and a draft's request fields, `TaskFields`: the kind,
+the words and which file is primary, saved through the task route; a
+member inside an archive is named as primary through `set_message_task`).
+A member a zip lists as a device or pipe is `special_file`.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five

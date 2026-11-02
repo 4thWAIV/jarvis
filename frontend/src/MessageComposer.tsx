@@ -17,7 +17,7 @@ import {
   addFiles, directory, discard, edit, editors, keepMine, queue, removeFile, review, roster, takeTheirs,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
-import { ReadinessLine } from "./BundleLines";
+import { ReadinessLine, TaskFields } from "./BundleLines";
 import { personName, previewOf, recipientLabel } from "./queueStore";
 
 const MB = 1024 * 1024;
@@ -84,7 +84,10 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
                     onRemove={locked ? undefined : () => removeFile(editorKey, a.attachment_id)} />
         ))}
         {draft && draft.attachments.length > 0 && (
-          <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
+          <>
+            <TaskFields draft={draft} disabled={locked || ed.saving || ed.dirty} />
+            <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
+          </>
         )}
         {ed.adding > 0 && <p className="composer-adding" role="status">Adding {ed.adding} file{ed.adding === 1 ? "" : "s"}…</p>}
         <label className="composer-attach">

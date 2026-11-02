@@ -3,11 +3,10 @@ headers, read with the standard library, and their bytes are served as
 they are (the preview's image is the file itself, through
 BundleInspection.html_asset).
 
-A PNG is also its own rendered page (page 1), exactly as sent, at its own
-size whatever `max_edge` asks: shrinking it would mean decoding it. JPEG,
-GIF and WebP have no rendered page, since a rendered page is a PNG and
-making one would mean decoding them, which on this Mac goes through
-ImageIO (its GIF reader crashes here).
+Each is also its own rendered page (page 1), exactly as sent with its own
+media type, at its own size whatever `max_edge` asks: shrinking it or
+turning it into a PNG would mean decoding it, which on this Mac goes
+through ImageIO (its GIF reader crashes here).
 """
 from __future__ import annotations
 
@@ -80,6 +79,7 @@ def _webp(data: bytes) -> Optional[tuple[int, int]]:
 
 
 _SIZES = {"png": _png, "gif": _gif, "jpeg": _jpeg, "webp": _webp}
+_MEDIA = {"png": "image/png", "gif": "image/gif", "jpeg": "image/jpeg", "webp": "image/webp"}
 
 
 def dimensions(fmt: str, data: bytes) -> Optional[tuple[int, int]]:
@@ -110,8 +110,7 @@ class ImageReader:
             self.size(source, detected)
         except Unsupported as e:
             return Description("unsupported", Extent(), e.reason)
-        operations = frozenset({"render"}) if detected.format == "png" else frozenset()
-        return Description("readable", Extent(pages=1), operations=operations)
+        return Description("readable", Extent(pages=1), operations=frozenset({"render"}))
 
     def read_text(self, source: MemberSource, detected: Detected, cursor: Optional[dict],
                   max_chars: int) -> TextSlice:
@@ -119,11 +118,10 @@ class ImageReader:
 
     def render(self, source: MemberSource, detected: Detected, page: int,
                options: RenderOptions) -> RenderedPage:
-        if detected.format != "png":
-            raise Unsupported("reader_unavailable")
         data = read_bounded(source, IMAGE_MAX_BYTES)
-        size = dimensions("png", data)
+        size = dimensions(detected.format, data)
         if size is None:
             raise Unsupported("corrupt")
         return RenderedPage(RenderedPageInfo(member_id=source.member_id, page=1, page_count=1,
-                                             width=size[0], height=size[1]), data)
+                                             width=size[0], height=size[1],
+                                             media_type=_MEDIA[detected.format]), data)

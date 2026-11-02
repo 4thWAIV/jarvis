@@ -17,6 +17,7 @@ import {
   type MemberPage, type OutcomeKind, type PreflightResult, type Preview, type Readiness,
   type Reason, type ReviewProgress, type ReviewState, type TextPage,
 } from "./bundleContract";
+import type { Draft, Openability, TaskContext } from "./messagingContract";
 import { createStore } from "./store";
 
 /** A received file, by its message and attachment ids. */
@@ -75,6 +76,17 @@ export const bundleWords = {
     other: "Request",
   } satisfies Record<OutcomeKind, string>,
   primary: "Primary",
+  request: "Request",
+  noRequest: "No request",
+  /** The recipient's JARVIS's report on a file it was told to open. */
+  openability: {
+    verified: "Opens there",
+    ready: "Opens there",
+    partial: "Partly readable there",
+    unsupported: "Can't be read there",
+    corrupt: "Damaged there",
+    unavailable: "Not opened there",
+  } satisfies Record<Openability, string>,
   reason: (reason: Reason | null | undefined) => (reason ? REASONS_SHOWN[reason] : ""),
 } as const;
 
@@ -134,7 +146,7 @@ export async function readPreview(m: MemberKey): Promise<Preview> {
   return answer(await fetch(`${memberBase(m)}/preview`));
 }
 
-/** Where a rendered page is served (image/png). */
+/** Where a rendered page is served (a PDF page as PNG, an image as sent). */
 export function pageUrl(m: MemberKey, page: number,
                         maxEdge: number = BUNDLE_LIMITS.RENDER_EDGE_DEFAULT): string {
   return `${memberBase(m)}/pages/${page}${query({ max_edge: maxEdge })}`;
@@ -163,6 +175,15 @@ export async function openMember(m: MemberKey): Promise<string | null> {
 /** The sender's prediction for a draft's files. */
 export async function readReadiness(messageId: string): Promise<PreflightResult> {
   return answer(await fetch(`/api/team/messages/drafts/${enc(messageId)}/readiness`));
+}
+
+/** The draft's one-off request (null clears it); the draft as saved. */
+export async function setTask(messageId: string, expectedRevision: number,
+                              task: TaskContext | null): Promise<Draft> {
+  return answer(await fetch(`/api/team/messages/drafts/${enc(messageId)}/task`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_draft_revision: expectedRevision, task }),
+  }));
 }
 
 /** The owner's own record of a review asked of him on a thread. */
@@ -196,16 +217,3 @@ export function cells(line: string, format: FormatId): string[] {
   return out;
 }
 
-/** A one-off request on a message (the wire's `MessageContent.task`). Read
- *  here by its documented shape until the transport lane's wire types are
- *  generated into messagingContract.ts; then that type replaces this one. */
-export interface TaskOnMessage {
-  requested_outcome: string;
-  outcome_kind: OutcomeKind;
-  primary?: { attachment_id: string; sha256: string; member_path?: string | null } | null;
-}
-
-export function taskOf(message: object): TaskOnMessage | null {
-  const task = (message as { task?: TaskOnMessage | null }).task;
-  return task && typeof task.requested_outcome === "string" ? task : null;
-}

@@ -101,7 +101,8 @@ from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import packages_api, work_packages
 from jarvis import bundle_api
-from jarvis.bundle_contract import BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, TEXT_PAGE_DEFAULT_CHARS
+from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SHOWN,
+                                    TEXT_PAGE_DEFAULT_CHARS)
 from jarvis.bundle_inspection import AttachmentKey
 from jarvis import self_update
 from jarvis.arrival_announcer import Wording
@@ -6554,10 +6555,31 @@ async def tool_people_messages(args: dict) -> str:
     return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
 
 
-def _file_lines(attachments) -> list[str]:
-    """A message's or a draft's files, one line each: name, size and id."""
+_OPENED_THERE = {"verified": "opens there", "ready": "opens there",
+                 "partial": "only partly readable there", "unsupported": "can't be read there",
+                 "corrupt": "damaged there", "unavailable": "not opened there"}
+
+
+def _file_lines(attachments, reports=()) -> list[str]:
+    """A message's or a draft's files, one line each: name, size and id,
+    and on a sent file the recipient's JARVIS's report once it opened it
+    (the same report the Queue's file card shows)."""
+    def opened(a) -> str:
+        r = next((r for r in reports if r.attachment_id == a.attachment_id
+                  and r.sha256 == a.sha256), None)
+        if r is None:
+            return ""
+        said = f"; the recipient's JARVIS says it {_OPENED_THERE[r.status]}"
+        if r.status not in ("verified", "ready"):
+            said += f" ({r.members_readable} of {r.members_total} readable"
+            if r.failed_member:
+                said += f"; first failed: {r.failed_member}"
+            if r.reason:
+                said += f", {REASONS_SHOWN.get(r.reason, r.reason)}"
+            said += ")"
+        return said
     return [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
-            f"attachment {a.attachment_id}" for a in attachments]
+            f"attachment {a.attachment_id}{opened(a)}" for a in attachments]
 
 
 def _thread_text(local, item) -> str:
@@ -6574,13 +6596,31 @@ def _thread_text(local, item) -> str:
         if msg.subject:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
-        out += _file_lines(msg.attachments)
+        out += _file_lines(msg.attachments,
+                           m.receipts.openability if m.direction == "outgoing" else ())
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
                    f"{d.send.state.replace('_', ' ')}: {d.text}")
         out += _file_lines(d.attachments)
     return "\n".join(out).strip()
+
+
+_REVIEW_PROGRESS_WORDS = {"file_ready": "the file is ready",
+                          "evidence_unavailable": "some evidence is unreadable",
+                          "review_in_progress": "in progress",
+                          "notes_ready": "notes are drafted"}
+
+
+async def _review_progress(thread) -> Optional[str]:
+    """The thread's review progress, as the Queue item's cue shows it
+    (bundle_api's review call); None when there is nothing to say."""
+    try:
+        got = await bundle_api.answer(_bundles.review(thread))
+    except Exception:                       # noqa: BLE001 - nothing to say, as on the page
+        return None
+    progress = got.body().get("progress") if got.ok else None
+    return _REVIEW_PROGRESS_WORDS.get(progress) if progress else None
 
 
 async def tool_read_people_thread(args: dict) -> str:
@@ -6601,6 +6641,9 @@ async def tool_read_people_thread(args: dict) -> str:
     if unread:
         head += (" Once he has heard them, mark these read with mark_people_message_read: "
                  + ", ".join(unread) + ".")
+    progress = await _review_progress(thread)
+    if progress:
+        head += f" His review: {progress} (review_checklist has the detail)."
     return head + "\n" + _one_page(_thread_text(messaging.local, item), _page_arg(args),
                                    "That conversation", "read_people_thread")
 
@@ -7086,7 +7129,7 @@ async def tool_look_at_bundle_page(args: dict):
     info = rendered.info
     return ToolImage(f"Page {info.page} of {info.page_count}, as it looks.\n"
                      + _wrap_untrusted(_BUNDLE_WRAP_NAME, info.model_dump_json()),
-                     rendered.png)
+                     rendered.data, info.media_type)
 
 
 async def tool_show_bundle_member(args: dict) -> str:

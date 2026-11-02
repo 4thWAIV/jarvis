@@ -22,7 +22,8 @@ from jarvis.bundle_readers import (Description, Detected, MemberSource, ReaderHe
 HTML_MAX_BYTES = 16 * 1024 * 1024
 
 # The headers every file of a static preview is served with (the bindings
-# lane's web_auth applies them to the bundle html routes): no script runs,
+# lane's web_auth applies them to the bundle html routes, as
+# web_auth.BUNDLE_PREVIEW_HEADERS): no script runs,
 # nothing loads from outside JARVIS, and only JARVIS's own page may frame it.
 PREVIEW_CSP = ("default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
                "font-src 'self'; frame-ancestors 'self'; sandbox")

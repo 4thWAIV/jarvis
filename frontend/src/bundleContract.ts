@@ -19,7 +19,7 @@ export const BUNDLE_LIMITS = {
 export type Operation = "download" | "list_archive" | "extract" | "read_text" | "render" | "ocr" | "edit_export" | "execute";
 export type FormatId = "folder" | "zip" | "tar" | "gzip" | "7z" | "rar" | "pdf" | "text" | "markdown" | "json" | "csv" | "tsv" | "html" | "svg" | "png" | "jpeg" | "gif" | "webp" | "heic" | "docx" | "xlsx" | "pptx" | "doc" | "xls" | "ppt" | "rtf" | "audio" | "video" | "unknown";
 export type Support = "readable" | "partial" | "unsupported" | "blocked";
-export type Reason = "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated";
+export type Reason = "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "special_file" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | "legacy_encoding";
 export type Openability = "verified" | "ready" | "partial" | "unsupported" | "corrupt" | "unavailable";
 export type Readiness = "ready" | "partial" | "unknown" | "blocked";
 export type GapAction = "flatten_wrapper" | "add_pdf_text" | "add_page_images" | "add_portable_pdf" | "add_file_index" | "ask_recipient_to_update" | "manual_review";
@@ -46,9 +46,11 @@ export const REASONS_SHOWN: Record<Reason, string> = {
   link: "It is a link, which JARVIS never follows.",
   duplicate: "Another member has the same name.",
   bad_name: "Its name is not usable.",
+  special_file: "It is a device or a pipe, not a file.",
   macros_ignored: "Its macros were not loaded.",
   external_resources_blocked: "Its links to the web were not loaded.",
   formulas_not_evaluated: "Formulas are shown as written, with their saved values.",
+  legacy_encoding: "It is not UTF-8; it was read as Windows-1252.",
 };
 
 /** A received (or sent) file, as the message's manifest names it. The filename and the declared type are the sender's words. */
@@ -77,7 +79,7 @@ export interface Classification {
   media_type: string;
   container: "zip" | "none" | "unsupported";
   support: "readable" | "partial" | "unsupported" | "blocked";
-  reason: "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | null;
+  reason: "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "special_file" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | "legacy_encoding" | null;
   root_member_id: string;
   inventory: Inventory | null;
   package: PackageBadge | null;
@@ -125,7 +127,7 @@ export interface MemberInfo {
   format: "folder" | "zip" | "tar" | "gzip" | "7z" | "rar" | "pdf" | "text" | "markdown" | "json" | "csv" | "tsv" | "html" | "svg" | "png" | "jpeg" | "gif" | "webp" | "heic" | "docx" | "xlsx" | "pptx" | "doc" | "xls" | "ppt" | "rtf" | "audio" | "video" | "unknown";
   media_type: string;
   support: "readable" | "partial" | "unsupported" | "blocked";
-  reason: "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | null;
+  reason: "not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "special_file" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | "legacy_encoding" | null;
   operations: ("download" | "list_archive" | "extract" | "read_text" | "render" | "ocr" | "edit_export" | "execute")[];
 }
 
@@ -205,6 +207,7 @@ export interface RenderedPageInfo {
   page_count: number;
   width: number;
   height: number;
+  media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 }
 
 export interface Requirement {
@@ -251,7 +254,7 @@ export interface TextPage {
   extent: Extent;
   complete: boolean;
   continuation: string | null;
-  notes: ("not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated")[];
+  notes: ("not_local" | "corrupt" | "not_zip" | "encrypted" | "password_required" | "unknown_format" | "reader_unavailable" | "nested_archive" | "scanned_no_text" | "page_failed" | "too_large" | "budget" | "outside" | "link" | "duplicate" | "bad_name" | "special_file" | "macros_ignored" | "external_resources_blocked" | "formulas_not_evaluated" | "legacy_encoding")[];
 }
 
 export type Location = PageLocation | LineLocation | SheetLocation | SlideLocation;

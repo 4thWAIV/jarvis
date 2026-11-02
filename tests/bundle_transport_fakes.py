@@ -57,8 +57,9 @@ class FakeInspection:
                               filename=r.filename, declared_media_type=r.media_type,
                               size_bytes=r.size_bytes, sha256=r.sha256)
 
-    def _observe(self, owner, key, spec, op, member, support, reason=None):
-        self.observer(Observation(owner, key, spec.ref.sha256, op, member, support, reason))
+    def _observe(self, owner, key, spec, op, member, support, reason=None, locations=()):
+        self.observer(Observation(owner, key, spec.ref.sha256, op, member, support, reason,
+                                  tuple(locations)))
 
     def _member(self, spec: Spec, path: str, fmt: str, support: str) -> MemberInfo:
         return MemberInfo(member_id=member_id(spec.ref.sha256, path), path=path,
@@ -114,8 +115,8 @@ class FakeInspection:
         if support != "readable":
             self._observe(owner, key, spec, "read_text", mid, support, "reader_unavailable")
             raise InspectionRefused("unsupported", "No reader here.", "reader_unavailable")
-        self._observe(owner, key, spec, "read_text", mid, "readable")
         location = PageLocation(page=1) if fmt == "pdf" else LineLocation(start=1, end=1)
+        self._observe(owner, key, spec, "read_text", mid, "readable", None, (location,))
         return TextPage(attachment=self._info(key, spec), member=self._member(spec, *self._find(
             spec, mid)), reader=ReaderId(name="fake", version=1),
             chunks=[TextChunk(location=location, text=f"text of {path or spec.ref.filename}")],
@@ -127,7 +128,7 @@ class FakeInspection:
         self._observe(owner, key, spec, "render", mid, "readable")
         return RenderedPage(info=RenderedPageInfo(member_id=mid, page=page,
                                                   page_count=spec.pages, width=10, height=10),
-                            png=b"\x89PNG fake page %d" % page)
+                            data=b"\x89PNG fake page %d" % page)
 
 
 def ref(n: int, name: str = "review.zip", sha: Optional[str] = None,

@@ -13,7 +13,9 @@ import { BundleInventory } from "./BundleInventory";
 import { openPackagePage, packageList, pagePackageFrom } from "./packages";
 import { downloadFile, revealFile } from "./queue";
 import { shownFor } from "./messagingApi";
-import type { AttachmentRef, LocalFile } from "./messagingContract";
+import type { AttachmentRef, LocalFile, OpenabilityReport } from "./messagingContract";
+import { bundleWords } from "./bundles";
+import type { Reason } from "./bundleContract";
 import { QueueIcon } from "./QueueIcons";
 import { sizeText } from "./queueStore";
 
@@ -34,9 +36,25 @@ function stateWords(file: LocalFile | undefined, ref: AttachmentRef, incoming: b
   }
 }
 
-export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
+/** What the recipient's JARVIS reported when it opened a sent file: shown
+ *  only once there is a report, with the first member that failed. */
+function OpenedThere({ report }: { report: OpenabilityReport }) {
+  const fine = report.status === "verified" || report.status === "ready";
+  const why = [report.failed_member, bundleWords.reason(report.reason as Reason | null)].filter(Boolean)
+    .join(": ");
+  return (
+    <span className={`file-state${fine ? "" : " bundle-problem"}`} title={why || undefined}>
+      {bundleWords.openability[report.status]}
+      {!fine && report.failed_member ? ` · ${report.failed_member.split("/").pop()}` : ""}
+    </span>
+  );
+}
+
+export function FileCard({ fileRef, file, messageId, incoming, report, onRemove }: {
   fileRef: AttachmentRef;
   file?: LocalFile;
+  /** On a sent file: the recipient's JARVIS's report, once it opened it. */
+  report?: OpenabilityReport;
   /** The accepted message it is on; absent on a draft. */
   messageId?: string;
   incoming: boolean;
@@ -50,6 +68,7 @@ export function FileCard({ fileRef, file, messageId, incoming, onRemove }: {
       <span className="file-name">{fileRef.filename}</span>
       <span className="file-meta">{sizeText(fileRef.size_bytes)} · {fileRef.media_type}</span>
       <span className="file-state">{stateWords(file, fileRef, incoming)}</span>
+      {!incoming && report && <OpenedThere report={report} />}
       {canDownload && (
         <button type="button" className="file-action"
                 onClick={() => void downloadFile(messageId!, fileRef.attachment_id)}>

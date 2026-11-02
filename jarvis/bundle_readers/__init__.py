@@ -129,7 +129,8 @@ def archive_reason(error) -> Reason:
     """bundle_archive's code for a refusal (an ArchiveError, or a listing's
     Refused entry: each has `reason` and `kind`), as the contract's Reason."""
     if error.reason == "bad-kind":
-        return {"link": "link", "encrypted": "encrypted"}.get(error.kind, "bad_name")
+        return {"link": "link", "encrypted": "encrypted",
+                "device": "special_file"}.get(error.kind, "bad_name")
     return {"bad-name": "bad_name", "outside": "outside", "collision": "duplicate",
             "too-large": "too_large", "too-deep": "budget", "too-many": "budget",
             "ratio": "budget", "too-slow": "budget", "not-zip": "not_zip",

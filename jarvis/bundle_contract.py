@@ -67,7 +67,8 @@ Reason = Literal[
     "not_local", "corrupt", "not_zip", "encrypted", "password_required",
     "unknown_format", "reader_unavailable", "nested_archive", "scanned_no_text",
     "page_failed", "too_large", "budget", "outside", "link", "duplicate",
-    "bad_name", "macros_ignored", "external_resources_blocked", "formulas_not_evaluated"]
+    "bad_name", "special_file", "macros_ignored", "external_resources_blocked",
+    "formulas_not_evaluated", "legacy_encoding"]
 
 REASONS_SHOWN: dict[str, str] = {
     "not_local": "It is not downloaded here yet.",
@@ -86,9 +87,11 @@ REASONS_SHOWN: dict[str, str] = {
     "link": "It is a link, which JARVIS never follows.",
     "duplicate": "Another member has the same name.",
     "bad_name": "Its name is not usable.",
+    "special_file": "It is a device or a pipe, not a file.",
     "macros_ignored": "Its macros were not loaded.",
     "external_resources_blocked": "Its links to the web were not loaded.",
     "formulas_not_evaluated": "Formulas are shown as written, with their saved values.",
+    "legacy_encoding": "It is not UTF-8; it was read as Windows-1252.",
 }
 
 # Openability (the recipient's report to the sender) is the wire's too.
@@ -321,20 +324,26 @@ class Preview(_Shape):
     continuation: Optional[str] = Field(default=None, max_length=CONTINUATION_MAX_CHARS)
 
 
+RenderedMediaType = Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
+
+
 class RenderedPageInfo(_Shape):
     member_id: str
     page: int = Field(ge=1)
     page_count: int = Field(ge=1)
     width: int = Field(ge=1)
     height: int = Field(ge=1)
+    # A PDF page is drawn as PNG; an image is its own page, as it was sent
+    # (never decoded), so it keeps its own type.
+    media_type: RenderedMediaType = "image/png"
 
 
 @dataclass(frozen=True)
 class RenderedPage:
-    """A rendered page's PNG: the route serves `png`, the brain's tool
-    returns it as an image block. Never JSON."""
+    """A rendered page's image (`info.media_type`): the route serves
+    `data`, the brain's tool returns it as an image block. Never JSON."""
     info: RenderedPageInfo
-    png: bytes
+    data: bytes
 
 
 # -- refusals ----------------------------------------------------------------------------

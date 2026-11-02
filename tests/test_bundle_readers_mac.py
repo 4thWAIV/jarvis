@@ -84,8 +84,8 @@ def test_the_real_pdfkit_reads_and_renders_a_two_page_pdf(tmp_path):
     assert [(loc.page, text.strip()) for loc, text in got.chunks] == [
         (1, "Summary, page one."), (2, "Evidence, page two.")]
     page = PdfReader().render(source, PDF, 1, RenderOptions(max_edge=400))
-    assert dimensions("png", page.png) == (page.info.width, page.info.height) == (309, 400)
-    idat = page.png[page.png.index(b"IDAT") + 4:page.png.index(b"IEND") - 8]
+    assert dimensions("png", page.data) == (page.info.width, page.info.height) == (309, 400)
+    idat = page.data[page.data.index(b"IDAT") + 4:page.data.index(b"IEND") - 8]
     rows = zlib.decompress(idat)
     stride = 1 + page.info.width * 4
     dark = sum(1 for y in range(page.info.height) for x in range(1, stride, 4)

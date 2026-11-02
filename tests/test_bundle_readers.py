@@ -296,16 +296,19 @@ def test_a_truncated_image_header_is_corrupt_not_a_crash(fmt, data):
     assert (got.support, got.reason) == ("unsupported", "corrupt")
 
 
-def test_a_png_is_its_own_rendered_page_and_other_images_are_never_decoded():
+def test_an_image_is_its_own_rendered_page_as_sent_and_never_decoded():
     png = png_bytes(5, 4)
     page = ImageReader().render(Source(png), br.Detected("png", "image/png"), 1,
                                 RenderOptions(max_edge=256))
-    assert page.png == png and (page.info.width, page.info.height) == (5, 4)
-    with pytest.raises(br.Unsupported):
-        ImageReader().render(Source(jpeg_header(5, 5)), br.Detected("jpeg", "image/jpeg"), 1,
-                             RenderOptions())
-    assert ImageReader().describe(Source(jpeg_header(5, 5)),
-                                  br.Detected("jpeg", "image/jpeg")).operations == frozenset()
+    assert page.data == png and (page.info.width, page.info.height) == (5, 4)
+    assert page.info.media_type == "image/png"
+    jpeg = jpeg_header(5, 3)
+    page = ImageReader().render(Source(jpeg), br.Detected("jpeg", "image/jpeg"), 1,
+                                RenderOptions())
+    assert page.data == jpeg and page.info.media_type == "image/jpeg"
+    assert (page.info.width, page.info.height) == (5, 3)
+    assert ImageReader().describe(Source(jpeg),
+                                  br.Detected("jpeg", "image/jpeg")).operations == {"render"}
     with pytest.raises(br.Unsupported):
         ImageReader().read_text(Source(png), br.Detected("png", "image/png"), None, 100)
 
@@ -463,8 +466,8 @@ def test_a_rendered_pdf_page_is_a_png_from_a_raw_bitmap(fake_osascript, tmp_path
     page = PdfReader().render(Source(two_page_pdf(), tmp_path), PDF, 2,
                               RenderOptions(max_edge=300))
     assert (page.info.page, page.info.page_count, page.info.height) == (2, 2, 300)
-    assert page.png.startswith(b"\x89PNG\r\n\x1a\n")
-    assert dimensions("png", page.png) == (page.info.width, page.info.height)
+    assert page.data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert dimensions("png", page.data) == (page.info.width, page.info.height)
     call = fake_osascript.calls[-1]
     assert call[:4] == [_quartz.OSASCRIPT, "-l", "JavaScript", "-e"]
     assert "ImageIO" not in call[4] and "NSBitmapImageRep" not in call[4]
@@ -485,3 +488,20 @@ def test_png_encoding_round_trips_through_zlib():
     assert struct.unpack(">II", data[16:24]) == (width, height)
     with pytest.raises(ValueError):
         _quartz.png(2, 2, b"\x00" * 3)
+
+
+# -- integration notes ---------------------------------------------------------------------
+
+def test_text_that_is_not_utf8_says_it_was_read_as_windows_1252():
+    reader, d = TextReader(), br.Detected("text", "text/plain")
+    assert reader.read_text(Source("café\n".encode("utf-8")), d, None, 100).notes == ()
+    got = reader.read_text(Source("café\n".encode("cp1252")), d, None, 100)
+    assert got.notes == ("legacy_encoding",) and got.chunks[0][1] == "café\n"
+
+
+def test_a_device_or_pipe_entry_is_a_special_file_not_a_bad_name():
+    class Refused:
+        reason, kind = "bad-kind", "device"
+    assert br.archive_reason(Refused()) == "special_file"
+    Refused.kind = "link"
+    assert br.archive_reason(Refused()) == "link"
