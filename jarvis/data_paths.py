@@ -479,6 +479,13 @@ def messaging_downloads_dir() -> Path:
     return data_dir() / "messaging" / "downloads"
 
 
+def bundle_cache_dir() -> Path:
+    """What bundle readers derived from received files (text pages, page
+    renders, listings), one folder per server and owner (bundle_cache.py).
+    Never an original. Not created here: the cache creates it owner-only."""
+    return data_dir() / "bundle-cache"
+
+
 def packages_dir() -> Path:
     """Work packages received from teammates and unpacked to be run here
     (work_packages.py), one folder each."""
