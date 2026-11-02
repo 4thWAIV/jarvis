@@ -657,7 +657,7 @@ Stale responses (a read answered after a pushed frame) and the refused-change pa
 - Team server errors: `team_client.TeamError` and `last_error` (pairing, status poll, network exchange; about 30 sites) carry no code, so Settings, Team shows them in English, marked as original detail. Plan item 7 lists them; not done here.
 - Voice causes: the voice record's cause and message lines, and the live health cause ("The page was busy for 807 ms"), are English sentences, so the Diagnostics view, its summary and the voice input row show them in English in Spanish. Wording them needs codes and values in `voice_diagnostics`, including the stored events.
 - Spanish values cut by width: the tile's "Escritura" row next to "hace 1 min" ("Escritu…"), and the Diagnostics row "Entrada de voz" beside "Con problemas" ("Entrada de …").
-- Register: `left.*` addresses the person as `usted` ("Inicie sesión en el servidor de su equipo"), `main.*` as `tú`; one has to be chosen.
+- Register: decided 2026-11-01, `usted` everywhere (see "Routing and register (2026-11-01)").
 - Brain discovery labels: Settings sections keep English labels (`translate("en", …)`), the centre and right panels' targets give labels in the language in force. Command and target identities never change; the plan allows either, but it is not one rule.
 - The browser's own file picker words ("Choose Files") follow Chrome's language.
 - Recorded content (stored conversation notices, the voice record) is shown as it was written.
@@ -680,3 +680,29 @@ Matrix gaps:
 - Controls: 51 non-navigation controls classified (`data-ui-action`: domain, input, recipient, file, refresh); `PENDING` 73 → 22, all navigation needing commands. af9b499.
 - Register: raised as blocker `spanish-register` (recommend usted); not changed.
 - Not done: the 22 navigation commands; localization item 7 (team server error codes, voice cause codes); task card progress and right subagent row targets.
+
+## Routing and register (2026-11-01)
+
+Branch `ui-nav-routing-register` from `feature/ui-navigation-pipeline`, not pushed. Applies Tim's two approvals (JARVIS msg 775): `leaf-sibling-routing` (over or under the row, bevelled drop) and `spanish-register` (usted throughout).
+
+### Leaf routing over or under the row (dfe52df)
+
+- `uiPipeline.ts` `leafEdge`: the straight leaf is tried first, unchanged. When it would cross a control or another part, `detour()` tries over and under the part's row: along the inner margin to the middle of the gap between the row (the part and whatever shares its band in the run's span) and the next control, part or line of text beyond it (or the object's own edge), across to above or below the part's centre, and into its top or bottom edge, `LEAF_END_PX` (3) outside it as a straight leaf ends. A gap narrower than twice `CLEAR_PX` does not count; each candidate is checked against controls, other parts and every line of text in the object outside the part (`labelsIn`); the shorter of the sides that clear is used, else `no-route`. Its turns are bevelled with the rest of the route (`bevelled()`), shortened only where a leg is too short, as before.
+- A part that is the whole itself (a row registered as its own `row` part) is no obstacle to its own leaves.
+- A part straddling the inner margin (the finished workflow row's ×) is reached straight down or up the margin into its edge, or directly when the socket is level with it. The × is now registered as the row's `dismiss` part (`WorkflowsView.tsx`).
+- Reached now: workflow Decisions tab (and every tab left of the last), Folders tabs, Team Server last write, reminder text and Sign in, workflow Dismiss ×.
+- Not reached (blocker `sibling-routing-remainder`, raised): microphone mute and off and the health dot, because the mic row touches the status line above and has 7 px below it, short of the 8 px the leaf needs; phase steps left of the last, because the next step's connector line covers the dot (`occluded`) and the socket branch would cross the next step, another object. Options and recommendation are on the monitor.
+- Tests: `test_voice_page_pipeline.py` `test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row` (each part above arrives; every route segment is on the registered map, a segment the map draws, or a bevel; every leaf segment straight or a 45-degree bevel of at most 6 px; no leaf point inside a control or a line of text; the leaf ends at the part, coming down or up into it). `_on` also accepts a segment identical to one the map draws (a socket branch the bevel takes whole). `LEFT_MISSED` and the reminder test updated; coverage.md updated.
+
+### Usted everywhere (36c7cac)
+
+- `left.*`, `right.*` and `shell.*` already used usted. `main.es.ts`: 46 strings changed (imperatives such as Seleccione, Elija, Vuelva a iniciar sesión; su and sus for tu and tus; usted for ti and tú; "Usted está diciendo"; "No hay decisiones pendientes para usted"; the agent's `needs_you` is "requiere su atención", as the right panel says; "Te escucho" is "Lo escucho", as the right panel's "Escuchándolo").
+- `test_ui_locale.py` `test_spanish_addresses_the_person_as_usted_everywhere`: no Spanish catalog value contains tú, tu, tus, te, ti, contigo, estás, haz or a gerund with -te on it. It catches 18 of the 46 old strings; imperatives are not checked, since tú and usted imperatives cannot be told apart reliably from third-person verbs.
+- Spanish centre checked on the built page: nothing in the conversation or centre area overflows its box.
+
+### Test evidence
+
+- `npx tsc --noEmit`: pass. `npx vite build` (scratch outDir): pass.
+- `pytest tests/test_ui_locale.py tests/test_ui_pipeline.py tests/test_ui_coverage_rules.py tests/test_ui_contract.py tests/test_ui_navigation.py tests/test_ui_right.py tests/test_spanish_speaking.py tests/test_language_setting.py`: 114 passed.
+- `pytest -m page` on language, settings, pipeline, left_settings, right, voice_health, conversation, queue, folders, workflows, centre_nav, team_reminder, mute, navigation, layout, rays, subagents, diagnostics and agents_list_fits: 159 passed.
+

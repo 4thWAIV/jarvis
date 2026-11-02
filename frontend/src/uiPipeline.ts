@@ -20,10 +20,13 @@
  * A route is found by walking registered edges only. Geometry is a function
  * of the layout now (measured, never stored), so a resize or a scroll moves
  * the points and never the topology. A socket enters its object at the
- * first point on its facing edge clear of the object's controls; a branch
- * or leaf that would cross another object, a control or another part, a
- * junction that cannot be measured, or a source the page covers, makes the
- * route unavailable rather than inventing a shortcut. Every turn a route
+ * first point on its facing edge clear of the object's controls. A leaf
+ * whose straight run would cross a control or another part goes over or
+ * under the part's row through the gap beside it and drops into the part's
+ * top or bottom edge. A branch that would cross another object, a leaf
+ * with no clear way over or under, a junction that cannot be measured, or
+ * a source the page covers, makes the route unavailable rather than
+ * inventing a shortcut. Every turn a route
  * takes, between edges or inside one, is a 45-degree bevel of BEVEL_PX
  * (uiSignal.ts bevelled()), drawn and travelled alike.
  */
@@ -31,7 +34,7 @@
 import { rayStart, rightChannelX, TOP_LANE_PX } from "./rayGeometry";
 import { lanes } from "./transferEndpoints";
 import { elementOf, mountedTargets, presentationId, visibilityOf, type VisualTarget } from "./uiRegistry";
-import { BEVEL_PX, bevelled, joined, type Point } from "./uiSignal";
+import { BEVEL_PX, bevelled, joined, length, type Point } from "./uiSignal";
 import {
   UI_CONTRACT, type AvailabilityReason, type JunctionId, type RailId, type TargetRef, type Visibility,
 } from "./uiContract";
@@ -67,6 +70,8 @@ const CLEAR_PX = 4;
  *  kept from anything beside it, and room for a leaf's bevel as it turns
  *  in from the margin (uiSignal.ts BEVEL_PX). */
 export const CORRIDOR_PX = INNER_MARGIN_PX + CLEAR_PX + BEVEL_PX;
+/** How far outside a part its leaf ends. */
+const LEAF_END_PX = 3;
 /** How far outside an open modal its rail runs. */
 const OVERLAY_GAP_PX = 8;
 
@@ -306,31 +311,85 @@ function crossesAnotherObject(edge: RouteEdge, target: VisualTarget): boolean {
   return edgeCrosses(edge, others);
 }
 
+/** Every line of text inside `el` but outside the addressed part `except`:
+ *  the labels a detour over or under a row keeps clear of. */
+function labelsIn(el: Element, except: Element): DOMRect[] {
+  const out: DOMRect[] = [];
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!n.textContent?.trim() || except.contains(n)) continue;
+    range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0) out.push(r);
+  }
+  return out;
+}
+
+/** The leaf over (`up`) or under the part's row: from the socket along the
+ *  inner margin to the middle of the gap between that row and the next
+ *  thing beyond it (or the object's own edge), across to above or below the
+ *  part's centre, and down or up into its top or bottom edge. Null when
+ *  there is no such gap; the caller checks what the run crosses. Its turns
+ *  are bevelled with the rest of the route. */
+function detour(entry: Point, margin: number, part: DOMRect, whole: DOMRect, obstacles: DOMRect[],
+                up: boolean): Point[] | null {
+  const cx = part.left + part.width / 2;
+  const [lo, hi] = [Math.min(margin, cx) - CLEAR_PX, Math.max(margin, cx) + CLEAR_PX];
+  const inSpan = obstacles.filter((o) => o.left < hi && o.right > lo);
+  // The row: the part and whatever beside it in the span shares its band.
+  const row = inSpan.filter((o) => o.top < part.bottom && o.bottom > part.top);
+  const rowEdge = up ? Math.min(part.top, ...row.map((o) => o.top)) : Math.max(part.bottom, ...row.map((o) => o.bottom));
+  const beyond = up ? Math.max(whole.top, ...inSpan.filter((o) => o.bottom <= rowEdge).map((o) => o.bottom))
+                    : Math.min(whole.bottom, ...inSpan.filter((o) => o.top >= rowEdge).map((o) => o.top));
+  if (Math.abs(rowEdge - beyond) < 2 * CLEAR_PX) return null;
+  const y = (rowEdge + beyond) / 2;
+  const end = up ? part.top - LEAF_END_PX : part.bottom + LEAF_END_PX;
+  return [entry, [margin, entry[1]], [margin, y], [cx, y], [cx, end]];
+}
+
 /** The leaf from the socket down the object's inner margin to the part's
- *  facing edge. "no-adapter" when the part has no element on show;
- *  "no-route" when the leaf would cross a control or another of the
- *  object's parts (never across a label to reach a value). */
+ *  facing edge. Where that straight run would cross a control or another
+ *  of the object's parts (a part beside others in one row), the leaf goes
+ *  over or under the row instead (detour()), keeping clear of every
+ *  control, part and label; the shorter of the two that clear. "no-adapter"
+ *  when the part has no element on show; "no-route" when neither side
+ *  clears (never across a label to reach a value). */
 function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge | AvailabilityReason {
   const el = elementOf(target, part);
   const r = boxOf(el);
   if (!el || !r) return "no-adapter";
   const right = target.socket.side === "right";
   const margin = entry[0] + (right ? -INNER_MARGIN_PX : INNER_MARGIN_PX);
-  const y = r.top + r.height / 2;
-  const edge = right ? Math.min(r.right + 3, margin) : Math.max(r.left - 3, margin);
-  const leaf: RouteEdge = { id: `leaf:${presentationId(target.ref)}:${part}`, layer: "leaf", host: hostOf(target),
-                            points: [entry, [margin, entry[1]], [margin, y], [edge, y]] };
+  const leaf = (points: Point[]): RouteEdge => ({ id: `leaf:${presentationId(target.ref)}:${part}`, layer: "leaf",
+                                                  host: hostOf(target), points });
+  const straight = leaf(r.left < margin && margin < r.right
+    // The part reaches over the margin (a part beside its whole, at its
+    // edge): down or up the margin into its top or bottom edge.
+    ? [entry, [margin, entry[1]],
+       [margin, entry[1] < r.top ? r.top - LEAF_END_PX : Math.min(entry[1], r.bottom + LEAF_END_PX)]]
+    : [entry, [margin, entry[1]], [margin, r.top + r.height / 2],
+       [right ? Math.min(r.right + LEAF_END_PX, margin) : Math.max(r.left - LEAF_END_PX, margin), r.top + r.height / 2]]);
   const whole = target.element();
   const kept: DOMRect[] = whole ? reservedIn(whole, el) : [];
   const decl = (UI_CONTRACT.kinds.find((k) => k.kind === target.ref.kind)?.parts ?? []) as readonly string[];
   for (const other of decl) {
     if (other === part) continue;
     const o = elementOf(target, other);
-    if (!o || o.contains(el) || el.contains(o)) continue;
+    // The whole itself (a row registered as its own `row` part) holds the
+    // leaf; it is never in the way.
+    if (!o || o === whole || o.contains(el) || el.contains(o)) continue;
     const box = boxOf(o);
     if (box) kept.push(box);
   }
-  return edgeCrosses(leaf, kept) ? "no-route" : leaf;
+  if (!edgeCrosses(straight, kept)) return straight;
+  const box = boxOf(whole);
+  if (!whole || !box) return "no-route";
+  const obstacles = [...kept, ...labelsIn(whole, el)];
+  const clear = [true, false]
+    .map((up) => detour(entry, margin, r, box, obstacles, up))
+    .filter((p): p is Point[] => p !== null && !edgeCrosses(leaf(p), obstacles))
+    .sort((a, b) => length(a) - length(b));
+  return clear.length ? leaf(clear[0]) : "no-route";
 }
 
 const SOURCE_REASON: Record<Exclude<Visibility, "visible">, AvailabilityReason> = {

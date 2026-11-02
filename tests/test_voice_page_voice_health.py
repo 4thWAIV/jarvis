@@ -243,8 +243,8 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             # Shown, it is a mounted target; its leaf would cross the meter
             # beside it, so it is refused truthfully, never drawn across
             # (the same as the mute and off buttons in
-            # test_voice_page_left_settings.LEFT_MISSED), until leaf routing
-            # around sibling parts is decided (blocker leaf-sibling-routing).
+            # test_voice_page_left_settings.LEFT_MISSED): the mic row leaves
+            # no gap over or under it (blocker sibling-routing-remainder).
             reached = await point()
             assert (reached["status"], reached.get("reason")) == ("blocked", "no-route"), reached
             await _health(page)

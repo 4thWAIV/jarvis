@@ -41,9 +41,9 @@ Tested by `tests/test_voice_page_left_settings.py` (every left part pointed
 at with reduced motion, the database row animated, the map, and human/brain
 parity for the tile). `no-route` below means the page answers
 `blocked / no-route` truthfully: the part sits beside another part on the
-side its leaf comes from, and `uiPipeline.ts` `leafEdge` only runs straight
-in from the facing edge (requested from pipeline-animation: leaf routing
-round sibling parts along the object's inner margin).
+side its leaf comes from, and `uiPipeline.ts` `leafEdge` finds no gap over
+or under its row that keeps clear of every control, part and label
+(blocker `sibling-routing-remainder`, 2026-11-01).
 
 | Source / control | Command | Target / parts | Current handler / state | Availability | Side effects | Reveal | Socket | State |
 |---|---|---|---|---|---|---|---|---|
@@ -51,8 +51,8 @@ round sibling parts along the object's inner margin).
 | StatusControl.tsx status text, Stop | — Stop: `data-ui-action="speech"` (hush) | `status`; text, stop | `useUiTarget`; Stop `stopSpeaking.current()` | text while there is one; stop only while speaking | hush stays its own action | none | rail.left, left | done (whole tested; text/stop parts live while shown) |
 | MicControl.tsx health dot | `voice.diagnostics.open` (declared, navigation) via `bindingProps` | `mic`; meter, health, mute, off | was `openDiagnostics.set(true)` | dot only while input has a problem | `centre.view-shown` | none | rail.left, left | done (binding, target); health dot pointing not page-tested (needs an input fault fixture) |
 | MicMeter.tsx / `#mic-silenced` | — (display) | `mic` part meter | `partRef` | always | — | none | rail.left | done |
-| MuteButton.tsx, MicOffButton.tsx | — `data-ui-action="microphone"` | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify; parts `no-route` (beside the meter) |
-| TeamServerTile.tsx tile | `network.open {kind: server}` via `bindingProps` | `teamServer` in `left.fixed`; readiness (the word), server, database, lastWrite | was `byHand("network.open")` | always | `centre.view-shown`, `centre.detail-replaced` | none | rail.left, left | done; lastWrite `no-route` (level with the readiness word) |
+| MuteButton.tsx, MicOffButton.tsx | — `data-ui-action="microphone"` | `mic` parts mute, off | `micMuted`, `micOff` stores | always | changes the microphone | none | rail.left | classify; parts `no-route` (beside the meter, and the row has no gap over or under it) |
+| TeamServerTile.tsx tile | `network.open {kind: server}` via `bindingProps` | `teamServer` in `left.fixed`; readiness (the word), server, database, lastWrite | was `byHand("network.open")` | always | `centre.view-shown`, `centre.detail-replaced` | none | rail.left, left | done; lastWrite reached under its row |
 | BrainUsage.tsx → WeeklyUsage.tsx each account | — (display only) | `brainAccount` keyed provider (the one named, else the figures', else the running brain); name (logo), remaining, pace, reset (burn-down) | `useAccountTarget` | while its provider is known (no target before) | — | none | rail.left, left | done |
 
 ## Right panel (coverage-right)
@@ -147,11 +147,14 @@ brain's request leave the same state; indications arrive).
 
 Known limits found while testing (pipeline geometry, not registration):
 
-- A leaf runs from the object's right inner margin straight to the part,
-  so in a horizontal row only the right-most part can be reached: pointing
-  at the workflow's Decisions tab is `blocked / no-route`, its Events tab
-  arrives. The same holds for the Folders tabs and phase steps left of the
-  last.
+- A leaf runs from the object's right inner margin straight to the part;
+  where that would cross another part or a control (a part left of others
+  in a row: the workflow's Decisions tab, the Folders tabs) it goes over
+  or under the row instead and drops into the part's top or bottom edge
+  (2026-11-01). A phase step left of the last is still not reached: the
+  next step's connector line covers its dot (`occluded`) and its socket
+  branch would cross the next step, another object (blocker
+  `sibling-routing-remainder`).
 - A part outside its object's box cannot be reached; the file preview is
   therefore the folder's part, not the entry's.
 
@@ -174,7 +177,7 @@ effects; the overlay map; pointing inside Settings blocked).
 | Settings.tsx Voice key/Test/Save, You fields/Save, Updates Check/Update | — `input`, `domain`, `refresh`, `restart` | `settingsSection` body | section handlers | — | saves settings / updates | — | — | classify |
 | BrainsSection.tsx add, model, sign in, default, remove | — `domain`, `sign-in` | `settingsSection` brains body | `act(...)` | — | changes brains | — | — | classify |
 | TeamSection.tsx connect, approval, cancel, disconnect, members, look up, add | — `sign-in`, `domain`, `input` | `settingsSection` team body | `connect`, `change`, `resolve`, `add` | — | membership / sign-in | — | — | classify |
-| TeamSignInReminder.tsx Later | `reminder.later` | `teamReminder` in `main.notice`; text, signIn, later | `later` route state | while not signed in and not hidden (`no-entity`) | — | none | rail.main, right | done; text and signIn `no-route` (left of Later) |
+| TeamSignInReminder.tsx Later | `reminder.later` | `teamReminder` in `main.notice`; text, signIn, later | `later` route state | while not signed in and not hidden (`no-entity`) | — | none | rail.main, right | done; text and signIn reached under the row (left of Later) |
 | TeamSignInReminder.tsx Sign in | — `data-ui-action="sign-in"`; then `settings.open {section: team}` by hand | `teamReminder` part signIn | `signInAgain` | while shown | starts sign-in, opens Settings | none | rail.main | classify |
 | Footer.tsx label | — (display) | `footer` in `footer.fixed`; label (the label is the whole: the footer box has no socket edge) | `useUiTarget`; `#footer #jarvis-label` takes the pointer so it can be seen at its point | always | — | none | rail.footer, left | done |
 
@@ -214,17 +217,22 @@ effects; the overlay map; pointing inside Settings blocked).
   dismiss), `input` (form fields, the typing box), `recipient` (the
   composer's recipient), `file` (attach, download, reveal, remove, save the
   voice record), `refresh` (a folder's Refresh).
-- Parts a leaf cannot reach past a sibling (`blocked / no-route`): workflow
-  Decisions tab and other tabs left of the last, phase steps, Folders tabs,
-  microphone mute and off, Team Server last write, reminder text and Sign
-  in, workflow Dismiss × beside its row. Blocker `leaf-sibling-routing`.
+- Parts beside a sibling, reached over or under their row since
+  2026-11-01 (`leaf-sibling-routing`, approved): workflow Decisions tab
+  and other tabs left of the last, Folders tabs, Team Server last write,
+  reminder text and Sign in; the workflow row's Dismiss × (now the
+  `dismiss` part) straight down the margin it straddles. Still
+  `blocked / no-route`: microphone mute and off (and the health dot),
+  whose row has no clear gap over or under it; phase steps left of the
+  last are `occluded` by the next step's connector. Blocker
+  `sibling-routing-remainder`.
 - Phases, tasks, open items, transcript, events and the subagent detail
   are revealed by `main.workflow` revealers that run the registered
   commands their key names (`uiNavigationReveal.ts` `RevealerContext.navigate`;
   page test `test_a_workflows_hidden_item_is_revealed_by_opening_it_on_its_tab`).
   Still no target on the task card's progress bar (`TaskBar`).
 - Subagent rows in the right panel are not targets yet.
-- Health dot: page-tested (`test_voice_page_voice_health.py`); while shown it is a named button and a mounted target, refused `blocked / no-route` beside the meter until `leaf-sibling-routing` is decided.
+- Health dot: page-tested (`test_voice_page_voice_health.py`); while shown it is a named button and a mounted target, refused `blocked / no-route` beside the meter until `sibling-routing-remainder` is decided.
 
 ## Localization coverage (integrator)
 
