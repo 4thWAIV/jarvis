@@ -328,11 +328,16 @@ taints and which route calls the same service. The page's copy is
 generated into `frontend/src/bundleContract.ts` by
 `scripts/generate_messaging_contract.py`. The pieces, each a skeleton until
 its lane fills it: `bundle_readers/` (one reader per format and the
-registry; PDF through PDFKit in JXA, no new dependency), `bundle_cache.py`
+registry, `detect` deciding a format from content before extension, and
+`health`, which asks osascript rather than assuming it), `bundle_cache.py`
 (derived output keyed by owner, attachment hash, member, reader version
-and options), `bundle_inspection.py` (the one service: open, classify,
-list, read, preview, render, reached only through `messaging_files`),
-`bundle_api.py` (the routes under
+and options, owner-only under `data_paths.bundle_cache_dir()`, least
+recently used trimmed past 512 MiB, plus each owner's scratch folder for
+the private 0600 copies a reader needs on disk), `bundle_inspection.py` (the
+one service: open, classify, list, read, preview, render and a static
+preview's files, reached only through `messaging_files`: `downloaded` on
+open, `verified_path` and `attachment_ref` otherwise; every outcome to its
+observer), `bundle_api.py` (the routes under
 `/api/team/messages/{message_id}/attachments/{attachment_id}/bundle`),
 `bundle_capabilities.py` (what this node can read, on its node update),
 `bundle_preflight.py` (the sender's readiness), `bundle_status.py` (the
@@ -340,6 +345,37 @@ recipient's openability, reported as a technical receipt) and
 `bundle_tasks.py` (a one-off request's task context, review checklist,
 companions and repair). Inspection never clears quarantine, keeps no
 execute bit, runs no script, loads no macro and executes no HTML.
+
+The readers, none a new dependency: PDF (`pdf.py`) through PDFKit and
+CoreGraphics in `osascript -l JavaScript` (`_quartz.py`, the one subprocess
+seam, `RUNNER`): page count, `encrypted`, each page's text (at most
+`PDF_PAGES_PER_CALL` pages and a timeout per call), `scanned_no_text` when
+no page has text, `page_failed` for a page that cannot be read, and a page
+drawn into a raw CoreGraphics bitmap that `_quartz.png` encodes with zlib;
+never ImageIO, NSBitmapImageRep or `sips`, which crash on this Mac (ImageIO's
+GIF reader too). Text, Markdown, JSON, CSV and TSV (`text.py`): UTF-8, a
+byte order mark, else Windows-1252; CSV and TSV paged by whole rows;
+malformed JSON or CSV still read, noted `corrupt`. HTML and SVG (`html.py`):
+text with `html.parser`, and what it would load from outside listed as
+`blocked_resources`; its static preview's files are served only from the
+same archive with `html.PREVIEW_HEADERS` (CSP `default-src 'none'` and
+`sandbox` without `allow-scripts`). PNG, JPEG, GIF and WebP (`image.py`):
+sized from their headers and never decoded; the preview is the file
+itself, and only a PNG is a rendered page. docx, xlsx and pptx
+(`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
+and row (saved values with the formula beside them,
+`formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
+(`macros_ignored`); an XML part with a DOCTYPE or entity is `corrupt`.
+Legacy doc, xls and ppt, RTF, HEIC, audio and video have no reader
+(`reader_unavailable`). Every reader pages through `_paging.page`, a page
+at most `max_chars` and ending on a whole line, row, page or slide unless
+one alone is longer; a member too large to read is refused
+(`too_large`), never cut. An archive is listed with
+`bundle_archive.list_members(..., per_entry=True)`: a bad entry (outside,
+link, encrypted, duplicate) is a `blocked` member and the rest stay
+readable; only the entry count and total size refuse the whole archive.
+Tar, gzip, 7z, RAR and split archives are `unsupported`; a nested archive
+is a member (`nested_archive`), never expanded.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -977,6 +1013,10 @@ the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without
 node, the frontend's `node_modules`, or Playwright's Chromium.
+
+`tests/test_bundle_readers_mac.py` is marked `osascript`: it runs the PDF
+reader against the real PDFKit and skips off macOS; every other bundle
+test fakes osascript (`tests/bundle_fixtures.FakeOsascript`).
 
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
