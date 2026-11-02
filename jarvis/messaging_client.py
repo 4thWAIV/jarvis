@@ -70,6 +70,9 @@ SYNC_PAGES_PER_PASS = 20
 # changed elsewhere reaches this JARVIS within it.
 CAPABILITIES_TTL_SEC = 30.0
 PREFIX = "/api/v1/messages"
+# Asks a team server for the messaging.bundles.v1 fields of messages and
+# receipts; an older one ignores it and answers messaging.v1.
+BUNDLES_QUERY = "bundles=1"
 
 
 # -- the team connection, as delivery uses it -------------------------------------
@@ -199,20 +202,23 @@ class TeamTransport:
         return await self._model(wire.RecipientList, "GET", PREFIX + "/recipients")
 
     async def send(self, request: wire.SendRequest) -> wire.SendResult:
-        return await self._model(wire.SendResult, "POST", PREFIX, request)
+        return await self._model(wire.SendResult, "POST", f"{PREFIX}?{BUNDLES_QUERY}", request)
 
     async def get(self, message_id: UUID) -> wire.AcceptedMessage:
-        return await self._model(wire.AcceptedMessage, "GET", f"{PREFIX}/{message_id}")
+        return await self._model(wire.AcceptedMessage, "GET",
+                                 f"{PREFIX}/{message_id}?{BUNDLES_QUERY}")
 
     async def sync(self, node_id: UUID, continuation: Optional[str],
                    limit: int) -> wire.SyncPage:
         query = {"node_id": str(node_id), "limit": limit}
         if continuation:
             query["continuation"] = continuation
-        return await self._model(wire.SyncPage, "GET", f"{PREFIX}/sync?{urlencode(query)}")
+        return await self._model(wire.SyncPage, "GET",
+                                 f"{PREFIX}/sync?{urlencode(query)}&{BUNDLES_QUERY}")
 
     async def receipts(self, batch: wire.ReceiptBatch) -> wire.ReceiptBatchResult:
-        return await self._model(wire.ReceiptBatchResult, "POST", PREFIX + "/receipts", batch)
+        return await self._model(wire.ReceiptBatchResult, "POST",
+                                 f"{PREFIX}/receipts?{BUNDLES_QUERY}", batch)
 
     async def change_work_state(self, thread_id: UUID,
                                 request: wire.WorkCommandRequest) -> wire.WorkState:
