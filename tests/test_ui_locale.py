@@ -76,3 +76,29 @@ def test_the_shell_s_words_come_from_the_catalog():
         assert "useT()" in _code(name), name
     assert re.search(r"t\(`tabs\.right\.\$\{tab\.id\}`\)", _code("RightPanel.tsx"))
     assert re.search(r"t\(`tabs\.main\.\$\{v\.id\}`\)", _code("CentreArea.tsx"))
+
+
+# The words that address the person as tú, whatever the sentence: the
+# pronouns and possessives, a gerund with the pronoun on it
+# ("enviándote"), and the second-person forms the centre once used that
+# are never third person ("estás", "haz").
+TU_FORM = re.compile(r"(?<!\w)(tú|tu|tus|te|ti|contigo|estás|haz|\w+(?:ándote|iéndote|éndote))(?!\w)", re.I)
+
+
+def _spanish_words() -> list[tuple[str, str]]:
+    """Every string a Spanish catalog shows, with its file: each quoted
+    value, its placeholders taken out; the keys (dotted names) left out."""
+    words = []
+    for path in sorted((SRC / "messages").glob("*es.ts")):
+        for value in re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _code(f"messages/{path.name}")):
+            if not re.fullmatch(r"[\w.-]+\.[\w.-]+", value):
+                words.append((path.name, re.sub(r"\{\w+\}", "", value)))
+    return words
+
+
+def test_spanish_addresses_the_person_as_usted_everywhere():
+    """One register in every region: usted, as the left column, the right
+    panel, Settings and the spoken "señor" do."""
+    words = _spanish_words()
+    assert len(words) > 500, len(words)
+    assert [(name, value) for name, value in words if TU_FORM.search(value)] == []
