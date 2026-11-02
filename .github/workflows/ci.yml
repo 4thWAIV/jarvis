@@ -79,7 +79,7 @@ jobs:
               sleep 30
             done ) &
           sampler=$!
-          trap 'pkill -P "$sampler" 2>/dev/null; kill "$sampler" 2>/dev/null; true' EXIT
+          trap 'pkill -P "$sampler" 2>/dev/null || true; kill "$sampler" 2>/dev/null || true' EXIT
           pytest -m page -v -o faulthandler_timeout=300 -p no:cacheprovider --durations=50 --durations-min=0.5 --junitxml="$RUNNER_TEMP/test-timing/page.xml"
       - uses: actions/upload-artifact@v4
         if: always()
