@@ -82,7 +82,7 @@ def test_a_package_unpacks_into_its_own_folder_and_runs_as_it_was_packed(tmp_pat
                                   "/tmp/escaped.txt", "..\\escaped.txt"])
 def test_an_entry_that_escapes_the_folder_refuses_the_whole_zip(tmp_path, marks, name):
     archive = write_zip(tmp_path, make_zip({"SKILL.md": "x", name: "owned"}))
-    with pytest.raises(work_packages.PackageError, match="outside the package"):
+    with pytest.raises(work_packages.PackageError, match="outside the folder the zip opens into"):
         work_packages.unpack(archive, "ab12cd34")
     assert list(data_paths.packages_dir().iterdir()) == [], "nothing was written"
     assert not (data_paths.packages_dir().parent / "escaped.txt").exists() and marks == []

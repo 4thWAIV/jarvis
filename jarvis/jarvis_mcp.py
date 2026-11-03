@@ -1548,7 +1548,7 @@ TOOL_SPECS = [
         "name": "open_package",
         "description": (
             "Open a work package a person sent: a .zip attached to their message with a "
-            "package.json at its root. Only when he says to open it. It downloads the file "
+            "package.json at its root or in its one top folder. Only when he says to open it. It downloads the file "
             "if needed, unpacks it into its own folder and returns its package.json, how it "
             "runs, and its skill or brief. A conversation package's skill you follow with "
             "him; an agent package starts with run_package_agent; a page package opens "

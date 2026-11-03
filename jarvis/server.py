@@ -6898,7 +6898,7 @@ def _files_said(handed: list) -> str:
 # --- Work packages -------------------------------------------------------
 #
 # A zip a teammate sends in an ordinary message, with a package.json at its
-# root (docs/work-packages.md). Opening it and running each step are
+# root or in its one wrapper folder (docs/work-packages.md). Opening it and running each step are
 # ACTING_TOOLS: his spoken yes on that turn is the one gate, as the team
 # asked; there is no sandbox. The results go back as a reply through
 # draft_message's `files`, so the ordinary review and approval apply.
@@ -6926,7 +6926,7 @@ async def tool_open_package(args: dict) -> str:
     archive = Path(found.local_path)
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
-                                                 attachment_id.hex[:8])
+                                                 attachment_id.hex)
         context.record_extraction(message_id, attachment_id, package.folder,
                                   sorted(set(package.manifest.named_files().values())))
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"

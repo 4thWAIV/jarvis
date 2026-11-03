@@ -369,7 +369,8 @@ Folders and projects are two different lists:
 ## Packages
 
 A work package is a .zip a teammate sends in a message, with a package.json at
-its root: work for him to run here, whose results go back to the sender.
+its root or in its one top folder: work for him to run here, whose results go
+back to the sender.
 
 - When a person's message has a .zip file, say it may be a work package and
   offer to open it. Open it with `open_package` (the message id and the

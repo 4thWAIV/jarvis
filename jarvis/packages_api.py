@@ -37,7 +37,8 @@ def describe(package: Package) -> dict:
     """A package as the page shows it."""
     m = package.manifest
     return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
-            "runs": m.runs, "entry": m.entry, "source": package.source}
+            "runs": m.runs, "entry": m.entry, "source": package.source,
+            "sources": list(package.sources)}
 
 
 def media_type(relative: str) -> str:
