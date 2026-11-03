@@ -72,10 +72,13 @@ class Page:
                            draft["send"]["content_revision"], draft["send"]["content_digest"],
                            self.node, "gui")
 
-    def matt_sends(self, text="Hello Tim.") -> wire.AcceptedMessage:
+    def matt_sends(self, text="Hello Tim.", subject="",
+                   reply_to: wire.AcceptedMessage | None = None) -> wire.AcceptedMessage:
         mid = self.serve.ids.new_id()
-        content = wire.MessageContent(message_id=mid, thread_id=mid, recipient_github_id=TIM,
-                                      content_revision=1, text=text)
+        content = wire.MessageContent(
+            message_id=mid, thread_id=reply_to.thread_id if reply_to else mid,
+            in_reply_to_message_id=reply_to.message_id if reply_to else None,
+            recipient_github_id=TIM, content_revision=1, subject=subject, text=text)
         return asyncio.run(self.matt.send(wire.SendRequest(
             **content.model_dump(), source_node_id=UUID(int=2),
             idempotency_key=self.serve.ids.new_id(),
@@ -264,6 +267,50 @@ def test_a_reply_draft_names_its_parent_and_one_editable_draft_per_item(page):
         "recipient_github_id": MATT, "text": "x", "thread_id": str(m.thread_id),
         "in_reply_to_message_id": str(UUID(int=9))})
     assert code(orphan) == "invalid_request", "a reply's parent is a message in its thread"
+
+
+def test_a_reply_with_no_subject_starts_with_its_conversation_s(page):
+    root = page.matt_sends("Lunch?", subject="Friday lunch")
+    later = page.matt_sends("Or dinner?", reply_to=root)       # a later message with none
+    page.tick()
+    reply = page.draft("Yes.", thread_id=str(root.thread_id),
+                       in_reply_to_message_id=str(later.message_id))
+    assert reply["subject"] == "Friday lunch", "the conversation's subject, not the parent's"
+    mid = reply["message_id"]
+    cleared = page.http.put(f"{P}/drafts/{mid}", json={
+        "expected_draft_revision": 1, "thread_id": str(root.thread_id),
+        "in_reply_to_message_id": str(later.message_id), "recipient_github_id": MATT,
+        "subject": "", "text": "Yes."})
+    assert cleared.status_code == 200 and cleared.json()["subject"] == "", \
+        "clearing it later is the owner's choice and is kept"
+
+
+def test_the_brain_s_reply_gets_the_same_subject_through_the_one_writer(page):
+    root = page.matt_sends("Lunch?", subject="Friday lunch")
+    page.tick()
+    draft = page.local.write_draft(None, ports.DraftSave(
+        thread_id=root.thread_id, in_reply_to_message_id=root.message_id,
+        recipient_github_id=MATT, text="Yes."), agent_drafted=True)
+    assert draft.subject == "Friday lunch"
+
+
+def test_a_reply_s_own_subject_is_kept_and_none_stays_none(page):
+    root = page.matt_sends("Lunch?", subject="Friday lunch")
+    page.tick()
+    reply = page.draft("Yes.", thread_id=str(root.thread_id),
+                       in_reply_to_message_id=str(root.message_id), subject="Lunch moved")
+    assert reply["subject"] == "Lunch moved"
+    bare = page.matt_sends("No subject here.")
+    page.tick()
+    plain = page.draft("Fine.", thread_id=str(bare.thread_id),
+                       in_reply_to_message_id=str(bare.message_id))
+    assert plain["subject"] == "", "a conversation with no subject gives its reply none"
+
+
+def test_a_new_draft_s_subject_is_not_filled(page):
+    page.matt_sends("Lunch?", subject="Friday lunch")
+    page.tick()
+    assert page.draft("Something else.")["subject"] == ""
 
 
 def test_unsent_text_blocks_dismissal_and_a_kept_command_goes_later(page):

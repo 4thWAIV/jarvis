@@ -262,6 +262,8 @@ class LocalMessaging:
             if existing is not None:
                 raise Refused("revision_conflict", self._draft_view(ns, existing))
             thread_id = save.thread_id
+            if not wire.normalize_subject(save.subject):
+                save = save.model_copy(update={"subject": self._conversation_subject(ns, parent)})
         send = ports.LocalSend(message_id=message_id, content_revision=1, state="draft")
         draft = ports.Draft(
             message_id=message_id, thread_id=thread_id,
@@ -273,6 +275,14 @@ class LocalMessaging:
         created = self.store.create_draft(*ns, draft)
         self.delivery.changed()
         return self._draft_view(ns, created)
+
+    def _conversation_subject(self, ns, parent: ports.LocalMessage) -> str:
+        """The subject a new reply starts with, for the page and the brain
+        alike: its conversation's, which is the first message's (the thread
+        is named by it), else the parent's when that one is not held here.
+        Only a new reply's empty subject is filled; the owner can change it."""
+        root = self.store.message(*ns, parent.message.thread_id)
+        return (root or parent).message.subject
 
     @staticmethod
     def _normalized(save: ports.DraftSave) -> dict:
