@@ -2,6 +2,21 @@
 
 Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validation` waiting for Tim. Nothing is merged, pushed or deployed.
 
+## Merged with main (2026-11-03)
+
+Merge commit `f57dfb7` (`fd3a651` + origin/main `57cc964`: #48, #49, #50, #51). The 16 conflicting files were resolved in that one commit, keeping both sides.
+
+What main brought is on the navigation contract and in both languages:
+- Package view and a received file are centre details, like the Queue item: `package.open` / `package.close` and `bundle.member.open` / `close`, with `bundle.member.view` (preview or text, which page) and `bundle.member.more`. Open page, Open, Close, the server's `package_page` and `bundle_view` frames (run as the brain's) and the brain's navigation all go through them. Tabs "Work package" / "Paquete de trabajo" and "File" / "Archivo"; `#package-view` and `#bundle-member-view` in the corridor.
+- An archive's contents in the Queue: `bundle.contents`, `bundle.folder` and `bundle.folder.more`. Each member is a `bundleEntry` target (name, Open). A file's Download, location, Copy, Reveal, Open page, Contents, path and More are parts of its `queueAttachment`. A message's request line and a draft's request fields are `request` parts.
+- Settings, Updates: the version picker's words, LATEST, why a version cannot be chosen, the confirm and "Yes, install PR N", and the new refusal codes `not_newer`, `not_offered` and `version_ci_not_passed`, in English and Spanish. The radios are marked `input` and Install `restart`. No Settings target was added; Settings is to move into the centre next.
+- The simpler Queue's shorter words replace the catalog's, in both languages. Bundle words (`main.bundle.*`) and location states (`main.queue.location.*`) come from the catalog; a reason the catalog does not know keeps the contract's English.
+- English dates on the picker follow the interface's `en-US` ("Nov 1"), as every other date does.
+
+Coverage (reach sweep, 283 contract target/parts, up from 259 with the new kinds and parts): 232 reached, 6 refused, 31 mounted with the part not on show, 14 never registered. The figures are the same in English and Spanish at 1440x900 and 1280x800. The six refused are Settings' targets while Settings covers the orb, as before (`reach-remainder` is still open). Every new package and received-file target and part is reached. The five new parts not on show are conditional, with nothing in the fixtures to show them: a file's Open page and More, a message's and a draft's request line, and the archive path (shown in the sweep's sources scene, but the sweep stops trying a part after three misses in earlier scenes). Sweep: `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/evidence/merge-main/sweep/` (`summary.txt`); the sweep added a scene with the bundle fixtures and a page package.
+
+Checks on the merge: `npx tsc --noEmit` pass; `generate_ui_contract.py` regenerated; targeted pytest (UI, brain-page parity, header lines, data paths, self-update, messaging, bundles, attachment locations, packages, untrusted turn) 1160 passed; `pytest -m page` on queue, bundles, packages, navigation, centre_nav, remaining_nav, settings, left_settings, coded_words, language, pipeline, human_rays and speech_input: 94 passed after three expectations in the Settings tests moved to the picker's words.
+
 ## Fourth candidate: tour routing (2026-11-02)
 
 Tim, through JARVIS, after watching the third candidate: "keep the route on the main line, the primary channel, for as long as possible; reduce the early cut-ins and branch off only when needed. Use the border or box around a control as an intermediate point: first draw attention to the box, then move from its border toward the controls inside it. Use surrounding controls as transition points where that improves the route. Make the movement clearer and better."
