@@ -22,6 +22,9 @@ import { personName, previewOf, recipientLabel } from "./queueStore";
 
 const MB = 1024 * 1024;
 const LOCKED = new Set(["approved", "submitting", "accept_unknown", "accepted"]);
+/** The attachment limits, for the Attach control's tooltip. */
+const limits = `Up to ${LIMITS.ATTACHMENTS_MAX} files, ${LIMITS.FILE_MAX_BYTES / MB} MB each, `
+  + `${LIMITS.PACKAGE_MAX_BYTES / MB} MB in all`;
 
 export function MessageComposer({ editorKey }: { editorKey: string }) {
   const ed = useSyncExternalStore(editors.subscribe, editors.get)[editorKey];
@@ -33,7 +36,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
   const draft: Draft | undefined = ed.messageId ? state.drafts[ed.messageId] : undefined;
   const locked = !!draft && LOCKED.has(draft.send.state);
   const parent = ed.parent ? state.messages[ed.parent]?.message : undefined;
-  const status = ed.saving ? "Saving…" : ed.dirty ? "Not saved yet" : ed.messageId ? "Draft saved, not sent" : "";
+  const status = ed.saving ? "Saving…" : ed.dirty ? "Unsaved" : ed.messageId ? "Saved" : "";
   const canReview = !locked && !ed.saving && ed.adding === 0 && ed.recipient !== null
     && (ed.text.trim() !== "" || ed.attachmentIds.length > 0);
   const id = `composer-${editorKey}`;
@@ -41,7 +44,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
     <section className="message-composer" aria-label={ed.thread ? "Your response" : "New message"}
              data-editor={editorKey}>
       {draft?.agent_drafted && (
-        <p className="composer-agent">Drafted by JARVIS. Nothing is sent until you review and approve it.</p>
+        <p className="composer-agent">Drafted by JARVIS</p>
       )}
       <div className="composer-to">
         {ed.thread
@@ -51,7 +54,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
               To{" "}
               <select value={ed.recipient ?? ""} disabled={locked}
                       onChange={(e) => edit(editorKey, { recipient: e.target.value ? Number(e.target.value) : null })}>
-                <option value="">Choose who it is for</option>
+                <option value="">Choose recipient</option>
                 {[...members].sort((a, b) => Number(b.github_id === dir.owner) - Number(a.github_id === dir.owner))
                   .map((m) => (
                     <option key={m.github_id} value={m.github_id}>{recipientLabel(dir, m.github_id)}</option>
@@ -59,7 +62,6 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
               </select>
             </label>
           )}
-        <span className="composer-inbox">The message goes to the person; their JARVIS holds their inbox.</span>
       </div>
       {parent && (
         <p className="composer-parent">
@@ -71,10 +73,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         <input type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
                onChange={(e) => edit(editorKey, { subject: e.target.value })} />
       </label>
-      <label className="composer-field" htmlFor={id}>
-        <span>Message</span>
-      </label>
-      <textarea id={id} className="composer-text" value={ed.text} rows={6} disabled={locked}
+      <textarea id={id} className="composer-text" aria-label="Message" value={ed.text} rows={6} disabled={locked}
                 maxLength={LIMITS.TEXT_MAX_CHARS}
                 onChange={(e) => edit(editorKey, { text: e.target.value })} />
       <div className="composer-files">
@@ -90,14 +89,11 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
           </>
         )}
         {ed.adding > 0 && <p className="composer-adding" role="status">Adding {ed.adding} file{ed.adding === 1 ? "" : "s"}…</p>}
-        <label className="composer-attach">
-          Attach files
-          <input type="file" multiple disabled={locked || ed.recipient === null}
+        <label className={`composer-attach${locked || ed.recipient === null ? " disabled" : ""}`} title={limits}>
+          Attach files<span className="visually-hidden"> ({limits})</span>
+          <input type="file" multiple className="visually-hidden" disabled={locked || ed.recipient === null}
                  onChange={(e) => { void addFiles(editorKey, [...(e.target.files ?? [])]); e.target.value = ""; }} />
         </label>
-        <span className="composer-limits">
-          Up to {LIMITS.ATTACHMENTS_MAX} files, {LIMITS.FILE_MAX_BYTES / MB} MB each, {LIMITS.PACKAGE_MAX_BYTES / MB} MB in all.
-        </span>
       </div>
       {ed.error && <p className="composer-error" role="alert">{ed.error}</p>}
       {ed.conflict && (
@@ -110,11 +106,11 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         <span className="composer-status" role="status">{status}</span>
         {confirmDiscard ? (
           <>
-            <span className="composer-confirm">Throw this draft away? It cannot be brought back.</span>
+            <span className="composer-confirm">Discard this draft for good?</span>
             <button type="button" className="composer-discard" onClick={() => { setConfirmDiscard(false); void discard(editorKey); }}>
-              Discard draft
+              Discard
             </button>
-            <button type="button" onClick={() => setConfirmDiscard(false)}>Keep it</button>
+            <button type="button" onClick={() => setConfirmDiscard(false)}>Keep</button>
           </>
         ) : (
           <button type="button" className="composer-discard" disabled={locked} onClick={() => setConfirmDiscard(true)}>

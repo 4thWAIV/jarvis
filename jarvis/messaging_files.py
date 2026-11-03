@@ -185,6 +185,11 @@ def _hash_file(path: Path) -> Optional[tuple[int, str]]:
         os.close(fd)
 
 
+def file_digest(path: Path) -> Optional[tuple[int, str]]:
+    """(size, sha256) of a regular file, never through a link, or None."""
+    return _hash_file(path)
+
+
 def reveal_in_finder(path: Path) -> None:
     """Show the file selected in a Finder window. `-R` reveals; it never
     opens or runs the file."""
@@ -263,8 +268,12 @@ class FileSnapshots:
                  reveal: Callable[[Path], None] = reveal_in_finder,
                  quarantine: Callable[[Path], None] = quarantine,
                  on_change: Callable[[], None] = lambda: None,
-                 snapshots_dir: Optional[Path] = None, downloads_dir: Optional[Path] = None):
+                 snapshots_dir: Optional[Path] = None, downloads_dir: Optional[Path] = None,
+                 held: Callable[[str, int], set[str]] = lambda server_id, owner: set()):
         self.store, self.transport, self.reveal_path = store, transport, reveal
+        # Attachment ids an active agent lease holds (attachment_locations.py):
+        # cleanup keeps them as it keeps what an unresolved send names.
+        self.held = held
         self.quarantine = quarantine
         self.ids = ids
         self.now, self.on_change = now, on_change
@@ -289,7 +298,14 @@ class FileSnapshots:
     def download_path(self, ref: wire.AttachmentRef) -> Path:
         """`<downloads>/<attachment id>/<the manifest's safe name>`: the name
         is the sender's, already free of paths and control characters."""
-        return self.downloads_dir() / str(ref.attachment_id) / ref.filename
+        self.downloads_dir()
+        return self.download_destination(ref)
+
+    def download_destination(self, ref: wire.AttachmentRef) -> Path:
+        """`download_path` without making its folder: for a read-only look
+        (attachment_locations.lookup), which must create nothing."""
+        root = self._downloads or data_paths.messaging_downloads_dir()
+        return root / str(ref.attachment_id) / ref.filename
 
     # -- records -----------------------------------------------------------------------
 
@@ -674,6 +690,21 @@ class FileSnapshots:
             await self.sleep(DOWNLOAD_RETRY_SEC * attempt)
         return self.verified_path(server_id, owner_github_id, message_id, attachment_id)
 
+    def received_ref(self, server_id: str, owner_github_id: int, message_id: UUID,
+                     attachment_id: UUID) -> wire.AttachmentRef:
+        """The manifest entry of a file on a message this owner holds
+        (`attachment_not_found` otherwise): attachment_locations.py's way in."""
+        return self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
+
+    def download_record(self, server_id: str, owner_github_id: int,
+                        attachment_id: UUID) -> tuple[ports.LocalFile, Optional[float]]:
+        """A received file's state, and when that state was written (None
+        when it was never downloaded here)."""
+        row = self._row(server_id, owner_github_id, attachment_id, DOWNLOAD)
+        if row is None:
+            return ports.LocalFile(attachment_id=attachment_id, state="available"), None
+        return self._local(row), row["updated_at"]
+
     def reveal(self, server_id: str, owner_github_id: int, message_id: UUID,
                attachment_id: UUID) -> None:
         """Show a verified download in Finder. Never opens it."""
@@ -706,7 +737,8 @@ class FileSnapshots:
                         removed += 1
                 except FileNotFoundError:
                     continue
-        needed = self._still_needed(server_id, owner_github_id)
+        needed = self._still_needed(server_id, owner_github_id) | self.held(server_id,
+                                                                            owner_github_id)
         with closing(run_store._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM messaging_files WHERE server_id=? AND owner_github_id=? "

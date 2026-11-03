@@ -8,6 +8,9 @@ exactly one instance and one source for who this JARVIS is:
     store          messaging_store.SqliteMessagingStore (the JARVIS database)
     files          messaging_files.FileSnapshots, sending through the
                    current pairing's transport
+    locations      attachment_locations.AttachmentLocations: where a
+                   received file is, and its agent leases (cleanup keeps
+                   what they hold)
     approvals      message_approvals.MessageApprovals, the one guard
     delivery       messaging_client.Delivery. Its transport for each pairing
                    is the team connection's, wrapped in GuardedTransport, so
@@ -50,7 +53,7 @@ from uuid import UUID
 
 from fastapi import FastAPI
 
-from jarvis import bundle_api, bundle_preflight, bundle_status, bundle_tasks
+from jarvis import attachment_locations, bundle_api, bundle_preflight, bundle_status, bundle_tasks
 from jarvis import data_paths
 from jarvis import draft_files
 from jarvis import messaging_api
@@ -118,8 +121,11 @@ class MessagingRuntime:
         self.node = UUID(str(node_id()))
         self.store = SqliteMessagingStore()
         self.store.forget_captures()
-        self.files = messaging_files.FileSnapshots(self.store, self._transport_now,
-                                                   on_change=self.hint)
+        self.files = messaging_files.FileSnapshots(
+            self.store, self._transport_now, on_change=self.hint,
+            held=lambda server_id, owner: self.locations.held(server_id, owner))
+        self.locations = attachment_locations.AttachmentLocations(
+            self.files, node_id=lambda: str(self.node))
         self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(),
                                           clock=clock, bundles=lambda: self.delivery.bundles_offered())
         current = _CurrentTransport(self._transport_now)
@@ -235,6 +241,13 @@ class MessagingRuntime:
         if who is None:
             return None
         return bundle_api.BundleContext(self.received, Owner(who.server_id, who.owner_github_id))
+
+    def location_context(self) -> Optional[attachment_locations.LocationContext]:
+        who = self.identity()
+        if who is None:
+            return None
+        return attachment_locations.LocationContext(self.locations, who.server_id,
+                                                    who.owner_github_id)
 
     def hint(self) -> None:
         """Tell every open page the queue changed (it reads it again)."""
@@ -387,3 +400,8 @@ def mount(app: FastAPI, runtime: Callable[[], Optional[MessagingRuntime]],
         found = runtime()
         return found.bundle_context() if found is not None else None
     bundle_api.mount(app, bundles, show)
+
+    def locations() -> Optional[attachment_locations.LocationContext]:
+        found = runtime()
+        return found.location_context() if found is not None else None
+    app.router.routes.extend(attachment_locations.router(locations).routes)

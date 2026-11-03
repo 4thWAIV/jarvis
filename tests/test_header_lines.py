@@ -898,6 +898,15 @@ EXEMPT = {
         "only through `_run_project`, the wall every run sentence uses, and "
         "otherwise fixed words or `_retry_run`'s refusal, which is fixed words or "
         "the folder service's fixed refusal"),
+    "attachment_locations.shown": (
+        "its `state` is a received file's location state, a Literal the model "
+        "validates, looked up in STATE_SHOWN's fixed words; no name, path or "
+        "other text a teammate or a session wrote reaches the string"),
+    "attachment_locations.spoken": (
+        "its `state` only picks STATE_SHOWN's fixed words; the rest is byte "
+        "counts and a failure code worded by Refused.shown, which returns its "
+        "spec's fixed sentence even for a code it does not know; the file's "
+        "name and paths go in the untrusted block `_location_reply` adds"),
 }
 
 
@@ -1511,6 +1520,64 @@ DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
 DRIVERS["server._announce_session_messages"] = _drive_announce_session_messages
 DRIVERS["server.tool_session_messages"] = _drive_session_messages
 DRIVERS["server.tool_read_session_message"] = _drive_read_session_message
+
+
+def _drive_where_line(server, session, monkeypatch):
+    """A received file's place, through the one tool that prints it,
+    `read_people_thread`. Not a session at all: the file's name is the
+    SENDER's, and its exact path on this Mac ends in that name. The
+    session's `title` carries the payload into both, so the sweep over
+    `FOREIGN_FIELDS` reaches it. One file here and checked (its path is
+    printed), one not downloaded (only a fixed state word is)."""
+    import asyncio
+    import uuid
+    from types import SimpleNamespace
+    from jarvis import attachment_locations
+
+    name = str(session.title or "")
+    here, there = uuid.uuid4(), uuid.uuid4()
+    message_id = uuid.uuid4()
+
+    def _located(attachment_id, state, path):
+        return attachment_locations.AttachmentLocation(
+            message_id=message_id, attachment_id=attachment_id, filename=name,
+            media_type="application/pdf", node_id=uuid.uuid4(), state=state,
+            local_path=path, size_bytes=3, sha256="0" * 64)
+
+    found = {here: _located(here, "verified", f"/Users/e/Downloads/JARVIS/{name}"),
+             there: _located(there, "remote_only", None)}
+    message = SimpleNamespace(
+        message_id=message_id, sender_github_id=2, recipient_github_id=1,
+        accepted_at=None, subject=None, text="the plan",
+        attachments=[SimpleNamespace(filename=name, size_bytes=3, attachment_id=a)
+                     for a in (here, there)])
+    item = SimpleNamespace(
+        work_state=SimpleNamespace(placement="active"), drafts=[],
+        messages=[SimpleNamespace(message=message, direction="incoming",
+                                  self_message=False,
+                                  receipts=SimpleNamespace(read_at=None,
+                                                           received_at=None))])
+
+    class _Local:
+        def item(self, _thread):
+            return item
+
+        def members(self):
+            return [SimpleNamespace(github_id=2, name=None, login="matt")]
+
+        def pairing(self):
+            return SimpleNamespace(owner_github_id=1)
+
+    class _Context:
+        def lookup(self, _message_id, attachment_id):
+            return found[attachment_id]
+
+    monkeypatch.setattr(server, "messaging", SimpleNamespace(
+        local=_Local(), location_context=lambda: _Context()))
+    return [asyncio.run(server.tool_read_people_thread({"thread": str(uuid.uuid4())}))]
+
+
+DRIVERS["server._where_line"] = _drive_where_line
 
 
 # --- The agents list --------------------------------------------------------

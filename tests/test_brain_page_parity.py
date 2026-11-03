@@ -130,12 +130,14 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status")
+             "update_status", "attachment_location")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis")
+            "update_jarvis", "reveal_attachment")
+# Acting tools that give back somebody else's words (a received file's name).
+NEW_TAINTING_ACTS = ("make_attachment_local",)
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models",)
 
@@ -144,7 +146,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     from jarvis import claude_provider, jarvis_mcp
     server = wired.server
     specs = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
-    for name in NEW_READS + NEW_ACTS + NEW_OWN_READS:
+    for name in NEW_READS + NEW_ACTS + NEW_OWN_READS + NEW_TAINTING_ACTS:
         assert name in specs and name in server.TOOL_HANDLERS
         assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert set(NEW_ACTS) <= server.ACTING_TOOLS
@@ -152,6 +154,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     assert set(NEW_READS) <= set(server.TAINTING_TOOLS)
     assert set(NEW_ACTS) <= set(server.TAINT_EXEMPT_TOOLS)
     assert set(NEW_OWN_READS) <= set(server.TAINT_EXEMPT_TOOLS) - server.ACTING_TOOLS
+    assert set(NEW_TAINTING_ACTS) <= server.ACTING_TOOLS & set(server.TAINTING_TOOLS)
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -167,6 +170,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
     ("update_jarvis", {}),
+    ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
+    ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -270,7 +275,7 @@ def test_team_network_reads_the_stored_snapshot(wired):
 @pytest.fixture
 def queue(wired, tmp_path):
     page = Page(tmp_path)
-    wired.server.messaging = SimpleNamespace(local=page.local)
+    wired.server.messaging = SimpleNamespace(local=page.local, location_context=lambda: None)
     return page
 
 

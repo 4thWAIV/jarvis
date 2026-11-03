@@ -344,11 +344,12 @@ def test_open_package_tells_the_brain_how_each_way_runs(wired, tmp_path, marks):
     from types import SimpleNamespace
     from jarvis.messaging_files import FilesContext
     from tests.test_messaging_files import MATT, SERVER
-    from tests.test_work_packages import _sent_package
+    from tests.test_work_packages import _sent_package, locations_for
     w, message, attachment = _sent_package(tmp_path, make_zip(
         {"BRIEF.md": "Count them."}, AGENT))
     wired.server.messaging = SimpleNamespace(
-        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT))
+        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT),
+        location_context=lambda: locations_for(w.matt.files, SERVER, MATT))
     text = _call(wired, "open_package", message=str(message), attachment=str(attachment))["text"]
     assert "run_package_agent" in text and "Brief (BRIEF.md):\nCount them." in text
     assert f"reply_to {message}" in text

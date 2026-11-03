@@ -111,11 +111,11 @@ def test_a_read_before_its_received_is_kept_and_changes_no_turn(got):
 def test_receipts_turn_and_reply_cues_are_independent(got):
     c = got["cues"]
     # Incoming and unread: the owner's turn.
-    assert (c["newest"]["turn"], c["newest"]["unread"], c["newest"]["readByYou"]) == ("mine", True, False)
+    assert (c["newest"]["turn"], c["newest"]["unread"]) == ("mine", True)
     # Opened and read, a reply drafted and not sent: still the owner's turn,
-    # read by them, not replied.
-    assert (c["ana-numbers"]["turn"], c["ana-numbers"]["readByYou"], c["ana-numbers"]["replied"]) == \
-        ("mine", True, False)
+    # no longer unread, not replied.
+    assert (c["ana-numbers"]["turn"], c["ana-numbers"]["unread"], c["ana-numbers"]["replied"]) == \
+        ("mine", False, False)
     assert c["ana-numbers"]["files"] == 1
     # Outgoing: received but unread; read but unanswered.
     assert (c["deploy"]["turn"], c["deploy"]["delivery"]) == ("theirs", "received")
@@ -154,7 +154,7 @@ def test_a_snapshot_for_another_pairing_replaces_everything(got):
 def test_dismissed_items_come_from_history_and_restore_keeps_their_facts(got):
     assert got["dismissed"] == ["lunch"]
     assert got["restoringWaiting"] is True and got["restoringDismissed"] == []
-    assert got["lunchCues"] == {"readByYou": True, "unread": False, "dismissed": True}
+    assert got["lunchCues"] == {"unread": False, "dismissed": True}
 
 
 def test_opening_a_waiting_item_shows_it_in_active_at_once(got):

@@ -299,6 +299,16 @@ TOOL_SPECS = [
                                  "takes it at once (a Codex session takes it at its next step). "
                                  "Otherwise omit it: each message waits until the session is "
                                  "between turns and has answered the one before.")},
+                "attachments": {"type": "array",
+                                "description": (
+                                    "Files people sent that he wants it to have, by message "
+                                    "and attachment id from read_people_thread. Each is "
+                                    "downloaded and checked if needed, then given as a path "
+                                    "it can read, or a verified copy in its folder."),
+                                "items": {"type": "object",
+                                          "properties": {"message": {"type": "string"},
+                                                         "attachment": {"type": "string"}},
+                                          "required": ["message", "attachment"]}},
             },
             "required": ["name", "capture"],
         },
@@ -501,6 +511,16 @@ TOOL_SPECS = [
                                            "finished run there instead of "
                                            "starting from nothing. False, or "
                                            "omitted, for something new.")},
+                "attachments": {"type": "array",
+                                "description": (
+                                    "Files people sent that he wants it to have, by message "
+                                    "and attachment id from read_people_thread. Each is "
+                                    "downloaded and checked if needed, then given as a path "
+                                    "it can read, or a verified copy in its folder."),
+                                "items": {"type": "object",
+                                          "properties": {"message": {"type": "string"},
+                                                         "attachment": {"type": "string"}},
+                                          "required": ["message", "attachment"]}},
             },
             "required": ["prompt"],
         },
@@ -1472,6 +1492,60 @@ TOOL_SPECS = [
                 "action": {"type": "string", "enum": ["discard", "cancel", "retry"]},
             },
             "required": ["message", "action"],
+        },
+    },
+    {
+        "name": "attachment_location",
+        "description": (
+            "Where a file a person sent is on this Mac, by its message and attachment id, "
+            "never by its name: the exact verified path (local_path), or its state (not "
+            "downloaded, downloading, missing, changed, moved, failed) and why. Reads only; "
+            "nothing is downloaded or opened. intended_path is only where a download would "
+            "go, never a saved file. Offer to show or copy a path rather than reading a long "
+            "one aloud."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The message id."},
+                "attachment": {"type": "string",
+                               "description": "The file's attachment id, from "
+                                              "read_people_thread."},
+            },
+            "required": ["message", "attachment"],
+        },
+    },
+    {
+        "name": "make_attachment_local",
+        "description": (
+            "Download a file a person sent and check its size and hash, when he asks to "
+            "use, open or locate it or to give it to an agent and it is not here yet (or "
+            "is missing, changed or failed). Returns the same location as "
+            "attachment_location. Never unpacks, opens or runs it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The message id."},
+                "attachment": {"type": "string",
+                               "description": "The file's attachment id, from "
+                                              "read_people_thread."},
+            },
+            "required": ["message", "attachment"],
+        },
+    },
+    {
+        "name": "reveal_attachment",
+        "description": (
+            "Show a downloaded, checked file a person sent selected in a Finder window, "
+            "on his word. It is never opened."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The message id."},
+                "attachment": {"type": "string",
+                               "description": "The file's attachment id, from "
+                                              "read_people_thread."},
+            },
+            "required": ["message", "attachment"],
         },
     },
     {

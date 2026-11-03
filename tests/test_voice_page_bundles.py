@@ -156,7 +156,9 @@ async def _open(p, url):
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice)
-    await page.route_web_socket("**/ws/sessions", _Sessions())
+    sessions = _Sessions()
+    await page.route_web_socket("**/ws/sessions", sessions)
+    routes.on_change = lambda: sessions.ws.send(json.dumps({"type": "messages"}))
     envelope = json.dumps(sc.network_envelope())
     await page.route("**/api/team/network", lambda r: r.fulfill(
         status=200, content_type="application/json", body=envelope))
@@ -183,7 +185,9 @@ async def test_a_checked_file_opens_its_contents_a_folder_at_a_time(page_playwri
         await page.click(f'.queue-view li[data-thread-id="{world.thread("ana-numbers")}"] .queue-row')
         card = page.locator("#queue-item-view .queue-file").first
         await card.locator("text=Download").click()
-        await async_api.expect(card.locator(".file-state")).to_have_text("Downloaded and checked")
+        # Checked is the ordinary state: the Open button appears, with no words.
+        await async_api.expect(card.get_by_role("button", name="Open q3-numbers.pdf")).to_be_visible()
+        await async_api.expect(card.locator(".file-state")).to_have_count(0)
         await card.get_by_role("button", name="Open q3-numbers.pdf").click()
         contents = card.get_by_role("button", name="Contents q3-numbers.pdf")
         await async_api.expect(contents).to_have_attribute("aria-expanded", "true")
