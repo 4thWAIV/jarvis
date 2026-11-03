@@ -146,7 +146,8 @@ async def test_a_workflow_opens_and_closes_the_same_by_hand_and_by_request(page_
             await row.wait_for(timeout=10000)
 
             await row.click()
-            await page.wait_for_selector("#workflow-detail .workflow-detail-name")
+            # Its name once read, not the placeholder drawn before the read answers.
+            await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text("Speech migration")
             by_hand = await page.evaluate(SHOWN)
             await page.click(".workflow-close")
             await page.wait_for_selector("#workflow-detail", state="detached")
@@ -154,7 +155,8 @@ async def test_a_workflow_opens_and_closes_the_same_by_hand_and_by_request(page_
 
             result = await voice.navigate("workflow.open", {"workflowId": "wf-1"})
             assert result["status"] == "completed" and result["effects"] == ["centre.view-shown"], result
-            await page.wait_for_selector("#workflow-detail .workflow-detail-name")
+            # Its name once read, not the placeholder drawn before the read answers.
+            await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text("Speech migration")
             assert await page.evaluate(SHOWN) == by_hand
             assert by_hand["centre"] == "Workflow" and by_hand["workflow"] == "Speech migration"
 
