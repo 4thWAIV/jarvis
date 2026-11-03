@@ -63,7 +63,8 @@ async def test_a_folders_forms_and_the_add_forms_cancel_are_the_same_by_hand_and
             await edit.click()
             form = page.locator(".folder-detail .folder-edit")
             await form.wait_for()
-            assert await form.locator("input").input_value() == FOLDERS[0]["display_name"]
+            # Filled once the folder's record is read into it, not on the first frame.
+            await async_api.expect(form.locator("input")).to_have_value(FOLDERS[0]["display_name"])
             await form.locator(".folder-button.quiet").click()
             await form.wait_for(state="detached")
             _completed(await voice.navigate("folder.mode", {"folderId": aurora, "mode": "edit"}))
