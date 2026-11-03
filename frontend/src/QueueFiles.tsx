@@ -5,7 +5,8 @@
  * and its state only when that is not the ordinary one. Sending: uploading.
  * Receiving: Download while it is on the team server, downloading, then its
  * exact path with Copy and Reveal in Finder (QueueFileLocation.tsx; and
- * Open page once JARVIS has opened it as a page work package, packages.ts).
+ * Open package on a zip not unpacked yet, and Open page once it is unpacked
+ * as a page work package, packages.ts).
  * Either side: failed, with the reason and Retry, or missing. A sent file:
  * the recipient's JARVIS's report once it opened it.
  *
@@ -15,10 +16,10 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { BundleInventory } from "./BundleInventory";
-import { openPackagePage, packageList, pagePackageFrom } from "./packages";
+import { openPackagePage, openReceivedPackage, packageFrom, packageList } from "./packages";
 import { downloadFile, messagingSaid } from "./queue";
 import { FileLocation } from "./QueueFileLocation";
-import { formatPercent, saidShown, t as tNow, useT } from "./locale";
+import { formatPercent, SaidText, saidShown, t as tNow, useT, type Said } from "./locale";
 import type { AttachmentRef, LocalFile, OpenabilityReport } from "./messagingContract";
 import { bundleWords } from "./bundles";
 import type { Reason } from "./bundleContract";
@@ -107,7 +108,7 @@ export function FileCard({ fileRef, file, messageId, incoming, report, onRemove,
       {incoming && messageId && state === "verified" && (
         <FileLocation messageId={messageId} attachmentId={fileRef.attachment_id} part={ui.part} />
       )}
-      {incoming && state === "verified" && <OpenPage attachmentId={fileRef.attachment_id} part={ui.part} />}
+      {incoming && messageId && state === "verified" && <OpenPackage messageId={messageId} fileRef={fileRef} part={ui.part} />}
       {incoming && messageId && state === "verified" && (
         <BundleInventory file={{ messageId, attachmentId: fileRef.attachment_id }} filename={fileRef.filename}
                          part={ui.part} />
@@ -120,22 +121,41 @@ export function FileCard({ fileRef, file, messageId, incoming, report, onRemove,
   );
 }
 
-/** Open page, for a file JARVIS has unpacked as a page work package. */
-function OpenPage({ attachmentId, part }: { attachmentId: string; part: PartRef }) {
+/** A zip, by its declared type or its name: what a work package comes as. */
+function isZip(ref: AttachmentRef): boolean {
+  return ref.media_type === "application/zip" || ref.filename.toLowerCase().endsWith(".zip");
+}
+
+/** Open page, for a file JARVIS has unpacked as a page work package (it
+ *  runs `package.open`); Open package, for a zip not unpacked yet (a page
+ *  package then opens at once). */
+function OpenPackage({ messageId, fileRef, part }: { messageId: string; fileRef: AttachmentRef; part: PartRef }) {
   const t = useT();
   const list = packageList();
   const packages = useSyncExternalStore(list.subscribe, list.get).value;
-  const [problem, setProblem] = useState<string | null>(null);
-  const found = pagePackageFrom(packages, attachmentId);
-  if (!found) return null;
+  const [problem, setProblem] = useState<Said | null>(null);
+  const [busy, setBusy] = useState(false);
+  const unpacked = packageFrom(packages, fileRef.attachment_id);
+  const act = async (open: () => Promise<Said | null>) => {
+    setBusy(true);
+    setProblem(await open());
+    setBusy(false);
+  };
   return (
     <>
-      <button type="button" className="file-action" ref={part("openPage")} data-ui-command="package.open"
-              data-ui-args={JSON.stringify({ packageId: found.id })}
-              onClick={async () => setProblem(await openPackagePage(found.id))}>
-        {t("main.queue.file.openPage")}
-      </button>
-      {problem && <span className="file-state" data-original-detail="">{problem}</span>}
+      {unpacked?.runs === "page" ? (
+        <button type="button" className="file-action" disabled={busy} ref={part("openPage")}
+                data-ui-command="package.open" data-ui-args={JSON.stringify({ packageId: unpacked.id })}
+                onClick={() => void act(() => openPackagePage(unpacked.id))}>
+          {t("main.queue.file.openPage")}
+        </button>
+      ) : packages && !unpacked && isZip(fileRef) && (
+        <button data-ui-action="domain" type="button" className="file-action" disabled={busy} ref={part("openPackage")}
+                onClick={() => void act(() => openReceivedPackage(messageId, fileRef.attachment_id))}>
+          {t("main.package.open")}
+        </button>
+      )}
+      {problem && <SaidText said={problem} className="file-state" />}
     </>
   );
 }

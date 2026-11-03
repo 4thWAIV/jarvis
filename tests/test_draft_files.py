@@ -243,8 +243,8 @@ async def test_a_folder_swapped_for_a_link_after_the_check_is_refused(tmp_path, 
     draft = await new_draft(rt)
     checked = draft_files.source_path
 
-    def then_swapped(raw):
-        path = checked(raw)
+    def then_swapped(raw, doing="send"):
+        path = checked(raw, doing)
         os.rename(tmp_path / "work", tmp_path / "work-old")
         os.symlink(tmp_path / "elsewhere", tmp_path / "work")
         return path

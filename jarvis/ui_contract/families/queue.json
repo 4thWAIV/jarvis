@@ -41,7 +41,7 @@
     {"kind": "queueMessage", "entity": "message", "label": "Message", "parts": ["card", "request", "body", "receipt"],
      "presentations": [{"view": "main.queue"}]},
     {"kind": "queueAttachment", "entity": "attachment", "label": "Attachment",
-     "parts": ["entry", "download", "location", "copy", "reveal", "openPage", "contents", "path", "more"],
+     "parts": ["entry", "download", "location", "copy", "reveal", "openPage", "openPackage", "contents", "path", "more"],
      "presentations": [{"view": "main.queue"}]},
     {"kind": "bundleEntry", "entity": "member", "label": "File in an archive", "parts": ["name", "open"],
      "presentations": [{"view": "main.queue"}]}

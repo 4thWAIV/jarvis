@@ -5,8 +5,9 @@
  * and last seen, how JARVIS reads it, and Refresh, Reconnect and Remove
  * from catalog (which never deletes a file, and says so). Below, its
  * contents: breadcrumbs, one bounded page of a directory at a time with
- * Load more, and a file's preview, a bounded window at a time; then the
- * sessions whose records named it, and its location's history.
+ * Load more, and a file's preview, a bounded window at a time (a .zip's
+ * with Open package, which opens a work package from here: packages.ts);
+ * then the sessions whose records named it, and its location's history.
  *
  * Every state is said in words: loading, empty, partial, missing, access
  * denied, removed, unsupported preview. File content is shown as text,
@@ -30,6 +31,7 @@ import {
  type Entries, type Entry, type Folder, type FolderDetail as Detail,
   type Preview, type Role,
 } from "./folders";
+import { openLocalPackage } from "./packages";
 import { shortAgo } from "./timeFormat";
 
 /** A part's callback ref, from a registered target. */
@@ -321,7 +323,7 @@ function Contents({ folder, partRef }: { folder: Folder; partRef: PartRef }) {
                   {...bindingProps(bind("folder.more", { folderId: folder.id, list: "entries" }))}>{t("main.folder.loadMore")}</button>
         )}
       </div>
-      {c && file && <FilePreview folder={folder} path={file} preview={c.preview} previewRef={partRef("preview")} />}
+      {c && file && <FilePreview folder={folder} path={file} preview={c.preview} partRef={partRef} />}
     </section>
   );
 }
@@ -366,14 +368,14 @@ function EntryRow({ folderId, entry: e, selected }: { folderId: string; entry: E
   );
 }
 
-function FilePreview({ folder, path, preview, previewRef }: {
-  folder: Folder; path: string; preview: Showing; previewRef: (el: Element | null) => void }) {
+function FilePreview({ folder, path, preview, partRef }: {
+  folder: Folder; path: string; preview: Showing; partRef: PartRef }) {
   const { windows, error, loading } = preview;
   const first = windows[0];
   const last = windows[windows.length - 1];
   const t = useT();
   return (
-    <section className="folder-preview" aria-label={t("main.folder.previewOf", { path })} ref={previewRef}>
+    <section className="folder-preview" aria-label={t("main.folder.previewOf", { path })} ref={partRef("preview")}>
       <h4 className="folder-path">{path}</h4>
       {loading && !first && <p className="folder-note" role="status">{t("main.folder.reading")}</p>}
       {error && <SaidText said={error} as="p" className="folder-error" role="alert" />}
@@ -385,6 +387,9 @@ function FilePreview({ folder, path, preview, previewRef }: {
         </p>
       )}
       {first?.kind === "binary" && <p className="folder-note">{t("main.folder.binaryNote")}</p>}
+      {first?.kind === "binary" && path.toLowerCase().endsWith(".zip") && (
+        <OpenLocalPackage path={`${folder.location.canonical_path}/${path}`} partRef={partRef} />
+      )}
       {first && first.kind !== "binary" && (
         <pre className="folder-text" tabIndex={0}>
           {windows.flatMap((w) => w.lines).join("\n") || t("main.folder.nothingToShow")}
@@ -403,6 +408,26 @@ function FilePreview({ folder, path, preview, previewRef }: {
       )}
       {last && !last.next_cursor && windows.length > 0 && first?.kind !== "binary" && <p className="folder-note">{t("main.folder.endOfFile")}</p>}
     </section>
+  );
+}
+
+/** Open package, for a .zip in the folder: a work package opened from
+ *  this Mac (a page one shows in the centre at once), or why not. */
+function OpenLocalPackage({ path, partRef }: { path: string; partRef: PartRef }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<Said | null>(null);
+  const open = async () => {
+    setBusy(true);
+    setProblem(await openLocalPackage(path));
+    setBusy(false);
+  };
+  return (
+    <p className="folder-note">
+      <button data-ui-action="domain" type="button" className="folder-button" disabled={busy}
+              ref={partRef("openPackage")} onClick={() => void open()}>{t("main.package.open")}</button>
+      {problem && <> <SaidText said={problem} className="folder-note-said" role="status" /></>}
+    </p>
   );
 }
 

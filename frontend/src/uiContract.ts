@@ -2700,6 +2700,7 @@ export const UI_CONTRACT = {
         "copy",
         "reveal",
         "openPage",
+        "openPackage",
         "contents",
         "path",
         "more"
@@ -3190,6 +3191,7 @@ export const UI_CONTRACT = {
         "location",
         "contents",
         "preview",
+        "openPackage",
         "close"
       ],
       "presentations": [
@@ -3216,6 +3218,7 @@ export const UI_CONTRACT = {
             "location",
             "contents",
             "preview",
+            "openPackage",
             "close"
           ],
           "reveal": {
@@ -3439,7 +3442,11 @@ export const UI_CONTRACT = {
       "parts": [
         "header",
         "frame",
-        "close"
+        "close",
+        "story",
+        "tell",
+        "fromSlide",
+        "stop"
       ],
       "presentations": [
         {

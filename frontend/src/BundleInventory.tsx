@@ -5,7 +5,8 @@
  * contents here, one folder at a time, each member with its name, type and
  * size, its state only when it is not readable, and Open. A zip that is
  * also a work package says so; opening or running a package stays with the
- * card's existing Open page and the brain's open_package.
+ * card's Open package and Open page (QueueFiles.tsx) and the brain's
+ * open_package.
  *
  * Showing the contents, a folder in them and the next page of one are the
  * registered `bundle.contents`, `bundle.folder` and `bundle.folder.more`

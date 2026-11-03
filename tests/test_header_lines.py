@@ -357,6 +357,10 @@ EXEMPT = {
         "in the UI contract, so the id it prints is the contract's own; the "
         "page's labels it prints go back only inside the server's untrusted "
         "`ui_map` block (`_ui_said`), never into a header or a spoken line"),
+    "package_story.parse": (
+        "it reads a story file's fields into a Story and refuses one with its own "
+        "sentences, built from slide and beat numbers and fixed words; no title, "
+        "beat or selector from the file is ever put into a refusal"),
     "server._bundle_reply": (
         "its head is the refusal's own words (bundle_contract's InspectionRefused or "
         "messaging_api's Refused, fixed text) or the paging line; the route's JSON, "

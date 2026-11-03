@@ -273,7 +273,7 @@ def test_the_page_s_files_are_framed_only_by_jarvis_and_sandboxed(wired, page):
     assert described == {"id": page.id, "name": "check", "version": "1.0.0",
                          "purpose": MANIFEST["purpose"], "runs": "page",
                          "entry": "web/index.html", "source": "ab12cd34",
-                         "sources": ["ab12cd34"]}
+                         "sources": ["ab12cd34"], "story": None}
 
 
 def test_is_package_page_is_exactly_a_page_s_files():
@@ -354,3 +354,125 @@ def test_open_package_tells_the_brain_how_each_way_runs(wired, tmp_path, marks):
     assert "run_package_agent" in text and "Brief (BRIEF.md):\nCount them." in text
     assert f"reply_to {message}" in text
     assert wired.hints == [{"type": "packages"}], "the page reads its packages again"
+
+
+def test_the_queue_s_open_package_and_the_brain_unpack_through_one_function(
+        wired, tmp_path, marks):
+    """A received package opens from the page too (the Queue's Open package,
+    POST /api/packages/received), through the same `_open_received_package`
+    as the brain's open_package: unpacked once, the page told to read its
+    packages again, then found by its attachment for Open page."""
+    from types import SimpleNamespace
+    from jarvis.messaging_files import FilesContext
+    from tests.test_messaging_files import MATT, SERVER
+    from tests.test_work_packages import _sent_package, locations_for
+    w, message, attachment = _sent_package(tmp_path, make_zip(
+        {"web/index.html": "<p>hi</p>"}, PAGE))
+    wired.server.messaging = SimpleNamespace(
+        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT),
+        location_context=lambda: locations_for(w.matt.files, SERVER, MATT))
+    route = "/api/packages/received"
+    body = {"message_id": str(message), "attachment_id": str(attachment)}
+    assert wired.client.post(route, json=body).status_code == 403, "the page's origin only"
+    r = wired.client.post(route, json=body, headers=BROWSER)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["unpacked"] is True and got["package"]["runs"] == "page"
+    assert got["package"]["sources"] == [attachment.hex]
+    assert wired.hints == [{"type": "packages"}]
+    again = wired.client.post(route, json=body, headers=BROWSER).json()
+    assert again == {**got, "unpacked": False}, "the same bytes are the same package"
+    text = _call(wired, "open_package", message=str(message), attachment=str(attachment))["text"]
+    assert text.startswith(f"Package {got['package']['id']} was already unpacked")
+    assert wired.hints == [{"type": "packages"}], "only an unpacking is a hint"
+    r = wired.client.post(route, json={"message_id": "x"}, headers=BROWSER)
+    assert r.status_code == 400
+    wired.server.messaging = None
+    r = wired.client.post(route, json=body, headers=BROWSER)
+    assert r.status_code == 409 and r.json()["error"] == wired.server.MESSAGING_OFF
+
+
+# -- a package zip that is a file on this Mac -------------------------------------------
+
+@pytest.fixture
+def shown(wired, monkeypatch):
+    """Every page frame the server sends, with one page open."""
+    sent: list[dict] = []
+
+    async def emit(message):
+        sent.append(message)
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", {object()})
+    return sent
+
+
+def test_the_folders_view_and_the_brain_open_a_local_zip_through_one_function(
+        wired, shown, tmp_path, marks):
+    """Open package on a .zip in the Folders view (POST /api/packages/local)
+    and the brain's open_local_package: the file read by the ordinary-file
+    rule, unpacked exactly as a received zip, and a page package shown in
+    the centre at once."""
+    folder = tmp_path / "Projects" / "deck"
+    folder.mkdir(parents=True)
+    archive = write_zip(folder, make_zip({"web/index.html": "<p>hi</p>"}, PAGE), "check.zip")
+    route = "/api/packages/local"
+    assert wired.client.post(route, json={"path": str(archive)}).status_code == 403
+    r = wired.client.post(route, json={"path": str(archive)}, headers=BROWSER)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["unpacked"] is True and got["problem"] is None
+    package = work_packages.find(got["package"]["id"])
+    assert package.manifest.runs == "page" and package.sources[0].startswith("local")
+    assert shown == [{"type": "package_page", "package": got["package"]}]
+    assert wired.hints == [{"type": "packages"}]
+    assert not [p for p in data_paths.packages_dir().iterdir() if p.name.endswith(".zip")], \
+        "the private copy is removed"
+    text = _call(wired, "open_local_package", path=str(archive))["text"]
+    assert text.startswith(f"Package {package.id} was already unpacked")
+    assert "It is open in the centre of his screen" in text
+    assert shown[-1] == shown[0] and len(shown) == 2
+
+
+def test_a_local_zip_is_read_by_the_ordinary_file_rule(wired, shown, tmp_path, marks):
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    os.symlink(archive, folder / "link.zip")
+    secret = folder / ".ssh"
+    secret.mkdir()
+    write_zip(secret, make_zip({"web/index.html": "x"}, PAGE), "id.zip")
+    (folder / "notes.zip").write_bytes(b"not a zip")
+    own = data_paths.data_dir() / "x.zip"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_bytes(archive.read_bytes())
+    for path, words in ((folder / "link.zip", "is a link"),
+                        (secret / "id.zip", "does not open id.zip from where it is"),
+                        (own, "does not open x.zip from where it is"),
+                        (folder / "gone.zip", "There is no file"),
+                        ("check.zip", "is not a full path")):
+        said = _call(wired, "open_local_package", path=str(path))["text"]
+        assert words in said and said.endswith("Nothing was opened."), said
+    r = wired.client.post("/api/packages/local", json={"path": str(folder / "notes.zip")},
+                          headers=BROWSER)
+    assert r.status_code == 409 and r.json()["error"]
+    assert shown == [] and work_packages.every() == []
+
+
+def test_a_page_that_connects_later_is_shown_the_package_until_it_is_closed(
+        wired, shown, tmp_path, marks):
+    """The package shown is held by the server: a page that connects after
+    it was opened (a reload) is sent it as its voice socket opens, and once
+    a page closes it, no longer."""
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    described = wired.client.post("/api/packages/local", json={"path": str(archive)},
+                                  headers=BROWSER).json()["package"]
+    frame = {"type": "package_page", "package": described}
+    assert frame in wired.server._opening_frames()
+    with wired.client.websocket_connect("/ws/voice", headers=BROWSER) as ws:
+        opening = [ws.receive_json() for _ in range(3)]
+    assert opening[2] == frame, opening
+    r = wired.client.delete(f"/api/packages/{described['id']}/page", headers=BROWSER)
+    assert r.status_code == 204
+    assert frame not in wired.server._opening_frames()

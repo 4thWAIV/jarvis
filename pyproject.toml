@@ -41,6 +41,7 @@ jarvis = [
     "transcribeProtocol.json",
     "ui_contract/*.json",
     "ui_contract/families/*.json",
+    "package_story.js",
     "jarvis_home/*",
     "skills/**/*",
     "session_skills/**/*",

@@ -1570,6 +1570,23 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "open_local_package",
+        "description": (
+            "Open a work package that is a .zip file on this Mac, by its full path, only when "
+            "he says to (\"open the package at ~/Projects/x/deck.zip\"; give the path with "
+            "his home folder written out). It unpacks the zip into its own folder exactly as "
+            "a package a person sent, and a page package opens in the centre of his screen "
+            "at once. It returns its package.json, how it runs, and its skill or brief; a "
+            "page package with a story is then told with tell_package_story when he asks."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The zip's full path on this Mac."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "list_packages",
         "description": "The work packages opened on this JARVIS: each one's id, name, "
                        "version, purpose and folder.",
@@ -1615,6 +1632,25 @@ TOOL_SPECS = [
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "required": ["package"],
+        },
+    },
+    {
+        "name": "tell_package_story",
+        "description": (
+            "Tell a page package's story, only when he asks: its page opens and JARVIS's "
+            "voice reads the story the sender wrote, slide by slide, pointing at each part "
+            "of the page as it is said. It returns at once; do not tell the story yourself. "
+            "`slide` starts from that slide (it also jumps a story being told); action "
+            "stop ends it. The page's Tell the story and Stop do the same."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string", "description": "The package's id."},
+                "action": {"type": "string", "enum": ["tell", "stop"],
+                           "description": "tell (the default) or stop."},
+                "slide": {"type": "integer", "description": "The slide to start from, from 1."},
+            },
             "required": ["package"],
         },
     },

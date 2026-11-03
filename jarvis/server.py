@@ -101,7 +101,9 @@ from jarvis import transmission
 from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
-from jarvis import attachment_locations, packages_api, work_packages
+from jarvis import attachment_locations, draft_files, packages_api, work_packages
+from jarvis import story_teller as story_teller_module
+from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
 from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SHOWN,
                                     TEXT_PAGE_DEFAULT_CHARS)
@@ -6986,43 +6988,105 @@ def _files_said(handed: list) -> str:
 _PACKAGE_WRAP_NAME = "package"
 
 
+async def _open_received_package(message_id: uuid.UUID, attachment_id: uuid.UUID
+                                 ) -> tuple[Optional["work_packages.Package"], bool, str]:
+    """Download a received zip if it is not here yet and unpack it into its
+    own folder: the brain's `open_package` and the page's Open package
+    (packages_api) alike. (the package, unpacked now, "") or (None, False,
+    why not)."""
+    context = _location_context()
+    if context is None:
+        return None, False, MESSAGING_OFF
+    try:
+        found = await context.ensure_local(message_id, attachment_id)
+    except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
+        return None, False, messaging_api.Refused(e.code).shown()
+    problem = attachment_locations.not_local(found)
+    if problem:
+        return None, False, messaging_api.Refused(problem).shown()
+    try:
+        package, fresh = await asyncio.to_thread(work_packages.unpack, Path(found.local_path),
+                                                 attachment_id.hex)
+        context.record_extraction(message_id, attachment_id, package.folder,
+                                  sorted(set(package.manifest.named_files().values())))
+    except (work_packages.PackageError, OSError) as e:
+        return None, False, str(e)
+    if fresh:
+        _send_to_session_clients({"type": "packages"})
+    return package, fresh, ""
+
+
 async def tool_open_package(args: dict) -> str:
     """Download a received zip if it is not here yet, unpack it into its own
     folder and hand the brain its package.json and skill to follow."""
-    context = _location_context()
-    if context is None:
-        return MESSAGING_OFF
     message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
     if message_id is None or attachment_id is None:
         return ("Which file, sir? Give me its message id and attachment id from "
                 "read_people_thread. Nothing was opened.")
+    package, fresh, problem = await _open_received_package(message_id, attachment_id)
+    if package is None:
+        return problem if problem == MESSAGING_OFF else f"{problem} Nothing was opened."
+    return _package_opened(package, fresh, _PACKAGE_HOW[package.manifest.runs] + (
+        f" At the end, package_results, then draft_message with reply_to {message_id} and "
+        f"those files, then request_message_review."))
+
+
+def _package_opened(package: "work_packages.Package", fresh: bool, what_next: str) -> str:
+    """What the brain is told of a package just opened: where it is, what to
+    do with it, its package.json and its skill or brief."""
     try:
-        found = await context.ensure_local(message_id, attachment_id)
-    except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
-        return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
-    problem = attachment_locations.not_local(found)
-    if problem:
-        return f"{messaging_api.Refused(problem).shown()} Nothing was opened."
-    archive = Path(found.local_path)
-    try:
-        package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
-                                                 attachment_id.hex)
-        context.record_extraction(message_id, attachment_id, package.folder,
-                                  sorted(set(package.manifest.named_files().values())))
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
                                                 ("Brief", package.manifest.brief))
                         if relative)
     except (work_packages.PackageError, OSError) as e:
         return f"{e} Nothing was opened."
+    how = "is unpacked" if fresh else "was already unpacked"
+    return (f"Package {package.id} {how} in {package.folder}. {what_next}\n"
+            f"package.json:\n{package.manifest.as_json()}{files}")
+
+
+async def _open_local_package(path: str) -> tuple[Optional["work_packages.Package"], bool, str]:
+    """Open a package zip that is a file on this Mac: the brain's
+    `open_local_package` and the page's Open package in the Folders view
+    alike. The path is read by the folder catalog's ordinary-file rule
+    (draft_files.Source: no link followed, keys, credentials and JARVIS's
+    own data refused, a received file's size limit), unpacked exactly as a
+    received zip, and a page package is then shown in the centre
+    (`_open_package_page`). (the package, unpacked now, "" or why it is not
+    shown) or (None, False, why not)."""
+    try:
+        source = await asyncio.to_thread(draft_files.Source.open, path, "open")
+    except draft_files.NotAttached as e:
+        return None, False, str(e)
+    try:
+        package, fresh = await work_packages.unpack_held(source.chunks())
+    except (draft_files.NotAttached, work_packages.PackageError, OSError) as e:
+        return None, False, str(e)
+    finally:
+        source.close()
     if fresh:
         _send_to_session_clients({"type": "packages"})
-    how = "is unpacked" if fresh else "was already unpacked"
-    return (f"Package {package.id} {how} in {package.folder}. "
-            f"{_PACKAGE_HOW[package.manifest.runs]} At the end, package_results, then "
-            f"draft_message with reply_to {message_id} and those files, then "
-            f"request_message_review.\n"
-            f"package.json:\n{package.manifest.as_json()}{files}")
+    if package.manifest.runs != work_packages.PAGE:
+        return package, fresh, ""
+    _, problem = await _open_package_page(package.id)
+    return package, fresh, problem
+
+
+async def tool_open_local_package(args: dict) -> str:
+    """Open a package zip on this Mac, by its path: unpacked, and a page
+    package shown in the centre."""
+    package, fresh, problem = await _open_local_package(str(args.get("path") or ""))
+    if package is None:
+        return f"{problem} Nothing was opened."
+    if package.manifest.runs == work_packages.PAGE:
+        what_next = (f"It is open in the centre of his screen, sir. "
+                     if not problem else f"It is unpacked but not shown: {problem} ")
+        what_next += ("If package.json names a story, tell_package_story tells it in your "
+                      "voice when he asks; what the page saves goes in its results folder.")
+    else:
+        what_next = _PACKAGE_HOW[package.manifest.runs]
+    return _package_opened(package, fresh, what_next)
 
 
 # What the brain does with an open package, by how it runs.
@@ -7036,7 +7100,8 @@ _PACKAGE_HOW = {
     work_packages.PAGE: (
         "It runs as a page: on his go-ahead, open_package_page shows it in the centre of his "
         "screen, where he uses it; what it saves goes in its results folder. Ask him to say "
-        "when he has finished with it."),
+        "when he has finished with it. If package.json names a story, tell_package_story "
+        "tells it over the page in your voice, when he asks."),
 }
 
 
@@ -7053,7 +7118,8 @@ def tool_list_packages(args: dict) -> str:
     packages = work_packages.every()
     if not packages:
         return "No packages have been opened here, sir."
-    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}, "
+    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
+             f"{', with a story' if p.manifest.story else ''}, "
              f"{p.manifest.purpose} ({p.folder})" for p in packages]
     return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
             f"run_package_command, run_package_agent, open_package_page and package_results "
@@ -7148,11 +7214,53 @@ async def _open_package_page(reference: str
         return None, str(e)
     if not voice_clients:
         return None, "No JARVIS page is open to show it on."
-    await _voice_emit({"type": "package_page", "package": packages_api.describe(package)})
+    global _package_shown
+    _package_shown = packages_api.describe(package)
+    await _voice_emit({"type": "package_page", "package": _package_shown})
     return package, ""
 
 
-packages_api.mount(app, _open_package_page)
+# The page package shown in the centre now, held here so a page that
+# connects later (a reload, another tab) shows it too; None once a page
+# closes it (`_close_package_page`).
+_package_shown: Optional[dict] = None
+
+
+async def _close_package_page(reference: str) -> None:
+    """The page's × on a package: no page that connects from now on shows it."""
+    global _package_shown
+    if _package_shown is not None and _package_shown.get("id") == reference:
+        _package_shown = None
+
+
+# A page package's story (story_teller.py): the page's Tell the story and
+# Stop and the brain's tell_package_story go through `_package_story`.
+story_teller = StoryTeller(lambda: speech, _open_package_page, lambda f: _voice_emit(f))
+
+
+async def _package_story(action: str, reference: str, slide: Optional[int] = None,
+                         by: str = "on the page") -> tuple[bool, str]:
+    """Tell (from `slide`) or stop a page package's story: (done, what was
+    done or why not). Started from the page, the brain is told at its next
+    turn, so it knows what he is hearing."""
+    told = await story_teller.act(action, reference, slide)
+    if told.package is None:
+        return False, told.problem
+    if told.slide is None:
+        if by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he stopped the story of package "
+                                    f"{told.package.id} {by}.")
+        return True, f"Stopped the story of {told.package.id}."
+    total = len(told.story.slides)
+    if by != "by voice":
+        _notes_for_brain.append(
+            f"Since your last turn he started the story of package {told.package.id} {by}, "
+            f"from slide {told.slide} of {total}; it is being told.")
+    return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
+
+
+packages_api.mount(app, _open_package_page, _package_story, _open_received_package,
+                   _open_local_package, _close_package_page)
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -7163,6 +7271,32 @@ async def tool_open_package_page(args: dict) -> str:
     return (f"{package.id} is open in the centre of his screen, sir. What it saves goes in "
             f"{package.folder / work_packages.RESULTS}; when he says he has finished, "
             f"package_results.")
+
+
+async def tool_tell_package_story(args: dict) -> str:
+    """Tell a page package's story, from a slide, or stop it: the page's
+    Tell the story and Stop."""
+    action = str(args.get("action") or story_teller_module.TELL)
+    slide = args.get("slide")
+    try:
+        slide = int(slide) if slide not in (None, "") else None
+    except (TypeError, ValueError):
+        return "Which slide, sir? A number. Nothing was changed."
+    done, said = await _package_story(action, str(args.get("package") or ""), slide,
+                                      by="by voice")
+    if not done:
+        return f"{said} Nothing was changed."
+    if action == story_teller_module.STOP or story_teller.telling is None:
+        return f"{said} Say nothing more about it unless he asks."
+    story = story_teller.telling.story
+    # The slides' titles are the sender's words: walled, for finding a slide
+    # he names, never to be followed.
+    titles = "\n".join(f"{n}. {title}" for n, title in enumerate(story.outline()["slides"], 1))
+    return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
+            f"points at each part on his screen as it is said; his speaking or Stop ends "
+            f"it. Do not repeat the story yourself. tell_package_story with a slide number "
+            f"goes to that slide. Its slides:\n"
+            + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
 async def _announce_package_run(run: dict) -> None:
@@ -7198,18 +7332,23 @@ async def _announce_package_run(run: dict) -> None:
 
 TOOL_HANDLERS.update({
     "open_package": tool_open_package,
+    "open_local_package": tool_open_local_package,
     "list_packages": tool_list_packages,
     "run_package_command": tool_run_package_command,
     "package_results": tool_package_results,
     "run_package_agent": tool_run_package_agent,
     "open_package_page": tool_open_package_page,
+    "tell_package_story": tool_tell_package_story,
 })
-ACTING_TOOLS.update({"open_package", "run_package_command", "run_package_agent",
-                     "open_package_page"})
+ACTING_TOOLS.update({"open_package", "open_local_package", "run_package_command",
+                     "run_package_agent",
+                     "open_package_page", "tell_package_story"})
 TAINTING_TOOLS.update({
     "open_package": "a work package a teammate sent",
+    "open_local_package": "a work package's own package.json and skill",
     "list_packages": "work packages teammates sent",
     "run_package_command": "the output of a work package's step",
+    "tell_package_story": "the slide titles of a story a teammate sent",
 })
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
@@ -11567,6 +11706,19 @@ def _scan_projects_sync() -> list[dict]:
 
 # -- WebSocket Voice Handler -----------------------------------------------
 
+def _opening_frames() -> list[dict]:
+    """What a page is told as its voice socket opens: the settings it
+    needs, that JARVIS is idle, the page package shown (so a reload keeps
+    it) and the story being told, if any."""
+    frames = [{"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH},
+              {"type": "status", "state": "idle"}]
+    if _package_shown is not None:
+        frames.append({"type": "package_page", "package": _package_shown})
+    if story_teller.status() is not None:
+        frames.append(story_teller.status())
+    return frames
+
+
 @app.websocket("/ws/voice")
 async def voice_handler(ws: WebSocket):
     """
@@ -11620,8 +11772,8 @@ async def voice_handler(ws: WebSocket):
         # Through this client's own queue, not straight down the socket, so
         # the opening frames cannot be overtaken by a broadcast that lands
         # while they are in flight.
-        _enqueue(queue, {"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH})
-        _enqueue(queue, {"type": "status", "state": "idle"})
+        for frame in _opening_frames():
+            _enqueue(queue, frame)
 
         global _last_greeting_time
         if speech is not None and time.time() - _last_greeting_time > 60:

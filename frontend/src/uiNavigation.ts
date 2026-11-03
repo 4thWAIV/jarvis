@@ -126,11 +126,17 @@ export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Ob
 type PlainClose = "workflow.close" | "thread.close" | "voice.diagnostics.close" | "subsystem.close" | "network.close"
   | "package.close" | "bundle.member.close";
 
-/** A slot's close command: offered while the slot holds an item. */
-export function registerClose(id: PlainClose, slot: DetailSlot<unknown>): void {
+/** A slot's close command: offered while the slot holds an item.
+ *  `closed`, when given, is told the item it let go, whoever closed it. */
+export function registerClose<T>(id: PlainClose, slot: DetailSlot<T>, closed?: (item: T) => void): void {
   registerCommand(id, {
     availability: () => slot.value.get() !== null ? { available: true } : { available: false, reason: "no-entity" },
-    execute: () => ({ status: "completed", effects: slot.close() }),
+    execute: () => {
+      const item = slot.value.get();
+      const effects = slot.close();
+      if (item !== null) closed?.(item);
+      return { status: "completed", effects };
+    },
   });
 }
 
