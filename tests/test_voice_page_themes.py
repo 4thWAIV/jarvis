@@ -12,7 +12,7 @@ pytestmark = pytest.mark.page
 
 METRICS = """() => Object.fromEntries([
  '#left-column','#orb-control','#orb-canvas','#right-column','.centre-tabs',
- '#conversation','.conversation-speaking','.conversation-hearing','#footer',
+ '#conversation','.chat-playback','.chat-composer','#footer',
  '.agents-list li:first-child','.settings-panel.settings-view','.settings-nav',
  '#settings-system .status-grid','#settings-system .sysinfo-grid'
 ].flatMap(s=>{
@@ -60,7 +60,7 @@ async def test_switching_themes_keeps_geometry_draft_panel_and_connections(page_
         await server.install(page)
         await page.goto(page_url)
         await page.wait_for_selector('.agents-list li')
-        editor=page.get_by_role('textbox',name='Type instead of speaking')
+        editor=page.get_by_role('textbox',name='Message JARVIS')
         await editor.fill('Unsent draft stays here')
         await page.evaluate('window.originalCanvas = document.querySelector("#orb-canvas")')
         await open_settings(page)
@@ -81,7 +81,8 @@ async def test_switching_themes_keeps_geometry_draft_panel_and_connections(page_
         await page.get_by_label('Appearance').select_option('graphite')
         await page.get_by_role('button',name='Close',exact=True).click()
         await editor.click()
-        assert await editor.evaluate('(e)=>getComputedStyle(e.parentElement).outlineStyle')=='solid'
+        assert await editor.evaluate('(e)=>getComputedStyle(e.parentElement).boxShadow') != 'none'
+        assert await editor.evaluate('''e => { const p=document.createElement('span'); p.style.color='var(--ui-accent)'; e.parentElement.append(p); const color=getComputedStyle(p).color; p.remove(); return getComputedStyle(e.parentElement).borderColor === color; }''')
         assert await editor.input_value()=='Unsent draft stays here'
         await page.reload()
         assert await page.evaluate('document.documentElement.dataset.theme')=='graphite'

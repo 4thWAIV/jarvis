@@ -27,7 +27,7 @@ from tests.test_voice_page_voice_health import record
 from tests.test_voice_page_workflows import _workflow
 from tests.test_voice_page_diagnostics import _week
 from tests.test_voice_page_settings import _status
-from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION, _silence_wav
 from tests.test_voice_page_subagents import (lone_subagents, subagent_transcript,
                                              workflow_subagents)
 
@@ -157,8 +157,14 @@ async def capture(url, output, theme=None, capture_metrics=False):
                 else: body={}
                 await route.fulfill(json=body)
             await page.route('**/api/**',api)
+            peers=[]
             async def voice(ws):
-                ws.on_message(lambda _:None)
+                peers.append(ws)
+                def receive(raw):
+                    msg=json.loads(raw)
+                    if msg.get('type')=='skip_to_end':
+                        ws.send(json.dumps({'type':'reading_skipped','utt':msg['utt']}))
+                ws.on_message(receive)
                 ws.send(json.dumps({'type':'status','state':'idle'}))
             await page.route_web_socket('**/ws/voice',voice)
             await page.route_web_socket('**/ws/sessions',lambda ws:ws.on_message(lambda _:None))
@@ -168,6 +174,18 @@ async def capture(url, output, theme=None, capture_metrics=False):
             await page.evaluate('document.fonts.ready')
             await page.wait_for_timeout(1200)
             await snapshot('workspace-conversation.png')
+            # A fictional complete answer while silent fixture audio is playing.
+            # This captures the real playback control without a provider or speaker audio.
+            reply="Ready for your review.\n\n### A clearer conversation\n\n- Read complete replies as soon as they arrive.\n- Skip the spoken reading whenever you’re ready.\n- Keep writing while JARVIS responds.\n\nThe surrounding workspace and its controls stay in place."
+            await page.get_by_role('textbox',name='Message JARVIS').click()
+            peers[-1].send(json.dumps({'type':'reply','utt':1000,'at':time.time(),'text':reply,'done':True}))
+            peers[-1].send(json.dumps({'type':'audio','utt':1000,'idx':0,'text':'Ready for your review.',
+                                      'kind':'reply','data':_silence_wav(12)}))
+            await page.wait_for_selector('.chat-playback')
+            await page.get_by_role('textbox',name='Message JARVIS').fill('Let’s review the next step together.\nKeep the release paused for now.')
+            await snapshot('workspace-conversation-playback.png')
+            await page.get_by_role('button',name='Skip to end').click()
+            await page.get_by_role('textbox',name='Message JARVIS').fill('')
             await page.locator('#agents-control').screenshot(path=str(output/'workspace-agents.png'))
             await page.click('.right-tabs [role=tab][title=Workflows]')
             await page.click('.workflow-row')

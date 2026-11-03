@@ -18,6 +18,12 @@ export interface Turn {
   id: number;
   speaker: Speaker;
   sentences: string[];
+  /** Full readable reply, independent of the sentences played aloud. */
+  text?: string;
+  complete?: boolean;
+  interrupted?: boolean;
+  epoch?: number;
+  replyAt?: number;
   /** A user turn still being heard: the next thing heard replaces its text. */
   open: boolean;
   /** Typed submissions belong in history, never in the microphone caption. */
@@ -47,6 +53,16 @@ const KEEP_TURNS = 40;
 export const conversation = createStore<Conversation>({ turns: [], speaking: null });
 
 let nextId = 1;
+let captionEpoch = 0;
+export function jarvisReconnected(): void {
+  for (const utt of pending.keys()) flush(utt);
+  captionEpoch++;
+}
+export function jarvisDisconnected(): void {
+  jarvisQuiet();
+  const { turns } = conversation.get();
+  commit(turns.map(t => t.complete === false ? { ...t, interrupted: true } : t), null);
+}
 
 function commit(turns: Turn[], speaking: [number, number, number] | null): void {
   conversation.set({ turns: turns.slice(-KEEP_TURNS), speaking });
@@ -92,7 +108,7 @@ export function shown(display: Display): void {
     commit(insert(turns, [display], turns.length - 1), speaking);
     return;
   }
-  const reply = turns.map((t) => t.utt).lastIndexOf(utt);
+  const reply = turns.map((t) => t.epoch === captionEpoch ? t.utt : undefined).lastIndexOf(utt);
   if (reply >= 0) {
     commit(insert(turns, [display], reply), speaking);
     return;
@@ -148,46 +164,55 @@ export function heardText(ids: number[]): string {
 /** A sentence of JARVIS's has started playing and lasts `seconds`.
  *  Sentences of one utterance join one turn; a new utterance starts a new
  *  one. */
-export function jarvisSpeaking(utt: number, text: string, seconds: number): void {
+export function jarvisSpeaking(utt: number, text: string, seconds: number, idx?: number): void {
   const { turns } = conversation.get();
-  const { last, at } = lastWords(turns);
-  let turn: Turn;
-  let next: Turn[];
-  if (last && last.speaker === "jarvis" && last.utt === utt) {
-    // Its sources may already be shown after it; the words stay above them.
-    turn = { ...last, sentences: [...last.sentences, text] };
-    next = turns.map((t, i) => (i === at ? turn : t));
-  } else {
-    const closed = last && last.open ? turns.map((t, i) => (i === at ? { ...last, open: false } : t)) : turns;
-    turn = { id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences: [text], open: false, utt };
-    next = [...closed, turn];
-    const waiting = pending.get(utt);
-    if (waiting) {
-      pending.delete(utt);
-      next = insert(next, waiting, next.length - 1);
-    }
-  }
-  const sentence = turn.sentences.length - 1;
-  commit(next, [turn.id, sentence, 0]);
-  speakWords(text, seconds, (word) => {
-    const { turns: now, speaking } = conversation.get();
-    if (!speaking || speaking[0] !== turn.id || speaking[1] !== sentence || speaking[2] !== word) {
-      commit(now, [turn.id, sentence, word]);
+  const at = turns.findIndex(t => t.speaker === "jarvis" && t.utt === utt && t.epoch === captionEpoch);
+  const existing = turns[at];
+  const sentence = idx ?? existing?.sentences.length ?? 0;
+  const sentences = [...(existing?.sentences ?? [])];
+  while (sentences.length < sentence) sentences.push("");
+  sentences[sentence] = text;
+  const turn: Turn = existing ? { ...existing, sentences } : {
+    id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences, open: false, utt, epoch: captionEpoch,
+  };
+  commit(existing ? turns.map((t, i) => i === at ? turn : t) : [...turns, turn], [turn.id, sentence, 0]);
+  flush(utt);
+  speakWords(text, seconds, word => {
+    const now = conversation.get();
+    if (now.speaking?.[0] === turn.id && now.speaking[1] === sentence) {
+      commit(now.turns, [turn.id, sentence, word]);
     }
   });
 }
 
-/** A reply with no playable audio still belongs in the conversation. */
-export function jarvisText(utt: number, text: string): void {
+/** Readable provider text is independent of the audio playback clock. */
+export function jarvisReply(utt: number, text: string, done: boolean, at?: number): void {
   const { turns, speaking } = conversation.get();
-  const { last, at } = lastWords(turns);
-  if (last?.speaker === "jarvis" && last.utt === utt) {
-    commit(turns.map((t, i) => i === at
-      ? { ...last, sentences: [...last.sentences, text] } : t), speaking);
-  } else {
-    commit([...turns, { id: nextId++, at: Date.now() / 1000, speaker: "jarvis",
-      sentences: [text], open: false, utt }], speaking);
-  }
+  const index = turns.findIndex(t => t.speaker === "jarvis" && t.utt === utt && (
+    (at != null && t.replyAt === at)
+    || (t.epoch === captionEpoch && (t.replyAt == null || at == null || t.replyAt === at))));
+  const existing = turns[index];
+  const turn: Turn = existing ? { ...existing, text, complete: done, interrupted: false, epoch: captionEpoch, ...(at != null ? { at, replyAt: at } : {}) } : {
+    id: nextId++, at: at ?? Date.now() / 1000, speaker: "jarvis", sentences: [], text,
+    complete: done, open: false, utt, epoch: captionEpoch, replyAt: at,
+  };
+  commit(existing ? turns.map((t, i) => i === index ? turn : t) : [...turns, turn], speaking);
+  flush(utt);
+}
+
+/** Compatibility for unvoiced chunks and older servers. */
+export function jarvisText(utt: number, text: string, idx?: number): void {
+  const { turns, speaking } = conversation.get();
+  const at = turns.findIndex(t => t.speaker === "jarvis" && t.utt === utt && t.epoch === captionEpoch);
+  const existing = turns[at];
+  const sentences = [...(existing?.sentences ?? [])];
+  const sentence = idx ?? sentences.length;
+  while (sentences.length < sentence) sentences.push("");
+  sentences[sentence] = text;
+  const turn: Turn = existing ? { ...existing, sentences } : {
+    id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences, open: false, utt, epoch: captionEpoch,
+  };
+  commit(existing ? turns.map((t, i) => i === at ? turn : t) : [...turns, turn], speaking);
   flush(utt);
 }
 

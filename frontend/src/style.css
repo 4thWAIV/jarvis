@@ -422,75 +422,8 @@ html, body {
 #conversation > div { flex: none; scrollbar-width: none; }
 #conversation > div::-webkit-scrollbar { display: none; }
 
-/* Everything said, in all the height the boxes below leave; it scrolls,
-   with a thin bar so it reads as a scroll box. */
-#conversation > .conversation-history {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 14px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ui-divider) transparent;
-}
-.history-turn { letter-spacing: 0.3px; }
 .history-turn.user { color: var(--ui-text); }
 .history-turn.jarvis { color: var(--ui-accent); }
-.history-turn.long { cursor: pointer; }
-.history-turn.clamped {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-
-/* What JARVIS is saying now: four lines, blue. */
-.conversation-speaking {
-  position: relative;
-  box-sizing: content-box;
-  height: calc(4 * var(--conversation-line));
-  overflow-y: auto;
-  padding: 8px 14px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.35);
-  border-radius: 8px;
-  background: rgba(var(--ui-accent-rgb), 0.06);
-}
-
-/* What Tim is saying now, at the very bottom: white, one line growing to
-   four. */
-.conversation-hearing {
-  box-sizing: content-box;
-  min-height: var(--conversation-line);
-  max-height: calc(4 * var(--conversation-line));
-  overflow-y: auto;
-  padding: 8px 14px;
-  border: 1px solid var(--ui-edge);
-  border-radius: 8px;
-  background: var(--ui-surface);
-}
-.conversation-hearing .caption-turn.user { color: var(--ui-text); }
-.conversation-hearing { cursor: text; }
-/* Typing in the white box: exactly the heard words' lines, growing with
-   what is typed, and the box scrolls past four. */
-.hearing-input {
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  border: none;
-  outline: none;
-  resize: none;
-  overflow: hidden;
-  field-sizing: content;
-  min-height: var(--conversation-line);
-  background: transparent;
-  color: var(--ui-text);
-  font: inherit;
-  line-height: var(--conversation-line);
-  letter-spacing: 0.3px;
-}
-.hearing-input[hidden] { display: none; }
-.hearing-input::placeholder { color: var(--ui-muted); }
 
 #caption-box {
   padding: 8px 14px;
@@ -3489,11 +3422,6 @@ input::placeholder, textarea::placeholder {
 }
 button:focus-visible, a:focus-visible, input:focus-visible,
 select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 2px;
-}
-/* The microphone caption/editor already owns its border and padding. */
-.conversation-hearing:focus-within {
   outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }

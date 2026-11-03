@@ -19,6 +19,7 @@ export interface AudioPlayer {
   enqueue(base64: string, utt: number, idx: number): Promise<void>;
   onNeedsGesture(cb: () => void): void;
   stop(): void;
+  cancelUtterance(utt: number): void;
   dropQueued(): void;
   getAnalyser(): AnalyserNode;
   onPlayed(cb: (utt: number, idx: number) => void): void;
@@ -43,6 +44,7 @@ export function createAudioPlayer(): AudioPlayer {
 
   const queue: QueuedChunk[] = [];
   let isPlaying = false;
+  let currentUtt: number | null = null;
   let currentSource: AudioBufferSourceNode | null = null;
   let playedCallback: ((utt: number, idx: number) => void) | null = null;
   let startedCallback: ((utt: number, idx: number, seconds: number) => void) | null = null;
@@ -94,9 +96,11 @@ export function createAudioPlayer(): AudioPlayer {
     source.buffer = head.buffer;
     source.connect(analyser);
     currentSource = source;
+    currentUtt = head.utt;
     source.onended = () => {
       if (currentSource === source) {
         currentSource = null;
+        currentUtt = null;
         playedCallback?.(head.utt, head.idx);
         playNext();
       }
@@ -126,6 +130,7 @@ export function createAudioPlayer(): AudioPlayer {
 
     stop() {
       queue.length = 0;
+      currentUtt = null;
       if (currentSource) {
         const src = currentSource;
         currentSource = null; // so onended does not ack or chain
@@ -136,6 +141,16 @@ export function createAudioPlayer(): AudioPlayer {
         }
       }
       isPlaying = false;
+    },
+
+    cancelUtterance(utt) {
+      for (let i = queue.length - 1; i >= 0; i--) if (queue[i].utt === utt) queue.splice(i, 1);
+      if (currentUtt === utt && currentSource) {
+        const source = currentSource;
+        currentSource = null; currentUtt = null; isPlaying = false;
+        try { source.stop(); } catch { /* already ended */ }
+      }
+      if (!isPlaying) playNext();
     },
 
     dropQueued() {

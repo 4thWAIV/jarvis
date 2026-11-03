@@ -35,7 +35,7 @@ LAYOUT = """() => {
   // white box in Conversation.
   const centre = document.getElementById('centre-bottom') || document.getElementById('conversation');
   const caption = (document.getElementById('caption-box')
-    || document.querySelector('.conversation-hearing')).getBoundingClientRect();
+    || document.querySelector('.chat-composer')).getBoundingClientRect();
   return {footerBottom: footer.bottom, footerWidth: footer.width, page: [innerWidth, innerHeight],
           over, orbWidth: orb.width, leftWidth: left.width, panelWidth: panel.width,
           gapLeft: caption.left - left.right, gapRight: right.left - caption.right,

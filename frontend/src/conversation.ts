@@ -6,9 +6,8 @@
  * read it here; a "conversation" hint on the voice socket (jarvis.ts) says
  * to read it again.
  *
- * What is said while the page is open is drawn from the live captions
- * (captions.ts) as it always was; the record adds what came before the page
- * opened, and what only the server sees (messages and their answers).
+ * The durable record is authoritative. Live captions bridge the interval
+ * before a server record arrives, with utterance/turn correlation where available.
  */
 
 import { createStore } from "./store";
@@ -36,7 +35,7 @@ export interface ConversationItem {
   /** Kind-specific: a capture notice's capture_event ("cleared", "restored")
    *  and who did it ("by"). */
   detail: { capture_event?: string; by?: string; how?: string; as?: number;
-            heard?: number[] };
+            heard?: number[]; utt?: number; reply_started_at?: number; client_turn_id?: number };
   message: MessageState | null;
 }
 
@@ -52,10 +51,6 @@ export const conversationChanged = createStore(0);
 
 /** The agent whose thread the centre area shows, or null. */
 export const openThread = createStore<{ sessionId: string; name: string | null } | null>(null);
-
-/** When this page opened, in seconds: what was said before it comes from the
- *  record, what is said after from the live captions. */
-export const pageOpenedAt = Date.now() / 1000;
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -76,16 +71,6 @@ export const STATUS_WORDS: Record<string, string> = {
   undelivered: "Not picked up", delivered: "Delivered", working: "Working on it",
   answered: "Answered", failed: "Failed",
 };
-
-/** The kinds the live captions already draw while the page is open. */
-const LIVE_KINDS: ReadonlySet<ItemKind> = new Set(["heard", "typed", "jarvis", "capture", "notice"]);
-
-/** Whether the history shows this record item: everything from before the
- *  page opened, and after it only what the live captions do not draw. */
-export function fromRecord(item: ConversationItem): boolean {
-  // A capture cleared or restored is never spoken, so it is always the record's.
-  return item.at < pageOpenedAt || !LIVE_KINDS.has(item.kind) || !!item.detail?.capture_event;
-}
 
 /** Restore a cleared capture (the Restore button). Resolves with the
  *  refusal's reason, or null. */

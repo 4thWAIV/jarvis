@@ -69,7 +69,7 @@ async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_url):
             timeout=10000)
         head = await page.evaluate("""() => {
           const h = document.querySelector('.sources-chip-head');
-          const turns = [...document.querySelectorAll('.conversation-history > *')];
+          const turns = [...document.querySelectorAll('.conversation-messages > *')];
           return {text: h.textContent, colour: getComputedStyle(h).color,
                   after: turns.findIndex(t => t.querySelector('.sources-chip'))
                        > turns.findIndex(t => t.textContent.includes('rain tomorrow')),
