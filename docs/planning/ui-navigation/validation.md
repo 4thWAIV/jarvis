@@ -2,6 +2,14 @@
 
 Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validation` waiting for Tim. Nothing is merged, pushed or deployed.
 
+## Story packages merged, their controls pointed at (2026-11-03)
+
+Merge `a733fb2` (origin/main `375290c`, #52) added six pointer parts: `packageView` story, tell, fromSlide and stop, `queueAttachment` openPackage and `folder` openPackage. The reach sweep now has the scenes they need, from stand-in answers and the example story deck (`examples/packages/story-deck`, zipped and unpacked as `tests/test_voice_page_story.py` does): a Queue message from Matt with `story-deck.zip`, fetched and checked but not unpacked; a folder whose only entry is that zip, previewed as a binary file; and the deck opened by the server's `package_page` frame, with its story.
+
+Coverage (312 contract target/parts): 257 reached, 0 refused, 31 mounted with the part not on show, 24 never registered or shown; the same in English and Spanish at 1440x900 and 1280x800. All six new parts reached in all four (and the package view's head, frame and Close). Settings control by control unchanged: 116 pointed, 95 reached, 0 refused. Sweep: `ui-nav-run/evidence/story-packages/sweep/` (`summary.txt`; script `ui-nav-run/tools/test_reach_sweep.py`).
+
+Page test: `tests/test_voice_page_remaining_nav.py` points at each of the six through the brain's `ui_request` (indicate) and asserts each arrives (English, as the file's other tests); the file's 8 tests pass.
+
 ## Settings in the centre (2026-11-03)
 
 Tim, through JARVIS, approved as written: move Settings out of its overlay into a scrollable centre view like Conversation, reorganise it for clarity, update the pointer so it reaches the Settings controls, then complete the PR. Commit `110f8f3`; the inventory and the before and after structure are in `.agents/in-progress/settings-redesign.md`.

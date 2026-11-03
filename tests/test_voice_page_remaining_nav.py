@@ -9,7 +9,10 @@ discarding and before Done (`queue.discard.ask`, `queue.done.ask`). Also the
 targets and reveals added with them: a task card's progress bar, a
 subagent's row in the right panel, a subsystem's check and a folder's entry
 brought into view by the commands their keys name. And the one rule for
-the brain's map: every target's label in the language in force.
+the brain's map: every target's label in the language in force. Last, the
+package controls: Open package on a received zip and on a .zip's preview
+in a folder, and a page package's story box, Tell the story, the slide to
+start from and Stop, each pointed at and reached (the example story deck).
 
 Each control carries the command it runs (`data-ui-command`); clicking it
 and the brain's `ui_request` leave the view showing the same thing.
@@ -19,11 +22,13 @@ replaced by Playwright.
 
 import json
 import time
+from urllib.parse import unquote
 
 import pytest
 
 from tests import messaging_queue_scenario as sc
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_centre_nav import _Workflows, _arrived, _open, _shown_tab
 from tests.test_voice_page_folders import FOLDERS, _Api as _Folders
@@ -224,10 +229,13 @@ class _QueueVoice(_Voice):
             self.ws.send(json.dumps(m))
 
 
-async def _queue(p, url):
-    world = await sc.build()
+async def _queue(p, url, world=None):
+    world = world or await sc.build()
     voice = _QueueVoice()
     routes = sc.QueueRoutes(world, voice)
+    sessions = _NetworkSessions()
+    # A file made local is a "messages" hint, as the server sends one.
+    routes.on_change = lambda: sessions.ws.send(json.dumps({"type": "messages"}))
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -235,7 +243,7 @@ async def _queue(p, url):
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice)
-    await page.route_web_socket("**/ws/sessions", _NetworkSessions())
+    await page.route_web_socket("**/ws/sessions", sessions)
     envelope = json.dumps(sc.network_envelope())
     await page.route("**/api/team/network", lambda r: r.fulfill(status=200, content_type="application/json",
                                                                  body=envelope))
@@ -376,5 +384,123 @@ async def test_the_maps_labels_follow_the_language_in_force_and_identities_do_no
             assert spanish[("settingsSection", "voice")] == "Configuración, Voz e idioma"
             assert spanish[("settings", None)] == "Configuración"
             assert spanish[("status", None)] == "Estado"
+        finally:
+            await browser.close()
+
+
+def _story_deck(tmp_path):
+    """The example story deck, zipped and unpacked here as a teammate's zip
+    would be: (the zip's bytes, the package, as the page is sent it)."""
+    import sys
+    from jarvis import packages_api, work_packages
+    sys.path.insert(0, str(EXAMPLES))
+    try:
+        import zip_package
+    finally:
+        sys.path.remove(str(EXAMPLES))
+    archive = tmp_path / "story-deck.zip"
+    assert zip_package.main([str(EXAMPLES / "story-deck"), str(archive)]) == 0
+    package, _ = work_packages.unpack(archive, "5t0ryd3c", clear_mark=lambda _f: None)
+    return archive.read_bytes(), package, packages_api.describe(package)
+
+
+def _packages(package, listed):
+    """The /api/packages routes: the packages listed, and the deck's own files."""
+    from jarvis import packages_api, work_packages
+
+    async def handle(route):
+        path = unquote(route.request.url.split("/api/packages", 1)[1].split("?", 1)[0])
+        prefix = f"/{package.id}/files/"
+        if path == "":
+            await route.fulfill(json={"packages": listed})
+        elif path.startswith(prefix):
+            relative = path[len(prefix):]
+            await route.fulfill(body=work_packages.page_file(package, relative),
+                                content_type=packages_api.media_type(relative))
+        else:
+            await route.fulfill(status=404, json={"error": "not here"})
+    return handle
+
+
+class _ZipFolders(_Folders):
+    """The folder routes, with the deck's zip in the folder and its preview
+    the binary file it is."""
+
+    async def __call__(self, route):
+        url = route.request.url
+        path = url.split("/api/folders", 1)[1].split("?", 1)[0]
+        if path.endswith("/entries"):
+            await route.fulfill(json={
+                "folder_id": path.split("/")[1], "location_id": "l", "location_revision": 1,
+                "canonical_path": "/demo", "path": "", "reader": "files",
+                "breadcrumbs": [{"name": "aurora", "path": ""}],
+                "entries": [{"name": "story-deck.zip", "path": "story-deck.zip", "kind": "file",
+                             "size": 4096, "modified": 1.0, "transcript": False}],
+                "withheld": 0, "scanned": 1, "partial": False, "next_cursor": None})
+        elif path.endswith("/preview"):
+            await route.fulfill(json={
+                "folder_id": path.split("/")[1], "location_id": "l", "location_revision": 1,
+                "canonical_path": "/demo", "path": "story-deck.zip", "reader": "files", "kind": "binary",
+                "size": 4096, "modified": 1.0, "lines": [], "first_line": 1, "offset": 0,
+                "next_cursor": None, "partial": False, "clipped_lines": 0, "skipped_records": 0,
+                "sessions": []})
+        else:
+            await super().__call__(route)
+
+
+@pytest.mark.asyncio
+async def test_a_received_zips_open_package_is_pointed_at_and_reached(page_url, tmp_path):
+    """The Queue's Open package, on a received zip not unpacked yet."""
+    data, package, _ = _story_deck(tmp_path)
+    world = await sc.build()
+    sent = await world.send("deck", sc.MATT_MAC, sc.TIM, "The tea deck", "Here it is.",
+                            files=(("story-deck.zip", data),))
+    await world.sync()
+    attachment = sent.attachments[0].attachment_id
+    async with async_api.async_playwright() as p:
+        browser, page, world, voice = await _queue(p, page_url, world)
+        try:
+            await page.route("**/api/packages**", _packages(package, []))
+            _completed(await voice.navigate("queue.open", {"threadId": str(sent.thread_id)}))
+            card = page.locator(f'#queue-item-view .queue-file[data-attachment-id="{attachment}"]')
+            # Fetched and checked here, so Open package is offered.
+            await card.locator("button:has-text('Download')").click()
+            await async_api.expect(card.locator("button:has-text('Open package')")).to_be_visible()
+            result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+                "region": "main", "view": "main.queue", "kind": "queueAttachment",
+                "key": str(attachment), "part": "openPackage"}})
+            assert _arrived(result)
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_folders_zip_and_a_packages_story_controls_are_pointed_at_and_reached(page_url, tmp_path):
+    """The Folders view's Open package on a .zip's preview, then a page
+    package with a story: its story box, Tell the story, the slide to start
+    from and Stop."""
+    aurora = FOLDERS[0]["id"]
+    _, package, info = _story_deck(tmp_path)
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url, ("**/api/folders**", _ZipFolders()),
+                                           ("**/api/packages**", _packages(package, [info])))
+        try:
+            await voice.navigate("main.tab.select", {"tab": "folders"})
+            _completed(await voice.navigate("folders.open", {"folderId": aurora}))
+            await page.locator(".folder-detail .folder-entry:has-text('story-deck.zip')").wait_for()
+            _completed(await voice.navigate("folder.preview", {"folderId": aurora, "path": "story-deck.zip"}))
+            await async_api.expect(page.locator(".folder-preview button:has-text('Open package')")).to_be_visible()
+            result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+                "region": "main", "view": "main.folders", "kind": "folder", "key": aurora,
+                "part": "openPackage"}})
+            assert _arrived(result)
+
+            voice.ws.send(json.dumps({"type": "package_page", "package": info}))
+            await page.locator("#package-view .package-story").wait_for()
+            for part in ("story", "tell", "fromSlide", "stop"):
+                result = await voice.request({"kind": "indicate", "reveal": "never", "target": {
+                    "region": "main", "view": "main.package", "kind": "packageView", "key": package.id,
+                    "part": part}})
+                assert _arrived(result), part
         finally:
             await browser.close()
