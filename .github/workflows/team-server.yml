@@ -1,10 +1,11 @@
 # The team server's own tests (team_server/), against a real MongoDB.
 # Separate from ci.yml: a different service with its own dependencies, and it
-# runs on Linux like its image.
+# runs on Linux like its image. On main, the deploy jobs then put the tested
+# commit on staging and production (docs/team-server.md, "Deploying").
 name: team-server
 
 # Like ci.yml: once per pull request, on push only for main, and a newer
-# commit cancels a branch's older run.
+# commit cancels a branch's older run. A main run is never cancelled.
 on:
   push:
     branches: [main]
@@ -16,6 +17,17 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Reads /version's JSON on stdin and prints its commit, or nothing when the
+  # answer is not JSON or the commit is not a plain Git object name.
+  READ_COMMIT: |
+    import json, re, sys
+    try:
+        commit = str(json.load(sys.stdin).get("commit", ""))
+    except Exception:
+        commit = ""
+    print(commit if re.fullmatch(r"[0-9a-f]{7,40}", commit) else "")
 
 jobs:
   test:
@@ -51,3 +63,130 @@ jobs:
         run: |
           echo '{"commit": "ci"}' > team_server/build_info.json
           docker build -t team-server-ci team_server
+
+  # Deploys what reached main: staging, then production. Only on main (a push
+  # or Run workflow), never on a pull request, and only once the tests above
+  # passed. Each environment deploys only when team_server/ differs between
+  # the commit its /version reports and this one, so a change outside it
+  # never restarts the server, and Run workflow (which no paths filter
+  # stops) catches up after a failed deploy. A run whose commit is no longer
+  # main's head skips: the newer run deploys. RAILWAY_TOKEN is each GitHub
+  # environment's own Railway project token. Both jobs share the steps
+  # (&deploy_steps); their own env says which environment.
+  deploy-staging:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    environment:
+      name: staging
+      url: https://team-server-staging.up.railway.app
+    concurrency:
+      group: team-server-deploy-staging
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENV: staging
+      SERVER: https://team-server-staging.up.railway.app
+    steps: &deploy_steps
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, so the commit the server reports can be found.
+          fetch-depth: 0
+      - name: Decide
+        id: decide
+        run: |
+          seen=$(curl -fsS -m 15 "$SERVER/version" | python3 -c "$READ_COMMIT") || seen=""
+          echo "observed=${seen:-unreadable}" >> "$GITHUB_OUTPUT"
+          echo "$DEPLOY_ENV reports commit ${seen:-unreadable}; this run is $GITHUB_SHA"
+          if [ -n "$seen" ] && git cat-file -e "$seen^{commit}" 2>/dev/null \
+             && git diff --quiet "$seen" HEAD -- team_server; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=already current: team_server/ is the same at $seen" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=superseded: main is now ${head:-unreadable}; a newer run deploys" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+      - name: Package
+        if: steps.decide.outputs.deploy == 'true'
+        run: bash team_server/package.sh "$RUNNER_TEMP/pkg"
+      - name: Install the Railway CLI
+        if: steps.decide.outputs.deploy == 'true'
+        run: npm install -g @railway/cli@4.31.0
+      - name: Deploy
+        if: steps.decide.outputs.deploy == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: >-
+          railway up "$RUNNER_TEMP/pkg" --path-as-root
+          --project d3907faa-856f-485d-a61d-79ac70791711
+          --service team-server --environment "$DEPLOY_ENV" --ci
+      - name: Wait for the new commit
+        id: verify
+        if: steps.decide.outputs.deploy == 'true'
+        run: |
+          deadline=$((SECONDS + 600))
+          while :; do
+            ready=$(curl -sS -m 15 -o /dev/null -w '%{http_code}' "$SERVER/health/ready") || ready=000
+            seen=$(curl -fsS -m 15 "$SERVER/version" | python3 -c "$READ_COMMIT") || seen=""
+            echo "/health/ready $ready, /version commit ${seen:-unreadable}"
+            if [ "$ready" = 200 ] && [ "$seen" = "$GITHUB_SHA" ]; then
+              echo "observed=$seen" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "observed=${seen:-unreadable}" >> "$GITHUB_OUTPUT"
+              echo "::error::$DEPLOY_ENV did not become ready on $GITHUB_SHA within 10 minutes"
+              exit 1
+            fi
+            sleep 15
+          done
+      - name: Summary
+        if: always()
+        env:
+          DEPLOY: ${{ steps.decide.outputs.deploy }}
+          REASON: ${{ steps.decide.outputs.reason }}
+          BEFORE: ${{ steps.decide.outputs.observed }}
+          AFTER: ${{ steps.verify.outputs.observed }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          if [ "$DEPLOY" = true ]; then
+            result="deployed: $OUTCOME"
+            observed="${AFTER:-unreadable}"
+          else
+            result="${REASON:-not deployed: $OUTCOME}"
+            observed="${BEFORE:-unreadable}"
+          fi
+          {
+            echo "### Team server: $DEPLOY_ENV"
+            echo "- Environment: $DEPLOY_ENV ($SERVER)"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Observed /version commit: $observed"
+            echo "- Result: $result"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Production runs only after staging passed or skipped (already current,
+  # or superseded, which production then finds too).
+  deploy-production:
+    needs: [test, deploy-staging]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    environment:
+      name: production
+      url: https://team-server-production-0fbf.up.railway.app
+    concurrency:
+      group: team-server-deploy-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENV: production
+      SERVER: https://team-server-production-0fbf.up.railway.app
+    steps: *deploy_steps

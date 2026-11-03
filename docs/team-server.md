@@ -87,18 +87,41 @@ The test members stay in the roster as ordinary members; suspend them from Setti
 
 ## Deploying
 
-The image is built from a package made from a clean commit, so `/version` names a real commit:
+A merge to main that changes `team_server/` deploys staging, then production, automatically once the team server tests pass. The merge is the release decision. The `deploy-staging` and `deploy-production` jobs of `.github/workflows/team-server.yml` do it, one environment at a time:
+
+1. Read the environment's `/version`. When the commit it reports is known and `team_server/` is the same there as in this commit, the environment is already current and is skipped. An unknown or unreadable commit deploys.
+2. Skip when main has moved on since this run's commit: the newer run deploys.
+3. Package this commit with `team_server/package.sh` (so `/version` names it) and upload it with `railway up --ci` to the `team-server` service in that environment.
+4. Wait, up to 10 minutes, for `/health/ready` to answer 200 and `/version` to report this commit; otherwise the job fails.
+
+Production runs only after staging passed or was skipped. Main runs are never cancelled, and each environment's deploys run one at a time. Each job's summary gives the environment, the commit and the `/version` commit it saw.
+
+**Re-running a deploy.** Actions → team-server → Run workflow (on main). It always checks, whatever changed, so it catches up an environment after a failed deploy.
+
+**Emergency path only.** By hand, from a clean commit:
 
 ```sh
 bash team_server/package.sh /absolute/empty/dir
-bash <path-to>/team-server-deploy.sh staging /absolute/empty/dir   # production only with release authorization
+bash <path-to>/team-server-deploy.sh staging /absolute/empty/dir
 ```
 
-`package.sh` refuses when `team_server/` has uncommitted changes. The deploy wrapper uploads only that directory to the Railway service; Railway builds the Dockerfile, waits for `/health/ready` and then switches traffic.
+`package.sh` refuses when `team_server/` has uncommitted changes. The deploy wrapper uploads only that directory to the Railway service; Railway builds the Dockerfile, waits for `/health/ready` and then switches traffic. The next automatic deploy replaces whatever this put there.
+
+### One-time setup
+
+The deploy jobs use GitHub environments `staging` and `production` (deployment branch: main only), each with the secret `RAILWAY_TOKEN`, a Railway project token for that environment:
+
+1. In Railway, open the project → Settings → Tokens and create a token for the `staging` environment, and another for `production`.
+2. Store each one in its GitHub environment, entering the value at the prompt:
+
+```sh
+gh secret set RAILWAY_TOKEN --env staging --repo 4thWAIV/jarvis
+gh secret set RAILWAY_TOKEN --env production --repo 4thWAIV/jarvis
+```
 
 ### Rollback
 
-Railway keeps earlier deployments. To go back: in the Railway dashboard, open the `team-server` service in the environment, choose the previous successful deployment and use **Redeploy**; or package and deploy the previous commit as above. Check `/version` shows the intended commit and `/health/ready` is 200. The data model is versioned (`schema_version: 1`); a rollback across a schema change needs that release's notes.
+Railway keeps earlier deployments. To go back: in the Railway dashboard, open the `team-server` service in the environment, choose the previous successful deployment and use **Redeploy**; or package and deploy the previous commit as above. Check `/version` shows the intended commit and `/health/ready` is 200. The data model is versioned (`schema_version: 1`); a rollback across a schema change needs that release's notes. A rollback by redeploying an older deployment is overwritten by the next merge to main that changes `team_server/`.
 
 ## First administrator (bootstrap)
 
