@@ -673,16 +673,8 @@ def _drop_voice_client(ws) -> None:
         speech.transport_gone()
 
 
-async def _voice_emit(msg: dict) -> None:
-    """Hand one protocol message to every connected voice client.
-
-    Hand, not send: the frame goes on each client's own queue and returns
-    immediately, so no socket can hold up the mouth. A content frame — audio
-    or its text fallback — that reaches NO queue still raises, so the
-    scheduler abandons that utterance instead of waiting out its ack timeout
-    for an ack that can never come. Status frames with nobody listening are
-    simply lost.
-    """
+def _queue_voice(msg: dict) -> int:
+    """Queue a frame synchronously, including from a provider delta callback."""
     delivered = 0
     for ws in list(voice_clients):
         queue = _voice_queues.get(ws)
@@ -691,6 +683,12 @@ async def _voice_emit(msg: dict) -> None:
             continue
         if _enqueue(queue, msg):
             delivered += 1
+    return delivered
+
+
+async def _voice_emit(msg: dict) -> None:
+    """Queue a frame without waiting for sockets; undelivered audio is refused."""
+    delivered = _queue_voice(msg)
     if delivered == 0 and msg.get("type") in _CONTENT_FRAMES:
         raise NoVoiceClient("no voice client connected")
 
@@ -2708,6 +2706,47 @@ class _OneLinePerTurn:
             self._sink(text)
 
 
+class _ReplyText:
+    """Full assistant text, independent of narration filters and audio acks.
+
+    One pending snapshot coalesces fast deltas; finishing cancels that timer
+    and publishes the provider's canonical result last. No background task
+    or provider generation is cancelled when the user skips its reading.
+    """
+
+    def __init__(self, utt: int):
+        self.utt = utt
+        self.at = time.time()
+        self.text = ""
+        self._timer: Optional[asyncio.TimerHandle] = None
+        self._done = False
+        _queue_voice({"type": "reply", "utt": utt, "at": self.at, "text": "", "done": False})
+
+    def feed(self, delta: str) -> None:
+        if self._done:
+            return
+        self.text += delta
+        if self._timer is None:
+            self._timer = asyncio.get_running_loop().call_later(0.05, self._publish)
+
+    def _publish(self) -> None:
+        self._timer = None
+        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
+                      "text": self.text, "done": False})
+
+    def finish(self, text: Optional[str] = None) -> None:
+        if self._done:
+            return
+        self._done = True
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if text is not None:
+            self.text = text
+        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
+                      "text": self.text, "done": True})
+
+
 async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     """One user utterance → one brain turn → streamed speech. Runs as a task so
     the socket loop keeps receiving `played` acks and interim text meanwhile.
@@ -2729,19 +2768,25 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
         return
     await _turn_lock.acquire()
     utt = speech.begin_turn()
+    reply = _ReplyText(utt.id)
     _turn_utt, _turn_heard = utt, heard
     try:
         try:
             try:
                 screen = _ScreenOnly(lambda d: speech.feed(utt, d), _show_on_screen)
                 hold = _OneLinePerTurn(screen.feed)
+                def delta(d: str) -> None:
+                    reply.feed(d)
+                    hold.delta(d)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
-                                                   on_delta=hold.delta,
+                                                   on_delta=delta,
                                                    on_tool=hold.tool_started)
+                reply.finish(result.text)
                 hold.finish()    # the one line this turn is allowed
                 screen.finish()  # a "Sources:" block it held goes on the screen
             finally:
+                reply.finish()  # errors/cancellation also close the live text stream
                 _turn_utt, _turn_heard = None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
@@ -2764,7 +2809,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
         if result.stop_reason == "result":
-            _record(conversation_log.ItemKind.JARVIS, result.text)
+            _record(conversation_log.ItemKind.JARVIS, result.text,
+                    detail={"utt": utt.id, "reply_started_at": reply.at})
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
         await speech.wait_for(utt, timeout=120.0)
@@ -10811,6 +10857,7 @@ async def voice_handler(ws: WebSocket):
                                                      typed into the white box
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
+        {"type": "skip_to_end", "utt": 3}           stop this reply's reading, not generation
 
     Server -> Client:
         {"type": "config", "muteMicDuringSpeech": false}
@@ -10819,6 +10866,9 @@ async def voice_handler(ws: WebSocket):
         {"type": "drop_queued"}                      keep the playing chunk, drop the rest
         {"type": "status", "state": "thinking"|"speaking"|"idle"}
         {"type": "text", "text": "..."}              a chunk TTS could not voice
+        {"type": "reply", "utt": 3, "at": 1234.5, "text": "...", "done": false}
+                                                     cumulative text; `at` is stable per turn
+        {"type": "reading_skipped", "utt": 3}       drop only this reply's audio, no fake ack
 
     Run lifecycle events are published on /ws/runs, not here.
     """
@@ -10830,7 +10880,7 @@ async def voice_handler(ws: WebSocket):
         """One whole thing he said (or typed): record it, and answer it."""
         log.info(f"User{' (typed)' if typed else ''}: {text}")
         _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
-                text)
+                text, detail={"client_turn_id": heard} if heard is not None else {})
         cleared = _take_clear_answer(text)
         if cleared:
             return
@@ -10866,6 +10916,11 @@ async def voice_handler(ws: WebSocket):
             if speech is None:
                 continue
             kind = msg.get("type")
+            if kind == "skip_to_end":
+                target = msg.get("utt")
+                if type(target) is int and target > 0:
+                    await speech.skip_reply(target)
+                continue
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
                 # whose failures were invisible from here: it can go deaf with

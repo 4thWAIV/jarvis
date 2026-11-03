@@ -938,6 +938,30 @@ class SpeechScheduler:
                 u.held_ack = -1
                 self._accept_ack(u, u.id, idx, now)
 
+    async def skip_reply(self, utt_id: int) -> bool:
+        """Cancel only a conversation reply's reading, never its generation.
+
+        Played indices remain truthful. Unlike hush/barge-in this does not
+        touch other speech, unread notices, or approval cancellation windows.
+        The client drops this utterance's queued audio on reading_skipped.
+        """
+        u = self.utterances.get(utt_id)
+        if u is None or u.kind != "turn" or u.label != "reply" or u.done:
+            return False
+        u.cancel()  # flag/cancel synthesis before awaiting a transport operation
+        active = self._current is u
+        if active:
+            self._current = None
+        if self._paused is u:
+            self._paused = None
+        self._pending = [p for p in self._pending if p is not u]
+        self._settle(u.id)  # retire echo bookkeeping, not played acknowledgements
+        await self._emit({"type": "reading_skipped", "utt": u.id})
+        if active:
+            await self._set_speaking(False)
+        self._kick()
+        return True
+
     async def barge_in(self, keep_unread: bool = True, reason: str = "") -> None:
         """The user is talking: stop everything now."""
         cur = self._current
