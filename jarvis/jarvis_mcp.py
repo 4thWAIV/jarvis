@@ -1568,6 +1568,23 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "open_local_package",
+        "description": (
+            "Open a work package that is a .zip file on this Mac, by its full path, only when "
+            "he says to (\"open the package at ~/Projects/x/deck.zip\"; give the path with "
+            "his home folder written out). It unpacks the zip into its own folder exactly as "
+            "a package a person sent, and a page package opens in the centre of his screen "
+            "at once. It returns its package.json, how it runs, and its skill or brief; a "
+            "page package with a story is then told with tell_package_story when he asks."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "The zip's full path on this Mac."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "list_packages",
         "description": "The work packages opened on this JARVIS: each one's id, name, "
                        "version, purpose and folder.",

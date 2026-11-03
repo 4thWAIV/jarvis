@@ -189,6 +189,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "7ab19bd7c0ea8b22e2049c6eae55c86b0ce602e210e5bb936c4ab195387a566c",  # received file locations with the one-top-folder package
     "cf116431e57650e8a6e4f5031e98a0713bc90e959134771aa15d758c8a25c95d",  # files people send, with received file locations
     "ba5ecd240c8e40c4759f42037d72721fb561e6d1c7ae70cce79377282b01288d",  # a page package's story: tell_package_story
+    "fc653b8811eaeaa30a6d533736a271d2d2093c75479f0feae10857a2c09a8a1b",  # open_local_package: a package zip on this Mac
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

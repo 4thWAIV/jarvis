@@ -14,6 +14,9 @@ a zip entry may not land outside its package's folder.
                  through bundle_archive's checks and staging, once per
                  archive's bytes, the quarantine mark taken off so its
                  scripts can run
+    unpack_held  a zip that is a file on this Mac (draft_files.Source: the
+                 folder catalog's ordinary-file rule, no link followed, a
+                 received file's size limit), copied privately, then unpack
     find, every  the packages unpacked here, by folder name (or by the
                  package's own name, when only one has it)
     run          one shell command in a package's folder, with a timeout,
@@ -50,7 +53,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Optional
+from typing import AsyncIterator, Callable, Optional
 
 from jarvis import bundle_archive, data_paths, folder_readers, package_story
 from jarvis.folder_contract import FolderError
@@ -408,6 +411,31 @@ def unpack(archive_path: Path, attachment_id: str,
                     type(e).__name__)
     log.info("package %s unpacked from attachment %s", final.name, attachment[:8])
     return _load(final), True
+
+
+# A zip opened from a path on this Mac has no attachment id: it is recorded
+# by its bytes instead, under a prefix no attachment id (hex) can have.
+LOCAL_SOURCE = "local"
+
+
+async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
+    """Unpack a zip that is a file on this Mac, from its bytes as they are
+    read from the held file (draft_files.Source.chunks): copied into a
+    private file among the packages first, so the archive checked is the
+    archive unpacked, then `unpack` exactly as a received zip."""
+    root = data_paths.packages_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    temp = root / f"{PARTIAL}{uuid.uuid4()}.zip"
+    digest = hashlib.sha256()
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            async for chunk in chunks:
+                digest.update(chunk)
+                await asyncio.to_thread(f.write, chunk)
+        return await asyncio.to_thread(unpack, temp, LOCAL_SOURCE + digest.hexdigest()[:27])
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 # -- the packages here ----------------------------------------------------------------

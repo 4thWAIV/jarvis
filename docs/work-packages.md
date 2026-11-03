@@ -199,6 +199,14 @@ The brain's tools:
   came from (its SHA-256 and attachment ids) is kept in
   `<data>/packages/.records/`. A package unpacked before that record existed
   is recognised by its folder name and adopted.
+- `open_local_package` (path): opens a package zip that is a file on this
+  Mac, by its full path. The path is read by the folder catalog's
+  ordinary-file rule (no link followed; keys, credentials and JARVIS's own
+  data refused; at most a received file's size), the zip is unpacked exactly
+  as a received one, and a page package is shown in the centre at once.
+  The page's own way is Open package on a .zip's preview in the Folders
+  view; both go through `_open_local_package`, and `POST
+  /api/packages/local`. Acting.
 - `list_packages`: the packages unpacked here.
 - `run_package_command` (package, command, `terminal`): runs one step in
   the package's folder and returns its exit code and the last 4,000
@@ -215,6 +223,8 @@ The brain's tools:
   JARVIS page that is open. The page's own way is Open page on the package's
   file in the Queue, once it is unpacked; both go through the same
   `_open_package_page`, and `POST /api/packages/<id>/page`. Acting.
+  JARVIS keeps the page package shown and shows it again on a page that
+  connects later, a reload included, until its × is pressed.
 - `tell_package_story` (package, `action` tell or stop, `slide`): opens a
   page package's page and tells its story in JARVIS's voice from that slide,
   or stops it; telling another slide jumps there. The page's own way is Tell

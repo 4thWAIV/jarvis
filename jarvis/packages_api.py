@@ -1,8 +1,9 @@
 """The page's work-package routes, /api/packages: the packages unpacked here,
 a page package's own files for its frame, what that frame saves, opening
-it in the centre area, opening a received one, and telling its story.
-Thin: each calls work_packages.py; opening a received zip calls the same
-`open_received` the brain's `open_package` does, opening its page the same
+it in the centre area, opening a received one or one on this Mac, and
+telling its story. Thin: each calls work_packages.py; opening a received
+zip calls the same `open_received` the brain's `open_package` does, a zip
+on this Mac the same `open_local` the brain's `open_local_package` does, opening its page the same
 `open_page` the brain's `open_package_page` does, and telling the same story
 teller (story_teller.py) the brain's `tell_package_story` does.
 
@@ -17,11 +18,16 @@ page (PackageView.tsx) makes the request.
   POST /api/packages/received               {"message_id", "attachment_id"}:
                                             the Queue's Open package, a
                                             received zip unpacked here
+  POST /api/packages/local                  {"path"}: the Folders view's Open
+                                            package, a zip on this Mac
+                                            unpacked here, a page one shown
   GET  /api/packages/{id}/files/{path}      one file of a page package
   POST /api/packages/{id}/results?name=     save the body as results/<name>
                                             (a page package's, at most
                                             work_packages.RESULT_MAX_BYTES)
   POST /api/packages/{id}/page              open it in every page's centre
+  DELETE /api/packages/{id}/page            the page's ×: a page that connects
+                                            from now on no longer shows it
   POST /api/packages/{id}/story             {"action": "tell", "slide"?} or
                                             {"action": "stop"}: its story
   GET  /api/packages/story.js               the helper a story page loads
@@ -44,6 +50,7 @@ from jarvis.web_auth import PACKAGE_PAGE_MARK, PACKAGE_PAGE_PREFIX
 from jarvis.work_packages import Package, PackageError
 
 RECEIVED_PATH = "/api/packages/received"
+LOCAL_PATH = "/api/packages/local"
 _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg+xml")
 
 
@@ -90,12 +97,17 @@ def mount(app: FastAPI,
           open_page: Callable[[str], Awaitable[tuple[Package | None, str]]],
           story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]],
           open_received: Callable[[uuid.UUID, uuid.UUID],
-                                  Awaitable[tuple[Package | None, bool, str]]]) -> None:
+                                  Awaitable[tuple[Package | None, bool, str]]],
+          open_local: Callable[[str], Awaitable[tuple[Package | None, bool, str]]],
+          close_page: Callable[[str], Awaitable[None]]) -> None:
     """`open_page(reference)` opens a page package in every page's centre
     area: (the package, "") or (None, why not). `story(action, reference,
     slide)` tells or stops its story: (done, what was done or why not).
     `open_received(message_id, attachment_id)` unpacks a received zip:
-    (the package, unpacked now, "") or (None, False, why not)."""
+    (the package, unpacked now, "") or (None, False, why not). `open_local(path)`
+    unpacks a zip on this Mac and shows a page one: (the package, unpacked
+    now, "" or why it is not shown) or (None, False, why not).
+    `close_page(reference)` forgets the package a newly connected page shows."""
 
     async def list_packages():
         packages = await asyncio.to_thread(work_packages.every)
@@ -143,6 +155,16 @@ def mount(app: FastAPI,
             return JSONResponse({"error": problem}, status_code=409)
         return {"package": describe(package), "unpacked": fresh}
 
+    async def open_local_package(body: dict = Body(default_factory=dict)):
+        package, fresh, problem = await open_local(str(body.get("path") or ""))
+        if package is None:
+            return JSONResponse({"error": problem}, status_code=409)
+        return {"package": describe(package), "unpacked": fresh, "problem": problem or None}
+
+    async def close_package_page(package_id: str):
+        await close_page(package_id)
+        return Response(status_code=204)
+
     async def story_helper():
         return Response(await asyncio.to_thread(HELPER_FILE.read_bytes),
                         media_type=media_type(HELPER_FILE.name),
@@ -159,6 +181,7 @@ def mount(app: FastAPI,
 
     app.add_api_route("/api/packages", list_packages, methods=["GET"])
     app.add_api_route(RECEIVED_PATH, open_received_package, methods=["POST"])
+    app.add_api_route(LOCAL_PATH, open_local_package, methods=["POST"])
     # Before the {package_id} routes, so story.js is never taken for an id.
     app.add_api_route(package_story.HELPER_PATH, story_helper, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}" + PACKAGE_PAGE_MARK + "{path:path}",
@@ -167,5 +190,7 @@ def mount(app: FastAPI,
                       methods=["POST"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/page", open_package_page,
                       methods=["POST"])
+    app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/page", close_package_page,
+                      methods=["DELETE"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/story", tell_story,
                       methods=["POST"])

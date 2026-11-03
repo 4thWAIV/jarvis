@@ -983,3 +983,94 @@ async def test_the_page_opens_an_item_on_the_real_routes_and_only_then_reads_it(
             "read_at"] is not None, "the read receipt, once the body was on screen")
         assert len(reads) == 1
         await browser.close()
+
+
+# -- a work package with a story, received and told ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_story_package_sent_by_a_teammate_is_opened_shown_and_told(
+        server, team_server, nodes, monkeypatch, tmp_path):
+    """Matt's JARVIS (its own process) sends Tim the example story deck as a
+    zip through the real draft, review and Send; Tim's JARVIS receives it,
+    and the brain's open_package, open_package_page and tell_package_story
+    (the stand-in brain at /internal/tool) unpack it, show it on the page
+    and tell its story: every audio frame carries its beat's cue, in the
+    story's order. The rings those cues draw are the page tests'
+    (tests/test_voice_page_story.py)."""
+    from jarvis.speech import SpeechScheduler
+    from tests.test_brain_page_parity import _Brain
+    from tests.test_package_modes import EXAMPLES
+    from tests.test_voice_page_story import _synthesize
+    sys.path.insert(0, str(EXAMPLES))
+    try:
+        import zip_package
+    finally:
+        sys.path.remove(str(EXAMPLES))
+    archive = tmp_path / "story-deck-1.0.0.zip"
+    assert zip_package.main([str(EXAMPLES / "story-deck"), str(archive)]) == 0
+
+    tim = await here(server, team_server, TIM, monkeypatch)
+    matt = await nodes(team_server, MATT, "matt")
+    await matt.ok("GET", P + "/recipients")
+    draft = await matt.ok("POST", P + "/drafts", json={
+        "recipient_github_id": TIM.id, "subject": "The tea deck", "text": "Tell it, please."})
+    added = await matt.ok("POST", f"{P}/drafts/{draft['message_id']}/files",
+                          content=archive.read_bytes(),
+                          headers={"X-Filename": archive.name, "Content-Type": "application/zip"})
+    draft = await matt.ok("PUT", f"{P}/drafts/{draft['message_id']}", json={
+        "expected_draft_revision": draft["draft_revision"], "recipient_github_id": TIM.id,
+        "subject": "The tea deck", "text": "Tell it, please.",
+        "attachment_ids": [added["attachment_id"]]})
+    reviewed = await matt.ok("POST", f"{P}/drafts/{draft['message_id']}/review",
+                             json={"expected_draft_revision": draft["draft_revision"]})
+    await matt.ok("POST", f"/api/capture/{reviewed['capture_id']}/send")
+
+    deadline = time.monotonic() + CONVERGE_SEC
+    while (item := _item(await tim.snapshot(), reviewed["thread_id"])) is None:
+        assert time.monotonic() < deadline, "Tim's JARVIS never received it"
+        await tim.tick()
+        await asyncio.sleep(0.25)
+    (message,) = item["messages"]
+    (ref,) = message["message"]["attachments"]
+
+    frames: list[dict] = []
+    speech = None
+
+    async def emit(msg):
+        frames.append(msg)
+        if msg.get("type") == "audio":       # the page plays it at once
+            asyncio.get_running_loop().create_task(speech.played(msg["utt"], msg["idx"]))
+    speech = SpeechScheduler(_synthesize, emit)
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_voice_emit", emit)
+    monkeypatch.setattr(server, "voice_clients", {object()})
+    monkeypatch.setattr(server, "brain_instance", _Brain("user"))
+
+    async def call(tool, **arguments) -> str:
+        got = await tim.ok("POST", "/internal/tool", json={"tool": tool, "arguments": arguments})
+        return got["text"]
+
+    await speech.start()
+    try:
+        opened = await call("open_package", message=reviewed["message_id"],
+                            attachment=ref["attachment_id"])
+        assert opened.startswith("Package story-deck-1.0.0-") and " is unpacked " in opened
+        package_id = opened.split()[1]
+        shown = await call("open_package_page", package=package_id)
+        assert shown.startswith(f"{package_id} is open in the centre")
+        assert {"type": "package_page", "package": server.packages_api.describe(
+            server.work_packages.find(package_id))} in frames
+        told = await call("tell_package_story", package=package_id)
+        assert "Telling the story" in told, told
+        deadline = time.monotonic() + 120
+        while not any(f.get("type") == "package_story" and f.get("state") == "finished"
+                      for f in frames):
+            assert time.monotonic() < deadline, "the story was never finished"
+            await asyncio.sleep(0.2)
+    finally:
+        await speech.stop()
+    audio = [f for f in frames if f.get("type") == "audio"]
+    assert audio and all(f["cue"]["package"] == package_id for f in audio)
+    beats = list(dict.fromkeys(f["cue"]["beat"] for f in audio))
+    assert beats[:2] == ["1.1", "1.2"] and len(beats) == 12
+    assert all(f["cue"]["targets"] for f in audio if f["cue"]["beat"] == "1.1")

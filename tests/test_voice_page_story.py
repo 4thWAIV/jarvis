@@ -76,14 +76,17 @@ async def _synthesize(text: str) -> bytes:
 
 class _Voice:
     """The voice socket: the scheduler's frames to the page, the page's
-    played acks back to the scheduler."""
+    played acks back to the scheduler. A page that connects is first sent
+    the server's own opening frames (`server._opening_frames`)."""
 
-    def __init__(self):
-        self.ws, self.speech, self.audio = None, None, []
+    def __init__(self, opening=lambda: []):
+        self.ws, self.speech, self.audio, self.opening = None, None, [], opening
 
     def __call__(self, ws):
         self.ws = ws
         ws.on_message(self._heard)
+        for frame in self.opening():
+            ws.send(json.dumps(frame))
 
     def _heard(self, raw):
         msg = json.loads(raw)
@@ -142,7 +145,7 @@ def voice(jarvis_app, monkeypatch):
     """The voice socket, with the real scheduler behind it as the server's."""
     from jarvis.speech import SpeechScheduler
     server, _, _ = jarvis_app
-    voice = _Voice()
+    voice = _Voice(server._opening_frames)
     voice.speech = SpeechScheduler(_synthesize, voice.emit)
     monkeypatch.setattr(server, "speech", voice.speech)
     monkeypatch.setattr(server, "_voice_emit", voice.emit)
@@ -205,13 +208,19 @@ async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_ur
             await voice.speech.stop()
         await browser.close()
 
+    beats = _rings_follow_the_audio(voice, starts, rings)
+    assert list(beats)[:2] == ["1.1", "1.2"] and len(beats) == 12
+
+
+def _rings_follow_the_audio(voice, starts, rings) -> dict[str, list[dict]]:
+    """Each beat's targets were ringed from its audio's start to its end:
+    the beats heard, in order, with their audio's times."""
     # One start per audio frame, in order; a beat's audio is its frames.
     assert len(starts) == len(voice.audio)
     beats: dict[str, list[dict]] = {}
     for frame_msg, start in zip(voice.audio, starts):
         beats.setdefault(frame_msg["cue"]["beat"], []).append(
             {"at": start["at"] / 1000, "end": (start["at"] / 1000) + start["seconds"]})
-    assert list(beats)[:2] == ["1.1", "1.2"] and len(beats) == 12
     for beat, played in beats.items():
         ringed = [r for r in rings if r["beat"] == beat]
         assert ringed, f"beat {beat} was never ringed"
@@ -223,6 +232,7 @@ async def test_each_beat_is_ringed_while_its_words_play(page_playwright, page_ur
                 f"beat {beat}'s ring went {played[-1]['end'] - removed:.2f}s before its audio ended"
             assert removed <= played[-1]["end"] + SLACK, \
                 f"beat {beat}'s ring stayed {removed - played[-1]['end']:.2f}s after its audio"
+    return beats
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -247,3 +257,52 @@ async def test_stop_ends_the_voice_and_the_rings_and_a_slide_can_be_chosen(
         finally:
             await voice.speech.stop()
         await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
+        page_playwright, page_url, jarvis_app, voice, tmp_path):
+    """open_local_package's one function, `_open_local_package`, with the
+    deck's zip as a file on this Mac: the deck is shown on the page, a
+    reload (a new voice socket) still shows it, and its story told from
+    there rings each beat while its words play."""
+    server, _, package = jarvis_app
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                          # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.add_init_script(RECORD)
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route_web_socket("**/ws/sessions", lambda ws: None)
+        await page.route("**/api/packages/**", _through(*jarvis_app[:2]))
+        try:
+            await page.goto(page_url)
+            await page.wait_for_function(
+                "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
+            await voice.speech.start()
+            opened, _, problem = await server._open_local_package(
+                str(tmp_path / "story-deck.zip"))
+            assert opened.id == package.id and problem == ""
+            frame = page.frame_locator("#package-view iframe")
+            title = frame.locator("h2").first
+            await async_api.expect(title).to_have_text("Three things a good pot of tea needs")
+
+            await page.reload()
+            await page.wait_for_function(
+                "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
+            await async_api.expect(title).to_have_text("Three things a good pot of tea needs")
+
+            await page.click("#package-view .package-story button:has-text('Tell the story')")
+            await async_api.expect(page.locator(".package-story-now")).to_have_text(
+                "The story is told.", timeout=90000)
+            starts = await page.evaluate("window.__audioStarts")
+            inner = next(f for f in page.frames if "/files/index.html" in f.url)
+            rings = await inner.evaluate("window.__rings")
+        finally:
+            await voice.speech.stop()
+        await browser.close()
+    beats = _rings_follow_the_audio(voice, starts, rings)
+    assert list(beats)[:2] == ["1.1", "1.2"] and len(beats) == 12

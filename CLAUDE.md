@@ -312,7 +312,17 @@ and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
 is the gate. The page's Open package (on a received zip in the Queue, `POST
 /api/packages/received`) is his own click, and unpacks through the same
 `_open_received_package` as `open_package`; a page package then opens at
-once, and its file has Open page from then on. `run_package_command` runs one shell step in the folder with a
+once, and its file has Open page from then on. A package zip that is a
+file on this Mac opens the same way through `_open_local_package`: the
+acting `open_local_package` (a path) and the Folders view's Open package on
+a .zip's preview (`POST /api/packages/local`). The path is read by
+`draft_files.Source` (the folder catalog's ordinary-file rule, no link
+followed, a received file's size limit), copied privately and unpacked by
+`work_packages.unpack_held` exactly as a received zip (recorded under
+`local<sha>` in place of an attachment id), and a page package is shown at
+once. The page package shown is held by the server (`_package_shown`) and
+sent to every page that connects, so a reload keeps it; its × (`DELETE
+/api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
 `list_packages` and `package_results` read what is there. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's

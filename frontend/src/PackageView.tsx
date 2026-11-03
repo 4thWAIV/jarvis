@@ -1,6 +1,8 @@
 /**
  * A page work package in the centre area: its entry HTML in a frame, opened
- * by the page's Open page or the brain's `open_package_page` (packages.ts).
+ * by the page's Open page or Open package or the brain's `open_package_page`
+ * or `open_local_package` (packages.ts). The server holds it, so a reload
+ * shows it again until its × is pressed.
  *
  * The frame is `sandbox="allow-scripts"` and never `allow-same-origin`:
  * its files are served from JARVIS's own origin, so with the same origin
@@ -16,7 +18,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { connectBridge } from "./packageBridge";
-import { entryUrl, openPackage, storyState, tellStory, type PackageInfo } from "./packages";
+import { closePackage, entryUrl, storyState, tellStory, type PackageInfo } from "./packages";
 
 export function PackageView({ info }: { info: PackageInfo }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -36,7 +38,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
           <p>{info.purpose}</p>
         </div>
         <button type="button" className="workflow-close" title="Close" aria-label="Close"
-                onClick={() => openPackage.set(null)}>×</button>
+                onClick={() => closePackage(info.id)}>×</button>
       </section>
       {info.story && <StoryControls info={info} onSaid={setSaid} />}
       <iframe ref={frame} className="package-frame" title={info.name} src={entryUrl(info)}

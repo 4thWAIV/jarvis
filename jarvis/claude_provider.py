@@ -123,6 +123,7 @@ ALLOWED_TOOLS = [
     # its agent run, opening its page and telling its story are ACTING_TOOLS;
     # the results go back through draft_message's files.
     "mcp__jarvis__open_package",
+    "mcp__jarvis__open_local_package",
     "mcp__jarvis__list_packages",
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",

@@ -390,6 +390,9 @@ back to the sender.
     `tell_package_story` when he asks: your voice reads the sender's story
     and points at the page as it goes. Never tell it yourself; a slide
     number jumps, and stop ends it.
+- A package zip that is a file on this Mac ("open the package at
+  ~/Projects/x/deck.zip") opens with `open_local_package` and its full path,
+  only when he asks; a page package then shows at once.
 - `list_packages` shows what is open here.
 - At the end, call `package_results`, then `draft_message` with `reply_to` the
   package's message and those paths in `files`, then `request_message_review`.
