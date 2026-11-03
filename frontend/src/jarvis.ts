@@ -21,7 +21,8 @@ import { inputStatus, micLevel, micMuted, micOff } from "./mic";
 import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startSessionsSocket } from "./sessionsSocket";
-import { showPackage, type PackageInfo } from "./packages";
+import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
+         type StoryState } from "./packages";
 import { showMember } from "./bundles";
 import { BUNDLE_VIEW_FRAME } from "./bundleContract";
 
@@ -127,6 +128,7 @@ export function startJarvis(orb: Orb): void {
     // Locally first: the round trip is real and silence should be instant.
     audioPlayer.stop();
     jarvisQuiet();
+    storyCue.set(null);
     socket.send({ type: "hush" });
     transition("listening");
   }
@@ -158,8 +160,14 @@ export function startJarvis(orb: Orb): void {
   // on the sentence being heard. A sentence reading a capture back lights
   // the capture's box instead, and is not added to the captions.
   const chunkText = new Map<string, { text: string; capture?: number }>();
+  // A story beat's cue, by chunk (packages.ts): shown in the package's frame
+  // as the beat's words START playing, and ended as its last words end.
+  const chunkCue = new Map<string, StoryCue>();
   audioPlayer.onStarted((utt, idx, seconds) => {
     const key = `${utt}:${idx}`;
+    const cue = chunkCue.get(key);
+    if (cue) storyCue.set(cue);
+    else storyCue.set(null);
     const chunk = chunkText.get(key);
     chunkText.delete(key);
     if (!chunk) return;
@@ -179,13 +187,16 @@ export function startJarvis(orb: Orb): void {
   socket.onOpen(() => reconnected.set(reconnected.get() + 1));
 
   audioPlayer.onPlayed((utt, idx) => {
+    const key = `${utt}:${idx}`;
+    if (chunkCue.get(key)?.last) storyCue.set(null);
+    chunkCue.delete(key);
     socket.send({ type: "played", utt, idx });
   });
 
   // End of speech is the server's call (`status: idle` after every chunk is
   // acked); a transient empty queue mid-utterance must not flip the UI.
   // The highlight goes when nothing is playing.
-  audioPlayer.onFinished(() => { jarvisQuiet(); captureQuiet(); });
+  audioPlayer.onFinished(() => { jarvisQuiet(); captureQuiet(); storyCue.set(null); });
 
   audioPlayer.onNeedsGesture(() => {
     notice("Playback", "Click anywhere to enable audio.");
@@ -210,6 +221,9 @@ export function startJarvis(orb: Orb): void {
             text: String(msg.text),
             ...(typeof msg.capture === "number" ? { capture: msg.capture } : {}),
           });
+        }
+        if (msg.cue && typeof msg.cue === "object") {
+          chunkCue.set(`${msg.utt}:${msg.idx}`, msg.cue as unknown as StoryCue);
         }
         audioPlayer.enqueue(data, Number(msg.utt), Number(msg.idx));
       }
@@ -241,8 +255,14 @@ export function startJarvis(orb: Orb): void {
         showMember({ messageId: msg.message_id, attachmentId: msg.attachment_id,
                      memberId: msg.member_id });
       }
+    } else if (type === "package_story") {
+      // A story started, moved to a slide, finished or stopped
+      // (story_teller.py): the package's Tell the story and Stop follow it.
+      storyState.set(msg as unknown as StoryState);
     } else if (type === "stop") {
       audioPlayer.stop();
+      chunkCue.clear();
+      storyCue.set(null);
       jarvisQuiet();
       transition("listening");
     } else if (type === "drop_queued") {

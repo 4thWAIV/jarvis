@@ -137,7 +137,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment")
 # Acting tools that give back somebody else's words (a received file's name).
-NEW_TAINTING_ACTS = ("make_attachment_local",)
+NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models",)
 
@@ -172,6 +172,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("update_jarvis", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
+    ("tell_package_story", {"package": "x", "slide": 2}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""

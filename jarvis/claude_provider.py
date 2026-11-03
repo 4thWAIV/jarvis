@@ -120,14 +120,15 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__make_attachment_local",
     "mcp__jarvis__reveal_attachment",
     # Work packages a teammate sends: opening one, running its steps, starting
-    # its agent run and opening its page are ACTING_TOOLS; the results go back
-    # through draft_message's files.
+    # its agent run, opening its page and telling its story are ACTING_TOOLS;
+    # the results go back through draft_message's files.
     "mcp__jarvis__open_package",
     "mcp__jarvis__list_packages",
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",
     "mcp__jarvis__run_package_agent",
     "mcp__jarvis__open_package_page",
+    "mcp__jarvis__tell_package_story",
     # Files a teammate sent, read as files (bundle_api.py): any zip or
     # document, with or without a package.json. Reads come back walled;
     # inspecting (it downloads), showing and every change to a draft or a

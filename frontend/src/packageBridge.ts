@@ -19,10 +19,17 @@
  *                              sampleRate, channels, format}, then, while
  *                              on, one `audio` {pcm, sampleRate, ...} per
  *                              100 ms frame: PCM16 little-endian mono
+ *
+ * And the story (a page package with one, told by JARVIS's voice): JARVIS
+ * posts `story.cue` {beat, targets, actions} as a beat's words start
+ * playing and `story.clear` as they end or the voice stops; the frame's
+ * helper (jarvis/package_story.js) points at the targets. The frame says
+ * `story.ready` once its helper has loaded (the beat playing now is posted
+ * again) and `story.missing` {beat, targets} for selectors it could not find.
  */
 
 import { inputStatus } from "./mic";
-import { saveResult } from "./packages";
+import { saveResult, storyCue } from "./packages";
 import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
 
 export const BRIDGE = "package";
@@ -31,6 +38,8 @@ export interface BridgeEvents {
   /** A save finished: its words for the view. */
   onSaved(words: string): void;
   onListening(on: boolean): void;
+  /** The story's frame could not find some of a beat's targets. */
+  onStoryMissing(words: string): void;
 }
 
 function asBlob(data: unknown): Blob | null {
@@ -80,17 +89,38 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     }
   };
 
+  // The beat playing now, if it is this package's, else nothing.
+  let shown: string | null = null;
+  const showCue = (again = false) => {
+    const cue = storyCue.get();
+    const mine = cue && cue.package === packageId ? cue : null;
+    if (!mine) {
+      if (shown !== null) post({ type: "story.clear" });
+      shown = null;
+      return;
+    }
+    if (shown === mine.beat && !again) return;
+    shown = mine.beat;
+    post({ type: "story.cue", beat: mine.beat, targets: mine.targets, actions: mine.actions });
+  };
+  const unsubscribe = storyCue.subscribe(() => showCue());
+
   const onMessage = (event: MessageEvent) => {
     if (event.source !== frame.contentWindow) return;
     const message = event.data;
     if (!message || typeof message !== "object" || message.jarvis !== BRIDGE) return;
     if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
+    else if (message.type === "story.ready") showCue(true);
+    else if (message.type === "story.missing" && Array.isArray(message.targets)) {
+      events.onStoryMissing(`Not found on the page: ${message.targets.map(String).join(", ")}`);
+    }
   };
 
   window.addEventListener("message", onMessage);
   return () => {
     window.removeEventListener("message", onMessage);
+    unsubscribe();
     stopListening?.();
   };
 }

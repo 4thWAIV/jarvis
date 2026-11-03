@@ -287,6 +287,10 @@ class Chunk:
     notice: bool = False        # this chunk's failure was the third in a row: warn after it
     earliest_ack: float = 0.0   # no honest ack can arrive before this (see ACK_FLOOR_FACTOR)
     capture: Optional[int] = None   # the capture this chunk reads back, if it does
+    # What the page shows while this chunk plays (a story beat's targets):
+    # sent verbatim on its audio frame as `cue`, never read here. The last
+    # chunk of a cue carries `"last": True`, so the page knows where it ends.
+    cue: Optional[dict] = None
 
 
 @dataclass
@@ -543,11 +547,44 @@ class SpeechScheduler:
         self._kick()
         return u
 
-    def _add_reading(self, utt: Utterance, text: str, capture: int) -> None:
+    def narrate(self, beats: list[tuple[str, dict]]) -> Utterance:
+        """Speak `beats` in order as one utterance, after whatever is already
+        queued: each beat's text split into sentences, and every chunk of a
+        beat carrying its cue, so the page shows the cue while those words
+        play. A reply he asked for: his speaking, hush and a cancel word stop
+        it as they stop any reply; wait_for says when it has all been heard."""
+        u = self._new(Priority.NORMAL, "say", immediate=True, label="reply")
+        for text, cue in beats:
+            self._add_reading(u, text, cue=cue)
+        u.closed = True
+        self._pending.append(u)
+        self._kick()
+        return u
+
+    async def withdraw(self, utt: Utterance, reason: str = "") -> None:
+        """Stop this one utterance, playing or queued, and leave everything
+        else as it is: a narration stopped from its own Stop."""
+        if utt.done:
+            return
+        log.info("speech: utterance %s withdrawn%s", utt.id, f" ({reason})" if reason else "")
+        utt.cancelled = True
+        self._pending = [u for u in self._pending if u is not utt]
+        if self._paused is utt:
+            self._paused = None
+        if self._current is utt:
+            self._current = None
+            self._settle(utt.id)
+            await self._emit({"type": "stop"})
+            await self._set_speaking(False)
+        self._kick()
+
+    def _add_reading(self, utt: Utterance, text: str, capture: Optional[int] = None,
+                     cue: Optional[dict] = None) -> None:
         reading = SentenceSplitter()
-        for piece in [*reading.feed(text), reading.flush()]:
-            if piece:
-                self._add_chunk(utt, piece, capture=capture)
+        pieces = [p for p in [*reading.feed(text), reading.flush()] if p]
+        for n, piece in enumerate(pieces):
+            marked = None if cue is None else {**cue, "last": n == len(pieces) - 1}
+            self._add_chunk(utt, piece, capture=capture, cue=marked)
 
     async def wait_played(self, utt: Utterance, idx: int, timeout: float = 60.0) -> bool:
         """True once chunk `idx` of `utt` has been played; False on cancel or
@@ -861,7 +898,7 @@ class SpeechScheduler:
             replay = self._new(Priority.NORMAL, "say", immediate=True, label=u.label)
             for c in u.chunks:
                 replay.chunks.append(Chunk(c.text, audio=c.audio, ready=True,
-                                           capture=c.capture))
+                                           capture=c.capture, cue=c.cue))
             replay.closed = True
             self._pending.append(replay)
             self._kick()
@@ -964,8 +1001,9 @@ class SpeechScheduler:
         self._kick()
 
     # ── internals ──────────────────────────────────────────────────────
-    def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None) -> None:
-        chunk = Chunk(text, capture=capture)
+    def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None,
+                   cue: Optional[dict] = None) -> None:
+        chunk = Chunk(text, capture=capture, cue=cue)
         utt.chunks.append(chunk)
         self._spawn(self._synthesize(utt, chunk))
 
@@ -1267,6 +1305,8 @@ class SpeechScheduler:
                            "text": chunk.text, "kind": u.label}
                     if chunk.capture is not None:
                         msg["capture"] = chunk.capture
+                    if chunk.cue is not None:
+                        msg["cue"] = chunk.cue
                     await self._emit_raw(msg)
                     u.high_sent = max(u.high_sent, idx)   # it really did go out
                 except Exception as e:

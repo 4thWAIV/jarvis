@@ -1616,6 +1616,25 @@ TOOL_SPECS = [
             "required": ["package"],
         },
     },
+    {
+        "name": "tell_package_story",
+        "description": (
+            "Tell a page package's story, only when he asks: its page opens and JARVIS's "
+            "voice reads the story the sender wrote, slide by slide, pointing at each part "
+            "of the page as it is said. It returns at once; do not tell the story yourself. "
+            "`slide` starts from that slide (it also jumps a story being told); action "
+            "stop ends it. The page's Tell the story and Stop do the same."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {"type": "string", "description": "The package's id."},
+                "action": {"type": "string", "enum": ["tell", "stop"],
+                           "description": "tell (the default) or stop."},
+                "slide": {"type": "integer", "description": "The slide to start from, from 1."},
+            },
+            "required": ["package"],
+        },
+    },
     # Files a teammate sent, read as files (bundle_api.py): the same calls
     # and the same JSON as the Queue's file inventory and its centre view.
     {

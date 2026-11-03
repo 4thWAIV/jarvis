@@ -7,6 +7,15 @@
  * both reach the server's `_open_package_page`, which tells every JARVIS
  * page to show it with a `package_page` frame on the voice socket
  * (jarvis.ts). The page's own request opens it here at once as well.
+ *
+ * A page package with a story is told one way too: the page's Tell the story
+ * and Stop and the brain's `tell_package_story` both reach the server's
+ * `_package_story` (story_teller.py). JARVIS's voice reads it, and each
+ * beat's cue rides on its audio frames: `storyCue` holds the beat whose
+ * words are playing now (jarvis.ts sets it as they start, and clears it as
+ * the beat's last words end or the voice stops), and the package's view
+ * hands it to its frame (packageBridge.ts). `storyState` is what the server
+ * last said of the story (`package_story` frames).
  */
 
 import { liveRead, type LiveStore } from "./liveRead";
@@ -24,7 +33,40 @@ export interface PackageInfo {
   /** Every attachment it was opened from (an id's letters and digits,
    *  lowercase), or only the start of the first for an older package. */
   sources: string[];
+  /** Its story's outline, when it tells one. */
+  story: StoryOutline | null;
 }
+
+export interface StoryOutline {
+  title: string;
+  language: string;
+  slides: string[];
+}
+
+/** A beat of a story, as its audio frames carry it (package_story.py). */
+export interface StoryCue {
+  package: string;
+  beat: string;
+  slide: number;
+  targets: string[];
+  actions: Record<string, string>[];
+  /** The beat's last chunk: the cue ends when it has played. */
+  last?: boolean;
+}
+
+/** What the server last said of a story (story_teller.py). */
+export interface StoryState {
+  package: string;
+  state: "telling" | "finished" | "stopped";
+  slide: number;
+  slides: number;
+}
+
+/** The beat whose words are playing now, or none. */
+export const storyCue = createStore<StoryCue | null>(null);
+
+/** The story the server last spoke of, or none. */
+export const storyState = createStore<StoryState | null>(null);
 
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
@@ -68,6 +110,21 @@ export async function openPackagePage(id: string): Promise<string | null> {
   try {
     showPackage((await answer<{ package: PackageInfo }>(
       await fetch(`${base(id)}/page`, { method: "POST" }))).package);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/** Tell its story from `slide` (from 1), or stop it: null once done, else
+ *  why not. */
+export async function tellStory(id: string, action: "tell" | "stop",
+                                slide?: number): Promise<string | null> {
+  try {
+    await answer(await fetch(`${base(id)}/story`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(slide ? { action, slide } : { action }),
+    }));
     return null;
   } catch (e) {
     return (e as Error).message;

@@ -100,6 +100,8 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import attachment_locations, packages_api, work_packages
+from jarvis import story_teller as story_teller_module
+from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
 from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SHOWN,
                                     TEXT_PAGE_DEFAULT_CHARS)
@@ -7011,7 +7013,8 @@ _PACKAGE_HOW = {
     work_packages.PAGE: (
         "It runs as a page: on his go-ahead, open_package_page shows it in the centre of his "
         "screen, where he uses it; what it saves goes in its results folder. Ask him to say "
-        "when he has finished with it."),
+        "when he has finished with it. If package.json names a story, tell_package_story "
+        "tells it over the page in your voice, when he asks."),
 }
 
 
@@ -7028,7 +7031,8 @@ def tool_list_packages(args: dict) -> str:
     packages = work_packages.every()
     if not packages:
         return "No packages have been opened here, sir."
-    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}, "
+    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
+             f"{', with a story' if p.manifest.story else ''}, "
              f"{p.manifest.purpose} ({p.folder})" for p in packages]
     return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
             f"run_package_command, run_package_agent, open_package_page and package_results "
@@ -7127,7 +7131,33 @@ async def _open_package_page(reference: str
     return package, ""
 
 
-packages_api.mount(app, _open_package_page)
+# A page package's story (story_teller.py): the page's Tell the story and
+# Stop and the brain's tell_package_story go through `_package_story`.
+story_teller = StoryTeller(lambda: speech, _open_package_page, lambda f: _voice_emit(f))
+
+
+async def _package_story(action: str, reference: str, slide: Optional[int] = None,
+                         by: str = "on the page") -> tuple[bool, str]:
+    """Tell (from `slide`) or stop a page package's story: (done, what was
+    done or why not). Started from the page, the brain is told at its next
+    turn, so it knows what he is hearing."""
+    told = await story_teller.act(action, reference, slide)
+    if told.package is None:
+        return False, told.problem
+    if told.slide is None:
+        if by != "by voice":
+            _notes_for_brain.append(f"Since your last turn he stopped the story of package "
+                                    f"{told.package.id} {by}.")
+        return True, f"Stopped the story of {told.package.id}."
+    total = len(told.story.slides)
+    if by != "by voice":
+        _notes_for_brain.append(
+            f"Since your last turn he started the story of package {told.package.id} {by}, "
+            f"from slide {told.slide} of {total}; it is being told.")
+    return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
+
+
+packages_api.mount(app, _open_package_page, _package_story)
 
 
 async def tool_open_package_page(args: dict) -> str:
@@ -7138,6 +7168,32 @@ async def tool_open_package_page(args: dict) -> str:
     return (f"{package.id} is open in the centre of his screen, sir. What it saves goes in "
             f"{package.folder / work_packages.RESULTS}; when he says he has finished, "
             f"package_results.")
+
+
+async def tool_tell_package_story(args: dict) -> str:
+    """Tell a page package's story, from a slide, or stop it: the page's
+    Tell the story and Stop."""
+    action = str(args.get("action") or story_teller_module.TELL)
+    slide = args.get("slide")
+    try:
+        slide = int(slide) if slide not in (None, "") else None
+    except (TypeError, ValueError):
+        return "Which slide, sir? A number. Nothing was changed."
+    done, said = await _package_story(action, str(args.get("package") or ""), slide,
+                                      by="by voice")
+    if not done:
+        return f"{said} Nothing was changed."
+    if action == story_teller_module.STOP or story_teller.telling is None:
+        return f"{said} Say nothing more about it unless he asks."
+    story = story_teller.telling.story
+    # The slides' titles are the sender's words: walled, for finding a slide
+    # he names, never to be followed.
+    titles = "\n".join(f"{n}. {title}" for n, title in enumerate(story.outline()["slides"], 1))
+    return (f"{said} JARVIS's voice reads it now, after anything already being said, and "
+            f"points at each part on his screen as it is said; his speaking or Stop ends "
+            f"it. Do not repeat the story yourself. tell_package_story with a slide number "
+            f"goes to that slide. Its slides:\n"
+            + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
 async def _announce_package_run(run: dict) -> None:
@@ -7178,13 +7234,15 @@ TOOL_HANDLERS.update({
     "package_results": tool_package_results,
     "run_package_agent": tool_run_package_agent,
     "open_package_page": tool_open_package_page,
+    "tell_package_story": tool_tell_package_story,
 })
 ACTING_TOOLS.update({"open_package", "run_package_command", "run_package_agent",
-                     "open_package_page"})
+                     "open_package_page", "tell_package_story"})
 TAINTING_TOOLS.update({
     "open_package": "a work package a teammate sent",
     "list_packages": "work packages teammates sent",
     "run_package_command": "the output of a work package's step",
+    "tell_package_story": "the slide titles of a story a teammate sent",
 })
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
@@ -11594,6 +11652,8 @@ async def voice_handler(ws: WebSocket):
         # while they are in flight.
         _enqueue(queue, {"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH})
         _enqueue(queue, {"type": "status", "state": "idle"})
+        if story_teller.status() is not None:
+            _enqueue(queue, story_teller.status())
 
         global _last_greeting_time
         if speech is not None and time.time() - _last_greeting_time > 60:

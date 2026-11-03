@@ -1,0 +1,40 @@
+{
+  "title": "A pot of tea",
+  "language": "en",
+  "slides": [
+    {
+      "title": "Three things a good pot of tea needs",
+      "target": "#s1",
+      "beats": [
+        {"say": "Three things make a decent pot of tea.", "targets": ["#s1 h2"]},
+        {"say": "Fresh water, boiled once.", "targets": ["#water"]},
+        {"say": "Good leaves, kept dry.", "targets": ["#leaves"]},
+        {"say": "And patience. The leaves set the time, not you.", "targets": ["#time"]}
+      ]
+    },
+    {
+      "title": "Four steps",
+      "target": "#s2",
+      "beats": [
+        {"say": "Boil the water.", "targets": ["#s2 [data-step='1']"]},
+        {"say": "Warm the pot, then pour that water away.", "targets": ["#s2 [data-step='2']"]},
+        {"say": "Leaves in, water on, lid on.", "targets": ["#s2 [data-step='3']"]},
+        {"say": "Then pour all of it, before it stews.", "targets": ["#s2 [data-step='4']"]}
+      ]
+    },
+    {
+      "title": "Each tea has its own time",
+      "target": "#s3",
+      "beats": [
+        {"say": "Each tea keeps its own time.", "targets": [".tea"]},
+        {"say": "Green tea wants water well off the boil.",
+         "actions": [{"click": ".tea[data-detail='green']"}],
+         "targets": ["#detail-green .temp"]},
+        {"say": "And two or three minutes, no more.", "targets": ["#detail-green .minutes"]},
+        {"say": "Black tea takes it hotter, and longer.",
+         "actions": [{"click": "#detail-green .close"}],
+         "targets": [".tea[data-detail='black']"]}
+      ]
+    }
+  ]
+}

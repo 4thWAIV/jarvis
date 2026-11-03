@@ -1,7 +1,9 @@
 """The page's work-package routes, /api/packages: the packages unpacked here,
-a page package's own files for its frame, what that frame saves, and
-opening it in the centre area. Thin: each calls work_packages.py, and
-opening calls the same `open_page` the brain's `open_package_page` does.
+a page package's own files for its frame, what that frame saves, opening
+it in the centre area, and telling its story. Thin: each calls
+work_packages.py; opening calls the same `open_page` the brain's
+`open_package_page` does, and telling the same story teller
+(story_teller.py) the brain's `tell_package_story` does.
 
 They sit behind the web boundary like every other route (web_auth.py): a
 POST needs the page's own origin or the tool token, and no access-key
@@ -16,17 +18,23 @@ page (PackageView.tsx) makes the request.
                                             (a page package's, at most
                                             work_packages.RESULT_MAX_BYTES)
   POST /api/packages/{id}/page              open it in every page's centre
+  POST /api/packages/{id}/story             {"action": "tell", "slide"?} or
+                                            {"action": "stop"}: its story
+  GET  /api/packages/story.js               the helper a story page loads
+                                            (package_story.js, one copy),
+                                            which points and highlights in
+                                            its frame
 """
 from __future__ import annotations
 
 import asyncio
 import mimetypes
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from jarvis import work_packages
+from jarvis import data_paths, package_story, work_packages
 from jarvis.web_auth import PACKAGE_PAGE_MARK, PACKAGE_PAGE_PREFIX
 from jarvis.work_packages import Package, PackageError
 
@@ -34,11 +42,20 @@ _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg
 
 
 def describe(package: Package) -> dict:
-    """A package as the page shows it."""
+    """A package as the page shows it; `story` is its story's outline, or
+    None (no story, or one that can no longer be told)."""
     m = package.manifest
+    try:
+        story = package.story()
+    except PackageError:
+        story = None
     return {"id": package.id, "name": m.name, "version": m.version, "purpose": m.purpose,
             "runs": m.runs, "entry": m.entry, "source": package.source,
-            "sources": list(package.sources)}
+            "sources": list(package.sources),
+            "story": story.outline() if story is not None else None}
+
+
+HELPER_FILE = data_paths.PACKAGE_DIR / "package_story.js"
 
 
 def media_type(relative: str) -> str:
@@ -64,9 +81,11 @@ async def _body(request: Request, limit: int) -> bytes:
 
 
 def mount(app: FastAPI,
-          open_page: Callable[[str], Awaitable[tuple[Package | None, str]]]) -> None:
+          open_page: Callable[[str], Awaitable[tuple[Package | None, str]]],
+          story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]]) -> None:
     """`open_page(reference)` opens a page package in every page's centre
-    area: (the package, "") or (None, why not)."""
+    area: (the package, "") or (None, why not). `story(action, reference,
+    slide)` tells or stops its story: (done, what was done or why not)."""
 
     async def list_packages():
         packages = await asyncio.to_thread(work_packages.every)
@@ -102,10 +121,28 @@ def mount(app: FastAPI,
             return JSONResponse({"error": problem}, status_code=404)
         return {"package": describe(package)}
 
+    async def story_helper():
+        return Response(await asyncio.to_thread(HELPER_FILE.read_bytes),
+                        media_type=media_type(HELPER_FILE.name),
+                        headers={"Cache-Control": "no-store"})
+
+    async def tell_story(package_id: str, body: dict = Body(default_factory=dict)):
+        slide = body.get("slide")
+        if slide is not None and (not isinstance(slide, int) or isinstance(slide, bool)):
+            return JSONResponse({"error": "slide is a number, from 1."}, status_code=400)
+        done, said = await story(str(body.get("action") or ""), package_id, slide)
+        if not done:
+            return JSONResponse({"error": said}, status_code=409)
+        return {"said": said}
+
     app.add_api_route("/api/packages", list_packages, methods=["GET"])
+    # Before the {package_id} routes, so story.js is never taken for an id.
+    app.add_api_route(package_story.HELPER_PATH, story_helper, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}" + PACKAGE_PAGE_MARK + "{path:path}",
                       page_file, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/results", save_result,
                       methods=["POST"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/page", open_package_page,
+                      methods=["POST"])
+    app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}/story", tell_story,
                       methods=["POST"])
