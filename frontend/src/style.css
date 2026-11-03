@@ -2969,7 +2969,6 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   color: rgba(255, 255, 255, 0.55);
 }
 .queue-count { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
-.queue-empty { margin: 0; color: rgba(255, 255, 255, 0.35); }
 .queue-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .queue-list.done { gap: 3px; }
 .queue-item { position: relative; min-width: 0; }
@@ -3029,7 +3028,6 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .row-who { grid-area: who; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-person { font-size: 12px; font-weight: 600; }
-.row-via { color: rgba(255, 255, 255, 0.5); }
 .row-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.45); white-space: nowrap; }
 .row-subject {
   grid-area: subject;
@@ -3112,12 +3110,12 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .item-subject { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; overflow-wrap: anywhere; }
 .item-who { margin: 0; color: rgba(255, 255, 255, 0.75); overflow-wrap: anywhere; }
 .item-person { font-weight: 600; color: #fff; }
-.item-handle, .item-via { color: rgba(255, 255, 255, 0.5); }
+.item-via { color: rgba(255, 255, 255, 0.5); }
 .item-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item-cues .queue-cue { font-size: 11px; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .item-actions button, .item-turn, .item-back, .composer-actions button, .composer-conflict button,
-.file-action, .message-reply {
+.file-action, .message-reply, .composer-attach {
   padding: 4px 10px;
   font: inherit;
   font-size: 12px;
@@ -3127,8 +3125,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   border-radius: 6px;
   cursor: pointer;
 }
-.item-actions button:hover, .item-turn:hover, .composer-actions button:hover { border-color: rgba(14, 165, 233, 0.7); }
-.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.item-actions button:hover, .item-turn:hover, .composer-actions button:hover, .composer-attach:hover { border-color: rgba(14, 165, 233, 0.7); }
+.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled,
+.composer-attach.disabled { opacity: 0.4; cursor: not-allowed; }
 .item-actions button[aria-pressed="true"] { border-color: rgba(52, 211, 153, 0.7); }
 .item-back { align-self: flex-start; }
 .item-turn { font-size: 11px; padding: 2px 8px; }
@@ -3163,7 +3162,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-message.on-its-way { border-style: dashed; }
 .message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; }
 .message-person { font-weight: 600; color: #fff; }
-.message-handle, .message-via, .message-to { color: rgba(255, 255, 255, 0.5); }
+.message-to { color: rgba(255, 255, 255, 0.5); }
 .message-time { margin-left: auto; color: rgba(255, 255, 255, 0.45); font-size: 11px; }
 .message-subject { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 /* Text as text: line breaks kept, long words broken, nothing interpreted. */
@@ -3203,6 +3202,22 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
 .queue-file.state-verified .file-state { color: #86efac; }
 .file-action { font-size: 11px; padding: 2px 8px; }
+/* A received file's place on this Mac (QueueFileLocation.tsx): the path,
+   then icon-sized Copy and Reveal. */
+.file-location { display: flex; align-items: center; gap: 4px; flex-basis: 100%; min-width: 0; }
+.file-path {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 255, 255, 0.75);
+  user-select: all;
+}
+.file-icon-action {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; color: rgba(255, 255, 255, 0.75);
+  background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+}
+.file-icon-action:hover, .file-icon-action:focus-visible { color: #fff; border-color: rgba(14, 165, 233, 0.7); }
+.file-icon-action:disabled { opacity: 0.4; cursor: wait; }
+.queue-file .file-state.attention { color: #fca5a5; }
 
 /* The response being written, and its inline review (MessageComposer.tsx,
    MessageReview.tsx). */
@@ -3235,12 +3250,13 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   padding: 5px 8px;
 }
 .composer-to select { max-width: 100%; }
-.composer-inbox, .composer-limits, .composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
+.composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
 .composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
 .composer-text { width: 100%; resize: vertical; min-height: 96px; line-height: 1.45; }
 .composer-text:disabled, .composer-field input:disabled { opacity: 0.6; }
-.composer-attach { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
-.composer-attach input { margin-left: 8px; font-size: 11px; }
+/* Attach files is a button; its file input is visually hidden inside it. */
+.composer-attach { align-self: flex-start; position: relative; }
+.composer-attach:focus-within { outline: 2px solid rgba(14, 165, 233, 0.95); outline-offset: 2px; }
 .composer-adding { margin: 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
 .composer-error { margin: 0; font-size: 12px; color: #fca5a5; }
 .composer-conflict { display: flex; gap: 6px; flex-wrap: wrap; }

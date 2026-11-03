@@ -2,7 +2,7 @@
  * The inline review of one frozen revision, on the item it belongs to:
  * exactly who it goes to (the person and the JARVIS that holds their
  * inbox), the subject, the whole text as it was saved, and every file with
- * its size and declared type, then the total. Nothing here approves on its
+ * its size and declared type, then the total when there is more than one. Nothing here approves on its
  * own: the buttons are the existing capture box's (CaptureBox.tsx) on the
  * capture JARVIS opened for this review, so Send is the existing
  * `POST /api/capture/{n}/send` and the voice read-back is the same capture
@@ -28,9 +28,9 @@ export function MessageReview({ draft }: { draft: Draft }) {
     && c.human?.content_revision === draft.send.content_revision);
   const total = draft.attachments.reduce((n, a) => n + a.size_bytes, 0);
   return (
-    <section className="message-review" aria-label="Review before sending"
+    <section className="message-review" aria-labelledby={`review-${draft.message_id}`}
              data-message-id={draft.message_id} data-content-revision={draft.send.content_revision}>
-      <h3 className="review-heading">Review: exactly this will be sent</h3>
+      <h3 className="review-heading" id={`review-${draft.message_id}`}>Review before sending</h3>
       <dl className="review-fields">
         <dt>To</dt>
         <dd className="review-to">{recipientLabel(dir, draft.recipient_github_id)}</dd>
@@ -39,16 +39,16 @@ export function MessageReview({ draft }: { draft: Draft }) {
       </dl>
       {draft.text
         ? <div className="review-text message-text">{draft.text}</div>
-        : <p className="review-no-text">No text: only the files below.</p>}
+        : <p className="review-no-text">No text</p>}
       {draft.attachments.length > 0 && (
         <div className="review-files">
           {draft.attachments.map((a) => (
-            <FileCard key={a.attachment_id} fileRef={a} incoming={false}
+            <FileCard key={a.attachment_id} fileRef={a} incoming={false} showType
                       file={draft.files.find((f) => f.attachment_id === a.attachment_id)} />
           ))}
-          <p className="review-total">
-            {draft.attachments.length} file{draft.attachments.length === 1 ? "" : "s"}, {sizeText(total)} in all
-          </p>
+          {draft.attachments.length > 1 && (
+            <p className="review-total">{draft.attachments.length} files, {sizeText(total)} in all</p>
+          )}
         </div>
       )}
       {capture

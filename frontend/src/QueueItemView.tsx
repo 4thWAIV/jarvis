@@ -1,16 +1,19 @@
 /**
  * One item, in the centre: the work surface for the conversation open now.
  * One view however many messages there are; opening another item replaces
- * it, and the one left stays in Active / Outbox with its draft.
+ * it, and the one left stays in Active with its draft.
  *
- *   - The head: the subject, who it is with (their name, GitHub handle and
- *     the JARVIS it came through), whose turn it is (with the owner's
- *     correction: Move to my side / Waiting on …), and the item's actions:
- *     Respond, Next item, Put back, Mark addressed, Mark unread, Done
- *     (Restore for a dismissed one), Close; Back after following a link.
- *   - The exchange, oldest first: each message with its sender, time,
- *     subject and text (as text), its files, what it replies to, its direct
- *     replies and related messages, and for the owner's own how far it got.
+ *   - The head: the subject, who it is with (their name, with the GitHub
+ *     handle as its tooltip, and the JARVIS it came through), whose turn it
+ *     is (with the owner's correction: Move to my side / Waiting on …), and
+ *     the item's actions: Respond, Next, Put back, Mark addressed, Mark
+ *     unread, Done (Restore for a dismissed one), Close; Back after
+ *     following a link.
+ *   - The exchange, oldest first: each message with its sender (handle and
+ *     JARVIS as the tooltip), time, subject when it is not the item's, text
+ *     (as text), its files, what it replies to, its direct replies and
+ *     related messages, and for the owner's own how far it got. Read by you
+ *     is an icon; Unread is said.
  *     The owner's responses on their way out follow, each with its state
  *     and its ways out (Retry, Cancel, Edit), then the response being
  *     written and its inline review.
@@ -83,7 +86,7 @@ function OneItem({ thread }: { thread: string }) {
     return (
       <div id="queue-item-view" className="queue-item-view">
         <p className="read-failure" role="status">
-          {loadError ? `Couldn't read this item (${loadError}); trying again on the next change.` : "Reading…"}
+          {loadError ? `Couldn't read this item (${loadError}); retrying.` : "Reading…"}
         </p>
         <div className="item-actions"><button type="button" onClick={closeItem}>Close</button></div>
       </div>
@@ -128,8 +131,10 @@ function OneItem({ thread }: { thread: string }) {
         )}
         <h2 className="item-subject">{subject || "(no subject)"}</h2>
         <p className="item-who">
-          <span className="item-person">{personName(dir, correspondent)}</span>
-          {handle(dir, correspondent) && <span className="item-handle"> {handle(dir, correspondent)}</span>}
+          <span className="item-person" title={handle(dir, correspondent) ?? undefined}>
+            {personName(dir, correspondent)}
+          </span>
+          {handle(dir, correspondent) && <span className="visually-hidden"> {handle(dir, correspondent)}</span>}
           {latestTheirs && <span className="item-via"> · {jarvisLabel(dir, latestTheirs.message.source_node_id)}</span>}
         </p>
         <div className="item-cues">
@@ -148,7 +153,7 @@ function OneItem({ thread }: { thread: string }) {
           {!c.dismissed && parentForReply && !ed && !editable && (
             <button type="button" onClick={() => respond(parentForReply.message_id)}>Respond</button>
           )}
-          <button type="button" onClick={next}>Next item</button>
+          <button type="button" onClick={next}>Next</button>
           {!c.dismissed && work.placement !== "queued" && (
             <button type="button" disabled={busy} onClick={() => void putBack(thread)}>Put back</button>
           )}
@@ -162,14 +167,14 @@ function OneItem({ thread }: { thread: string }) {
             <button type="button" disabled={busy} onClick={() => void setUnread(thread, true)}>Mark unread</button>
           )}
           {c.dismissed
-            ? <button type="button" disabled={busy} onClick={() => void restore(thread)}>Restore to queue</button>
+            ? <button type="button" disabled={busy} onClick={() => void restore(thread)}>Restore</button>
             : <button type="button" disabled={busy} onClick={done}>Done</button>}
           <button type="button" onClick={close}>Close</button>
         </div>
-        {noneWaiting && <p className="item-note" role="status">No items are waiting.</p>}
+        {noneWaiting && <p className="item-note" role="status">Nothing waiting.</p>}
         {busy && <p className="item-note" role="status">Saving…</p>}
         {notes[thread] && <p className="item-note warn" role="alert">{notes[thread]}</p>}
-        {loadError && <p className="read-failure" role="status">Couldn't read this item again ({loadError}); showing the last known.</p>}
+        {loadError && <p className="read-failure" role="status">Couldn't refresh ({loadError}); showing the last known.</p>}
         {dismissing && blockers.length > 0 && (
           <DismissBlockers thread={thread} blockers={blockers} onClose={() => setDismissing(false)} />
         )}
@@ -179,12 +184,12 @@ function OneItem({ thread }: { thread: string }) {
         <ol className="item-exchange">
           {messages.map((m) => (
             <li key={m.message.message_id}>
-              <MessageCard m={m} state={state} dir={dir} thread={thread}
+              <MessageCard m={m} state={state} dir={dir} thread={thread} itemSubject={subject}
                            onReply={c.dismissed || editable || ed ? undefined : () => respond(m.message.message_id)} />
             </li>
           ))}
           {outgoing.map((d) => (
-            <li key={d.message_id}><OutgoingDraft draft={d} thread={thread} dir={dir} /></li>
+            <li key={d.message_id}><OutgoingDraft draft={d} thread={thread} dir={dir} itemSubject={subject} /></li>
           ))}
         </ol>
         {editable?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={editable} />}
@@ -213,7 +218,7 @@ function UnsentConversation({ thread }: { thread: string }) {
         <div className="item-actions"><button type="button" onClick={closeItem}>Close</button></div>
       </header>
       <div className="item-scroll">
-        {draft && !editable && <OutgoingDraft draft={draft} thread={thread} dir={dir} />}
+        {draft && !editable && <OutgoingDraft draft={draft} thread={thread} dir={dir} itemSubject={draft.subject} />}
         {draft?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={draft} />}
         {ed && <MessageComposer editorKey={thread} />}
       </div>
@@ -229,28 +234,28 @@ function DismissBlockers({ thread, blockers, onClose }: {
   const [sure, setSure] = useState(false);
   return (
     <div className="item-blockers" role="alert">
-      <p>This item can't be dismissed yet:</p>
+      <p>Can't dismiss yet:</p>
       <ul>
         {blockers.map((b) => <li key={b}>{DISMISS_BLOCKERS_SHOWN[b as keyof typeof DISMISS_BLOCKERS_SHOWN]}</li>)}
       </ul>
       <div className="item-actions">
         {blockers.includes("unsent_text") && !blockers.includes("send_unresolved") && (sure ? (
           <button type="button" onClick={async () => { if (await discard(thread)) { onClose(); void dismiss(thread); } }}>
-            Discard the reply and dismiss
+            Discard and dismiss
           </button>
         ) : (
-          <button type="button" onClick={() => setSure(true)}>Discard the reply…</button>
+          <button type="button" onClick={() => setSure(true)}>Discard reply…</button>
         ))}
-        <button type="button" onClick={() => { onClose(); void putBack(thread); }}>Put back instead</button>
-        <button type="button" onClick={onClose}>Keep working</button>
+        <button type="button" onClick={() => { onClose(); void putBack(thread); }}>Put back</button>
+        <button type="button" onClick={onClose}>Cancel</button>
       </div>
     </div>
   );
 }
 
 /** One accepted message of the exchange. */
-function MessageCard({ m, state, dir, thread, onReply }: {
-  m: ShownMessage; state: QueueState; dir: Directory; thread: string; onReply?: () => void;
+function MessageCard({ m, state, dir, thread, itemSubject, onReply }: {
+  m: ShownMessage; state: QueueState; dir: Directory; thread: string; itemSubject: string; onReply?: () => void;
 }) {
   const msg = m.message;
   const owner = state.owner_github_id;
@@ -259,6 +264,10 @@ function MessageCard({ m, state, dir, thread, onReply }: {
   const body = useRef<HTMLDivElement>(null);
   const parent = msg.in_reply_to_message_id ? state.messages[msg.in_reply_to_message_id]?.message : undefined;
   const replies = repliesTo(state, msg.message_id);
+  // The sender's handle and the JARVIS it came through: the name's tooltip,
+  // and said to screen readers.
+  const senderDetail = [!fromMe && handle(dir, msg.sender_github_id), `via ${jarvisLabel(dir, msg.source_node_id)}`]
+    .filter(Boolean).join(" · ");
 
   // The read receipt: once this body has actually been on screen.
   useEffect(() => {
@@ -284,12 +293,15 @@ function MessageCard({ m, state, dir, thread, onReply }: {
     <article className={`queue-message ${fromMe ? "outgoing" : "incoming"}${m.self_message ? " self" : ""}`}
              data-message-id={msg.message_id} aria-label={`From ${personName(dir, msg.sender_github_id)}`}>
       <header className="message-head">
-        <span className="message-person">{fromMe ? "You" : personName(dir, msg.sender_github_id)}</span>
-        {!fromMe && handle(dir, msg.sender_github_id) && (
-          <span className="message-handle">{handle(dir, msg.sender_github_id)}</span>
+        <span className="message-person" title={senderDetail}>
+          {fromMe ? "You" : personName(dir, msg.sender_github_id)}
+        </span>
+        <span className="visually-hidden"> · {senderDetail}</span>
+        {fromMe && (
+          <span className="message-to" title={recipientLabel(dir, msg.recipient_github_id)}>
+            to {personName(dir, msg.recipient_github_id)}
+          </span>
         )}
-        <span className="message-via">via {jarvisLabel(dir, msg.source_node_id)}</span>
-        {fromMe && <span className="message-to">to {recipientLabel(dir, msg.recipient_github_id)}</span>}
         <time className="message-time" dateTime={msg.accepted_at}>{clockTime(msg.accepted_at)}</time>
       </header>
       {msg.in_reply_to_message_id && (
@@ -302,7 +314,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
             : <span>a message not on this JARVIS</span>}
         </p>
       )}
-      {msg.subject && <h3 className="message-subject">{msg.subject}</h3>}
+      {msg.subject && msg.subject !== itemSubject && <h3 className="message-subject">{msg.subject}</h3>}
       <div className="message-text" ref={body}>{msg.text}</div>
       {msg.attachments.length > 0 && (
         <div className="message-files">
@@ -314,7 +326,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
       )}
       <footer className="message-foot">
         {toMe && (m.receipts?.read_at
-          ? <Cue kind="read-by-you" title={m.receipts.read_at}>Read by you</Cue>
+          ? <Cue kind="read-by-you" quiet>Read by you</Cue>
           : <Cue kind="unread">Unread</Cue>)}
         {fromMe && (
           <Cue kind={DELIVERY_CUE[delivery(msg, m.receipts)]}
@@ -326,9 +338,9 @@ function MessageCard({ m, state, dir, thread, onReply }: {
           <span className="message-replies">
             <Cue kind="replied">{replies.length === 1 ? "1 reply" : `${replies.length} replies`}</Cue>
             {replies.map((r) => (
-              <button key={r.message_id} type="button" className="link-button" onClick={() => jump(r.message_id)}>
-                {r.sender_github_id === owner ? "You" : personName(dir, r.sender_github_id)}:{" "}
-                {DELIVERY_WORDS(dir, r.recipient_github_id)[delivery(r, state.receipts[r.message_id])]}
+              <button key={r.message_id} type="button" className="link-button" onClick={() => jump(r.message_id)}
+                      title={DELIVERY_WORDS(dir, r.recipient_github_id)[delivery(r, state.receipts[r.message_id])]}>
+                {r.sender_github_id === owner ? "You" : personName(dir, r.sender_github_id)}
               </button>
             ))}
           </span>
@@ -347,7 +359,7 @@ function MessageCard({ m, state, dir, thread, onReply }: {
             })}
           </span>
         )}
-        {onReply && <button type="button" className="message-reply" onClick={onReply}>Reply to this</button>}
+        {onReply && <button type="button" className="message-reply" onClick={onReply}>Reply</button>}
       </footer>
     </article>
   );
@@ -356,7 +368,9 @@ function MessageCard({ m, state, dir, thread, onReply }: {
 /** A response of the owner's on its way out: its state in words, its files
  *  and what can honestly be done with it now. Nothing is called accepted
  *  before the team server said so. */
-function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; dir: Directory }) {
+function OutgoingDraft({ draft, thread, dir, itemSubject }: {
+  draft: Draft; thread: string; dir: Directory; itemSubject: string;
+}) {
   const s = draft.send.state;
   const failure = s === "failed" && draft.send.failure;
   return (
@@ -366,7 +380,7 @@ function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; d
         <span className="message-to">to {recipientLabel(dir, draft.recipient_github_id)}</span>
         <span className="queue-sending" role="status">{sendWords(draft)}</span>
       </header>
-      {draft.subject && <h3 className="message-subject">{draft.subject}</h3>}
+      {draft.subject && draft.subject !== itemSubject && <h3 className="message-subject">{draft.subject}</h3>}
       <div className="message-text">{draft.text}</div>
       {draft.attachments.length > 0 && (
         <div className="message-files">
@@ -378,7 +392,7 @@ function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; d
       )}
       {failure && <p className="item-note warn">{shownFailure(failure)}</p>}
       {s === "accept_unknown" && (
-        <p className="item-note">It may already have arrived. Retrying sends the same message, never a second one.</p>
+        <p className="item-note">It may have arrived. Retry never sends it twice.</p>
       )}
       <div className="item-actions">
         {(s === "failed" || s === "accept_unknown") && (

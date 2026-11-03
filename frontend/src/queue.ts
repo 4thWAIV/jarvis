@@ -24,13 +24,14 @@
  *     none.
  */
 
+import { makeLocal } from "./attachmentLocation";
 import { captures } from "./capture";
 import { liveRead, type LiveStore } from "./liveRead";
 import { messagingApi, MessagingError } from "./messagingApi";
 import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkCommand } from "./messagingContract";
 import { network } from "./network";
 import {
-  applyDraft, applyFile, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
+  applyDraft, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
   EMPTY, removeDraft, waiting, withPending, type Directory, type QueueState,
 } from "./queueStore";
 import { createStore } from "./store";
@@ -443,7 +444,7 @@ async function save(key: string): Promise<boolean> {
   if (!ed || !ed.dirty) return true;
   if (!ed.messageId && !hasContent(ed)) return true;          // nothing to keep yet
   if (ed.recipient === null) {
-    setEditor(key, { ...ed, error: "Choose who it is for, and it will be kept as a draft." });
+    setEditor(key, { ...ed, error: "Choose a recipient to save the draft." });
     return false;
   }
   const body: DraftSave = {
@@ -643,13 +644,13 @@ export function editAgain(key: string, draft: Draft): void {
 
 // ── Files on received messages ───────────────────────────────────────────
 
-/** Fetch a received file to this JARVIS and check it. JARVIS never opens
- *  it; the owner's one action on it is Reveal in Finder. */
+/** Fetch a received file to this JARVIS and check it, through the one
+ *  location resolver (make-local). JARVIS never opens it; its state comes
+ *  back with the `messages` hint as the download moves. */
 export async function downloadFile(messageId: string, attachmentId: string): Promise<void> {
   const thread = queueRecord.get().messages[messageId]?.message.thread_id;
   try {
-    const file = await messagingApi().download(messageId, attachmentId);
-    record((s) => applyFile(s, messageId, file));
+    await makeLocal(messageId, attachmentId);
   } catch (e) {
     if (thread) note(thread, shown(e));
   }
