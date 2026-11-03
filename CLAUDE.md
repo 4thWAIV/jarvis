@@ -309,7 +309,10 @@ the Queue's Open page matches on), and a folder from before the record is
 adopted by its name.
 There is no other sandbox: the team is trusted. The brain's `open_package`
 and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
-is the gate. `run_package_command` runs one shell step in the folder with a
+is the gate. The page's Open package (on a received zip in the Queue, `POST
+/api/packages/received`) is his own click, and unpacks through the same
+`_open_received_package` as `open_package`; a page package then opens at
+once, and its file has Open page from then on. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
 `list_packages` and `package_results` read what is there. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's

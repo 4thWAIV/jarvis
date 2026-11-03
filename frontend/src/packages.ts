@@ -2,6 +2,10 @@
  * Work packages on the page (packages_api.py): the packages unpacked here,
  * and the one page package open in the centre area (PackageView.tsx).
  *
+ * A received package is unpacked one way, whoever asks: the Queue's Open
+ * package (on its file, QueueFiles.tsx) and the brain's `open_package` both
+ * reach the server's `_open_received_package`.
+ *
  * A page package opens one way, whoever asks: the page's Open page (on its
  * file in the Queue, QueueFiles.tsx) and the brain's `open_package_page`
  * both reach the server's `_open_package_page`, which tells every JARVIS
@@ -93,10 +97,10 @@ export function packageList(): LiveStore<PackageInfo[]> {
   return packages;
 }
 
-/** The page package unpacked from this attachment, if there is one. */
-export function pagePackageFrom(list: PackageInfo[] | null, attachmentId: string) {
+/** The package unpacked from this attachment, if there is one. */
+export function packageFrom(list: PackageInfo[] | null, attachmentId: string) {
   const key = attachmentId.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
-  return list?.find((p) => p.runs === "page" && p.sources.some((s) => s && key.startsWith(s)));
+  return list?.find((p) => p.sources.some((s) => s && key.startsWith(s)));
 }
 
 /** Show it, unless it is already showing. */
@@ -111,6 +115,24 @@ export async function openPackagePage(id: string): Promise<string | null> {
     showPackage((await answer<{ package: PackageInfo }>(
       await fetch(`${base(id)}/page`, { method: "POST" }))).package);
     return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/** The Queue's Open package: unpack a received zip here, through the
+ *  server's `_open_received_package` (the brain's `open_package` too), and
+ *  show it at once when it runs as a page. Null once done, else why not; a
+ *  package that runs another way says to ask JARVIS. */
+export async function openReceivedPackage(messageId: string, attachmentId: string): Promise<string | null> {
+  try {
+    const { package: info } = await answer<{ package: PackageInfo }>(await fetch("/api/packages/received", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId, attachment_id: attachmentId }),
+    }));
+    packagesChanged.set(packagesChanged.get() + 1);
+    if (info.runs === "page") return openPackagePage(info.id);
+    return `Unpacked as ${info.id}. It runs as ${info.runs === "agent" ? "an agent" : "a conversation"}: ask JARVIS to run it.`;
   } catch (e) {
     return (e as Error).message;
   }

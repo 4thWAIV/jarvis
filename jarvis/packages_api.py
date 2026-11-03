@@ -1,9 +1,10 @@
 """The page's work-package routes, /api/packages: the packages unpacked here,
 a page package's own files for its frame, what that frame saves, opening
-it in the centre area, and telling its story. Thin: each calls
-work_packages.py; opening calls the same `open_page` the brain's
-`open_package_page` does, and telling the same story teller
-(story_teller.py) the brain's `tell_package_story` does.
+it in the centre area, opening a received one, and telling its story.
+Thin: each calls work_packages.py; opening a received zip calls the same
+`open_received` the brain's `open_package` does, opening its page the same
+`open_page` the brain's `open_package_page` does, and telling the same story
+teller (story_teller.py) the brain's `tell_package_story` does.
 
 They sit behind the web boundary like every other route (web_auth.py): a
 POST needs the page's own origin or the tool token, and no access-key
@@ -13,6 +14,9 @@ reaches none of these itself: it asks the page, by postMessage, and the
 page (PackageView.tsx) makes the request.
 
   GET  /api/packages                        the packages unpacked here
+  POST /api/packages/received               {"message_id", "attachment_id"}:
+                                            the Queue's Open package, a
+                                            received zip unpacked here
   GET  /api/packages/{id}/files/{path}      one file of a page package
   POST /api/packages/{id}/results?name=     save the body as results/<name>
                                             (a page package's, at most
@@ -29,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import uuid
 from typing import Awaitable, Callable, Optional
 
 from fastapi import Body, FastAPI, Request, Response
@@ -38,6 +43,7 @@ from jarvis import data_paths, package_story, work_packages
 from jarvis.web_auth import PACKAGE_PAGE_MARK, PACKAGE_PAGE_PREFIX
 from jarvis.work_packages import Package, PackageError
 
+RECEIVED_PATH = "/api/packages/received"
 _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg+xml")
 
 
@@ -82,10 +88,14 @@ async def _body(request: Request, limit: int) -> bytes:
 
 def mount(app: FastAPI,
           open_page: Callable[[str], Awaitable[tuple[Package | None, str]]],
-          story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]]) -> None:
+          story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]],
+          open_received: Callable[[uuid.UUID, uuid.UUID],
+                                  Awaitable[tuple[Package | None, bool, str]]]) -> None:
     """`open_page(reference)` opens a page package in every page's centre
     area: (the package, "") or (None, why not). `story(action, reference,
-    slide)` tells or stops its story: (done, what was done or why not)."""
+    slide)` tells or stops its story: (done, what was done or why not).
+    `open_received(message_id, attachment_id)` unpacks a received zip:
+    (the package, unpacked now, "") or (None, False, why not)."""
 
     async def list_packages():
         packages = await asyncio.to_thread(work_packages.every)
@@ -121,6 +131,18 @@ def mount(app: FastAPI,
             return JSONResponse({"error": problem}, status_code=404)
         return {"package": describe(package)}
 
+    async def open_received_package(body: dict = Body(default_factory=dict)):
+        try:
+            message_id = uuid.UUID(str(body.get("message_id") or ""))
+            attachment_id = uuid.UUID(str(body.get("attachment_id") or ""))
+        except ValueError:
+            return JSONResponse({"error": "Which file? Give its message and attachment ids."},
+                                status_code=400)
+        package, fresh, problem = await open_received(message_id, attachment_id)
+        if package is None:
+            return JSONResponse({"error": problem}, status_code=409)
+        return {"package": describe(package), "unpacked": fresh}
+
     async def story_helper():
         return Response(await asyncio.to_thread(HELPER_FILE.read_bytes),
                         media_type=media_type(HELPER_FILE.name),
@@ -136,6 +158,7 @@ def mount(app: FastAPI,
         return {"said": said}
 
     app.add_api_route("/api/packages", list_packages, methods=["GET"])
+    app.add_api_route(RECEIVED_PATH, open_received_package, methods=["POST"])
     # Before the {package_id} routes, so story.js is never taken for an id.
     app.add_api_route(package_story.HELPER_PATH, story_helper, methods=["GET"])
     app.add_api_route(PACKAGE_PAGE_PREFIX + "{package_id}" + PACKAGE_PAGE_MARK + "{path:path}",

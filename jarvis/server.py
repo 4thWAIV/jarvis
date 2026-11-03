@@ -6963,37 +6963,51 @@ def _files_said(handed: list) -> str:
 _PACKAGE_WRAP_NAME = "package"
 
 
+async def _open_received_package(message_id: uuid.UUID, attachment_id: uuid.UUID
+                                 ) -> tuple[Optional["work_packages.Package"], bool, str]:
+    """Download a received zip if it is not here yet and unpack it into its
+    own folder: the brain's `open_package` and the page's Open package
+    (packages_api) alike. (the package, unpacked now, "") or (None, False,
+    why not)."""
+    context = _location_context()
+    if context is None:
+        return None, False, MESSAGING_OFF
+    try:
+        found = await context.ensure_local(message_id, attachment_id)
+    except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
+        return None, False, messaging_api.Refused(e.code).shown()
+    problem = attachment_locations.not_local(found)
+    if problem:
+        return None, False, messaging_api.Refused(problem).shown()
+    try:
+        package, fresh = await asyncio.to_thread(work_packages.unpack, Path(found.local_path),
+                                                 attachment_id.hex)
+        context.record_extraction(message_id, attachment_id, package.folder,
+                                  sorted(set(package.manifest.named_files().values())))
+    except (work_packages.PackageError, OSError) as e:
+        return None, False, str(e)
+    if fresh:
+        _send_to_session_clients({"type": "packages"})
+    return package, fresh, ""
+
+
 async def tool_open_package(args: dict) -> str:
     """Download a received zip if it is not here yet, unpack it into its own
     folder and hand the brain its package.json and skill to follow."""
-    context = _location_context()
-    if context is None:
-        return MESSAGING_OFF
     message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
     if message_id is None or attachment_id is None:
         return ("Which file, sir? Give me its message id and attachment id from "
                 "read_people_thread. Nothing was opened.")
+    package, fresh, problem = await _open_received_package(message_id, attachment_id)
+    if package is None:
+        return problem if problem == MESSAGING_OFF else f"{problem} Nothing was opened."
     try:
-        found = await context.ensure_local(message_id, attachment_id)
-    except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
-        return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
-    problem = attachment_locations.not_local(found)
-    if problem:
-        return f"{messaging_api.Refused(problem).shown()} Nothing was opened."
-    archive = Path(found.local_path)
-    try:
-        package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
-                                                 attachment_id.hex)
-        context.record_extraction(message_id, attachment_id, package.folder,
-                                  sorted(set(package.manifest.named_files().values())))
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
                                                 ("Brief", package.manifest.brief))
                         if relative)
     except (work_packages.PackageError, OSError) as e:
         return f"{e} Nothing was opened."
-    if fresh:
-        _send_to_session_clients({"type": "packages"})
     how = "is unpacked" if fresh else "was already unpacked"
     return (f"Package {package.id} {how} in {package.folder}. "
             f"{_PACKAGE_HOW[package.manifest.runs]} At the end, package_results, then "
@@ -7157,7 +7171,7 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
     return True, f"Telling the story of {told.package.id} from slide {told.slide} of {total}."
 
 
-packages_api.mount(app, _open_package_page, _package_story)
+packages_api.mount(app, _open_package_page, _package_story, _open_received_package)
 
 
 async def tool_open_package_page(args: dict) -> str:

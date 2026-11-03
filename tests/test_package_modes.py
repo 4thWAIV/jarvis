@@ -354,3 +354,39 @@ def test_open_package_tells_the_brain_how_each_way_runs(wired, tmp_path, marks):
     assert "run_package_agent" in text and "Brief (BRIEF.md):\nCount them." in text
     assert f"reply_to {message}" in text
     assert wired.hints == [{"type": "packages"}], "the page reads its packages again"
+
+
+def test_the_queue_s_open_package_and_the_brain_unpack_through_one_function(
+        wired, tmp_path, marks):
+    """A received package opens from the page too (the Queue's Open package,
+    POST /api/packages/received), through the same `_open_received_package`
+    as the brain's open_package: unpacked once, the page told to read its
+    packages again, then found by its attachment for Open page."""
+    from types import SimpleNamespace
+    from jarvis.messaging_files import FilesContext
+    from tests.test_messaging_files import MATT, SERVER
+    from tests.test_work_packages import _sent_package, locations_for
+    w, message, attachment = _sent_package(tmp_path, make_zip(
+        {"web/index.html": "<p>hi</p>"}, PAGE))
+    wired.server.messaging = SimpleNamespace(
+        files_context=lambda: FilesContext(w.matt.files, SERVER, MATT),
+        location_context=lambda: locations_for(w.matt.files, SERVER, MATT))
+    route = "/api/packages/received"
+    body = {"message_id": str(message), "attachment_id": str(attachment)}
+    assert wired.client.post(route, json=body).status_code == 403, "the page's origin only"
+    r = wired.client.post(route, json=body, headers=BROWSER)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["unpacked"] is True and got["package"]["runs"] == "page"
+    assert got["package"]["sources"] == [attachment.hex]
+    assert wired.hints == [{"type": "packages"}]
+    again = wired.client.post(route, json=body, headers=BROWSER).json()
+    assert again == {**got, "unpacked": False}, "the same bytes are the same package"
+    text = _call(wired, "open_package", message=str(message), attachment=str(attachment))["text"]
+    assert text.startswith(f"Package {got['package']['id']} was already unpacked")
+    assert wired.hints == [{"type": "packages"}], "only an unpacking is a hint"
+    r = wired.client.post(route, json={"message_id": "x"}, headers=BROWSER)
+    assert r.status_code == 400
+    wired.server.messaging = None
+    r = wired.client.post(route, json=body, headers=BROWSER)
+    assert r.status_code == 409 and r.json()["error"] == wired.server.MESSAGING_OFF

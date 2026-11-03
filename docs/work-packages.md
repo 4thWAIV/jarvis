@@ -191,6 +191,9 @@ The brain's tools:
   is not here yet, unpacks it into `<data>/packages/<name>-<version>-<id>/`,
   takes macOS's quarantine mark off the folder so its scripts run, and
   returns `package.json` and the skill. Acting: only on the person's word.
+  The page's own way is Open package on the zip in the Queue: the same
+  `_open_received_package`, through `POST /api/packages/received`; a page
+  package then opens in the centre at once.
   Opening the same bytes again, from that attachment or a resent one, gives
   the package already unpacked, results and all: which archive each package
   came from (its SHA-256 and attachment ids) is kept in
@@ -210,7 +213,7 @@ The brain's tools:
   can be run again with `retry_run`, still as that package's. Acting.
 - `open_package_page` (package): opens a page package in the centre of every
   JARVIS page that is open. The page's own way is Open page on the package's
-  file in the Queue, once JARVIS has opened it; both go through the same
+  file in the Queue, once it is unpacked; both go through the same
   `_open_package_page`, and `POST /api/packages/<id>/page`. Acting.
 - `tell_package_story` (package, `action` tell or stop, `slide`): opens a
   page package's page and tells its story in JARVIS's voice from that slide,
