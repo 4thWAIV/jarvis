@@ -131,7 +131,7 @@ async def _settled(page):
     so where a section scrolls to) no longer changes."""
     await async_api.expect(page.get_by_placeholder("Your name")).to_have_value("Tim")
     await page.wait_for_selector(".brain-card")
-    await async_api.expect(page.locator("#settings-updates")).to_contain_text("new commit")
+    await async_api.expect(page.locator("#settings-updates")).to_contain_text("newer version")
 
 
 async def _marks(page, selector):
@@ -241,7 +241,7 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
             await async_api.expect(page.get_by_placeholder("Su nombre")).to_have_value("Tim")
             section = await _navigate(ui, "settings.section", {"section": "updates"})
             assert section["status"] == "completed", section
-            await async_api.expect(page.locator("#settings-updates")).to_contain_text("commits nuevos en main")
+            await async_api.expect(page.locator("#settings-updates")).to_contain_text("versiones más nuevas en main")
 
             # Back to English from elsewhere: reworded in place, Settings still open.
             page.settings_server.language = "en"

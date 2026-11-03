@@ -137,9 +137,9 @@ async def _open(p, url):
     return browser, page, api
 
 
-@pytest.mark.asyncio
-async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcript(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcript(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, api = await _open(p, page_url)
         await page.click(".right-tabs [role=tab][title=Workflows]")
         row = page.locator(".subagent-row[data-subagent-key='agent:s2/b1']")
@@ -179,9 +179,9 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_workflows_subagents_are_listed_in_it_and_their_transcripts_shown(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_workflows_subagents_are_listed_in_it_and_their_transcripts_shown(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, api = await _open(p, page_url)
         await page.click(".right-tabs [role=tab][title=Workflows]")
         await page.click(".workflow-row[data-workflow-id=wf-1]")
@@ -210,9 +210,9 @@ async def test_a_workflows_subagents_are_listed_in_it_and_their_transcripts_show
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_agents_row_says_how_many_are_working_at_the_same_size(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, _api = await _open(p, page_url)
         await page.wait_for_selector(".agents-list li[data-session-id=s1] .agent-subagents")
         rows = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {

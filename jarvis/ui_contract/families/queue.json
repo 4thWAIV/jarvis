@@ -33,14 +33,17 @@
     {"kind": "queuePanel", "entity": null, "label": "Queue", "parts": ["waiting", "active", "history", "more", "new"],
      "presentations": [{"view": "right.queue", "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}}]},
     {"kind": "queueThread", "entity": "thread", "label": "Queue item",
-     "parts": ["row", "sender", "subject", "receipt", "turn", "header", "back", "next", "close", "composer"],
+     "parts": ["row", "sender", "subject", "receipt", "turn", "header", "back", "next", "close", "composer", "request"],
      "presentations": [{"view": "right.queue", "parts": ["row", "sender", "subject", "receipt", "turn"],
                         "reveal": {"command": "right.tab.select", "args": {"tab": "queue"}}},
-                       {"view": "main.queue", "parts": ["header", "back", "next", "close", "composer", "turn"],
+                       {"view": "main.queue", "parts": ["header", "back", "next", "close", "composer", "request", "turn"],
                         "reveal": {"command": "queue.open", "args": {"threadId": "$key"}}}]},
-    {"kind": "queueMessage", "entity": "message", "label": "Message", "parts": ["card", "body", "receipt"],
+    {"kind": "queueMessage", "entity": "message", "label": "Message", "parts": ["card", "request", "body", "receipt"],
      "presentations": [{"view": "main.queue"}]},
-    {"kind": "queueAttachment", "entity": "attachment", "label": "Attachment", "parts": ["entry"],
+    {"kind": "queueAttachment", "entity": "attachment", "label": "Attachment",
+     "parts": ["entry", "download", "location", "copy", "reveal", "openPage", "contents", "path", "more"],
+     "presentations": [{"view": "main.queue"}]},
+    {"kind": "bundleEntry", "entity": "member", "label": "File in an archive", "parts": ["name", "open"],
      "presentations": [{"view": "main.queue"}]}
   ]
 }

@@ -140,6 +140,23 @@
       "entity": "thread"
     },
     {
+      "id": "main.package",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work package page",
+      "tab": "package",
+      "entity": "package",
+      "kept": true
+    },
+    {
+      "id": "main.file",
+      "region": "main",
+      "kind": "detail",
+      "label": "Received file",
+      "tab": "file",
+      "entity": "member"
+    },
+    {
       "id": "overlay.controls",
       "region": "overlay",
       "kind": "fixed",
@@ -214,7 +231,9 @@
             "diagnostics",
             "subsystem",
             "network",
-            "queue"
+            "queue",
+            "package",
+            "file"
           ]
         }
       },

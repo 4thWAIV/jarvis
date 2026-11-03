@@ -197,7 +197,7 @@ def test_indexes_are_made_twice_on_a_fresh_namespace_and_nothing_is_purged(deliv
 
 
 def test_messaging_is_always_on_and_there_is_no_switch(client, alice):
-    assert messaging.capabilities() == [mm.CAPABILITY]
+    assert messaging.capabilities() == [mm.CAPABILITY, mm.BUNDLES_CAPABILITY]
     for method, path in (("GET", PREFIX + "/recipients"), ("POST", PREFIX),
                          ("GET", f"{PREFIX}/{uuid.uuid4()}")):
         r = client.request(method, path, json={} if method == "POST" else None)

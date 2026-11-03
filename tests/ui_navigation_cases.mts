@@ -68,6 +68,8 @@ const folders = await import("../frontend/src/folders.ts");
 const agents = await import("../frontend/src/agents.ts");
 await import("../frontend/src/uiRight.ts");
 await import("../frontend/src/captions.ts");
+const packages = await import("../frontend/src/packages.ts");
+const bundles = await import("../frontend/src/bundles.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
@@ -441,6 +443,33 @@ function registerFolderRow(el: unknown) {
   assert.equal(navigationRevision.get(), before);
   off();
   passed.push("reveal: nothing declared, nothing guessed");
+}
+
+{
+  // A page package and a received file are centre details like the rest:
+  // the frame the server sends opens them by the registered command, and
+  // closing goes back to Conversation.
+  await reset();
+  const info = { id: "mic-check-page-1.0.0-0f1e2d3c", name: "mic-check-page", version: "1.0.0", purpose: "",
+                 runs: "page" as const, entry: "index.html", source: "0f1e2d3c", sources: ["0f1e2d3c"] };
+  const before = navigationRevision.get();
+  packages.showPackage(info);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(nav.mainView.get(), "package");
+  assert.equal(packages.openPackage.get()?.id, info.id);
+  assert.ok(navigationRevision.get() > before);
+  assert.equal((await dispatch("package.open", { packageId: "not-here" }, { actor: "brain" })).status, "unavailable");
+  assert.equal((await dispatch("package.close", {}, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "conversation");
+  assert.equal(packages.openPackage.get(), null);
+  const member = { messageId: "m-1", attachmentId: "a-1", memberId: "mabc" };
+  bundles.showMember(member);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(nav.mainView.get(), "file");
+  assert.deepEqual(bundles.openBundleMember.get(), member);
+  assert.equal((await dispatch("bundle.member.close", {}, { actor: "brain" })).status, "completed");
+  assert.equal(nav.mainView.get(), "conversation");
+  passed.push("package and received file: opened by their commands, closed back to Conversation");
 }
 
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so

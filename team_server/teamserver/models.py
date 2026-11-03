@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from teamserver.messaging_models import AttachmentCapabilities
+
 GITHUB_LOGIN = r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
 Role = Literal["admin", "member"]
 State = Literal["approved", "active", "suspended"]
@@ -218,6 +220,10 @@ class NodeUpdate(BaseModel):
     resources: Resources
     brains: list[BrainAccount] = Field(max_length=8)
     activity: Optional[HumanActivity] = None
+    # What the node can do with a received file (messaging.bundles.v1).
+    # Absent from an older JARVIS, which this lax model also lets an older
+    # team server ignore: such a node is legacy, its standing unknown.
+    attachments: Optional[AttachmentCapabilities] = None
 
 
 class AccountPace(BaseModel):
@@ -254,6 +260,11 @@ class NodeView(BaseModel):
     activity_state: Literal["never_observed", "available", "unsupported"]
     last_human_activity_at: Optional[datetime] = None
     last_human_activity_source: Optional[Literal["gui", "speech", "typed"]] = None
+    attachments: Optional[AttachmentCapabilities] = Field(
+        default=None, description="As the node last sent it; null for a legacy node")
+    attachments_observed_at: Optional[datetime] = Field(
+        default=None, description="When the node's readers were checked: receipt time "
+                                  "less observed_age_ms")
 
 
 class HealthPoint(BaseModel):

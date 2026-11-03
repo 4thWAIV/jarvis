@@ -114,12 +114,35 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_people_thread",
     "mcp__jarvis__change_people_draft",
     "mcp__jarvis__attach_message_files",
-    # Work packages a teammate sends: opening one and running its steps are
-    # ACTING_TOOLS; the results go back through draft_message's files.
+    # Where a received file is (attachment_locations.py): the read-only
+    # lookup, and the acting make-local and Reveal in Finder.
+    "mcp__jarvis__attachment_location",
+    "mcp__jarvis__make_attachment_local",
+    "mcp__jarvis__reveal_attachment",
+    # Work packages a teammate sends: opening one, running its steps, starting
+    # its agent run and opening its page are ACTING_TOOLS; the results go back
+    # through draft_message's files.
     "mcp__jarvis__open_package",
     "mcp__jarvis__list_packages",
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",
+    "mcp__jarvis__run_package_agent",
+    "mcp__jarvis__open_package_page",
+    # Files a teammate sent, read as files (bundle_api.py): any zip or
+    # document, with or without a package.json. Reads come back walled;
+    # inspecting (it downloads), showing and every change to a draft or a
+    # review are ACTING_TOOLS (bundle_contract.BRAIN_TOOLS).
+    "mcp__jarvis__inspect_attachment",
+    "mcp__jarvis__list_bundle_members",
+    "mcp__jarvis__read_bundle_member",
+    "mcp__jarvis__look_at_bundle_page",
+    "mcp__jarvis__show_bundle_member",
+    "mcp__jarvis__attachment_readiness",
+    "mcp__jarvis__set_message_task",
+    "mcp__jarvis__add_companion_files",
+    "mcp__jarvis__prepare_repair",
+    "mcp__jarvis__review_checklist",
+    "mcp__jarvis__set_review_scope",
     "mcp__jarvis__diagnostics",
     # Speech input's models (speech_models.py) and the language
     # (language_setting.py): reading them, and the acting install and

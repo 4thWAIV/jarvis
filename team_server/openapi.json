@@ -95,6 +95,24 @@
             "title": "Subject",
             "type": "string"
           },
+          "supersedes": {
+            "items": {
+              "$ref": "#/components/schemas/Supersedes"
+            },
+            "maxItems": 10,
+            "title": "Supersedes",
+            "type": "array"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "text": {
             "default": "",
             "maxLength": 20000,
@@ -326,6 +344,104 @@
           "step"
         ],
         "title": "AnnouncementRequest",
+        "type": "object"
+      },
+      "ArtifactRef": {
+        "additionalProperties": false,
+        "description": "A file of this message (by id and hash, never by its name alone),\nor one member of it by its archive path.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "member_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Path"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "sha256"
+        ],
+        "title": "ArtifactRef",
+        "type": "object"
+      },
+      "AttachmentCapabilities": {
+        "additionalProperties": false,
+        "description": "What one node can do with a received file, on its node update: the\nreaders that answered their health check `observed_age_ms` ago, the\narchive budgets, and the work-package manifests and modes it runs. A\nnode without it is an older JARVIS: unknown, never assumed able.",
+        "properties": {
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/FormatCapability"
+            },
+            "maxItems": 40,
+            "title": "Formats",
+            "type": "array"
+          },
+          "max_archive_entries": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Max Archive Entries",
+            "type": "integer"
+          },
+          "max_expanded_bytes": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Max Expanded Bytes",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Max File Bytes",
+            "type": "integer"
+          },
+          "observed_age_ms": {
+            "maximum": 604800000.0,
+            "minimum": 0.0,
+            "title": "Observed Age Ms",
+            "type": "integer"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "work_packages": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkPackageCapability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "observed_age_ms",
+          "max_file_bytes",
+          "max_archive_entries",
+          "max_expanded_bytes",
+          "formats"
+        ],
+        "title": "AttachmentCapabilities",
         "type": "object"
       },
       "AttachmentCreate": {
@@ -819,6 +935,84 @@
         "title": "ErrorDetail",
         "type": "object"
       },
+      "FormatCapability": {
+        "additionalProperties": false,
+        "description": "One format a node's readers handle now, the operations its health\ncheck passed, and the largest file it takes (None: the node's limit).",
+        "properties": {
+          "format": {
+            "enum": [
+              "folder",
+              "zip",
+              "tar",
+              "gzip",
+              "7z",
+              "rar",
+              "pdf",
+              "text",
+              "markdown",
+              "json",
+              "csv",
+              "tsv",
+              "html",
+              "svg",
+              "png",
+              "jpeg",
+              "gif",
+              "webp",
+              "heic",
+              "docx",
+              "xlsx",
+              "pptx",
+              "doc",
+              "xls",
+              "ppt",
+              "rtf",
+              "audio",
+              "video",
+              "unknown"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "operations": {
+            "items": {
+              "enum": [
+                "download",
+                "list_archive",
+                "extract",
+                "read_text",
+                "render",
+                "ocr",
+                "edit_export",
+                "execute"
+              ],
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "format",
+          "operations"
+        ],
+        "title": "FormatCapability",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1223,6 +1417,16 @@
               }
             ]
           },
+          "attachments": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "boot_id": {
             "format": "uuid",
             "title": "Boot Id",
@@ -1290,6 +1494,30 @@
             ],
             "title": "Activity State",
             "type": "string"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As the node last sent it; null for a legacy node"
+          },
+          "attachments_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the node's readers were checked: receipt time less observed_age_ms",
+            "title": "Attachments Observed At"
           },
           "brains": {
             "$ref": "#/components/schemas/BrainSummary"
@@ -1402,6 +1630,114 @@
           "expected_revision"
         ],
         "title": "OpenItem",
+        "type": "object"
+      },
+      "OpenabilityReport": {
+        "additionalProperties": false,
+        "description": "The recipient node's technical report on one file of one message,\nafter its owner told it to open the file: never the document's text, a\ndevice path or a log. `failed_member` is the archive's own path of the\nfirst member that failed; `reason` a bundle reason code.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "content_revision": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Content Revision",
+            "type": "integer"
+          },
+          "failed_member": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Member"
+          },
+          "failed_operation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "download",
+                  "list_archive",
+                  "extract",
+                  "read_text",
+                  "render",
+                  "ocr",
+                  "edit_export",
+                  "execute"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Operation"
+          },
+          "members_readable": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Members Readable",
+            "type": "integer"
+          },
+          "members_total": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Members Total",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[a-z_]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "ready",
+              "partial",
+              "unsupported",
+              "corrupt",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "sha256",
+          "content_revision",
+          "status",
+          "members_total",
+          "members_readable",
+          "checked_at"
+        ],
+        "title": "OpenabilityReport",
         "type": "object"
       },
       "PutBack": {
@@ -1568,6 +1904,14 @@
             "title": "Nodes",
             "type": "array"
           },
+          "openability": {
+            "items": {
+              "$ref": "#/components/schemas/OpenabilityReport"
+            },
+            "maxItems": 10,
+            "title": "Openability",
+            "type": "array"
+          },
           "read_at": {
             "anyOf": [
               {
@@ -1615,12 +1959,13 @@
       },
       "ReceiptItem": {
         "additionalProperties": false,
-        "description": "One receipt. `read` only ever comes from the owner's GUI after the\nbody was displayed (or an explicit mark-read), never from a\nnotification, a summary or the model.",
+        "description": "One receipt. `read` only ever comes from the owner's GUI after the\nbody was displayed (or an explicit mark-read), never from a\nnotification, a summary or the model. `openability` carries its report,\nand only it does: one item per file.",
         "properties": {
           "kind": {
             "enum": [
               "received",
-              "read"
+              "read",
+              "openability"
             ],
             "title": "Kind",
             "type": "string"
@@ -1629,6 +1974,16 @@
             "format": "uuid",
             "title": "Message Id",
             "type": "string"
+          },
+          "openability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenabilityReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2118,6 +2473,43 @@
         "title": "Status",
         "type": "object"
       },
+      "Supersedes": {
+        "additionalProperties": false,
+        "description": "This message's file `by_attachment_id` replaces `attachment_id` of an\nearlier message in the same thread, which is kept.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "by_attachment_id": {
+            "format": "uuid",
+            "title": "By Attachment Id",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "repair",
+              "revision"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "attachment_id",
+          "by_attachment_id",
+          "reason"
+        ],
+        "title": "Supersedes",
+        "type": "object"
+      },
       "SyncEntry": {
         "additionalProperties": false,
         "properties": {
@@ -2186,6 +2578,59 @@
           "server_time"
         ],
         "title": "SyncPage",
+        "type": "object"
+      },
+      "TaskContext": {
+        "additionalProperties": false,
+        "description": "A one-off request a message carries: what the sender asks for, the\nprimary artifact and the supporting ones, and who the answer goes to\n(only the sender). Task context, never an authorization: the recipient\ndecides whether to take it on.",
+        "properties": {
+          "outcome_kind": {
+            "enum": [
+              "notes",
+              "revised_copy",
+              "data",
+              "answer",
+              "other"
+            ],
+            "title": "Outcome Kind",
+            "type": "string"
+          },
+          "primary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply_audience": {
+            "const": "sender_only",
+            "default": "sender_only",
+            "title": "Reply Audience",
+            "type": "string"
+          },
+          "requested_outcome": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Requested Outcome",
+            "type": "string"
+          },
+          "supporting": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactRef"
+            },
+            "maxItems": 50,
+            "title": "Supporting",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requested_outcome",
+          "outcome_kind"
+        ],
+        "title": "TaskContext",
         "type": "object"
       },
       "Team": {
@@ -2386,6 +2831,38 @@
           "change"
         ],
         "title": "WorkCommandRequest",
+        "type": "object"
+      },
+      "WorkPackageCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 4,
+            "title": "Manifest Versions",
+            "type": "array"
+          },
+          "modes": {
+            "items": {
+              "enum": [
+                "conversation",
+                "agent",
+                "page"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Modes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "manifest_versions",
+          "modes"
+        ],
+        "title": "WorkPackageCapability",
         "type": "object"
       },
       "WorkState": {
@@ -3082,6 +3559,18 @@
     "/api/v1/messages": {
       "post": {
         "operationId": "send_message_api_v1_messages_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bundles",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Bundles",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3118,8 +3607,8 @@
                           "type": "string"
                         },
                         "size_bytes": {
-                          "maximum": 26214400.0,
-                          "minimum": 0.0,
+                          "maximum": 26214400,
+                          "minimum": 0,
                           "title": "Size Bytes",
                           "type": "integer"
                         }
@@ -3144,8 +3633,8 @@
                     "type": "string"
                   },
                   "content_revision": {
-                    "maximum": 9.223372036854776e+18,
-                    "minimum": 1.0,
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
                     "title": "Content Revision",
                     "type": "integer"
                   },
@@ -3172,8 +3661,8 @@
                     "type": "string"
                   },
                   "recipient_github_id": {
-                    "maximum": 9.223372036854776e+18,
-                    "minimum": -2147483648.0,
+                    "maximum": 9223372036854775807,
+                    "minimum": -2147483648,
                     "title": "Recipient Github Id",
                     "type": "integer"
                   },
@@ -3202,6 +3691,172 @@
                     "maxLength": 200,
                     "title": "Subject",
                     "type": "string"
+                  },
+                  "supersedes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "description": "This message's file `by_attachment_id` replaces `attachment_id` of an\nearlier message in the same thread, which is kept.",
+                      "properties": {
+                        "attachment_id": {
+                          "format": "uuid",
+                          "title": "Attachment Id",
+                          "type": "string"
+                        },
+                        "by_attachment_id": {
+                          "format": "uuid",
+                          "title": "By Attachment Id",
+                          "type": "string"
+                        },
+                        "message_id": {
+                          "format": "uuid",
+                          "title": "Message Id",
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "repair",
+                            "revision"
+                          ],
+                          "title": "Reason",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message_id",
+                        "attachment_id",
+                        "by_attachment_id",
+                        "reason"
+                      ],
+                      "title": "Supersedes",
+                      "type": "object"
+                    },
+                    "maxItems": 10,
+                    "title": "Supersedes",
+                    "type": "array"
+                  },
+                  "task": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "description": "A one-off request a message carries: what the sender asks for, the\nprimary artifact and the supporting ones, and who the answer goes to\n(only the sender). Task context, never an authorization: the recipient\ndecides whether to take it on.",
+                        "properties": {
+                          "outcome_kind": {
+                            "enum": [
+                              "notes",
+                              "revised_copy",
+                              "data",
+                              "answer",
+                              "other"
+                            ],
+                            "title": "Outcome Kind",
+                            "type": "string"
+                          },
+                          "primary": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "description": "A file of this message (by id and hash, never by its name alone),\nor one member of it by its archive path.",
+                                "properties": {
+                                  "attachment_id": {
+                                    "format": "uuid",
+                                    "title": "Attachment Id",
+                                    "type": "string"
+                                  },
+                                  "member_path": {
+                                    "anyOf": [
+                                      {
+                                        "maxLength": 1024,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "title": "Member Path"
+                                  },
+                                  "sha256": {
+                                    "pattern": "^[0-9a-f]{64}$",
+                                    "title": "Sha256",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "attachment_id",
+                                  "sha256"
+                                ],
+                                "title": "ArtifactRef",
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reply_audience": {
+                            "const": "sender_only",
+                            "default": "sender_only",
+                            "title": "Reply Audience",
+                            "type": "string"
+                          },
+                          "requested_outcome": {
+                            "maxLength": 500,
+                            "minLength": 1,
+                            "title": "Requested Outcome",
+                            "type": "string"
+                          },
+                          "supporting": {
+                            "items": {
+                              "additionalProperties": false,
+                              "description": "A file of this message (by id and hash, never by its name alone),\nor one member of it by its archive path.",
+                              "properties": {
+                                "attachment_id": {
+                                  "format": "uuid",
+                                  "title": "Attachment Id",
+                                  "type": "string"
+                                },
+                                "member_path": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 1024,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "title": "Member Path"
+                                },
+                                "sha256": {
+                                  "pattern": "^[0-9a-f]{64}$",
+                                  "title": "Sha256",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "attachment_id",
+                                "sha256"
+                              ],
+                              "title": "ArtifactRef",
+                              "type": "object"
+                            },
+                            "maxItems": 50,
+                            "title": "Supporting",
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "requested_outcome",
+                          "outcome_kind"
+                        ],
+                        "title": "TaskContext",
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "text": {
                     "default": "",
@@ -3329,6 +3984,18 @@
     "/api/v1/messages/receipts": {
       "post": {
         "operationId": "message_receipts_api_v1_messages_receipts_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bundles",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Bundles",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3571,6 +4238,16 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "bundles",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Bundles",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3800,6 +4477,16 @@
               "format": "uuid",
               "title": "Message Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bundles",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Bundles",
+              "type": "boolean"
             }
           }
         ],

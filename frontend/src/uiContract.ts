@@ -145,7 +145,9 @@ export const UI_CONTRACT = {
     "record": "^[A-Za-z0-9._:-]{1,128}$",
     "incident": "^[A-Za-z0-9._:-]{1,128}$",
     "check": "^[A-Za-z0-9._:-]{1,128}$",
-    "settingsSection": "^[a-z]{1,32}$"
+    "settingsSection": "^[a-z]{1,32}$",
+    "package": "^[A-Za-z0-9._-]{1,128}$",
+    "member": "^[A-Za-z0-9]{1,64}$"
   },
   "argumentTypes": [
     "enum",
@@ -411,6 +413,23 @@ export const UI_CONTRACT = {
       "entity": "thread"
     },
     {
+      "id": "main.package",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work package page",
+      "tab": "package",
+      "entity": "package",
+      "kept": true
+    },
+    {
+      "id": "main.file",
+      "region": "main",
+      "kind": "detail",
+      "label": "Received file",
+      "tab": "file",
+      "entity": "member"
+    },
+    {
       "id": "overlay.controls",
       "region": "overlay",
       "kind": "fixed",
@@ -486,7 +505,9 @@ export const UI_CONTRACT = {
             "diagnostics",
             "subsystem",
             "network",
-            "queue"
+            "queue",
+            "package",
+            "file"
           ]
         }
       },
@@ -1803,6 +1824,245 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "conversation"
+    },
+    {
+      "id": "package.open",
+      "label": "Open a page work package in the centre",
+      "view": "main.package",
+      "args": {
+        "packageId": {
+          "type": "key",
+          "entity": "package"
+        }
+      },
+      "required": [
+        "packageId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "package.close",
+      "label": "Close the work package page",
+      "view": "main.package",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.member.open",
+      "label": "Open a file a teammate sent, or one file inside it, in the centre",
+      "view": "main.file",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        },
+        "attachmentId": {
+          "type": "key",
+          "entity": "attachment"
+        },
+        "memberId": {
+          "type": "key",
+          "entity": "member"
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId",
+        "memberId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.member.close",
+      "label": "Close the received file",
+      "view": "main.file",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.contents",
+      "label": "Show or hide what an archive a teammate sent holds, on its file in the open Queue item",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        },
+        "attachmentId": {
+          "type": "key",
+          "entity": "attachment"
+        },
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId",
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged",
+          "when": {
+            "shown": true
+          }
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.folder",
+      "label": "Show one folder of an archive's contents ('' is its top)",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        },
+        "attachmentId": {
+          "type": "key",
+          "entity": "attachment"
+        },
+        "folder": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId",
+        "folder"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.folder.more",
+      "label": "Read the next page of the archive folder shown",
+      "view": "main.queue",
+      "args": {
+        "messageId": {
+          "type": "key",
+          "entity": "message"
+        },
+        "attachmentId": {
+          "type": "key",
+          "entity": "attachment"
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.member.view",
+      "label": "Show the open received file as its preview or its text, or turn to one of its pages",
+      "view": "main.file",
+      "args": {
+        "show": {
+          "type": "enum",
+          "values": [
+            "preview",
+            "text"
+          ]
+        },
+        "page": {
+          "type": "integer",
+          "min": 1
+        }
+      },
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "packages"
+    },
+    {
+      "id": "bundle.member.more",
+      "label": "Read the next page of the open received file's text",
+      "view": "main.file",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.paged"
+        }
+      ],
+      "family": "packages"
     }
   ],
   "kinds": [
@@ -2235,7 +2495,8 @@ export const UI_CONTRACT = {
         "back",
         "next",
         "close",
-        "composer"
+        "composer",
+        "request"
       ],
       "presentations": [
         {
@@ -2262,6 +2523,7 @@ export const UI_CONTRACT = {
             "next",
             "close",
             "composer",
+            "request",
             "turn"
           ],
           "reveal": {
@@ -2280,6 +2542,7 @@ export const UI_CONTRACT = {
       "label": "Message",
       "parts": [
         "card",
+        "request",
         "body",
         "receipt"
       ],
@@ -2295,7 +2558,30 @@ export const UI_CONTRACT = {
       "entity": "attachment",
       "label": "Attachment",
       "parts": [
-        "entry"
+        "entry",
+        "download",
+        "location",
+        "copy",
+        "reveal",
+        "openPage",
+        "contents",
+        "path",
+        "more"
+      ],
+      "presentations": [
+        {
+          "view": "main.queue"
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "kind": "bundleEntry",
+      "entity": "member",
+      "label": "File in an archive",
+      "parts": [
+        "name",
+        "open"
       ],
       "presentations": [
         {
@@ -3009,6 +3295,47 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "conversation"
+    },
+    {
+      "kind": "packageView",
+      "entity": "package",
+      "label": "Work package page",
+      "parts": [
+        "header",
+        "frame",
+        "close"
+      ],
+      "presentations": [
+        {
+          "view": "main.package",
+          "reveal": {
+            "command": "package.open",
+            "args": {
+              "packageId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "packages"
+    },
+    {
+      "kind": "bundleMember",
+      "entity": "member",
+      "label": "Received file",
+      "parts": [
+        "header",
+        "show",
+        "close",
+        "pages",
+        "body",
+        "more"
+      ],
+      "presentations": [
+        {
+          "view": "main.file"
+        }
+      ],
+      "family": "packages"
     }
   ],
   "families": [
@@ -3055,6 +3382,10 @@ export const UI_CONTRACT = {
     {
       "family": "conversation",
       "owner": "coverage-main"
+    },
+    {
+      "family": "packages",
+      "owner": "integrator"
     }
   ]
 } as const;
@@ -3165,6 +3496,13 @@ export interface CommandArgs {
   "agents.filter": { show: "active" | "all"; };
   "agents.page": { direction: "previous" | "next"; };
   "agents.reveal": { sessionId: string; };
+  "bundle.contents": { messageId: string; attachmentId: string; shown: boolean; };
+  "bundle.folder": { messageId: string; attachmentId: string; folder: string; };
+  "bundle.folder.more": { messageId: string; attachmentId: string; };
+  "bundle.member.close": { };
+  "bundle.member.more": { };
+  "bundle.member.open": { messageId: string; attachmentId: string; memberId: string; };
+  "bundle.member.view": { show?: "preview" | "text"; page?: number; };
   "conversation.earlier": { };
   "conversation.record.expand": { recordId: string; open: boolean; };
   "folder.browse": { folderId: string; path?: string; revision?: number; };
@@ -3178,10 +3516,12 @@ export interface CommandArgs {
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
+  "package.close": { };
+  "package.open": { packageId: string; };
   "queue.back": { };
   "queue.close": { };
   "queue.discard.ask": { open: boolean; };

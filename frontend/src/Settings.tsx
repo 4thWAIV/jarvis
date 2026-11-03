@@ -32,7 +32,7 @@ import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
-import { useT, type Translate } from "./locale";
+import { formatDateTime, placed, useT, type Translate } from "./locale";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
 import type { CommandArgs, SideEffect } from "./uiContract";
@@ -370,6 +370,20 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
 
 // GET /api/update (self_update.Status.to_json) and POST /api/update
 // (self_update.Outcome.to_json).
+type CiState = "" | "passed" | "pending" | "failed" | "none" | "unknown";
+
+// A version: a pull request merged to main (self_update.Version.to_json).
+interface UpdateVersion {
+  sha: string;
+  pr: number | null;
+  title: string;
+  date: string;
+  ci: CiState;
+  name: string;
+  can_choose: boolean;
+  unchosen: string;
+}
+
 interface UpdateStatus {
   source: "github" | "installed" | "other";
   reason: string;
@@ -377,8 +391,9 @@ interface UpdateStatus {
   branch: string;
   commit: string;
   behind: number;
-  commits: { sha: string; subject: string }[];
-  ci: "" | "passed" | "pending" | "failed" | "none" | "unknown";
+  current: UpdateVersion | null;
+  versions: UpdateVersion[];
+  ci: CiState;
   blockers: { code: string; text: string; detail: string[]; values?: { count?: number } }[];
   up_to_date: boolean;
   can_update: boolean;
@@ -388,6 +403,7 @@ interface UpdateOutcome {
   status: UpdateStatus;
   ok: boolean;
   updated: boolean;
+  version: UpdateVersion | null;
   refused: string;
   /** Why it was refused (self_update.REFUSED_*): its words are the page's. */
   refused_code?: "busy" | "source" | "cannot_check" | "blocked" | "";
@@ -398,10 +414,21 @@ interface UpdateOutcome {
   restart: boolean;
 }
 
+// Each version's tests, as its row says them, and the colour they take.
 const CI_WORDS = {
-  passed: "left.updates.ci.passed", pending: "left.updates.ci.pending", failed: "left.updates.ci.failed",
-  none: "left.updates.ci.none", unknown: "left.updates.ci.unknown",
+  passed: ["left.updates.ci.passed", "pass"], pending: ["left.updates.ci.pending", "wait"],
+  failed: ["left.updates.ci.failed", "fail"], none: ["left.updates.ci.none", "fail"],
+  unknown: ["left.updates.ci.unknown", "wait"],
 } as const;
+
+// Why a version whose tests have not passed cannot be chosen, by its CI.
+const UNCHOSEN_WORDS = {
+  pending: "left.updates.unchosen.pending", failed: "left.updates.unchosen.failed",
+  none: "left.updates.unchosen.none", unknown: "left.updates.unchosen.unknown",
+} as const;
+
+// The latest commit's CI is said on each version's row instead.
+const CI_BLOCKERS = new Set(["ci_not_passed", "version_ci_not_passed"]);
 
 const SOURCE_WORDS = { installed: "left.updates.installed", other: "left.updates.notGithub" } as const;
 
@@ -409,9 +436,28 @@ const NOTE_WORDS: Record<string, "left.updates.note.frontendPackages"> = {
   frontend_packages: "left.updates.note.frontendPackages",
 };
 
+/** A version's name in words: "PR 42", or its short sha. */
+function versionName(t: Translate, v: UpdateVersion): string {
+  return v.pr !== null ? t("left.updates.prName", { pr: v.pr }) : v.sha.slice(0, 7);
+}
+
+function shortDate(iso: string): string {
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? "" : formatDateTime(when, { day: "numeric", month: "short" });
+}
+
+/** A version as a line: its name, its pull request's title (as written)
+ *  and its short sha. */
+function VersionTitle({ version }: { version: UpdateVersion }) {
+  const t = useT();
+  return version.pr !== null
+    ? <><b>{versionName(t, version)}</b>: {version.title} <code>{version.sha.slice(0, 7)}</code></>
+    : <><code>{version.sha.slice(0, 7)}</code> {version.title}</>;
+}
+
 /** What stops an update (self_update's blocker codes), with what it names
- *  (a branch, files) as it came. A code the page does not know keeps the
- *  server's sentence. */
+ *  (a branch, files, a version) as it came. A code the page does not know
+ *  keeps the server's sentence. */
 function blockerWords(t: Translate, b: UpdateStatus["blockers"][number]): { text: string; detail: string } {
   const listed = b.detail.join(", ");
   switch (b.code) {
@@ -419,6 +465,9 @@ function blockerWords(t: Translate, b: UpdateStatus["blockers"][number]): { text
     case "modified": return { text: t("left.updates.blocker.modified"), detail: listed };
     case "would_overwrite": return { text: t("left.updates.blocker.wouldOverwrite"), detail: listed };
     case "ci_not_passed": return { text: t("left.updates.blocker.ciNotPassed"), detail: listed };
+    case "not_newer": return { text: t("left.updates.blocker.notNewer"), detail: listed };
+    case "not_offered": return { text: t("left.updates.blocker.notOffered"), detail: listed };
+    case "version_ci_not_passed": return { text: t("left.updates.blocker.versionCiNotPassed"), detail: listed };
     case "local_commits":
       return b.values?.count !== undefined
         ? { text: t("left.updates.blocker.localCommits", { count: b.values.count }), detail: "" }
@@ -442,7 +491,8 @@ function refusedWords(t: Translate, out: UpdateOutcome): string {
 
 /** What an update did, kept as what happened and worded where shown. */
 type UpdateResult =
-  | { kind: "restarting"; commit: string; notes: string[] }
+  | { kind: "installing"; version: UpdateVersion }
+  | { kind: "restarting"; version: UpdateVersion | null; commit: string; notes: string[] }
   | { kind: "refused"; out: UpdateOutcome }
   | { kind: "failed"; detail: string }
   | { kind: "current" }
@@ -455,10 +505,14 @@ function UpdatesSection() {
   const [problem, setProblem] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [result, setResult] = useState<UpdateResult | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const check = useCallback(async () => {
     setChecking(true);
     setProblem(null);
+    setResult((was) => (was?.kind === "refused" || was?.kind === "failed" || was?.kind === "no-answer" ? null : was));
+    setConfirming(false);
     try {
       setStatus(await getJson<UpdateStatus>("/api/update"));
     } catch (e) {
@@ -470,17 +524,37 @@ function UpdatesSection() {
 
   useEffect(() => { check(); }, [check]);
 
-  const update = async () => {
+  // The newest version that can be chosen starts chosen, and stays chosen
+  // across a check unless it can no longer be.
+  const versions = status?.versions ?? [];
+  useEffect(() => {
+    setChosen((was) => versions.some((v) => v.sha === was && v.can_choose) ? was
+      : versions.find((v) => v.can_choose)?.sha ?? null);
+  }, [status]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choice = versions.find((v) => v.sha === chosen) ?? null;
+
+  const install = async () => {
+    if (!choice) return;
+    if (!confirming) {
+      setConfirming(true);
+      setResult(null);
+      return;
+    }
+    setConfirming(false);
     setUpdating(true);
-    setResult(null);
+    setResult({ kind: "installing", version: choice });
     try {
-      const res = await fetch("/api/update", { method: "POST" });
+      const res = await fetch("/api/update", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: choice.sha }) });
       const out = (await res.json()) as UpdateOutcome;
       setStatus(out.status);
       if (out.restart) {
         const commit = out.to_commit.slice(0, 7);
-        setResult({ kind: "restarting", commit, notes: out.note_codes ?? [] });
-        reloadAfterRestart(t("left.updates.updatedRestarting", { commit }));
+        setResult({ kind: "restarting", version: out.version, commit, notes: out.note_codes ?? [] });
+        reloadAfterRestart(t("left.updates.updatedRestarting",
+                             { version: out.version ? versionName(t, out.version) : commit }));
         return;
       }
       setResult(out.refused ? { kind: "refused", out }
@@ -492,55 +566,101 @@ function UpdatesSection() {
     setUpdating(false);
   };
 
+  const ready = status !== null && status.source === "github" && !status.error;
   let summary: ReactNode = t("left.updates.checking");
   if (problem) summary = t("left.updates.unasked", { error: problem });
   else if (status && status.source !== "github") summary = t(SOURCE_WORDS[status.source]);
   else if (status?.error) {
     summary = <>{t("left.updates.cannotCheck")} <span data-original-detail="">{status.error}</span></>;
-  } else if (status?.up_to_date) summary = t("left.updates.upToDateAt", { commit: status.commit.slice(0, 7) });
-  else if (status) {
-    summary = status.ci
-      ? t("left.updates.behindCi", { count: status.behind, ci: t(CI_WORDS[status.ci]) })
-      : t("left.updates.behind", { count: status.behind });
-  }
-  const showCommits = status && status.source === "github" && !status.error && status.behind > 0;
+  } else if (status?.up_to_date) summary = t("left.updates.upToDate");
+  else if (status) summary = t("left.updates.newer", { count: versions.length });
+  const stopping = ready ? status.blockers.filter((b) => !CI_BLOCKERS.has(b.code)) : [];
+  const brings = choice ? versions.length - versions.indexOf(choice) : 0;
 
   let said: ReactNode = null;
-  if (result?.kind === "restarting") {
-    said = [t("left.updates.updatedRestarting", { commit: result.commit }),
+  let refusal: ReactNode = null;
+  if (result?.kind === "installing") said = t("left.updates.installing", { version: versionName(t, result.version) });
+  else if (result?.kind === "restarting") {
+    said = [t("left.updates.updatedRestarting",
+              { version: result.version ? versionName(t, result.version) : result.commit }),
+            t("left.updates.reloads"),
             ...result.notes.map((n) => NOTE_WORDS[n] ? t(NOTE_WORDS[n]) : n)].join(" ");
   } else if (result?.kind === "refused") {
-    said = t("left.updates.notUpdated", { reason: refusedWords(t, result.out) });
+    refusal = t("left.updates.notUpdated", { reason: refusedWords(t, result.out) });
   } else if (result?.kind === "failed") {
-    said = <>{t("left.updates.failed")} <span data-original-detail="">{result.detail}</span></>;
+    refusal = <>{t("left.updates.failed")} <span data-original-detail="">{result.detail}</span></>;
   } else if (result?.kind === "current") said = t("left.updates.alreadyUpToDate");
-  else if (result?.kind === "no-answer") said = t("left.updates.noAnswer");
+  else if (result?.kind === "no-answer") refusal = t("left.updates.noAnswer");
 
   return (
     <>
+      {ready && status.current && (
+        <p className="update-current">
+          {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={status.current} />)}
+        </p>
+      )}
       <p className="settings-hint">{checking && status ? t("left.updates.checkingAgain") : summary}</p>
-      {showCommits && (
-        <ul className="update-commits">
-          {status.commits.map((c) => (
-            <li key={c.sha}><code>{c.sha.slice(0, 7)}</code> {c.subject}</li>
-          ))}
+      {ready && versions.length > 0 && (
+        <ul className="update-versions">
+          {versions.map((v, i) => {
+            const [ciKey, ciClass] = v.ci ? CI_WORDS[v.ci] : [null, ""];
+            const why = v.can_choose ? "" : v.ci && v.ci !== "passed" ? t(UNCHOSEN_WORDS[v.ci]) : v.unchosen;
+            return (
+              <li key={v.sha} className={"update-version" + (v.can_choose ? "" : " off")
+                                         + (v.sha === chosen ? " sel" : "")}>
+                <label>
+                  <input data-ui-action="input" type="radio" name="update-version"
+                         disabled={!v.can_choose || updating} checked={v.sha === chosen}
+                         onChange={() => { setChosen(v.sha); setConfirming(false); }} />
+                  <span className="update-version-body">
+                    <span className="update-version-title">
+                      {v.pr !== null ? `${versionName(t, v)}: ${v.title}` : `${versionName(t, v)} ${v.title}`}
+                      {i === 0 && <span className="update-tag">{t("left.updates.latest")}</span>}
+                    </span>
+                    <span className="update-version-meta">
+                      {shortDate(v.date)} · <code>{v.sha.slice(0, 7)}</code>
+                      {why ? ` · ${why}` : ""}
+                    </span>
+                  </span>
+                  <span className={`update-ci ${ciClass}`}>{ciKey ? t(ciKey) : ""}</span>
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
-      {showCommits && status.blockers.map((b) => {
-        const { text, detail } = blockerWords(t, b);
-        return (
-          <p key={b.code} className="settings-hint read-failure">
-            {text}{detail && <> <span data-original-detail="">{detail}</span></>}
-          </p>
-        );
-      })}
+      {confirming && choice && (
+        <div className="update-confirm">
+          {t("left.updates.confirm", { version: versionName(t, choice), count: brings })}
+          <ul>
+            <li>{t("left.updates.confirm.reload")}</li>
+            <li>{status?.current
+              ? t("left.updates.confirm.moveBack", { version: versionName(t, status.current) })
+              : t("left.updates.confirm.moveBackHere")}</li>
+            <li>{t("left.updates.confirm.noOlder")}</li>
+          </ul>
+        </div>
+      )}
+      {refusal ? <p className="update-refused">{refusal}</p>
+        : stopping.map((b) => {
+          const { text, detail } = blockerWords(t, b);
+          return (
+            <p key={b.code} className="update-refused">
+              {text}{detail && <> <span data-original-detail="">{detail}</span></>}
+            </p>
+          );
+        })}
       {said && <p className="settings-restart-notice">{said}</p>}
       <div className="settings-actions">
         <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}>
           {t("left.updates.checkAgain")}</button>
-        {status?.can_update && (
-          <button data-ui-action="restart" className="settings-btn primary" onClick={update} disabled={updating || checking}>
-            {t(updating ? "left.updates.updating" : "left.updates.update")}</button>
+        {ready && versions.length > 0 && (
+          <button data-ui-action="restart" className="settings-btn primary" onClick={install}
+                  disabled={!choice || stopping.length > 0 || updating || checking}>
+            {updating && choice ? t("left.updates.installing", { version: versionName(t, choice) })
+              : confirming && choice ? t("left.updates.yesInstall", { version: versionName(t, choice) })
+              : t("left.updates.install")}
+          </button>
         )}
       </div>
     </>

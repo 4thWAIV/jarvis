@@ -87,19 +87,19 @@ async def _open(browser, url, height):
 async_api = pytest.importorskip("playwright.async_api")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("height", [500, 650, 900, 1200])
-async def test_the_list_fits_the_page_at_every_height(page_url, height):
-    async with async_api.async_playwright() as p:
+async def test_the_list_fits_the_page_at_every_height(page_playwright, page_url, height):
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open(browser, page_url, height)
         _assert_fits(await _settled(page))
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_resized_window_is_measured_again(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_resized_window_is_measured_again(page_playwright, page_url):
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open(browser, page_url, 1100)
         tall = await page.evaluate(LAYOUT)
@@ -110,11 +110,11 @@ async def test_a_resized_window_is_measured_again(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("row", ["99px", "30px"])
-async def test_a_new_row_size_on_the_open_page_is_measured_again(page_url, row):
+async def test_a_new_row_size_on_the_open_page_is_measured_again(page_playwright, page_url, row):
     """What Vite's hot reload does to the CSS, without a reload or a resize."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open(browser, page_url, 900)
         before = await page.evaluate(LAYOUT)
@@ -156,9 +156,9 @@ async def _open_routed(page, url):
     return page
 
 
-@pytest.mark.asyncio
-async def test_inactive_is_gray_idle_is_idle_and_every_other_state_is_thinking(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_inactive_is_gray_idle_is_idle_and_every_other_state_is_thinking(page_playwright, page_url):
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
         assert await page.evaluate(ORB_LOOKS) == {
@@ -185,10 +185,10 @@ def _colourfulness(png: bytes) -> float:
     return best
 
 
-@pytest.mark.asyncio
-async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page_playwright, page_url):
     pytest.importorskip("PIL")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)
         orbs = page.locator(".agents-list li .agent-orb")
@@ -199,13 +199,13 @@ async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_switch_shows_only_in_all_and_active_entries_fill_the_row(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_switch_shows_only_in_all_and_active_entries_fill_the_row(page_playwright, page_url):
     look = """() => [...document.querySelectorAll('.agents-list li')].map(li => ({
         switch: !!li.querySelector('.agent-switch'),
         fills: Math.abs(li.querySelector('.agent-entry').getBoundingClientRect().width
                         - li.getBoundingClientRect().width) < 1}))"""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)          # opens on All
         assert all(row["switch"] for row in await page.evaluate(look))
@@ -217,15 +217,15 @@ async def test_the_switch_shows_only_in_all_and_active_entries_fill_the_row(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_switch_stands_upright_with_on_at_the_top(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_switch_stands_upright_with_on_at_the_top(page_playwright, page_url):
     look = """() => [...document.querySelectorAll('.agents-list li')].map(li => {
         const sw = li.querySelector('.agent-switch');
         const r = sw.getBoundingClientRect();
         const knob = parseFloat(getComputedStyle(sw, '::after').top);
         return [sw.getAttribute('aria-checked'), r.height > r.width, knob < r.height / 2];
     })"""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, LOOKS)          # opens on All
         await page.wait_for_timeout(300)                            # the knob's slide
@@ -247,11 +247,11 @@ NEEDS = {"agents": [
 ]}
 
 
-@pytest.mark.asyncio
-async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_left(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_left(page_playwright, page_url):
     """The rows mirror the old left-side ones: the orb at the right end, so
     the count sits in the upper left, clear of the right-aligned name."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, NEEDS)
         got = await page.evaluate("""() => [...document.querySelectorAll('.agents-list li')].map(li => {
@@ -268,9 +268,9 @@ async def test_the_needs_count_is_a_bare_number_in_the_card_s_upper_left(page_ur
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_provider_logo_sits_in_the_card_s_lower_left(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_provider_logo_sits_in_the_card_s_lower_left(page_playwright, page_url):
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, NEEDS)
         await page.wait_for_function(
@@ -292,14 +292,14 @@ async def test_the_provider_logo_sits_in_the_card_s_lower_left(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_list_stops_at_its_ends_and_each_arrow_shows_only_when_there_is_more(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_list_stops_at_its_ends_and_each_arrow_shows_only_when_there_is_more(page_playwright, page_url):
     many = {"agents": [{"session_id": str(i), "name": f"agent {i}", "active": True,
                         "state": "idle", "needs": 0, "provider": None} for i in range(12)]}
     state = """() => ({
       names: [...document.querySelectorAll('.agents-list .agent-name')].map(e => e.textContent),
       arrows: [...document.querySelectorAll('.agents-chevron')].map(b => b.style.visibility)})"""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser = await _browser(p)
         page = await _open_with(browser, page_url, many)
         top = await page.evaluate(state)

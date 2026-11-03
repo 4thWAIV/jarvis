@@ -19,13 +19,18 @@ import {
   roster, takeTheirs,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
+import { ReadinessLine, TaskFields } from "./BundleLines";
 import { personName, previewOf, recipientLabel } from "./queueStore";
 import { bind, bindingProps } from "./uiNavigation";
 
 const MB = 1024 * 1024;
 const LOCKED = new Set(["approved", "submitting", "accept_unknown", "accepted"]);
 
-export function MessageComposer({ editorKey }: { editorKey: string }) {
+export function MessageComposer({ editorKey, request }: {
+  editorKey: string;
+  /** Where its request fields register, as the open item's `request` part. */
+  request?: (el: Element | null) => void;
+}) {
   const t = useT();
   const ed = useSyncExternalStore(editors.subscribe, editors.get)[editorKey];
   const state = useSyncExternalStore(queue.subscribe, queue.get);
@@ -44,6 +49,9 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
   const canReview = !locked && !ed.saving && ed.adding === 0 && ed.recipient !== null
     && (ed.text.trim() !== "" || ed.attachmentIds.length > 0);
   const id = `composer-${editorKey}`;
+  // The attachment limits: the Attach control's tooltip.
+  const limits = t("main.queue.composer.limits", { count: LIMITS.ATTACHMENTS_MAX, each: formatNumber(LIMITS.FILE_MAX_BYTES / MB),
+                                                   all: formatNumber(LIMITS.PACKAGE_MAX_BYTES / MB) });
   return (
     <section className="message-composer" aria-label={ed.thread ? t("main.queue.composer.response") : t("main.queue.newMessage")}
              data-editor={editorKey}>
@@ -66,7 +74,6 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
               </select>
             </label>
           )}
-        <span className="composer-inbox">{t("main.queue.composer.inbox")}</span>
       </div>
       {parent && (
         <p className="composer-parent">
@@ -79,10 +86,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
         <input data-ui-action="input" type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
                onChange={(e) => edit(editorKey, { subject: e.target.value })} />
       </label>
-      <label className="composer-field" htmlFor={id}>
-        <span>{t("main.queue.composer.message")}</span>
-      </label>
-      <textarea data-ui-action="input" id={id} className="composer-text" value={ed.text} rows={6} disabled={locked}
+      <textarea data-ui-action="input" id={id} className="composer-text" aria-label={t("main.queue.composer.message")} value={ed.text} rows={6} disabled={locked}
                 maxLength={LIMITS.TEXT_MAX_CHARS}
                 onChange={(e) => edit(editorKey, { text: e.target.value })} />
       <div className="composer-files">
@@ -91,16 +95,18 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
                     file={draft!.files.find((f) => f.attachment_id === a.attachment_id)}
                     onRemove={locked ? undefined : () => removeFile(editorKey, a.attachment_id)} />
         ))}
+        {draft && draft.attachments.length > 0 && (
+          <>
+            <TaskFields draft={draft} disabled={locked || ed.saving || ed.dirty} target={request} />
+            <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
+          </>
+        )}
         {ed.adding > 0 && <p className="composer-adding" role="status">{t("main.queue.composer.adding", { count: ed.adding })}</p>}
-        <label className="composer-attach">
-          {t("main.queue.composer.attach")}
-          <input data-ui-action="file" type="file" multiple disabled={locked || ed.recipient === null}
+        <label className={`composer-attach${locked || ed.recipient === null ? " disabled" : ""}`} title={limits}>
+          {t("main.queue.composer.attach")}<span className="visually-hidden"> ({limits})</span>
+          <input data-ui-action="file" type="file" multiple className="visually-hidden" disabled={locked || ed.recipient === null}
                  onChange={(e) => { void addFiles(editorKey, [...(e.target.files ?? [])]); e.target.value = ""; }} />
         </label>
-        <span className="composer-limits">
-          {t("main.queue.composer.limits", { count: LIMITS.ATTACHMENTS_MAX, each: formatNumber(LIMITS.FILE_MAX_BYTES / MB),
-                                             all: formatNumber(LIMITS.PACKAGE_MAX_BYTES / MB) })}
-        </span>
       </div>
       {ed.error && <SaidText said={ed.error} as="p" className="composer-error" role="alert" />}
       {ed.conflict && (
@@ -118,7 +124,7 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
                     onClick={() => { askedNoMore(); void discard(editorKey); }}>
               {t("main.queue.composer.discardDraft")}
             </button>
-            <button type="button" {...bindingProps(bind("queue.discard.ask", { open: false }))}>{t("main.common.keepIt")}</button>
+            <button type="button" {...bindingProps(bind("queue.discard.ask", { open: false }))}>{t("main.queue.composer.keep")}</button>
           </>
         ) : (
           <button type="button" className="composer-discard" disabled={locked}

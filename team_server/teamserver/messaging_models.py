@@ -15,7 +15,11 @@ What it holds:
     the envelope       a message as JARVIS submits it, and as it was accepted
     the digest         the one serialization the owner's approval binds to
     receipts           received / read, per message and recipient, first
-                       timestamps kept, never moved backwards
+                       timestamps kept, never moved backwards; openability,
+                       the recipient node's technical report on each file
+    bundles            (capability `messaging.bundles.v1`) a node's attachment
+                       capabilities, a message's one-off task context and the
+                       attachments a repair supersedes
     work state         one owner's view of one exchange: placement, the
                        reminder, addressed, dismissed and whose turn it is
     sync               keyset pages of a full reconciliation scan
@@ -66,11 +70,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # -- identity of the contract -------------------------------------------------
 
 CAPABILITY = "messaging.v1"          # advertised in /version `capabilities`
+# Offered beside messaging.v1 by a team server that takes a message's task
+# context and supersedes links and openability receipts. JARVIS sends none
+# of them to a server without it, which would refuse the unknown fields.
+BUNDLES_CAPABILITY = "messaging.bundles.v1"
 SCHEMA_VERSION = 1                   # every envelope carries it
 # Changes when any wire shape, rule or fixture changes. Workers build
 # against one revision; a breaking change bumps the number and regenerates
 # every consumer in the same batch.
-INTERFACE_REVISION = "messaging.v1-contract.3"
+INTERFACE_REVISION = "messaging.v1-contract.4"
 DIGEST_VERSION = 1
 
 
@@ -79,6 +87,12 @@ def messaging_offered(capabilities: list[str] | tuple[str, ...]) -> bool:
     An older server lacks it: messaging is then unavailable and nothing else
     changes."""
     return CAPABILITY in capabilities
+
+
+def bundles_offered(capabilities: list[str] | tuple[str, ...]) -> bool:
+    """Whether a team server also takes task context, supersedes links and
+    openability receipts (and messaging itself)."""
+    return messaging_offered(capabilities) and BUNDLES_CAPABILITY in capabilities
 
 
 # -- limits -------------------------------------------------------------------
@@ -102,6 +116,15 @@ SYNC_PAGE_MAX = 50
 SYNC_CONTINUATION_TTL_SEC = 600
 RECEIPT_BATCH_MAX = 100
 INT64_MAX = 2**63 - 1
+# Bundles: a node advertises at most FORMATS_MAX formats; a capability
+# reading older than a week is useless; a task names at most
+# TASK_SUPPORTING_MAX supporting artifacts.
+ATTACHMENT_CAPABILITIES_VERSION = 1
+FORMATS_MAX = 40
+CAPABILITY_AGE_MAX_MS = 7 * 86_400_000
+TASK_OUTCOME_MAX_CHARS = 500
+TASK_SUPPORTING_MAX = 50
+ARCHIVE_PATH_MAX_CHARS = 1024
 
 # Files, proposed defaults recorded at the contract gate (handoff stage 5,
 # "Define lease/fencing and retention at the contract gate"). The team
@@ -217,6 +240,130 @@ def filename_problem(value: str) -> Optional[str]:
     return None
 
 
+# -- bundles: the shared words --------------------------------------------------
+#
+# What a node can do with a file, a file's actual format, and what a
+# recipient's node found when it opened one. JARVIS's bundle contract
+# (jarvis/bundle_contract.py) imports these names from its copy of this
+# module, so the words are defined once.
+
+# `download` and `list_archive` are about the container, `read_text` and
+# `render` about a document, `ocr` reads text from page images,
+# `edit_export` makes a changed or converted copy, and `execute` runs
+# something (work packages only, never during inspection).
+Operation = Literal["download", "list_archive", "extract", "read_text", "render",
+                    "ocr", "edit_export", "execute"]
+
+# A file's actual format, decided from its content and then its extension.
+FormatId = Literal[
+    "folder", "zip", "tar", "gzip", "7z", "rar",
+    "pdf", "text", "markdown", "json", "csv", "tsv", "html", "svg",
+    "png", "jpeg", "gif", "webp", "heic",
+    "docx", "xlsx", "pptx", "doc", "xls", "ppt", "rtf",
+    "audio", "video", "unknown"]
+
+# A received file's openability on the recipient's node, reported to the
+# sender: verified (downloaded, hash checked, every required member read),
+# ready (downloaded and checked, readers for everything, not all read yet),
+# partial (some required members unreadable), unsupported (no reader for
+# the primary document), corrupt (hash or container wrong), unavailable
+# (could not be downloaded).
+Openability = Literal["verified", "ready", "partial", "unsupported", "corrupt", "unavailable"]
+
+
+class FormatCapability(_Strict):
+    """One format a node's readers handle now, the operations its health
+    check passed, and the largest file it takes (None: the node's limit)."""
+    format: FormatId
+    operations: list[Operation] = Field(max_length=8)
+    max_bytes: Optional[int] = Field(default=None, ge=0, le=INT64_MAX)
+
+
+class WorkPackageCapability(_Strict):
+    manifest_versions: list[int] = Field(max_length=4)
+    modes: list[Literal["conversation", "agent", "page"]] = Field(max_length=3)
+
+
+class AttachmentCapabilities(_Strict):
+    """What one node can do with a received file, on its node update: the
+    readers that answered their health check `observed_age_ms` ago, the
+    archive budgets, and the work-package manifests and modes it runs. A
+    node without it is an older JARVIS: unknown, never assumed able."""
+    version: Literal[1] = ATTACHMENT_CAPABILITIES_VERSION
+    observed_age_ms: int = Field(ge=0, le=CAPABILITY_AGE_MAX_MS)
+    max_file_bytes: int = Field(ge=0, le=INT64_MAX)
+    max_archive_entries: int = Field(ge=0, le=INT64_MAX)
+    max_expanded_bytes: int = Field(ge=0, le=INT64_MAX)
+    formats: list[FormatCapability] = Field(max_length=FORMATS_MAX)
+    work_packages: Optional[WorkPackageCapability] = None
+
+    @model_validator(mode="after")
+    def _once_each(self):
+        named = [f.format for f in self.formats]
+        if len(set(named)) != len(named):
+            raise ValueError("each format appears once")
+        return self
+
+
+class OpenabilityReport(_Strict):
+    """The recipient node's technical report on one file of one message,
+    after its owner told it to open the file: never the document's text, a
+    device path or a log. `failed_member` is the archive's own path of the
+    first member that failed; `reason` a bundle reason code."""
+    attachment_id: UUID
+    sha256: str = Field(pattern=_SHA256)
+    content_revision: Revision
+    status: Openability
+    failed_operation: Optional[Operation] = None
+    failed_member: Optional[str] = Field(default=None, max_length=ARCHIVE_PATH_MAX_CHARS)
+    reason: Optional[str] = Field(default=None, max_length=40, pattern=r"^[a-z_]+$")
+    members_total: int = Field(ge=0, le=INT64_MAX)
+    members_readable: int = Field(ge=0, le=INT64_MAX)
+    checked_at: datetime
+
+    @model_validator(mode="after")
+    def _counts(self):
+        if self.members_readable > self.members_total:
+            raise ValueError("more members readable than there are")
+        return self
+
+
+class ArtifactRef(_Strict):
+    """A file of this message (by id and hash, never by its name alone),
+    or one member of it by its archive path."""
+    attachment_id: UUID
+    sha256: str = Field(pattern=_SHA256)
+    member_path: Optional[str] = Field(default=None, min_length=1,
+                                       max_length=ARCHIVE_PATH_MAX_CHARS)
+
+
+class TaskContext(_Strict):
+    """A one-off request a message carries: what the sender asks for, the
+    primary artifact and the supporting ones, and who the answer goes to
+    (only the sender). Task context, never an authorization: the recipient
+    decides whether to take it on."""
+    requested_outcome: str = Field(min_length=1, max_length=TASK_OUTCOME_MAX_CHARS)
+    outcome_kind: Literal["notes", "revised_copy", "data", "answer", "other"]
+    primary: Optional[ArtifactRef] = None
+    supporting: list[ArtifactRef] = Field(default_factory=list, max_length=TASK_SUPPORTING_MAX)
+    reply_audience: Literal["sender_only"] = "sender_only"
+
+    @model_validator(mode="after")
+    def _outcome(self):
+        if text_problem(self.requested_outcome) or not self.requested_outcome.strip():
+            raise ValueError("the requested outcome is not normalized text")
+        return self
+
+
+class Supersedes(_Strict):
+    """This message's file `by_attachment_id` replaces `attachment_id` of an
+    earlier message in the same thread, which is kept."""
+    message_id: UUID
+    attachment_id: UUID
+    by_attachment_id: UUID
+    reason: Literal["repair", "revision"]
+
+
 # -- the envelope -------------------------------------------------------------
 
 class AttachmentRef(_Strict):
@@ -252,6 +399,9 @@ class MessageContent(_Strict):
     subject: str = Field(default="", max_length=SUBJECT_MAX_CHARS)
     text: str = Field(default="", max_length=TEXT_MAX_CHARS)
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=ATTACHMENTS_MAX)
+    # messaging.bundles.v1 only; absent from the digest while unset.
+    task: Optional[TaskContext] = None
+    supersedes: list[Supersedes] = Field(default_factory=list, max_length=ATTACHMENTS_MAX)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -272,6 +422,16 @@ class MessageContent(_Strict):
             raise ValueError("each attachment appears once")
         if sum(a.size_bytes for a in self.attachments) > PACKAGE_MAX_BYTES:
             raise ValueError("the files are larger than one message may carry")
+        files = {a.attachment_id: a.sha256 for a in self.attachments}
+        named = ([self.task.primary] if self.task and self.task.primary else []) + \
+            (list(self.task.supporting) if self.task else [])
+        if any(files.get(r.attachment_id) != r.sha256 for r in named):
+            raise ValueError("a task names only this message's files, by their hashes")
+        replaced = [(s.message_id, s.attachment_id) for s in self.supersedes]
+        if len(set(replaced)) != len(replaced) or any(
+                s.by_attachment_id not in files or s.message_id == self.message_id
+                for s in self.supersedes):
+            raise ValueError("a file supersedes an earlier message's file, each once")
         return self
 
 
@@ -302,8 +462,16 @@ class AcceptedMessage(MessageContent):
 def digest_input(content: MessageContent, *, server_id: str, sender_github_id: int) -> dict:
     """Everything that can change what the owner sends. Not in it: the source
     node (the session's transport context), the idempotency key (the
-    operation, not the content) and anything presentational."""
+    operation, not the content) and anything presentational. `task` and
+    `supersedes` are in it only when set, so a message without them digests
+    exactly as it did before they existed."""
+    extra: dict = {}
+    if content.task is not None:
+        extra["task"] = content.task.model_dump(mode="json")
+    if content.supersedes:
+        extra["supersedes"] = [s.model_dump(mode="json") for s in content.supersedes]
     return {
+        **extra,
         "digest_version": DIGEST_VERSION,
         "schema_version": content.schema_version,
         "server_id": server_id,
@@ -341,7 +509,7 @@ def content_of(message: MessageContent) -> MessageContent:
 
 # -- receipts -------------------------------------------------------------------
 
-ReceiptKind = Literal["received", "read"]
+ReceiptKind = Literal["received", "read", "openability"]
 
 
 class NodeReceipt(_Strict):
@@ -360,15 +528,27 @@ class ReceiptFacts(_Strict):
     received_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
     nodes: list[NodeReceipt] = Field(default_factory=list)
+    # messaging.bundles.v1: the latest report per file, never a read or a
+    # review; JARVIS treats an empty list as no report.
+    openability: list[OpenabilityReport] = Field(default_factory=list,
+                                                 max_length=ATTACHMENTS_MAX)
     revision: Revision
 
 
 class ReceiptItem(_Strict):
     """One receipt. `read` only ever comes from the owner's GUI after the
     body was displayed (or an explicit mark-read), never from a
-    notification, a summary or the model."""
+    notification, a summary or the model. `openability` carries its report,
+    and only it does: one item per file."""
     message_id: UUID
     kind: ReceiptKind
+    openability: Optional[OpenabilityReport] = None
+
+    @model_validator(mode="after")
+    def _report(self):
+        if (self.kind == "openability") != (self.openability is not None):
+            raise ValueError("an openability receipt, and only one, carries a report")
+        return self
 
 
 class ReceiptBatch(_Strict):
@@ -390,20 +570,35 @@ class ReceiptBatchResult(_Strict):
 
 
 def merge_receipt(facts: ReceiptFacts, kind: ReceiptKind, node_id: UUID,
-                  now: datetime) -> ReceiptFacts:
+                  now: datetime, openability: Optional[OpenabilityReport] = None
+                  ) -> ReceiptFacts:
     """Apply one receipt idempotently. The revision moves only when a fact
-    is new; a repeat changes nothing."""
+    is new; a repeat changes nothing. An openability report replaces the
+    one held for its file and revision only when it was checked later."""
     received_at, read_at, nodes = facts.received_at, facts.read_at, list(facts.nodes)
+    reports = list(facts.openability)
     if kind == "received":
         if received_at is None:
             received_at = now
         if all(n.node_id != node_id for n in nodes):
             nodes.append(NodeReceipt(node_id=node_id, received_at=now))
-    elif read_at is None:
-        read_at = now
-    changed = (received_at, read_at, nodes) != (facts.received_at, facts.read_at, facts.nodes)
+    elif kind == "read":
+        if read_at is None:
+            read_at = now
+    elif openability is not None:
+        key = (openability.attachment_id, openability.content_revision)
+        held = next((i for i, r in enumerate(reports)
+                     if (r.attachment_id, r.content_revision) == key), None)
+        if held is None:
+            if len(reports) < ATTACHMENTS_MAX:
+                reports.append(openability)
+        elif openability.checked_at > reports[held].checked_at:
+            reports[held] = openability
+    changed = (received_at, read_at, nodes, reports) != (
+        facts.received_at, facts.read_at, facts.nodes, facts.openability)
     return facts.model_copy(update={
         "received_at": received_at, "read_at": read_at, "nodes": nodes,
+        "openability": reports,
         "revision": facts.revision + 1 if changed else facts.revision})
 
 

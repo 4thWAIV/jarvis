@@ -101,7 +101,11 @@ from jarvis import transmission
 from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
-from jarvis import work_packages
+from jarvis import attachment_locations, packages_api, work_packages
+from jarvis import bundle_api
+from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SHOWN,
+                                    TEXT_PAGE_DEFAULT_CHARS)
+from jarvis.bundle_inspection import AttachmentKey
 from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
@@ -2032,6 +2036,12 @@ def _on_run_event(message: dict) -> None:
         if message.get("type") != "run_finished":
             return
         run = message.get("run") or {}
+        if run.get("package_id"):
+            # An agent package's run: its own words, and what comes next
+            # (the reply with its results). Cancelled is silent, as below.
+            if run.get("status") != run_store.RunStatus.CANCELLED:
+                _spawn(_announce_package_run(run))
+            return
         if run.get("origin") != "voice":
             return
         status = run.get("status")
@@ -2969,7 +2979,7 @@ speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
 team_api.mount(app)
-messaging_runtime.mount(app, lambda: messaging)
+messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
 
@@ -4574,20 +4584,29 @@ def _page_arg(args: dict) -> int:
         return 1
 
 
-def _one_page(text: str, page: int, what: str, tool: str) -> str:
-    """One page of `text` with a header saying where it sits and how to get
-    the next, the page itself wrapped as untrusted. `what` is a header
-    phrase JARVIS wrote ("guard's last reply"); `tool` is the tool to call
-    for the next page."""
-    pages = _pages(text, REPLY_PAGE_CHARS)
+def _paged(text: str, page: int, what: str, tool: str,
+           exact: bool = False) -> tuple[str, Optional[str]]:
+    """(the header, page `page` of `text`), or (why there is no such page,
+    None). The header says where the page sits and how to get the next;
+    `what` is a header phrase JARVIS wrote ("guard's last reply"), `tool`
+    the tool to call for the next page. `exact` cuts at the page size and
+    drops nothing, so the pages join back into `text` (JSON)."""
+    pages = ([text[i:i + REPLY_PAGE_CHARS] for i in range(0, len(text), REPLY_PAGE_CHARS)]
+             if exact else _pages(text, REPLY_PAGE_CHARS))
     if not 1 <= page <= len(pages):
         return (f"{what} has {len(pages)} page{'s' if len(pages) != 1 else ''}; "
-                f"there is no page {page}.")
+                f"there is no page {page}."), None
     head = (f"{what}, page {page} of {len(pages)} "
             f"({len(text):,} characters in all).")
     if page < len(pages):
         head += f" Call {tool} again with page {page + 1} for the rest."
-    return head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, pages[page - 1])
+    return head, pages[page - 1]
+
+
+def _one_page(text: str, page: int, what: str, tool: str) -> str:
+    """One page of `text` (`_paged`), the page itself wrapped as untrusted."""
+    head, chunk = _paged(text, page, what, tool)
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, chunk)
 
 
 def tool_read_session_reply(args: dict) -> str:
@@ -5997,10 +6016,19 @@ async def tool_steer_session(args: dict) -> str:
     global last_mentioned_session
     last_mentioned_session = session.session_id
 
+    # A session reads its own folder; elsewhere it would ask him first, so
+    # a received file goes as a verified copy there, never a path it cannot read.
+    workspace = Path(session.cwd) if session.cwd else None
+    handed, problem = await _hand_over(args.get("attachments"),
+                                       (workspace,) if workspace else (), False, workspace)
+    if problem:
+        return f"{problem} Nothing was sent."
     priority = args.get("priority") is True
-    message_id, problem = _stage_capture(session, capture, priority)
+    message_id, problem = _stage_capture(session, capture, priority,
+                                         extra=_handed_text(handed))
     if problem:
         return problem
+    _hold(handed, f"message:{message_id}")
     if priority:
         staged_note = (f"staged as message {message_id}, PRIORITY: it goes to "
                        f"{_said_name(session)} the moment this turn ends, ahead of "
@@ -6028,20 +6056,21 @@ async def tool_steer_session(args: dict) -> str:
     return staged_note
 
 
-def _stage_capture(session, capture: dict,
-                   priority: bool = False) -> tuple[Optional[int], Optional[str]]:
+def _stage_capture(session, capture: dict, priority: bool = False,
+                   extra: str = "") -> tuple[Optional[int], Optional[str]]:
     """Record a capture as a message to `session` and stage it to send:
     (its message id, None), or (None, why it cannot go), recorded as failed.
-    steer_session and the capture box's Send button both come through here."""
-    return transmission.stage(_AgentRecipient(session, capture, priority), capture,
+    steer_session and the capture box's Send button both come through here.
+    `extra` is JARVIS's own lines sent after his words (the files handed over)."""
+    return transmission.stage(_AgentRecipient(session, capture, priority, extra), capture,
                               voice=speech, put=_stage_steer)
 
 
 class _AgentRecipient:
     """An agent session a capture is for, as `transmission.stage` asks it."""
 
-    def __init__(self, session, capture: dict, priority: bool):
-        self.session, self.prompt, self.priority = session, capture["text"], priority
+    def __init__(self, session, capture: dict, priority: bool, extra: str = ""):
+        self.session, self.prompt, self.priority = session, capture["text"] + extra, priority
         self.capture_id = capture["id"]
 
     def refusal(self) -> Optional[tuple[str, str]]:
@@ -6561,10 +6590,45 @@ async def tool_people_messages(args: dict) -> str:
     return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
 
 
-def _file_lines(attachments) -> list[str]:
-    """A message's or a draft's files, one line each: name, size and id."""
+_OPENED_THERE = {"verified": "has been read there", "ready": "opens there",
+                 "partial": "only partly readable there", "unsupported": "can't be read there",
+                 "corrupt": "damaged there", "unavailable": "not opened there"}
+
+
+def _file_lines(attachments, reports=()) -> list[str]:
+    """A message's or a draft's files, one line each: name, size and id,
+    and on a sent file the recipient's JARVIS's report once it opened it
+    (the same report the Queue's file card shows)."""
+    def opened(a) -> str:
+        r = next((r for r in reports if r.attachment_id == a.attachment_id
+                  and r.sha256 == a.sha256), None)
+        if r is None:
+            return ""
+        said = f"; the recipient's JARVIS says it {_OPENED_THERE[r.status]}"
+        if r.status not in ("verified", "ready"):
+            said += f" ({r.members_readable} of {r.members_total} readable"
+            if r.failed_member:
+                said += f"; first failed: {r.failed_member}"
+            if r.reason:
+                said += f", {REASONS_SHOWN.get(r.reason, r.reason)}"
+            said += ")"
+        return said
     return [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
-            f"attachment {a.attachment_id}" for a in attachments]
+            f"attachment {a.attachment_id}{opened(a)}" for a in attachments]
+
+
+def _where_line(message_id: uuid.UUID, attachment_id: uuid.UUID) -> str:
+    """A received file's location, as attachment_location gives it."""
+    context = _location_context()
+    if context is None:
+        return ""
+    try:
+        found = context.lookup(message_id, attachment_id)
+    except Exception:
+        return ""
+    if found.local_path:
+        return f"; on this Mac at {found.local_path}"
+    return f"; {attachment_locations.STATE_SHOWN[found.state].lower()}"
 
 
 def _thread_text(local, item) -> str:
@@ -6581,13 +6645,33 @@ def _thread_text(local, item) -> str:
         if msg.subject:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
-        out += _file_lines(msg.attachments)
+        received = m.direction == "incoming" or m.self_message
+        reports = m.receipts.openability if m.direction == "outgoing" else ()
+        out += [line + (_where_line(msg.message_id, a.attachment_id) if received else "")
+                for line, a in zip(_file_lines(msg.attachments, reports), msg.attachments)]
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
                    f"{d.send.state.replace('_', ' ')}: {d.text}")
         out += _file_lines(d.attachments)
     return "\n".join(out).strip()
+
+
+_REVIEW_PROGRESS_WORDS = {"file_ready": "the file is ready",
+                          "evidence_unavailable": "some evidence is unreadable",
+                          "review_in_progress": "in progress",
+                          "notes_ready": "notes are drafted"}
+
+
+async def _review_progress(thread) -> Optional[str]:
+    """The thread's review progress, as the Queue item's cue shows it
+    (bundle_api's review call); None when there is nothing to say."""
+    try:
+        got = await bundle_api.answer(_bundles.review(thread))
+    except Exception:                       # noqa: BLE001 - nothing to say, as on the page
+        return None
+    progress = got.body().get("progress") if got.ok else None
+    return _REVIEW_PROGRESS_WORDS.get(progress) if progress else None
 
 
 async def tool_read_people_thread(args: dict) -> str:
@@ -6608,8 +6692,13 @@ async def tool_read_people_thread(args: dict) -> str:
     if unread:
         head += (" Once he has heard them, mark these read with mark_people_message_read: "
                  + ", ".join(unread) + ".")
-    return head + "\n" + _one_page(_thread_text(messaging.local, item), _page_arg(args),
-                                   "That conversation", "read_people_thread")
+    progress = await _review_progress(thread)
+    if progress:
+        head += f" His review: {progress} (review_checklist has the detail)."
+    # Off the event loop: each received file's location hashes the file.
+    text = await asyncio.to_thread(_thread_text, messaging.local, item)
+    return head + "\n" + _one_page(text, _page_arg(args), "That conversation",
+                                   "read_people_thread")
 
 
 async def tool_mark_people_message_read(args: dict) -> str:
@@ -6746,10 +6835,150 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+def _location_context() -> Optional["attachment_locations.LocationContext"]:
+    """Where received files are, for whoever is signed in now; None while
+    messaging is off or signed out."""
+    return messaging.location_context() if messaging is not None else None
+
+
+# --- Where a received file is ---------------------------------------------
+#
+# The Queue's file location as the brain's tools, over the one resolver
+# (attachment_locations.py) the page's routes call: the read-only lookup,
+# the acting make-local (download and verify on his word), and the existing
+# Reveal in Finder. The name and path are the sender's words: they come
+# back in the untrusted block as the route's own JSON.
+
+_FILE_WRAP_NAME = "received file"
+
+
+def _location_reply(found: "attachment_locations.AttachmentLocation") -> str:
+    head = attachment_locations.spoken(found, lambda code: messaging_api.Refused(code).shown())
+    return head + "\n" + _wrap_untrusted(_FILE_WRAP_NAME, found.model_dump_json(indent=1))
+
+
+def _file_ids(args: dict) -> tuple[Optional[uuid.UUID], Optional[uuid.UUID]]:
+    return _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+
+
+_WHICH_FILE = ("Which file, sir? Give me its message id and attachment id from "
+               "read_people_thread.")
+
+
+async def _on_located_file(args: dict, work) -> str:
+    context = _location_context()
+    if context is None:
+        return MESSAGING_OFF
+    message_id, attachment_id = _file_ids(args)
+    if message_id is None or attachment_id is None:
+        return _WHICH_FILE
+    try:
+        return await work(context, message_id, attachment_id)
+    except Exception as e:
+        return messaging_api.refused_by(e).shown()
+
+
+async def tool_attachment_location(args: dict) -> str:
+    """Where a received file is on this Mac, read only (the Queue file's
+    own location): its exact verified path, or its state and why not."""
+    async def work(context, message_id, attachment_id):
+        found = await asyncio.to_thread(context.lookup, message_id, attachment_id)
+        return _location_reply(found)
+    return await _on_located_file(args, work)
+
+
+async def tool_make_attachment_local(args: dict) -> str:
+    """Download and verify a received file if it is not here (the Queue
+    file's Download): its location once checked. Nothing is opened."""
+    async def work(context, message_id, attachment_id):
+        return _location_reply(await context.ensure_local(message_id, attachment_id))
+    return await _on_located_file(args, work)
+
+
+async def tool_reveal_attachment(args: dict) -> str:
+    """Show a verified received file in Finder (the Queue file's Reveal)."""
+    async def work(context, message_id, attachment_id):
+        await asyncio.to_thread(context.reveal, message_id, attachment_id)
+        return "It is selected in a Finder window, sir; nothing was opened."
+    return await _on_located_file(args, work)
+
+
+TOOL_HANDLERS.update({
+    "attachment_location": tool_attachment_location,
+    "make_attachment_local": tool_make_attachment_local,
+    "reveal_attachment": tool_reveal_attachment,
+})
+ACTING_TOOLS.update({"make_attachment_local", "reveal_attachment"})
+TAINTING_TOOLS.update({
+    "attachment_location": "a file name a person on the team chose",
+    "make_attachment_local": "a file name a person on the team chose",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "reveal_attachment": "it shows his own received file in Finder, it does not read it",
+})
+
+
+def _refusal_words(code: str) -> str:
+    return messaging_api.Refused(code).shown()
+
+
+async def _hand_over(wanted, roots: tuple[Path, ...], reads_anywhere: bool,
+                     workspace: Optional[Path]) -> tuple[list, Optional[str]]:
+    """Received files for an agent on this JARVIS (spawn_run, steer_session,
+    a package's agent): each made local and checked, then handed as a path
+    the agent can read, or a verified copy in its workspace
+    (attachment_locations.handoff). (the hand-overs, None), or ([], why not)."""
+    if not wanted:
+        return [], None
+    context = _location_context()
+    if context is None:
+        return [], MESSAGING_OFF
+    if not isinstance(wanted, list):
+        return [], _WHICH_FILE
+    access = context.here(roots, reads_anywhere, workspace)
+    handed = []
+    for item in wanted:
+        message_id, attachment_id = _file_ids(item if isinstance(item, dict) else {})
+        if message_id is None or attachment_id is None:
+            return [], _WHICH_FILE
+        try:
+            found = await context.ensure_local(message_id, attachment_id)
+        except Exception as e:
+            return [], messaging_api.refused_by(e).shown()
+        handed.append(await asyncio.to_thread(attachment_locations.handoff, found, access))
+    refused = [h for h in handed if h.handed == "unavailable"]
+    if refused:
+        return [], "; ".join(f"attachment {h.attachment_id} cannot be handed over: "
+                             f"{attachment_locations.handoff_reason(h, _refusal_words)}"
+                             for h in refused) + "."
+    return handed, None
+
+
+def _handed_text(handed: list) -> str:
+    return ("\n\n" + attachment_locations.handoff_text(handed, _refusal_words)) if handed else ""
+
+
+def _hold(handed: list, holder: str) -> None:
+    """Keep each handed file from cleanup while its agent has it."""
+    context = _location_context()
+    for h in handed:
+        if context is not None and h.handed in ("original", "copy"):
+            context.hold(h.attachment_id, holder)
+
+
+def _files_said(handed: list) -> str:
+    """How many received files went with it, and how."""
+    if not handed:
+        return ""
+    copies = sum(1 for h in handed if h.handed == "copy")
+    return (f" {len(handed)} file{'s' if len(handed) != 1 else ''} handed over"
+            + (f", {copies} as a verified copy in its folder" if copies else "") + ".")
+
+
 # --- Work packages -------------------------------------------------------
 #
 # A zip a teammate sends in an ordinary message, with a package.json at its
-# root (docs/work-packages.md). Opening it and running each step are
+# root or in its one wrapper folder (docs/work-packages.md). Opening it and running each step are
 # ACTING_TOOLS: his spoken yes on that turn is the one gate, as the team
 # asked; there is no sandbox. The results go back as a reply through
 # draft_message's `files`, so the ordinary review and approval apply.
@@ -6760,7 +6989,7 @@ _PACKAGE_WRAP_NAME = "package"
 async def tool_open_package(args: dict) -> str:
     """Download a received zip if it is not here yet, unpack it into its own
     folder and hand the brain its package.json and skill to follow."""
-    context = messaging.files_context() if messaging is not None else None
+    context = _location_context()
     if context is None:
         return MESSAGING_OFF
     message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
@@ -6768,28 +6997,53 @@ async def tool_open_package(args: dict) -> str:
         return ("Which file, sir? Give me its message id and attachment id from "
                 "read_people_thread. Nothing was opened.")
     try:
-        archive = await context.files.downloaded(context.server_id, context.owner_github_id,
-                                                 message_id, attachment_id)
+        found = await context.ensure_local(message_id, attachment_id)
     except (messaging_wire.ContractError, messaging_ports.TransportError) as e:
         return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
+    problem = attachment_locations.not_local(found)
+    if problem:
+        return f"{messaging_api.Refused(problem).shown()} Nothing was opened."
+    archive = Path(found.local_path)
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
-                                                 attachment_id.hex[:8])
-        skill = package.skill_text()
+                                                 attachment_id.hex)
+        context.record_extraction(message_id, attachment_id, package.folder,
+                                  sorted(set(package.manifest.named_files().values())))
+        files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
+                        for title, relative in (("Skill", package.manifest.skill),
+                                                ("Brief", package.manifest.brief))
+                        if relative)
     except (work_packages.PackageError, OSError) as e:
         return f"{e} Nothing was opened."
+    if fresh:
+        _send_to_session_clients({"type": "packages"})
     how = "is unpacked" if fresh else "was already unpacked"
-    return (f"Package {package.id} {how} in {package.folder}. Follow its skill below with "
-            f"him, one step at a time; run each step with run_package_command only on his "
-            f"go-ahead. At the end, package_results, then draft_message with reply_to "
-            f"{message_id} and those files, then request_message_review.\n"
-            f"package.json:\n{package.manifest.as_json()}\n\n"
-            f"Skill ({package.manifest.skill}):\n{skill}")
+    return (f"Package {package.id} {how} in {package.folder}. "
+            f"{_PACKAGE_HOW[package.manifest.runs]} At the end, package_results, then "
+            f"draft_message with reply_to {message_id} and those files, then "
+            f"request_message_review.\n"
+            f"package.json:\n{package.manifest.as_json()}{files}")
 
 
-def _package_or_problem(args: dict) -> tuple[Optional["work_packages.Package"], str]:
+# What the brain does with an open package, by how it runs.
+_PACKAGE_HOW = {
+    work_packages.CONVERSATION: (
+        "Follow its skill below with him, one step at a time; run each step with "
+        "run_package_command only on his go-ahead."),
+    work_packages.AGENT: (
+        "It runs as an agent: on his go-ahead, run_package_agent starts one Claude Code run "
+        "on its brief below, in its folder, and you are told when it has finished."),
+    work_packages.PAGE: (
+        "It runs as a page: on his go-ahead, open_package_page shows it in the centre of his "
+        "screen, where he uses it; what it saves goes in its results folder. Ask him to say "
+        "when he has finished with it."),
+}
+
+
+def _package_or_problem(args: dict, runs: Optional[str] = None
+                        ) -> tuple[Optional["work_packages.Package"], str]:
     try:
-        return work_packages.find(str(args.get("package") or "")), ""
+        return work_packages.find(str(args.get("package") or ""), runs), ""
     except work_packages.PackageError as e:
         return None, str(e)
 
@@ -6799,10 +7053,11 @@ def tool_list_packages(args: dict) -> str:
     packages = work_packages.every()
     if not packages:
         return "No packages have been opened here, sir."
-    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, {p.manifest.purpose} "
-             f"({p.folder})" for p in packages]
+    lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}, "
+             f"{p.manifest.purpose} ({p.folder})" for p in packages]
     return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
-            f"run_package_command and package_results take the id.\n"
+            f"run_package_command, run_package_agent, open_package_page and package_results "
+            f"take the id.\n"
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines)))
 
 
@@ -6842,13 +7097,115 @@ def tool_package_results(args: dict) -> str:
             f"paths to draft_message's files:\n" + "\n".join(lines))
 
 
+async def tool_run_package_agent(args: dict) -> str:
+    """Start an agent package: one Claude Code run, through the run
+    pipeline like every other, on its brief in its folder. Its finish is
+    announced by `_announce_package_run`."""
+    package, problem = _package_or_problem(args, work_packages.AGENT)
+    if package is None:
+        return f"{problem} Nothing was started."
+    if run_executor_instance is None:
+        return "I can't start anything just now, sir."
+    if run_store.list_runs(status=list(run_store.RunStatus.ACTIVE), package_id=package.id,
+                           limit=1):
+        return (f"{package.id} is already running, sir; you will be told when it has "
+                f"finished. Nothing else was started.")
+    try:
+        brief = work_packages.agent_brief(package)
+    except (work_packages.PackageError, OSError) as e:
+        return f"{e} Nothing was started."
+    # The zip it was unpacked from, found by the folder JARVIS unpacked it
+    # into (its location's extraction record), handed over as any file is.
+    context = _location_context()
+    source = context.extracted_from(package.folder) if context is not None else None
+    handed, problem = await _hand_over(
+        [{"message": str(source[0]), "attachment": str(source[1])}] if source else [],
+        (package.folder,), _SKIP_PERMISSIONS, package.folder)
+    if problem:
+        return f"{problem} Nothing was started."
+    try:
+        run_id = await run_executor_instance.spawn(
+            compose_run_prompt(brief + _handed_text(handed)), package.id, str(package.folder),
+            "voice", package_id=package.id)
+    except Exception as e:
+        log.error(f"run_package_agent failed for {package.id}: {e}", exc_info=True)
+        return f"I couldn't start {package.id}, sir."
+    global last_started_run
+    last_started_run = run_id
+    _hold(handed, f"run:{run_id}")
+    return (f"Started {package.id} as an agent run in its folder, sir. You will be told when "
+            f"it has finished.")
+
+
+async def _open_package_page(reference: str
+                             ) -> tuple[Optional["work_packages.Package"], str]:
+    """Open a page package in the centre area of every page open: the
+    brain's `open_package_page` and the page's own route alike.
+    (the package, "") or (None, why not)."""
+    try:
+        package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
+    except work_packages.PackageError as e:
+        return None, str(e)
+    if not voice_clients:
+        return None, "No JARVIS page is open to show it on."
+    await _voice_emit({"type": "package_page", "package": packages_api.describe(package)})
+    return package, ""
+
+
+packages_api.mount(app, _open_package_page)
+
+
+async def tool_open_package_page(args: dict) -> str:
+    """Show a page package on his screen, where he uses it."""
+    package, problem = await _open_package_page(str(args.get("package") or ""))
+    if package is None:
+        return f"{problem} Nothing was opened."
+    return (f"{package.id} is open in the centre of his screen, sir. What it saves goes in "
+            f"{package.folder / work_packages.RESULTS}; when he says he has finished, "
+            f"package_results.")
+
+
+async def _announce_package_run(run: dict) -> None:
+    """An agent package's run has ended: say so, and tell the brain what
+    comes next. The package is named only as it is found here: its id is
+    JARVIS's own folder name (letters, digits, '.', '_' and '-'), never the
+    run row's text as written, and its own name is walled; a package no
+    longer here is "a work package"."""
+    try:
+        package = work_packages.find(str(run.get("package_id") or ""))
+        said, which = (_plain_name(package.manifest.name, "a work package"),
+                       f"work package {package.id}")
+    except work_packages.PackageError:
+        said, which = "a work package", "a work package that is no longer here"
+    if run.get("status") == run_store.RunStatus.SUCCEEDED:
+        await _say_notice(
+            f"The work package {said} has finished, sir. Shall I draft the reply with its "
+            f"results?",
+            f"Since your last turn you told him the agent run of {which} finished, and "
+            f"asked whether to draft the reply with its results. If he says yes: "
+            f"package_results with that package, then draft_message with reply_to the "
+            f"message the package came in on and those paths in files, then "
+            f"request_message_review.", "package run")
+        return
+    ended = ("ran out of time" if run.get("status") == run_store.RunStatus.TIMED_OUT
+             else "failed")
+    await _say_notice(
+        f"The work package {said} {ended}, sir.",
+        f"Since your last turn you told him the agent run of {which} {ended}. Nothing was "
+        f"drafted; retry_run runs it again on his word.",
+        "package run")
+
+
 TOOL_HANDLERS.update({
     "open_package": tool_open_package,
     "list_packages": tool_list_packages,
     "run_package_command": tool_run_package_command,
     "package_results": tool_package_results,
+    "run_package_agent": tool_run_package_agent,
+    "open_package_page": tool_open_package_page,
 })
-ACTING_TOOLS.update({"open_package", "run_package_command"})
+ACTING_TOOLS.update({"open_package", "run_package_command", "run_package_agent",
+                     "open_package_page"})
 TAINTING_TOOLS.update({
     "open_package": "a work package a teammate sent",
     "list_packages": "work packages teammates sent",
@@ -6857,7 +7214,308 @@ TAINTING_TOOLS.update({
 TAINT_EXEMPT_TOOLS.update({
     "package_results": ("it lists the paths and sizes of files a package wrote, from "
                         "JARVIS's own glob, and no file content"),
+    "run_package_agent": ("it starts a package's run and says so; the brief goes to the run, "
+                          "not back to the brain"),
+    "open_package_page": "it opens a package's page on his screen and reads nothing back",
 })
+
+
+# --- Files a teammate sent: bundles (bundle_api.py) -------------------------
+#
+# What a received file is and what it holds, read by the brain through the
+# same calls the page's bundle routes make (bundle_api.Calls), and handed
+# back as the same JSON, a page of it at a time within the tool cap, inside
+# an untrusted block: names, paths and text in it are the sender's. A file
+# downloaded or revealed in Finder is not a file read: only these readers
+# count as reading it. Which tools act and which taint is the contract's one
+# table, bundle_contract.BRAIN_TOOLS; the reasons the clean ones are clean
+# are below, held to the same set.
+
+_BUNDLE_WRAP_NAME = "file"
+
+
+async def _show_bundle_frame(frame: dict) -> bool:
+    """Hand a bundle_view frame to every JARVIS page open: True when one
+    took it."""
+    if not voice_clients:
+        return False
+    await _voice_emit(frame)
+    return True
+
+
+_bundles = bundle_api.Calls(
+    lambda: messaging.bundle_context() if messaging is not None else None,
+    _show_bundle_frame)
+
+
+def _bundle_key(args: dict) -> Optional[AttachmentKey]:
+    message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+    if message_id is None or attachment_id is None:
+        return None
+    return AttachmentKey(message_id, attachment_id)
+
+
+_WHICH_FILE = ("Which file, sir? Give me its message id and attachment id from "
+               "read_people_thread.")
+_WHICH_MEMBER = ("Which part of it, sir? Give me its member id from list_bundle_members "
+                 "(or the file's own, root_member_id, from inspect_attachment).")
+
+
+def _int_arg(args: dict, key: str, default: int) -> int:
+    try:
+        return int(args.get(key) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bundle_reply(got: "bundle_api.Answer", page: int, what: str, tool: str,
+                  then: str = "") -> str:
+    """A bundle call's JSON, as the route sent it, one page at a time and
+    walled; a refusal says its own words first."""
+    if got.ok:
+        head, chunk = _paged(got.text, page, what, tool, exact=True)
+        if chunk is not None and then and "again with page" not in head:
+            head += " " + then
+    else:
+        error = got.body().get("error") or {}
+        head, chunk = f"Nothing was read, sir: {error.get('message', 'it was refused.')}", got.text
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_BUNDLE_WRAP_NAME, chunk)
+
+
+async def tool_inspect_attachment(args: dict) -> str:
+    """What a received file is, downloading and checking it first if it is
+    not here: POST {A}/bundle, the page's Files."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    got = await bundle_api.answer(_bundles.inspect(key))
+    return _bundle_reply(
+        got, _page_arg(args), "That file", "inspect_attachment",
+        "For an archive, list_bundle_members shows what it holds; read_bundle_member reads "
+        "a member and look_at_bundle_page shows you a page.")
+
+
+async def tool_list_bundle_members(args: dict) -> str:
+    """One folder of a received archive: GET {A}/bundle/members."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    got = await bundle_api.answer(_bundles.members(
+        key, str(args.get("folder") or ""), args.get("continuation") or None,
+        _int_arg(args, "limit", MEMBER_PAGE_DEFAULT)))
+    return _bundle_reply(got, _page_arg(args), "What it holds", "list_bundle_members",
+                         "A continuation in it lists the rest of the folder.")
+
+
+async def tool_read_bundle_member(args: dict) -> str:
+    """One member's text, a reader's page at a time: GET .../text."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    got = await bundle_api.answer(_bundles.text(
+        key, member, args.get("continuation") or None,
+        _int_arg(args, "max_chars", TEXT_PAGE_DEFAULT_CHARS)))
+    return _bundle_reply(got, _page_arg(args), "Its text", "read_bundle_member",
+                         "complete false means there is more: pass its continuation.")
+
+
+async def tool_look_at_bundle_page(args: dict):
+    """A page of a received document as an image you see: GET .../pages/{n}."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    page = _int_arg(args, "page", 1)
+    try:
+        rendered = await _bundles.page(key, member, page)
+    except Exception as e:
+        _status, body = bundle_api.refusal(e)
+        return _bundle_reply(bundle_api.Answer(_status, json.dumps(body)), 1, "", "")
+    info = rendered.info
+    return ToolImage(f"Page {info.page} of {info.page_count}, as it looks.\n"
+                     + _wrap_untrusted(_BUNDLE_WRAP_NAME, info.model_dump_json()),
+                     rendered.data, info.media_type)
+
+
+async def tool_show_bundle_member(args: dict) -> str:
+    """Open a member in the centre of his screen: POST .../show."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    try:
+        shown = await _bundles.show(key, member)
+    except Exception as e:
+        _status, body = bundle_api.refusal(e)
+        return f"Nothing was shown, sir: {body['error'].get('message')}"
+    if not shown:
+        return "No JARVIS page is open to show it on. Nothing was shown."
+    return "It is open in the centre of his screen, sir."
+
+
+def _draft_now(message_id: uuid.UUID):
+    """The saved draft as the page shows it, for the revision its buttons send."""
+    local = messaging.local
+    pairing = local.pairing()
+    if pairing is None:
+        raise messaging_api.Refused("messaging_unavailable", availability="not_paired")
+    draft = local.store.draft(*pairing.ns, message_id)
+    if draft is None:
+        raise messaging_api.Refused("draft_not_found")
+    return draft
+
+
+async def _bundle_change(work, done) -> str:
+    """A transport call on his word: `done(result)` said, or its refusal."""
+    if messaging is None:
+        return MESSAGING_OFF
+
+    async def call():
+        result = work()
+        return await result if inspect.isawaitable(result) else result
+    got = await bundle_api.answer(call())
+    if not got.ok:
+        return f"Nothing was changed, sir: {(got.body().get('error') or {}).get('message')}"
+    return done(got.body())
+
+
+def _artifact(draft, attachment: Optional[uuid.UUID], member: str = "") -> Optional[dict]:
+    """A file on the draft as the task names it: by id and hash, never its name."""
+    ref = next((a for a in draft.attachments if a.attachment_id == attachment), None)
+    if ref is None:
+        return None
+    out = {"attachment_id": str(ref.attachment_id), "sha256": ref.sha256}
+    if member:
+        out["member_path"] = member
+    return out
+
+
+async def tool_attachment_readiness(args: dict) -> str:
+    """Whether his draft's files can be opened by its recipient's JARVIS:
+    GET /drafts/{id}/readiness. A prediction, never proof."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which draft, sir? Give me its message id."
+    got = await bundle_api.answer(_bundles.readiness(message_id))
+    return _bundle_reply(got, _page_arg(args), "Its readiness", "attachment_readiness",
+                         "It predicts; it never says the recipient opened anything.")
+
+
+async def tool_set_message_task(args: dict) -> str:
+    """What he asks the recipient for, carried with his draft: PUT .../task."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which draft, sir? Give me its message id."
+
+    def work():
+        draft = _draft_now(message_id)
+        outcome = str(args.get("outcome") or "").strip()
+        task = None
+        if outcome:
+            supporting = [_artifact(draft, _uuid_arg({"a": a}, "a"))
+                          for a in (args.get("supporting") or [])]
+            task = {"requested_outcome": outcome,
+                    "outcome_kind": str(args.get("outcome_kind") or "notes"),
+                    "primary": _artifact(draft, _uuid_arg(args, "primary"),
+                                         str(args.get("primary_member") or "")),
+                    "supporting": [s for s in supporting if s is not None],
+                    "reply_audience": "sender_only"}
+        return _bundles.set_task(message_id, draft.draft_revision, task)
+
+    return await _bundle_change(work, lambda d: (
+        f"Set, sir: the draft is at revision {d['draft_revision']}. It needs reviewing "
+        f"again with request_message_review before it can go."))
+
+
+async def tool_add_companion_files(args: dict) -> str:
+    """Readable copies made from one of his draft's files, added beside it:
+    POST .../companions. The original stays."""
+    message_id, attachment = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+    if message_id is None or attachment is None:
+        return "Which draft and which of its files, sir?"
+    kinds = [str(k) for k in (args.get("kinds") or [])]
+    said = await _bundle_change(
+        lambda: _bundles.add_companions(message_id, _draft_now(message_id).draft_revision,
+                                        attachment, kinds),
+        lambda d: (f"Added, sir: the draft now has {len(d.get('attachments') or [])} files "
+                   f"and is at revision {d['draft_revision']}; review it again with "
+                   f"request_message_review."))
+    return said
+
+
+async def tool_prepare_repair(args: dict) -> str:
+    """A repaired copy of a file that could not be opened, as a new draft
+    replying in the same thread: POST {A}/repair. Nothing is sent."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    mode = str(args.get("mode") or "")
+    said = await _bundle_change(
+        lambda: _bundles.repair(key, mode),
+        lambda d: (f"Prepared, sir: draft {d['message_id']}, revision {d['draft_revision']}, "
+                   f"replies in the same thread and keeps the old file. Nothing was sent; "
+                   f"request_message_review reviews it."))
+    return said
+
+
+async def tool_review_checklist(args: dict) -> str:
+    """His own record of a one-off request: GET /threads/{id}/review."""
+    thread = _uuid_arg(args, "thread")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+    got = await bundle_api.answer(_bundles.review(thread))
+    return _bundle_reply(got, _page_arg(args), "The review's checklist", "review_checklist",
+                         "Only an item read counts as checked.")
+
+
+async def tool_set_review_scope(args: dict) -> str:
+    """He accepts the whole review or only the readable part:
+    PUT /threads/{id}/review/scope."""
+    thread, scope = _uuid_arg(args, "thread"), str(args.get("scope") or "")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+
+    async def work():
+        now = await _bundles.review(thread)
+        return await _bundles.set_scope(thread, now.revision, scope)
+
+    return await _bundle_change(work, lambda d: (
+        f"Done, sir: the review's scope is {d.get('scope')}. Say in the notes what was "
+        f"not read." if d.get("scope") == "partial" else
+        f"Done, sir: the review's scope is {d.get('scope')}."))
+
+
+TOOL_HANDLERS.update({
+    "inspect_attachment": tool_inspect_attachment,
+    "list_bundle_members": tool_list_bundle_members,
+    "read_bundle_member": tool_read_bundle_member,
+    "look_at_bundle_page": tool_look_at_bundle_page,
+    "show_bundle_member": tool_show_bundle_member,
+    "attachment_readiness": tool_attachment_readiness,
+    "set_message_task": tool_set_message_task,
+    "add_companion_files": tool_add_companion_files,
+    "prepare_repair": tool_prepare_repair,
+    "review_checklist": tool_review_checklist,
+    "set_review_scope": tool_set_review_scope,
+})
+_BUNDLE_CLEAN = {
+    "show_bundle_member": "it opens a file on his screen and reads nothing back",
+    "set_message_task": "it records what he asks for on his own draft, and reads nothing back",
+    "add_companion_files": ("it adds readable copies of his own draft's file and gives back "
+                            "only a count and a revision"),
+    "prepare_repair": ("it makes a new draft of his own with a repaired copy and gives back "
+                       "only its id and revision"),
+    "set_review_scope": "it records the scope he accepted, and reads nothing back",
+}
+assert set(_BUNDLE_CLEAN) == {n for n, t in BRAIN_TOOLS.items() if t.taints is None}, \
+    "every clean bundle tool says why, and only those"
+ACTING_TOOLS.update(n for n, t in BRAIN_TOOLS.items() if t.acting)
+TAINTING_TOOLS.update({n: t.taints for n, t in BRAIN_TOOLS.items() if t.taints})
+TAINT_EXEMPT_TOOLS.update(_BUNDLE_CLEAN)
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
@@ -7154,9 +7812,17 @@ async def tool_spawn_run(args: dict) -> str:
         previous = _last_run_to_resume(name, path)
         resume_from = previous["id"] if previous else None
 
+    # Received files he named go with it as paths it can read (a run whose
+    # permissions are skipped reads anywhere; otherwise a verified copy in
+    # its folder).
+    handed, problem = await _hand_over(args.get("attachments"), (Path(path),),
+                                       _SKIP_PERMISSIONS, Path(path))
+    if problem:
+        return f"{problem} Nothing was started."
+
     # The user's own words, framed for a process nobody can answer. See
     # UNATTENDED_PREAMBLE.
-    composed = compose_run_prompt(prompt)
+    composed = compose_run_prompt(prompt + _handed_text(handed))
 
     try:
         run_id = await run_executor_instance.spawn(
@@ -7171,6 +7837,7 @@ async def tool_spawn_run(args: dict) -> str:
     # for a back-reference. Same idea as `last_mentioned_session`.
     global last_started_run
     last_started_run = run_id
+    _hold(handed, f"run:{run_id}")
 
     run = run_store.get_run(run_id) or {}
     started_on = run.get("requested_model") or model
@@ -7180,7 +7847,8 @@ async def tool_spawn_run(args: dict) -> str:
         where = f"Nothing to pick up in {name}, so I started fresh"
     else:
         where = f"Started on {name}"
-    return f"{where}, running {started_on}." if started_on else f"{where}, sir."
+    said = f"{where}, running {started_on}." if started_on else f"{where}, sir."
+    return said + _files_said(handed)
 
 
 TOOL_HANDLERS.update({
@@ -10694,7 +11362,8 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
             return None, problem
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
-        resume_from=original["id"], folder_id=folder_id)
+        resume_from=original["id"], folder_id=folder_id,
+        package_id=original.get("package_id"))
     return new_id, None
 
 
@@ -11332,9 +12001,10 @@ async def api_restart():
 # access-key category covers these routes.
 # ---------------------------------------------------------------------------
 
-async def _update_and_restart(why: str) -> self_update.Outcome:
-    """Update the checkout and, once the new code is in, restart."""
-    out = await asyncio.to_thread(self_update.update)
+async def _update_and_restart(why: str, version: Optional[str] = None) -> self_update.Outcome:
+    """Update the checkout to `version` (origin/main's latest when None)
+    and, once the new code is in, restart."""
+    out = await asyncio.to_thread(self_update.update, None, version)
     if out.restart:
         _restart_server(why)
     return out
@@ -11342,14 +12012,30 @@ async def _update_and_restart(why: str) -> self_update.Outcome:
 
 @app.get("/api/update")
 async def api_update_status():
-    """Where this checkout stands against origin/main, and what stops an update."""
+    """Where this checkout stands against origin/main: the version running,
+    the newer versions with their CI, and what stops an update."""
     return (await asyncio.to_thread(self_update.check)).to_json()
 
 
+async def _asked_version(request: Request) -> Optional[str]:
+    """The `version` (a PR number or a sha) a POST names, if any; no body,
+    or none named, is origin/main's latest."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    asked = body.get("version") if isinstance(body, dict) else None
+    if asked is None:
+        return None
+    return str(asked).strip() or None
+
+
 @app.post("/api/update")
-async def api_update():
-    """Update to origin/main's latest commit, when its CI passed, and restart."""
-    out = await _update_and_restart("the page's Update and restart")
+async def api_update(request: Request):
+    """Update to the version asked for (origin/main's latest when none is),
+    when its CI passed, and restart."""
+    out = await _update_and_restart("the page's Install and restart",
+                                    await _asked_version(request))
     code = 409 if out.refused else 500 if out.failed else 200
     return JSONResponse(status_code=code, content=out.to_json())
 
@@ -11367,7 +12053,8 @@ def _update_said(head: str, details: list[str]) -> str:
 
 
 async def tool_update_status(args: dict) -> str:
-    """Whether JARVIS is up to date with GitHub: the Updates section."""
+    """Whether JARVIS is up to date with GitHub, and the versions it can
+    update to: the Updates section."""
     status = await asyncio.to_thread(self_update.check)
     return _update_said(*self_update.describe(status))
 
@@ -11376,16 +12063,16 @@ UPDATE_BEGUN = ("The update has begun. JARVIS says so out loud itself and restar
                  "is in, or says that it did not go through; say nothing more.")
 
 
-async def _update_by_voice() -> None:
+async def _update_by_voice(version: Optional[str] = None) -> None:
     """The update the brain asked for, after its turn: say it is updating,
-    update, and restart once that has been heard; or say it did not go
-    through. Never raises out."""
+    update to `version` (origin/main's latest when None), and restart once
+    that has been heard; or say it did not go through. Never raises out."""
     try:
         heard = await _say_notice(
             "Updating myself from GitHub, sir; I'll restart once it's in.",
             "Since your last turn you told him you were updating yourself from GitHub "
             "and would restart.", "update")
-        out = await asyncio.to_thread(self_update.update)
+        out = await asyncio.to_thread(self_update.update, None, version)
         head, _details = self_update.describe_outcome(out)
         if out.restart:
             if heard is not None and speech is not None:
@@ -11401,13 +12088,16 @@ async def _update_by_voice() -> None:
 
 
 async def tool_update_jarvis(args: dict) -> str:
-    """Update JARVIS from GitHub and restart: the Updates section's Update
+    """Update JARVIS from GitHub to the version he chose (origin/main's
+    latest when he named none) and restart: the Updates section's Install
     and restart. An ACTING tool. Checked here; the update itself (minutes,
-    with pip and npm) runs after the turn, in `_update_by_voice`."""
-    status = await asyncio.to_thread(self_update.check)
+    with pip and npm) runs after the turn, in `_update_by_voice`, which
+    checks again."""
+    version = str(args.get("version") or "").strip() or None
+    status = await asyncio.to_thread(self_update.check, None, version)
     if not status.can_update:
         return _update_said(*self_update.describe(status))
-    asyncio.create_task(_update_by_voice())
+    asyncio.create_task(_update_by_voice(version))
     return UPDATE_BEGUN
 
 

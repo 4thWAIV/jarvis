@@ -18,6 +18,10 @@ import zipfile
 from pathlib import Path
 
 LEFT_OUT = {"results", "model", "__pycache__", ".DS_Store"}
+# How a package runs and the file each way needs: jarvis/work_packages.py's
+# MODES, copied so this runs on any python3 without JARVIS's dependencies
+# (tests/test_package_modes.py checks the two agree).
+MODES = {"conversation": "skill", "agent": "brief", "page": "entry"}
 
 
 def files(folder: Path) -> list[Path]:
@@ -34,9 +38,15 @@ def main(argv: list[str]) -> int:
         return 2
     folder = Path(argv[0]).resolve()
     manifest = json.loads((folder / "package.json").read_text(encoding="utf-8"))
-    if not (folder / manifest["skill"]).is_file():
-        print(f"{folder} has no skill file {manifest['skill']}.")
+    runs = manifest.get("runs", "conversation")
+    if runs not in MODES:
+        print(f"{folder}'s runs is not one of {', '.join(MODES)}.")
         return 1
+    for field in MODES.values():
+        named = manifest.get(field)
+        if (named or field == MODES[runs]) and not (folder / str(named)).is_file():
+            print(f"{folder} has no {field} file {named}.")
+            return 1
     out = Path(argv[1] if len(argv) == 2 else f"{manifest['name']}-{manifest['version']}.zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for path in files(folder):

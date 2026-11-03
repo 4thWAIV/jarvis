@@ -9,7 +9,8 @@ includes them.
 `GET /api/team/network` is the Network view's one source: the last network
 snapshot the team server sent, unchanged, in team_client's envelope.
 `node_update` is what this backend sends it, from the local collectors
-(host_resources, brain_accounts, human_activity), which no route returns.
+(host_resources, brain_accounts, human_activity, and bundle_capabilities'
+advertisement of what it can open), which no route returns.
 The team lifecycle (`start`, `stop`) owns the status poll, the network
 exchange, the host sampler and the spoken sign-in reminder.
 """
@@ -27,8 +28,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from jarvis import (brain_accounts, data_paths, host_resources, human_activity,
-                    team_client, team_reminder)
+from jarvis import (brain_accounts, bundle_capabilities, data_paths, host_resources,
+                    human_activity, team_client, team_reminder)
 from jarvis.team_client import TeamError
 
 PREFIX = "/api/team"
@@ -86,7 +87,8 @@ def node_update(account_key: Optional[str]) -> dict:
             "jarvis_version": jarvis_version(), "os": os_name(),
             "resources": host_resources.sampler.current(),
             "brains": brain_accounts.brains(account_key),
-            "activity": human_activity.recorder.current()}
+            "activity": human_activity.recorder.current(),
+            "attachments": bundle_capabilities.local_capabilities()}
 
 
 def _refusal(e: TeamError) -> dict:

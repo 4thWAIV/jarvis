@@ -106,6 +106,9 @@ def init_db() -> None:
                 -- The registered folder it ran in (folder_store), when the
                 -- brain started it in one rather than in a project.
                 folder_id     TEXT,
+                -- The work package it carries out (work_packages), when the
+                -- brain started a package that runs as an agent.
+                package_id    TEXT,
                 created_at    REAL NOT NULL,
                 started_at    REAL,
                 ended_at      REAL
@@ -215,6 +218,9 @@ def init_db() -> None:
         if "folder_id" not in cols:
             conn.execute("ALTER TABLE runs ADD COLUMN folder_id TEXT")
             conn.commit()
+        if "package_id" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN package_id TEXT")
+            conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:
             conn.execute(
@@ -234,14 +240,15 @@ def init_db() -> None:
 
 def create_run(prompt: str, project_name: str, project_path: str,
                origin: str, resume_from: str | None = None,
-               folder_id: str | None = None) -> str:
+               folder_id: str | None = None, package_id: str | None = None) -> str:
     run_id = str(uuid.uuid4())
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO runs (id, project_name, project_path, prompt, origin, "
-            "status, resume_from, folder_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "status, resume_from, folder_id, package_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (run_id, project_name, project_path, prompt, origin,
-             RunStatus.QUEUED, resume_from, folder_id, time.time()),
+             RunStatus.QUEUED, resume_from, folder_id, package_id, time.time()),
         )
         conn.commit()
     log.info("run %s created (%s, origin=%s)", run_id, project_name, origin)
@@ -267,9 +274,13 @@ def all_run_ids() -> set[str]:
 
 
 def list_runs(status: list[str] | None = None, project: str | None = None,
-              limit: int = 50, before: float | None = None) -> list[dict]:
+              limit: int = 50, before: float | None = None,
+              package_id: str | None = None) -> list[dict]:
     sql = "SELECT * FROM runs WHERE 1=1"
     params: list = []
+    if package_id:
+        sql += " AND package_id = ?"
+        params.append(package_id)
     if status:
         sql += f" AND status IN ({','.join('?' * len(status))})"
         params.extend(status)

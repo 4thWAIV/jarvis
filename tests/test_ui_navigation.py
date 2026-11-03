@@ -34,6 +34,7 @@ EXPECTED = {
     "reveal: a revealer brings a late item", "reveal: a gone item is refused",
     "reveal: a person's navigation cancels it", "reveal: nothing declared, nothing guessed",
     "no declared command without a handler",
+    "package and received file: opened by their commands, closed back to Conversation",
 }
 
 
@@ -58,7 +59,8 @@ ROUTE_WRITES = re.compile(r"\b(?:rightTab|mainView|openDetails|openNetwork|openQ
 SLOT_WRITES = re.compile(r"\b(\w+Slot)\.(?:show|close|adjust)\(")
 SLOT_OWNERS = {"workflowSlot": "workflows.ts", "threadSlot": "conversation.ts",
                "diagnosticsSlot": {"voiceHealth.ts", "subsystems.ts"}, "subsystemSlot": "subsystems.ts",
-               "networkSlot": "network.ts", "queueSlot": "queue.ts"}
+               "networkSlot": "network.ts", "queueSlot": "queue.ts", "packageSlot": "packages.ts",
+               "memberSlot": "bundles.ts"}
 
 
 def _sources():

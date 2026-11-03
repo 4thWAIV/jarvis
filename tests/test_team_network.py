@@ -368,7 +368,7 @@ async def test_the_route_returns_the_envelope_unchanged(conn, server, monkeypatc
 def test_the_node_update_is_built_from_the_collectors_alone():
     update = team_api.node_update(None)
     assert set(update) == {"node_id", "boot_id", "seq", "label", "jarvis_version", "os",
-                           "resources", "brains", "activity"}
+                           "resources", "brains", "activity", "attachments"}
     assert update["node_id"] == data_paths.node_id() and update["boot_id"] == team_api.BOOT_ID
     assert update["brains"] == []                            # no key, no brains
     assert team_api.node_update(None)["seq"] > update["seq"]

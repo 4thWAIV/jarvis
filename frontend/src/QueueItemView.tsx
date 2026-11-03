@@ -1,16 +1,19 @@
 /**
  * One item, in the centre: the work surface for the conversation open now.
  * One view however many messages there are; opening another item replaces
- * it, and the one left stays in Active / Outbox with its draft.
+ * it, and the one left stays in Active with its draft.
  *
- *   - The head: the subject, who it is with (their name, GitHub handle and
- *     the JARVIS it came through), whose turn it is (with the owner's
- *     correction: Move to my side / Waiting on …), and the item's actions:
- *     Respond, Next item, Put back, Mark addressed, Mark unread, Done
- *     (Restore for a dismissed one), Close; Back after following a link.
- *   - The exchange, oldest first: each message with its sender, time,
- *     subject and text (as text), its files, what it replies to, its direct
- *     replies and related messages, and for the owner's own how far it got.
+ *   - The head: the subject, who it is with (their name, with the GitHub
+ *     handle as its tooltip, and the JARVIS it came through), whose turn it
+ *     is (with the owner's correction: Move to my side / Waiting on …), and
+ *     the item's actions: Respond, Next, Put back, Mark addressed, Mark
+ *     unread, Done (Restore for a dismissed one), Close; Back after
+ *     following a link.
+ *   - The exchange, oldest first: each message with its sender (handle and
+ *     JARVIS as the tooltip), time, subject when it is not the item's, text
+ *     (as text), its files, what it replies to, its direct replies and
+ *     related messages, and for the owner's own how far it got. Read by you
+ *     is an icon; Unread is said.
  *     The owner's responses on their way out follow, each with its state
  *     and its ways out (Retry, Cancel, Edit), then the response being
  *     written and its inline review.
@@ -22,7 +25,7 @@
  * Registered for pointing at: the item (`queueThread`: its head, whose
  * turn it is, Back, Next, Close and the reply being written), each message
  * (`queueMessage`: its card, body and receipt) and each file on a message
- * (`queueAttachment`). Back, Next item, Close and a link to another item
+ * (`queueAttachment`). Back, Next, Close and a link to another item
  * run `queue.back`, `queue.next`, `queue.close` and `queue.follow`
  * (queue.ts), the same commands the brain runs, with their side effects:
  * the next item becomes Active, leaving a reply saves its draft, and a
@@ -46,6 +49,7 @@ import {
   setTurn, setUnread,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
+import { ReviewProgressLabel, TaskLine } from "./BundleLines";
 import { Cue, DELIVERY_CUE } from "./QueueIcons";
 import {
   cues, DELIVERY_WORDS, delivery, draftsOf, handle, isSelf, jarvisLabel, latestFrom, messagesOf, personName,
@@ -156,14 +160,17 @@ function OneItem({ thread }: { thread: string }) {
         )}
         <h2 className="item-subject">{subject || t("main.queue.noSubject")}</h2>
         <p className="item-who">
-          <span className="item-person">{personName(dir, correspondent)}</span>
-          {handle(dir, correspondent) && <span className="item-handle"> {handle(dir, correspondent)}</span>}
+          <span className="item-person" title={handle(dir, correspondent) ?? undefined}>
+            {personName(dir, correspondent)}
+          </span>
+          {handle(dir, correspondent) && <span className="visually-hidden"> {handle(dir, correspondent)}</span>}
           {latestTheirs && <span className="item-via"> · {jarvisLabel(dir, latestTheirs.message.source_node_id)}</span>}
         </p>
         <div className="item-cues" ref={ui.part("turn")}>
           <Cue kind={c.turn === "mine" ? "your-turn" : "their-turn"}>{turnWords(dir, work)}</Cue>
           {c.addressed && <Cue kind="addressed">{t("main.queue.addressed")}</Cue>}
           {c.dismissed && <Cue kind="dismissed">{t("main.queue.dismissed")}</Cue>}
+          <ReviewProgressLabel thread={thread} />
           {!self && !c.dismissed && (c.turn === "mine"
             ? <button data-ui-action="domain" type="button" className="item-turn" disabled={busy}
                       onClick={() => void setTurn(thread, correspondent)}>
@@ -207,16 +214,16 @@ function OneItem({ thread }: { thread: string }) {
         <ol className="item-exchange">
           {messages.map((m) => (
             <li key={m.message.message_id}>
-              <MessageCard m={m} state={state} dir={dir} thread={thread}
+              <MessageCard m={m} state={state} dir={dir} thread={thread} itemSubject={subject}
                            reply={c.dismissed || editable || ed ? undefined : reply(m.message.message_id)} />
             </li>
           ))}
           {outgoing.map((d) => (
-            <li key={d.message_id}><OutgoingDraft draft={d} thread={thread} dir={dir} /></li>
+            <li key={d.message_id}><OutgoingDraft draft={d} thread={thread} dir={dir} itemSubject={subject} /></li>
           ))}
         </ol>
         {editable?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={editable} />}
-        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} /></div>}
+        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} request={ui.part("request")} /></div>}
       </div>
     </div>
   );
@@ -246,9 +253,9 @@ function UnsentConversation({ thread }: { thread: string }) {
                                                 {...bindingProps(bind("queue.close", {}))}>{t("main.common.close")}</button></div>
       </header>
       <div className="item-scroll">
-        {draft && !editable && <OutgoingDraft draft={draft} thread={thread} dir={dir} />}
+        {draft && !editable && <OutgoingDraft draft={draft} thread={thread} dir={dir} itemSubject={draft.subject} />}
         {draft?.send.state === "awaiting_approval" && !ed?.dirty && <MessageReview draft={draft} />}
-        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} /></div>}
+        {ed && <div ref={ui.part("composer")}><MessageComposer editorKey={thread} request={ui.part("request")} /></div>}
       </div>
     </div>
   );
@@ -272,16 +279,16 @@ function DismissBlockers({ thread, blockers, sure }: { thread: string; blockers:
         ) : (
           <button type="button" {...bindingProps(bind("queue.done.ask", { step: "discard" }))}>{t("main.queue.discardReply")}</button>
         ))}
-        <button data-ui-action="domain" type="button" onClick={() => { askedNoMore(); void putBack(thread); }}>{t("main.queue.putBackInstead")}</button>
-        <button type="button" {...bindingProps(bind("queue.done.ask", { step: "closed" }))}>{t("main.queue.keepWorking")}</button>
+        <button data-ui-action="domain" type="button" onClick={() => { askedNoMore(); void putBack(thread); }}>{t("main.queue.putBack")}</button>
+        <button type="button" {...bindingProps(bind("queue.done.ask", { step: "closed" }))}>{t("main.common.cancel")}</button>
       </div>
     </div>
   );
 }
 
 /** One accepted message of the exchange; `reply` starts a reply to it. */
-function MessageCard({ m, state, dir, reply }: {
-  m: ShownMessage; state: QueueState; dir: Directory; thread: string; reply?: Binding;
+function MessageCard({ m, state, dir, itemSubject, reply }: {
+  m: ShownMessage; state: QueueState; dir: Directory; thread: string; itemSubject: string; reply?: Binding;
 }) {
   const t = useT();
   const msg = m.message;
@@ -293,6 +300,11 @@ function MessageCard({ m, state, dir, reply }: {
                            label: t("main.queue.from", { person: personName(dir, msg.sender_github_id) }), socket: CENTRE_SOCKET });
   const parent = msg.in_reply_to_message_id ? state.messages[msg.in_reply_to_message_id]?.message : undefined;
   const replies = repliesTo(state, msg.message_id);
+  // The sender's handle and the JARVIS it came through: the name's tooltip,
+  // and said to screen readers.
+  const senderDetail = [!fromMe && handle(dir, msg.sender_github_id),
+                        t("main.queue.via", { jarvis: jarvisLabel(dir, msg.source_node_id) })]
+    .filter(Boolean).join(" · ");
 
   // The read receipt: once this body has actually been on screen.
   useEffect(() => {
@@ -313,12 +325,15 @@ function MessageCard({ m, state, dir, reply }: {
              data-message-id={msg.message_id} aria-label={t("main.queue.from", { person: personName(dir, msg.sender_github_id) })}
              ref={(el) => { ui.whole(el); ui.part("card")(el); }}>
       <header className="message-head">
-        <span className="message-person">{fromMe ? t("main.queue.you") : personName(dir, msg.sender_github_id)}</span>
-        {!fromMe && handle(dir, msg.sender_github_id) && (
-          <span className="message-handle">{handle(dir, msg.sender_github_id)}</span>
+        <span className="message-person" title={senderDetail}>
+          {fromMe ? t("main.queue.you") : personName(dir, msg.sender_github_id)}
+        </span>
+        <span className="visually-hidden"> · {senderDetail}</span>
+        {fromMe && (
+          <span className="message-to" title={recipientLabel(dir, msg.recipient_github_id)}>
+            {t("main.queue.toLower", { person: personName(dir, msg.recipient_github_id) })}
+          </span>
         )}
-        <span className="message-via">{t("main.queue.via", { jarvis: jarvisLabel(dir, msg.source_node_id) })}</span>
-        {fromMe && <span className="message-to">{t("main.queue.toLower", { person: recipientLabel(dir, msg.recipient_github_id) })}</span>}
         <time className="message-time" dateTime={msg.accepted_at}>{clockTime(msg.accepted_at)}</time>
       </header>
       {msg.in_reply_to_message_id && (
@@ -331,20 +346,25 @@ function MessageCard({ m, state, dir, reply }: {
             : <span>{t("main.queue.inReplyToMissing")}</span>}
         </p>
       )}
-      {msg.subject && <h3 className="message-subject">{msg.subject}</h3>}
+      {msg.subject && msg.subject !== itemSubject && <h3 className="message-subject">{msg.subject}</h3>}
+      <TaskLine task={msg.task} attachments={msg.attachments} target={ui.part("request")} />
       <div className="message-text" ref={(el) => { body.current = el; ui.part("body")(el); }}>{msg.text}</div>
       {msg.attachments.length > 0 && (
         <div className="message-files">
           {msg.attachments.map((a) => (
             <FileCard key={a.attachment_id} fileRef={a} messageId={msg.message_id} incoming={toMe && !fromMe}
-                      file={m.files.find((f) => f.attachment_id === a.attachment_id)} />
+                      file={m.files.find((f) => f.attachment_id === a.attachment_id)}
+                      report={fromMe
+                        ? m.receipts?.openability.find((r) => r.attachment_id === a.attachment_id
+                                                              && r.sha256 === a.sha256)
+                        : undefined} />
           ))}
         </div>
       )}
       <footer className="message-foot">
         {(toMe || fromMe) && <span className="message-receipt" ref={ui.part("receipt")}>
           {toMe && (m.receipts?.read_at
-            ? <Cue kind="read-by-you" title={m.receipts.read_at}>{t("main.queue.readByYou")}</Cue>
+            ? <Cue kind="read-by-you" quiet>{t("main.queue.readByYou")}</Cue>
             : <Cue kind="unread">{t("main.queue.unread")}</Cue>)}
           {fromMe && (
             <Cue kind={DELIVERY_CUE[delivery(msg, m.receipts)]}
@@ -357,9 +377,9 @@ function MessageCard({ m, state, dir, reply }: {
           <span className="message-replies">
             <Cue kind="replied">{t("main.queue.replies", { count: replies.length })}</Cue>
             {replies.map((r) => (
-              <button key={r.message_id} type="button" className="link-button" {...show(r.message_id)}>
-                {r.sender_github_id === owner ? t("main.queue.you") : personName(dir, r.sender_github_id)}:{" "}
-                {DELIVERY_WORDS(dir, r.recipient_github_id)[delivery(r, state.receipts[r.message_id])]}
+              <button key={r.message_id} type="button" className="link-button" {...show(r.message_id)}
+                      title={DELIVERY_WORDS(dir, r.recipient_github_id)[delivery(r, state.receipts[r.message_id])]}>
+                {r.sender_github_id === owner ? t("main.queue.you") : personName(dir, r.sender_github_id)}
               </button>
             ))}
           </span>
@@ -387,7 +407,9 @@ function MessageCard({ m, state, dir, reply }: {
 /** A response of the owner's on its way out: its state in words, its files
  *  and what can honestly be done with it now. Nothing is called accepted
  *  before the team server said so. */
-function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; dir: Directory }) {
+function OutgoingDraft({ draft, thread, dir, itemSubject }: {
+  draft: Draft; thread: string; dir: Directory; itemSubject: string;
+}) {
   const t = useT();
   const s = draft.send.state;
   const failure = s === "failed" && draft.send.failure;
@@ -398,7 +420,7 @@ function OutgoingDraft({ draft, thread, dir }: { draft: Draft; thread: string; d
         <span className="message-to">{t("main.queue.toLower", { person: recipientLabel(dir, draft.recipient_github_id) })}</span>
         <span className="queue-sending" role="status">{sendWords(draft)}</span>
       </header>
-      {draft.subject && <h3 className="message-subject">{draft.subject}</h3>}
+      {draft.subject && draft.subject !== itemSubject && <h3 className="message-subject">{draft.subject}</h3>}
       <div className="message-text">{draft.text}</div>
       {draft.attachments.length > 0 && (
         <div className="message-files">

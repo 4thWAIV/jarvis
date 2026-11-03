@@ -66,9 +66,9 @@ BOXES = """() => {
 }"""
 
 
-@pytest.mark.asyncio
-async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_address(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_address(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         tabs = await page.evaluate(
             "() => [...document.querySelectorAll('.centre-tabs [role=tab]')].map(t => [t.textContent, t.ariaSelected])")
@@ -86,14 +86,14 @@ async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_a
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_white_box_is_at_the_bottom_and_the_history_fills_the_height(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_white_box_is_at_the_bottom_and_the_history_fills_the_height(page_playwright, page_url):
     """Anchored to the bottom: the white box sits on the footer's gap, the
     four-line blue box above it, and the history takes every bit of height
     left, up to the header, scrolling."""
     voice = _Voice()
     clip = _silence_wav(0.2)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         geo = """() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
@@ -140,11 +140,11 @@ async def test_the_white_box_is_at_the_bottom_and_the_history_fills_the_height(p
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_playwright, page_url):
     voice = _Voice()
     clip = _silence_wav(1.2)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('how are the', false)")
         got = await page.evaluate(BOXES)
@@ -181,13 +181,13 @@ async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_url):
 
 
 
-@pytest.mark.asyncio
-async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_playwright, page_url):
     """Clicked, the white box takes typing. Shift+Enter starts a new line;
     Enter sends it, marked typed, and the words wait in the box as spoken
     ones do until JARVIS answers."""
     voice = _Voice()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('something half heard', false)")
         await page.click(".conversation-hearing")
@@ -221,10 +221,10 @@ async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_url):
         assert classes[0] == classes[1] == "history-turn user", classes
         await browser.close()
 
-@pytest.mark.asyncio
-async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_playwright, page_url):
     voice = _Voice()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('tell hammer to ship it', true)")
         await asyncio.sleep(0.2)
@@ -264,8 +264,8 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page_playwright, page_url):
     """"Send to:" over the top left once it is a message, its state over the
     top right; Read, Accept, Delete and Send in the bottom right, each a POST to its
     route; a refusal shown under the text."""
@@ -280,7 +280,7 @@ async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page
         else:
             await route.fulfill(status=200, content_type="application/json", body="{}")
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.route("**/api/capture/*/*", answer)
         voice.send({"type": "capture", "id": 5, "state": "capturing", "text": "Note this.",
@@ -336,12 +336,12 @@ async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_long_turn_shows_two_lines_and_opens_when_clicked(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_long_turn_shows_two_lines_and_opens_when_clicked(page_playwright, page_url):
     voice = _Voice()
     clip = _silence_wav(0.3)
     long = " ".join(["The build finished and every one of the tests passed."] * 20)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         voice.send({"type": "status", "state": "speaking"},
                    {"type": "audio", "utt": 1, "idx": 0, "data": clip, "text": long, "kind": "reply"})
@@ -400,13 +400,13 @@ class _Record:
                                   "agent": {"session_id": "h", "name": "hammer", "state": "idle"}})
 
 
-@pytest.mark.asyncio
-async def test_the_history_reads_the_record_with_live_message_status_and_threads(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_history_reads_the_record_with_live_message_status_and_threads(page_playwright, page_url):
     """What was said before the page opened comes from the record and is
     there again after a reload; a message's status moves on a hint and opens
     to the answer; an agent's name opens its thread."""
     voice, record = _Voice(), _Record()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -453,8 +453,8 @@ async def test_the_history_reads_the_record_with_live_message_status_and_threads
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_playwright, page_url):
     voice, posted = _Voice(), []
     restored = {"done": False}
 
@@ -475,7 +475,7 @@ async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_
         restored["done"] = True
         await route.fulfill(json={"capture": 3, "restored": True})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover

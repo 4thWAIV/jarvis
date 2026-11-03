@@ -20,6 +20,8 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.main.network": "Instancia",
   "tabs.main.teamServer": "Servidor del equipo",
   "tabs.main.queue": "Mensaje",
+  "tabs.main.package": "Paquete de trabajo",
+  "tabs.main.file": "Archivo",
   "tabs.main.workflow": "Flujo de trabajo",
   "tabs.main.subagent": "Subagente",
 

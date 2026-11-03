@@ -24,6 +24,7 @@
  *     none.
  */
 
+import { makeLocal } from "./attachmentLocation";
 import { captures } from "./capture";
 import { liveRead, type LiveStore } from "./liveRead";
 import { codeWords, formatNumber, saidShown, t, type Said } from "./locale";
@@ -31,7 +32,7 @@ import { messagingApi, MessagingError } from "./messagingApi";
 import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkCommand } from "./messagingContract";
 import { network } from "./network";
 import {
-  applyDraft, applyFile, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
+  applyDraft, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
   cues, EMPTY, removeDraft, subjectOf, threadOf, waiting, withPending, type Directory, type QueueState,
 } from "./queueStore";
 import { createStore } from "./store";
@@ -837,13 +838,13 @@ export function blockersOf(state: QueueState, thread: string) {
 
 // ── Files on received messages ───────────────────────────────────────────
 
-/** Fetch a received file to this JARVIS and check it. JARVIS never opens
- *  it; the owner's one action on it is Reveal in Finder. */
+/** Fetch a received file to this JARVIS and check it, through the one
+ *  location resolver (make-local). JARVIS never opens it; its state comes
+ *  back with the `messages` hint as the download moves. */
 export async function downloadFile(messageId: string, attachmentId: string): Promise<void> {
   const thread = queueRecord.get().messages[messageId]?.message.thread_id;
   try {
-    const file = await messagingApi().download(messageId, attachmentId);
-    record((s) => applyFile(s, messageId, file));
+    await makeLocal(messageId, attachmentId);
   } catch (e) {
     if (thread) note(thread, said(e));
   }

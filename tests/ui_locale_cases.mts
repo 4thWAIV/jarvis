@@ -24,7 +24,8 @@ import {
 
 /** Entries reviewed as reading the same in Spanish as in English. The team
  *  row's error is nothing but its value, itself worded by its own code. */
-const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError"]);
+// left.updates.prName: "PR 42" is GitHub's own name for a pull request, in both.
+const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError", "left.updates.prName"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });

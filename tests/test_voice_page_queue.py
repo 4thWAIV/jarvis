@@ -78,9 +78,9 @@ async def _arrive(world, voice, page, name, subject):
     await page.wait_for_selector(f'.queue-view li[data-thread-id="{world.thread(name)}"]', timeout=15000)
 
 
-@pytest.mark.asyncio
-async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         tabs = await page.evaluate("() => [...document.querySelectorAll('.right-tabs [role=tab]')].map(t => t.title)")
         assert tabs == ["Folders", "Agents", "Queue", "Workflows", "Network", "Diagnostics"], tabs
@@ -92,19 +92,23 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
         assert await _rows(page, world, "active") == ["release", "budget", "deploy", "ana-numbers"]
 
         text = lambda name: page.locator(_row(world, name)).inner_text()  # noqa: E731
+        # The JARVIS it came through is the person's tooltip, not row text.
+        via = lambda name: page.locator(f"{_row(world, name)} .row-person").get_attribute("title")  # noqa: E731
         newest = await text("newest")
-        assert "Matt · Matt’s MacBook" in newest and "Your turn" in newest and "Unread" in newest
+        assert await via("newest") == "Matt · Matt’s MacBook"
+        assert "Your turn" in newest and "Unread" in newest
         deploy = await text("deploy")
         assert "Matt’s turn" in deploy and "Received by their JARVIS" in deploy and "Unread" not in deploy
         assert "Read by Ana" in await text("budget")
         assert "You replied" in await text("release")
         assert "Related" in await text("creds") and "You replied" not in await text("creds")
-        assert "A member no longer listed · a JARVIS no longer listed" in await text("former")
+        assert await via("former") == "A member no longer listed · a JARVIS no longer listed"
         self_file = await text("self-file")
-        assert "Me · Tim’s i9" in self_file and "Your turn" in self_file and "1 file" in self_file
+        assert await via("self-file") == "Me · Tim’s i9"
+        assert "Your turn" in self_file and "1 file" in self_file
         assert "Your turn" in await text("note-self")
         ana = await text("ana-numbers")
-        assert "Your turn" in ana and "Reply drafted, not sent" in ana
+        assert "Your turn" in ana and "Unsent reply" in ana
 
         # Every icon is decorative; the words are the label.
         hidden = await page.evaluate("() => [...document.querySelectorAll('.queue-view svg')].every(s => s.getAttribute('aria-hidden') === 'true')")
@@ -123,11 +127,11 @@ async def test_the_queue_tab_lists_waiting_then_active_newest_first(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_open_next_and_put_back(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_open_next_and_put_back(page_playwright, page_url):
     """Open makes it Active and reads it once the body has been shown; Next
     keeps the item left in Active; Put back returns it to its place."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         before = await _rows(page, world, "waiting")
@@ -136,11 +140,15 @@ async def test_open_next_and_put_back(page_url):
         assert await page.inner_text("#queue-item-view .item-subject") == "Can you look at this?"
         assert await page.inner_text(".centre-tabs [aria-selected=true]") == "CAN YOU LOOK AT THIS?"
         await page.wait_for_function("() => document.querySelector('.queue-message .queue-cue.cue-read-by-you')")
+        # The JARVIS a message came through is its sender's tooltip, and is
+        # still said to a screen reader.
+        head = page.locator("#queue-item-view .queue-message.incoming .message-head").first
+        assert "via Matt’s MacBook" in await head.locator(".visually-hidden").text_content()
         assert routes.reads == [world.message("newest")]
         assert "newest" in await _rows(page, world, "active")
         await async_api.expect(page.locator(_row(world, "newest"))).to_have_attribute("aria-current", "true")
 
-        await page.click("text=Next item")
+        await page.click('#queue-item-view >> text="Next"')
         await page.wait_for_function(
             f"() => document.querySelector('#queue-item-view')?.dataset.threadId === '{world.thread('creds')}'")
         assert "newest" in await _rows(page, world, "active")
@@ -151,25 +159,26 @@ async def test_open_next_and_put_back(page_url):
         await page.wait_for_selector("#queue-item-view", state="detached")
         waiting = await _rows(page, world, "waiting")
         assert waiting == [n for n in before if n != "newest"], waiting
-        # Read and Addressed are independent; neither is a reply.
+        # Read and Addressed are independent; neither is a reply. Read is
+        # the ordinary state, so the row no longer says Unread.
         text = await page.locator(_row(world, "creds")).inner_text()
-        assert "Read by you" in text and "Addressed" not in text and "You replied" not in text
+        assert "Unread" not in text and "Addressed" not in text and "You replied" not in text
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_respond_review_and_send_inline(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_respond_review_and_send_inline(page_playwright, page_url):
     """A response is written on the item, reviewed exactly as it will be
     sent, approved with the existing capture's Send, and stays Active as
     Matt's turn. Editing after a review invalidates it."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(_row(world, "newest"))
         await page.click("#queue-item-view >> text=Respond")
         await async_api.expect(page.locator(".composer-to")).to_contain_text("To Matt · Matt’s MacBook")
         await page.fill(".composer-text", "Looking now.\nBack in ten.")
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Draft saved, not sent", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
         draft = next(d for d in world.store.drafts.values() if d.thread_id == world.sent["newest"].thread_id)
         assert draft.in_reply_to_message_id == world.sent["newest"].message_id
         assert draft.send.state == "draft"
@@ -184,7 +193,7 @@ async def test_respond_review_and_send_inline(page_url):
         # An edit takes the review away; reviewing again is a new revision.
         await page.fill(".composer-text", "Looking now.\nBack in five.")
         await async_api.expect(review).to_have_count(0)
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Draft saved, not sent", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
         await page.click(".composer-review")
         await async_api.expect(review).to_have_attribute("data-content-revision", "2")
         assert not [m for m in world.serve.messages.values() if m.text.startswith("Looking now")], \
@@ -203,21 +212,21 @@ async def test_respond_review_and_send_inline(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(".queue-new")
         await async_api.expect(page.locator(".composer-to option")).to_have_count(5)
         options = await page.evaluate("() => [...document.querySelectorAll('.composer-to option')].map(o => o.textContent)")
-        assert options == ["Choose who it is for", "Me · Tim’s i9", "Matt · Matt’s MacBook",
+        assert options == ["Choose recipient", "Me · Tim’s i9", "Matt · Matt’s MacBook",
                            "Ana · Ana’s Studio", f"{sc.LONG_NAME} · Max’s JARVIS"], options
         await page.select_option(".composer-to select", str(sc.TIM))
         await page.fill(".composer-field input", "Reminder")
         await page.fill(".composer-text", "Call the bank.")
         assert await page.evaluate("document.activeElement.className") == "composer-text"
-        await async_api.expect(page.locator(".composer-status")).to_have_text("Draft saved, not sent", timeout=5000)
+        await async_api.expect(page.locator(".composer-status")).to_have_text("Saved", timeout=5000)
         # The first save gave it its own id without losing the editor.
         assert await page.evaluate("document.activeElement.className") == "composer-text"
         unsent = await _rows(page, world, "active")
@@ -238,9 +247,9 @@ async def test_a_message_to_oneself_goes_the_real_way_and_is_your_turn(page_url)
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_an_arrival_never_takes_focus_text_or_the_review(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_arrival_never_takes_focus_text_or_the_review(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(_row(world, "ana-numbers"))
@@ -261,9 +270,9 @@ async def test_an_arrival_never_takes_focus_text_or_the_review(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_done_waits_for_unsent_work_and_says_why(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_done_waits_for_unsent_work_and_says_why(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         # Finished work dismisses at once.
@@ -278,8 +287,8 @@ async def test_done_waits_for_unsent_work_and_says_why(page_url):
         blockers = page.locator(".item-blockers")
         await async_api.expect(blockers).to_contain_text("There is a reply here that has not been sent.")
         assert "ana-numbers" in await _rows(page, world, "active")
-        await blockers.locator("text=Discard the reply…").click()
-        await blockers.locator("text=Discard the reply and dismiss").click()
+        await blockers.locator("text=Discard reply…").click()
+        await blockers.locator("text=Discard and dismiss").click()
         await page.wait_for_selector("#queue-item-view", state="detached")
         assert "ana-numbers" not in await _rows(page, world, "active")
         assert not [d for d in world.store.drafts.values() if d.thread_id == world.sent["ana-numbers"].thread_id]
@@ -291,27 +300,27 @@ async def test_done_waits_for_unsent_work_and_says_why(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_dismissed_item_opens_for_reference_and_restores_with_its_history(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_dismissed_item_opens_for_reference_and_restores_with_its_history(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         await page.click(".queue-history-toggle")
-        assert await page.inner_text(".queue-history-toggle") == "▾ Hide dismissed (1)"
+        assert await page.inner_text(".queue-history-toggle") == "▾ Dismissed (1)"
         await page.click(".queue-done-row")
         await async_api.expect(page.locator("#queue-item-view .item-cues")).to_contain_text("Dismissed")
         assert not [c for c in routes.calls if c[0] == "PUT"], "looking is not reactivating"
-        await page.click("#queue-item-view >> text=Restore to queue")
+        await page.click('#queue-item-view >> text="Restore"')
         await page.wait_for_function(
             f"() => [...document.querySelectorAll('.queue-list[data-list=\"waiting\"] > li')].some(li => li.dataset.threadId === '{world.thread('lunch')}')")
         text = await page.locator(_row(world, "lunch")).inner_text()
-        assert "Read by you" in text and "Dismissed" not in text
+        assert "Unread" not in text and "Dismissed" not in text
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_failed_save_keeps_the_text_through_navigation(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_failed_save_keeps_the_text_through_navigation(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url)
         await _queue_tab(page)
         routes.fail_saves = True
@@ -334,9 +343,9 @@ async def test_a_failed_save_keeps_the_text_through_navigation(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         routes.offline = True
@@ -350,9 +359,9 @@ async def test_a_command_kept_offline_says_so_and_the_queue_stays(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page, world, routes, voice = await _open(p, page_url)
         await _queue_tab(page)
         before = await _rows(page, world, "waiting")
@@ -371,12 +380,12 @@ async def test_a_failed_read_or_a_lost_pairing_keeps_the_queue_and_says_why(page
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_keyboard_only_and_narrow_and_still(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_keyboard_only_and_narrow_and_still(page_playwright, page_url):
     """A narrow window and reduced motion: rows fit, nothing in the Queue
     animates, and an item opens and closes from the keyboard with focus
     returned to the row."""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page, world, routes, _ = await _open(p, page_url, viewport=(1024, 700), reduced=True)
         await _queue_tab(page)
         row = page.locator(_row(world, "former"))

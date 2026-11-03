@@ -30,6 +30,14 @@
  *     way: offered while one is open, which clicking its row in the Queue
  *     does. One view however many messages there are; opening another item
  *     replaces it.
+ *   - A page work package (PackageView.tsx), named after it, the same way:
+ *     offered while one is open, which its file's Open page in the Queue or
+ *     the brain's open_package_page does. Opening another replaces it. Kept
+ *     on the page, hidden, while another view is shown, as Folders is, so a
+ *     package part way through is not started again.
+ *   - A file a teammate sent (BundleMemberView.tsx), the same way: offered
+ *     while one is open, which its Open in the Queue or the brain's
+ *     show_bundle_member does. Opening another replaces it.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -62,6 +70,10 @@ import { directory, openQueue, queue } from "./queue";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
 import { TeamSignInReminder } from "./TeamSignInReminder";
+import { openPackage } from "./packages";
+import { PackageView } from "./PackageView";
+import { openBundleMember } from "./bundles";
+import { BundleMemberView } from "./BundleMemberView";
 
 function MainView() {
   return (
@@ -139,6 +151,18 @@ const QUEUE_VIEW: MainTabView = {
   view: () => null,
 };
 
+const PACKAGE_VIEW: MainTabView = {
+  id: "package",
+  icon: null,
+  view: () => null,
+};
+
+const FILE_VIEW: MainTabView = {
+  id: "file",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
   icon: null,
@@ -162,6 +186,8 @@ export function CentreArea() {
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
+  const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
+  const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   const t = useT();
   const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
@@ -178,6 +204,10 @@ export function CentreArea() {
           view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
     ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
                        view: () => <QueueItemView thread={queueOpen} /> }] : []),
+    ...(packageOpen ? [{ ...PACKAGE_VIEW, title: packageOpen.name || t("tabs.main.package") }] : []),
+    ...(fileOpen ? [{ ...titled(FILE_VIEW),
+                      view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
+                                                    member={fileOpen} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
@@ -208,7 +238,14 @@ export function CentreArea() {
           {folders.view()}
         </div>
       )}
-      {view.id !== conversation.id && view.id !== folders.id && view.view()}
+      {packageOpen && (
+        <div className={`centre-kept${view.id === PACKAGE_VIEW.id ? "" : " hidden"}`}
+             inert={view.id !== PACKAGE_VIEW.id}>
+          <PackageView key={packageOpen.id} info={packageOpen} />
+        </div>
+      )}
+      {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
+        && view.view()}
     </>
   );
 }

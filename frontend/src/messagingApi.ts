@@ -19,6 +19,7 @@ import {
   type LocalItem, type LocalMessage, type QueueSnapshot, type RecipientList,
   type WorkCommand, type WorkCommandResult,
 } from "./messagingContract";
+import type { AttachmentLocation } from "./attachmentLocation";
 
 export class MessagingError extends Error {
   constructor(
@@ -50,6 +51,8 @@ export interface MessagingApi {
   read(messageId: string): Promise<LocalMessage>;
   download(messageId: string, attachmentId: string): Promise<LocalFile>;
   reveal(messageId: string, attachmentId: string): Promise<void>;
+  /** Where a received file is; with `make`, downloaded and checked first. */
+  location(messageId: string, attachmentId: string, make: boolean): Promise<AttachmentLocation>;
 }
 
 const BASE = "/api/team/messages";
@@ -123,6 +126,8 @@ export const httpMessagingApi: MessagingApi = {
     call("POST", `/${id(messageId)}/files/${id(attachmentId)}/download`),
   reveal: (messageId, attachmentId) =>
     call("POST", `/${id(messageId)}/files/${id(attachmentId)}/reveal`),
+  location: (messageId, attachmentId, make) =>
+    call(make ? "POST" : "GET", `/${id(messageId)}/files/${id(attachmentId)}/location`),
 };
 
 /** The adapter every read and command uses. */

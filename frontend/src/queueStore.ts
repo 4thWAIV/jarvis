@@ -368,8 +368,6 @@ const UNRESOLVED: SendState[] = ["awaiting_approval", "approved", "submitting", 
 export interface ItemCues {
   turn: "mine" | "theirs";
   unread: boolean;
-  /** The owner's own read of the latest message to them. */
-  readByYou: boolean;
   addressed: boolean;
   /** An accepted reply of the owner's names the latest message to them. */
   replied: boolean;
@@ -396,7 +394,6 @@ export function cues(state: QueueState, thread: string): ItemCues | null {
   return {
     turn: turn(work),
     unread: work.unread_reminder,
-    readByYou: !work.unread_reminder && !!latestToMe?.receipts?.read_at,
     addressed: work.addressed_at !== null,
     replied: !!latestToMe && fromMe.some((m) => m.message.in_reply_to_message_id === latestToMe.message.message_id),
     files: messages.reduce((n, m) => n + m.message.attachments.length, 0),

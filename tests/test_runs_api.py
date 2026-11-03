@@ -124,7 +124,7 @@ def test_retry_terminal_run_spawns(client, status, monkeypatch):
     spawned = []
 
     async def fake_spawn(prompt, name, path, origin, resume_from=None,
-                         timeout_sec=0, folder_id=None):
+                         timeout_sec=0, folder_id=None, package_id=None):
         spawned.append((prompt, name, path, origin, resume_from))
         return store.create_run(prompt, name, path, origin, resume_from)
 

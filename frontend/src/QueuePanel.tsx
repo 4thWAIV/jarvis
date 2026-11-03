@@ -1,14 +1,16 @@
 /**
  * The right panel's Queue: one owner's work, newest arrival first. Waiting
- * at the top (what has come in and not been taken up), Active / Outbox
- * under it (opened work, outgoing exchanges and whatever is on its way out,
- * kept together), and the dismissed items behind a collapsed Show
- * dismissed, read a page at a time. There are no folders.
+ * at the top (what has come in and not been taken up), Active under it
+ * (opened work, outgoing exchanges and whatever is on its way out, kept
+ * together), and the dismissed items behind a collapsed Dismissed, read a
+ * page at a time. There are no folders.
  *
- * A row is the person and the JARVIS it came through, the subject (or the
- * first line), how long ago it arrived, whose turn it is, a strip of the
- * owner's own cues (Unread or Read by you, Addressed, You replied, files,
- * Related) and, apart from them, how far the owner's latest message got.
+ * A row is the person (the JARVIS it came through is their name's title),
+ * the subject (or the first line), how long ago it arrived, whose turn it
+ * is, a strip of the owner's own cues (Unread, Addressed, You replied,
+ * files, Related) and, apart from them, how far the owner's latest message
+ * got. Only what is not the ordinary state is shown: no "Read by you", no
+ * empty-section lines (each heading's count says it).
  * Clicking a row opens the item in the centre; a waiting one becomes
  * Active. Nothing here moves focus or scrolls when something arrives.
  *
@@ -21,7 +23,7 @@
  * run: a Waiting or Active row `queue.open` (a waiting one becomes Active,
  * an unread body is marked read once shown, the item left keeps its saved
  * draft), an unsent or dismissed row `queue.follow` (its place unchanged),
- * Show dismissed `queue.history` and Show more `queue.history.more`. The
+ * Dismissed `queue.history` and Show more `queue.history.more`. The
  * panel (`queuePanel`) and each row (`queueThread`) are targets the brain
  * can point at; pointing at a row never opens it, so it is neither
  * activated nor read. New message opens a blank one by `queue.new`, as the
@@ -52,9 +54,9 @@ import { useTick } from "./WorkflowsView";
 
 const JUST_NOW_MS = 60_000;
 
-// ── Show dismissed and its pages ────────────────────────────────────────
+// ── Dismissed and its pages ────────────────────────────────────────
 
-/** Whether Show dismissed is open; kept while the tab is switched. */
+/** Whether Dismissed is open; kept while the tab is switched. */
 const historyOpen = createStore(false);
 
 const offered = (): Availability =>
@@ -86,7 +88,7 @@ registerCommand("queue.history.more", {
   },
 });
 
-/** Whether Waiting or Active / Outbox lists `thread`. */
+/** Whether Waiting or Active lists `thread`. */
 const listedOpen = (state: QueueState, thread: string) =>
   [...waiting(state), ...active(state)].some((i) => i.work_state.thread_id === thread)
   || unsentDrafts(state).some((d) => d.thread_id === thread);
@@ -167,7 +169,6 @@ export function QueuePanel() {
         <h3 className="queue-heading" id="queue-waiting-heading">
           {t("right.queue.waiting")} <span className="queue-count">{waitingRows.length}</span>
         </h3>
-        {state.loaded && waitingRows.length === 0 && <p className="queue-empty">{t("right.queue.nothingWaiting")}</p>}
         <ul className="queue-list" data-list="waiting">
           {waitingRows.map((i) => <Row key={i.work_state.thread_id} item={i} state={state} dir={dir}
                                        current={open === i.work_state.thread_id} />)}
@@ -178,7 +179,6 @@ export function QueuePanel() {
         <h3 className="queue-heading" id="queue-active-heading">
           {t("right.queue.active")} <span className="queue-count">{activeRows.length + unsent.length}</span>
         </h3>
-        {state.loaded && activeRows.length + unsent.length === 0 && <p className="queue-empty">{t("right.queue.nothingActive")}</p>}
         <ul className="queue-list" data-list="active">
           {unsent.map((d) => <UnsentRow key={d.message_id} draft={d} dir={dir}
                                         current={open === d.thread_id}
@@ -229,8 +229,8 @@ function Row({ item, state, dir, current }: {
           {who.slice(0, 1).toUpperCase()}
         </span>
         <span className="row-who" ref={ui.part("sender")}>
-          <span className="row-person">{who}</span>
-          {via && <span className="row-via"> · {via}</span>}
+          <span className="row-person" title={via ? `${who} · ${via}` : undefined}>{who}</span>
+          {via && <span className="visually-hidden"> · {via}</span>}
         </span>
         <span className="row-age" title={work.arrival_at}>{shortAgo(Math.max(0, ago), JUST_NOW_MS)}</span>
         <span className="row-subject" ref={ui.part("subject")}>{subject || previewOf(latest) || t("right.queue.noSubject")}</span>
@@ -239,7 +239,6 @@ function Row({ item, state, dir, current }: {
         </span>
         <span className="row-strip">
           {c.unread && <Cue kind="unread">{t("right.queue.unread")}</Cue>}
-          {c.readByYou && <Cue kind="read-by-you">{t("right.queue.readByYou")}</Cue>}
           {c.addressed && <Cue kind="addressed">{t("right.queue.addressed")}</Cue>}
           {c.replied && <Cue kind="replied">{t("right.queue.replied")}</Cue>}
           {c.files > 0 && <Cue kind="files">{t("right.queue.files", { count: c.files })}</Cue>}
@@ -269,7 +268,7 @@ function DeliveryCue({ state, dir, thread }: { state: QueueState; dir: Directory
   return <Cue kind={DELIVERY_CUE[c.delivery]}>{words}</Cue>;
 }
 
-/** A new conversation not yet accepted: on its way out, so in the Outbox. */
+/** A new conversation not yet accepted: on its way out, so in Active. */
 function UnsentRow({ draft, dir, current, listed }: {
   draft: Draft; dir: Directory; current: boolean; listed: boolean;
 }) {
@@ -312,13 +311,11 @@ function History({ state, dir, open, historyRef, moreRef }: {
     <div className="queue-history" ref={historyRef}>
       <button type="button" className="queue-history-toggle" aria-expanded={shown}
               {...bindingProps(bind("queue.history", { shown: !shown }))}>
-        {shown ? "▾" : "▸"} {t(shown ? "right.queue.hideDismissed" : "right.queue.showDismissed",
-                                 { count: state.history_count })}
+        {shown ? "▾" : "▸"} {t("right.queue.dismissedCount", { count: state.history_count })}
       </button>
       {shown && (
         <>
           {error && <p className="read-failure" role="status">{error}</p>}
-          {state.history_read && rows.length === 0 && <p className="queue-empty">{t("right.queue.nothingDismissed")}</p>}
           <ul className="queue-list done" data-list="dismissed">
             {rows.map((i) => <DismissedRow key={i.work_state.thread_id} item={i} state={state} dir={dir}
                                            current={open === i.work_state.thread_id} />)}
@@ -350,7 +347,6 @@ function DismissedRow({ item, state, dir, current }: {
               {...bindingProps(bind("queue.follow", { threadId: thread }))}>
         <span className="row-person" ref={ui.part("sender")}>{who}</span>
         <span className="row-subject" ref={ui.part("subject")}>{subject || t("right.queue.noSubject")}</span>
-        <Cue kind="dismissed">{t("right.queue.dismissed")}</Cue>
       </button>
       <button data-ui-action="domain" type="button" className="queue-restore" onClick={() => void restore(thread)}>
         {t("right.queue.restore")}

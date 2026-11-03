@@ -24,6 +24,8 @@ export const shellEn = {
   "tabs.main.network": "Instance",
   "tabs.main.teamServer": "Team server",
   "tabs.main.queue": "Message",
+  "tabs.main.package": "Work package",
+  "tabs.main.file": "File",
   "tabs.main.workflow": "Workflow",
   "tabs.main.subagent": "Subagent",
 

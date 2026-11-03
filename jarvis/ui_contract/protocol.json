@@ -75,7 +75,9 @@
     "record": "^[A-Za-z0-9._:-]{1,128}$",
     "incident": "^[A-Za-z0-9._:-]{1,128}$",
     "check": "^[A-Za-z0-9._:-]{1,128}$",
-    "settingsSection": "^[a-z]{1,32}$"
+    "settingsSection": "^[a-z]{1,32}$",
+    "package": "^[A-Za-z0-9._-]{1,128}$",
+    "member": "^[A-Za-z0-9]{1,64}$"
   },
   "argumentTypes": ["enum", "string", "integer", "boolean", "key"],
   "sideEffects": {
@@ -129,6 +131,7 @@
     "families/workflows.json",
     "families/diagnostics.json",
     "families/folders.json",
-    "families/conversation.json"
+    "families/conversation.json",
+    "families/packages.json"
   ]
 }

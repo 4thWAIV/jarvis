@@ -145,6 +145,7 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
         session_id = "s1"
         voice_name = "chitauri"
         provider = "anthropic"
+        cwd = "/Users/e/Projects/chitauri"
         project = "chitauri"
         needs_a_human_hand = False
         steerable = True

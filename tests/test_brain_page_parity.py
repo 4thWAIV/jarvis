@@ -130,12 +130,14 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status")
+             "update_status", "attachment_location")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis")
+            "update_jarvis", "reveal_attachment")
+# Acting tools that give back somebody else's words (a received file's name).
+NEW_TAINTING_ACTS = ("make_attachment_local",)
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
 NEW_OWN_READS = ("speech_models",)
 
@@ -144,7 +146,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     from jarvis import claude_provider, jarvis_mcp
     server = wired.server
     specs = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
-    for name in NEW_READS + NEW_ACTS + NEW_OWN_READS:
+    for name in NEW_READS + NEW_ACTS + NEW_OWN_READS + NEW_TAINTING_ACTS:
         assert name in specs and name in server.TOOL_HANDLERS
         assert f"mcp__jarvis__{name}" in claude_provider.ALLOWED_TOOLS
     assert set(NEW_ACTS) <= server.ACTING_TOOLS
@@ -152,6 +154,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     assert set(NEW_READS) <= set(server.TAINTING_TOOLS)
     assert set(NEW_ACTS) <= set(server.TAINT_EXEMPT_TOOLS)
     assert set(NEW_OWN_READS) <= set(server.TAINT_EXEMPT_TOOLS) - server.ACTING_TOOLS
+    assert set(NEW_TAINTING_ACTS) <= server.ACTING_TOOLS & set(server.TAINTING_TOOLS)
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -167,6 +170,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
     ("update_jarvis", {}),
+    ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
+    ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -270,7 +275,7 @@ def test_team_network_reads_the_stored_snapshot(wired):
 @pytest.fixture
 def queue(wired, tmp_path):
     page = Page(tmp_path)
-    wired.server.messaging = SimpleNamespace(local=page.local)
+    wired.server.messaging = SimpleNamespace(local=page.local, location_context=lambda: None)
     return page
 
 
@@ -456,7 +461,7 @@ def test_retry_run_resumes_a_finished_run_and_refuses_a_live_one(wired, monkeypa
     server = wired.server
     spawned = []
 
-    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None):
+    async def fake_spawn(prompt, name, path, origin, resume_from=None, folder_id=None, package_id=None):
         spawned.append((prompt, name, path, origin, resume_from, folder_id))
         return "new-run"
 
@@ -531,44 +536,63 @@ def test_set_language_is_the_language_route_without_its_spoken_confirmation(
 # ── updates ──────────────────────────────────────────────────────────────
 
 def _behind(monkeypatch, blockers=()):
+    """One newer version, PR 42, whose title is hostile; PR 39 running."""
     from jarvis import self_update as su
+    newer = su.Version("b" * 40, 42, HOSTILE, "2026-11-01T15:00:00-06:00", su.CI_PASSED)
     status = su.Status(source=su.GITHUB, branch="main", commit="a" * 40, latest="b" * 40,
-                       behind=1, commits=[su.Commit("b" * 40, HOSTILE)], ci=su.CI_PASSED,
+                       behind=1, current=su.Version("a" * 40, 39, HOSTILE),
+                       versions=[newer], target=newer.sha, chosen=newer, ci=su.CI_PASSED,
                        blockers=list(blockers))
     checks = []
-    monkeypatch.setattr(su, "check", lambda: checks.append(1) or status)
+
+    def check(root=None, version=None):
+        checks.append(version)
+        return status
+
+    monkeypatch.setattr(su, "check", check)
     return checks
 
 
 def test_update_status_is_the_updates_section_s_check_walled(wired, monkeypatch):
     checks = _behind(monkeypatch)
     got = _call(wired, "update_status")
-    assert checks == [1]
-    assert got["text"].startswith("1 new commit on origin/main; its CI passed. "
-                                  "It can be updated.\n")
+    assert checks == [None]
+    assert got["text"].startswith("1 newer version on origin/main. PR 42 can be installed.\n")
     _walled(got["text"])
     assert wired.server.brain_instance.marks == [
         "the new commits' messages, written by the team"]
 
 
 def test_update_jarvis_starts_the_update_after_the_turn(wired, monkeypatch):
-    _behind(monkeypatch)
+    checks = _behind(monkeypatch)
     started = []
 
-    async def fake_update_by_voice():
-        started.append(1)
+    async def fake_update_by_voice(version=None):
+        started.append(version)
 
     monkeypatch.setattr(wired.server, "_update_by_voice", fake_update_by_voice)
     got = _call(wired, "update_jarvis")
     assert got["ok"] and got["text"] == wired.server.UPDATE_BEGUN
-    assert started == [1]
+    assert started == [None] and checks == [None]
+
+
+def test_update_jarvis_takes_the_version_he_chose(wired, monkeypatch):
+    checks = _behind(monkeypatch)
+    started = []
+
+    async def fake_update_by_voice(version=None):
+        started.append(version)
+
+    monkeypatch.setattr(wired.server, "_update_by_voice", fake_update_by_voice)
+    got = _call(wired, "update_jarvis", version="42")
+    assert got["ok"] and checks == ["42"] and started == ["42"]
 
 
 def test_update_jarvis_says_what_stops_it_and_starts_nothing(wired, monkeypatch):
     from jarvis import self_update as su
     _behind(monkeypatch, [su.Blocker(su.MODIFIED, ["README.md"])])
     started = []
-    monkeypatch.setattr(wired.server, "_update_by_voice", lambda: started.append(1))
+    monkeypatch.setattr(wired.server, "_update_by_voice", lambda *a: started.append(1))
     got = _call(wired, "update_jarvis")
     assert "The update is refused: Tracked files have been changed here." in got["text"]
     _walled(got["text"])

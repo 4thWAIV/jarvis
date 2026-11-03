@@ -186,6 +186,14 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "165255a4d9a01a66b2e8652e54f2be8015c2374a24ed590990c71c84f9dbf986",  # UI navigation: ui_journey and interruption
     "de87215499c617643fd3c51c945c5835f4f55403d2f2497175dc478ec52b7bd4",  # UI navigation with the language setting
     "493370b70acd291ce0e4fb125775044c3a701c1bd9df1859b72d59484d1e83af",  # pass ui_map's navigationRevision back
+    "0f0743b0efd1a0a684a75cc9a5f3247c79394c51a703747c1c1744885f948339",  # packages run three ways: conversation, agent, page
+    "c38c882c0d924db7b2f71a30d7d0f5a9b054073c826817562595294dfbc2cc55",  # update_jarvis takes a version: a merged pull request
+    "1f9e95e5be820d75a28ae08e71e46db577c9935659b566e11dddf28f867a9930",  # a received file's location: where it is and handing it on
+    "3d993a2448e2a70f040a05b62d39016bdc6ad8b7600901330798f8e335a3487a",  # a package's package.json in its one top folder
+    "7d3af236e6905373e0ee578839cdb30bd19503b6e52fb1b559442cb8877e5521",  # files people send: inspect, read, cite
+    "7ab19bd7c0ea8b22e2049c6eae55c86b0ce602e210e5bb936c4ab195387a566c",  # received file locations with the one-top-folder package
+    "cf116431e57650e8a6e4f5031e98a0713bc90e959134771aa15d758c8a25c95d",  # files people send, with received file locations
+    "5ee81f0f12d649b69926f36e37cfd1d2456155dde064fe5732d5cd5eb0e0f91c",  # UI navigation merged with files people send
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -479,6 +487,13 @@ def messaging_downloads_dir() -> Path:
     """Received files, written privately and moved here only once their size
     and hash are verified (messaging_files.py). Not created here, as above."""
     return data_dir() / "messaging" / "downloads"
+
+
+def bundle_cache_dir() -> Path:
+    """What bundle readers derived from received files (text pages, page
+    renders, listings), one folder per server and owner (bundle_cache.py).
+    Never an original. Not created here: the cache creates it owner-only."""
+    return data_dir() / "bundle-cache"
 
 
 def packages_dir() -> Path:

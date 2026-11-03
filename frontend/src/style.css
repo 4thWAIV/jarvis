@@ -2317,6 +2317,87 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .subsystem-messages li.outcome-lost { background: rgba(239, 68, 68, 0.15); }
 .subsystem-messages time { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
 
+/* A page work package (PackageView.tsx): its name and purpose, then its
+   frame filling the rest of the centre, then one status line. */
+#package-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#package-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+.package-head { display: flex; align-items: center; gap: 12px; }
+.package-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.package-head-words p { margin: 0; color: rgba(255, 255, 255, 0.6); }
+.package-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 8px;
+  background: #fff;
+}
+.package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
+
+/* A file a teammate sent (BundleMemberView.tsx): its name, then its pages,
+   preview or text filling the rest of the centre. A PDF's page image sits
+   beside its text. */
+#bundle-member-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#bundle-member-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe;
+  overflow-wrap: anywhere; }
+#bundle-member-view .package-head-words p { overflow-wrap: anywhere; }
+.bundle-notes { margin: 0; font-size: 12px; color: #fcd34d; }
+.bundle-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.bundle-body.with-pages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.bundle-page { margin: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-page img, .bundle-image {
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: top left;
+  background: #fff;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 6px;
+}
+.bundle-page figcaption { align-items: center; }
+.bundle-page-number { font-size: 12px; color: rgba(255, 255, 255, 0.7); }
+.bundle-html { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-text { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding-right: 4px; }
+.bundle-body:not(.with-pages) .bundle-text { flex: 1; }
+.bundle-chunk { display: flex; flex-direction: column; gap: 4px; }
+.bundle-where { margin: 0; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.5); }
+.bundle-table-wrap { overflow-x: auto; }
+.bundle-table { border-collapse: collapse; font-size: 12px; }
+.bundle-table td {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+  vertical-align: top;
+}
+
 /* ---------------------------------------------------------------------------
    Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the
    Diagnostics view (VoiceDiagnosticsView.tsx) and their pictures
@@ -2971,7 +3052,6 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   color: rgba(255, 255, 255, 0.55);
 }
 .queue-count { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
-.queue-empty { margin: 0; color: rgba(255, 255, 255, 0.35); }
 .queue-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .queue-list.done { gap: 3px; }
 .queue-item { position: relative; min-width: 0; }
@@ -3031,7 +3111,6 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .row-who { grid-area: who; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-person { font-size: 12px; font-weight: 600; }
-.row-via { color: rgba(255, 255, 255, 0.5); }
 .row-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.45); white-space: nowrap; }
 .row-subject {
   grid-area: subject;
@@ -3114,12 +3193,12 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .item-subject { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; overflow-wrap: anywhere; }
 .item-who { margin: 0; color: rgba(255, 255, 255, 0.75); overflow-wrap: anywhere; }
 .item-person { font-weight: 600; color: #fff; }
-.item-handle, .item-via { color: rgba(255, 255, 255, 0.5); }
+.item-via { color: rgba(255, 255, 255, 0.5); }
 .item-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item-cues .queue-cue { font-size: 11px; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .item-actions button, .item-turn, .item-back, .composer-actions button, .composer-conflict button,
-.file-action, .message-reply {
+.file-action, .message-reply, .composer-attach {
   padding: 4px 10px;
   font: inherit;
   font-size: 12px;
@@ -3129,8 +3208,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   border-radius: 6px;
   cursor: pointer;
 }
-.item-actions button:hover, .item-turn:hover, .composer-actions button:hover { border-color: rgba(14, 165, 233, 0.7); }
-.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.item-actions button:hover, .item-turn:hover, .composer-actions button:hover, .composer-attach:hover { border-color: rgba(14, 165, 233, 0.7); }
+.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled,
+.composer-attach.disabled { opacity: 0.4; cursor: not-allowed; }
 .item-actions button[aria-pressed="true"] { border-color: rgba(52, 211, 153, 0.7); }
 .item-back { align-self: flex-start; }
 .item-turn { font-size: 11px; padding: 2px 8px; }
@@ -3165,7 +3245,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-message.on-its-way { border-style: dashed; }
 .message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; }
 .message-person { font-weight: 600; color: #fff; }
-.message-handle, .message-via, .message-to { color: rgba(255, 255, 255, 0.5); }
+.message-to { color: rgba(255, 255, 255, 0.5); }
 .message-time { margin-left: auto; color: rgba(255, 255, 255, 0.45); font-size: 11px; }
 .message-subject { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 /* Text as text: line breaks kept, long words broken, nothing interpreted. */
@@ -3205,6 +3285,50 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
 .queue-file.state-verified .file-state { color: #86efac; }
 .file-action { font-size: 11px; padding: 2px 8px; }
+/* A received file's place on this Mac (QueueFileLocation.tsx): the path,
+   then icon-sized Copy and Reveal. */
+.file-location { display: flex; align-items: center; gap: 4px; flex-basis: 100%; min-width: 0; }
+.file-path {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 255, 255, 0.75);
+  user-select: all;
+}
+.file-icon-action {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; color: rgba(255, 255, 255, 0.75);
+  background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+}
+.file-icon-action:hover, .file-icon-action:focus-visible { color: #fff; border-color: rgba(14, 165, 233, 0.7); }
+.file-icon-action:disabled { opacity: 0.4; cursor: wait; }
+.queue-file .file-state.attention { color: #fca5a5; }
+
+/* What a received file holds, on its card (BundleInventory.tsx): Open (or
+   Contents) on the card's line, an archive's folder on its own below. */
+.bundle-inventory, .bundle-line { display: contents; }
+.bundle-folder { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 0 2px 8px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.bundle-path { font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.bundle-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.bundle-member { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.bundle-name { overflow-wrap: anywhere; min-width: 0; }
+.bundle-member.support-blocked .bundle-support, .bundle-member.support-unsupported .bundle-support,
+.bundle-problem { color: #fca5a5; }
+.bundle-member.support-partial .bundle-support { color: #fcd34d; }
+.bundle-badge {
+  padding: 0 6px;
+  font-size: 11px;
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.6);
+  border-radius: 999px;
+}
+.message-task { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.message-task-primary { color: rgba(255, 255, 255, 0.55); }
+.bundle-progress { color: #7dd3fc; }
+.bundle-progress.progress-evidence_unavailable { color: #fcd34d; }
+.composer-readiness { margin: 0; font-size: 12px; color: #fcd34d; }
+.composer-task { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-basis: 100%; }
+.composer-task input { flex: 1 1 200px; min-width: 0; }
+.composer-readiness.readiness-blocked { color: #fca5a5; }
 
 /* The response being written, and its inline review (MessageComposer.tsx,
    MessageReview.tsx). */
@@ -3227,7 +3351,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .review-capture .capture-buttons { position: static; justify-content: flex-end; }
 .composer-agent { margin: 0; font-size: 12px; color: #fcd34d; }
 .composer-to { display: flex; flex-direction: column; gap: 2px; }
-.composer-to select, .composer-field input, .composer-text {
+.composer-to select, .composer-field input, .composer-text, .composer-task select, .composer-task input {
   font: inherit;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.92);
@@ -3237,12 +3361,14 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   padding: 5px 8px;
 }
 .composer-to select { max-width: 100%; }
-.composer-inbox, .composer-limits, .composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
+.composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
 .composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
 .composer-text { width: 100%; resize: vertical; min-height: 96px; line-height: 1.45; }
-.composer-text:disabled, .composer-field input:disabled { opacity: 0.6; }
-.composer-attach { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
-.composer-attach input { margin-left: 8px; font-size: 11px; }
+.composer-text:disabled, .composer-field input:disabled, .composer-task select:disabled,
+.composer-task input:disabled { opacity: 0.6; }
+/* Attach files is a button; its file input is visually hidden inside it. */
+.composer-attach { align-self: flex-start; position: relative; }
+.composer-attach:focus-within { outline: 2px solid rgba(14, 165, 233, 0.95); outline-offset: 2px; }
 .composer-adding { margin: 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
 .composer-error { margin: 0; font-size: 12px; color: #fca5a5; }
 .composer-conflict { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -3513,19 +3639,75 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   .folder-row, .folders-panel-row, .candidate-row, .folder-availability-dot { forced-color-adjust: auto; border: 1px solid CanvasText; }
 }
 
-/* Settings, Updates: the new commits on main (Settings.tsx). */
-.update-commits {
-  margin: 6px 0 0 0;
-  padding-left: 16px;
-  max-height: 180px;
+/* Settings, Updates: the version running, the newer versions on main to
+   choose from, and the confirmation before installing (Settings.tsx). */
+.update-current { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-current b { font-weight: 600; }
+.update-current code, .update-version code {
+  color: rgba(0, 212, 255, 0.7);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.update-versions {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  max-height: 260px;
   overflow-y: auto;
+}
+.update-version { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.update-version:last-child { border-bottom: 0; }
+.update-version label {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.update-version:hover:not(.off) { background: rgba(0, 212, 255, 0.05); }
+.update-version.sel { background: rgba(0, 212, 255, 0.09); }
+.update-version.off { opacity: 0.5; }
+.update-version.off label { cursor: not-allowed; }
+.update-version input { margin: 2px 0 0 0; accent-color: #00d4ff; }
+.update-version-body { display: flex; flex-direction: column; min-width: 0; }
+.update-version-title { font-size: 13px; line-height: 1.35; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-version-meta { font-size: 11px; margin-top: 2px; color: rgba(255, 255, 255, 0.45); }
+.update-ci { font-size: 11px; white-space: nowrap; margin-top: 1px; }
+.update-ci.pass { color: rgba(74, 222, 128, 0.85); }
+.update-ci.fail { color: rgba(248, 113, 113, 0.85); }
+.update-ci.wait { color: rgba(251, 191, 36, 0.85); }
+.update-tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: rgba(0, 212, 255, 0.8);
+  vertical-align: 1px;
+}
+.update-confirm {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(0, 212, 255, 0.05);
   font-size: 12px;
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.8);
+}
+.update-confirm ul { margin: 6px 0 0 16px; padding: 0; color: rgba(255, 255, 255, 0.6); font-size: 11px; }
+.update-refused {
+  margin: 10px 0 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(248, 113, 113, 0.85);
   overflow-wrap: anywhere;
 }
-.update-commits code { color: rgba(0, 212, 255, 0.7); }
-
 /* The pipeline's corridor in the centre: every centre view hangs from the
    main rail in the gutter on its right, so its socket enters at its right
    edge and its parts' leaves run down the strip inside it; that strip is
@@ -3534,7 +3716,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
    centred between the side columns. Last, so it wins over each view's own
    padding on those sides. */
 #conversation, #workflow-detail, #agent-thread, #subsystem-detail, #voice-diagnostics,
-#network-detail, #queue-item-view, #folders-view {
+#network-detail, #queue-item-view, #folders-view, #package-view, #bundle-member-view {
   padding-left: var(--ui-corridor);
   padding-right: var(--ui-corridor);
 }
