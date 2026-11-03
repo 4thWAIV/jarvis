@@ -62,8 +62,8 @@ from teamserver import clock as clock_mod
 from teamserver import sessions
 from teamserver import team as team_mod
 from teamserver.errors import Problem
-from teamserver.messaging_models import (BUNDLES_CAPABILITY, CAPABILITY,
-                                         MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
+from teamserver.messaging_models import (BUNDLE_FIELDS, BUNDLES_CAPABILITY,
+                                         CAPABILITY, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
                                          PACKAGE_MAX_BYTES,
                                          SYNC_CONTINUATION_TTL_SEC, SYNC_PAGE_DEFAULT,
                                          SYNC_PAGE_MAX, ERRORS, AcceptedMessage,
@@ -155,20 +155,8 @@ def capabilities() -> list[str]:
 
 # -- what an older JARVIS can read ------------------------------------------------
 
-_MESSAGE_BUNDLE_FIELDS = ("task", "supersedes")
-_RECEIPT_BUNDLE_FIELDS = ("openability",)
-
-
-def _without(value: dict, fields: tuple[str, ...]) -> dict:
-    return {k: v for k, v in value.items() if k not in fields}
-
-
-def _legacy_message(value: dict) -> dict:
-    return _without(value, _MESSAGE_BUNDLE_FIELDS)
-
-
-def _legacy_receipts(value: dict) -> dict:
-    return _without(value, _RECEIPT_BUNDLE_FIELDS)
+def _legacy(value: dict) -> dict:
+    return {k: v for k, v in value.items() if k not in BUNDLE_FIELDS}
 
 
 def legacy_view(model) -> dict:
@@ -176,18 +164,18 @@ def legacy_view(model) -> dict:
     messaging.v1 fields only. Its strict models refuse anything more."""
     value = model.model_dump(mode="json")
     if isinstance(model, AcceptedMessage):
-        return _legacy_message(value)
+        return _legacy(value)
     if isinstance(model, ReceiptFacts):
-        return _legacy_receipts(value)
+        return _legacy(value)
     if isinstance(model, SyncEntry) or isinstance(model, SendResult):
-        return {**value, "message": _legacy_message(value["message"]),
-                "receipts": _legacy_receipts(value["receipts"])}
+        return {**value, "message": _legacy(value["message"]),
+                "receipts": _legacy(value["receipts"])}
     if isinstance(model, SyncPage):
-        return {**value, "entries": [{**e, "message": _legacy_message(e["message"]),
-                                      "receipts": _legacy_receipts(e["receipts"])}
+        return {**value, "entries": [{**e, "message": _legacy(e["message"]),
+                                      "receipts": _legacy(e["receipts"])}
                                      for e in value["entries"]]}
     if isinstance(model, ReceiptBatchResult):
-        return {**value, "facts": [_legacy_receipts(f) for f in value["facts"]]}
+        return {**value, "facts": [_legacy(f) for f in value["facts"]]}
     return value
 
 

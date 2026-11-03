@@ -7,7 +7,9 @@ against the real team server and MongoDB."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -467,3 +469,89 @@ def test_the_loop_backs_off_with_jitter_and_stops_cleanly(tim):
         await tim.delivery.stop()
     asyncio.run(run_and_stop())
     assert tim.delivery._task is None
+
+
+# -- what a messaging.v1-only team server takes -------------------------------------
+
+# The request shapes of a team server without messaging.bundles.v1 (the
+# wire contract at 7235d9d, before the bundle fields), whose models refuse
+# any field they do not name.
+V1_SEND_FIELDS = {"schema_version", "message_id", "thread_id", "in_reply_to_message_id",
+                  "related_message_ids", "recipient_github_id", "content_revision",
+                  "subject", "text", "attachments", "source_node_id", "idempotency_key",
+                  "content_digest"}
+V1_RECEIPT_ITEM_FIELDS = {"message_id", "kind"}
+CONTRACT = json.loads((Path(__file__).parent / "fixtures" / "messaging_contract.json")
+                      .read_text())["valid"]
+REFUSED = (422, {"error": {"code": "invalid_request"}})
+
+
+def _sent_body(call) -> dict:
+    conn = Answers(REFUSED)
+    with pytest.raises(ports.TransportError):
+        asyncio.run(call(transport(conn)))
+    return conn.calls[0][2]
+
+
+def _send_body(request: wire.SendRequest) -> dict:
+    return _sent_body(lambda t: t.send(request))
+
+
+def _receipts_body(batch: wire.ReceiptBatch) -> dict:
+    return _sent_body(lambda t: t.receipts(batch))
+
+
+@pytest.mark.parametrize("case", ["new_thread", "reply_with_related", "self_files_only",
+                                  "two_files_in_order"])
+def test_a_send_without_bundle_fields_is_a_messaging_v1_body(case):
+    request = wire.SendRequest.model_validate(CONTRACT["SendRequest"][case])
+    assert request.task is None and request.supersedes == []
+    body = _send_body(request)
+    assert set(body) == V1_SEND_FIELDS
+    assert wire.SendRequest.model_validate(body) == request
+
+
+def test_a_send_with_a_task_or_supersedes_carries_them():
+    review = wire.SendRequest.model_validate(CONTRACT["SendRequest"]["review_with_task"])
+    body = _send_body(review)
+    assert set(body) == V1_SEND_FIELDS | {"task"}
+    assert body["task"] == review.task.model_dump(mode="json")
+    repair = wire.SendRequest.model_validate(CONTRACT["SendRequest"]["repair_supersedes"])
+    body = _send_body(repair)
+    assert "supersedes" in body
+    assert body["supersedes"] == [s.model_dump(mode="json") for s in repair.supersedes]
+    assert wire.SendRequest.model_validate(body) == repair
+
+
+def test_a_receipt_without_a_report_is_a_messaging_v1_item():
+    batch = wire.ReceiptBatch.model_validate(CONTRACT["ReceiptBatch"]["received_and_read"])
+    body = _receipts_body(batch)
+    assert body["receipts"] and all(set(i) == V1_RECEIPT_ITEM_FIELDS for i in body["receipts"])
+    assert wire.ReceiptBatch.model_validate(body) == batch
+
+
+def test_an_openability_receipt_carries_its_report():
+    batch = wire.ReceiptBatch.model_validate(CONTRACT["ReceiptBatch"]["openability"])
+    body = _receipts_body(batch)
+    assert all(i["openability"] == r.openability.model_dump(mode="json")
+               for i, r in zip(body["receipts"], batch.receipts))
+    assert wire.ReceiptBatch.model_validate(body) == batch
+
+
+def test_an_envelope_stored_with_null_bundle_fields_sends_without_them(tmp_path):
+    """An envelope approved since the bundle fields existed was stored with
+    `task: null, supersedes: []`; its send, and the owner's Retry of it,
+    go to a messaging.v1 server without them, digest unchanged."""
+    request = wire.SendRequest.model_validate(CONTRACT["SendRequest"]["new_thread"])
+    store = SqliteMessagingStore(tmp_path / "node.db")
+    store.save_approved(ports.ApprovedSend(server_id=SERVER, owner_github_id=TIM,
+                                           request=request, via="gui",
+                                           approved_at=fakes.T0))
+    with store._tx() as conn:
+        stored = json.loads(conn.execute("SELECT body FROM human_approved")
+                            .fetchone()["body"])["request"]
+    assert stored["task"] is None and stored["supersedes"] == []
+    approved = store.approved(SERVER, TIM, request.message_id, request.content_revision)
+    body = _send_body(approved.request)
+    assert set(body) == V1_SEND_FIELDS
+    assert body["content_digest"] == request.content_digest
