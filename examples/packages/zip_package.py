@@ -42,7 +42,7 @@ def main(argv: list[str]) -> int:
     if runs not in MODES:
         print(f"{folder}'s runs is not one of {', '.join(MODES)}.")
         return 1
-    for field in MODES.values():
+    for field in (*MODES.values(), "story"):
         named = manifest.get(field)
         if (named or field == MODES[runs]) and not (folder / str(named)).is_file():
             print(f"{folder} has no {field} file {named}.")

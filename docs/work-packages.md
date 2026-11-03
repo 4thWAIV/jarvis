@@ -41,6 +41,7 @@ A zip with `package.json` at its root, or inside one folder that holds everythin
 | `skill` | Path inside the zip to a SKILL.md-style Markdown file: the instructions JARVIS follows with the person, step by step. Required when `runs` is `conversation`. |
 | `brief` | Path inside the zip to a Markdown file: the task the agent carries out. Required when `runs` is `agent`. |
 | `entry` | Path inside the zip to the HTML page that opens. Required when `runs` is `page`. |
+| `story` | Path inside the zip to a story file: what JARVIS says over the page, and what it points at as it says it (see "Telling a page's story"). Only for `runs` `page`; optional. |
 | `returns` | File globs, relative to the package's folder, for the files that go back to the sender. `**` matches any depth. |
 
 `name`, `version`, `purpose` and `returns` are always required, and so is
@@ -116,6 +117,72 @@ Every message both ways carries `jarvis: "package"`:
   it too; with JARVIS's microphone off there are none. `microphone` is
   JARVIS's voice input state (`listening`, `muted`, `off`, ...).
 
+### Telling a page's story (page, optional)
+
+A page package can carry a story: the words JARVIS says over the page, slide
+by slide, and the parts of the page it points at and rings while each part
+is said. Name the file in package.json's `story`. JARVIS checks it when the
+package is unpacked, like the rest of package.json, and refuses the package
+with the reason if it is not valid.
+
+```json
+{
+  "title": "A pot of tea",
+  "language": "en",
+  "slides": [
+    {
+      "title": "Four steps",
+      "target": "#s2",
+      "beats": [
+        {"say": "Boil the water.", "targets": ["#s2 [data-step='1']"]},
+        {"say": "Green tea wants water well off the boil.",
+         "actions": [{"click": ".tea[data-detail='green']"}],
+         "targets": ["#detail-green .temp"]}
+      ]
+    }
+  ]
+}
+```
+
+| field | what it is |
+|---|---|
+| `title` | The story's name. |
+| `language` | `en` (the default) or `es`. JARVIS tells it only while it is speaking that language. |
+| `slides` | The slides, in order, at most 60. Each has a `title` (shown in the slide list, and to the brain so he can ask for a slide by name), an optional `target` (the slide's own element: every beat of the slide first scrolls it into view) and its `beats`, in order, at most 40. |
+| `say` | A beat's words, at most 800 characters. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
+| `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. |
+| `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
+
+The page loads JARVIS's helper, which draws the pointer and the rings and
+runs the actions inside the page's own frame:
+
+```html
+<script src="/api/packages/story.js"></script>
+```
+
+JARVIS keeps one copy of it (`jarvis/package_story.js`) and serves it at
+that address; a package never carries its own copy. A page opened outside
+JARVIS simply has no helper.
+
+The story is spoken through JARVIS's usual voice, one beat after another.
+Each beat's words carry the beat with them to the page, and the page rings
+the beat's targets the moment those words start playing, then clears them
+as the last of them ends, so the pointing follows the voice rather than a
+timer. The person speaking, the Stop button beside it, Escape, or JARVIS's
+own Stop end both the voice and the rings.
+
+Besides `save` and `listen`, the bridge carries the story:
+
+| from JARVIS | when |
+|---|---|
+| `{jarvis: "package", type: "story.cue", beat, targets, actions}` | a beat's words start playing (`beat` is `"<slide>.<beat>"`, both from 1) |
+| `{jarvis: "package", type: "story.clear"}` | its words have ended, or the voice stopped |
+
+| from the page | what JARVIS does |
+|---|---|
+| `{jarvis: "package", type: "story.ready"}` | posts the beat playing now again (the helper says this once loaded) |
+| `{jarvis: "package", type: "story.missing", beat, targets}` | shows, under the frame, the selectors nothing visible matched |
+
 ## On the receiver's JARVIS
 
 The brain's tools:
@@ -124,11 +191,22 @@ The brain's tools:
   is not here yet, unpacks it into `<data>/packages/<name>-<version>-<id>/`,
   takes macOS's quarantine mark off the folder so its scripts run, and
   returns `package.json` and the skill. Acting: only on the person's word.
+  The page's own way is Open package on the zip in the Queue: the same
+  `_open_received_package`, through `POST /api/packages/received`; a page
+  package then opens in the centre at once.
   Opening the same bytes again, from that attachment or a resent one, gives
   the package already unpacked, results and all: which archive each package
   came from (its SHA-256 and attachment ids) is kept in
   `<data>/packages/.records/`. A package unpacked before that record existed
   is recognised by its folder name and adopted.
+- `open_local_package` (path): opens a package zip that is a file on this
+  Mac, by its full path. The path is read by the folder catalog's
+  ordinary-file rule (no link followed; keys, credentials and JARVIS's own
+  data refused; at most a received file's size), the zip is unpacked exactly
+  as a received one, and a page package is shown in the centre at once.
+  The page's own way is Open package on a .zip's preview in the Folders
+  view; both go through `_open_local_package`, and `POST
+  /api/packages/local`. Acting.
 - `list_packages`: the packages unpacked here.
 - `run_package_command` (package, command, `terminal`): runs one step in
   the package's folder and returns its exit code and the last 4,000
@@ -143,8 +221,17 @@ The brain's tools:
   can be run again with `retry_run`, still as that package's. Acting.
 - `open_package_page` (package): opens a page package in the centre of every
   JARVIS page that is open. The page's own way is Open page on the package's
-  file in the Queue, once JARVIS has opened it; both go through the same
+  file in the Queue, once it is unpacked; both go through the same
   `_open_package_page`, and `POST /api/packages/<id>/page`. Acting.
+  JARVIS keeps the page package shown and shows it again on a page that
+  connects later, a reload included, until its × is pressed.
+- `tell_package_story` (package, `action` tell or stop, `slide`): opens a
+  page package's page and tells its story in JARVIS's voice from that slide,
+  or stops it; telling another slide jumps there. The page's own way is Tell
+  the story, the slide list and Stop above the frame; both go through the
+  same `_package_story` (`jarvis/story_teller.py`), and `POST
+  /api/packages/<id>/story`. The slides' titles come back to the brain in an
+  untrusted block; the story's words never reach it. Acting.
 - `package_results` (package): the files that match `returns`, as full paths.
 - `draft_message` `files`, or `attach_message_files` on a saved draft: full
   paths to attach. Both go through `draft_files.py`, all or none at the
@@ -168,8 +255,8 @@ python3 examples/packages/zip_package.py examples/packages/spanish-speech-test
 ```
 
 It writes `spanish-speech-test-1.0.0.zip`, leaving out `results/`, `model/`
-and `.DS_Store`, after checking that the file the package's `runs` needs is
-there. Attach it to a message: pick it on the Queue page, or tell
+and `.DS_Store`, after checking that the file the package's `runs` needs,
+and its story if it names one, is there. Attach it to a message: pick it on the Queue page, or tell
 JARVIS to send it to the person, giving its full path.
 
 ## The example: spanish-speech-test
@@ -210,3 +297,11 @@ takes three seconds of JARVIS's microphone through `listen`, shows the peak
 and average level in dBFS, and Save results saves `results/clip.wav` (16 kHz
 mono WAV), `results/level.json` and, if the person wrote one, `results/note.txt`
 through `save`.
+
+## The example story package: story-deck
+
+`examples/packages/story-deck/` (`"runs": "page"`, `"story": "story.json"`)
+is a three-slide deck on making a pot of tea. Its story rings each of the
+three ingredients, each of the four numbered steps, and on the last slide
+opens the green tea's detail view, points at its temperature and time, and
+closes it again. It sends nothing back (`returns` is empty).

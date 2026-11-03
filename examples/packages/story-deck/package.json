@@ -1,0 +1,9 @@
+{
+  "name": "story-deck",
+  "version": "1.0.0",
+  "purpose": "A three-slide deck on making a pot of tea, with a story JARVIS tells over it, pointing at each part as it goes.",
+  "runs": "page",
+  "entry": "index.html",
+  "story": "story.json",
+  "returns": []
+}

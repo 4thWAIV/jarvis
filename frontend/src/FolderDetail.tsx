@@ -5,8 +5,9 @@
  * and last seen, how JARVIS reads it, and Refresh, Reconnect and Remove
  * from catalog (which never deletes a file, and says so). Below, its
  * contents: breadcrumbs, one bounded page of a directory at a time with
- * Load more, and a file's preview, a bounded window at a time; then the
- * sessions whose records named it, and its location's history.
+ * Load more, and a file's preview, a bounded window at a time (a .zip's
+ * with Open package, which opens a work package from here: packages.ts);
+ * then the sessions whose records named it, and its location's history.
  *
  * Every state is said in words: loading, empty, partial, missing, access
  * denied, removed, unsupported preview. File content is shown as text,
@@ -21,6 +22,7 @@ import {
   unregisterFolder, type Entries, type Entry, type Folder, type FolderDetail as Detail,
   type Preview, type Role,
 } from "./folders";
+import { openLocalPackage } from "./packages";
 import { shortAgo } from "./timeFormat";
 
 function when(at: number | null): string {
@@ -183,6 +185,9 @@ function FilePreview({ folder, path }: { folder: Folder; path: string }) {
         </p>
       )}
       {first?.kind === "binary" && <p className="folder-note">Binary and media files are shown as their details only.</p>}
+      {first?.kind === "binary" && path.toLowerCase().endsWith(".zip") && (
+        <OpenLocalPackage path={`${folder.location.canonical_path}/${path}`} />
+      )}
       {first && first.kind !== "binary" && (
         <pre className="folder-text" tabIndex={0}>
           {windows.flatMap((w) => w.lines).join("\n") || "(nothing to show)"}
@@ -200,6 +205,24 @@ function FilePreview({ folder, path }: { folder: Folder; path: string }) {
       )}
       {last && !last.next_cursor && windows.length > 0 && first?.kind !== "binary" && <p className="folder-note">End of file.</p>}
     </section>
+  );
+}
+
+/** Open package, for a .zip in the folder: a work package opened from
+ *  this Mac (a page one shows in the centre at once), or why not. */
+function OpenLocalPackage({ path }: { path: string }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const open = async () => {
+    setBusy(true);
+    setProblem(await openLocalPackage(path));
+    setBusy(false);
+  };
+  return (
+    <p className="folder-note">
+      <button type="button" className="folder-button" disabled={busy} onClick={() => void open()}>Open package</button>
+      {problem && <span role="status"> {problem}</span>}
+    </p>
   );
 }
 

@@ -309,7 +309,20 @@ the Queue's Open page matches on), and a folder from before the record is
 adopted by its name.
 There is no other sandbox: the team is trusted. The brain's `open_package`
 and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
-is the gate. `run_package_command` runs one shell step in the folder with a
+is the gate. The page's Open package (on a received zip in the Queue, `POST
+/api/packages/received`) is his own click, and unpacks through the same
+`_open_received_package` as `open_package`; a page package then opens at
+once, and its file has Open page from then on. A package zip that is a
+file on this Mac opens the same way through `_open_local_package`: the
+acting `open_local_package` (a path) and the Folders view's Open package on
+a .zip's preview (`POST /api/packages/local`). The path is read by
+`draft_files.Source` (the folder catalog's ordinary-file rule, no link
+followed, a received file's size limit), copied privately and unpacked by
+`work_packages.unpack_held` exactly as a received zip (recorded under
+`local<sha>` in place of an attachment id), and a page package is shown at
+once. The page package shown is held by the server (`_package_shown`) and
+sent to every page that connects, so a reload keeps it; its × (`DELETE
+/api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
 `list_packages` and `package_results` read what is there. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's
@@ -338,9 +351,26 @@ microphone frames (`voiceInput.listenToMicrophone`), because Chrome refuses
 The acting `open_package_page` and the page's Open page (on the package's
 file in the Queue, `POST /api/packages/<id>/page`) share
 `_open_package_page`, which sends every page a `package_page` frame on the
-voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. The
+voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. A
+page package may name a `story` (`package_story.py`, checked on unpack):
+slides of beats, each the words JARVIS says and the selectors it rings.
+The page's Tell the story and Stop (`POST /api/packages/<id>/story`) and
+the acting `tell_package_story` share `_package_story` and
+`story_teller.StoryTeller`, which opens the page and speaks the slides
+through `SpeechScheduler.narrate`, two slides queued at a time, as one
+NORMAL reply each, so barge-in, hush and turn-taking stop it as any reply.
+Each chunk carries its beat as `cue` on its `audio` frame (the way
+`capture` rides); the page sets `packages.storyCue` when that chunk STARTS
+playing and clears it when the beat's last chunk is played or the voice
+stops, and the bridge posts `story.cue` / `story.clear` to the frame, whose
+helper (`jarvis/package_story.js`, one copy, served at
+`/api/packages/story.js`) rings the targets and runs the beat's `show` and
+`click` actions. `package_story` frames on the voice socket say a story's
+state. The beats are spoken as the sender's narration and never reach the
+brain; the tool gives back only the slides' titles, walled. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
-`text-stats-agent/` (agent) and `mic-check-page/` (page).
+`text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
+(a page with a story).
 
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
@@ -995,7 +1025,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
-  a page package's files, what its frame saves, and opening it
+  a page package's files, what its frame saves, opening it, telling its
+  story, and the story helper
+- `package_story.py` / `story_teller.py` / `package_story.js` — A page
+  package's story: its format and cues, the one service that tells and
+  stops it, and the helper that rings its targets inside the frame
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open
@@ -1125,7 +1159,7 @@ marker there.
 
 The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
-`test_voice_page_rays.py`, `test_voice_page_folders.py`) are marked `page` and deselected too: they build
+`test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

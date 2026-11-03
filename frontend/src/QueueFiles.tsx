@@ -5,14 +5,15 @@
  * and its state only when that is not the ordinary one. Sending: uploading.
  * Receiving: Download while it is on the team server, downloading, then its
  * exact path with Copy and Reveal in Finder (QueueFileLocation.tsx; and
- * Open page once JARVIS has opened it as a page work package, packages.ts).
+ * Open package on a zip not unpacked yet, and Open page once it is unpacked
+ * as a page work package, packages.ts).
  * Either side: failed, with the reason and Retry, or missing. A sent file:
  * the recipient's JARVIS's report once it opened it.
  */
 
 import { useState, useSyncExternalStore } from "react";
 import { BundleInventory } from "./BundleInventory";
-import { openPackagePage, packageList, pagePackageFrom } from "./packages";
+import { openPackagePage, openReceivedPackage, packageFrom, packageList } from "./packages";
 import { downloadFile } from "./queue";
 import { FileLocation } from "./QueueFileLocation";
 import { shownFor } from "./messagingApi";
@@ -86,7 +87,7 @@ export function FileCard({ fileRef, file, messageId, incoming, report, onRemove,
       {incoming && messageId && state === "verified" && (
         <FileLocation messageId={messageId} attachmentId={fileRef.attachment_id} />
       )}
-      {incoming && state === "verified" && <OpenPage attachmentId={fileRef.attachment_id} />}
+      {incoming && messageId && state === "verified" && <OpenPackage messageId={messageId} fileRef={fileRef} />}
       {incoming && messageId && state === "verified" && <BundleInventory file={{ messageId, attachmentId: fileRef.attachment_id }} filename={fileRef.filename} />}
       {onRemove && (
         <button type="button" className="file-action" onClick={onRemove}
@@ -96,19 +97,36 @@ export function FileCard({ fileRef, file, messageId, incoming, report, onRemove,
   );
 }
 
-/** Open page, for a file JARVIS has unpacked as a page work package. */
-function OpenPage({ attachmentId }: { attachmentId: string }) {
+/** A zip, by its declared type or its name: what a work package comes as. */
+function isZip(ref: AttachmentRef): boolean {
+  return ref.media_type === "application/zip" || ref.filename.toLowerCase().endsWith(".zip");
+}
+
+/** Open page, for a file JARVIS has unpacked as a page work package; Open
+ *  package, for a zip not unpacked yet (a page package then opens at once). */
+function OpenPackage({ messageId, fileRef }: { messageId: string; fileRef: AttachmentRef }) {
   const list = packageList();
   const packages = useSyncExternalStore(list.subscribe, list.get).value;
   const [problem, setProblem] = useState<string | null>(null);
-  const found = pagePackageFrom(packages, attachmentId);
-  if (!found) return null;
+  const [busy, setBusy] = useState(false);
+  const unpacked = packageFrom(packages, fileRef.attachment_id);
+  const act = async (open: () => Promise<string | null>) => {
+    setBusy(true);
+    setProblem(await open());
+    setBusy(false);
+  };
+  const button = unpacked?.runs === "page"
+    ? { label: "Open page", open: () => openPackagePage(unpacked.id) }
+    : packages && !unpacked && isZip(fileRef)
+      ? { label: "Open package", open: () => openReceivedPackage(messageId, fileRef.attachment_id) }
+      : null;
   return (
     <>
-      <button type="button" className="file-action"
-              onClick={async () => setProblem(await openPackagePage(found.id))}>
-        Open page
-      </button>
+      {button && (
+        <button type="button" className="file-action" disabled={busy} onClick={() => void act(button.open)}>
+          {button.label}
+        </button>
+      )}
       {problem && <span className="file-state">{problem}</span>}
     </>
   );

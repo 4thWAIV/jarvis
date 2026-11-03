@@ -14,6 +14,9 @@ a zip entry may not land outside its package's folder.
                  through bundle_archive's checks and staging, once per
                  archive's bytes, the quarantine mark taken off so its
                  scripts can run
+    unpack_held  a zip that is a file on this Mac (draft_files.Source: the
+                 folder catalog's ordinary-file rule, no link followed, a
+                 received file's size limit), copied privately, then unpack
     find, every  the packages unpacked here, by folder name (or by the
                  package's own name, when only one has it)
     run          one shell command in a package's folder, with a timeout,
@@ -30,7 +33,9 @@ A package runs in one of three ways, its `runs` (MODES): "conversation",
 the default, where the brain follows its skill with the person step by
 step; "agent", where one Claude Code run (the run pipeline) carries out its
 brief in the package's folder; and "page", where its entry HTML opens in
-the page's centre area in a frame without an origin.
+the page's centre area in a frame without an origin. A page package may
+also name a story (package_story.py): what JARVIS says over the page, and
+what it points at while it says it.
 """
 from __future__ import annotations
 
@@ -48,9 +53,9 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Optional
+from typing import AsyncIterator, Callable, Optional
 
-from jarvis import bundle_archive, data_paths, folder_readers
+from jarvis import bundle_archive, data_paths, folder_readers, package_story
 from jarvis.folder_contract import FolderError
 from jarvis.messaging_files import QUARANTINE_ATTRIBUTE
 
@@ -70,6 +75,8 @@ MODES = {CONVERSATION: "skill", AGENT: "brief", PAGE: "entry"}
 # Fields only a JARVIS work package's package.json has; one with none of
 # them is some other package.json (a source project's npm manifest).
 _JARVIS_FIELDS = ("purpose", "returns", "runs", *MODES.values())
+# The optional story a page package tells (package_story.py).
+STORY = "story"
 # What a page package's frame may save: a name of at most RESULT_MAX_PARTS
 # plain parts under results/, and at most RESULT_MAX_BYTES each.
 RESULTS = "results"
@@ -87,7 +94,8 @@ class PackageError(ValueError):
 @dataclass(frozen=True)
 class Manifest:
     """A package's package.json. `runs` is one of MODES; the file it needs
-    (`skill`, `brief` or `entry`) is required, the other two optional."""
+    (`skill`, `brief` or `entry`) is required, the other two optional. A
+    page package may name a `story` file too."""
     name: str
     version: str
     purpose: str
@@ -96,6 +104,7 @@ class Manifest:
     skill: Optional[str] = None
     brief: Optional[str] = None
     entry: Optional[str] = None
+    story: Optional[str] = None
 
     @classmethod
     def parse(cls, raw: bytes) -> "Manifest":
@@ -123,11 +132,20 @@ class Manifest:
         returns = body.get("returns")
         if not isinstance(returns, list) or not all(isinstance(r, str) and r for r in returns):
             raise PackageError("Its package.json's returns is not a list of file patterns.")
+        story = body.get(STORY)
+        if story is not None:
+            if not isinstance(story, str) or not story.strip():
+                raise PackageError("Its package.json's story is not a file's path.")
+            if runs != PAGE:
+                raise PackageError("Its package.json names a story, but only a page package "
+                                   "tells one.")
+            fields[STORY] = story.strip()
         return cls(returns=tuple(returns), runs=runs, **fields)
 
     def named_files(self) -> dict[str, str]:
         """The files package.json names, by field, which the zip must hold."""
-        return {key: getattr(self, key) for key in MODES.values() if getattr(self, key)}
+        return {key: getattr(self, key) for key in (*MODES.values(), STORY)
+                if getattr(self, key)}
 
     def as_json(self) -> str:
         return json.dumps({"name": self.name, "version": self.version, "purpose": self.purpose,
@@ -178,6 +196,17 @@ class Package:
 
     def brief_text(self) -> str:
         return self.text(self.manifest.brief)
+
+    def story(self) -> Optional[package_story.Story]:
+        """The story it tells, or None for a package without one; a story
+        file changed since it was unpacked and no longer valid is refused."""
+        if not self.manifest.story:
+            return None
+        try:
+            raw = page_file(self, self.manifest.story)
+            return package_story.parse(raw)
+        except package_story.StoryError as e:
+            raise PackageError(f"{self.id}'s story cannot be told: {e}") from None
 
     def results(self) -> list[Path]:
         """Every regular file a `returns` pattern matches, in the package's
@@ -255,6 +284,15 @@ def recognise(archive: zipfile.ZipFile, listing: bundle_archive.Listing) -> Reco
         member = files.get(f"{root}{named}")
         if member is None:
             return Recognition(None, root, f"Its {key} file {named!r} is not in the zip.")
+    if manifest.story:
+        try:
+            package_story.parse(bundle_archive.read_member(
+                archive, files[f"{root}{manifest.story}"],
+                limit=package_story.STORY_MAX_BYTES))
+        except bundle_archive.ArchiveError as e:
+            return Recognition(None, root, f"Its story file cannot be read: {e}")
+        except package_story.StoryError as e:
+            return Recognition(None, root, f"Its story file {manifest.story!r} is not valid: {e}")
     return Recognition(manifest, root)
 
 
@@ -373,6 +411,31 @@ def unpack(archive_path: Path, attachment_id: str,
                     type(e).__name__)
     log.info("package %s unpacked from attachment %s", final.name, attachment[:8])
     return _load(final), True
+
+
+# A zip opened from a path on this Mac has no attachment id: it is recorded
+# by its bytes instead, under a prefix no attachment id (hex) can have.
+LOCAL_SOURCE = "local"
+
+
+async def unpack_held(chunks: AsyncIterator[bytes]) -> tuple[Package, bool]:
+    """Unpack a zip that is a file on this Mac, from its bytes as they are
+    read from the held file (draft_files.Source.chunks): copied into a
+    private file among the packages first, so the archive checked is the
+    archive unpacked, then `unpack` exactly as a received zip."""
+    root = data_paths.packages_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    temp = root / f"{PARTIAL}{uuid.uuid4()}.zip"
+    digest = hashlib.sha256()
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            async for chunk in chunks:
+                digest.update(chunk)
+                await asyncio.to_thread(f.write, chunk)
+        return await asyncio.to_thread(unpack, temp, LOCAL_SOURCE + digest.hexdigest()[:27])
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 # -- the packages here ----------------------------------------------------------------

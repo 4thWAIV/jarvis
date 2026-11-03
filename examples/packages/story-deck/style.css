@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 16px/1.5 -apple-system, system-ui, sans-serif; color: #1f2933; background: #eef2f6; }
+.deck { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; }
+.slide { position: relative; min-height: 100%; padding: 40px 56px; scroll-snap-align: center;
+         background: #fff; border-bottom: 8px solid #eef2f6; }
+.kicker { margin: 0; color: #0a7c71; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; font-size: 13px; }
+h2 { margin: 6px 0 28px; font-size: 32px; }
+.cards { display: flex; gap: 20px; flex-wrap: wrap; }
+.card { flex: 1 1 180px; padding: 20px; border: 1px solid #d2dae2; border-radius: 12px; background: #f8fafc;
+        text-align: left; font: inherit; color: inherit; }
+.card h3 { margin: 0 0 6px; font-size: 20px; }
+.card p { margin: 0; color: #52606d; }
+.tea { cursor: pointer; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.steps li { padding: 18px; border-radius: 12px; background: #f8fafc; border: 1px solid #d2dae2; }
+.steps li::before { content: attr(data-step); display: block; width: 36px; height: 36px; border-radius: 50%;
+                    background: #0a7c71; color: #fff; font-weight: 700; text-align: center; line-height: 36px;
+                    margin-bottom: 10px; }
+.steps b { display: block; font-size: 18px; }
+.steps span { color: #52606d; }
+.detail { position: absolute; inset: 120px 56px 40px; padding: 28px; border-radius: 14px; background: #fff;
+          border: 2px solid #0a7c71; box-shadow: 0 12px 40px rgba(0, 0, 0, .18); }
+.detail[hidden] { display: none; }
+.detail h3 { margin: 0 0 12px; font-size: 24px; }
+.detail .close { position: absolute; top: 16px; right: 16px; font: inherit; padding: 4px 12px; }
