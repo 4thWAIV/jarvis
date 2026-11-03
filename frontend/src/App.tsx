@@ -14,7 +14,7 @@ import { MicControl } from "./MicControl";
 import { RayLane } from "./RayLane";
 import { UiPipelineLayer } from "./UiPipelineLayer";
 import { RightPanel } from "./RightPanel";
-import { Settings } from "./Settings";
+import { useFirstRunSetup } from "./Settings";
 import { OrbControl } from "./OrbControl";
 import { StatusControl } from "./StatusControl";
 import { TeamServerTile } from "./TeamServerTile";
@@ -23,6 +23,7 @@ import { startJarvis } from "./jarvis";
 
 export function App() {
   useEffect(startHumanActivity, []);
+  useFirstRunSetup();
   return (
     <>
       {/* The upper left: the orb, what he is doing, the microphone, the team
@@ -39,9 +40,8 @@ export function App() {
       {/* The right-hand display, mirroring the left column. */}
       <RightPanel />
 
-      {/* The ⋮ menu, top right, and the Settings view it opens. */}
+      {/* The ⋮ menu, top right; the Settings it opens is a centre view. */}
       <MenuControl />
-      <Settings />
 
       {/* The pipeline map and white attention (uiAttention.ts), under the
           rays: the brain's pointing never covers a message's transmission. */}

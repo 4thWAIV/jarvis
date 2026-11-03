@@ -1,5 +1,5 @@
 /**
- * Settings → Voice: the language JARVIS hears and speaks, which is also the
+ * Settings → Voice and language: the language JARVIS hears and speaks, which is also the
  * interface's language (locale.ts), and the Spanish speech model it needs
  * (language_setting.py, speech_models.py).
  *
@@ -11,7 +11,8 @@
  * change leaves it as it was. Español can be chosen only once its speech
  * model is installed: "Download (124 MB)" starts that, checked against the
  * release's SHA-256, and its progress is read again every second while it
- * runs (there is no push for it).
+ * runs (there is no push for it). Once installed, the model's row is not
+ * shown: Español being on offer says it.
  *
  * Each language is named in its own words in either interface language.
  * The brain's `set_language` and `install_speech_model` call the same
@@ -23,6 +24,7 @@ import { useLiveRead } from "./liveRead";
 import {
   formatNumber, guardedRead, language as interfaceLanguage, SaidText, useLanguage, useT, type Said, type Translate,
 } from "./locale";
+import { SettingsRow, useSettingsItem } from "./SettingsRow";
 import { speechRefusal, type SpeechRefusal } from "./voiceInput";
 
 interface Install {
@@ -87,14 +89,11 @@ const readStatus = async () => {
   return status;
 };
 
-function installWords(t: Translate, model: Model): string {
-  const install = model.install;
-  if (model.installed) return t("language.installed");
-  if (install?.state === "downloading")
+/** How far a download under way has got. */
+function progressWords(t: Translate, install: Install): string {
+  if (install.state === "downloading")
     return t("language.downloading", { done: megabytes(t, install.doneBytes), total: megabytes(t, install.totalBytes) });
-  if (install?.state === "verifying") return t("language.verifying");
-  if (install?.state === "installing") return t("language.installing");
-  return t("language.notInstalled");
+  return t(install.state === "verifying" ? "language.verifying" : "language.installing");
 }
 
 export function LanguageControl() {
@@ -147,36 +146,31 @@ export function LanguageControl() {
   const install = spanish?.install;
   const failed = install?.state === "failed"
     ? speechRefusal({ code: install.errorCode ?? undefined, detail: install.error ?? undefined }) : null;
+  const missing = spanish !== null && !spanish.installed;
+  const languageUi = useSettingsItem("language", t("language.label"));
+  const modelUi = useSettingsItem("spanishModel", t("language.spanishModel"), missing);
   return (
     <>
-      <div className="settings-field">
-        <label htmlFor="settings-language">{t("language.label")}</label>
-        <div className="settings-input-row">
-          <select id="settings-language" data-ui-action="domain" value={status ? inForce : ""}
-                  disabled={!status || busy !== null}
-                  onChange={(e) => choose(e.target.value)}>
-            {LANGUAGES.map((l) => (
-              <option key={l.language} value={l.language} lang={l.language}
-                      disabled={l.language === SPANISH && !spanish?.installed}>{l.name}</option>
-            ))}
-          </select>
-        </div>
-        {busy && <p className="settings-hint">{t("language.loading")}</p>}
-      </div>
-      {spanish && (
-        <div className="settings-field">
-          <label>{t("language.spanishModel")}</label>
-          <div className="settings-input-row">
-            <span className="settings-model-state">{installWords(t, spanish)}</span>
-            {!spanish.installed && !downloading && (
-              <button className="settings-btn" data-ui-action="domain" onClick={download}>
-                {t("language.download", { size: megabytes(t, spanish.archiveBytes) })}
-              </button>
-            )}
-          </div>
-          {failed && <SaidText said={failed} as="p" className="settings-hint read-failure" />}
-        </div>
+      <SettingsRow label={t("language.label")} labelRef={languageUi.part("label")} htmlFor="settings-language">
+        <select id="settings-language" data-ui-action="domain" value={status ? inForce : ""}
+                disabled={!status || busy !== null} ref={languageUi.whole}
+                onChange={(e) => choose(e.target.value)}>
+          {LANGUAGES.map((l) => (
+            <option key={l.language} value={l.language} lang={l.language}
+                    disabled={l.language === SPANISH && !spanish?.installed}>{l.name}</option>
+          ))}
+        </select>
+      </SettingsRow>
+      {busy && <p className="settings-hint">{t("language.loading")}</p>}
+      {missing && (
+        <SettingsRow label={t("language.spanishModel")} labelRef={modelUi.part("label")}>
+          {downloading && install
+            ? <span className="settings-value" ref={modelUi.whole}>{progressWords(t, install)}</span>
+            : <button className="settings-btn" data-ui-action="domain" onClick={download} ref={modelUi.whole}>
+                {t("language.download", { size: megabytes(t, spanish.archiveBytes) })}</button>}
+        </SettingsRow>
       )}
+      {failed && <SaidText said={failed} as="p" className="settings-hint read-failure" />}
       {problem && <SaidText said={problem} as="p" className="settings-hint read-failure" />}
       {!status && (
         <p className="settings-hint read-failure">

@@ -38,6 +38,9 @@
  *   - A file a teammate sent (BundleMemberView.tsx), the same way: offered
  *     while one is open, which its Open in the Queue or the brain's
  *     show_bundle_member does. Opening another replaces it.
+ *   - Settings (Settings.tsx), the same way: offered while it is open,
+ *     which the menu's Settings and Check for updates, the sign-in
+ *     reminder's Sign in and first-time setup do.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -74,6 +77,7 @@ import { openPackage } from "./packages";
 import { PackageView } from "./PackageView";
 import { openBundleMember } from "./bundles";
 import { BundleMemberView } from "./BundleMemberView";
+import { settingsOpen, SettingsView } from "./Settings";
 
 function MainView() {
   return (
@@ -163,6 +167,12 @@ const FILE_VIEW: MainTabView = {
   view: () => null,
 };
 
+const SETTINGS_VIEW: MainTabView = {
+  id: "settings",
+  icon: null,
+  view: () => <SettingsView />,
+};
+
 const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
   icon: null,
@@ -188,6 +198,7 @@ export function CentreArea() {
   const people = useSyncExternalStore(directory.subscribe, directory.get);
   const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
   const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
+  const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
   const t = useT();
   const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
@@ -208,6 +219,7 @@ export function CentreArea() {
     ...(fileOpen ? [{ ...titled(FILE_VIEW),
                       view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
                                                     member={fileOpen} /> }] : []),
+    ...(settings ? [titled(SETTINGS_VIEW)] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];

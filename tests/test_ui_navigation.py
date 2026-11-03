@@ -60,7 +60,7 @@ SLOT_WRITES = re.compile(r"\b(\w+Slot)\.(?:show|close|adjust)\(")
 SLOT_OWNERS = {"workflowSlot": "workflows.ts", "threadSlot": "conversation.ts",
                "diagnosticsSlot": {"voiceHealth.ts", "subsystems.ts"}, "subsystemSlot": "subsystems.ts",
                "networkSlot": "network.ts", "queueSlot": "queue.ts", "packageSlot": "packages.ts",
-               "memberSlot": "bundles.ts"}
+               "memberSlot": "bundles.ts", "settingsSlot": "Settings.tsx"}
 
 
 def _sources():

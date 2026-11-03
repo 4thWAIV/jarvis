@@ -534,7 +534,7 @@ nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
 /api/team/connect`, the approval page in a new tab). The reminder's Sign in
 (`signInAgain`) reads `GET /api/team`: with a `last_server_url` it signs in
 there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
-Team (`openSettings("team")`). Later hides it until the page loads again or
+Team (`settings.open {section: "team"}`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
 itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
 started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
@@ -768,7 +768,7 @@ changes; the persona's "Language" section says the same.
 
 ## The language setting
 JARVIS hears and speaks one language at a time, English or Spanish, chosen
-in Settings, Voice, Language (`LanguageControl.tsx`), by the brain's acting
+in Settings, Voice and language, Language (`LanguageControl.tsx`), by the brain's acting
 `set_language`, or by one exact spoken phrase: "switch to Spanish" while in
 English, "cambia a inglés" while in Spanish (`Vocabulary.switch_command`,
 matched like the clear command: the whole utterance, optional leading
@@ -973,6 +973,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `frontend/src/Settings.tsx` / `SettingsRow.tsx` — Settings, a centre view
+  opened and closed only by `settings.open`, `settings.section` and
+  `settings.close` (the menu, Check for updates, the sign-in reminder and
+  first-time setup run them): You, Voice and language, Brains, Team,
+  Updates, Server; every control and reading in it a pointer target
 - `frontend/src/TeamSignInReminder.tsx` / `teamSignIn.ts` / `team_reminder.py`
   — The sign-in reminder at the top of the centre area, its Sign in, and the
   one spoken reminder per start (see "The sign-in reminder")

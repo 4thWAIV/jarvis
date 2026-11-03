@@ -208,22 +208,45 @@ export function undrawn(el: Element): boolean {
   return typeof getComputedStyle === "function" && getComputedStyle(el).visibility !== "visible";
 }
 
-/** Whether `el` is on screen and not covered, hidden or inert. */
+/** The part of `el`'s box that can be seen, or null when none can: inside
+ *  the window and inside every ancestor that clips what overflows it (a
+ *  scrolling view or list), up to a fixed-position one, which nothing
+ *  above it clips. */
+function seenPart(el: Element): { left: number; top: number; right: number; bottom: number } | null {
+  const r = el.getBoundingClientRect();
+  let left = Math.max(r.left, 0), top = Math.max(r.top, 0);
+  let right = Math.min(r.right, window.innerWidth - 1), bottom = Math.min(r.bottom, window.innerHeight - 1);
+  const styled = typeof getComputedStyle === "function";
+  for (let at: Element | null = el; styled && at && getComputedStyle(at).position !== "fixed"; ) {
+    at = at.parentElement ?? null;
+    if (!at) break;
+    const style = getComputedStyle(at);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const c = at.getBoundingClientRect();
+    left = Math.max(left, c.left); top = Math.max(top, c.top);
+    right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+  }
+  return right > left && bottom > top ? { left, top, right, bottom } : null;
+}
+
+/** Whether `el` is on screen and not covered, hidden or inert. Scrolled
+ *  out of its view or list, it is off screen: scrolling brings it back. */
 export function visibilityOf(el: Element | null): Visibility {
   if (!el || !el.isConnected) return "unmounted";
   if (el.closest(".hidden, [inert], [hidden]")) return "hidden";
   const r = el.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return "hidden";
   if (undrawn(el)) return "hidden";
-  if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return "offscreen";
-  // The middle of the part of it inside the window.
-  const x = (Math.max(r.left, 0) + Math.min(r.right, window.innerWidth - 1)) / 2;
-  const y = (Math.max(r.top, 0) + Math.min(r.bottom, window.innerHeight - 1)) / 2;
+  const seen = seenPart(el);
+  if (!seen) return "offscreen";
+  // The middle of the part of it that can be seen.
+  const x = (seen.left + seen.right) / 2;
+  const y = (seen.top + seen.bottom) / 2;
   const top = document.elementFromPoint(x, y);
   // Something drawn over it covers it; the element that holds it does not
   // (it is what the point finds when the element ignores the pointer, as
   // the status line's words do).
-  if (top && top !== el && !el.contains(top) && !top.contains(el) && !top.closest("[data-ui-overlay]")) {
+  if (top && top !== el && !el.contains(top) && !top.contains(el)) {
     return "occluded";
   }
   return "visible";

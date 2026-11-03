@@ -225,8 +225,11 @@ def _check_pipeline(pipe: dict, regions: set[str]) -> list[str]:
             out.append(f"rail {rail['id']} starts at unknown junction {rail['top']}")
         if rail["region"] not in regions:
             out.append(f"rail {rail['id']} has unknown region")
-    if {r["region"] for r in pipe["rails"]} != regions:
-        out.append("every region needs exactly one rail")
+    # A region has at most one rail; the overlay's targets (the menu) hang
+    # from the right rail, beside them.
+    rail_regions = [r["region"] for r in pipe["rails"]]
+    if len(set(rail_regions)) != len(rail_regions):
+        out.append("a region has more than one rail")
     return out
 
 

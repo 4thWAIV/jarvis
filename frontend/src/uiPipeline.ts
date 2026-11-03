@@ -13,9 +13,10 @@
  *   - right:   down the right-hand lane's channel, the one the rays use
  *              (rayGeometry.ts `rightChannelX`), so both share one line;
  *   - footer:  across the gap kept above the footer, from the left rail to
- *              the right one, reached down the left rail;
- *   - overlay: while a modal is open, down the margin just outside its
- *              left edge, drawn in the modal's own layer (host "modal").
+ *              the right one, reached down the left rail.
+ *
+ * The overlay (the menu button and the open menu) has no rail of its own:
+ * its targets hang from the right rail beside them.
  *
  * The primary channel and where a route leaves it. A target's primary
  * channel is the declared trunk from the orb to its region's rail (the
@@ -69,23 +70,18 @@ import {
 
 export type { Point };
 
-/** Which layer an edge is drawn in: the page's own (under the side
- *  columns, with the rays), or an open modal's, above it. */
-export type Host = "base" | "modal";
-
 export interface RouteEdge {
   id: string;
   /** Static topology, a rail or a rail's tap, an object's socket branch,
    *  or a part's leaf inside the object (drawn above it). */
   layer: "map" | "rail" | "branch" | "leaf";
-  host: Host;
   points: Point[];
 }
 
 /** A box the route passes into on its way, marked as the signal reaches
  *  its border: `at` is how far along the route that is (0 the orb, 1 the
  *  end). */
-export interface BoxMark { id: string; box: DOMRect; at: number; host: Host }
+export interface BoxMark { id: string; box: DOMRect; at: number }
 
 export interface Route { edges: RouteEdge[]; end: Point; socket: Point; marks: BoxMark[] }
 
@@ -105,22 +101,18 @@ const CLEAR_PX = 4;
 export const CORRIDOR_PX = INNER_MARGIN_PX + CLEAR_PX + BEVEL_PX;
 /** How far outside a part its leaf ends. */
 const LEAF_END_PX = 3;
-/** How far outside an open modal its rail runs. */
-const OVERLAY_GAP_PX = 8;
 
 /** What a route may not run across inside an object: anything a person
  *  presses or types in. */
 const RESERVED = "button, a[href], input, select, textarea, summary, [role='button'], [role='tab'], "
   + "[role='link'], [contenteditable='true']";
 
-const MODAL_VIEWS = new Set<string>(UI_CONTRACT.views.filter((v) => v.kind === "modal").map((v) => v.id));
-
 // ── rails ───────────────────────────────────────────────────────────────
 
 const rect = (id: string) => document.getElementById(id)?.getBoundingClientRect() ?? null;
 
 /** A rail now: down at x = `at` from `from` to `to`, or across at y = `at`. */
-interface RailLine { axis: "down" | "across"; at: number; from: number; to: number; host: Host }
+interface RailLine { axis: "down" | "across"; at: number; from: number; to: number }
 
 /** The y of the corridor kept above the footer, where the footer rail runs
  *  and every downward rail ends. */
@@ -129,42 +121,26 @@ function footerY(): number {
   return (footer ? footer.top : window.innerHeight) - 4;
 }
 
-/** The open modal's surface (an overlay target of a modal view that is on
- *  show), or null. */
-function openModal(): DOMRect | null {
-  for (const t of mountedTargets()) {
-    if (!MODAL_VIEWS.has(t.ref.view)) continue;
-    const el = t.element();
-    if (el && visibilityOf(el) === "visible") return el.getBoundingClientRect();
-  }
-  return null;
-}
-
 function railLine(rail: RailId): RailLine | null {
   const bottom = footerY();
   switch (rail) {
     case "rail.left": {
       const left = rect("left-column");
-      return left ? { axis: "down", at: left.left / 2, from: TOP_LANE_PX, to: bottom, host: "base" } : null;
+      return left ? { axis: "down", at: left.left / 2, from: TOP_LANE_PX, to: bottom } : null;
     }
     case "rail.main": {
       const column = rect("right-column");
-      return column ? { axis: "down", at: column.left - INNER_MARGIN_PX, from: TOP_LANE_PX, to: bottom, host: "base" }
+      return column ? { axis: "down", at: column.left - INNER_MARGIN_PX, from: TOP_LANE_PX, to: bottom }
                     : null;
     }
     case "rail.right": {
       const at = lanes();
       return at ? { axis: "down", at: rightChannelX(at.column, at.menuRight, at.width), from: TOP_LANE_PX,
-                    to: bottom, host: "base" } : null;
+                    to: bottom } : null;
     }
     case "rail.footer": {
       const left = railLine("rail.left"), right = railLine("rail.right");
-      return left && right ? { axis: "across", at: bottom, from: left.at, to: right.at, host: "base" } : null;
-    }
-    case "rail.overlay": {
-      const modal = openModal();
-      if (!modal || modal.left - OVERLAY_GAP_PX <= 0) return null;
-      return { axis: "down", at: modal.left - OVERLAY_GAP_PX, from: TOP_LANE_PX, to: modal.bottom, host: "modal" };
+      return left && right ? { axis: "across", at: bottom, from: left.at, to: right.at } : null;
     }
     default:
       return null;
@@ -198,7 +174,7 @@ function corner(a: Point, b: Point): Point[] {
 }
 
 /** Edges with every turn between and inside them bevelled (bevelled()),
- *  each keeping its id, layer and host. */
+ *  each keeping its id and layer. */
 function bevelEdges(edges: RouteEdge[]): RouteEdge[] {
   const runs = bevelled(edges.map((e) => e.points));
   return edges.map((e, i) => ({ ...e, points: runs[i] }));
@@ -207,16 +183,16 @@ function bevelEdges(edges: RouteEdge[]): RouteEdge[] {
 // ── the fixed map ───────────────────────────────────────────────────────
 
 /** The fixed topology's edges and rails, measured; one that cannot be is
- *  left out (an overlay rail with no modal open, for one). */
+ *  left out (a column not on the page, for one). */
 export function mapEdges(): RouteEdge[] {
   const out: RouteEdge[] = [];
   for (const e of PIPE.edges) {
     const a = junctionPoint(e.from as JunctionId), b = junctionPoint(e.to as JunctionId);
-    if (a && b) out.push({ id: e.id, layer: "map", host: "base", points: corner(a, b) });
+    if (a && b) out.push({ id: e.id, layer: "map", points: corner(a, b) });
   }
   for (const r of PIPE.rails) {
     const line = railLine(r.id as RailId);
-    if (line) out.push({ id: r.id, layer: "rail", host: line.host, points: [railStart(line), railEnd(line)] });
+    if (line) out.push({ id: r.id, layer: "rail", points: [railStart(line), railEnd(line)] });
   }
   return out;
 }
@@ -246,8 +222,6 @@ export function trunkTo(rail: RailId): string[] | null {
 }
 
 // ── a target's socket and its parts ──────────────────────────────────────
-
-const hostOf = (target: VisualTarget): Host => target.socket.rail === "rail.overlay" ? "modal" : "base";
 
 /** An element's box, or null when it has none or is not drawn
  *  (visibility: hidden): neither a target nor in a route's way. */
@@ -298,11 +272,10 @@ function socketEdges(target: VisualTarget): RouteEdge[] | null {
   const entry = socketPoint(target);
   if (!line || !entry) return null;
   const id = presentationId(target.ref);
-  const host = hostOf(target);
   const start = railStart(line);
   if (line.axis === "down") {
     if (entry[1] < line.from || entry[1] > line.to) return null;
-    const branch = (points: Point[]): RouteEdge => ({ id: `socket:${id}`, layer: "branch", host, points });
+    const branch = (points: Point[]): RouteEdge => ({ id: `socket:${id}`, layer: "branch", points });
     const straight = branch([[line.at, entry[1]], entry]);
     // Straight in unless that crosses another object (a step beside the
     // next in a row): then over or under the row (overTheRow()); with
@@ -310,7 +283,7 @@ function socketEdges(target: VisualTarget): RouteEdge[] | null {
     const over = crossesAnotherObject(straight, target) ? overTheRow(target, line.at) : null;
     const points = over ?? straight.points;
     return bevelEdges([
-      { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, points[0]] },
+      { id: `${target.socket.rail}:tap:${id}`, layer: "rail", points: [start, points[0]] },
       branch(points),
     ]);
   }
@@ -319,8 +292,8 @@ function socketEdges(target: VisualTarget): RouteEdge[] | null {
   const cx = entry[0] + (target.socket.side === "right" ? INNER_MARGIN_PX : -INNER_MARGIN_PX);
   if (cx < Math.min(line.from, line.to) || cx > Math.max(line.from, line.to)) return null;
   return bevelEdges([
-    { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [start, [cx, line.at]] },
-    { id: `socket:${id}`, layer: "branch", host, points: [[cx, line.at], [cx, entry[1]], entry] },
+    { id: `${target.socket.rail}:tap:${id}`, layer: "rail", points: [start, [cx, line.at]] },
+    { id: `socket:${id}`, layer: "branch", points: [[cx, line.at], [cx, entry[1]], entry] },
   ]);
 }
 
@@ -439,7 +412,7 @@ function overTheRow(target: VisualTarget, railX: number): Point[] | null {
     const y = lane(r, whole, obstacles, margin, railX, up);
     if (y === null) return [];
     const points: Point[] = [[railX, y], [margin, y], [margin, up ? r.top : r.bottom]];
-    return edgeCrosses({ id: "", layer: "branch", host: "base", points }, obstacles) ? [] : [points];
+    return edgeCrosses({ id: "", layer: "branch", points }, obstacles) ? [] : [points];
   });
   return ways.sort((a, b) => length(a) - length(b))[0] ?? null;
 }
@@ -479,7 +452,7 @@ function leafEdge(target: VisualTarget, part: string, entry: Point): RouteEdge |
   if (!whole || !box) return "no-route";
   const margin = marginOf(target, box);
   const leaf = (points: Point[]): RouteEdge => ({ id: `leaf:${presentationId(target.ref)}:${part}`, layer: "leaf",
-                                                  host: hostOf(target), points: distinct(points) });
+                                                  points: distinct(points) });
   const straight = leaf(r.left < margin && margin < r.right
     // The part reaches over the margin (a part beside its whole, at its
     // edge): down or up the margin into its top or bottom edge.
@@ -501,7 +474,7 @@ const SOURCE_REASON: Record<Exclude<Visibility, "visible">, AvailabilityReason> 
   offscreen: "offscreen", hidden: "hidden", occluded: "occluded", unmounted: "not-mounted",
 };
 
-/** Whether the main orb, every route's source, can be seen now; a modal
+/** Whether the main orb, every route's source, can be seen now; anything
  *  covering it blocks every route (there is never a second orb). */
 export function sourceProblem(): AvailabilityReason | null {
   const seen = visibilityOf(document.getElementById("orb-control"));
@@ -564,12 +537,11 @@ function entryAlong(points: readonly Point[], box: DOMRect): number | null {
  *  border on its last way in, in the order the signal reaches them. */
 function marksOn(edges: RouteEdge[], target: VisualTarget, part?: string): BoxMark[] {
   const points = polyline(edges);
-  const host = hostOf(target);
   const marks: BoxMark[] = [];
   for (const b of boxesAround(target, part)) {
     const box = boxOf(b.element)!;
     const at = entryAlong(points, box);
-    if (at !== null) marks.push({ id: b.id, box, at, host });
+    if (at !== null) marks.push({ id: b.id, box, at });
   }
   return marks.sort((a, b) => a.at - b.at);
 }
@@ -626,10 +598,9 @@ function lateBranch(target: VisualTarget, part?: string): RouteEdge[] | null {
   const scopeBox = boxOf(boxes[0]?.element ?? el)!;
   const obstacles = obstaclesFor(target, el, scopeBox, line.at, part);
   const id = presentationId(target.ref);
-  const host = hostOf(target);
   const fits = (y: number) => y >= line.from && y <= line.to;
   const clear = (points: Point[]) =>
-    !edgeCrosses({ id: "", layer: "leaf", host, points }, obstacles);
+    !edgeCrosses({ id: "", layer: "leaf", points }, obstacles);
   const level = r.top + r.height / 2;
   let points: Point[] | null = fits(level) && clear([[line.at, level], [faceX, level]])
     ? [[line.at, level], [faceX, level]] : null;
@@ -644,8 +615,8 @@ function lateBranch(target: VisualTarget, part?: string): RouteEdge[] | null {
   }
   if (!points) return null;
   return bevelEdges([
-    { id: `${target.socket.rail}:tap:${id}`, layer: "rail", host, points: [railStart(line), points[0]] },
-    { id: part ? `leaf:${id}:${part}` : `socket:${id}`, layer: part ? "leaf" : "branch", host, points },
+    { id: `${target.socket.rail}:tap:${id}`, layer: "rail", points: [railStart(line), points[0]] },
+    { id: part ? `leaf:${id}:${part}` : `socket:${id}`, layer: part ? "leaf" : "branch", points },
   ]);
 }
 

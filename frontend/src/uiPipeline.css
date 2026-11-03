@@ -1,10 +1,8 @@
 /* White attention along the pipeline (UiPipelineLayer.tsx). Nothing is
    drawn at rest: the map is data only, and a cue draws just its own route
-   while it runs, then fades to nothing. Three layers: under the side
+   while it runs, then fades to nothing. Two layers: under the side
    columns like the rays (#ray-lane is 15); above them for a part's leaf,
-   the rings and the contour; and above an open modal (#settings-container
-   is 100) for a route's run along the modal's own rail. Never takes a
-   click. */
+   the box marks, the rings and the contour. Never takes a click. */
 .ui-pipeline {
   position: fixed;
   inset: 0;
@@ -17,7 +15,6 @@
   stroke-linecap: round;
 }
 .ui-pipeline.over { z-index: 30; }
-.ui-pipeline.modal { z-index: 101; }
 
 /* A dark under-stroke so white reads on a light surface too. */
 .ui-under { stroke: rgba(5, 5, 8, 0.7); stroke-width: 4; }

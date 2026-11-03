@@ -1,6 +1,6 @@
 /**
- * The ⋮ menu in the top right: Settings (Settings.tsx), Check for updates
- * (Settings at Updates) and Restart Server. It closes on any click elsewhere.
+ * The ⋮ menu in the top right: Settings (Settings.tsx, a centre view),
+ * Check for updates (Settings at Updates) and Restart Server. It closes on any click elsewhere.
  *
  * Opening and closing it is the registered command `menu.toggle`, run the
  * same by his click and by the brain (uiRegistry.ts); Settings and Check for

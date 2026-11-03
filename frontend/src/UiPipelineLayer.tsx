@@ -11,12 +11,11 @@
  * A cue waiting for a real transmission to give the orb back shows its
  * route dashed until it can go.
  *
- * Three layers, all pointer-transparent. A route's run behind the side
+ * Two layers, both pointer-transparent. A route's run behind the side
  * columns, as the transmissions' rays do (so it comes out from inside the
- * orb). A part's leaf inside its object, the rings and the contour are
- * drawn above the columns, so they show on the object itself. An open
- * modal's rail, branch and leaf are drawn in a layer above the modal, in
- * the same page coordinates. Every position is computed from the one
+ * orb). A part's leaf inside its object, the box marks, the rings and the
+ * contour are drawn above the columns, so they show on the object itself.
+ * Every position is computed from the one
  * schedule (uiSignal.ts) that also decides when the request is answered.
  */
 
@@ -36,11 +35,11 @@ const CONTOUR_PAD = 4;
 /** How far outside a box its mark is drawn. */
 const MARK_PAD = 2;
 
-type Layer = "base" | "over" | "modal";
-const LAYERS: Layer[] = ["base", "over", "modal"];
+type Layer = "base" | "over";
+const LAYERS: Layer[] = ["base", "over"];
 
-/** Which of the three layers an edge is drawn in. */
-const layerOf = (e: RouteEdge): Layer => e.host === "modal" ? "modal" : e.layer === "leaf" ? "over" : "base";
+/** Which of the two layers an edge is drawn in. */
+const layerOf = (e: RouteEdge): Layer => e.layer === "leaf" ? "over" : "base";
 
 /** Each pulse still travelling, and the layer it is in now. */
 function pulses(cue: CueFrame): { at: Point; layer: Layer }[] {
@@ -88,15 +87,15 @@ function Rings({ cue }: { cue: CueFrame }) {
 
 /** Each box the route passes into, outlined from the moment the signal
  *  reaches its border, fading over the contract's boxMarkMs: drawn above
- *  the columns (or the modal), in the order the signal reaches them. */
-function Marks({ cue, layer }: { cue: CueFrame; layer: Layer }) {
+ *  the columns, in the order the signal reaches them. */
+function Marks({ cue }: { cue: CueFrame }) {
   if (cue.still || cue.queued) return null;
   const progress = markProgress(cue.elapsed, cue.schedule);
   return (
     <>
       {cue.marks.map((m, k) => {
         const t = progress[k];
-        if (t === null || t === undefined || (m.host === "modal" ? "modal" : "over") !== layer) return null;
+        if (t === null || t === undefined) return null;
         const shape = { x: m.box.left - MARK_PAD, y: m.box.top - MARK_PAD, width: m.box.width + 2 * MARK_PAD,
                         height: m.box.height + 2 * MARK_PAD, rx: 6 };
         return (
@@ -126,10 +125,9 @@ function drawnEdges(cue: CueFrame, edges: RouteEdge[]): Point[] {
 function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
   const edges = cue.route.edges.filter((e) => layerOf(e) === layer);
   const line = cue.queued ? polyline(edges) : drawnEdges(cue, edges);
-  const endLayer = layerOf(cue.route.edges[cue.route.edges.length - 1]);
-  const ends = layer === (endLayer === "base" ? "over" : endLayer);
+  const ends = layer === "over";
   const moving = pulses(cue).filter((p) => p.layer === layer);
-  const marked = cue.marks.some((m) => (m.host === "modal" ? "modal" : "over") === layer);
+  const marked = layer === "over" && cue.marks.length > 0;
   if (!edges.length && !moving.length && !ends && !marked) return null;
   return (
     <g data-cue={cue.cueId} data-queued={cue.queued ? "true" : "false"} data-edges={edges.map((e) => e.id).join(" ")}
@@ -142,7 +140,7 @@ function CueInLayer({ cue, layer }: { cue: CueFrame; layer: Layer }) {
         {layer === "base" && <path d={pathOf(line)} className="ui-route-glow" filter="url(#ui-glow)" />}
         <path d={pathOf(line)} className="ui-route" />
       </>}
-      <Marks cue={cue} layer={layer} />
+      {layer === "over" && <Marks cue={cue} />}
       {moving.map((p, i) => <circle key={i} cx={p.at[0]} cy={p.at[1]} r={3} className="ui-pulse" />)}
       {ends && <Rings cue={cue} />}
       {ends && cue.box && <Contour cue={cue} />}

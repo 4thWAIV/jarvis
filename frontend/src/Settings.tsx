@@ -1,112 +1,118 @@
 /**
- * The Settings view, opened from the ⋮ menu (MenuControl.tsx): a large view
- * over the page with its sections listed down the left and stacked in one
- * scrolling body — Brains, Voice, You, Team, Updates, System.
+ * The Settings view: a centre view like Conversation, offered as a centre
+ * tab while it is open, one scrolling page of sections in the order a
+ * person comes to them: You, Voice and language, Brains, Team, Updates,
+ * Server. Its title, × and a row of section names that jumps to each stay
+ * above the scrolling sections.
  *
- * With no Fish Audio key set it opens by itself, two seconds after the page
- * loads, as first-time setup: Voice first, then You, then it closes.
+ * With no Fish Audio key set, two seconds after the page loads, it opens
+ * as first-time setup (useFirstRunSetup): a welcome line, Voice and
+ * language alone, then You alone, then Finish closes it.
  *
- * Everything is read from and written to the same endpoints the dialog
- * before it used (/api/settings/*), plus /api/brains for the Brains section
- * and /api/update for Updates (self_update.py), which the menu's Check for
- * updates opens.
+ * Everything is read from and written to the same endpoints as before
+ * (/api/settings/*, /api/brains for Brains, /api/update for Updates,
+ * self_update.py, which the menu's Check for updates opens). A secret is
+ * typed into a masked field and never read back.
  *
- * Opening, closing and going to a section are registered commands
- * (settings.open, settings.close, settings.section), run the same by his
- * clicks and by the brain. Saving, testing keys, brains, sign-in, membership
- * and updates stay on their own authorised paths. Settings and each section
- * on show are targets hung from the overlay rail; while Settings covers the
- * orb, pointing inside it is refused as blocked (there is never a second
- * orb).
+ * Opening, closing and going to a section are the registered commands
+ * settings.open, settings.close and settings.section, run the same by his
+ * clicks (the menu, Check for updates, the sign-in reminder, the section
+ * row, ×, Finish), by first-time setup and by the brain; Settings is the
+ * centre's `settings` detail (uiNavigation.ts). Saving, testing keys,
+ * brains, sign-in, membership and updates stay on their own authorised
+ * paths. Settings, each section and every control and reading in it are
+ * targets on the main rail (SettingsRow.tsx).
  *
  * Its words are the catalog's (left.settings.* and each section's), in the
- * interface's language; a section is named by its registered id, and the
- * brain's discovery labels stay in English. Updates are worded from
- * self_update's codes; a commit's subject, a branch, a path or a failing
- * step's output is shown as it came.
+ * interface's language; a section is named by its registered id. Updates
+ * are worded from self_update's codes; a commit's subject, a branch, a path
+ * or a failing step's output is shown as it came. A state is shown only
+ * when it is not the ordinary one.
  */
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BrainsSection } from "./BrainsSection";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, placed, useT, type Translate } from "./locale";
+import { SettingsRow, useSettingsItem, useSettingsRow } from "./SettingsRow";
 import { StatusDot, type Dot } from "./StatusDot";
 import { createStore } from "./store";
 import type { CommandArgs, SideEffect } from "./uiContract";
-import { bind, bindingProps, type ReadStore } from "./uiNavigation";
-import { registerCommand, useUiTarget } from "./uiRegistry";
+import { bind, bindingProps, detailSlot } from "./uiNavigation";
+import { dispatch, registerCommand, useUiTarget } from "./uiRegistry";
 
 // In order; each is named by its id (`left.settings.section.<id>`).
-const SECTIONS = ["brains", "voice", "you", "team", "updates", "system"] as const satisfies
+const SECTIONS = ["you", "voice", "brains", "team", "updates", "server"] as const satisfies
   readonly CommandArgs["settings.section"]["section"][];
 export type SectionId = (typeof SECTIONS)[number];
 
 const sectionKey = (id: SectionId) => `left.settings.section.${id}` as const;
 
-const SETUP_STEPS = ["voice", "you"] as const;
+const SETUP_STEPS = ["voice", "you"] as const satisfies readonly SectionId[];
 const SETUP_DELAY_MS = 2000;
 
 // ── Settings' route state and its commands ───────────────────────────────
-// Whether Settings is open, the section asked for, and the first-time
-// setup step: changed only here, by the registered commands his clicks and
-// the brain's requests both run (settings.open, settings.section,
-// settings.close), and by first-time setup opening it by itself.
+// Whether Settings is open (the centre's `settings` detail), the section
+// asked for, and the first-time setup step: changed only here, by the
+// registered commands every opener runs.
 
-/** @routeState Whether Settings is open. */
-const open = createStore(false);
-export const settingsOpen: ReadStore<boolean> = open;
-/** @routeState The section to go to once Settings is drawn, when one was asked for. */
+const settingsSlot = detailSlot<true>("settings");
+/** @routeState Whether Settings is open: the centre offers its tab while it is. */
+export const settingsOpen = settingsSlot.value;
+/** @routeState The section to bring to the top once Settings is drawn, when one was asked for. */
 const asked = createStore<SectionId | null>(null);
 /** @routeState The first-time setup step being shown, or null when it is not setup. */
 const setup = createStore<number | null>(null);
 
 /** Whether a section is on show: all are, except during first-time setup,
  *  which shows its own step's alone. */
-function sectionShown(id: SectionId): boolean {
-  const step = setup.get();
+function sectionShown(id: SectionId, step = setup.get()): boolean {
   return step === null || SETUP_STEPS[step] === id;
 }
 
-/** Bring a section to the top of Settings' body. */
+/** Bring a section to the top of the view (at once: the pointer measures
+ *  it straight after). */
 function goTo(id: SectionId): void {
-  document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById(`settings-${id}`)?.scrollIntoView({ block: "start" });
+}
+
+/** Show Settings, at `section` if one is asked for: the body of open and
+ *  section alike. */
+function show(section: SectionId | undefined): SideEffect[] {
+  closeMenu();
+  asked.set(section ?? null);
+  return settingsSlot.show(true);
 }
 
 registerCommand("settings.open", {
-  availability: ({ section }) => open.get() && section && !sectionShown(section)
+  availability: ({ section }) => settingsSlot.value.get() && section && !sectionShown(section)
     ? { available: false, reason: "hidden" } : { available: true },
-  execute({ section }) {
-    closeMenu();
-    const effects: SideEffect[] = open.get() ? [] : ["settings.opened"];
-    asked.set(section ?? null);
-    open.set(true);
-    return { status: "completed", effects };
+  execute({ section, setup: first }) {
+    const opened = settingsSlot.value.get() === null;
+    if (first) setup.set(0);
+    const effects = show(section);
+    return { status: "completed", effects: opened ? ["settings.opened", ...effects] : effects };
   },
 });
 
 registerCommand("settings.section", {
-  availability: ({ section }) => !open.get() ? { available: false, reason: "not-mounted" }
+  availability: ({ section }) => !settingsSlot.value.get() ? { available: false, reason: "not-mounted" }
     : sectionShown(section) ? { available: true } : { available: false, reason: "hidden" },
-  execute({ section }) {
-    goTo(section);
-    return { status: "completed", effects: [] };
-  },
+  execute: ({ section }) => ({ status: "completed", effects: show(section) }),
 });
 
 registerCommand("settings.close", {
-  availability: () => open.get() ? { available: true } : { available: false, reason: "no-entity" },
+  availability: () => settingsSlot.value.get() ? { available: true } : { available: false, reason: "no-entity" },
   execute() {
-    open.set(false);
     setup.set(null);
-    return { status: "completed", effects: [] };
+    asked.set(null);
+    return { status: "completed", effects: settingsSlot.close() };
   },
 });
-
-// Pointed at from the overlay rail, down the left of the open view.
-const SOCKET = { rail: "rail.overlay", side: "left" } as const;
 
 interface Status {
   claude_code_installed: boolean;
@@ -128,184 +134,103 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+const readStatus = () => getJson<Status>("/api/settings/status");
+
+/** First-time setup: no Fish key means JARVIS cannot speak at all, so two
+ *  seconds after the page loads Settings opens as setup, through
+ *  `settings.open` like every other opener. The page does it for him; it
+ *  counts as his navigation. */
+export function useFirstRunSetup(): void {
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const s = await readStatus().catch(() => null);
+      if (s && !s.env_keys_set.fish_audio) void dispatch("settings.open", { setup: true }, { actor: "human" });
+    }, SETUP_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, []);
+}
+
 function formatUptime(t: Translate, seconds: number): string {
   if (seconds < 60) return t("time.short.seconds", { n: Math.floor(seconds) });
   if (seconds < 3600) return t("time.short.minutes", { n: Math.floor(seconds / 60) });
-  return t("left.system.hoursMinutes", { hours: Math.floor(seconds / 3600),
+  return t("left.server.hoursMinutes", { hours: Math.floor(seconds / 3600),
                                          minutes: Math.floor((seconds % 3600) / 60) });
 }
 
-/** One section of Settings: its heading and body, registered as the
- *  section's target (keyed by its ID) while it is on show. */
-function SettingsSection({ id, children }: { id: SectionId; children: ReactNode }) {
+/** Each section's target, registered while it is on show. SECTIONS is
+ *  fixed, so the hooks run in the same order on every render. */
+function useSectionTargets(step: number | null) {
   const t = useT();
-  const ui = useUiTarget({ ref: { region: "overlay", view: "overlay.settings", kind: "settingsSection", key: id },
-                           label: t("targets.settingsSection", { section: t(sectionKey(id)) }), socket: SOCKET });
-  return (
-    <section className="settings-section" id={`settings-${id}`} ref={ui.whole}>
-      <h3 ref={ui.part("heading")}>{t(sectionKey(id))}</h3>
-      <div className="settings-section-body" ref={ui.part("body")}>{children}</div>
-    </section>
-  );
+  return SECTIONS.map((id) => ({
+    id,
+    ui: useUiTarget(sectionShown(id, step)  // eslint-disable-line react-hooks/rules-of-hooks
+      ? { ref: { region: "main", view: "main.settings", kind: "settingsSection", key: id },
+          label: t("targets.settingsSection", { section: t(sectionKey(id)) }), socket: CENTRE_SOCKET }
+      : null),
+  }));
 }
 
-export function Settings() {
+/** The Settings view, while it is the centre's selected view. */
+export function SettingsView() {
   const t = useT();
-  const shown = useSyncExternalStore(open.subscribe, open.get);
   const step = useSyncExternalStore(setup.subscribe, setup.get);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [statusFailed, setStatusFailed] = useState(false);
+  const status = useLiveRead(readStatus);
+  const sections = useSectionTargets(step);
+  const ui = useUiTarget({ ref: { region: "main", view: "main.settings", kind: "settings" },
+                           label: t("menu.settings"), socket: CENTRE_SOCKET });
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const s = await getJson<Status>("/api/settings/status");
-      setStatus(s);
-      setStatusFailed(false);
-      return s;
-    } catch {
-      setStatus(null);
-      setStatusFailed(true);
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (shown) loadStatus();
-  }, [shown, loadStatus]);
-
-  // First-time setup: no Fish key means JARVIS cannot speak at all. The
-  // page opens Settings by itself here; no one navigated.
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      const s = await loadStatus();
-      if (s && !s.env_keys_set.fish_audio) {
-        setup.set(0);
-        open.set(true);
-      }
-    }, SETUP_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [loadStatus]);
-
-  // Opened at a section: go to it once the sections are drawn.
+  // Opened or moved to a section: bring it to the top once it is drawn.
   const section = useSyncExternalStore(asked.subscribe, asked.get);
   useEffect(() => {
-    if (!shown || !section) return;
+    if (!section) return;
     goTo(section);
     asked.set(null);
-  }, [shown, section]);
+  }, [section]);
 
-  const ui = useUiTarget(shown ? { ref: { region: "overlay", view: "overlay.settings", kind: "settings" },
-                                   label: t("menu.settings"), socket: SOCKET } : null);
-
-  if (!shown) return null;
   const close = bindingProps(bind("settings.close", {}));
-  const visible = (id: SectionId) => step === null || SETUP_STEPS[step] === id;
+  const body: Record<SectionId, () => ReactNode> = {
+    you: () => <YouSection />,
+    voice: () => <VoiceSection status={status.value} reload={status.refresh} />,
+    brains: () => <BrainsSection />,
+    team: () => <TeamSection />,
+    updates: () => <UpdatesSection />,
+    server: () => <ServerSection status={status.value} failed={status.error !== null} />,
+  };
+  const last = step !== null && step + 1 >= SETUP_STEPS.length;
 
   return (
-    <div id="settings-container" className="open">
-      <div className="settings-backdrop" {...close} />
-      <div className="settings-panel settings-view" role="dialog" aria-label={t("menu.settings")} ref={ui.whole}>
-        <div className="settings-header">
-          <h2>{t("menu.settings")}</h2>
-          <button className="settings-close" aria-label={t("left.settings.close")} ref={ui.part("close")}
-                  {...close}>×</button>
-        </div>
-        {step !== null && (
-          <div className="settings-welcome"><p>{t("left.settings.welcome")}</p></div>
-        )}
-        <div className="settings-columns">
-          {step === null && (
-            <nav className="settings-nav" aria-label={t("left.settings.sections")} ref={ui.part("nav")}>
+    <div id="settings-view" ref={ui.whole}>
+      <header className="settings-head">
+        <h2>{t("menu.settings")}</h2>
+        <button type="button" className="workflow-close" title={t("left.settings.close")}
+                aria-label={t("left.settings.close")} ref={ui.part("close")} {...close}>×</button>
+        {step === null
+          ? <nav className="settings-nav" aria-label={t("left.settings.sections")} ref={ui.part("nav")}>
               {SECTIONS.map((id) => (
-                <button key={id} type="button" {...bindingProps(bind("settings.section", { section: id }))}>
-                  {t(sectionKey(id))}</button>
+                <button key={id} type="button" ref={ui.part(id)}
+                        {...bindingProps(bind("settings.section", { section: id }))}>{t(sectionKey(id))}</button>
               ))}
             </nav>
-          )}
-          <div className="settings-body">
-            {visible("brains") && <SettingsSection id="brains"><BrainsSection /></SettingsSection>}
-            {visible("voice") && <SettingsSection id="voice">
-              <VoiceSection status={status} statusFailed={statusFailed} reload={loadStatus} /></SettingsSection>}
-            {visible("you") && <SettingsSection id="you"><YouSection reload={loadStatus} /></SettingsSection>}
-            {visible("team") && <SettingsSection id="team"><TeamSection /></SettingsSection>}
-            {visible("updates") && <SettingsSection id="updates"><UpdatesSection /></SettingsSection>}
-            {visible("system") && <SettingsSection id="system">
-              <SystemSection status={status} statusFailed={statusFailed} /></SettingsSection>}
-            {step !== null && (
-              <div className="setup-nav">
-                {step + 1 >= SETUP_STEPS.length
-                  ? <button className="settings-btn primary" {...close}>{t("left.settings.finishSetup")}</button>
-                  : <button className="settings-btn primary" data-ui-action="setup"
-                            onClick={() => setup.set(step + 1)}>{t("left.settings.nextName")}</button>}
-              </div>
-            )}
+          : <p className="settings-welcome">{t("left.settings.welcome")}</p>}
+      </header>
+      <div className="settings-body">
+        {sections.filter(({ id }) => sectionShown(id, step)).map(({ id, ui: s }) => (
+          <section key={id} className="settings-section" id={`settings-${id}`} ref={s.whole}>
+            <h3 ref={s.part("heading")}>{t(sectionKey(id))}</h3>
+            <div className="settings-section-body" ref={s.part("body")}>{body[id]()}</div>
+          </section>
+        ))}
+        {step !== null && (
+          <div className="settings-actions">
+            {last
+              ? <button className="settings-btn primary" ref={ui.part("setup")} {...close}>
+                  {t("left.settings.finishSetup")}</button>
+              : <button className="settings-btn primary" data-ui-action="setup" ref={ui.part("setup")}
+                        onClick={() => setup.set(step + 1)}>{t("left.settings.nextName")}</button>}
           </div>
-        </div>
+        )}
       </div>
     </div>
-  );
-}
-
-function VoiceSection({ status, statusFailed, reload }: {
-  status: Status | null; statusFailed: boolean; reload: () => Promise<Status | null>;
-}) {
-  const t = useT();
-  const [key, setKey] = useState("");
-  const [voiceId, setVoiceId] = useState("");
-  const [tested, setTested] = useState<Dot | null>(null);
-  const [savedKey, setSavedKey] = useState(false);
-  const known: Dot = statusFailed ? "off" : status ? (status.env_keys_set.fish_audio ? "green" : "red") : "off";
-
-  const test = async () => {
-    setTested("yellow");
-    try {
-      const r = await postJson<{ valid: boolean }>("/api/settings/test-fish",
-                                                    { key_value: key.trim() || undefined });
-      setTested(r.valid ? "green" : "red");
-    } catch {
-      setTested("red");
-    }
-  };
-  const saveKeys = async () => {
-    const value = key.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: value });
-    setTested(null);
-    await reload();
-    setSavedKey(Boolean(value));
-  };
-  const saveVoice = async () => {
-    const value = voiceId.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_VOICE_ID", key_value: value });
-  };
-
-  return (
-    <>
-      <div className="settings-field">
-        <label>{t("left.voice.fishKey")}</label>
-        <div className="settings-input-row">
-          <input data-ui-action="input" type="password" placeholder={t("left.voice.fishKeyPlaceholder")} value={key}
-                 onChange={(e) => setKey(e.target.value)} />
-          <button data-ui-action="domain" className="settings-btn" onClick={test}>{t("left.voice.test")}</button>
-          <StatusDot status={tested ?? known} />
-        </div>
-      </div>
-      <div className="settings-field">
-        <label>{t("left.voice.voiceId")}</label>
-        <div className="settings-input-row">
-          <input data-ui-action="input" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe" value={voiceId}
-                 onChange={(e) => setVoiceId(e.target.value)} />
-          <button data-ui-action="domain" className="settings-btn" onClick={saveVoice}>{t("left.voice.save")}</button>
-        </div>
-      </div>
-      <div className="settings-actions">
-        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKeys}>
-          {t("left.voice.saveKeys")}</button>
-      </div>
-      {savedKey && (
-        <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
-      )}
-      <LanguageControl />
-    </>
   );
 }
 
@@ -318,7 +243,7 @@ const HONORIFICS = [
   ["none", "left.you.honorific.none"],
 ] as const;
 
-function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
+function YouSection() {
   const t = useT();
   // Saving is held until what is stored has been read: saving the empty
   // fields of a read that failed would write a blank name over the real one.
@@ -327,6 +252,9 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
   const [name, setName] = useState("");
   const [honorific, setHonorific] = useState("sir");
   const [filled, setFilled] = useState(false);
+  const nameUi = useSettingsItem("name", t("left.you.name"));
+  const honorificUi = useSettingsItem("honorific", t("left.you.honorific"));
+  const saveUi = useSettingsItem("saveYou", t("left.settings.save"));
 
   useEffect(() => {
     if (stored.value && !filled) {
@@ -339,31 +267,92 @@ function YouSection({ reload }: { reload: () => Promise<Status | null> }) {
   const save = async () => {
     if (!filled) return;
     await postJson("/api/settings/preferences", { user_name: name.trim(), honorific });
-    await reload();
   };
 
   return (
     <>
-      <div className="settings-field">
-        <label>{t("left.you.name")}</label>
-        <input data-ui-action="input" type="text" placeholder={t("left.you.namePlaceholder")} value={name}
-               onChange={(e) => setName(e.target.value)} />
-      </div>
-      <div className="settings-field">
-        <label>{t("left.you.honorific")}</label>
-        <select data-ui-action="input" value={honorific} onChange={(e) => setHonorific(e.target.value)}>
+      <SettingsRow label={t("left.you.name")} labelRef={nameUi.part("label")} htmlFor="settings-name">
+        <input data-ui-action="input" id="settings-name" type="text" placeholder={t("left.you.namePlaceholder")}
+               value={name} ref={nameUi.whole} onChange={(e) => setName(e.target.value)} />
+      </SettingsRow>
+      <SettingsRow label={t("left.you.honorific")} labelRef={honorificUi.part("label")} htmlFor="settings-honorific">
+        <select data-ui-action="input" id="settings-honorific" value={honorific} ref={honorificUi.whole}
+                onChange={(e) => setHonorific(e.target.value)}>
           {HONORIFICS.map(([value, words]) => <option key={value} value={value}>{t(words)}</option>)}
         </select>
-      </div>
+      </SettingsRow>
       {!filled && (
         <p className="settings-hint read-failure">
           {stored.error ? t("left.you.unreadable", { error: stored.error }) : t("left.you.reading")}
         </p>
       )}
       <div className="settings-actions">
-        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}>
-          {t("left.you.save")}</button>
+        <button data-ui-action="domain" className="settings-btn primary" onClick={save} disabled={!filled}
+                ref={saveUi.whole}>{t("left.settings.save")}</button>
       </div>
+    </>
+  );
+}
+
+function VoiceSection({ status, reload }: { status: Status | null; reload: () => void }) {
+  const t = useT();
+  const [key, setKey] = useState("");
+  const [voiceId, setVoiceId] = useState("");
+  const [tested, setTested] = useState<Dot | null>(null);
+  const [savedKey, setSavedKey] = useState(false);
+  const voiceUi = useSettingsItem("voiceId", t("left.voice.voiceId"));
+  const saveVoiceUi = useSettingsItem("saveVoiceId", t("left.settings.save"));
+  const keyUi = useSettingsItem("fishKey", t("left.voice.fishKey"));
+  const testUi = useSettingsItem("testFishKey", t("left.voice.test"));
+  const saveKeyUi = useSettingsItem("saveFishKey", t("left.settings.save"));
+  // The dot says a test's result, or that no key is saved; a saved key is
+  // the ordinary state and shows none.
+  const dot: Dot | null = tested ?? (status && !status.env_keys_set.fish_audio ? "red" : null);
+
+  const test = async () => {
+    setTested("yellow");
+    try {
+      const r = await postJson<{ valid: boolean }>("/api/settings/test-fish",
+                                                    { key_value: key.trim() || undefined });
+      setTested(r.valid ? "green" : "red");
+    } catch {
+      setTested("red");
+    }
+  };
+  const saveKey = async () => {
+    const value = key.trim();
+    if (value) await postJson("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: value });
+    setTested(null);
+    reload();
+    setSavedKey(Boolean(value));
+  };
+  const saveVoice = async () => {
+    const value = voiceId.trim();
+    if (value) await postJson("/api/settings/keys", { key_name: "FISH_VOICE_ID", key_value: value });
+  };
+
+  return (
+    <>
+      <LanguageControl />
+      <SettingsRow label={t("left.voice.voiceId")} labelRef={voiceUi.part("label")} htmlFor="settings-voice-id">
+        <input data-ui-action="input" id="settings-voice-id" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe"
+               value={voiceId} ref={voiceUi.whole} onChange={(e) => setVoiceId(e.target.value)} />
+        <button data-ui-action="domain" className="settings-btn" onClick={saveVoice} ref={saveVoiceUi.whole}>
+          {t("left.settings.save")}</button>
+      </SettingsRow>
+      <SettingsRow label={t("left.voice.fishKey")} labelRef={keyUi.part("label")} htmlFor="settings-fish-key">
+        <input data-ui-action="input" id="settings-fish-key" type="password" autoComplete="off"
+               placeholder={t("left.voice.fishKeyPlaceholder")} value={key} ref={keyUi.whole}
+               onChange={(e) => setKey(e.target.value)} />
+        <button data-ui-action="domain" className="settings-btn" onClick={test} ref={testUi.whole}>
+          {t("left.voice.test")}</button>
+        {dot && <StatusDot status={dot} />}
+        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKey} ref={saveKeyUi.whole}>
+          {t("left.settings.save")}</button>
+      </SettingsRow>
+      {savedKey && (
+        <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
+      )}
     </>
   );
 }
@@ -498,6 +487,35 @@ type UpdateResult =
   | { kind: "current" }
   | { kind: "no-answer" };
 
+/** One version on offer: its radio, words and tests, a target by its commit. */
+function VersionRow({ version: v, latest, chosen, updating, choose }: {
+  version: UpdateVersion; latest: boolean; chosen: boolean; updating: boolean; choose: () => void;
+}) {
+  const t = useT();
+  const ui = useSettingsRow("updateVersion", v.sha, versionName(t, v));
+  const [ciKey, ciClass] = v.ci ? CI_WORDS[v.ci] : [null, ""];
+  const why = v.can_choose ? "" : v.ci && v.ci !== "passed" ? t(UNCHOSEN_WORDS[v.ci]) : v.unchosen;
+  return (
+    <li className={"update-version" + (v.can_choose ? "" : " off") + (chosen ? " sel" : "")} ref={ui.whole}>
+      <label>
+        <input data-ui-action="input" type="radio" name="update-version" ref={ui.part("choose")}
+               disabled={!v.can_choose || updating} checked={chosen} onChange={choose} />
+        <span className="update-version-body">
+          <span className="update-version-title">
+            {v.pr !== null ? `${versionName(t, v)}: ${v.title}` : `${versionName(t, v)} ${v.title}`}
+            {latest && <span className="update-tag">{t("left.updates.latest")}</span>}
+          </span>
+          <span className="update-version-meta">
+            {shortDate(v.date)} · <code>{v.sha.slice(0, 7)}</code>
+            {why ? ` · ${why}` : ""}
+          </span>
+        </span>
+        <span className={`update-ci ${ciClass}`} ref={ui.part("ci")}>{ciKey ? t(ciKey) : ""}</span>
+      </label>
+    </li>
+  );
+}
+
 function UpdatesSection() {
   const t = useT();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -567,6 +585,12 @@ function UpdatesSection() {
   };
 
   const ready = status !== null && status.source === "github" && !status.error;
+  const current = ready ? status.current : null;
+  const offered = ready && versions.length > 0;
+  const currentUi = useSettingsItem("currentVersion",
+    current ? t("left.updates.running", { version: versionName(t, current) }) : "", current !== null);
+  const checkUi = useSettingsItem("checkUpdates", t("left.updates.checkAgain"));
+  const installUi = useSettingsItem("installUpdate", t("left.updates.install"), offered);
   let summary: ReactNode = t("left.updates.checking");
   if (problem) summary = t("left.updates.unasked", { error: problem });
   else if (status && status.source !== "github") summary = t(SOURCE_WORDS[status.source]);
@@ -594,39 +618,18 @@ function UpdatesSection() {
 
   return (
     <>
-      {ready && status.current && (
-        <p className="update-current">
-          {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={status.current} />)}
+      {current && (
+        <p className="update-current" ref={currentUi.whole}>
+          {placed((mark) => t("left.updates.running", { version: mark }), <VersionTitle version={current} />)}
         </p>
       )}
       <p className="settings-hint">{checking && status ? t("left.updates.checkingAgain") : summary}</p>
-      {ready && versions.length > 0 && (
+      {offered && (
         <ul className="update-versions">
-          {versions.map((v, i) => {
-            const [ciKey, ciClass] = v.ci ? CI_WORDS[v.ci] : [null, ""];
-            const why = v.can_choose ? "" : v.ci && v.ci !== "passed" ? t(UNCHOSEN_WORDS[v.ci]) : v.unchosen;
-            return (
-              <li key={v.sha} className={"update-version" + (v.can_choose ? "" : " off")
-                                         + (v.sha === chosen ? " sel" : "")}>
-                <label>
-                  <input data-ui-action="input" type="radio" name="update-version"
-                         disabled={!v.can_choose || updating} checked={v.sha === chosen}
-                         onChange={() => { setChosen(v.sha); setConfirming(false); }} />
-                  <span className="update-version-body">
-                    <span className="update-version-title">
-                      {v.pr !== null ? `${versionName(t, v)}: ${v.title}` : `${versionName(t, v)} ${v.title}`}
-                      {i === 0 && <span className="update-tag">{t("left.updates.latest")}</span>}
-                    </span>
-                    <span className="update-version-meta">
-                      {shortDate(v.date)} · <code>{v.sha.slice(0, 7)}</code>
-                      {why ? ` · ${why}` : ""}
-                    </span>
-                  </span>
-                  <span className={`update-ci ${ciClass}`}>{ciKey ? t(ciKey) : ""}</span>
-                </label>
-              </li>
-            );
-          })}
+          {versions.map((v) => (
+            <VersionRow key={v.sha} version={v} latest={v === versions[0]} chosen={v.sha === chosen}
+                        updating={updating} choose={() => { setChosen(v.sha); setConfirming(false); }} />
+          ))}
         </ul>
       )}
       {confirming && choice && (
@@ -652,10 +655,11 @@ function UpdatesSection() {
         })}
       {said && <p className="settings-restart-notice">{said}</p>}
       <div className="settings-actions">
-        <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}>
+        <button data-ui-action="refresh" className="settings-btn" onClick={check} disabled={checking || updating}
+                ref={checkUi.whole}>
           {t("left.updates.checkAgain")}</button>
-        {ready && versions.length > 0 && (
-          <button data-ui-action="restart" className="settings-btn primary" onClick={install}
+        {offered && (
+          <button data-ui-action="restart" className="settings-btn primary" onClick={install} ref={installUi.whole}
                   disabled={!choice || stopping.length > 0 || updating || checking}>
             {updating && choice ? t("left.updates.installing", { version: versionName(t, choice) })
               : confirming && choice ? t("left.updates.yesInstall", { version: versionName(t, choice) })
@@ -667,25 +671,22 @@ function UpdatesSection() {
   );
 }
 
-function SystemSection({ status, statusFailed }: { status: Status | null; statusFailed: boolean }) {
+function ServerSection({ status, failed }: { status: Status | null; failed: boolean }) {
   const t = useT();
-  const detail = statusFailed ? t("left.system.noAnswer")
-    : status ? t("left.system.detail", { port: String(status.server_port),
-                                         uptime: formatUptime(t, status.uptime_seconds) }) : "";
+  const port = useSettingsItem("serverPort", t("left.server.port"));
+  const uptime = useSettingsItem("serverUptime", t("left.server.uptime"));
+  const known = status !== null && !failed;
   return (
     <>
-      <div className="status-grid">
-        <div className="status-row">
-          <StatusDot status={statusFailed ? "red" : status ? "green" : "off"} />
-          <span>{t("left.common.server")}</span><span className="status-detail">{detail}</span>
-        </div>
-      </div>
-      <div className="sysinfo-grid">
-        <div className="sysinfo-row"><span className="sysinfo-label">{t("left.system.port")}</span>
-          <span>{status && !statusFailed ? status.server_port : "—"}</span></div>
-        <div className="sysinfo-row"><span className="sysinfo-label">{t("left.system.uptime")}</span>
-          <span>{status && !statusFailed ? formatUptime(t, status.uptime_seconds) : "—"}</span></div>
-      </div>
+      {failed && (
+        <p className="settings-state"><StatusDot status="red" />{t("left.server.noAnswer")}</p>
+      )}
+      <SettingsRow label={t("left.server.port")} labelRef={port.part("label")}>
+        <span className="settings-value" ref={port.whole}>{known ? status.server_port : "—"}</span>
+      </SettingsRow>
+      <SettingsRow label={t("left.server.uptime")} labelRef={uptime.part("label")}>
+        <span className="settings-value" ref={uptime.whole}>{known ? formatUptime(t, status.uptime_seconds) : "—"}</span>
+      </SettingsRow>
     </>
   );
 }

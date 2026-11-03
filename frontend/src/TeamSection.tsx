@@ -19,11 +19,15 @@
  * worded by its code (teamSignIn.ts `teamSaid`); what the team server says
  * in its own words is shown as it came, marked as original detail; names,
  * logins and addresses are never translated.
+ *
+ * Each control is a Settings target by its key, and each member by GitHub
+ * id (SettingsRow.tsx).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, placed, SaidText, saidShown, useT, type CodedLine, type Said, type Translate } from "./locale";
+import { SettingsRow, useSettingsItem, useSettingsRow } from "./SettingsRow";
 import { StatusDot, type Dot } from "./StatusDot";
 import { connectTeam, openApproval, refusalSaid, teamCall as call, teamSaid } from "./teamSignIn";
 
@@ -113,6 +117,17 @@ export function TeamSection() {
     refresh();
   };
 
+  const state = status?.state ?? null;
+  const connected = status !== null && status.server_url !== null && state !== "pairing" && state !== "disconnected";
+  const stateUi = useSettingsItem("teamState", status ? t(STATE_TEXT[status.state][1]) : "", status !== null);
+  const addressUi = useSettingsItem("teamAddress", t("left.team.address"), state === "disconnected");
+  const signInUi = useSettingsItem("teamSignIn", t("left.team.signInGithub"), state === "disconnected");
+  const approvalUi = useSettingsItem("teamApproval", t("left.team.openApproval"), Boolean(status?.pairing));
+  const cancelUi = useSettingsItem("teamCancel", t("left.team.cancel"), Boolean(status?.pairing));
+  const againUi = useSettingsItem("teamSignInAgain", t("left.team.signInAgain"),
+                                  connected && state === "signed_out" && Boolean(status?.server_url));
+  const disconnectUi = useSettingsItem("teamDisconnect", t("left.team.disconnect"), connected);
+
   const connect = (serverUrl: string) => act(() => connectTeam(serverUrl));
   const disconnect = () => act(async () => {
     const r = await call<{ remote: string; message: string }>("POST", "/api/team/disconnect");
@@ -125,34 +140,27 @@ export function TeamSection() {
       {live.error ? t("left.team.unreadable", { error: live.error }) : t("left.team.reading")}</p>;
   }
   const [dot, stateKey] = STATE_TEXT[status.state];
-  const connected = status.server_url !== null && status.state !== "pairing"
-                    && status.state !== "disconnected";
-
   const signedIn = connected && status.state !== "signed_out";
   return (
     <div className="team">
       {!signedIn && <p className="settings-hint">{t("left.team.turnsOn")}</p>}
-      <div className="status-row">
+      <p className="settings-state" ref={stateUi.whole}>
         <StatusDot status={dot} /><span>{t(stateKey)}</span>
         {connected && <span className="status-detail">
           {t("left.team.lastContact", { when: when(t, status.last_contact_at) })}</span>}
-      </div>
+      </p>
       {status.last_error && <SaidText said={teamSaid(status.last_error_said, status.last_error)}
                                       as="p" className="settings-hint" />}
       {note && ("remote" in note ? <p className="settings-hint">{t(DISCONNECTED[note.remote])}</p>
                                  : <SaidText said={note.said} as="p" className="settings-hint" />)}
 
       {status.state === "disconnected" && (
-        <div className="settings-field">
-          <label htmlFor="team-url">{t("left.team.address")}</label>
-          <div className="settings-input-row">
-            <input data-ui-action="input" id="team-url" type="text" placeholder={t("left.team.addressPlaceholder")}
-                   value={url} onChange={(e) => setUrl(e.target.value)} />
-            <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy || !url.trim()}
-                    onClick={() => connect(url.trim())}>{t("left.team.signInGithub")}</button>
-          </div>
-          <p className="settings-hint">{t("left.team.optional")}</p>
-        </div>
+        <SettingsRow label={t("left.team.address")} labelRef={addressUi.part("label")} htmlFor="team-url">
+          <input data-ui-action="input" id="team-url" type="text" placeholder={t("left.team.addressPlaceholder")}
+                 value={url} ref={addressUi.whole} onChange={(e) => setUrl(e.target.value)} />
+          <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy || !url.trim()}
+                  ref={signInUi.whole} onClick={() => connect(url.trim())}>{t("left.team.signInGithub")}</button>
+        </SettingsRow>
       )}
 
       {status.pairing && (
@@ -160,10 +168,10 @@ export function TeamSection() {
           <p>{t("left.team.approve")}</p>
           <div className="team-code">{status.pairing.user_code}</div>
           <div className="settings-actions">
-            <button data-ui-action="sign-in" className="settings-btn"
+            <button data-ui-action="sign-in" className="settings-btn" ref={approvalUi.whole}
                     onClick={() => openApproval(status.pairing!.verification_uri_complete)}>
               {t("left.team.openApproval")}</button>
-            <button data-ui-action="sign-in" className="settings-btn" disabled={busy}
+            <button data-ui-action="sign-in" className="settings-btn" disabled={busy} ref={cancelUi.whole}
                     onClick={() => act(() => call("POST", "/api/team/cancel"))}>{t("left.team.cancel")}</button>
           </div>
         </div>
@@ -171,21 +179,23 @@ export function TeamSection() {
 
       {connected && (
         <>
-          <div className="sysinfo-grid">
-            <div className="sysinfo-row"><span className="sysinfo-label">{t("left.common.server")}</span>
-              <span>{status.server_url}</span></div>
-            {status.team && <div className="sysinfo-row"><span className="sysinfo-label">{t("left.team.team")}</span>
-              <span>{t("left.team.teamSize", { team: status.team.name, count: status.team.member_count,
-                                               limit: status.team.member_limit })}</span></div>}
-            {status.me && <div className="sysinfo-row"><span className="sysinfo-label">{t("left.team.you")}</span>
-              <span>{t("left.team.youAre", { login: status.me.login, role: roleWords(t, status.me.role) })}</span></div>}
-          </div>
+          <SettingsRow label={t("left.common.server")}>
+            <span className="settings-value">{status.server_url}</span>
+          </SettingsRow>
+          {status.team && <SettingsRow label={t("left.team.team")}>
+            <span className="settings-value">{t("left.team.teamSize", { team: status.team.name,
+              count: status.team.member_count, limit: status.team.member_limit })}</span>
+          </SettingsRow>}
+          {status.me && <SettingsRow label={t("left.team.you")}>
+            <span className="settings-value">
+              {t("left.team.youAre", { login: status.me.login, role: roleWords(t, status.me.role) })}</span>
+          </SettingsRow>}
           <div className="settings-actions">
             {status.state === "signed_out" && status.server_url && (
-              <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy}
+              <button data-ui-action="sign-in" className="settings-btn primary" disabled={busy} ref={againUi.whole}
                       onClick={() => connect(status.server_url!)}>{t("left.team.signInAgain")}</button>)}
-            <button data-ui-action="sign-in" className="settings-btn" disabled={busy} onClick={disconnect}>
-              {t("left.team.disconnect")}</button>
+            <button data-ui-action="sign-in" className="settings-btn" disabled={busy} onClick={disconnect}
+                    ref={disconnectUi.whole}>{t("left.team.disconnect")}</button>
           </div>
           {status.me?.role === "admin" && status.state !== "signed_out" && (
             <MembersPanel me={status.me} />)}
@@ -217,6 +227,53 @@ function Said({ outcome }: { outcome: Outcome }) {
     ? <p className="team-refused" role="alert">{outcome.say(t)}{outcome.reason
         ? <> <SaidText said={outcome.reason} className="team-refused-reason" /></> : null}</p>
     : <p className="team-done">{outcome.say(t)}</p>;
+}
+
+/** One member's row: who, their role, what can be done, and the outcome
+ *  of the last change asked for here; a target by GitHub id. */
+function MemberRow({ m, me, busy, change, endSessions, said }: {
+  m: Member; me: Me; busy: boolean; said: ReactNode;
+  change: (m: Member, body: { role?: string; status?: string }, notDone: (t: Translate) => string) => void;
+  endSessions: (m: Member) => void;
+}) {
+  const t = useT();
+  const ui = useSettingsRow("teamMember", String(m.github_id), m.login);
+  return (
+    <li className="team-member" ref={ui.whole}>
+      <span className="team-member-name" ref={ui.part("name")}>{m.login}{m.name ? ` — ${m.name}` : ""}</span>
+      <span className="team-member-meta" ref={ui.part("role")}>{roleWords(t, m.role)}</span>
+      <span className="team-member-actions" ref={ui.part("actions")}>
+        {m.role === "member"
+          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { role: "admin" },
+                                          (tr) => tr("left.team.notMadeAdmin", { login: m.login }))}>
+              {t("left.team.makeAdmin")}</button>
+          : <button data-ui-action="domain" className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { role: "member" },
+                                          (tr) => tr("left.team.notMadeMember", { login: m.login }))}>
+              {t("left.team.makeMember")}</button>}
+        {m.state === "suspended"
+          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
+                    onClick={() => change(m, { status: "approved" },
+                                          (tr) => tr("left.team.notReenabled", { login: m.login }))}>
+              {t("left.team.reenable")}</button>
+          : <button data-ui-action="domain" className="settings-btn" disabled={busy || m.github_id === me.github_id}
+                    title={t("left.team.suspendNote")}
+                    onClick={() => change(m, { status: "suspended" },
+                                          (tr) => tr("left.team.notSuspended", { login: m.login }))}>
+              {t("left.team.suspend")}</button>}
+        {m.state === "approved" &&
+          <button data-ui-action="domain" className="settings-btn" disabled={busy}
+                  onClick={() => change(m, { status: "removed" },
+                                        (tr) => tr("left.team.notRemoved", { login: m.login }))}>
+            {t("left.team.remove")}</button>}
+        {m.state === "active" && m.github_id !== me.github_id &&
+          <button data-ui-action="domain" className="settings-btn" disabled={busy}
+                  onClick={() => endSessions(m)}>{t("left.team.endSessions")}</button>}
+      </span>
+      {said}
+    </li>
+  );
 }
 
 function MembersPanel({ me }: { me: Me }) {
@@ -275,42 +332,12 @@ function MembersPanel({ me }: { me: Me }) {
   const said = (where: Where) => outcome?.where === where
     && <Said outcome={outcome} />;
   const addRefused = outcome?.where === "add" && outcome.refused;
-
-  const row = (m: Member) => (
-    <li key={m.github_id} className="team-member">
-      <span className="team-member-name">{m.login}{m.name ? ` — ${m.name}` : ""}</span>
-      <span className="team-member-meta">{roleWords(t, m.role)}</span>
-      <span className="team-member-actions">
-        {m.role === "member"
-          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
-                    onClick={() => change(m, { role: "admin" },
-                                          (tr) => tr("left.team.notMadeAdmin", { login: m.login }))}>
-              {t("left.team.makeAdmin")}</button>
-          : <button data-ui-action="domain" className="settings-btn" disabled={busy}
-                    onClick={() => change(m, { role: "member" },
-                                          (tr) => tr("left.team.notMadeMember", { login: m.login }))}>
-              {t("left.team.makeMember")}</button>}
-        {m.state === "suspended"
-          ? <button data-ui-action="domain" className="settings-btn" disabled={busy}
-                    onClick={() => change(m, { status: "approved" },
-                                          (tr) => tr("left.team.notReenabled", { login: m.login }))}>
-              {t("left.team.reenable")}</button>
-          : <button data-ui-action="domain" className="settings-btn" disabled={busy || m.github_id === me.github_id}
-                    onClick={() => change(m, { status: "suspended" },
-                                          (tr) => tr("left.team.notSuspended", { login: m.login }))}>
-              {t("left.team.suspend")}</button>}
-        {m.state === "approved" &&
-          <button data-ui-action="domain" className="settings-btn" disabled={busy}
-                  onClick={() => change(m, { status: "removed" },
-                                        (tr) => tr("left.team.notRemoved", { login: m.login }))}>
-            {t("left.team.remove")}</button>}
-        {m.state === "active" && m.github_id !== me.github_id &&
-          <button data-ui-action="domain" className="settings-btn" disabled={busy}
-                  onClick={() => endSessions(m)}>{t("left.team.endSessions")}</button>}
-      </span>
-      {said(m.github_id)}
-    </li>
-  );
+  const confirming = found !== null && !found.on_roster;
+  const loginUi = useSettingsItem("teamLogin", t("left.team.addLabel"));
+  const lookUpUi = useSettingsItem("teamLookUp", t("left.team.lookUp"));
+  const roleUi = useSettingsItem("teamRole", t("left.team.role"), confirming);
+  const addUi = useSettingsItem("teamAdd", t("left.team.add"), confirming);
+  const addCancelUi = useSettingsItem("teamAddCancel", t("left.team.cancel"), confirming);
 
   return (
     <div className="team-members">
@@ -323,22 +350,22 @@ function MembersPanel({ me }: { me: Me }) {
           return members.length > 0 && (
             <section key={state} className={`team-member-group state-${state}`}>
               <h5>{t(title, { count: members.length })}</h5>
-              <ul className="team-member-list">{members.map(row)}</ul>
+              <ul className="team-member-list">{members.map((m) => (
+                <MemberRow key={m.github_id} m={m} me={me} busy={busy} change={change} endSessions={endSessions}
+                           said={said(m.github_id)} />
+              ))}</ul>
             </section>
           );
         })}
         <p className="settings-hint">{t("left.team.rosterNote", { count: roster.members.length,
                                                                   limit: roster.member_limit })}</p>
       </>}
-      <div className="settings-field">
-        <label htmlFor="team-add">{t("left.team.addLabel")}</label>
-        <div className="settings-input-row">
-          <input data-ui-action="input" id="team-add" type="text" placeholder={t("left.team.addPlaceholder")} value={login}
-                 onChange={(e) => { setLogin(e.target.value); setFound(null); setOutcome(null); }} />
-          <button data-ui-action="domain" className="settings-btn" disabled={busy || !login.trim()} onClick={resolve}>
-            {t("left.team.lookUp")}</button>
-        </div>
-      </div>
+      <SettingsRow label={t("left.team.addLabel")} labelRef={loginUi.part("label")} htmlFor="team-add">
+        <input data-ui-action="input" id="team-add" type="text" placeholder={t("left.team.addPlaceholder")} value={login}
+               ref={loginUi.whole} onChange={(e) => { setLogin(e.target.value); setFound(null); setOutcome(null); }} />
+        <button data-ui-action="domain" className="settings-btn" disabled={busy || !login.trim()} onClick={resolve}
+                ref={lookUpUi.whole}>{t("left.team.lookUp")}</button>
+      </SettingsRow>
       {found && (
         <div className="team-confirm">
           {found.on_roster
@@ -349,14 +376,15 @@ function MembersPanel({ me }: { me: Me }) {
                      : t("left.team.confirmAdd", { login: mark, id: String(found.github_id) }),
                    <strong>{found.login}</strong>)}
                   {addRefused ? null : <> {t("left.team.canSignIn")}</>}</p>
-                <div className="settings-input-row">
-                  <select data-ui-action="input" value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
+                <div className="settings-controls">
+                  <select data-ui-action="input" value={role} ref={roleUi.whole}
+                          onChange={(e) => setRole(e.target.value as "member" | "admin")}>
                     <option value="member">{t("left.team.roleMember")}</option>
                     <option value="admin">{t("left.team.roleAdmin")}</option>
                   </select>
                   <button data-ui-action="domain" className="settings-btn primary" disabled={busy || !roster}
-                          onClick={() => add(found)}>{t("left.team.add")}</button>
-                  <button data-ui-action="input" className="settings-btn"
+                          ref={addUi.whole} onClick={() => add(found)}>{t("left.team.add")}</button>
+                  <button data-ui-action="input" className="settings-btn" ref={addCancelUi.whole}
                           onClick={() => { setFound(null); setOutcome(null); }}>{t("left.team.cancel")}</button>
                 </div>
               </>}

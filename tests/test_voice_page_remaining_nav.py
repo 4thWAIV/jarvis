@@ -364,7 +364,7 @@ async def test_the_maps_labels_follow_the_language_in_force_and_identities_do_no
             await page.wait_for_selector("#settings-language")
             english = await _labels(voice)
             assert english[("orb", None)] == "The orb"
-            assert english[("settingsSection", "voice")] == "Settings, Voice"
+            assert english[("settingsSection", "voice")] == "Settings, Voice and language"
             assert english[("settings", None)] == "Settings"
 
             sessions.language("es")
@@ -372,7 +372,7 @@ async def test_the_maps_labels_follow_the_language_in_force_and_identities_do_no
             spanish = await _labels(voice)
             assert set(spanish) == set(english), "the same targets, by the same identities"
             assert spanish[("orb", None)] == "El orbe"
-            assert spanish[("settingsSection", "voice")] == "Configuración, Voz"
+            assert spanish[("settingsSection", "voice")] == "Configuración, Voz e idioma"
             assert spanish[("settings", None)] == "Configuración"
             assert spanish[("status", None)] == "Estado"
         finally:

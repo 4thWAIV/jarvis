@@ -7,8 +7,8 @@ Every object and meaningful part is a registered target the white signal
 reaches along the pipeline from its region's rail; each control that
 navigates carries the command it runs, and clicking it leaves the page
 exactly as the brain's request for that command does, with the side
-effects the contract declares. Pointing inside Settings while it covers the
-orb is refused as blocked, never drawn from a second orb.
+effects the contract declares. Settings is a centre view: every section and
+every control and reading in it is reached along the main rail.
 
 In Spanish (the language setting's, on the sessions socket's snapshot) the
 same words are Spanish, nothing in the column, the tile, the reminder or
@@ -34,6 +34,9 @@ from tests.test_voice_page_language import _Sessions as _LanguageSessions
 from tests.test_voice_page_network import FITS, HEALTHY, SIGNED_OUT, _envelope, _server, _Sessions, _Team
 from tests.test_voice_page_pipeline import _UiServer
 from tests.test_voice_page_settings import _Server
+from jarvis.ui_contract import load as load_contract
+
+UI_CONTRACT = load_contract()
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
@@ -105,7 +108,7 @@ async def _point(ui, target, reveal="never"):
 SHOWN = """() => ({
   menu: !!document.getElementById('menu-dropdown'),
   expanded: document.getElementById('btn-menu').getAttribute('aria-expanded'),
-  settings: !!document.querySelector('#settings-container .settings-view'),
+  settings: !!document.getElementById('settings-view'),
   reminder: !!document.getElementById('team-reminder'),
 })"""
 
@@ -132,6 +135,30 @@ async def _settled(page):
     await async_api.expect(page.get_by_placeholder("Your name")).to_have_value("Tim")
     await page.wait_for_selector(".brain-card")
     await async_api.expect(page.locator("#settings-updates")).to_contain_text("newer version")
+
+
+SETTINGS = {"region": "main", "view": "main.settings"}
+CLOSE = "#settings-view .settings-head .workflow-close"
+# What opening Settings from closed does, as the contract declares it.
+OPENED = ["settings.opened", "centre.view-shown"]
+# Why a declared part is not pointed at: it is not drawn for this record
+# (a brain with nothing failing has no checks), which is not a miss.
+ABSENT = {"not-mounted", "hidden", "unmounted"}
+
+
+async def _settings_missed(ui):
+    """Every Settings target on show and each of its parts pointed at
+    (scrolled into view where needed): those not reached, and why."""
+    listed = await _ask(ui, {"kind": "map", "view": "main.settings"})
+    parts = {kind: decl["parts"] for kind, decl in UI_CONTRACT.kinds.items()}
+    missed = []
+    for t in listed["map"]["targets"]:
+        for part in [None, *parts[t["ref"]["kind"]]]:
+            target = {**t["ref"], **({"part": part} if part else {})}
+            result = await _point(ui, target, reveal="navigate")
+            if result["status"] != "completed" and not (part and result.get("reason") in ABSENT):
+                missed.append([t["ref"]["kind"], t["ref"].get("key"), part, result["status"], result.get("reason")])
+    return missed
 
 
 async def _marks(page, selector):
@@ -197,7 +224,7 @@ LEFT_WORDS = """() => ({
 # Nothing in Settings' list of sections or its header runs past its own box.
 SETTINGS_FITS = """() => {
   const bad = [];
-  for (const el of document.querySelectorAll('.settings-nav button, .settings-header h2, .settings-section h3')) {
+  for (const el of document.querySelectorAll('.settings-nav button, .settings-head h2, .settings-section h3')) {
     if (el.scrollWidth > el.clientWidth + 0.5) bad.push(['clipped', el.textContent]);
     const p = el.parentElement.getBoundingClientRect(), r = el.getBoundingClientRect();
     if (r.left < p.left - 0.5 || r.right > p.right + 0.5) bad.push(['outside', el.textContent]);
@@ -234,9 +261,10 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
 
             await page.click("#btn-menu")
             await page.click("#menu-dropdown button >> nth=0")
-            await page.wait_for_selector(".settings-view")
+            await page.wait_for_selector("#settings-view")
             nav = await page.locator(".settings-nav button").all_text_contents()
-            assert nav == ["Cerebros", "Voz", "Usted", "Equipo", "Actualizaciones", "Sistema"], nav
+            assert nav == ["Usted", "Voz e idioma", "Cerebros", "Equipo", "Actualizaciones", "Servidor"], nav
+            assert await page.locator(".centre-tabs [aria-selected=true]").text_content() == "Configuración"
             assert await page.evaluate(SETTINGS_FITS) == []
             await async_api.expect(page.get_by_placeholder("Su nombre")).to_have_value("Tim")
             section = await _navigate(ui, "settings.section", {"section": "updates"})
@@ -246,9 +274,11 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
             # Back to English from elsewhere: reworded in place, Settings still open.
             page.settings_server.language = "en"
             page.sessions.send({"type": "language", "language": "en"})
-            await async_api.expect(page.locator(".settings-nav button").first).to_have_text("Brains")
-            assert await page.locator(".settings-view").count() == 1
-            await page.click(".settings-close")
+            await async_api.expect(page.locator(".settings-nav button").first).to_have_text("You")
+            assert await page.locator("#settings-view").count() == 1
+            missed = await _settings_missed(ui)
+            assert missed == [], json.dumps(missed)
+            await page.click(CLOSE)
             words = await page.evaluate(LEFT_WORDS)
             assert words["tile"] == "TEAM SERVER" and words["reminderButtons"] == ["Sign in", "Later"], words
             assert await _left_missed(ui) == LEFT_MISSED
@@ -267,8 +297,10 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             assert kinds == [("brainAccount", "anthropic"), ("mic", None), ("orb", None), ("status", None),
                              ("teamServer", None)]
             overlay = await _ask(ui, {"kind": "map", "region": "overlay"})
-            commands = {c["id"]: c for c in overlay["map"]["commands"]}
-            assert {"menu.toggle", "settings.open", "settings.section", "settings.close"} <= set(commands)
+            assert "menu.toggle" in {c["id"] for c in overlay["map"]["commands"]}
+            settings = await _ask(ui, {"kind": "map", "view": "main.settings"})
+            commands = {c["id"]: c for c in settings["map"]["commands"]}
+            assert {"settings.open", "settings.section", "settings.close"} <= set(commands)
             # Settings is closed: closing it is not offered, and says why.
             assert (commands["settings.close"]["available"], commands["settings.close"]["reason"]) == \
                 (False, "no-entity")
@@ -327,15 +359,15 @@ async def test_settings_opens_goes_to_a_section_and_closes_the_same_by_hand_and_
             await page.click(nav)
             team_by_hand = await page.evaluate(SCROLLED, "settings-team")
             assert team_by_hand["top"] > 0 and team_by_hand["inView"], team_by_hand
-            await page.click(".settings-close")
-            await page.wait_for_selector("#settings-container", state="detached")
+            await page.click(CLOSE)
+            await page.wait_for_selector("#settings-view", state="detached")
             assert await page.evaluate(SHOWN) == closed
 
             # By request, from the same start (the menu open): the same.
             await _navigate(ui, "menu.toggle", {"open": True})
             opened = await _navigate(ui, "settings.open", {})
             await _settled(page)
-            assert (opened["status"], opened["effects"]) == ("completed", ["settings.opened"]), opened
+            assert (opened["status"], opened["effects"]) == ("completed", OPENED), opened
             assert await page.evaluate(SHOWN) == by_hand
             went = await _navigate(ui, "settings.section", {"section": "team"})
             assert went["status"] == "completed", went
@@ -349,10 +381,10 @@ async def test_settings_opens_goes_to_a_section_and_closes_the_same_by_hand_and_
             await page.click("#menu-dropdown button >> nth=1")
             updates_by_hand = await page.evaluate(SCROLLED, "settings-updates")
             assert updates_by_hand["inView"], updates_by_hand
-            await page.click(".settings-backdrop", position={"x": 5, "y": 5})
-            await page.wait_for_selector("#settings-container", state="detached")
+            await page.click(CLOSE)
+            await page.wait_for_selector("#settings-view", state="detached")
             opened = await _navigate(ui, "settings.open", {"section": "updates"})
-            assert opened["effects"] == ["settings.opened"], opened
+            assert opened["effects"] == OPENED, opened
             assert await page.evaluate(SCROLLED, "settings-updates") == updates_by_hand
             await _navigate(ui, "settings.close", {})
 
@@ -364,21 +396,28 @@ async def test_settings_opens_goes_to_a_section_and_closes_the_same_by_hand_and_
 
 
 @pytest.mark.asyncio
-async def test_pointing_inside_settings_is_blocked_while_it_covers_the_orb(page_url):
+async def test_every_settings_section_and_control_is_reached_along_the_main_rail(page_url):
     async with async_api.async_playwright() as p:
         browser, page, ui = await _open(p, page_url)
         try:
-            section = {"region": "overlay", "view": "overlay.settings", "kind": "settingsSection",
-                       "key": "team", "part": "heading"}
+            section = {**SETTINGS, "kind": "settingsSection", "key": "team", "part": "heading"}
             result = await _point(ui, section, reveal="navigate")
             # Opened through its registered command (and said so), then
-            # refused: the orb every signal starts from is covered.
-            assert (result["status"], result["reason"]) == ("blocked", "occluded"), result
-            assert result["effects"] == ["settings.opened"]
-            assert await page.locator(".ui-contour").count() == 0
-            listed = await _ask(ui, {"kind": "map", "region": "overlay"})
-            keys = sorted(t["ref"].get("key") or t["ref"]["kind"] for t in listed["map"]["targets"])
-            assert keys == ["brains", "menu", "settings", "system", "team", "updates", "voice", "you"]
+            # reached from the orb, which nothing covers now.
+            assert (result["status"], result["effects"]) == ("completed", OPENED), result
+            await _settled(page)
+            listed = await _ask(ui, {"kind": "map", "view": "main.settings"})
+            keys = {(t["ref"]["kind"], t["ref"].get("key")) for t in listed["map"]["targets"]}
+            assert {("settings", None), ("brainCard", "anthropic"), ("brainAdd", "openai"),
+                    ("updateVersion", "e" * 40)} <= keys, keys
+            assert {k for kind, k in keys if kind == "settingsSection"} == {
+                "you", "voice", "brains", "team", "updates", "server"}
+            assert {k for kind, k in keys if kind == "settingsItem"} >= {
+                "name", "honorific", "saveYou", "language", "spanishModel", "voiceId", "saveVoiceId",
+                "fishKey", "testFishKey", "saveFishKey", "currentVersion", "checkUpdates", "installUpdate",
+                "serverPort", "serverUptime"}
+            missed = await _settings_missed(ui)
+            assert missed == [], json.dumps(missed)
         finally:
             await browser.close()
 

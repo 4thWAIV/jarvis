@@ -8,6 +8,10 @@ The centre opens on Conversation. It combines earlier conversation with live spe
 
 The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
 
+## Settings in the centre
+
+Settings opens in the centre as a tab beside Conversation, from the ⋮ menu (Check for updates opens it at Updates), and no longer covers the orb or the side columns. Its sections are in the order you come to them: You, Voice and language, Brains, Team, Updates and Server, with a row of their names under the title to jump to each. Each row is a short label and its controls; a state is shown only when it needs your attention, such as a brain check that is failing or a server that is not answering. With no Fish Audio key, first-time setup still opens by itself and walks through Voice and language, then You. JARVIS can point at any Settings control when you ask where something is.
+
 ## Folders
 
 The centre's Folders view is a catalog of the folders JARVIS knows on this Mac. Add existing folder takes an absolute path or one starting with ~/, shows where it resolves and how JARVIS will read it, and registers it only when you say so; nothing is created, moved or changed on disk. Each folder keeps its ID through restarts and moves: if it disappears it stays listed as Missing, and Reconnect location points the same folder at its new place (a different directory has to be confirmed). Remove from catalog stops JARVIS reading it and deletes nothing.

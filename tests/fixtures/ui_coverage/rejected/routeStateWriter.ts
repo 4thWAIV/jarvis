@@ -7,7 +7,7 @@ import { menuOpen } from "../../../../frontend/src/MenuControl";
 import type { Store } from "../../../../frontend/src/store";
 
 export function sneakOpen(): void {
-  (settingsOpen as Store<boolean>).set(true);
+  (settingsOpen as unknown as Store<true | null>).set(true);
   const menu = menuOpen as unknown as Store<boolean>;
   menu.set(true);
 }

@@ -3,13 +3,17 @@
  * a way to add the others.
  *
  * A card shows the brain's logo and plan, its model (from the brain's own
- * list), its setup checks as dots with what to do about one that is not
- * green, its account, a sign-in button for a brain that signs in from here
+ * list), any setup check that is not passing, with what to do about it
+ * (passing checks are the ordinary state and are not listed), a sign-in button for a brain that signs in from here
  * (Codex: the page opens ChatGPT's sign-in in a new tab, and the card turns
  * when Codex reports it finished), and "Start with this brain", one choice
  * across the cards, which takes effect at the next start. The brain running
  * now is marked. Switching the running brain is not here yet: it needs a
  * handover, because a new brain is a new conversation.
+ *
+ * Each card is a target by its brain, with its model, checks, sign-in,
+ * start choice and Remove as parts; each Add button is one too
+ * (SettingsRow.tsx).
  */
 
 import { useState } from "react";
@@ -18,6 +22,7 @@ import { addBrain, brainsChanged, brainsMayHaveChanged, listBrains, removeBrain,
 import { useLiveRead } from "./liveRead";
 import { useT, type Translate } from "./locale";
 import { PROVIDERS } from "./providers";
+import { SettingsRow, useSettingsRow } from "./SettingsRow";
 import { StatusDot } from "./StatusDot";
 
 // How each setup check is named on its card, by the check's name; a
@@ -64,15 +69,20 @@ export function BrainsSection() {
       </div>
       {others.length > 0 && (
         <div className="settings-actions brain-add">
-          {others.map((card) => (
-            <button data-ui-action="domain" key={card.name} className="settings-btn"
-                    onClick={() => act(addBrain(card.name))}>
-              {t("left.brains.add", { brain: card.title })}
-            </button>
-          ))}
+          {others.map((card) => <AddBrain key={card.name} card={card} act={act} />)}
         </div>
       )}
     </div>
+  );
+}
+
+function AddBrain({ card, act }: { card: BrainCard; act: (work: Promise<unknown>) => void }) {
+  const t = useT();
+  const words = t("left.brains.add", { brain: card.title });
+  const ui = useSettingsRow("brainAdd", card.name, words);
+  return (
+    <button data-ui-action="domain" className="settings-btn" ref={ui.whole}
+            onClick={() => act(addBrain(card.name))}>{words}</button>
   );
 }
 
@@ -85,6 +95,8 @@ function BrainCardView({ card, act, onProblem }: {
   const logo = PROVIDERS[card.name]?.logo;
   const [signing, setSigning] = useState(false);
   const signedIn = card.account?.signed_in ?? false;
+  const ui = useSettingsRow("brainCard", card.name, card.title);
+  const failing = (card.checks ?? []).filter((check) => check.status !== "ok");
 
   const signIn = async () => {
     setSigning(true);
@@ -98,7 +110,7 @@ function BrainCardView({ card, act, onProblem }: {
   };
 
   return (
-    <div className={`brain-card${card.active ? " active" : ""}`} data-brain={card.name}>
+    <div className={`brain-card${card.active ? " active" : ""}`} data-brain={card.name} ref={ui.whole}>
       {card.active && <span className="brain-card-state">{t("left.brains.inUse")}</span>}
       <div className="brain-card-head">
         {logo && <img className="brain-card-logo" src={logo} alt="" />}
@@ -106,35 +118,40 @@ function BrainCardView({ card, act, onProblem }: {
         {card.account?.plan && <span className="brain-card-plan">{t("left.brains.plan", { plan: card.account.plan })}</span>}
       </div>
 
-      <div className="settings-field">
-        <label>{t("left.brains.model")}</label>
-        <select data-ui-action="domain" value={card.model} onChange={(e) => act(setModel(card.name, e.target.value))}>
+      <SettingsRow label={t("left.brains.model")} htmlFor={`brain-model-${card.name}`}>
+        <select data-ui-action="domain" id={`brain-model-${card.name}`} value={card.model} ref={ui.part("model")}
+                onChange={(e) => act(setModel(card.name, e.target.value))}>
           {(card.models ?? [card.model]).map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
-      </div>
+      </SettingsRow>
 
-      <div className="brain-checks">
-        {/* Signing in is one of each brain's own checks, so it is said once, there. */}
-        {(card.checks ?? []).map((check) => <CheckRow key={check.name} check={check} />)}
-      </div>
+      {failing.length > 0 && (
+        <div className="brain-checks" ref={ui.part("checks")}>
+          {/* Signing in is one of each brain's own checks, so it is said once, there. */}
+          {failing.map((check) => <CheckRow key={check.name} check={check} />)}
+        </div>
+      )}
 
       {card.signs_in_here && !signedIn && (
-        <button data-ui-action="sign-in" className="settings-btn primary" onClick={signIn} disabled={signing}>
+        <button data-ui-action="sign-in" className="settings-btn primary" onClick={signIn} disabled={signing}
+                ref={ui.part("signIn")}>
           {t(signing ? "left.brains.signingIn" : "left.brains.signInChatGpt")}
         </button>
       )}
 
-      <label className="brain-default">
-        <input data-ui-action="domain" type="radio" name="brain-default" checked={card.default}
-               onChange={() => act(setDefault(card.name))} />
-        {t("left.brains.startWith")}
-      </label>
-
-      {!card.default && card.name !== "anthropic" && (
-        <button data-ui-action="domain" className="settings-btn brain-remove" onClick={() => act(removeBrain(card.name))}>
-          {t("left.brains.remove")}
-        </button>
-      )}
+      <div className="brain-card-foot">
+        <label className="brain-default" ref={ui.part("startWith")}>
+          <input data-ui-action="domain" type="radio" name="brain-default" checked={card.default}
+                 onChange={() => act(setDefault(card.name))} />
+          {t("left.brains.startWith")}
+        </label>
+        {!card.default && card.name !== "anthropic" && (
+          <button data-ui-action="domain" className="settings-btn brain-remove" ref={ui.part("remove")}
+                  onClick={() => act(removeBrain(card.name))}>
+            {t("left.brains.remove")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -146,7 +163,7 @@ function CheckRow({ check }: { check: BrainCheck }) {
       <StatusDot status={DOT[check.status]} />
       <span>{CHECK_LABEL[check.name]?.(t) ?? check.name}</span>
       <span className="status-detail" data-original-detail="">{check.message}</span>
-      {check.status !== "ok" && check.remedy && <p className="settings-hint" data-original-detail="">{check.remedy}</p>}
+      {check.remedy && <p className="settings-hint" data-original-detail="">{check.remedy}</p>}
     </div>
   );
 }

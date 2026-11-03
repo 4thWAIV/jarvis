@@ -83,7 +83,6 @@ export const UI_CONTRACT = {
     "fixed",
     "tab",
     "detail",
-    "modal",
     "menu"
   ],
   "availabilityReasons": {
@@ -146,6 +145,8 @@ export const UI_CONTRACT = {
     "incident": "^[A-Za-z0-9._:-]{1,128}$",
     "check": "^[A-Za-z0-9._:-]{1,128}$",
     "settingsSection": "^[a-z]{1,32}$",
+    "teamMember": "^-?[0-9]{1,20}$",
+    "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
@@ -198,11 +199,6 @@ export const UI_CONTRACT = {
         "label": "Right rail"
       },
       {
-        "id": "rail.overlay.top",
-        "region": "overlay",
-        "label": "Overlay rail"
-      },
-      {
         "id": "rail.footer.top",
         "region": "footer",
         "label": "Footer rail"
@@ -234,12 +230,6 @@ export const UI_CONTRACT = {
         "region": "right"
       },
       {
-        "id": "edge.trunk-overlay",
-        "from": "rail.main.top",
-        "to": "rail.overlay.top",
-        "region": "overlay"
-      },
-      {
         "id": "edge.trunk-footer",
         "from": "rail.left.top",
         "to": "rail.footer.top",
@@ -261,11 +251,6 @@ export const UI_CONTRACT = {
         "id": "rail.right",
         "region": "right",
         "top": "rail.right.top"
-      },
-      {
-        "id": "rail.overlay",
-        "region": "overlay",
-        "top": "rail.overlay.top"
       },
       {
         "id": "rail.footer",
@@ -430,6 +415,13 @@ export const UI_CONTRACT = {
       "entity": "member"
     },
     {
+      "id": "main.settings",
+      "region": "main",
+      "kind": "detail",
+      "label": "Settings",
+      "tab": "settings"
+    },
+    {
       "id": "overlay.controls",
       "region": "overlay",
       "kind": "fixed",
@@ -440,12 +432,6 @@ export const UI_CONTRACT = {
       "region": "overlay",
       "kind": "menu",
       "label": "Menu"
-    },
-    {
-      "id": "overlay.settings",
-      "region": "overlay",
-      "kind": "modal",
-      "label": "Settings"
     },
     {
       "id": "footer.fixed",
@@ -507,7 +493,8 @@ export const UI_CONTRACT = {
             "network",
             "queue",
             "package",
-            "file"
+            "file",
+            "settings"
           ]
         }
       },
@@ -1000,19 +987,22 @@ export const UI_CONTRACT = {
     },
     {
       "id": "settings.open",
-      "label": "Open Settings, at one section if one is named; the menu closes",
-      "view": "overlay.settings",
+      "label": "Open Settings in the centre, at one section if one is named; the menu closes. setup: first-time setup (a welcome, then Voice, then You)",
+      "view": "main.settings",
       "args": {
         "section": {
           "type": "enum",
           "values": [
-            "brains",
-            "voice",
             "you",
+            "voice",
+            "brains",
             "team",
             "updates",
-            "system"
+            "server"
           ]
+        },
+        "setup": {
+          "type": "boolean"
         }
       },
       "required": [],
@@ -1023,6 +1013,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "settings.opened"
+        },
+        {
+          "effect": "centre.view-shown"
         }
       ],
       "family": "settings"
@@ -1030,17 +1023,17 @@ export const UI_CONTRACT = {
     {
       "id": "settings.section",
       "label": "Go to one section of Settings while it is open",
-      "view": "overlay.settings",
+      "view": "main.settings",
       "args": {
         "section": {
           "type": "enum",
           "values": [
-            "brains",
-            "voice",
             "you",
+            "voice",
+            "brains",
             "team",
             "updates",
-            "system"
+            "server"
           ]
         }
       },
@@ -1056,15 +1049,19 @@ export const UI_CONTRACT = {
     },
     {
       "id": "settings.close",
-      "label": "Close Settings (first-time setup ends with it)",
-      "view": "overlay.settings",
+      "label": "Close Settings (first-time setup ends with it); the centre goes back to Conversation",
+      "view": "main.settings",
       "args": {},
       "required": [],
       "actors": [
         "human",
         "brain"
       ],
-      "effects": [],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
       "family": "settings"
     },
     {
@@ -2345,14 +2342,21 @@ export const UI_CONTRACT = {
     {
       "kind": "settings",
       "entity": null,
-      "label": "Settings",
+      "label": "Settings; a part named after a section is that section's name in the row that jumps to it",
       "parts": [
         "close",
-        "nav"
+        "nav",
+        "setup",
+        "you",
+        "voice",
+        "brains",
+        "team",
+        "updates",
+        "server"
       ],
       "presentations": [
         {
-          "view": "overlay.settings",
+          "view": "main.settings",
           "reveal": {
             "command": "settings.open",
             "args": {}
@@ -2371,11 +2375,143 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "overlay.settings",
+          "view": "main.settings",
           "reveal": {
             "command": "settings.open",
             "args": {
               "section": "$key"
+            }
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "kind": "settingsItem",
+      "entity": null,
+      "label": "One control or reading in Settings, by its name",
+      "parts": [
+        "label"
+      ],
+      "keys": [
+        "name",
+        "honorific",
+        "saveYou",
+        "language",
+        "spanishModel",
+        "voiceId",
+        "saveVoiceId",
+        "fishKey",
+        "testFishKey",
+        "saveFishKey",
+        "teamState",
+        "teamAddress",
+        "teamSignIn",
+        "teamApproval",
+        "teamCancel",
+        "teamSignInAgain",
+        "teamDisconnect",
+        "teamLogin",
+        "teamLookUp",
+        "teamRole",
+        "teamAdd",
+        "teamAddCancel",
+        "currentVersion",
+        "checkUpdates",
+        "installUpdate",
+        "serverPort",
+        "serverUptime"
+      ],
+      "presentations": [
+        {
+          "view": "main.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "kind": "brainCard",
+      "entity": "provider",
+      "label": "A brain's card in Settings",
+      "parts": [
+        "model",
+        "checks",
+        "signIn",
+        "startWith",
+        "remove"
+      ],
+      "presentations": [
+        {
+          "view": "main.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {
+              "section": "brains"
+            }
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "kind": "brainAdd",
+      "entity": "provider",
+      "label": "Add a brain",
+      "parts": [],
+      "presentations": [
+        {
+          "view": "main.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {
+              "section": "brains"
+            }
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "kind": "teamMember",
+      "entity": "teamMember",
+      "label": "A team member in Settings",
+      "parts": [
+        "name",
+        "role",
+        "actions"
+      ],
+      "presentations": [
+        {
+          "view": "main.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {
+              "section": "team"
+            }
+          }
+        }
+      ],
+      "family": "settings"
+    },
+    {
+      "kind": "updateVersion",
+      "entity": "version",
+      "label": "A version offered in Settings, Updates",
+      "parts": [
+        "choose",
+        "ci"
+      ],
+      "presentations": [
+        {
+          "view": "main.settings",
+          "reveal": {
+            "command": "settings.open",
+            "args": {
+              "section": "updates"
             }
           }
         }
@@ -3516,7 +3652,7 @@ export interface CommandArgs {
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -3538,8 +3674,8 @@ export interface CommandArgs {
   "reminder.later": { };
   "right.tab.select": { tab: "folders" | "agents" | "queue" | "workflows" | "network" | "diagnostics"; };
   "settings.close": { };
-  "settings.open": { section?: "brains" | "voice" | "you" | "team" | "updates" | "system"; };
-  "settings.section": { section: "brains" | "voice" | "you" | "team" | "updates" | "system"; };
+  "settings.open": { section?: "you" | "voice" | "brains" | "team" | "updates" | "server"; setup?: boolean; };
+  "settings.section": { section: "you" | "voice" | "brains" | "team" | "updates" | "server"; };
   "subagent.open": { sessionId: string; agentId: string; };
   "subsystem.close": { };
   "subsystem.open": { subsystemId: string; };

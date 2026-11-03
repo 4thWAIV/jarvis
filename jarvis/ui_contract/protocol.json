@@ -15,7 +15,7 @@
   "endpointStyles": ["outline", "circle", "brackets"],
   "revealModes": ["never", "navigate"],
   "visibility": ["visible", "offscreen", "hidden", "occluded", "unmounted"],
-  "viewKinds": ["fixed", "tab", "detail", "modal", "menu"],
+  "viewKinds": ["fixed", "tab", "detail", "menu"],
   "availabilityReasons": {
     "no-entity": "Nothing of that kind is open or listed.",
     "entity-gone": "That item is no longer listed.",
@@ -76,6 +76,8 @@
     "incident": "^[A-Za-z0-9._:-]{1,128}$",
     "check": "^[A-Za-z0-9._:-]{1,128}$",
     "settingsSection": "^[a-z]{1,32}$",
+    "teamMember": "^-?[0-9]{1,20}$",
+    "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
@@ -101,7 +103,6 @@
       {"id": "rail.left.top", "region": "left", "label": "Left rail"},
       {"id": "rail.main.top", "region": "main", "label": "Main rail"},
       {"id": "rail.right.top", "region": "right", "label": "Right rail"},
-      {"id": "rail.overlay.top", "region": "overlay", "label": "Overlay rail"},
       {"id": "rail.footer.top", "region": "footer", "label": "Footer rail"}
     ],
     "edges": [
@@ -109,14 +110,12 @@
       {"id": "edge.trunk-left", "from": "trunk.orb", "to": "rail.left.top", "region": "left"},
       {"id": "edge.trunk-main", "from": "trunk.orb", "to": "rail.main.top", "region": "main"},
       {"id": "edge.trunk-right", "from": "rail.main.top", "to": "rail.right.top", "region": "right"},
-      {"id": "edge.trunk-overlay", "from": "rail.main.top", "to": "rail.overlay.top", "region": "overlay"},
       {"id": "edge.trunk-footer", "from": "rail.left.top", "to": "rail.footer.top", "region": "footer"}
     ],
     "rails": [
       {"id": "rail.left", "region": "left", "top": "rail.left.top"},
       {"id": "rail.main", "region": "main", "top": "rail.main.top"},
       {"id": "rail.right", "region": "right", "top": "rail.right.top"},
-      {"id": "rail.overlay", "region": "overlay", "top": "rail.overlay.top"},
       {"id": "rail.footer", "region": "footer", "top": "rail.footer.top"}
     ]
   },

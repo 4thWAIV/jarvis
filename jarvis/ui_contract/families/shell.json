@@ -157,6 +157,13 @@
       "entity": "member"
     },
     {
+      "id": "main.settings",
+      "region": "main",
+      "kind": "detail",
+      "label": "Settings",
+      "tab": "settings"
+    },
+    {
       "id": "overlay.controls",
       "region": "overlay",
       "kind": "fixed",
@@ -167,12 +174,6 @@
       "region": "overlay",
       "kind": "menu",
       "label": "Menu"
-    },
-    {
-      "id": "overlay.settings",
-      "region": "overlay",
-      "kind": "modal",
-      "label": "Settings"
     },
     {
       "id": "footer.fixed",
@@ -233,7 +234,8 @@
             "network",
             "queue",
             "package",
-            "file"
+            "file",
+            "settings"
           ]
         }
       },
