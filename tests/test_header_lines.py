@@ -347,6 +347,10 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "package_story.parse": (
+        "it reads a story file's fields into a Story and refuses one with its own "
+        "sentences, built from slide and beat numbers and fixed words; no title, "
+        "beat or selector from the file is ever put into a refusal"),
     "server._bundle_reply": (
         "its head is the refusal's own words (bundle_contract's InspectionRefused or "
         "messaging_api's Refused, fixed text) or the paging line; the route's JSON, "
