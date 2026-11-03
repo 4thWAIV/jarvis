@@ -74,6 +74,7 @@ from starlette.responses import JSONResponse
 
 from jarvis import access_keys
 from jarvis import data_paths
+from jarvis.bundle_readers import html as bundle_html
 
 log = logging.getLogger("jarvis.auth")
 
@@ -161,17 +162,50 @@ def is_package_page(path: str) -> bool:
     return bool(package) and ("/" + rest).startswith(PACKAGE_PAGE_MARK)
 
 
+# A static HTML preview of a file a teammate sent (bundle_api.py's html
+# route): framed only by JARVIS's own page, and sandboxed with no
+# permissions at all, so it gets an opaque origin and runs no script
+# whether it is opened in the page's `sandbox=""` frame or straight in a
+# tab. Nothing outside the bundle loads: its own images, styles and fonts
+# come from the same route, and every other address is refused.
+BUNDLE_PREVIEW_PREFIX = "/api/team/messages/"
+BUNDLE_PREVIEW_MARK = "/html/"
+# The headers themselves are the html reader's (one definition).
+BUNDLE_PREVIEW_HEADERS = bundle_html.PREVIEW_HEADERS
+
+
+def is_bundle_preview(path: str) -> bool:
+    """`/api/team/messages/<m>/attachments/<a>/bundle/members/<id>/html/...`:
+    one file of a static HTML preview."""
+    if not path.startswith(BUNDLE_PREVIEW_PREFIX):
+        return False
+    parts = path[len(BUNDLE_PREVIEW_PREFIX):].split("/")
+    return (len(parts) >= 8 and [parts[1], parts[3], parts[4]] == ["attachments", "bundle",
+                                                                   "members"]
+            and "/" + parts[6] + "/" == BUNDLE_PREVIEW_MARK
+            and all(parts[i] for i in (0, 2, 5)))
+
+
+def _headers_for(path: str) -> tuple[tuple[bytes, bytes], ...]:
+    if is_package_page(path):
+        return PACKAGE_PAGE_HEADERS
+    if is_bundle_preview(path):
+        return BUNDLE_PREVIEW_HEADERS
+    return SECURITY_HEADERS
+
+
 def apply_security_headers(raw_headers, path: str = "") -> list[tuple[bytes, bytes]]:
     """Our values, replacing rather than joining any that are already there.
 
     Appending would produce `X-Frame-Options: SAMEORIGIN, DENY`, which is
     two conflicting policies and which several browsers resolve by ignoring
     the header entirely. These are the security headers; ours win. A page
-    package's file gets PACKAGE_PAGE_HEADERS instead.
+    package's file gets PACKAGE_PAGE_HEADERS instead, and a bundle's static
+    preview BUNDLE_PREVIEW_HEADERS.
     """
     kept = [(name, value) for name, value in (raw_headers or ())
             if name.lower() not in _SECURITY_HEADER_NAMES]
-    kept.extend(PACKAGE_PAGE_HEADERS if is_package_page(path) else SECURITY_HEADERS)
+    kept.extend(_headers_for(path))
     return kept
 
 
@@ -605,7 +639,8 @@ class OriginGuard:
     @staticmethod
     def _with_security_headers(send, path: str = ""):
         """Add SECURITY_HEADERS (PACKAGE_PAGE_HEADERS for a page package's
-        file) to the response start message.
+        file, BUNDLE_PREVIEW_HEADERS for a bundle's static preview) to the
+        response start message.
 
         A raw ASGI wrapper rather than a `BaseHTTPMiddleware` on top,
         because BaseHTTPMiddleware would buffer every streamed response

@@ -342,6 +342,154 @@ voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent) and `mic-check-page/` (page).
 
+## Collaboration bundles
+Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
+without running anything. The shared contract is `bundle_contract.py`: the
+typed JSON of every bundle route (Classification, MemberPage, TextPage,
+Preview, PreflightResult, ReviewState), the fixed formats, operations,
+support and reason codes, the opaque `member_id` (from the attachment's
+SHA-256 and the member's checked path) and continuation, and `BRAIN_TOOLS`,
+which says for each bundle tool whether it is an ACTING_TOOL, what it
+taints and which route calls the same service. The page's copy is
+generated into `frontend/src/bundleContract.ts` by
+`scripts/generate_messaging_contract.py`. The pieces:
+`bundle_readers/` (one reader per format and the
+registry, `detect` deciding a format from content before extension, and
+`health`, which asks osascript rather than assuming it), `bundle_cache.py`
+(derived output keyed by owner, attachment hash, member, reader version
+and options, owner-only under `data_paths.bundle_cache_dir()`, least
+recently used trimmed past 512 MiB, plus each owner's scratch folder for
+the private 0600 copies a reader needs on disk), `bundle_inspection.py` (the
+one service: open, classify, list, read, preview, render and a static
+preview's files, reached only through `messaging_files`: `downloaded` on
+open, `verified_path` and `attachment_ref` otherwise; every outcome to its
+observer), `bundle_api.py` (the routes under
+`/api/team/messages/{message_id}/attachments/{attachment_id}/bundle`),
+`bundle_capabilities.py` (what this node can read, on its node update),
+`bundle_preflight.py` (the sender's readiness), `bundle_status.py` (the
+recipient's openability, reported as a technical receipt) and
+`bundle_tasks.py` (a one-off request's task context, review checklist,
+companions and repair). Inspection never clears quarantine, keeps no
+execute bit, runs no script, loads no macro and executes no HTML.
+
+The readers, none a new dependency: PDF (`pdf.py`) through PDFKit and
+CoreGraphics in `osascript -l JavaScript` (`_quartz.py`, the one subprocess
+seam, `RUNNER`): page count, `encrypted`, each page's text (at most
+`PDF_PAGES_PER_CALL` pages and a timeout per call), `scanned_no_text` when
+no page has text, `page_failed` for a page that cannot be read, and a page
+drawn into a raw CoreGraphics bitmap that `_quartz.png` encodes with zlib;
+never ImageIO, NSBitmapImageRep or `sips`, which crash on this Mac (ImageIO's
+GIF reader too). Text, Markdown, JSON, CSV and TSV (`text.py`): UTF-8, a
+byte order mark, else Windows-1252 (noted `legacy_encoding`); CSV and TSV
+paged by whole rows; malformed JSON or CSV still read, noted `corrupt`. HTML and SVG (`html.py`):
+text with `html.parser`, and what it would load from outside listed as
+`blocked_resources`; its static preview's files are served only from the
+same archive with `html.PREVIEW_HEADERS` (CSP `default-src 'none'` and
+`sandbox` without `allow-scripts`). PNG, JPEG, GIF and WebP (`image.py`):
+sized from their headers and never decoded; the preview is the file
+itself, and so is its one rendered page, served with its own type
+(`RenderedPageInfo.media_type`; a PDF page is PNG), so the brain sees a
+JPEG, GIF or WebP as sent; an image is never shrunk to `max_edge`, since
+that would mean decoding it. A member with text and nothing to draw
+(Markdown, CSV, an Office file) has an empty preview (no refs): asking for
+it is not a failed read and is not observed. No preview is a read: it only
+names what can be shown, so its success is never observed; a page counts
+once `render_page` draws it and words once `read_member` reads them. docx, xlsx and pptx
+(`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
+and row (saved values with the formula beside them,
+`formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
+(`macros_ignored`); an XML part with a DOCTYPE or entity is `corrupt`.
+Legacy doc, xls and ppt, RTF, HEIC, audio and video have no reader
+(`reader_unavailable`). Every reader pages through `_paging.page`, a page
+at most `max_chars` and ending on a whole line, row, page or slide unless
+one alone is longer; a member too large to read is refused
+(`too_large`), never cut. An archive is listed with
+`bundle_archive.list_members(..., per_entry=True)`: a bad entry (outside,
+link, encrypted, duplicate) is a `blocked` member and the rest stay
+readable; only the entry count and total size refuse the whole archive.
+Tar, gzip, 7z, RAR and split archives are `unsupported`; a nested archive
+is a member (`nested_archive`), never expanded.
+
+The transport crosses the wire under its own capability,
+`messaging.bundles.v1`, which the team server offers beside `messaging.v1`
+(`messaging_models.bundles_offered`). A node's update carries its
+`AttachmentCapabilities` (`bundle_capabilities.local_capabilities`: the
+readers' health, checked at most every five minutes, the archive budgets
+and the work-package modes; `zip` always); the snapshot shows each node's
+own with `attachments_observed_at`, and a node judged from it is
+`advertised`, `legacy` (none: an older JARVIS), `stale` (checked over
+`CAPABILITY_FRESH_SEC` ago) or `offline`. A message may carry `task` (a
+`TaskContext`: outcome, primary and supporting artifacts by attachment id
+and hash, answer to the sender only) and `supersedes` (a file of an earlier
+message in the same thread between the same two people, which is kept);
+both are in the digest only when set, so every older digest is unchanged.
+A draft holds them (`Draft.task`, `.supersedes`); `draft_content` and the
+read-back include them only while the server offers bundles
+(`MessageApprovals(bundles=...)`, from `Delivery.bundles_offered`), else
+the read-back says the task does not go, and a change of server between
+review and yes is a new digest and a new review. The recipient's
+openability is a receipt kind (`openability`, one `OpenabilityReport` per
+file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
+the inspection service's observations per (message, file, revision)
+(`human_openability`, messaging store schema 3; a listing that already
+shows a member with no reader is `partial` before anything is tried on it,
+and a review's progress is only worked out on a thread whose task was asked
+of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
+JARVIS asks every message and receipt route for the bundle fields
+(`?bundles=1`); a team server answers a JARVIS that does not ask with the
+messaging.v1 fields only (`messaging.legacy_view`), so older nodes keep
+working. `bundle_preflight.SenderPreflight` inspects the draft's own
+snapshots (`DraftFiles`) with the same inspection service, derives what
+the message needs, and judges each of the recipient's nodes on its own:
+blocked, ready, partial or unknown, with only the gaps the sender can act
+on; a review of a draft with files stores it with the revision
+(`human_preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
+`LocalMessaging.edit_bundle`), adds companions beside the original
+(`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
+thread with a flattened copy checked member by member, or companions,
+from `FileSnapshots.original_bytes`), and keeps the recipient's review
+checklist (`human_review`, never sent), resumed across a repair: an item
+read on the replaced file carries to the repaired copy's member only when
+`BundleInspection.member_digest` (the member's SHA-256, under the archive
+budgets) is the same on both, never on the path alone; each
+item keeps where it was read (`read`: the pages and line ranges an
+`Observation`'s `locations` carried, ranges that touch joined,
+`bundle_tasks.read_locations`). Nothing marks an item `cited` yet. A received
+file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
+transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
+`messaging_runtime` builds and binds the three records; a draft edit from a
+worker thread runs on the event loop (`MessagingRuntime.on_loop`).
+
+The routes and the brain's tools share one set of calls,
+`bundle_api.Calls`, over the context the messaging runtime gives
+(`MessagingRuntime.bundle_context`: its one `BundleInspection` over the
+received files, `received`, and the owner signed in now). A tool answers with the route's own JSON text
+(`bundle_api.answer`), a page of it at a time within the tool cap
+(`server._paged(..., exact=True)`, so the pages join back), walled as the
+sender's words. `look_at_bundle_page` hands the brain the PNG as an image
+block, as `look_at_screen` does. The Codex brain reaches the same MCP
+server and the same tools. `show_bundle_member` and the page's Open share
+the show route's call, which checks the member and sends ids only in a
+`bundle_view` frame on the voice socket. A member's static HTML is served
+with `web_auth.BUNDLE_PREVIEW_HEADERS`, which are the html reader's own
+`PREVIEW_HEADERS` (framed by JARVIS only, `sandbox` with no permissions,
+nothing from outside the bundle), and framed with `sandbox=""`. A sent
+file's card shows the recipient's JARVIS's report once it has opened it
+(`receipts.openability`; "Read there", "Opens there", "Partly readable there" with the
+first member that failed), and `read_people_thread` says the same on each
+file line and the thread's review progress in its head. Downloading or revealing a file is not reading it. The
+page's side: `bundles.ts` (the routes, the open member and `bundleWords`,
+every string shown), `BundleInventory.tsx` (Open on a checked incoming
+file's card: a document opens in the centre, an archive lists a folder at
+a time), `BundleMemberView.tsx` (the centre's File view: a PDF's pages
+beside its text, text with More, rows as a table, images, the static
+preview) and `BundleLines.tsx` (a message's request line, the thread's
+review progress, a draft's readiness, each shown only when there is
+something to say, and a draft's request fields, `TaskFields`: the kind,
+the words and which file is primary, saved through the task route; a
+member inside an archive is named as primary through `set_message_task`).
+A member a zip lists as a device or pipe is `special_file`.
+
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
 seconds while paired, `team_client` sends one node update to the team
@@ -353,9 +501,10 @@ sent; `GET /api/team/network` returns it unchanged, and a `network` hint on
 (`data_paths.node_id()`, one per data directory), the boot ID and update
 sequence (`team_api`), the machine's CPU and memory (`host_resources.py`),
 each brain's account as a keyed hash with its quota windows
-(`brain_accounts.py`; no email leaves the machine) and the last human
+(`brain_accounts.py`; no email leaves the machine), the last human
 activity (`human_activity.py`: a sequence number, an age and a source, never
-content). The team server binds each node to the member whose session first
+content) and what it can open (`bundle_capabilities.py`, see "Collaboration
+bundles"). The team server binds each node to the member whose session first
 published it, refuses an older boot or sequence, and works out presence
 (online within 15 s, delayed to 45 s, then offline), the brains' pace and
 its own health when the snapshot is built. The brain's `team_network` reads
@@ -871,6 +1020,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `server_address.py` — This server's own address (`own`), recorded with
   its pid at startup and removed on shutdown, and the one reader of that
   record (`running`) that `python -m jarvis.update` uses (see "Self-update")
+- `bundle_contract.py` / `bundle_inspection.py` / `bundle_readers/` — Reading a
+  file someone sent (see "Collaboration bundles")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -979,6 +1130,10 @@ the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without
 node, the frontend's `node_modules`, or Playwright's Chromium.
+
+`tests/test_bundle_readers_mac.py` is marked `osascript`: it runs the PDF
+reader against the real PDFKit and skips off macOS; every other bundle
+test fakes osascript (`tests/bundle_fixtures.FakeOsascript`).
 
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that

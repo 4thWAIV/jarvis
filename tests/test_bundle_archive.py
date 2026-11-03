@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from jarvis import bundle_archive as ba
-from tests.bundle_fixtures import WRAPPER, review_bundle, review_files, two_page_pdf, zip_bytes
+from tests.bundle_fixtures import (FILE_MODE, WRAPPER, encrypt_entries, raw_zip, review_bundle,
+                                   review_files, two_page_pdf, zip_bytes)
 
 
 def opened(tmp_path: Path, data: bytes, name: str = "in.zip") -> zipfile.ZipFile:
@@ -23,18 +24,7 @@ def opened(tmp_path: Path, data: bytes, name: str = "in.zip") -> zipfile.ZipFile
     return ba.open_archive(path)
 
 
-def raw_zip(entries: list[tuple[str, bytes, int]]) -> bytes:
-    """A zip whose entries are exactly as given: (name, data, unix mode)."""
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w") as z:
-        for name, data, mode in entries:
-            info = zipfile.ZipInfo(name)
-            info.external_attr = mode << 16
-            z.writestr(info, data)
-    return out.getvalue()
-
-
-FILE = 0o100644
+FILE = FILE_MODE
 
 
 # -- listing -----------------------------------------------------------------------------
@@ -241,3 +231,51 @@ def test_extract_never_writes_over_a_folder_that_exists(tmp_path):
         with pytest.raises(FileExistsError):
             ba.extract(z, ba.list_members(z), tmp_path / "out")
     assert list((tmp_path / "out").iterdir()) == []
+
+
+# -- per-entry listing, for read-only browsing ---------------------------------------------
+
+def test_a_per_entry_listing_sets_bad_entries_aside_and_keeps_the_rest(tmp_path):
+    entries = [("ok/a.txt", b"a", FILE), ("../escaped.txt", b"x", FILE),
+               ("ok/link", b"/etc/passwd", 0o120777), ("ok/A.TXT", b"dup", FILE),
+               ("C:/x.txt", b"x", FILE), ("ok/b.txt", b"b", FILE)]
+    with opened(tmp_path, raw_zip(entries)) as z:
+        with pytest.raises(ba.ArchiveError):
+            ba.list_members(z)                     # strict, as work packages are
+        listing = ba.list_members(z, per_entry=True)
+    assert set(listing.files()) == {"ok/a.txt", "ok/b.txt"}
+    assert [(r.name, r.reason, r.kind) for r in listing.refused] == [
+        ("../escaped.txt", "outside", ""), ("ok/link", "bad-kind", "link"),
+        ("ok/A.TXT", "collision", ""), ("C:/x.txt", "outside", "")]
+
+
+def test_a_per_entry_listing_sets_aside_an_entry_that_needs_a_file_as_a_folder(tmp_path):
+    entries = [("a", b"file", FILE), ("a/b.txt", b"x", FILE), ("c.txt", b"c", FILE)]
+    with opened(tmp_path, raw_zip(entries)) as z:
+        listing = ba.list_members(z, per_entry=True)
+    assert set(listing.files()) == {"a", "c.txt"}
+    assert [(r.name, r.reason) for r in listing.refused] == [("a/b.txt", "collision")]
+
+
+def test_encrypted_entries_are_refused_one_by_one_when_browsing(tmp_path):
+    data = encrypt_entries(raw_zip([("s1.txt", b"x", FILE), ("s2.txt", b"y", FILE)]))
+    with opened(tmp_path, data) as z:
+        listing = ba.list_members(z, per_entry=True)
+    assert listing.members == ()
+    assert {(r.name, r.kind) for r in listing.refused} == {("s1.txt", "encrypted"),
+                                                          ("s2.txt", "encrypted")}
+
+
+def test_whole_archive_budgets_refuse_even_a_per_entry_listing(tmp_path):
+    entries = [(f"f{n}.txt", b"x", FILE) for n in range(5)]
+    with opened(tmp_path, raw_zip(entries)) as z:
+        with pytest.raises(ba.ArchiveError) as e:
+            ba.list_members(z, ba.Budgets(max_entries=4), per_entry=True)
+    assert e.value.reason == "too-many"
+
+
+def test_a_head_is_only_the_first_bytes(tmp_path):
+    with opened(tmp_path, zip_bytes({"big.txt": b"0123456789" * 10_000})) as z:
+        member = ba.list_members(z).files()["big.txt"]
+        assert ba.read_head(z, member, 16) == b"0123456789012345"
+        assert ba.read_head(z, member, 1 << 20) == b"0123456789" * 10_000

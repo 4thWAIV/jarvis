@@ -100,6 +100,10 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import attachment_locations, packages_api, work_packages
+from jarvis import bundle_api
+from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SHOWN,
+                                    TEXT_PAGE_DEFAULT_CHARS)
+from jarvis.bundle_inspection import AttachmentKey
 from jarvis import self_update
 from jarvis.arrival_announcer import Wording
 from jarvis import session_watch
@@ -2972,7 +2976,7 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")))
 team_api.mount(app)
-messaging_runtime.mount(app, lambda: messaging)
+messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
 
@@ -4555,20 +4559,29 @@ def _page_arg(args: dict) -> int:
         return 1
 
 
-def _one_page(text: str, page: int, what: str, tool: str) -> str:
-    """One page of `text` with a header saying where it sits and how to get
-    the next, the page itself wrapped as untrusted. `what` is a header
-    phrase JARVIS wrote ("guard's last reply"); `tool` is the tool to call
-    for the next page."""
-    pages = _pages(text, REPLY_PAGE_CHARS)
+def _paged(text: str, page: int, what: str, tool: str,
+           exact: bool = False) -> tuple[str, Optional[str]]:
+    """(the header, page `page` of `text`), or (why there is no such page,
+    None). The header says where the page sits and how to get the next;
+    `what` is a header phrase JARVIS wrote ("guard's last reply"), `tool`
+    the tool to call for the next page. `exact` cuts at the page size and
+    drops nothing, so the pages join back into `text` (JSON)."""
+    pages = ([text[i:i + REPLY_PAGE_CHARS] for i in range(0, len(text), REPLY_PAGE_CHARS)]
+             if exact else _pages(text, REPLY_PAGE_CHARS))
     if not 1 <= page <= len(pages):
         return (f"{what} has {len(pages)} page{'s' if len(pages) != 1 else ''}; "
-                f"there is no page {page}.")
+                f"there is no page {page}."), None
     head = (f"{what}, page {page} of {len(pages)} "
             f"({len(text):,} characters in all).")
     if page < len(pages):
         head += f" Call {tool} again with page {page + 1} for the rest."
-    return head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, pages[page - 1])
+    return head, pages[page - 1]
+
+
+def _one_page(text: str, page: int, what: str, tool: str) -> str:
+    """One page of `text` (`_paged`), the page itself wrapped as untrusted."""
+    head, chunk = _paged(text, page, what, tool)
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, chunk)
 
 
 def tool_read_session_reply(args: dict) -> str:
@@ -6552,10 +6565,31 @@ async def tool_people_messages(args: dict) -> str:
     return head + "\n" + _wrap_untrusted(_TEAM_WRAP_NAME, "\n".join(lines))
 
 
-def _file_lines(attachments) -> list[str]:
-    """A message's or a draft's files, one line each: name, size and id."""
+_OPENED_THERE = {"verified": "has been read there", "ready": "opens there",
+                 "partial": "only partly readable there", "unsupported": "can't be read there",
+                 "corrupt": "damaged there", "unavailable": "not opened there"}
+
+
+def _file_lines(attachments, reports=()) -> list[str]:
+    """A message's or a draft's files, one line each: name, size and id,
+    and on a sent file the recipient's JARVIS's report once it opened it
+    (the same report the Queue's file card shows)."""
+    def opened(a) -> str:
+        r = next((r for r in reports if r.attachment_id == a.attachment_id
+                  and r.sha256 == a.sha256), None)
+        if r is None:
+            return ""
+        said = f"; the recipient's JARVIS says it {_OPENED_THERE[r.status]}"
+        if r.status not in ("verified", "ready"):
+            said += f" ({r.members_readable} of {r.members_total} readable"
+            if r.failed_member:
+                said += f"; first failed: {r.failed_member}"
+            if r.reason:
+                said += f", {REASONS_SHOWN.get(r.reason, r.reason)}"
+            said += ")"
+        return said
     return [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
-            f"attachment {a.attachment_id}" for a in attachments]
+            f"attachment {a.attachment_id}{opened(a)}" for a in attachments]
 
 
 def _where_line(message_id: uuid.UUID, attachment_id: uuid.UUID) -> str:
@@ -6587,14 +6621,32 @@ def _thread_text(local, item) -> str:
             out.append(f"Subject: {msg.subject}")
         out.append(msg.text)
         received = m.direction == "incoming" or m.self_message
+        reports = m.receipts.openability if m.direction == "outgoing" else ()
         out += [line + (_where_line(msg.message_id, a.attachment_id) if received else "")
-                for line, a in zip(_file_lines(msg.attachments), msg.attachments)]
+                for line, a in zip(_file_lines(msg.attachments, reports), msg.attachments)]
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "
                    f"{d.send.state.replace('_', ' ')}: {d.text}")
         out += _file_lines(d.attachments)
     return "\n".join(out).strip()
+
+
+_REVIEW_PROGRESS_WORDS = {"file_ready": "the file is ready",
+                          "evidence_unavailable": "some evidence is unreadable",
+                          "review_in_progress": "in progress",
+                          "notes_ready": "notes are drafted"}
+
+
+async def _review_progress(thread) -> Optional[str]:
+    """The thread's review progress, as the Queue item's cue shows it
+    (bundle_api's review call); None when there is nothing to say."""
+    try:
+        got = await bundle_api.answer(_bundles.review(thread))
+    except Exception:                       # noqa: BLE001 - nothing to say, as on the page
+        return None
+    progress = got.body().get("progress") if got.ok else None
+    return _REVIEW_PROGRESS_WORDS.get(progress) if progress else None
 
 
 async def tool_read_people_thread(args: dict) -> str:
@@ -6615,6 +6667,9 @@ async def tool_read_people_thread(args: dict) -> str:
     if unread:
         head += (" Once he has heard them, mark these read with mark_people_message_read: "
                  + ", ".join(unread) + ".")
+    progress = await _review_progress(thread)
+    if progress:
+        head += f" His review: {progress} (review_checklist has the detail)."
     # Off the event loop: each received file's location hashes the file.
     text = await asyncio.to_thread(_thread_text, messaging.local, item)
     return head + "\n" + _one_page(text, _page_arg(args), "That conversation",
@@ -7138,6 +7193,304 @@ TAINT_EXEMPT_TOOLS.update({
                           "not back to the brain"),
     "open_package_page": "it opens a package's page on his screen and reads nothing back",
 })
+
+
+# --- Files a teammate sent: bundles (bundle_api.py) -------------------------
+#
+# What a received file is and what it holds, read by the brain through the
+# same calls the page's bundle routes make (bundle_api.Calls), and handed
+# back as the same JSON, a page of it at a time within the tool cap, inside
+# an untrusted block: names, paths and text in it are the sender's. A file
+# downloaded or revealed in Finder is not a file read: only these readers
+# count as reading it. Which tools act and which taint is the contract's one
+# table, bundle_contract.BRAIN_TOOLS; the reasons the clean ones are clean
+# are below, held to the same set.
+
+_BUNDLE_WRAP_NAME = "file"
+
+
+async def _show_bundle_frame(frame: dict) -> bool:
+    """Hand a bundle_view frame to every JARVIS page open: True when one
+    took it."""
+    if not voice_clients:
+        return False
+    await _voice_emit(frame)
+    return True
+
+
+_bundles = bundle_api.Calls(
+    lambda: messaging.bundle_context() if messaging is not None else None,
+    _show_bundle_frame)
+
+
+def _bundle_key(args: dict) -> Optional[AttachmentKey]:
+    message_id, attachment_id = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+    if message_id is None or attachment_id is None:
+        return None
+    return AttachmentKey(message_id, attachment_id)
+
+
+_WHICH_FILE = ("Which file, sir? Give me its message id and attachment id from "
+               "read_people_thread.")
+_WHICH_MEMBER = ("Which part of it, sir? Give me its member id from list_bundle_members "
+                 "(or the file's own, root_member_id, from inspect_attachment).")
+
+
+def _int_arg(args: dict, key: str, default: int) -> int:
+    try:
+        return int(args.get(key) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bundle_reply(got: "bundle_api.Answer", page: int, what: str, tool: str,
+                  then: str = "") -> str:
+    """A bundle call's JSON, as the route sent it, one page at a time and
+    walled; a refusal says its own words first."""
+    if got.ok:
+        head, chunk = _paged(got.text, page, what, tool, exact=True)
+        if chunk is not None and then and "again with page" not in head:
+            head += " " + then
+    else:
+        error = got.body().get("error") or {}
+        head, chunk = f"Nothing was read, sir: {error.get('message', 'it was refused.')}", got.text
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_BUNDLE_WRAP_NAME, chunk)
+
+
+async def tool_inspect_attachment(args: dict) -> str:
+    """What a received file is, downloading and checking it first if it is
+    not here: POST {A}/bundle, the page's Files."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    got = await bundle_api.answer(_bundles.inspect(key))
+    return _bundle_reply(
+        got, _page_arg(args), "That file", "inspect_attachment",
+        "For an archive, list_bundle_members shows what it holds; read_bundle_member reads "
+        "a member and look_at_bundle_page shows you a page.")
+
+
+async def tool_list_bundle_members(args: dict) -> str:
+    """One folder of a received archive: GET {A}/bundle/members."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    got = await bundle_api.answer(_bundles.members(
+        key, str(args.get("folder") or ""), args.get("continuation") or None,
+        _int_arg(args, "limit", MEMBER_PAGE_DEFAULT)))
+    return _bundle_reply(got, _page_arg(args), "What it holds", "list_bundle_members",
+                         "A continuation in it lists the rest of the folder.")
+
+
+async def tool_read_bundle_member(args: dict) -> str:
+    """One member's text, a reader's page at a time: GET .../text."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    got = await bundle_api.answer(_bundles.text(
+        key, member, args.get("continuation") or None,
+        _int_arg(args, "max_chars", TEXT_PAGE_DEFAULT_CHARS)))
+    return _bundle_reply(got, _page_arg(args), "Its text", "read_bundle_member",
+                         "complete false means there is more: pass its continuation.")
+
+
+async def tool_look_at_bundle_page(args: dict):
+    """A page of a received document as an image you see: GET .../pages/{n}."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    page = _int_arg(args, "page", 1)
+    try:
+        rendered = await _bundles.page(key, member, page)
+    except Exception as e:
+        _status, body = bundle_api.refusal(e)
+        return _bundle_reply(bundle_api.Answer(_status, json.dumps(body)), 1, "", "")
+    info = rendered.info
+    return ToolImage(f"Page {info.page} of {info.page_count}, as it looks.\n"
+                     + _wrap_untrusted(_BUNDLE_WRAP_NAME, info.model_dump_json()),
+                     rendered.data, info.media_type)
+
+
+async def tool_show_bundle_member(args: dict) -> str:
+    """Open a member in the centre of his screen: POST .../show."""
+    key, member = _bundle_key(args), str(args.get("member") or "").strip()
+    if key is None:
+        return _WHICH_FILE
+    if not member:
+        return _WHICH_MEMBER
+    try:
+        shown = await _bundles.show(key, member)
+    except Exception as e:
+        _status, body = bundle_api.refusal(e)
+        return f"Nothing was shown, sir: {body['error'].get('message')}"
+    if not shown:
+        return "No JARVIS page is open to show it on. Nothing was shown."
+    return "It is open in the centre of his screen, sir."
+
+
+def _draft_now(message_id: uuid.UUID):
+    """The saved draft as the page shows it, for the revision its buttons send."""
+    local = messaging.local
+    pairing = local.pairing()
+    if pairing is None:
+        raise messaging_api.Refused("messaging_unavailable", availability="not_paired")
+    draft = local.store.draft(*pairing.ns, message_id)
+    if draft is None:
+        raise messaging_api.Refused("draft_not_found")
+    return draft
+
+
+async def _bundle_change(work, done) -> str:
+    """A transport call on his word: `done(result)` said, or its refusal."""
+    if messaging is None:
+        return MESSAGING_OFF
+
+    async def call():
+        result = work()
+        return await result if inspect.isawaitable(result) else result
+    got = await bundle_api.answer(call())
+    if not got.ok:
+        return f"Nothing was changed, sir: {(got.body().get('error') or {}).get('message')}"
+    return done(got.body())
+
+
+def _artifact(draft, attachment: Optional[uuid.UUID], member: str = "") -> Optional[dict]:
+    """A file on the draft as the task names it: by id and hash, never its name."""
+    ref = next((a for a in draft.attachments if a.attachment_id == attachment), None)
+    if ref is None:
+        return None
+    out = {"attachment_id": str(ref.attachment_id), "sha256": ref.sha256}
+    if member:
+        out["member_path"] = member
+    return out
+
+
+async def tool_attachment_readiness(args: dict) -> str:
+    """Whether his draft's files can be opened by its recipient's JARVIS:
+    GET /drafts/{id}/readiness. A prediction, never proof."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which draft, sir? Give me its message id."
+    got = await bundle_api.answer(_bundles.readiness(message_id))
+    return _bundle_reply(got, _page_arg(args), "Its readiness", "attachment_readiness",
+                         "It predicts; it never says the recipient opened anything.")
+
+
+async def tool_set_message_task(args: dict) -> str:
+    """What he asks the recipient for, carried with his draft: PUT .../task."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which draft, sir? Give me its message id."
+
+    def work():
+        draft = _draft_now(message_id)
+        outcome = str(args.get("outcome") or "").strip()
+        task = None
+        if outcome:
+            supporting = [_artifact(draft, _uuid_arg({"a": a}, "a"))
+                          for a in (args.get("supporting") or [])]
+            task = {"requested_outcome": outcome,
+                    "outcome_kind": str(args.get("outcome_kind") or "notes"),
+                    "primary": _artifact(draft, _uuid_arg(args, "primary"),
+                                         str(args.get("primary_member") or "")),
+                    "supporting": [s for s in supporting if s is not None],
+                    "reply_audience": "sender_only"}
+        return _bundles.set_task(message_id, draft.draft_revision, task)
+
+    return await _bundle_change(work, lambda d: (
+        f"Set, sir: the draft is at revision {d['draft_revision']}. It needs reviewing "
+        f"again with request_message_review before it can go."))
+
+
+async def tool_add_companion_files(args: dict) -> str:
+    """Readable copies made from one of his draft's files, added beside it:
+    POST .../companions. The original stays."""
+    message_id, attachment = _uuid_arg(args, "message"), _uuid_arg(args, "attachment")
+    if message_id is None or attachment is None:
+        return "Which draft and which of its files, sir?"
+    kinds = [str(k) for k in (args.get("kinds") or [])]
+    said = await _bundle_change(
+        lambda: _bundles.add_companions(message_id, _draft_now(message_id).draft_revision,
+                                        attachment, kinds),
+        lambda d: (f"Added, sir: the draft now has {len(d.get('attachments') or [])} files "
+                   f"and is at revision {d['draft_revision']}; review it again with "
+                   f"request_message_review."))
+    return said
+
+
+async def tool_prepare_repair(args: dict) -> str:
+    """A repaired copy of a file that could not be opened, as a new draft
+    replying in the same thread: POST {A}/repair. Nothing is sent."""
+    key = _bundle_key(args)
+    if key is None:
+        return _WHICH_FILE
+    mode = str(args.get("mode") or "")
+    said = await _bundle_change(
+        lambda: _bundles.repair(key, mode),
+        lambda d: (f"Prepared, sir: draft {d['message_id']}, revision {d['draft_revision']}, "
+                   f"replies in the same thread and keeps the old file. Nothing was sent; "
+                   f"request_message_review reviews it."))
+    return said
+
+
+async def tool_review_checklist(args: dict) -> str:
+    """His own record of a one-off request: GET /threads/{id}/review."""
+    thread = _uuid_arg(args, "thread")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+    got = await bundle_api.answer(_bundles.review(thread))
+    return _bundle_reply(got, _page_arg(args), "The review's checklist", "review_checklist",
+                         "Only an item read counts as checked.")
+
+
+async def tool_set_review_scope(args: dict) -> str:
+    """He accepts the whole review or only the readable part:
+    PUT /threads/{id}/review/scope."""
+    thread, scope = _uuid_arg(args, "thread"), str(args.get("scope") or "")
+    if thread is None:
+        return "Which conversation, sir? Give me its thread from people_messages."
+
+    async def work():
+        now = await _bundles.review(thread)
+        return await _bundles.set_scope(thread, now.revision, scope)
+
+    return await _bundle_change(work, lambda d: (
+        f"Done, sir: the review's scope is {d.get('scope')}. Say in the notes what was "
+        f"not read." if d.get("scope") == "partial" else
+        f"Done, sir: the review's scope is {d.get('scope')}."))
+
+
+TOOL_HANDLERS.update({
+    "inspect_attachment": tool_inspect_attachment,
+    "list_bundle_members": tool_list_bundle_members,
+    "read_bundle_member": tool_read_bundle_member,
+    "look_at_bundle_page": tool_look_at_bundle_page,
+    "show_bundle_member": tool_show_bundle_member,
+    "attachment_readiness": tool_attachment_readiness,
+    "set_message_task": tool_set_message_task,
+    "add_companion_files": tool_add_companion_files,
+    "prepare_repair": tool_prepare_repair,
+    "review_checklist": tool_review_checklist,
+    "set_review_scope": tool_set_review_scope,
+})
+_BUNDLE_CLEAN = {
+    "show_bundle_member": "it opens a file on his screen and reads nothing back",
+    "set_message_task": "it records what he asks for on his own draft, and reads nothing back",
+    "add_companion_files": ("it adds readable copies of his own draft's file and gives back "
+                            "only a count and a revision"),
+    "prepare_repair": ("it makes a new draft of his own with a repaired copy and gives back "
+                       "only its id and revision"),
+    "set_review_scope": "it records the scope he accepted, and reads nothing back",
+}
+assert set(_BUNDLE_CLEAN) == {n for n, t in BRAIN_TOOLS.items() if t.taints is None}, \
+    "every clean bundle tool says why, and only those"
+ACTING_TOOLS.update(n for n, t in BRAIN_TOOLS.items() if t.acting)
+TAINTING_TOOLS.update({n: t.taints for n, t in BRAIN_TOOLS.items() if t.taints})
+TAINT_EXEMPT_TOOLS.update(_BUNDLE_CLEAN)
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an

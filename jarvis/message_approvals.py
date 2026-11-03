@@ -102,8 +102,14 @@ class MessageApprovals:
     transaction with the send record (`save_approved`)."""
 
     def __init__(self, store: ports.LocalMessagingStore, snapshots: ports.AttachmentSnapshots,
-                 *, ids: ports.IdSource, clock: ports.Clock):
+                 *, ids: ports.IdSource, clock: ports.Clock,
+                 bundles: Callable[[], bool] = lambda: False):
+        """`bundles` says whether the team server takes a draft's task and
+        supersedes links (messaging.bundles.v1): what review digests and
+        reads back, so a change of server between review and approval is a
+        changed digest and a new review."""
         self.store, self.snapshots, self.ids, self.clock = store, snapshots, ids, clock
+        self.bundles = bundles
 
     # -- what a draft would send ------------------------------------------------
 
@@ -121,7 +127,7 @@ class MessageApprovals:
             server_id, owner_github_id, draft.message_id, draft.send.content_revision),
             list(draft.attachments))
         try:
-            content = ports.draft_content(draft)
+            content = ports.draft_content(draft, self.bundles())
         except ValidationError:
             raise wire.ContractError("invalid_request") from None
         return content, wire.content_digest(content, server_id=server_id,
@@ -328,8 +334,8 @@ class Reviews:
         draft = self.approvals.request_review(server_id, owner_github_id, message_id,
                                               expected_draft_revision)
         label = recipient_label(self.recipients(), draft.recipient_github_id, owner_github_id)
-        capture_id = self.captures.open_for_review(draft, ports.human_readback(draft, label),
-                                                   label)
+        capture_id = self.captures.open_for_review(
+            draft, ports.human_readback(draft, label, self.approvals.bundles()), label)
         return self.approvals.store.set_capture(server_id, owner_github_id, message_id,
                                                 capture_id)
 
@@ -377,7 +383,7 @@ class HumanRecipient:
                                      self.bound["content_revision"],
                                      self.bound["content_digest"])
         if (draft is None or draft.recipient_github_id != self.bound["github_id"]
-                or ports.human_readback(draft, self.label) != self.text):
+                or ports.human_readback(draft, self.label, m.approvals.bundles()) != self.text):
             return NOT_APPROVED, _changed(self.label)
         return None
 

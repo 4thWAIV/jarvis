@@ -35,6 +35,7 @@ import {
   setTurn, setUnread, startReply,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
+import { ReviewProgressLabel, TaskLine } from "./BundleLines";
 import { Cue, DELIVERY_CUE } from "./QueueIcons";
 import {
   cues, DELIVERY_WORDS, delivery, draftsOf, handle, isSelf, jarvisLabel, latestFrom, messagesOf, personName,
@@ -141,6 +142,7 @@ function OneItem({ thread }: { thread: string }) {
           <Cue kind={c.turn === "mine" ? "your-turn" : "their-turn"}>{turnWords(dir, work)}</Cue>
           {c.addressed && <Cue kind="addressed">Addressed</Cue>}
           {c.dismissed && <Cue kind="dismissed">Dismissed</Cue>}
+          <ReviewProgressLabel thread={thread} />
           {!self && !c.dismissed && (c.turn === "mine"
             ? <button type="button" className="item-turn" disabled={busy}
                       onClick={() => void setTurn(thread, correspondent)}>
@@ -315,12 +317,17 @@ function MessageCard({ m, state, dir, thread, itemSubject, onReply }: {
         </p>
       )}
       {msg.subject && msg.subject !== itemSubject && <h3 className="message-subject">{msg.subject}</h3>}
+      <TaskLine task={msg.task} attachments={msg.attachments} />
       <div className="message-text" ref={body}>{msg.text}</div>
       {msg.attachments.length > 0 && (
         <div className="message-files">
           {msg.attachments.map((a) => (
             <FileCard key={a.attachment_id} fileRef={a} messageId={msg.message_id} incoming={toMe && !fromMe}
-                      file={m.files.find((f) => f.attachment_id === a.attachment_id)} />
+                      file={m.files.find((f) => f.attachment_id === a.attachment_id)}
+                      report={fromMe
+                        ? m.receipts?.openability.find((r) => r.attachment_id === a.attachment_id
+                                                              && r.sha256 === a.sha256)
+                        : undefined} />
           ))}
         </div>
       )}
