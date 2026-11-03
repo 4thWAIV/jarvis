@@ -97,7 +97,7 @@ const lunch = threads["lunch"];
 const restoring = Q.withPending(withHistory, { [lunch]: { command: "restore", expected_revision: withHistory.items[lunch].work_state.revision } });
 out.restoringWaiting = names(Q.waiting(restoring)).includes("lunch");
 out.restoringDismissed = names(Q.dismissed(restoring));
-out.lunchCues = (({ readByYou, unread, dismissed }) => ({ readByYou, unread, dismissed }))(Q.cues(withHistory, lunch)!);
+out.lunchCues = (({ unread, dismissed }) => ({ unread, dismissed }))(Q.cues(withHistory, lunch)!);
 
 // Opening a waiting item shows it in Active at once.
 const newest = threads["newest"];
