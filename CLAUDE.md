@@ -259,9 +259,27 @@ subjects and bodies come back in an untrusted block.
 ## Work packages
 A teammate sends runnable work as a zip with `package.json` at its root,
 attached to an ordinary message between people (format:
-`docs/work-packages.md`). `work_packages.py` unpacks it into
-`data_paths.packages_dir()/<name>-<version>-<id>/`, refusing the whole zip if
-any entry escapes the folder or is a link, and removes the quarantine mark.
+`docs/work-packages.md`). Every received zip is read through one module,
+`bundle_archive.py` (`open_archive`, `list_members`, `read_member`,
+`extract`): every entry checked before anything is written (absolute, drive
+or network paths, backslashes, `..`, links, devices, encrypted entries, two
+entries landing at one path by case or Unicode form, a file where a folder
+is needed), entry, depth, per-file, total and compression-ratio budgets
+counted on what is actually decompressed, macOS metadata (`__MACOSX`,
+`.DS_Store`) set aside, the one wrapper folder found, and extraction into a
+private staging folder renamed into place whole. It never runs anything,
+clears the quarantine mark or keeps execute bits unless asked
+(`keep_modes`). `work_packages.recognise` finds `package.json` at the
+zip's root or in its one wrapper folder, every path it names relative to
+that folder; several candidates, a malformed one or another project's (an
+npm `package.json` has none of the JARVIS fields) say why it is not a
+package. `work_packages.py` unpacks it into
+`data_paths.packages_dir()/<name>-<version>-<id>/` (the wrapper's contents),
+and removes the quarantine mark. Opening the same bytes again, from any
+attachment, gives the package already there: `packages_dir()/.records/`
+holds each package's SHA-256 and attachment ids (`Package.sources`, which
+the Queue's Open page matches on), and a folder from before the record is
+adopted by its name.
 There is no other sandbox: the team is trusted. The brain's `open_package`
 and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
 is the gate. `run_package_command` runs one shell step in the folder with a
@@ -790,6 +808,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   brain's `attach_message_files` and `draft_message`'s `files`): the folder
   catalog's ordinary-file rule, a held descriptor reached without links,
   and one save at the exact revision under the same sign-in, all or none
+- `bundle_archive.py` — Reading a received zip safely: the entry checks,
+  budgets, wrapper folder and staged extraction work packages and ordinary
+  bundles share (see "Work packages")
 - `work_packages.py` — Work packages: unpacking a received zip, finding,
   running a step, its results, and which files the brain may attach; the
   three ways a package runs, an agent package's brief, and a page package's

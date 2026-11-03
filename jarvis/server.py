@@ -6730,7 +6730,7 @@ TAINT_EXEMPT_TOOLS.update({
 # --- Work packages -------------------------------------------------------
 #
 # A zip a teammate sends in an ordinary message, with a package.json at its
-# root (docs/work-packages.md). Opening it and running each step are
+# root or in its one wrapper folder (docs/work-packages.md). Opening it and running each step are
 # ACTING_TOOLS: his spoken yes on that turn is the one gate, as the team
 # asked; there is no sandbox. The results go back as a reply through
 # draft_message's `files`, so the ordinary review and approval apply.
@@ -6755,7 +6755,7 @@ async def tool_open_package(args: dict) -> str:
         return f"{messaging_api.Refused(e.code).shown()} Nothing was opened."
     try:
         package, fresh = await asyncio.to_thread(work_packages.unpack, archive,
-                                                 attachment_id.hex[:8])
+                                                 attachment_id.hex)
         files = "".join(f"\n\n{title} ({relative}):\n{package.text(relative)}"
                         for title, relative in (("Skill", package.manifest.skill),
                                                 ("Brief", package.manifest.brief))

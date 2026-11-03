@@ -20,7 +20,7 @@ back through the usual draft, review and approval.
 
 ## The format
 
-A zip with `package.json` at its root:
+A zip with `package.json` at its root, or inside one folder that holds everything else (the way Finder's Compress zips a folder). macOS's `__MACOSX` folder and `.DS_Store` files are set aside when looking for that folder, and never unpacked. Every path `package.json` names is relative to the folder it is in, and the package's folder on the receiver holds what that folder holds:
 
 ```json
 {
@@ -45,10 +45,11 @@ A zip with `package.json` at its root:
 
 `name`, `version`, `purpose` and `returns` are always required, and so is
 the file the package's `runs` needs; the other two may be there too, and
-every file package.json names must be in the zip. Every entry in the zip must stay inside the package
-folder: an absolute path, a `..` that climbs out or a symbolic link refuses
-the whole zip, and nothing is written. File permissions in the zip are
-kept, so scripts stay executable.
+every file package.json names must be in the zip, beside package.json.
+
+A `package.json` that has none of `purpose`, `returns`, `runs`, `skill`, `brief` or `entry` is some other project's (an npm one, say), not a work package's. A zip whose `package.json` is in a folder that is not its only one, or with several folders holding one and none at the root, is not a package either; each of these is refused with the reason, and the zip is still an ordinary file.
+
+The zip is checked by `jarvis/bundle_archive.py` before anything is written. An absolute path, a drive or network path, a backslash, a `..` that climbs out, a link, a device, an encrypted entry, two entries that would be the same file on a Mac's disk (by case or Unicode form), or a file where another entry needs a folder refuses the whole zip. So do more than 10,000 entries, a file over 256 MB, more than 1 GB in all, or a file expanding more than 100 times its compressed size past its first megabyte, counted as it is actually decompressed. It is unpacked into a private staging folder and renamed into place only once complete, so a failure leaves nothing. File permissions in the zip are kept (never set-user-ID), so scripts stay executable.
 
 ### Writing the skill
 
@@ -123,6 +124,11 @@ The brain's tools:
   is not here yet, unpacks it into `<data>/packages/<name>-<version>-<id>/`,
   takes macOS's quarantine mark off the folder so its scripts run, and
   returns `package.json` and the skill. Acting: only on the person's word.
+  Opening the same bytes again, from that attachment or a resent one, gives
+  the package already unpacked, results and all: which archive each package
+  came from (its SHA-256 and attachment ids) is kept in
+  `<data>/packages/.records/`. A package unpacked before that record existed
+  is recognised by its folder name and adopted.
 - `list_packages`: the packages unpacked here.
 - `run_package_command` (package, command, `terminal`): runs one step in
   the package's folder and returns its exit code and the last 4,000
@@ -155,7 +161,7 @@ to open a .zip, run it the way it runs, and reply with the results.
 
 ## Sending one
 
-Zip the package's folder with `package.json` at the root:
+Zip the package's folder with `package.json` at the root (a zip of the folder itself, with `package.json` one folder down, opens too):
 
 ```bash
 python3 examples/packages/zip_package.py examples/packages/spanish-speech-test
