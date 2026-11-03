@@ -45,7 +45,6 @@ export const bundleWords = {
   more: "More",
   previous: "Previous",
   next: "Next",
-  top: "Top",
   text: "Text",
   pages: "Pages",
   preview: "Preview",

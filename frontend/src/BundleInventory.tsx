@@ -53,13 +53,18 @@ export function BundleInventory({ file, filename }: { file: FileKey; filename: s
         )}
         {problem && <span className="file-state bundle-problem" role="status">{problem}</span>}
       </div>
-      {archive && expanded && <Folder file={file} />}
+      {archive && expanded && <Folder file={file} filename={filename} />}
     </div>
   );
 }
 
-/** One folder of the archive: its members, a page at a time. */
-function Folder({ file }: { file: FileKey }) {
+/** One folder of the archive: its members, a page at a time. A zip whose
+ *  top level is one folder and nothing else opens inside it, since that
+ *  folder only wraps the files. The path above the list names where you
+ *  are, starting from the zip's own name; every part but the last goes
+ *  back there. */
+function Folder({ file, filename }: { file: FileKey; filename: string }) {
+  const [root, setRoot] = useState<string | null>(null);
   const [folder, setFolder] = useState("");
   const [pages, setPages] = useState<MemberPage[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
@@ -69,37 +74,41 @@ function Folder({ file }: { file: FileKey }) {
     setProblem(null);
     try {
       const page = await listMembers({ messageId, attachmentId }, where, continuation);
+      if (where === "" && !continuation && root === null) {
+        const only = page.members.length === 1 && page.members[0].is_dir && !page.continuation
+          ? page.members[0].path : "";
+        setRoot(only);
+        if (only) { setFolder(only); return; }
+      }
       setPages((now) => (continuation ? [...now, page] : [page]));
     } catch (e) {
       setProblem((e as Error).message);
     }
-  }, [messageId, attachmentId]);
-  useEffect(() => { setPages([]); void read(folder, null); }, [folder, read]);
+  }, [messageId, attachmentId, root]);
+  useEffect(() => { setPages([]); void read(folder, null); }, [folder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const members = pages.flatMap((p) => p.members);
   const more = pages[pages.length - 1]?.continuation ?? null;
-  const parent = folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
+  const base = root ?? "";
+  const inside = folder === base ? [] : folder.slice(base ? base.length + 1 : 0).split("/");
+  const crumbs = [{ name: filename, path: base }, ...inside.map((part, i) => ({
+    name: part, path: [base, ...inside.slice(0, i + 1)].filter(Boolean).join("/"),
+  }))];
   return (
     <div className="bundle-folder">
-      {folder && (
+      {crumbs.length > 1 && (
         <nav className="bundle-path" aria-label="Folder">
-          <button type="button" className="link-button" onClick={() => setFolder("")}>{W.top}</button>
-          {folder.split("/").map((part, i, all) => (
-            <span key={i}>
-              {" / "}
-              <button type="button" className="link-button"
-                      onClick={() => setFolder(all.slice(0, i + 1).join("/"))}>{part}</button>
+          {crumbs.map((c, i) => (
+            <span key={c.path}>
+              {i > 0 && " / "}
+              {i < crumbs.length - 1
+                ? <button type="button" className="link-button" onClick={() => setFolder(c.path)}>{c.name}</button>
+                : <span aria-current="location">{c.name}</span>}
             </span>
           ))}
         </nav>
       )}
       <ul className="bundle-members">
-        {folder && (
-          <li className="bundle-member is-dir">
-            <button type="button" className="link-button" onClick={() => setFolder(parent)}
-                    aria-label="Up">..</button>
-          </li>
-        )}
         {members.map((m) => <Member key={m.member_id} m={m} file={file} enter={setFolder} />)}
       </ul>
       {pages.length === 0 && !problem && <p className="file-state">{W.reading}</p>}

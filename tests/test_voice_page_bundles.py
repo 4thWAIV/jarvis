@@ -194,11 +194,12 @@ async def test_a_checked_file_opens_its_contents_a_folder_at_a_time(page_playwri
         await async_api.expect(card.locator(".bundle-badge")).to_have_text("Work package")
         await async_api.expect(card.locator(".file-meta").nth(1)).to_have_text("5 files")
 
-        # The one wrapper folder, then into it: each member's name, type and
-        # size; a state only where it is not readable.
-        await card.locator(".bundle-member.is-dir .bundle-name").click()
+        # A zip whose top level is one folder opens inside it: each member's
+        # name, type and size; a state only where it is not readable. There
+        # is no ".." row, and no path until a folder below it is opened.
         rows = card.locator(".bundle-members > li")
-        await async_api.expect(rows).to_have_count(6)
+        await async_api.expect(rows).to_have_count(5)
+        assert await card.locator(".bundle-path").count() == 0
         assert await card.locator(".bundle-name").all_inner_texts() == [
             "sources/", "summary.pdf", "brief.md", "summary.html", "latest"]
         assert await card.locator(".bundle-support").all_inner_texts() == [
@@ -208,13 +209,14 @@ async def test_a_checked_file_opens_its_contents_a_folder_at_a_time(page_playwri
         assert await card.locator(f'[data-member-id="{LINK["member_id"]}"] button').count() == 0
         await card.locator("text=sources/").click()
         await async_api.expect(card.locator(".bundle-name")).to_have_text(["notes.txt"])
-        await card.locator(".bundle-path >> text=Top").click()
-        await async_api.expect(card.locator(".bundle-name")).to_have_text([f"{FOLDER}/"])
+        # The path starts at the zip's own name and ends at where you are.
+        assert await card.locator(".bundle-path").inner_text() == "q3-numbers.pdf / sources"
+        await card.locator(".bundle-path >> text=q3-numbers.pdf").click()
+        await async_api.expect(rows).to_have_count(5)
         assert [c[2].get("folder", "") for c in bundles.calls if c[1] == "bundle/members"] == [
-            "", FOLDER, f"{FOLDER}/sources", ""]
+            "", FOLDER, f"{FOLDER}/sources", FOLDER]
 
         # Open a member: the show route, and the centre's File view at once.
-        await card.locator(".bundle-name").click()
         await card.get_by_role("button", name="Open brief.md").click()
         await async_api.expect(page.locator(".centre-tabs [aria-label='File']")) \
             .to_have_attribute("aria-selected", "true")
