@@ -193,7 +193,7 @@ class TeamTransport:
     async def _model(self, model: type[BaseModel], method: str, path: str,
                      body: Optional[BaseModel] = None):
         payload = await self._call(method, path,
-                                   body.model_dump(mode="json") if body is not None else None)
+                                   wire.request_body(body) if body is not None else None)
         return self._parsed(model, payload)
 
     async def capabilities(self) -> list[str]:

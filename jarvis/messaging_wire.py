@@ -77,6 +77,12 @@ CAPABILITY = "messaging.v1"          # advertised in /version `capabilities`
 # context and supersedes links and openability receipts. JARVIS sends none
 # of them to a server without it, which would refuse the unknown fields.
 BUNDLES_CAPABILITY = "messaging.bundles.v1"
+# The fields messaging.bundles.v1 added: a message's `task` and
+# `supersedes`, a receipt's `openability`. A messaging.v1 server refuses
+# them as unknown, so a request leaves each out while unset
+# (`request_body`) and an answer to an older JARVIS strips them
+# (`messaging.legacy_view`).
+BUNDLE_FIELDS = ("task", "supersedes", "openability")
 SCHEMA_VERSION = 1                   # every envelope carries it
 # Changes when any wire shape, rule or fixture changes. Workers build
 # against one revision; a breaking change bumps the number and regenerates
@@ -96,6 +102,33 @@ def bundles_offered(capabilities: list[str] | tuple[str, ...]) -> bool:
     """Whether a team server also takes task context, supersedes links and
     openability receipts (and messaging itself)."""
     return messaging_offered(capabilities) and BUNDLES_CAPABILITY in capabilities
+
+
+def _unset(value) -> bool:
+    return value is None or (isinstance(value, (list, tuple)) and not value)
+
+
+def _drop_unset_bundle_fields(model, dumped) -> None:
+    if isinstance(model, BaseModel):
+        for name in type(model).model_fields:
+            value = getattr(model, name)
+            if name in BUNDLE_FIELDS and _unset(value):
+                dumped.pop(name, None)
+            elif name in dumped:
+                _drop_unset_bundle_fields(value, dumped[name])
+    elif isinstance(model, (list, tuple)):
+        for item, item_dumped in zip(model, dumped):
+            _drop_unset_bundle_fields(item, item_dumped)
+
+
+def request_body(model: BaseModel) -> dict:
+    """The JSON body JARVIS sends for a request model. A bundle field that is
+    unset (None or empty) is left out, as the digest leaves it out, so a
+    request that uses none of them is exactly what a messaging.v1 server
+    takes; one that is set is sent."""
+    dumped = model.model_dump(mode="json")
+    _drop_unset_bundle_fields(model, dumped)
+    return dumped
 
 
 # -- limits -------------------------------------------------------------------
