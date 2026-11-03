@@ -2,6 +2,20 @@
 
 Workflow `wf-dc741957b946`, phase `local-validation-ready` done; `human-validation` waiting for Tim. Nothing is merged, pushed or deployed.
 
+## Settings in the centre (2026-11-03)
+
+Tim, through JARVIS, approved as written: move Settings out of its overlay into a scrollable centre view like Conversation, reorganise it for clarity, update the pointer so it reaches the Settings controls, then complete the PR. Commit `110f8f3`; the inventory and the before and after structure are in `.agents/in-progress/settings-redesign.md`.
+
+- Settings is the centre's `settings` detail, a tab "Settings" / "Configuración" while open. Every opener goes through `settings.open` (menu, Check for updates at Updates, the sign-in reminder at Team, first-time setup with `{setup: true}`), `settings.section` and `settings.close` (× and Finish Setup; back to Conversation). It covers neither the orb nor a column; the centre corridor is on both sides.
+- Sections, in the order a person comes to them: You, Voice and language, Brains, Team, Updates, Server, as short labelled rows; a state only when it is not the ordinary one. First-time setup keeps its steps (Voice and language, then You, then Finish).
+- Removed with the overlay: `overlay.settings`, the `modal` view kind, `rail.overlay` with its junction and edge, the pipeline's modal host and layer, the overlay CSS and a dead `data-ui-overlay` check. The overlay region keeps the menu, on the right rail.
+- New targets on the main rail: `settings` gains `setup` and a part per section (its name in the section row); `settingsSection` (heading, body); `settingsItem` by key (27 keys, part label); `brainCard` and `brainAdd` by brain; `teamMember` by GitHub id; `updateVersion` by commit.
+- Found on the way: a target scrolled out of a scrolling view counted as on screen. `visibilityOf` now clips to every scrolling ancestor, so it is "offscreen" and the reveal scrolls it in.
+
+Coverage (reach sweep, 306 contract target/parts, up from 283 with the Settings kinds and parts): 242 reached, 0 refused, 36 mounted with the part not on show, 28 never registered or shown. The same in English and Spanish at 1440x900 and 1280x800. The six refused before (Settings while it covered the orb) are reached. Settings counted control by control, in four Team states (administrator with someone looked up, disconnected, pairing, signed out), both brains and the Spanish model not installed: 116 targets and parts pointed at, 95 reached, 0 refused, 21 parts not drawn (the `label` part of a button or reading that has no label of its own, and setup's button outside setup). The sweep run here did not have the merge sweep's bundle and page-package scene (its script was not kept), so the 13 package, received-file and archive-entry target/parts count as not shown; they were reached in the merge sweep, and `test_voice_page_packages.py` and `test_voice_page_bundles.py` pass on this commit. Sweep: `/Users/timothystockstill/code/macos/4thWAIV/jarvis/.claude/worktrees/ui-nav-run/evidence/settings/sweep/` (`summary.txt`; script `ui-nav-run/tools/test_reach_sweep.py`).
+
+Checks: `npx tsc --noEmit` pass; contract regenerated, `--check` exit 0; targeted pytest (UI contract, control, tools, navigation, pipeline, right, coverage rules, locale, brain-page parity, header lines, data paths, self-update, language setting, team reminder, internal tool, MCP, tool handlers, untrusted turn and wrapper, dead code, anchored patterns, system prompt header) 747 passed, 2 skipped after one fix (a style lookup outside a browser); `pytest -m page` on settings, left_settings, remaining_nav, coded_words, language, team_reminder, team, centre_nav, pipeline (64 passed) and right, navigation, workflows, folders, queue, conversation, network, subsystems, voice_health, diagnostics, subagents, bundles, packages, human_rays, layout, mute (120 passed; one navigation test failed once while the Python suite ran beside it and passed twice alone).
+
 ## Merged with main (2026-11-03)
 
 Merge commit `f57dfb7` (`fd3a651` + origin/main `57cc964`: #48, #49, #50, #51). The 16 conflicting files were resolved in that one commit, keeping both sides.
