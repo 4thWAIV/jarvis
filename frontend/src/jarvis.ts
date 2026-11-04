@@ -193,8 +193,8 @@ export function startJarvis(orb: Orb): void {
     readingUtt = utt; skippedReading = null;
     transition("speaking");
     const key = `${utt}:${idx}`;
+    // Kept until the chunk is played: onPlayed ends the beat at its last chunk.
     const cue = chunkCue.get(key);
-    chunkCue.delete(key);
     if (cue) storyCue.set(cue);
     else storyCue.set(null);
     const chunk = chunkText.get(key);
