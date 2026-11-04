@@ -102,8 +102,20 @@ class MessageApprovals:
     transaction with the send record (`save_approved`)."""
 
     def __init__(self, store: ports.LocalMessagingStore, snapshots: ports.AttachmentSnapshots,
-                 *, ids: ports.IdSource, clock: ports.Clock):
+                 *, ids: ports.IdSource, clock: ports.Clock,
+                 bundles: Callable[[], bool] = lambda: False,
+                 cites: Callable[[], bool] = lambda: False):
+        """`bundles` says whether the team server takes a draft's task and
+        supersedes links (messaging.bundles.v1), and `cites` whether it
+        takes the files a reply cites (messaging.bundles.cites.v1): what
+        review digests and reads back, so a change of server between review
+        and approval is a changed digest and a new review."""
         self.store, self.snapshots, self.ids, self.clock = store, snapshots, ids, clock
+        self.bundles, self.cites = bundles, cites
+
+    def readback(self, draft: ports.Draft, label: str) -> str:
+        """The draft's read-back for what the team server carries now."""
+        return ports.human_readback(draft, label, self.bundles(), self.cites())
 
     # -- what a draft would send ------------------------------------------------
 
@@ -121,7 +133,7 @@ class MessageApprovals:
             server_id, owner_github_id, draft.message_id, draft.send.content_revision),
             list(draft.attachments))
         try:
-            content = ports.draft_content(draft)
+            content = ports.draft_content(draft, self.bundles(), self.cites())
         except ValidationError:
             raise wire.ContractError("invalid_request") from None
         return content, wire.content_digest(content, server_id=server_id,
@@ -328,8 +340,8 @@ class Reviews:
         draft = self.approvals.request_review(server_id, owner_github_id, message_id,
                                               expected_draft_revision)
         label = recipient_label(self.recipients(), draft.recipient_github_id, owner_github_id)
-        capture_id = self.captures.open_for_review(draft, ports.human_readback(draft, label),
-                                                   label)
+        capture_id = self.captures.open_for_review(
+            draft, self.approvals.readback(draft, label), label)
         return self.approvals.store.set_capture(server_id, owner_github_id, message_id,
                                                 capture_id)
 
@@ -373,13 +385,19 @@ class HumanRecipient:
         if m is None or self.who is None or m.availability() != "available":
             return UNAVAILABLE, (f"Messaging isn't available on this JARVIS just now, sir, "
                                  f"so nothing has gone to {self.label}.")
-        draft = m.approvals.awaiting(*self.who.ns, self.message_id,
-                                     self.bound["content_revision"],
-                                     self.bound["content_digest"])
-        if (draft is None or draft.recipient_github_id != self.bound["github_id"]
-                or ports.human_readback(draft, self.label) != self.text):
+        if not self.as_heard(self.who):
             return NOT_APPROVED, _changed(self.label)
         return None
+
+    def as_heard(self, who: Identity) -> bool:
+        """Whether the draft still awaits approval at the reviewed revision
+        and reads back exactly as he heard it: the read-back also says what
+        is never sent (the files a reply cites), which the digest cannot."""
+        approvals = self.messaging.approvals
+        draft = approvals.awaiting(*who.ns, self.message_id, self.bound["content_revision"],
+                                   self.bound["content_digest"])
+        return (draft is not None and draft.recipient_github_id == self.bound["github_id"]
+                and approvals.readback(draft, self.label) == self.text)
 
     def unheard(self) -> str:
         return (f"I can't read that back to you right now, sir, so I won't send it to "
@@ -405,6 +423,7 @@ class HumanDestination:
         self.capture_id = recipient.capture_id
         self.label, self.via, self.messaging = recipient.label, recipient.via, recipient.messaging
         self.bound, self.message_id, self.who = recipient.bound, recipient.message_id, who
+        self.recipient = recipient
         self.approved: Optional[ports.ApprovedSend] = None
         self.status: Optional[str] = None
 
@@ -420,6 +439,11 @@ class HumanDestination:
         return None
 
     async def deliver(self) -> str:
+        approvals = self.messaging.approvals
+        if approvals.store.approved(*self.who.ns, self.message_id,
+                                    self.bound["content_revision"]) is None \
+                and not self.recipient.as_heard(self.who):
+            return NOT_APPROVED                           # changed in the window
         try:
             self.approved = self.messaging.approvals.approve(
                 *self.who.ns, self.message_id, self.bound["content_revision"],

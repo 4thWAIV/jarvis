@@ -53,10 +53,10 @@ SPOKEN = {"type": "audio", "utt": 1, "idx": 0, "text": "It will rain tomorrow, s
           "kind": "reply"}
 
 
-@pytest.mark.asyncio
-async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_playwright, page_url):
     clip = _silence_wav(0.3)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             # The display names its reply and arrives before the reply's
             # words are played; it still goes after them.
@@ -87,9 +87,9 @@ async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_right_panel_holds_folders_agents_queue_workflows_network_and_diagnostics(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_right_panel_holds_folders_agents_queue_workflows_network_and_diagnostics(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [DISPLAY])
         await page.wait_for_selector(".right-tabs .right-tab")
         titles = await page.evaluate(
@@ -118,9 +118,9 @@ def _box_js():
     }"""
 
 
-@pytest.mark.asyncio
-async def test_a_capture_shows_white_above_the_captions_with_its_state_on_the_border(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_capture_shows_white_above_the_captions_with_its_state_on_the_border(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "capture", "id": 3, "state": "capturing", "text": TEXT}])
         await page.wait_for_selector(".capture-box")
@@ -133,9 +133,9 @@ async def test_a_capture_shows_white_above_the_captions_with_its_state_on_the_bo
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_transmitting_turns_the_box_yellow_and_sending_clears_it(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_transmitting_turns_the_box_yellow_and_sending_clears_it(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "capture", "id": 3, "state": "capturing", "text": TEXT},
             {"type": "capture", "id": 3, "state": "transmitting"}])
@@ -145,7 +145,7 @@ async def test_transmitting_turns_the_box_yellow_and_sending_clears_it(page_url)
         assert got["border"].startswith("rgba(251, 191, 36"), got
         await browser.close()
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "capture", "id": 3, "state": "capturing", "text": TEXT},
             {"type": "capture", "id": 3, "state": None},
@@ -155,10 +155,10 @@ async def test_transmitting_turns_the_box_yellow_and_sending_clears_it(page_url)
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_box_grows_to_fit_a_long_capture(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_box_grows_to_fit_a_long_capture(page_playwright, page_url):
     long = " ".join([TEXT] * 12)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [], capture={
             "type": "capture", "id": 4, "state": "capturing", "text": long})
         await page.wait_for_selector(".capture-box")
@@ -170,10 +170,10 @@ async def test_the_box_grows_to_fit_a_long_capture(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_read_backs_are_spoken_into_the_captions(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_read_backs_are_spoken_into_the_captions(page_playwright, page_url):
     clip = _silence_wav(0.4)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "status", "state": "speaking"},
             {"type": "audio", "utt": 1, "idx": 0, "data": clip,
@@ -184,9 +184,9 @@ async def test_read_backs_are_spoken_into_the_captions(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_capture_for_an_agent_is_amber_and_several_stack(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_capture_for_an_agent_is_amber_and_several_stack(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "capture", "id": 3, "state": "capturing", "text": TEXT},
             {"type": "capture", "id": 4, "state": "capturing", "text": "Ship it.", "to": "hammer"}])
@@ -200,8 +200,8 @@ async def test_a_capture_for_an_agent_is_amber_and_several_stack(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_read_back_glows_word_by_word_exactly_as_jarvis_speaking_does(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_read_back_glows_word_by_word_exactly_as_jarvis_speaking_does(page_playwright, page_url):
     """One way of marking the spoken word everywhere: the capture box draws
     it with the same component and styles as the captions, so the word being
     read looks the same as the word being spoken, and the read-back stays out
@@ -210,7 +210,7 @@ async def test_a_read_back_glows_word_by_word_exactly_as_jarvis_speaking_does(pa
     clip = _silence_wav(3.0)
     glow = """(s) => { const w = document.querySelector(s); if (!w) return null;
       const c = getComputedStyle(w); return [c.color, c.textShadow, w.className]; }"""
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, [
             {"type": "capture", "id": 3, "state": "capturing", "text": long, "to": "hammer"},
             {"type": "capture", "id": 3, "state": "reading"},
@@ -234,11 +234,11 @@ async def test_a_read_back_glows_word_by_word_exactly_as_jarvis_speaking_does(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_many_captures_scroll_inside_the_list_and_a_reconnect_resyncs_it(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_many_captures_scroll_inside_the_list_and_a_reconnect_resyncs_it(page_playwright, page_url):
     many = [{"type": "capture", "id": n, "state": "capturing", "text": " ".join([TEXT] * 3)}
             for n in range(1, 7)]
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, many)
         await page.wait_for_function("document.querySelectorAll('.capture-box').length === 6",
                                      timeout=10000)

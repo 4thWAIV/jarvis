@@ -601,6 +601,28 @@ def test_a_draft_edited_after_staging_is_not_approved_at_the_hand_over(tim):
     assert "haven't sent it" in speech.said[0] and tim.presentation.presented == []
 
 
+def test_what_is_read_back_but_never_sent_is_checked_again_at_the_hand_over(tim):
+    """The files a reply cites are read back and never sent, so the digest
+    cannot see them: changed under the reviewed revision in the window, the
+    read-back no longer matches and nothing is approved."""
+    draft, reviewed = _reviewed(tim)
+    capture = tim.captures.open[reviewed.capture_id]
+    transmission.accept(capture)
+    staged = []
+    transmission.stage(HumanRecipient(capture, "gui", tim.messaging), capture,
+                       voice=Speech(), put=staged.append)
+    current = tim.current(draft)
+    cited = ports.CitedFile(attachment_id=UUID(int=0xC1), member_id="m1", path="notes.md")
+    tim.store.save_draft(*NS, current.model_copy(update={"cited": [cited]}),
+                         current.draft_revision)
+    assert "Cited: notes.md." in ports.human_readback(tim.current(draft), "Matt")
+    speech = Speech()
+    asyncio.run(transmission.perform(staged[0], speech=speech, cancel_window=2.0,
+                                     captures=Box(tim.captures)))
+    assert staged[0].status == "failed" and tim.store.approved(*NS, draft.message_id, 1) is None
+    assert "haven't sent it" in speech.said[0]
+
+
 def test_cancelled_in_the_window_it_stays_awaiting_approval_with_nothing_in_the_outbox(tim):
     draft, reviewed = _reviewed(tim)
     _, _, (destination,), speech = tim.stage_and_perform(reviewed.capture_id,

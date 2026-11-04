@@ -13,18 +13,33 @@
  */
 
 import { liveRead } from "./liveRead";
+import { codedSaid, t, type Said } from "./locale";
 import { createStore } from "./store";
+import { bind, detailSlot, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type HealthState = "healthy" | "no-frames" | "browser-behind" | "connection-behind"
   | "server-starved" | "decoder-slow";
 export type StageState = "ok" | "warn" | "bad" | "unknown";
 export type Stage = "mic" | "browser" | "connection" | "recogniser" | "jarvis";
 export const STAGES: Stage[] = ["mic", "browser", "connection", "recogniser", "jarvis"];
-export const STAGE_WORDS: Record<Stage, string> = {
-  mic: "Mic", browser: "Page", connection: "Link", recogniser: "Recog", jarvis: "Server",
-};
+/** A stage of the audio's way, in a short word. */
+export const stageWords = (stage: Stage): string => t(`main.voice.stage.${stage}`);
 
-export interface Health {
+/** Why a second was not healthy: its English as the record has it, and,
+ *  since voice_diagnostics gave causes codes, its code and values. */
+export interface Cause {
+  cause: string | null;
+  causeCode?: string | null;
+  causeValues?: Record<string, string | number>;
+}
+
+/** A cause in the language in force (voice_diagnostics' CAUSES); one
+ *  recorded before the codes is its English, shown as it was written. */
+export const causeSaid = (c: Cause): Said =>
+  codedSaid("voice.cause", c.causeCode ? { code: c.causeCode, values: c.causeValues } : null, c.cause ?? "");
+
+export interface Health extends Cause {
   state: HealthState;
   cause: string;
   backlogSec: number;
@@ -37,7 +52,7 @@ export interface Health {
 }
 
 /** One second of the server's record (voice_diagnostics.sample_json). */
-export interface Sample {
+export interface Sample extends Cause {
   at: number; capture: string | null;
   receivedSec: number; decodedSec: number; backlogSec: number; oldestSec: number;
   rtf: number | null; loopDelayMs: number; processCpu: number; loadAvg: number;
@@ -49,12 +64,12 @@ export interface Sample {
 }
 
 /** One event of the server's record (voice_diagnostics.event_json). */
-export interface VoiceEvent {
+export interface VoiceEvent extends Cause {
   id: number; at: number; kind: string; capture: string | null; source: string | null;
   text: string | null; cause: string | null; topProcesses: { name: string; cpu: number }[];
 }
 
-export interface Summary {
+export interface Summary extends Cause {
   state: HealthState | "idle";
   cause: string;
   pipeline: Record<Stage, { state: StageState; value: number | null }>;
@@ -66,11 +81,8 @@ export interface Summary {
   now: number;
 }
 
-export const HEALTH_WORDS: Record<HealthState | "idle", string> = {
-  healthy: "Hearing you", "no-frames": "No audio from the mic", "browser-behind": "Browser behind",
-  "connection-behind": "Connection backed up", "server-starved": "Server too busy",
-  "decoder-slow": "Recogniser behind", idle: "Not listening",
-};
+/** A health state in words, in the language in force. */
+export const healthWords = (state: HealthState | "idle"): string => t(`main.voice.health.${state}`);
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 
@@ -82,12 +94,12 @@ const DROPPING_FOR_SEC = 60;
  *  last minute, or no audio at all), or not listening. */
 export function audioStatus(state: HealthState | "idle", lastDropAt: number | null,
                             now = Date.now() / 1000): { word: string; tone: Tone } {
-  if (state === "idle") return { word: "Not listening", tone: "off" };
+  if (state === "idle") return { word: t("main.voice.status.off"), tone: "off" };
   if (state === "no-frames" || (lastDropAt !== null && now - lastDropAt < DROPPING_FOR_SEC)) {
-    return { word: "Dropping speech", tone: "bad" };
+    return { word: t("main.voice.status.bad"), tone: "bad" };
   }
-  if (state !== "healthy") return { word: "Falling behind", tone: "warn" };
-  return { word: "Hearing you", tone: "ok" };
+  if (state !== "healthy") return { word: t("main.voice.status.warn"), tone: "warn" };
+  return { word: t("main.voice.status.ok"), tone: "ok" };
 }
 
 /** Sentences heard as a share of sentences heard plus speech dropped, or
@@ -135,8 +147,25 @@ export const getHistory = (from: number, to: number) =>
   getJson<{ samples: Sample[]; events: VoiceEvent[] }>(
     `/api/voice/diagnostics/samples?from=${from}&to=${to}`);
 
-/** Whether the centre area shows the Diagnostics view. */
-export const openDiagnostics = createStore(false);
+/** The centre's voice diagnostics detail: open or not (it has no item).
+ *  subsystems.ts writes it too: opening a subsystem closes it, and the
+ *  reverse.
+ *  @routeStateAlso subsystems.ts */
+export const diagnosticsSlot = detailSlot<true>("diagnostics");
+
+/** Whether the centre area offers the Diagnostics view. Writing it runs
+ *  `voice.diagnostics.open` or `voice.diagnostics.close`, as a person's
+ *  navigation. */
+export const openDiagnostics = routeStore<boolean>(
+  { get: () => diagnosticsSlot.value.get() !== null, subscribe: diagnosticsSlot.value.subscribe },
+  (open) => open ? bind("voice.diagnostics.open", {}) : bind("voice.diagnostics.close", {}));
+
+registerCommand("voice.diagnostics.open", {
+  availability: () => ({ available: true }),
+  execute: () => ({ status: "completed", effects: diagnosticsSlot.show(true) }),
+});
+
+registerClose("voice.diagnostics.close", diagnosticsSlot);
 
 // ── what the page measures ────────────────────────────────────────────────
 

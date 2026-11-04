@@ -25,6 +25,7 @@ from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import UUID
 
+from jarvis import attachment_locations
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.message_approvals import capture_binding
@@ -270,6 +271,8 @@ class QueueRoutes:
         self.down = False             # JARVIS's queue route fails
         self.availability = "available"
         self.captures: dict[int, UUID] = {}
+        self.local: dict[UUID, dict[UUID, ports.LocalFile]] = {}  # files made local, by message
+        self.on_change = lambda: None   # a "messages" hint, where the test sends one
 
     # -- the page's routes ----------------------------------------------------
 
@@ -317,7 +320,7 @@ class QueueRoutes:
             thread = UUID(parts[1])
             if method == "GET":
                 item = s.item(SERVER, TIM, thread)
-                return (200, dump(item)) if item else _error("message_not_found")
+                return (200, dump(self._with_local(item))) if item else _error("message_not_found")
             return await self._work(thread, wire.WorkCommandRequest.model_validate(body))
         if parts[:1] == ["drafts"]:
             return await self._drafts(method, parts[1:], query, body, data, headers)
@@ -333,8 +336,34 @@ class QueueRoutes:
             if parts[3] == "download":
                 return 200, dump(ports.LocalFile(attachment_id=attachment, state="verified",
                                                  bytes_done=1))
+            if parts[3] == "location":
+                return 200, self._location(message_id, attachment, make=method == "POST")
             return 204, None
         return _error("invalid_request")
+
+    def _with_local(self, item: ports.LocalItem) -> ports.LocalItem:
+        """The item with the files made local here, as messaging_api shows them."""
+        return item.model_copy(update={"messages": [
+            m.model_copy(update={"files": list(self.local[m.message.message_id].values())})
+            if m.message.message_id in self.local else m for m in item.messages]})
+
+    def _location(self, message_id: UUID, attachment: UUID, make: bool) -> dict:
+        """attachment_locations' answer: make_local verifies it at once."""
+        ref = next(a for a in self.w.store.message(SERVER, TIM, message_id).message.attachments
+                   if a.attachment_id == attachment)
+        if make:
+            self.local.setdefault(message_id, {})[attachment] = ports.LocalFile(
+                attachment_id=attachment, state="verified", bytes_done=ref.size_bytes)
+            self.on_change()
+        here = attachment in self.local.get(message_id, {})
+        return attachment_locations.AttachmentLocation(
+            message_id=message_id, attachment_id=attachment, filename=ref.filename,
+            media_type=ref.media_type, node_id=TIM_I9,
+            state="verified" if here else "remote_only",
+            local_path=f"/Users/tim/Downloads/JARVIS/{ref.filename}" if here else None,
+            size_bytes=ref.size_bytes, sha256=ref.sha256,
+            bytes_done=ref.size_bytes if here else 0,
+            actions=["reveal", "copy_path"] if here else ["make_local"]).model_dump(mode="json")
 
     async def _work(self, thread: UUID, request: wire.WorkCommandRequest):
         s = self.w.store

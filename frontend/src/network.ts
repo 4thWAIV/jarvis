@@ -17,9 +17,12 @@
  */
 
 import { liveRead } from "./liveRead";
+import { formatDateTime, formatNumber, t, wordsOf, type CodedLine } from "./locale";
 import { createStore } from "./store";
 import { spokenAgo } from "./timeFormat";
 import { sign } from "./WeeklyUsage";
+import { registerCommand } from "./uiRegistry";
+import { detailSlot, registerClose } from "./uiNavigation";
 
 // ── The team server's snapshot ───────────────────────────────────────────
 
@@ -117,6 +120,8 @@ export interface NetworkStatus {
   received_at: string | null;
   stale: boolean;
   last_error: string | null;
+  /** The last error by code, beside its English (older backends: absent). */
+  last_error_said?: CodedLine | null;
   round_trip_ms: number | null;
   last_contact_at: string | null;
   connection: Connection;
@@ -136,7 +141,29 @@ export const network = liveRead(getNetwork, [networkChanged]);
 /** What the centre area shows from the network, or null: the team server's
  *  health, or one node. */
 export type NetworkOpen = { kind: "server" } | { kind: "node"; nodeId: string };
-export const openNetwork = createStore<NetworkOpen | null>(null);
+
+const networkSlot = detailSlot<NetworkOpen>("network", (a, b) =>
+  a.kind === b.kind && (a.kind === "server" || a.nodeId === (b as { nodeId: string }).nodeId));
+/** Read-only: the controls run `network.open` and `network.close`. */
+export const openNetwork = networkSlot.value;
+
+// Opening and closing that detail: the registered commands every control
+// (the Team Server tile, an instance's tile, Close) and the brain run.
+registerCommand("network.open", {
+  availability: (args) => {
+    if (args.kind === "server") return { available: true };
+    const nodes = network.get().value?.snapshot?.nodes;
+    if (!nodes) return { available: false, reason: "not-loaded" };
+    return args.nodeId && nodes.some((n) => n.node_id === args.nodeId)
+      ? { available: true } : { available: false, reason: "no-entity" };
+  },
+  execute(args) {
+    const next: NetworkOpen = args.kind === "server" ? { kind: "server" } : { kind: "node", nodeId: args.nodeId! };
+    return { status: "completed", effects: networkSlot.show(next) };
+  },
+});
+
+registerClose("network.close", networkSlot);
 
 // ── Read out of it, the same way everywhere ──────────────────────────────
 
@@ -147,9 +174,10 @@ export function sinceMs(iso: string | null | undefined, now: number = Date.now()
   return Number.isNaN(at) ? null : Math.max(0, now - at);
 }
 
-/** A time as the page's clock reads it: "28 Oct 22:40:03". */
+/** A time as the page's clock reads it, in the interface's language:
+ *  "Oct 28, 22:40:03". */
 export function clockTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
+  return formatDateTime(new Date(iso), {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
 }
@@ -183,16 +211,20 @@ export function memoryPercent(r: Resources): number | null {
   return (100 * r.memory_used_bytes) / r.memory_total_bytes;
 }
 
+/** A size of points, one decimal, in the interface's language: "3.0", "3,0". */
+const pointsText = (points: number) =>
+  formatNumber(Math.abs(points), undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 /** A pace with its sign: "+3.0", "−6.5" (a true minus). */
 export function paceText(points: number): string {
-  return `${sign(points) === "-" ? "−" : "+"}${Math.abs(points).toFixed(1)}`;
+  return `${sign(points) === "-" ? "−" : "+"}${pointsText(points)}`;
 }
 
 /** A pace in words: "3.0 points ahead of an even pace". */
 export function paceWords(points: number): string {
   return sign(points) === "-"
-    ? `${Math.abs(points).toFixed(1)} points behind an even pace, heading for the limit`
-    : `${Math.abs(points).toFixed(1)} points ahead of an even pace`;
+    ? t("right.network.paceBehind", { points: pointsText(points) })
+    : t("right.network.paceAhead", { points: pointsText(points) });
 }
 
 /** Ten points fills one half of the pace rail. */
@@ -200,27 +232,35 @@ export function paceWidth(points: number): number {
   return Math.min(Math.abs(points) / 10, 1) * 50;
 }
 
-/** "410 MB", "24.0 GB". */
+/** "410 MB", "24.0 GB" ("24,0 GB" in Spanish). */
 export function bytesText(n: number): string {
   const gb = n / 1024 ** 3;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+  return gb >= 1 ? `${formatNumber(gb, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`
+    : `${formatNumber(Math.round(n / 1024 ** 2))} MB`;
 }
 
-export const MEASURED_WORDS: Record<Measured, string> = {
-  measured: "Measured", warming_up: "Warming up", unsupported: "Not supported here", error: "Sampler error",
-};
+export const MEASURED_WORDS = wordsOf<Measured>(["measured", "warming_up", "unsupported", "error"],
+  (m) => t(`right.network.measured.${m}`));
 
-export const SOURCE_WORDS: Record<ActivitySource, string> = {
-  gui: "on screen", speech: "by voice", typed: "typed",
-};
+export const SOURCE_WORDS = wordsOf<ActivitySource>(["gui", "speech", "typed"],
+  (s) => t(`right.network.source.${s}`));
 
-export const PRESENCE_WORDS: Record<NodeView["presence"], string> = {
-  online: "Online", delayed: "Delayed", offline: "Offline",
-};
+export const PRESENCE_WORDS = wordsOf<NodeView["presence"]>(["online", "delayed", "offline"],
+  (p) => t(`right.network.presence.${p}`));
 
 // ── The Team Server tile and its detail ──────────────────────────────────
 
+/** The Team Server tile's state: a code (also its class name, through
+ *  TeamServerTile's readinessClass), never shown as it is: its words are
+ *  READINESS_WORDS. */
 export type Readiness = "Ready" | "Not ready" | "No contact" | "Sign in";
+
+/** The readiness word in the interface's language. */
+export const READINESS_WORDS: Readonly<Record<Readiness, string>> = wordsOf<Readiness>(
+  ["Ready", "Not ready", "No contact", "Sign in"],
+  (r) => t(({ "Ready": "right.network.readiness.ready", "Not ready": "right.network.readiness.notReady",
+              "No contact": "right.network.readiness.noContact", "Sign in": "right.network.readiness.signIn",
+            } as const)[r]));
 /** A health row's state: working, failing or not known from here. */
 export type RowState = "ok" | "bad" | "unknown";
 

@@ -77,10 +77,10 @@ class _Sessions:
         self.ws = ws
 
 
-@pytest.mark.asyncio
-async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -109,11 +109,13 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_u
         assert got["decisions"] == "1", got
 
         await row.click()
-        await page.wait_for_selector("#workflow-detail .workflow-detail-name")
-        assert await page.text_content(".workflow-detail-name") == "Speech migration"
+        # The detail is drawn before its own read lands (a busy machine
+        # shows that): wait for the record's words, not the element.
+        await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text(
+            "Speech migration", timeout=10000)
         # Ages in the page's one short form (timeFormat.shortAgo): decades are years.
-        assert re.fullmatch(r"started \d\dy ago · heard from just now",
-                            await page.text_content(".workflow-times"))
+        await async_api.expect(page.locator(".workflow-times")).to_have_text(
+            re.compile(r"^started \d\dy ago · heard from just now$"), timeout=10000)
         overview = await page.evaluate("""() => ({
           orb: document.querySelector('.workflow-detail-head .workflow-orb canvas').getBoundingClientRect().width,
           steps: document.querySelectorAll('.workflow-overview .phase-track .phase-segment').length,
@@ -150,8 +152,8 @@ def _entry(offset, role, text, tool=None):
     return {"offset": offset, "at": 1_792_886_400.0, "role": role, "text": text, "tool": tool}
 
 
-@pytest.mark.asyncio
-async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(page_playwright, page_url):
     server, sessions = _Server(), _Sessions()
     asked = []
 
@@ -170,7 +172,7 @@ async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(pag
             await route.fulfill(json={"session_id": "s1", "name": "guard", "state": "idle",
                                       "earlier": None, "entries": [_entry(0, "you", "Start the build.")]})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -219,8 +221,8 @@ def _finished(wid, name, state="succeeded", dismissed=False, dismiss_at=None):
     return w
 
 
-@pytest.mark.asyncio
-async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(page_playwright, page_url):
     """Finished, it stays in view with its outcome and an ×; dismissed, it
     leaves the list at once and is listed under Done; one nobody dismisses
     leaves on its own at its dismiss_at, without a hint."""
@@ -255,7 +257,7 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
             wid = path.split("/")[2]
             await route.fulfill(json={"workflow": next(w for w in state["list"] if w["id"] == wid)})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -298,14 +300,14 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
         await browser.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("width", [1440, 1200, 900])
-async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_url, width):
+async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_playwright, page_url, width):
     """One width for both sidebars, at most 230px and shrinking with the
     window; the centre area always sits between them; a workflow row never
     runs past its panel."""
     server, sessions = _Server(), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover

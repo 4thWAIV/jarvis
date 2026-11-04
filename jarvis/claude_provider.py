@@ -114,16 +114,59 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_people_thread",
     "mcp__jarvis__change_people_draft",
     "mcp__jarvis__attach_message_files",
-    # Work packages a teammate sends: opening one and running its steps are
-    # ACTING_TOOLS; the results go back through draft_message's files.
+    # Where a received file is (attachment_locations.py): the read-only
+    # lookup, and the acting make-local and Reveal in Finder.
+    "mcp__jarvis__attachment_location",
+    "mcp__jarvis__make_attachment_local",
+    "mcp__jarvis__reveal_attachment",
+    # Work packages a teammate sends: opening one, running its steps, starting
+    # its agent run, opening its page and telling its story are ACTING_TOOLS;
+    # the results go back through draft_message's files.
     "mcp__jarvis__open_package",
+    "mcp__jarvis__open_local_package",
     "mcp__jarvis__list_packages",
     "mcp__jarvis__run_package_command",
     "mcp__jarvis__package_results",
+    "mcp__jarvis__run_package_agent",
+    "mcp__jarvis__open_package_page",
+    "mcp__jarvis__tell_package_story",
+    # Files a teammate sent, read as files (bundle_api.py): any zip or
+    # document, with or without a package.json. Reads come back walled;
+    # inspecting (it downloads), showing and every change to a draft or a
+    # review are ACTING_TOOLS (bundle_contract.BRAIN_TOOLS).
+    "mcp__jarvis__inspect_attachment",
+    "mcp__jarvis__list_bundle_members",
+    "mcp__jarvis__read_bundle_member",
+    "mcp__jarvis__look_at_bundle_page",
+    "mcp__jarvis__show_bundle_member",
+    "mcp__jarvis__attachment_readiness",
+    "mcp__jarvis__set_message_task",
+    "mcp__jarvis__add_companion_files",
+    "mcp__jarvis__prepare_repair",
+    "mcp__jarvis__review_checklist",
+    "mcp__jarvis__set_review_scope",
+    "mcp__jarvis__set_cited_files",
     "mcp__jarvis__diagnostics",
+    # Speech input's models (speech_models.py) and the language
+    # (language_setting.py): reading them, and the acting install and
+    # language change the page's routes also call.
+    "mcp__jarvis__speech_models",
+    "mcp__jarvis__install_speech_model",
+    "mcp__jarvis__set_language",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",
+    # Self-update (self_update.py): the Updates section's check, and its
+    # Update and restart as an ACTING_TOOL.
+    "mcp__jarvis__update_status",
+    "mcp__jarvis__update_jarvis",
+    # The page's navigation and white attention (ui_control.py): ui_map reads
+    # (untrusted block); ui_navigate, ui_indicate and ui_journey are ACTING_TOOLS.
+    "mcp__jarvis__ui_map",
+    "mcp__jarvis__ui_navigate",
+    "mcp__jarvis__ui_indicate",
+    "mcp__jarvis__ui_journey",
+    "mcp__jarvis__ui_clear",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had
     # no answer at all. Both were verified inside this exact flag set

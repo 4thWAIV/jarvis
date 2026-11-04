@@ -30,10 +30,9 @@ def test_hush_stops_him_and_drops_what_was_left():
 def test_hush_is_not_reachable_as_a_spoken_word():
     """A spoken interrupt is the thing being avoided; it must not have been
     quietly added to the cancel words as well."""
-    speech_src = (Path(__file__).parent.parent / "jarvis" / "speech.py").read_text()
-    cancel = speech_src[speech_src.index("CANCEL_WORDS = "):]
-    cancel = cancel[:cancel.index("\n")]
-    assert "hush" not in cancel, cancel
+    from jarvis import spoken_words
+    for language, words in spoken_words.VOCABULARIES.items():
+        assert "hush" not in words.cancel_phrases, language
 
 
 def test_the_client_sends_a_key_press_not_a_word():

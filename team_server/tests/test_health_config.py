@@ -98,7 +98,9 @@ def test_version_reports_build_and_always_offers_messaging(client):
     assert v["version"] == build_info.VERSION
     assert v["server_id"]
     assert set(v["capabilities"]) == {"github-login", "membership", "device-pairing",
-                                      "status", "network", "messaging.v1"}
+                                      "status", "network", "messaging.v1",
+                                      "messaging.bundles.v1",
+                                      "messaging.bundles.cites.v1"}
     assert not any("presence" in c for c in v["capabilities"])
 
 

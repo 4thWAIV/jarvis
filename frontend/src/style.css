@@ -39,6 +39,17 @@
      measures rendered rows). On :root because the orb's height uses them. */
   --agent-row: 60px;
   --agent-gap: 8px;
+  /* The pipeline's corridor along an object's facing edge (uiPipeline.ts
+     CORRIDOR_PX: inner margin, clearance and the 45-degree bevel of a
+     leaf's turn): its socket enters there and its leaves run down it, so
+     content keeps out of it. A component that registers a target and
+     draws to its own edge reserves it with this. */
+  --ui-corridor: 16px;
+  /* A lane a leaf runs along over or under a row of parts, inside the
+     object's own box (uiPipeline.ts lane(): the gap must be twice CLEAR_PX,
+     the leaf runs in its middle). A row that fills its object's height,
+     such as the microphone's, keeps this much below it. */
+  --ui-leaf-lane: 8px;
 }
 
 html, body {
@@ -618,240 +629,89 @@ html, body {
 }
 
 /* ---------------------------------------------------------------------------
-   Settings Panel
+   Settings (Settings.tsx): a centre view like the others, one scrolling page
+   of sections under its title and the row of section names that jumps to
+   each. Each section is labelled rows: the words on the left, the controls
+   on the right, with a lane between rows the pointer's route runs in.
    --------------------------------------------------------------------------- */
 
-#settings-container {
-  display: none;
+#settings-view {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 100;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px;
+  z-index: 10;
+  font-size: 13px;
+  color: var(--ui-text);
+  text-align: left;
 }
-
-.settings-backdrop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.5);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-#settings-container.open .settings-backdrop {
-  opacity: 1;
-}
-
-.settings-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 420px;
-  max-width: 100%;
-  height: 100%;
-  background: rgba(var(--ui-ground-rgb), 0.92);
-  border-left: 1px solid rgba(var(--ui-accent-rgb), 0.12);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+.settings-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; }
+/* The sections scroll under the head. Room for the rings' edges: the
+   scroll box clips anything outside it. */
+.settings-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 22px;
+  padding: 6px 4px;
 }
-
-#settings-container.open .settings-panel {
-  transform: translateX(0);
-}
-
-/* The Settings view (Settings.tsx): mounted only while open, as a large view
-   over the centre, with its sections listed on the left and stacked in one
-   scrolling body. */
-#settings-container.open { display: block; }
-#settings-container.open .settings-backdrop { opacity: 1; }
-.settings-panel.settings-view {
-  top: 6vh;
-  bottom: 6vh;
-  left: max(16px, 8vw);
-  right: max(16px, 8vw);
-  width: auto;
-  height: auto;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.15);
-  border-radius: 12px;
-  transform: none;
-  overflow: hidden;
-}
-.settings-columns {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-.settings-nav {
-  flex: none;
-  width: 150px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 16px 8px;
-  border-right: 1px solid rgba(var(--ui-accent-rgb), 0.08);
-}
+.settings-head h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); }
+.settings-nav { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
 .settings-nav button {
-  padding: 8px 12px;
-  border: none;
+  padding: 4px 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.18);
   border-radius: 6px;
   background: none;
   color: var(--ui-accent);
   font: inherit;
-  font-size: 12px;
-  letter-spacing: 1.5px;
+  font-size: 11px;
+  letter-spacing: 1px;
   text-transform: uppercase;
-  text-align: left;
   cursor: pointer;
 }
 .settings-nav button:hover { background: rgba(var(--ui-accent-rgb), 0.08); color: var(--ui-accent); }
-.settings-view .settings-body { overflow-y: auto; }
+.settings-welcome { flex-basis: 100%; margin: 0; color: var(--ui-accent); font-size: 14px; }
 
-/* The Brains section: a card per brain. */
-.brain-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
-}
-.brain-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--ui-divider);
-  border-radius: 10px;
-}
-.brain-card.active { border-color: rgba(var(--ui-accent-rgb), 0.6); }
-.brain-card-state {
-  position: absolute;
-  top: -8px;
-  right: 12px;
-  padding: 0 6px;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ui-accent);
-  background: var(--ui-ground);
-}
-.brain-card-head { display: flex; align-items: center; gap: 10px; }
-.brain-card-logo { width: 22px; height: 22px; object-fit: contain; }
-.brain-card-title { font-size: 14px; color: var(--ui-text); }
-.brain-card-plan { margin-left: auto; font-size: 11px; color: var(--ui-secondary);
-                   text-transform: capitalize; }
-.brain-card .settings-field { margin: 0; }
-.brain-checks { display: flex; flex-direction: column; gap: 6px; }
-.check-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px;
-             color: var(--ui-text); }
-.check-row .settings-hint { flex-basis: 100%; margin: 0 0 0 16px; }
-.brain-default { display: flex; align-items: center; gap: 8px; font-size: 12px;
-                 color: var(--ui-text); cursor: pointer; }
-.brain-remove { align-self: flex-start; }
-.brain-add { margin-top: 14px; }
-
-.settings-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  border-bottom: 1px solid rgba(var(--ui-accent-rgb), 0.08);
-}
-
-.settings-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 400;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--ui-accent);
-}
-
-.settings-close {
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.15);
-  border-radius: 6px;
-  background: rgba(var(--ui-accent-rgb), 0.05);
-  color: var(--ui-accent);
-  font-size: 18px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.settings-close:hover {
-  background: rgba(var(--ui-accent-rgb), 0.12);
-  color: var(--ui-accent);
-  border-color: rgba(var(--ui-accent-rgb), 0.3);
-}
-
-.settings-welcome {
-  padding: 16px 24px;
-  border-bottom: 1px solid rgba(var(--ui-accent-rgb), 0.08);
-}
-
-.settings-welcome p {
-  margin: 0;
-  color: var(--ui-accent);
-  font-size: 14px;
-  letter-spacing: 0.5px;
-}
-
-.settings-body {
-  padding: 8px 0;
-  flex: 1;
-}
-
-.settings-section {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--ui-divider);
-}
-
+.settings-section { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 6px; }
+.settings-body > .settings-actions { justify-content: flex-end; }
 .settings-section h3 {
-  margin: 0 0 14px 0;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--ui-secondary);
-}
-
-.settings-field {
-  margin-bottom: 14px;
-}
-
-.settings-field label {
-  display: block;
-  margin-bottom: 6px;
+  margin: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 12px;
-  color: var(--ui-muted);
-  letter-spacing: 0.5px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ui-accent);
 }
+.settings-section-body { display: flex; flex-direction: column; gap: 12px; }
 
-.settings-input-row {
-  display: flex;
-  gap: 8px;
+/* One row: its words, then its controls; the gap between rows is the lane
+   a route into a control runs along. */
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 170px) minmax(0, 1fr);
   align-items: center;
+  gap: 12px;
 }
-
-.settings-field input[type="text"],
-.settings-field input[type="password"],
-.settings-field select,
-.settings-field textarea {
-  width: 100%;
-  padding: 8px 12px;
+.settings-row > label { font-size: 12px; color: var(--ui-secondary); }
+.settings-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.settings-controls input[type="text"],
+.settings-controls input[type="password"],
+.settings-controls select {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 360px;
+  padding: 7px 10px;
   background: var(--ui-surface);
-  border: 1px solid var(--ui-divider);
+  border: 1px solid var(--ui-edge);
   border-radius: 6px;
   color: var(--ui-text);
   font-size: 13px;
@@ -859,38 +719,22 @@ html, body {
   outline: none;
   transition: border-color 0.2s;
 }
-
-.settings-field input:focus,
-.settings-field select:focus,
-.settings-field textarea:focus {
-  border-color: rgba(var(--ui-accent-rgb), 0.3);
-}
-
-.settings-field select {
-  appearance: none;
-  cursor: pointer;
-}
-
-.settings-field textarea {
-  resize: vertical;
-  min-height: 44px;
-}
-
-.settings-input-row input {
-  flex: 1;
-}
+.settings-controls select { appearance: none; cursor: pointer; }
+.settings-controls input:focus, .settings-controls select:focus { border-color: rgba(var(--ui-accent-rgb), 0.35); }
+.settings-value { color: var(--ui-accent); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* A state worth saying: its dot and its words on one line. */
+.settings-state { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
 
 .settings-hint {
-  margin: 6px 0 0 0;
+  margin: 0;
   font-size: 11px;
   line-height: 1.4;
   color: var(--ui-secondary);
 }
 
 .settings-restart-notice {
-  margin: 8px 0 0 0;
+  margin: 0;
   font-size: 12px;
-  text-align: right;
   color: var(--ui-accent);
 }
 
@@ -924,11 +768,51 @@ html, body {
   color: var(--ui-accent);
 }
 
-.settings-actions {
-  margin-top: 8px;
-  display: flex;
-  justify-content: flex-end;
+/* A section's own buttons, under its rows' controls. */
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-section-body > .settings-actions { padding-left: calc(min(170px, 30%) + 12px); }
+
+/* The Brains section: a card per brain. */
+.brain-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
 }
+.brain-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+}
+.brain-card.active { border-color: rgba(14, 165, 233, 0.6); }
+.brain-card-state {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(14, 165, 233, 0.95);
+  background: rgb(8, 10, 18);
+}
+.brain-card-head { display: flex; align-items: center; gap: 10px; }
+.brain-card-logo { width: 22px; height: 22px; object-fit: contain; }
+.brain-card-title { font-size: 14px; color: rgba(255, 255, 255, 0.9); }
+.brain-card-plan { margin-left: auto; font-size: 11px; color: rgba(255, 255, 255, 0.5);
+                   text-transform: capitalize; }
+.brain-card .settings-row { grid-template-columns: auto minmax(0, 1fr); }
+.brain-checks { display: flex; flex-direction: column; gap: 6px; }
+.check-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px;
+             color: rgba(255, 255, 255, 0.75); }
+.check-row .settings-hint { flex-basis: 100%; margin: 0 0 0 16px; }
+.brain-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brain-default { display: flex; align-items: center; gap: 8px; font-size: 12px;
+                 color: rgba(255, 255, 255, 0.75); cursor: pointer; }
+.brain-add { margin-top: 14px; }
 
 /* Status dots */
 .status-dot {
@@ -961,51 +845,10 @@ html, body {
   50% { opacity: 0.4; }
 }
 
-.status-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--ui-secondary);
-}
-
 .status-detail {
   margin-left: auto;
   font-size: 11px;
   color: var(--ui-secondary);
-}
-
-.sysinfo-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sysinfo-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-}
-
-.sysinfo-label {
-  color: var(--ui-muted);
-}
-
-.sysinfo-row span:last-child {
-  color: var(--ui-accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.setup-nav {
-  padding: 16px 24px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 /* Microphone input meter — the answer to "is it even hearing me?", visible
@@ -1018,6 +861,9 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  /* Mute, off and the health dot sit beside the meter: their leaves run
+     under the row. */
+  padding-bottom: var(--ui-leaf-lane);
   z-index: 20;
 }
 
@@ -1067,7 +913,9 @@ html, body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0;
+  /* Its corridor on the rail's side (--ui-corridor): the chevrons and rows
+     otherwise reach the edge the list's leaves run down. */
+  padding: 0 var(--ui-corridor) 0 0;
 }
 
 /* The space the rows get: whatever is left below the switch and the up
@@ -1859,7 +1707,9 @@ html, body {
 .workflow-times { font-size: 10px; color: var(--ui-muted); }
 .phase-stepper { list-style: none; display: flex; gap: 0; }
 .phase-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; text-align: center; }
-.phase-step::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 3px; background: rgba(251, 113, 133, 0.25); }
+/* The connector into a step runs under the step before it: it ignores the
+   pointer, so it never covers that step's dot as a target. */
+.phase-step::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 3px; background: rgba(251, 113, 133, 0.25); pointer-events: none; }
 .phase-step:first-child::before { display: none; }
 .phase-step.at-done::before, .phase-step.at-current::before { background: #fb7185; }
 .phase-step-dot {
@@ -1994,8 +1844,9 @@ html, body {
   font-size: 11px;
   cursor: pointer;
 }
+/* Room over the head for a leaf to the agent's name past the status. */
 .record-message, .record-from {
-  padding: 6px 10px;
+  padding: var(--ui-leaf-lane) 10px 6px;
   border-radius: 8px;
   border: 1px solid var(--ui-divider);
   background: var(--ui-surface);
@@ -2147,8 +1998,11 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   white-space: nowrap;
 }
 .subsystem-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.subsystem-state { font-size: 10.5px; color: var(--ui-secondary); }
-.subsystem-waiting { margin: 4px 0 0; font-size: 11px; color: var(--ui-secondary); }
+/* In the list a name may be longer than its column ("Entrada de voz" beside
+   "Con problemas"): it wraps to a second line rather than being cut. */
+.subsystem-row .subsystem-name { white-space: normal; overflow-wrap: break-word; }
+.subsystem-state { font-size: 10.5px; color: rgba(255, 255, 255, 0.6); }
+.subsystem-waiting { margin: 4px 0 0; font-size: 11px; color: rgba(255, 255, 255, 0.5); }
 
 .subsystem-dot {
   width: 10px;
@@ -2189,6 +2043,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Room over the title row for a leaf to the name past the close ×. */
+  padding-top: var(--ui-leaf-lane);
   overflow-y: auto;
   z-index: 10;
   font-size: 13px;
@@ -2220,6 +2076,90 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .subsystem-checks li.state-down { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
 .subsystem-messages li.outcome-lost { background: rgba(239, 68, 68, 0.15); }
 .subsystem-messages time { font-size: 11px; color: var(--ui-secondary); }
+
+/* A page work package (PackageView.tsx): its name and purpose, then its
+   frame filling the rest of the centre, then one status line. */
+#package-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#package-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; }
+.package-head { display: flex; align-items: center; gap: 12px; }
+.package-head-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.package-head-words p { margin: 0; color: rgba(255, 255, 255, 0.6); }
+.package-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 8px;
+  background: #fff;
+}
+.package-status { margin: 0; min-height: 1.2em; color: rgba(255, 255, 255, 0.7); }
+.package-story { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.package-story select { max-width: 320px; font: inherit; }
+.package-story-now { color: rgba(255, 255, 255, 0.7); }
+
+/* A file a teammate sent (BundleMemberView.tsx): its name, then its pages,
+   preview or text filling the rest of the centre. A PDF's page image sits
+   beside its text. */
+#bundle-member-view {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+#bundle-member-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe;
+  overflow-wrap: anywhere; }
+#bundle-member-view .package-head-words p { overflow-wrap: anywhere; }
+.bundle-notes { margin: 0; font-size: 12px; color: #fcd34d; }
+.bundle-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.bundle-body.with-pages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.bundle-page { margin: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-page img, .bundle-image {
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: top left;
+  background: #fff;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 6px;
+}
+.bundle-page figcaption { align-items: center; }
+.bundle-page-number { font-size: 12px; color: rgba(255, 255, 255, 0.7); }
+.bundle-html { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bundle-text { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding-right: 4px; }
+.bundle-body:not(.with-pages) .bundle-text { flex: 1; }
+.bundle-chunk { display: flex; flex-direction: column; gap: 4px; }
+.bundle-where { margin: 0; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.5); }
+.bundle-table-wrap { overflow-x: auto; }
+.bundle-table { border-collapse: collapse; font-size: 12px; }
+.bundle-table td {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+  vertical-align: top;
+}
 
 /* ---------------------------------------------------------------------------
    Voice health: the Diagnostics tab's summary (VoiceSummary.tsx), the
@@ -2457,7 +2397,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px;
+  /* Room over the row for a leaf to the state dot past the words. */
+  padding: var(--ui-leaf-lane) 8px 4px;
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -2598,13 +2539,17 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .server-beacon.readiness-ready, .readiness-ready .server-beacon { color: #4ade80; }
 .server-beacon svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 1.5; fill: none; }
-.server-beacon strong { font-size: 11px; font-weight: 700; line-height: 13px; white-space: nowrap; color: currentColor; }
+/* A readiness word longer than the column (Spanish "Iniciar sesión") goes
+   on two centred lines rather than being cut. */
+.server-beacon strong { font-size: 11px; font-weight: 700; line-height: 13px; max-width: 62px;
+                        text-align: center; overflow-wrap: break-word; color: currentColor; }
 .health-rows { display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
 .health-row {
   display: grid;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
+  /* 4px, not 5: "Escritura" beside "hace 1 min" fits the tile in Spanish. */
+  gap: 4px;
   height: 17px;
   color: #4ade80;
 }
@@ -2744,6 +2689,8 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Room over the title row for a leaf to the name past the close ×. */
+  padding-top: var(--ui-leaf-lane);
   overflow-y: auto;
   z-index: 10;
   font-size: 13px;
@@ -2867,8 +2814,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   text-transform: uppercase;
   color: var(--ui-secondary);
 }
-.queue-count { font-variant-numeric: tabular-nums; color: var(--ui-text); }
-.queue-empty { margin: 0; color: var(--ui-muted); }
+.queue-count { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
 .queue-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .queue-list.done { gap: 3px; }
 .queue-item { position: relative; min-width: 0; }
@@ -2928,8 +2874,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 .row-who { grid-area: who; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-person { font-size: 12px; font-weight: 600; }
-.row-via { color: var(--ui-secondary); }
-.row-age { grid-area: age; font-size: 10px; color: var(--ui-muted); white-space: nowrap; }
+.row-age { grid-area: age; font-size: 10px; color: rgba(255, 255, 255, 0.45); white-space: nowrap; }
 .row-subject {
   grid-area: subject;
   min-width: 0;
@@ -3008,15 +2953,15 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   text-align: left;
 }
 .item-head { flex: none; display: flex; flex-direction: column; gap: 6px; }
-.item-subject { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); overflow-wrap: anywhere; }
-.item-who { margin: 0; color: var(--ui-text); overflow-wrap: anywhere; }
-.item-person { font-weight: 600; color: var(--ui-text); }
-.item-handle, .item-via { color: var(--ui-secondary); }
+.item-subject { margin: 0; font-size: 20px; font-weight: 600; color: #e0f2fe; overflow-wrap: anywhere; }
+.item-who { margin: 0; color: rgba(255, 255, 255, 0.75); overflow-wrap: anywhere; }
+.item-person { font-weight: 600; color: #fff; }
+.item-via { color: rgba(255, 255, 255, 0.5); }
 .item-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .item-cues .queue-cue { font-size: 11px; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .item-actions button, .item-turn, .item-back, .composer-actions button, .composer-conflict button,
-.file-action, .message-reply {
+.file-action, .message-reply, .composer-attach {
   padding: 4px 10px;
   font: inherit;
   font-size: 12px;
@@ -3026,8 +2971,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   border-radius: 6px;
   cursor: pointer;
 }
-.item-actions button:hover, .item-turn:hover, .composer-actions button:hover { border-color: rgba(var(--ui-accent-rgb), 0.7); }
-.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.item-actions button:hover, .item-turn:hover, .composer-actions button:hover, .composer-attach:hover { border-color: rgba(14, 165, 233, 0.7); }
+.item-actions button:disabled, .item-turn:disabled, .composer-actions button:disabled,
+.composer-attach.disabled { opacity: 0.4; cursor: not-allowed; }
 .item-actions button[aria-pressed="true"] { border-color: rgba(52, 211, 153, 0.7); }
 .item-back { align-self: flex-start; }
 .item-turn { font-size: 11px; padding: 2px 8px; }
@@ -3061,9 +3007,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-message.outgoing { border-left: 3px solid rgba(var(--ui-owner-rgb), 0.75); }
 .queue-message.on-its-way { border-style: dashed; }
 .message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; }
-.message-person { font-weight: 600; color: var(--ui-text); }
-.message-handle, .message-via, .message-to { color: var(--ui-secondary); }
-.message-time { margin-left: auto; color: var(--ui-muted); font-size: 11px; }
+.message-person { font-weight: 600; color: #fff; }
+.message-to { color: rgba(255, 255, 255, 0.5); }
+.message-time { margin-left: auto; color: rgba(255, 255, 255, 0.45); font-size: 11px; }
 .message-subject { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 /* Text as text: line breaks kept, long words broken, nothing interpreted. */
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
@@ -3102,6 +3048,56 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .queue-file.state-failed .file-state, .queue-file.state-missing .file-state { color: #fca5a5; }
 .queue-file.state-verified .file-state { color: #86efac; }
 .file-action { font-size: 11px; padding: 2px 8px; }
+/* A received file's place on this Mac (QueueFileLocation.tsx): the path,
+   then icon-sized Copy and Reveal. */
+.file-location { display: flex; align-items: center; gap: 4px; flex-basis: 100%; min-width: 0; }
+.file-path {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 255, 255, 0.75);
+  user-select: all;
+}
+.file-icon-action {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; color: rgba(255, 255, 255, 0.75);
+  background: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+}
+.file-icon-action:hover, .file-icon-action:focus-visible { color: #fff; border-color: rgba(14, 165, 233, 0.7); }
+.file-icon-action:disabled { opacity: 0.4; cursor: wait; }
+.queue-file .file-state.attention { color: #fca5a5; }
+
+/* What a received file holds, on its card (BundleInventory.tsx): Open (or
+   Contents) on the card's line, an archive's folder on its own below. */
+.bundle-inventory, .bundle-line { display: contents; }
+.bundle-folder { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 0 2px 8px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.bundle-path { font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.bundle-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.bundle-member { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.bundle-name { overflow-wrap: anywhere; min-width: 0; }
+.bundle-member.support-blocked .bundle-support, .bundle-member.support-unsupported .bundle-support,
+.bundle-problem { color: #fca5a5; }
+.bundle-member.support-partial .bundle-support { color: #fcd34d; }
+.bundle-badge {
+  padding: 0 6px;
+  font-size: 11px;
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.6);
+  border-radius: 999px;
+}
+.message-task { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.message-task-primary { color: rgba(255, 255, 255, 0.55); }
+.bundle-progress { color: #7dd3fc; }
+.bundle-progress.progress-evidence_unavailable { color: #fcd34d; }
+.composer-readiness { margin: 0; font-size: 12px; color: #fcd34d; }
+.composer-task { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-basis: 100%; }
+.composer-task input { flex: 1 1 200px; min-width: 0; }
+.composer-cited { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; margin: 0; padding: 0;
+  border: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); }
+.composer-cited legend { padding: 0; margin-bottom: 2px; color: rgba(255, 255, 255, 0.55); }
+.composer-cited label { display: flex; gap: 4px; align-items: center; overflow-wrap: anywhere; }
+.composer-task .composer-cited input { flex: none; padding: 0; }
+.composer-cited:disabled { opacity: 0.6; }
+.composer-readiness.readiness-blocked { color: #fca5a5; }
 
 /* The response being written, and its inline review (MessageComposer.tsx,
    MessageReview.tsx). */
@@ -3124,7 +3120,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .review-capture .capture-buttons { position: static; justify-content: flex-end; }
 .composer-agent { margin: 0; font-size: 12px; color: #fcd34d; }
 .composer-to { display: flex; flex-direction: column; gap: 2px; }
-.composer-to select, .composer-field input, .composer-text {
+.composer-to select, .composer-field input, .composer-text, .composer-task select, .composer-task input {
   font: inherit;
   font-size: 13px;
   color: var(--ui-text);
@@ -3134,12 +3130,14 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   padding: 5px 8px;
 }
 .composer-to select { max-width: 100%; }
-.composer-inbox, .composer-limits, .composer-parent { font-size: 11px; color: var(--ui-secondary); margin: 0; }
-.composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ui-secondary); }
+.composer-parent { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin: 0; }
+.composer-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.55); }
 .composer-text { width: 100%; resize: vertical; min-height: 96px; line-height: 1.45; }
-.composer-text:disabled, .composer-field input:disabled { opacity: 0.6; }
-.composer-attach { font-size: 12px; color: var(--ui-text); }
-.composer-attach input { margin-left: 8px; font-size: 11px; }
+.composer-text:disabled, .composer-field input:disabled, .composer-task select:disabled,
+.composer-task input:disabled { opacity: 0.6; }
+/* Attach files is a button; its file input is visually hidden inside it. */
+.composer-attach { align-self: flex-start; position: relative; }
+.composer-attach:focus-within { outline: 2px solid rgba(14, 165, 233, 0.95); outline-offset: 2px; }
 .composer-adding { margin: 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
 .composer-error { margin: 0; font-size: 12px; color: #fca5a5; }
 .composer-conflict { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -3265,7 +3263,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   grid-template-areas: "role name avail" "role node seen";
   gap: 2px 8px;
   align-items: center;
-  padding: 6px 8px;
+  /* Room above the name for a leaf over its row (the name sits beside the
+     availability on the side the leaf comes from). */
+  padding: var(--ui-leaf-lane) 8px 6px;
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -3315,7 +3315,9 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 .folder-facts { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
 .folder-facts dt { color: var(--ui-secondary); }
 .folder-facts dd { margin: 0; }
-.folder-detail { display: flex; flex-direction: column; gap: 12px; }
+/* Its own corridor on the side its socket enters (--ui-corridor): its
+   sections and buttons otherwise reach the edge its leaves run down. */
+.folder-detail { display: flex; flex-direction: column; gap: 12px; padding-right: var(--ui-corridor); }
 .folder-detail-head { display: flex; align-items: flex-start; gap: 12px; }
 .folder-detail-head h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); word-break: break-word; }
 .folder-detail-marks { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
@@ -3406,6 +3408,87 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   .folder-row, .folders-panel-row, .candidate-row, .folder-availability-dot { forced-color-adjust: auto; border: 1px solid CanvasText; }
 }
 
+/* Settings, Updates: the version running, the newer versions on main to
+   choose from, and the confirmation before installing (Settings.tsx). */
+.update-current { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-current b { font-weight: 600; }
+.update-current code, .update-version code {
+  color: rgba(0, 212, 255, 0.7);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.update-versions {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.update-version { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.update-version:last-child { border-bottom: 0; }
+.update-version label {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.update-version:hover:not(.off) { background: rgba(0, 212, 255, 0.05); }
+.update-version.sel { background: rgba(0, 212, 255, 0.09); }
+.update-version.off { opacity: 0.5; }
+.update-version.off label { cursor: not-allowed; }
+.update-version input { margin: 2px 0 0 0; accent-color: #00d4ff; }
+.update-version-body { display: flex; flex-direction: column; min-width: 0; }
+.update-version-title { font-size: 13px; line-height: 1.35; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+.update-version-meta { font-size: 11px; margin-top: 2px; color: rgba(255, 255, 255, 0.45); }
+.update-ci { font-size: 11px; white-space: nowrap; margin-top: 1px; }
+.update-ci.pass { color: rgba(74, 222, 128, 0.85); }
+.update-ci.fail { color: rgba(248, 113, 113, 0.85); }
+.update-ci.wait { color: rgba(251, 191, 36, 0.85); }
+.update-tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: rgba(0, 212, 255, 0.8);
+  vertical-align: 1px;
+}
+.update-confirm {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(0, 212, 255, 0.05);
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.8);
+}
+.update-confirm ul { margin: 6px 0 0 16px; padding: 0; color: rgba(255, 255, 255, 0.6); font-size: 11px; }
+.update-refused {
+  margin: 10px 0 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(248, 113, 113, 0.85);
+  overflow-wrap: anywhere;
+}
+/* The pipeline's corridor in the centre: every centre view hangs from the
+   main rail in the gutter on its right, so its socket enters at its right
+   edge and its parts' leaves run down the strip inside it; that strip is
+   kept clear of content (UiPipelineLayer.tsx). The same strip is kept on
+   the left too, so the view's content (the Conversation box) stays
+   centred between the side columns. Last, so it wins over each view's own
+   padding on those sides. */
+#conversation, #workflow-detail, #agent-thread, #subsystem-detail, #voice-diagnostics,
+#network-detail, #queue-item-view, #folders-view, #package-view, #bundle-member-view, #settings-view {
+  padding-left: var(--ui-corridor);
+  padding-right: var(--ui-corridor);
+}
 /* Paint-only common control treatments: no dimensions, spacing or font changes.
    Specific selected/error/semantic state rules above retain their precedence. */
 .control-button, .settings-btn, .folder-button, .folder-tab {

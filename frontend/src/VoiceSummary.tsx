@@ -20,40 +20,51 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT } from "./locale";
+import { RIGHT_SOCKET } from "./uiRight";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 import { useTick } from "./WorkflowsView";
 import { ago } from "./workflows";
 import { HeadroomBar, HeardRing, PipelineTrack, SpeedRing } from "./VoiceVisuals";
-import { audioStatus, health, heardShare, openDiagnostics, summary } from "./voiceHealth";
+import { audioStatus, health, heardShare, summary } from "./voiceHealth";
 
+/** Opening runs `voice.diagnostics.open`, as the brain's request does. The
+ *  summary is one button, and that button is the target the brain points at
+ *  (`voice`: the whole, its summary and its open control). */
 export function VoiceSummary() {
+  const t = useT();
   useTick(1000);
   const live = useSyncExternalStore(health.subscribe, health.get);
   const record = useSyncExternalStore(summary.subscribe, summary.get);
+  const ui = useUiTarget({ ref: { region: "right", view: "right.diagnostics", kind: "voice" },
+                           label: t("targets.voiceHealth"), socket: RIGHT_SOCKET });
   const s = record.value;
   const status = audioStatus(live?.state ?? s?.state ?? "idle", s?.lastDropAt ?? null);
   const pipeline = live?.pipeline ?? s?.pipeline;
   const last = s?.last2min[s.last2min.length - 1];
 
   return (
-    <section className="voice-summary" aria-label="Voice health">
-      <button type="button" className="voice-summary-open" onClick={() => openDiagnostics.set(true)}
-              title="Open the Diagnostics view">
+    <section className="voice-summary" aria-label={t("right.voice.label")}>
+      <button type="button" className="voice-summary-open" ref={(el) => { ui.whole(el); ui.part("summary")(el); ui.part("open")(el); }}
+              {...bindingProps(bind("voice.diagnostics.open", {}))}
+              title={t("right.voice.open")}>
         {/* A grid: the rings and the status word on one line, centred on the
             same middle; the captions and the status's details under them. */}
         <span className="voice-rings">
           <HeardRing share={s ? heardShare(s.lastHour) : null} tone={status.tone} size={48} />
           <b className={`voice-status-word tone-${status.tone}`}>{status.word}</b>
           <SpeedRing rtf={live ? live.rtf : last?.rtf ?? null} size={40} />
-          <small className="voice-ring-caption">heard</small>
+          <small className="voice-ring-caption">{t("right.voice.heard")}</small>
           <span className="voice-status-detail">
-            {s?.lastDropAt != null && <span className="voice-last-drop">last drop {ago(s.lastDropAt)}</span>}
+            {s?.lastDropAt != null && <span className="voice-last-drop">{t("right.voice.lastDrop", { ago: ago(s.lastDropAt) })}</span>}
           </span>
-          <small className="voice-ring-caption">speed</small>
+          <small className="voice-ring-caption">{t("right.voice.speed")}</small>
         </span>
         {pipeline && <PipelineTrack pipeline={pipeline} />}
         <HeadroomBar backlogSec={live?.backlogSec ?? last?.backlogSec ?? null} />
       </button>
-      {record.error && !s && <p className="read-failure">Couldn't read the voice record ({record.error}); trying again.</p>}
+      {record.error && !s && <p className="read-failure">{t("right.voice.readFailed", { error: record.error })}</p>}
     </section>
   );
 }

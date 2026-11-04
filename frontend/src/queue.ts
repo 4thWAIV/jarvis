@@ -24,20 +24,37 @@
  *     none.
  */
 
+import { makeLocal } from "./attachmentLocation";
 import { captures } from "./capture";
 import { liveRead, type LiveStore } from "./liveRead";
+import { codeWords, formatNumber, saidShown, t, type Said } from "./locale";
 import { messagingApi, MessagingError } from "./messagingApi";
 import { LIMITS, type Draft, type DraftSave, type RecipientList, type WorkCommand } from "./messagingContract";
 import { network } from "./network";
 import {
-  applyDraft, applyFile, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
-  EMPTY, removeDraft, waiting, withPending, type Directory, type QueueState,
+  applyDraft, applyHistory, applyItem, applyMessage, applySnapshot, applyWorkState,
+  cues, EMPTY, removeDraft, subjectOf, threadOf, waiting, withPending, type Directory, type QueueState,
 } from "./queueStore";
 import { createStore } from "./store";
+import type { CommandArgs, SideEffect } from "./uiContract";
+import { bind, bindingAvailable, detailSlot, runBinding } from "./uiNavigation";
+import { elementOf, findTarget, registerCommand, type Availability, type CommandOutcome } from "./uiRegistry";
 
-/** A refusal in the contract's words. */
 const asError = (e: unknown) => (e instanceof MessagingError ? e : new MessagingError("transport", 0, String(e)));
-const shown = (e: unknown) => asError(e).shown;
+
+/** What a messaging refusal code means, in the language in force: the
+ *  catalog's words for the contract's code, else `fallback` (the server's
+ *  own words, shown as they came). */
+export function messagingSaid(code: string, fallback: Said): Said {
+  return codeWords("main.messaging.error", code) !== null
+    ? { words: () => codeWords("main.messaging.error", code)! } : fallback;
+}
+
+/** A refusal in words: its contract code's, or the message it came with. */
+const said = (e: unknown): Said => {
+  const err = asError(e);
+  return messagingSaid(err.code, { original: err.message });
+};
 
 /** Moves on every "messages" hint on /ws/sessions, and on its every
  *  (re)connect (sessionsSocket.ts). */
@@ -120,12 +137,16 @@ export interface QueueOpen {
   back: string[];
 }
 export const NEW = "new";
-export const openQueue = createStore<QueueOpen | null>(null);
+
+const queueSlot = detailSlot<QueueOpen>("queue", (a, b) => a.thread === b.thread);
+/** Read-only: the item open in the centre. The controls run `queue.open`,
+ *  `queue.follow`, `queue.back`, `queue.next` and `queue.close`. */
+export const openQueue = queueSlot.value;
 
 /** Something to tell the owner about one item (a refusal, a kept command),
  *  by thread. */
-export const itemNotes = createStore<Record<string, string>>({});
-function note(thread: string, words: string | null): void {
+export const itemNotes = createStore<Record<string, Said>>({});
+function note(thread: string, words: Said | null): void {
   const notes = { ...itemNotes.get() };
   if (words) notes[thread] = words; else delete notes[thread];
   itemNotes.set(notes);
@@ -133,57 +154,229 @@ function note(thread: string, words: string | null): void {
 
 /** The item a row stands for, opened from the Queue: a waiting one becomes
  *  Active. The item left keeps its place and its draft, saved now. */
-export function openItem(thread: string): void {
-  leaveCurrent();
-  openQueue.set({ thread, back: [] });
-  const item = queueRecord.get().items[thread];
-  if (item?.work_state.placement === "queued") {
-    void command(thread, { command: "open", expected_revision: item.work_state.revision });
-  }
-}
+export const openItem = (thread: string): void => runBinding(bind("queue.open", { threadId: thread }));
 
 /** Follow a link (a parent, a reply, a related message) without changing
  *  the linked item's place: a dismissed one stays dismissed. The current
  *  one stays where it is, and Back returns to it. */
-export function followLink(thread: string): void {
-  const now = openQueue.get();
-  leaveCurrent();
-  openQueue.set({ thread, back: now && now.thread !== thread ? [...now.back, now.thread] : now?.back ?? [] });
-}
+export const followLink = (thread: string): void => runBinding(bind("queue.follow", { threadId: thread }));
 
-export function goBack(): void {
-  const now = openQueue.get();
-  if (!now?.back.length) return;
-  leaveCurrent();
-  openQueue.set({ thread: now.back[now.back.length - 1], back: now.back.slice(0, -1) });
-}
+export const goBack = (): void => runBinding(bind("queue.back", {}));
 
 /** Open the next waiting item; the current one stays in Active. False when
  *  nothing is waiting (the current view stays). */
 export function nextItem(): boolean {
-  const current = openQueue.get()?.thread;
-  const next = waiting(queue.get()).find((i) => i.work_state.thread_id !== current);
-  if (!next) return false;
-  openItem(next.work_state.thread_id);
+  const b = bind("queue.next", {});
+  if (!bindingAvailable(b)) return false;
+  runBinding(b);
   return true;
 }
 
-export function closeItem(): void {
-  leaveCurrent();
-  openQueue.set(null);
-}
+export const closeItem = (): void => runBinding(bind("queue.close", {}));
 
-/** Start writing a new conversation. */
-export function startNew(): void {
-  leaveCurrent();
+/** Start writing a new conversation (`queue.new`): a blank editor of its
+ *  own, kept until it is sent or discarded, shown in the item's place;
+ *  nothing is saved until it is written. */
+function openNew(): SideEffect[] {
+  const left = leaveCurrent();
   if (!editors.get()[NEW]) setEditor(NEW, blankEditor({ recipient: null, thread: null, parent: null, subject: "" }));
-  openQueue.set({ thread: NEW, back: [] });
+  return [...left, ...queueSlot.show({ thread: NEW, back: [] })];
 }
 
-function leaveCurrent(): void {
+/** Save the open item's draft as it is left: whether there was one to save. */
+function leaveCurrent(): SideEffect[] {
   const now = openQueue.get();
-  if (now) void flush(now.thread);
+  if (!now) return [];
+  const dirty = !!editors.get()[now.thread]?.dirty;
+  void flush(now.thread);
+  return dirty ? ["queue.draft-saved"] : [];
 }
+
+/** Whether showing `thread` will mark a message read: one to the owner it
+ *  has not read yet (the body's receipt is sent once it is on screen). */
+function unreadToOwner(thread: string): boolean {
+  const state = queueRecord.get();
+  return (state.items[thread]?.message_ids ?? []).some((id) =>
+    state.messages[id]?.message.recipient_github_id === state.owner_github_id && !state.receipts[id]?.read_at);
+}
+
+/** Show `thread` in the item's place, leaving the current one. */
+function showItem(thread: string, back: string[]): SideEffect[] {
+  const left = openQueue.get()?.thread !== thread ? leaveCurrent() : [];
+  return [...left, ...queueSlot.show({ thread, back }), ...(unreadToOwner(thread) ? ["queue.read-marked" as const] : [])];
+}
+
+/** Whether the Queue lists `thread`: refused until the queue is read. */
+function itemAvailable(thread: string): Availability {
+  if (queueRecord.get().items[thread]) return { available: true };
+  return applied === null ? { available: false, reason: "not-loaded" } : { available: false, reason: "no-entity" };
+}
+
+/** Open `thread` from the Queue: a waiting one becomes Active. */
+function openFromQueue(thread: string): CommandOutcome {
+  const effects = showItem(thread, []);
+  const item = queueRecord.get().items[thread];
+  if (item?.work_state.placement === "queued") {
+    void command(thread, { command: "open", expected_revision: item.work_state.revision });
+    effects.push("queue.item-activated");
+  }
+  return { status: "completed", effects };
+}
+
+registerCommand("queue.open", {
+  availability: ({ threadId }) => itemAvailable(threadId),
+  execute: ({ threadId }) => openFromQueue(threadId),
+});
+
+/** Follow a link to `thread`, with Back to the item it was followed from. */
+function follow(thread: string): CommandOutcome {
+  const now = openQueue.get();
+  const back = now && now.thread !== thread ? [...now.back, now.thread] : now?.back ?? [];
+  return { status: "completed", effects: showItem(thread, back) };
+}
+
+registerCommand("queue.follow", {
+  availability: ({ threadId }) => itemAvailable(threadId),
+  execute: ({ threadId }) => follow(threadId),
+});
+
+registerCommand("queue.back", {
+  availability: () => openQueue.get()?.back.length ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    const now = openQueue.get()!;
+    return { status: "completed", effects: showItem(now.back[now.back.length - 1], now.back.slice(0, -1)) };
+  },
+});
+
+/** The next waiting item after the open one, if any. */
+const nextWaiting = () => {
+  const current = openQueue.get()?.thread;
+  return waiting(queue.get()).find((i) => i.work_state.thread_id !== current) ?? null;
+};
+
+registerCommand("queue.next", {
+  availability: () => nextWaiting() ? { available: true } : { available: false, reason: "no-entity" },
+  // The same as opening its row: it becomes Active.
+  execute: () => openFromQueue(nextWaiting()!.work_state.thread_id),
+});
+
+registerCommand("queue.close", {
+  availability: () => openQueue.get() ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    const effects = leaveCurrent();
+    return { status: "completed", effects: [...effects, ...queueSlot.close()] };
+  },
+});
+
+// ── Within the open item: a reply, a draft again, a link, a question ─────
+//
+// Writing starts, a failed response goes back in its editor, a linked
+// message is shown and a question is asked or put away, a click and the
+// brain alike. None of them saves, sends, discards or dismisses anything:
+// those stay the owner's own acts.
+
+const nothing: Availability = { available: false, reason: "no-entity" };
+const done = (effects: SideEffect[] = []): CommandOutcome => ({ status: "completed", effects });
+
+/** The item open in the centre, when the Queue holds it (not a new
+ *  conversation being written). */
+function openThread(): string | null {
+  const thread = openQueue.get()?.thread;
+  return thread && thread !== NEW && queueRecord.get().items[thread] ? thread : null;
+}
+
+registerCommand("queue.new", {
+  availability: () => queueRecord.get().availability === "available" ? { available: true } : nothing,
+  execute: () => done(openNew()),
+});
+
+/** Whether a reply can be started on the open item, to `messageId`: one
+ *  of its messages, the item not dismissed, and nothing being written. */
+function replyAvailable(messageId: string): Availability {
+  const thread = openThread();
+  const state = queue.get();
+  if (!thread || threadOf(state, messageId) !== thread || cues(state, thread)?.dismissed) return nothing;
+  return editors.get()[thread] || editableDraft(state, thread) ? nothing : { available: true };
+}
+
+registerCommand("queue.reply", {
+  availability: ({ messageId }) => replyAvailable(messageId),
+  execute({ messageId }) {
+    const thread = openThread()!;
+    const state = queue.get();
+    startReply(thread, messageId, state.items[thread].work_state.correspondent_github_id, subjectOf(state, thread));
+    return done();
+  },
+});
+
+/** The open view's response `messageId`, when it failed or was cancelled. */
+function sentBack(messageId: string): Draft | null {
+  const open = openQueue.get()?.thread;
+  const d = queue.get().drafts[messageId];
+  return open && d && (d.thread_id === open || d.message_id === open)
+    && (d.send.state === "failed" || d.send.state === "cancelled") ? d : null;
+}
+
+// Its editor again; the next save makes a new revision (`revise` on JARVIS).
+registerCommand("queue.draft.edit", {
+  availability: ({ messageId }) => (sentBack(messageId) ? { available: true } : nothing),
+  execute({ messageId }) {
+    setEditor(openQueue.get()!.thread, fromDraft(sentBack(messageId)!));
+    return done();
+  },
+});
+
+registerCommand("queue.message.show", {
+  availability: ({ messageId }) => (openQueue.get() && threadOf(queue.get(), messageId) ? { available: true } : nothing),
+  execute({ messageId }) {
+    const there = threadOf(queue.get(), messageId)!;
+    if (there !== openQueue.get()!.thread) return follow(there);
+    const shown = findTarget({ region: "main", view: "main.queue", kind: "queueMessage", key: messageId });
+    (shown && elementOf(shown))?.scrollIntoView({ block: "nearest" });
+    return done();
+  },
+});
+
+type DoneStep = CommandArgs["queue.done.ask"]["step"];
+
+/** The open view's questions: whether to discard the draft being written,
+ *  and how far Done's prompt has got (why it must wait, then whether to
+ *  discard the reply). Forgotten once another item is shown. */
+export const asking = createStore<{ thread: string | null; discard: boolean; done: DoneStep }>(
+  { thread: null, discard: false, done: "closed" });
+function ask(change: { discard?: boolean; done?: DoneStep }): void {
+  const thread = openQueue.get()?.thread ?? null;
+  const now = asking.get();
+  asking.set({ ...(now.thread === thread ? now : { discard: false, done: "closed" as const }), ...change, thread });
+}
+openQueue.subscribe(() => {
+  if (asking.get().thread !== (openQueue.get()?.thread ?? null)) {
+    asking.set({ thread: openQueue.get()?.thread ?? null, discard: false, done: "closed" });
+  }
+});
+
+/** Put the open view's questions away, once what one offered was done. */
+export const askedNoMore = (): void => ask({ discard: false, done: "closed" });
+
+registerCommand("queue.discard.ask", {
+  availability: () => {
+    const open = openQueue.get()?.thread;
+    return open && editors.get()[open] ? { available: true } : nothing;
+  },
+  execute({ open }) { ask({ discard: open }); return done(); },
+});
+
+registerCommand("queue.done.ask", {
+  availability: ({ step }) => {
+    const thread = openThread();
+    if (!thread) return nothing;
+    const blockers = blockersOf(queue.get(), thread);
+    if (step === "blockers" && !blockers.length) return nothing;
+    if (step === "discard" && (!blockers.includes("unsent_text") || blockers.includes("send_unresolved"))) return nothing;
+    return { available: true };
+  },
+  execute({ step }) { ask({ done: step }); return done(); },
+});
 
 // ── Commands ─────────────────────────────────────────────────────────────
 
@@ -196,14 +389,14 @@ async function command(thread: string, change: WorkCommand): Promise<boolean> {
   try {
     const result = await messagingApi().workCommand(thread, change);
     record((s) => applyWorkState(s, result.work_state));
-    if (result.pending) note(thread, "Kept on this JARVIS until the team server answers.");
+    if (result.pending) note(thread, { words: () => t("main.queue.kept") });
     return true;
   } catch (e) {
     const err = asError(e);
     if (err.code === "revision_conflict" && err.latest) {
       record((s) => applyWorkState(s, err.latest as QueueState["items"][string]["work_state"]));
     }
-    note(thread, err.shown);
+    note(thread, said(err));
     return false;
   } finally {
     const pending = { ...pendingCommands.get() };
@@ -236,7 +429,7 @@ export const restore = (thread: string) => on(thread, (r) => ({ command: "restor
 export async function putBack(thread: string): Promise<boolean> {
   if (!(await flush(thread))) return false;
   if (!(await on(thread, (r) => ({ command: "put_back", expected_revision: r })))) return false;
-  if (openQueue.get()?.thread === thread) openQueue.set(null);
+  if (openQueue.get()?.thread === thread) queueSlot.adjust(null);
   return true;
 }
 
@@ -244,12 +437,14 @@ export async function putBack(thread: string): Promise<boolean> {
  *  `blockers` and offered their ways out first. */
 export async function dismiss(thread: string): Promise<boolean> {
   if (!(await on(thread, (r) => ({ command: "dismiss", expected_revision: r })))) return false;
-  if (openQueue.get()?.thread === thread) openQueue.set(null);
+  if (openQueue.get()?.thread === thread) queueSlot.adjust(null);
   return true;
 }
 
 // ── Dismissed items ──────────────────────────────────────────────────────
 
+/** Why the last read of dismissed items failed, in the words of the
+ *  language in force when it failed (QueuePanel.tsx shows it). */
 export const historyError = createStore<string | null>(null);
 
 /** Read the first page of dismissed items, or the next one. Never more
@@ -262,7 +457,7 @@ export async function readHistory(first: boolean): Promise<void> {
     historyError.set(null);
     record((s) => applyHistory(s, page, first));
   } catch (e) {
-    historyError.set(shown(e));
+    historyError.set(saidShown(said(e)).text);
   }
 }
 
@@ -343,7 +538,7 @@ export interface Editor {
   saving: boolean;
   /** Files being copied to JARVIS now. */
   adding: number;
-  error: string | null;
+  error: Said | null;
   /** The draft as it is on JARVIS, after it changed under this editor. */
   conflict: Draft | null;
 }
@@ -381,9 +576,9 @@ export function editableDraft(state: QueueState, thread: string): Draft | null {
     .find((d) => d && EDITABLE.has(d.send.state)) ?? null;
 }
 
-/** Respond on an item, to one exact message of it. An unsent response
- *  already there is taken up again, as it is. */
-export function startReply(thread: string, parent: string, recipient: number, subject: string): void {
+/** Respond on an item, to one exact message of it (`queue.reply`). An
+ *  unsent response already there is taken up again, as it is. */
+function startReply(thread: string, parent: string, recipient: number, subject: string): void {
   if (editors.get()[thread]) return;
   const draft = editableDraft(queueRecord.get(), thread);
   setEditor(thread, draft ? fromDraft(draft) : blankEditor({ recipient, thread, parent, subject }));
@@ -443,7 +638,7 @@ async function save(key: string): Promise<boolean> {
   if (!ed || !ed.dirty) return true;
   if (!ed.messageId && !hasContent(ed)) return true;          // nothing to keep yet
   if (ed.recipient === null) {
-    setEditor(key, { ...ed, error: "Choose who it is for, and it will be kept as a draft." });
+    setEditor(key, { ...ed, error: { words: () => t("main.queue.chooseRecipient") } });
     return false;
   }
   const body: DraftSave = {
@@ -469,7 +664,7 @@ async function save(key: string): Promise<boolean> {
       const newKey = key === NEW ? draft.thread_id : key;
       if (newKey !== key) {
         setEditor(key, null);
-        if (openQueue.get()?.thread === key) openQueue.set({ thread: newKey, back: openQueue.get()!.back });
+        if (openQueue.get()?.thread === key) queueSlot.adjust({ thread: newKey, back: openQueue.get()!.back });
       }
       setEditor(newKey, saved);
       if (changed) edit(newKey, {});
@@ -481,9 +676,11 @@ async function save(key: string): Promise<boolean> {
         const latest = err.latest as Draft;
         record((s) => applyDraft(s, latest));
         setEditor(key, { ...now, saving: false, conflict: latest,
-                         error: "This draft was changed elsewhere. Your text is kept here." });
+                         error: { words: () => t("main.queue.changedElsewhere") } });
       } else {
-        setEditor(key, { ...now, saving: false, error: `Not saved: ${err.shown} Your text is kept here.` });
+        const why = said(err);
+        setEditor(key, { ...now, saving: false,
+                         error: { words: () => t("main.queue.notSaved", { reason: saidShown(why).text }) } });
       }
       return false;
     } finally {
@@ -519,10 +716,11 @@ export async function addFiles(key: string, files: File[]): Promise<void> {
   const known = ed.messageId ? queueRecord.get().drafts[ed.messageId]?.attachments ?? [] : [];
   const total = known.reduce((n, a) => n + a.size_bytes, 0) + files.reduce((n, f) => n + f.size, 0);
   const tooBig = files.find((f) => f.size > LIMITS.FILE_MAX_BYTES);
-  const refusal = ed.attachmentIds.length + files.length > LIMITS.ATTACHMENTS_MAX
-    ? `At most ${LIMITS.ATTACHMENTS_MAX} files.`
-    : tooBig ? `${tooBig.name} is larger than ${LIMITS.FILE_MAX_BYTES / MB} MB.`
-    : total > LIMITS.PACKAGE_MAX_BYTES ? `The files come to more than ${LIMITS.PACKAGE_MAX_BYTES / MB} MB.`
+  const megabytes = (bytes: number) => formatNumber(bytes / MB);
+  const refusal: Said | null = ed.attachmentIds.length + files.length > LIMITS.ATTACHMENTS_MAX
+    ? { words: () => t("main.queue.tooManyFiles", { count: LIMITS.ATTACHMENTS_MAX }) }
+    : tooBig ? { words: () => t("main.queue.fileTooLarge", { name: tooBig.name, size: megabytes(LIMITS.FILE_MAX_BYTES) }) }
+    : total > LIMITS.PACKAGE_MAX_BYTES ? { words: () => t("main.queue.filesTooLarge", { size: megabytes(LIMITS.PACKAGE_MAX_BYTES) }) }
     : null;
   if (refusal) { setEditor(key, { ...ed, error: refusal }); return; }
   if (!ed.messageId) {
@@ -535,12 +733,13 @@ export async function addFiles(key: string, files: File[]): Promise<void> {
   const messageId = ed.messageId!;
   setEditor(key, { ...ed, adding: ed.adding + files.length, error: null });
   const added: string[] = [];
-  let failure: string | null = null;
+  let failure: Said | null = null;
   for (const file of files) {
     try {
       added.push((await messagingApi().addFile(messageId, file)).attachment_id);
     } catch (e) {
-      failure = `${file.name} was not added: ${shown(e)}`;
+      const why = said(e);
+      failure = { words: () => t("main.queue.fileNotAdded", { name: file.name, reason: saidShown(why).text }) };
     }
   }
   const now = editors.get()[key];
@@ -569,7 +768,7 @@ async function onDraft(key: string, act: (messageId: string, revision: number) =
     if (now) setEditor(key, { ...now, savedRevision: after.draft_revision, error: null });
   } catch (e) {
     const now = editors.get()[key] ?? ed;
-    setEditor(key, { ...now, error: shown(e) });
+    setEditor(key, { ...now, error: said(e) });
   }
 }
 
@@ -588,7 +787,7 @@ export async function retrySend(draft: Draft): Promise<void> {
     const after = await messagingApi().retry(draft.message_id, draft.draft_revision);
     record((s) => applyDraft(s, after));
   } catch (e) {
-    note(draft.thread_id, shown(e));
+    note(draft.thread_id, said(e));
   }
 }
 
@@ -598,7 +797,7 @@ export async function cancelSend(draft: Draft): Promise<void> {
     const after = await messagingApi().cancel(draft.message_id, draft.draft_revision);
     record((s) => applyDraft(s, after));
   } catch (e) {
-    note(draft.thread_id, shown(e));
+    note(draft.thread_id, said(e));
   }
 }
 
@@ -612,15 +811,15 @@ export async function discard(key: string): Promise<boolean> {
     try {
       await messagingApi().discardDraft(draft.message_id, draft.draft_revision);
     } catch (e) {
-      if (ed) setEditor(key, { ...ed, error: shown(e) });
-      else note(key, shown(e));
+      if (ed) setEditor(key, { ...ed, error: said(e) });
+      else note(key, said(e));
       return false;
     }
     record((s) => removeDraft(s, draft.message_id));
   }
   setEditor(key, null);
   if (key === NEW || draft?.thread_id === draft?.message_id) {
-    if (openQueue.get()?.thread === key) openQueue.set(null);
+    if (openQueue.get()?.thread === key) queueSlot.adjust(null);
   }
   return true;
 }
@@ -635,23 +834,19 @@ export function blockersOf(state: QueueState, thread: string) {
   return [...all];
 }
 
-/** Change a send that failed or was cancelled: its editor again, and the
- *  next save makes a new revision (`revise` on JARVIS). */
-export function editAgain(key: string, draft: Draft): void {
-  setEditor(key, fromDraft(draft));
-}
+
 
 // ── Files on received messages ───────────────────────────────────────────
 
-/** Fetch a received file to this JARVIS and check it. JARVIS never opens
- *  it; the owner's one action on it is Reveal in Finder. */
+/** Fetch a received file to this JARVIS and check it, through the one
+ *  location resolver (make-local). JARVIS never opens it; its state comes
+ *  back with the `messages` hint as the download moves. */
 export async function downloadFile(messageId: string, attachmentId: string): Promise<void> {
   const thread = queueRecord.get().messages[messageId]?.message.thread_id;
   try {
-    const file = await messagingApi().download(messageId, attachmentId);
-    record((s) => applyFile(s, messageId, file));
+    await makeLocal(messageId, attachmentId);
   } catch (e) {
-    if (thread) note(thread, shown(e));
+    if (thread) note(thread, said(e));
   }
 }
 
@@ -660,6 +855,6 @@ export async function revealFile(messageId: string, attachmentId: string): Promi
   try {
     await messagingApi().reveal(messageId, attachmentId);
   } catch (e) {
-    if (thread) note(thread, shown(e));
+    if (thread) note(thread, said(e));
   }
 }

@@ -105,7 +105,7 @@ def _app(factory):
 
 @pytest.fixture
 def client(engine):
-    with TestClient(_app(lambda: engine)) as c:
+    with TestClient(_app(lambda _model: engine)) as c:
         yield c
 
 
@@ -298,7 +298,7 @@ def test_a_decoder_failure_is_reported(client, engine):
 def test_the_page_is_told_while_the_model_loads(engine):
     loaded = threading.Event()
 
-    def slow():
+    def slow(_model):
         loaded.wait(5)
         return engine
 
@@ -311,7 +311,7 @@ def test_the_page_is_told_while_the_model_loads(engine):
 
 
 def test_a_missing_model_is_reported_with_the_setup_command():
-    with TestClient(_app(transcriber.SherpaEngine)) as client:
+    with TestClient(_app(transcriber.load_engine)) as client:
         with _open(client) as ws:
             ws.send_text(json.dumps(START))
             # The failed load reaches the event loop from the worker thread, so
@@ -352,7 +352,7 @@ def test_connecting_again_and_again_leaves_no_threads_or_sessions(client, engine
 
 
 def test_shutdown_waits_for_the_running_inference_then_stops_the_worker(engine):
-    with TestClient(_app(lambda: engine)) as client:
+    with TestClient(_app(lambda _model: engine)) as client:
         with _open(client) as ws:
             _ready(ws)
         worker = transcription_api.service._thread

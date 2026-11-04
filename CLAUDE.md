@@ -21,7 +21,8 @@ When a user clones this repo and starts Claude Code, help them:
 5. Install the Playwright browser: .venv/bin/python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
 5a. Install the current local Kroko speech model:
-   `.venv/bin/python scripts/setup_speech_input.py`
+   `.venv/bin/python scripts/setup_speech_input.py` (English; `--language es`
+   adds the Spanish model, `--language all` both)
 6. Install frontend dependencies: cd frontend && npm install
 7. Generate the SSL certs — see below, they are NOT optional:
    `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'`
@@ -87,6 +88,26 @@ cancels and says nothing was cleared. Context rotation likewise waits for a
 yes to its own question. Every clear or rotation is logged with its trigger
 and the exact utterance. The one involuntary replacement is the crash/stall
 restart in `brain.py`, which is recovery, not a decision, and is logged.
+In Spanish the one clear command is exactly `empezar de cero`, under the
+same rules.
+
+## Spoken words
+Every matcher of what the user said against fixed words splits and folds it
+with `spoken_words.py`: the yes and no to clearing and compaction
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+command, the cancel and replay words and echo rejection (`speech._tokens`),
+agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
+(`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
+"s") and `fold` takes accents off before comparing; on ASCII text both give
+exactly what the old `[a-z0-9]` splitters gave. Each language's word lists
+are one `Vocabulary` there, English and Latin American Spanish (yes: sí, si,
+claro, adelante, hazlo, dale, "de acuerdo"; no: no, espera, luego, después,
+nunca, negativo, todavía; cancel: espera, espérate, cancela, alto, detente,
+never "para"; replay: repite, otra vez). Which list counts is
+`spoken_words.active_language()`, the one place the language is decided;
+only `language_setting` sets it (see "The language setting"). Every test
+starts in English (`conftest._english_until_a_test_chooses`) and switches
+with the `spanish` fixture.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -235,20 +256,306 @@ history), `read_people_thread` (one item; no read receipt), and the acting
 command) and `change_people_draft` (discard, cancel, retry). A refusal is worded by `messaging_api.Refused.shown`; names,
 subjects and bodies come back in an untrusted block.
 
+## Received file locations
+Where a file a person sent is on this Mac has one answer,
+`attachment_locations.py`: `AttachmentLocations` over the messaging-files
+service (its record and its downloads folder), by message and attachment
+id for the owner signed in, never by name. `lookup` reads only; its
+`AttachmentLocation` has `local_path` only for a file here whose size and
+SHA-256 are the manifest's now, and otherwise its state (`remote_only`,
+`downloading`, `missing`, `changed`, `moved`, `failed`) with `intended_path`,
+which is never a saved file. `ensure_local` fetches through the existing
+downloader and verifies again, on the owner's word; nothing is unpacked,
+opened or run. Its table `attachment_locations` keeps where each file was
+verified (how a changed downloads folder reads as `moved`) and, when a work
+package was unpacked from it, the zip's hash, the folder and the members
+its manifest names; `attachment_leases` keeps a file an agent holds (a run
+while active, a message to a session while open) from `FileSnapshots.cleanup`.
+`GET`/`POST /api/team/messages/{m}/files/{a}/location`, the brain's
+`attachment_location` and the acting `make_attachment_local` and
+`reveal_attachment` give the same JSON (name and path in the untrusted
+block); the Queue shows a downloaded file's path with Copy and Reveal
+(`QueueFileLocation.tsx`, `attachmentLocation.ts`). Handing files to an agent
+(`spawn_run`'s and `steer_session`'s `attachments`, and a package's agent,
+given the zip it came from) goes through `handoff`: the verified path where
+that agent can read it (a run with permissions skipped, or a path inside its
+folder), else a verified copy in its folder under `.jarvis-attachments/<id>/`
+with where it came from, else nothing is started or sent and the reason is
+said; an agent on another node gets only the message and attachment ids.
+
 ## Work packages
 A teammate sends runnable work as a zip with `package.json` at its root,
 attached to an ordinary message between people (format:
-`docs/work-packages.md`). `work_packages.py` unpacks it into
-`data_paths.packages_dir()/<name>-<version>-<id>/`, refusing the whole zip if
-any entry escapes the folder or is a link, and removes the quarantine mark.
+`docs/work-packages.md`). Every received zip is read through one module,
+`bundle_archive.py` (`open_archive`, `list_members`, `read_member`,
+`extract`): every entry checked before anything is written (absolute, drive
+or network paths, backslashes, `..`, links, devices, encrypted entries, two
+entries landing at one path by case or Unicode form, a file where a folder
+is needed), entry, depth, per-file, total and compression-ratio budgets
+counted on what is actually decompressed, macOS metadata (`__MACOSX`,
+`.DS_Store`) set aside, the one wrapper folder found, and extraction into a
+private staging folder renamed into place whole. It never runs anything,
+clears the quarantine mark or keeps execute bits unless asked
+(`keep_modes`). `work_packages.recognise` finds `package.json` at the
+zip's root or in its one wrapper folder, every path it names relative to
+that folder; several candidates, a malformed one or another project's (an
+npm `package.json` has none of the JARVIS fields) say why it is not a
+package. `work_packages.py` unpacks it into
+`data_paths.packages_dir()/<name>-<version>-<id>/` (the wrapper's contents),
+and removes the quarantine mark. Opening the same bytes again, from any
+attachment, gives the package already there: `packages_dir()/.records/`
+holds each package's SHA-256 and attachment ids (`Package.sources`, which
+the Queue's Open page matches on), and a folder from before the record is
+adopted by its name.
 There is no other sandbox: the team is trusted. The brain's `open_package`
 and `run_package_command` are ACTING_TOOLS, so the person's yes in that turn
-is the gate. `run_package_command` runs one shell step in the folder with a
+is the gate. The page's Open package (on a received zip in the Queue, `POST
+/api/packages/received`) is his own click, and unpacks through the same
+`_open_received_package` as `open_package`; a page package then opens at
+once, and its file has Open page from then on. A package zip that is a
+file on this Mac opens the same way through `_open_local_package`: the
+acting `open_local_package` (a path) and the Folders view's Open package on
+a .zip's preview (`POST /api/packages/local`). The path is read by
+`draft_files.Source` (the folder catalog's ordinary-file rule, no link
+followed, a received file's size limit), copied privately and unpacked by
+`work_packages.unpack_held` exactly as a received zip (recorded under
+`local<sha>` in place of an attachment id), and a page package is shown at
+once. The page package shown is held by the server (`_package_shown`) and
+sent to every page that connects, so a reload keeps it; its × (`DELETE
+/api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
 `list_packages` and `package_results` read what is there. Results go back
 through `draft_message`'s `files`, which attaches each file with the page's
 own snapshot step (`FileSnapshots.add_to_draft`), so review and approval are
-unchanged. The example is `examples/packages/spanish-speech-test/`.
+unchanged. A package runs one of three ways, package.json's `runs`
+(`work_packages.MODES`): `conversation` (the default, as above: the brain
+follows its `skill`), `agent` and `page`. An agent package's `brief` is
+carried out by one run through `RunExecutor` in its folder, started by the
+acting `run_package_agent` and recorded in `runs.package_id` (added by
+`run_store.init_db`'s column backfill; one active run per package, and a
+retry keeps it); `_on_run_event` hands its end to `_announce_package_run`,
+which says it through `_say_notice` and tells the brain to call
+`package_results` and `draft_message` once he agrees. A page package's
+`entry` opens in the centre area (`PackageView.tsx`) in an iframe
+`sandbox="allow-scripts"`, never `allow-same-origin`: its files
+(`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
+`work_packages.page_file` through `folder_readers` with no link followed)
+are served from JARVIS's own origin, so web_auth gives exactly those paths
+`frame-ancestors 'self'; sandbox allow-scripts` and `SAMEORIGIN`
+(`PACKAGE_PAGE_HEADERS`) in place of DENY. The frame asks the page by
+postMessage (`packageBridge.ts`): `save` writes `results/<name>`
+(`work_packages.save_result`, plain names, 20 MB, through `POST
+/api/packages/<id>/results`), and `listen` streams the page's own
+microphone frames (`voiceInput.listenToMicrophone`), because Chrome refuses
+`getUserMedia` to a frame without an origin even with `allow="microphone"`.
+The acting `open_package_page` and the page's Open page (on the package's
+file in the Queue, `POST /api/packages/<id>/page`) share
+`_open_package_page`, which sends every page a `package_page` frame on the
+voice socket; unpacking one sends a `packages` hint on `/ws/sessions`. A
+page package may name a `story` (`package_story.py`, checked on unpack):
+slides of beats, each the words JARVIS says and the selectors it rings.
+The page's Tell the story and Stop (`POST /api/packages/<id>/story`) and
+the acting `tell_package_story` share `_package_story` and
+`story_teller.StoryTeller`, which opens the page and speaks the slides
+through `SpeechScheduler.narrate`, two slides queued at a time, as one
+NORMAL reply each, so barge-in, hush and turn-taking stop it as any reply.
+Each chunk carries its beat as `cue` on its `audio` frame (the way
+`capture` rides); the page sets `packages.storyCue` when that chunk STARTS
+playing and clears it when the beat's last chunk is played or the voice
+stops, and the bridge posts `story.cue` / `story.clear` to the frame, whose
+helper (`jarvis/package_story.js`, one copy, served at
+`/api/packages/story.js`) rings the targets and runs the beat's `show` and
+`click` actions. `package_story` frames on the voice socket say a story's
+state. The beats are spoken as the sender's narration and never reach the
+brain; the tool gives back only the slides' titles, walled. The
+examples are `examples/packages/spanish-speech-test/` (conversation),
+`text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
+(a page with a story).
+
+## Collaboration bundles
+Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
+without running anything. The shared contract is `bundle_contract.py`: the
+typed JSON of every bundle route (Classification, MemberPage, TextPage,
+Preview, PreflightResult, ReviewState), the fixed formats, operations,
+support and reason codes, the opaque `member_id` (from the attachment's
+SHA-256 and the member's checked path) and continuation, and `BRAIN_TOOLS`,
+which says for each bundle tool whether it is an ACTING_TOOL, what it
+taints and which route calls the same service. The page's copy is
+generated into `frontend/src/bundleContract.ts` by
+`scripts/generate_messaging_contract.py`. The pieces:
+`bundle_readers/` (one reader per format and the
+registry, `detect` deciding a format from content before extension, and
+`health`, which asks osascript rather than assuming it), `bundle_cache.py`
+(derived output keyed by owner, attachment hash, member, reader version
+and options, owner-only under `data_paths.bundle_cache_dir()`, least
+recently used trimmed past 512 MiB, plus each owner's scratch folder for
+the private 0600 copies a reader needs on disk), `bundle_inspection.py` (the
+one service: open, classify, list, read, preview, render and a static
+preview's files, reached only through `messaging_files`: `downloaded` on
+open, `verified_path` and `attachment_ref` otherwise; every outcome to its
+observer), `bundle_api.py` (the routes under
+`/api/team/messages/{message_id}/attachments/{attachment_id}/bundle`),
+`bundle_capabilities.py` (what this node can read, on its node update),
+`bundle_preflight.py` (the sender's readiness), `bundle_status.py` (the
+recipient's openability, reported as a technical receipt) and
+`bundle_tasks.py` (a one-off request's task context, review checklist,
+companions and repair). Inspection never clears quarantine, keeps no
+execute bit, runs no script, loads no macro and executes no HTML.
+
+The readers, none a new dependency: PDF (`pdf.py`) through PDFKit and
+CoreGraphics in `osascript -l JavaScript` (`_quartz.py`, the one subprocess
+seam, `RUNNER`): page count, `encrypted`, each page's text (at most
+`PDF_PAGES_PER_CALL` pages and a timeout per call), `scanned_no_text` when
+no page has text, `page_failed` for a page that cannot be read, and a page
+drawn into a raw CoreGraphics bitmap that `_quartz.png` encodes with zlib;
+never ImageIO, NSBitmapImageRep or `sips`, which crash on this Mac (ImageIO's
+GIF reader too). Text, Markdown, JSON, CSV and TSV (`text.py`): UTF-8, a
+byte order mark, else Windows-1252 (noted `legacy_encoding`); CSV and TSV
+paged by whole rows; malformed JSON or CSV still read, noted `corrupt`. HTML and SVG (`html.py`):
+text with `html.parser`, and what it would load from outside listed as
+`blocked_resources`; its static preview's files are served only from the
+same archive with `html.PREVIEW_HEADERS` (CSP `default-src 'none'` and
+`sandbox` without `allow-scripts`). PNG, JPEG, GIF and WebP (`image.py`):
+sized from their headers and never decoded; the preview is the file
+itself, and so is its one rendered page, served with its own type
+(`RenderedPageInfo.media_type`; a PDF page is PNG), so the brain sees a
+JPEG, GIF or WebP as sent; an image is never shrunk to `max_edge`, since
+that would mean decoding it. A member with text and nothing to draw
+(Markdown, CSV, an Office file) has an empty preview (no refs): asking for
+it is not a failed read and is not observed. No preview is a read: it only
+names what can be shown, so its success is never observed; a page counts
+once `render_page` draws it and words once `read_member` reads them. docx, xlsx and pptx
+(`office.py`): their XML through `bundle_archive`, by paragraph, by sheet
+and row (saved values with the formula beside them,
+`formulas_not_evaluated`) and by slide; `vbaProject.bin` is never read
+(`macros_ignored`); an XML part with a DOCTYPE or entity is `corrupt`.
+Legacy doc, xls and ppt, RTF, HEIC, audio and video have no reader
+(`reader_unavailable`). Every reader pages through `_paging.page`, a page
+at most `max_chars` and ending on a whole line, row, page or slide unless
+one alone is longer; a member too large to read is refused
+(`too_large`), never cut. An archive is listed with
+`bundle_archive.list_members(..., per_entry=True)`: a bad entry (outside,
+link, encrypted, duplicate) is a `blocked` member and the rest stay
+readable; only the entry count and total size refuse the whole archive.
+Tar, gzip, 7z, RAR and split archives are `unsupported`; a nested archive
+is a member (`nested_archive`), never expanded.
+
+The transport crosses the wire under its own capability,
+`messaging.bundles.v1`, which the team server offers beside `messaging.v1`
+(`messaging_models.bundles_offered`). A node's update carries its
+`AttachmentCapabilities` (`bundle_capabilities.local_capabilities`: the
+readers' health, checked at most every five minutes, the archive budgets
+and the work-package modes; `zip` always); the snapshot shows each node's
+own with `attachments_observed_at`, and a node judged from it is
+`advertised`, `legacy` (none: an older JARVIS), `stale` (checked over
+`CAPABILITY_FRESH_SEC` ago) or `offline`. A message may carry `task` (a
+`TaskContext`: outcome, primary and supporting artifacts by attachment id
+and hash, answer to the sender only) and `supersedes` (a file of an earlier
+message in the same thread between the same two people, which is kept);
+both are in the digest only when set, so every older digest is unchanged.
+A draft holds them (`Draft.task`, `.supersedes`); `draft_content` and the
+read-back include them only while the server offers bundles
+(`MessageApprovals(bundles=...)`, from `Delivery.bundles_offered`), else
+the read-back says the task does not go, and a change of server between
+review and yes is a new digest and a new review. The recipient's
+openability is a receipt kind (`openability`, one `OpenabilityReport` per
+file in `ReceiptFacts.openability`, never a read): `bundle_status` folds
+the inspection service's observations per (message, file, revision)
+(`human_openability`, messaging store schema 3; a listing that already
+shows a member with no reader is `partial` before anything is tried on it,
+and a review's progress is only worked out on a thread whose task was asked
+of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
+JARVIS asks every message and receipt route for the bundle fields
+(`?bundles=1`) and for a reply's cites (`?cites=1`, `BUNDLES_QUERY`); a
+team server answers a JARVIS that does not ask for the bundle fields with
+the messaging.v1 fields only, and one that asks for them but not for cites
+without `cites` (`messaging.hidden_fields`, the one rule, applied by
+`messaging.legacy_view`), so older nodes, whose strict wire copy refuses a
+field it does not know, keep working. `bundle_preflight.SenderPreflight` inspects the draft's own
+snapshots (`DraftFiles`) with the same inspection service, derives what
+the message needs, and judges each of the recipient's nodes on its own:
+blocked, ready, partial or unknown, with only the gaps the sender can act
+on; a review of a draft with files stores it with the revision
+(`human_preflight`). `bundle_tasks.BundleTasks` sets the task (an edit:
+`LocalMessaging.edit_bundle`), adds companions beside the original
+(`FileSnapshots.snapshot_made`), prepares a repair (a draft replying in the
+thread with a flattened copy checked member by member, or companions,
+from `FileSnapshots.original_bytes`), and keeps the recipient's review
+checklist (`human_review`, never sent), resumed across a repair: an item
+read on the replaced file carries to the repaired copy's member only when
+`BundleInspection.member_digest` (the member's SHA-256, under the archive
+budgets) is the same on both, never on the path alone; each
+item keeps where it was read (`read`: the pages and line ranges an
+`Observation`'s `locations` carried, ranges that touch joined,
+`bundle_tasks.read_locations`). His reply in a thread whose task was asked
+of him carries the items it relies on (`Draft.cited`):
+`BundleTasks.propose_cited`, which `LocalMessaging` calls in the same save
+as every edit (`propose_cited`, set by `messaging_runtime`), proposes the
+read items whose name or path the reply's text names as words
+(`spoken_words.folded_words`), again as a new revision when an item is
+read while the reply is still a draft, until he sets them himself
+(`set_cited`: the composer's Cited ticks in `TaskFields`, `PUT
+/api/team/messages/drafts/{id}/cited`, and the acting `set_cited_files`;
+`cited_by_owner` then stops the proposal). Each mark stores its wire
+reference when it is proposed or set (`CitedFile.ref`, a `CitedRef`: the
+message in the thread he received the file on, the file's SHA-256 and the
+member's archive path, or none for the whole file; `BundleTasks._marks`);
+a mark saved before that has none. The reply carries the marks with one
+as `cites` (`ports.sent_cites`, at most `CITES_MAX`, in the digest only
+when set) only while the team server offers `messaging.bundles.cites.v1`
+(`messaging_models.cites_offered`, `MessageApprovals(cites=...)` from
+`Delivery.cites_offered`, as bundles are). The read-back has a `Cited:`
+line and says which stay here (`CITES_NOT_CARRIED` when the server takes
+none, else "Not sent with it:" and the marks with no reference), and the
+hand-over checks the read-back again, since the digest cannot see what is
+not sent; a change is an edit, so a reviewed reply is reviewed again, and a
+change of server between review and yes is a new digest. The team server
+takes a cite only of a file of an earlier message in the same thread that
+was sent to the person replying, by its attachment id and hash, else
+`relation_not_allowed`. Once the team server has accepted the reply at the
+revision that carried them, those items are `cited` (`_cited_by_replies`,
+worked out each time the record is brought up to date); a cited item stays
+cited and carries across a repair as a read does. On the sender's side the
+cites stay with the reply as it is stored, and `ports.with_citations`
+(called by the messaging store for every thread it reads) gives each
+message he sent the cites the other person's replies make of its files
+(`LocalMessage.cited_in_reply`): the one record the Queue's file card
+("Cited in reply", with the members) and `read_people_thread`'s file lines
+("cited in reply") both read. A received
+file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
+transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
+`messaging_runtime` builds and binds the three records; a draft edit from a
+worker thread runs on the event loop (`MessagingRuntime.on_loop`).
+
+The routes and the brain's tools share one set of calls,
+`bundle_api.Calls`, over the context the messaging runtime gives
+(`MessagingRuntime.bundle_context`: its one `BundleInspection` over the
+received files, `received`, and the owner signed in now). A tool answers with the route's own JSON text
+(`bundle_api.answer`), a page of it at a time within the tool cap
+(`server._paged(..., exact=True)`, so the pages join back), walled as the
+sender's words. `look_at_bundle_page` hands the brain the PNG as an image
+block, as `look_at_screen` does. The Codex brain reaches the same MCP
+server and the same tools. `show_bundle_member` and the page's Open share
+the show route's call, which checks the member and sends ids only in a
+`bundle_view` frame on the voice socket. A member's static HTML is served
+with `web_auth.BUNDLE_PREVIEW_HEADERS`, which are the html reader's own
+`PREVIEW_HEADERS` (framed by JARVIS only, `sandbox` with no permissions,
+nothing from outside the bundle), and framed with `sandbox=""`. A sent
+file's card shows the recipient's JARVIS's report once it has opened it
+(`receipts.openability`; "Read there", "Opens there", "Partly readable there" with the
+first member that failed), and `read_people_thread` says the same on each
+file line and the thread's review progress in its head. Downloading or revealing a file is not reading it. The
+page's side: `bundles.ts` (the routes, the open member and `bundleWords`,
+every string shown), `BundleInventory.tsx` (Open on a checked incoming
+file's card: a document opens in the centre, an archive lists a folder at
+a time), `BundleMemberView.tsx` (the centre's File view: a PDF's pages
+beside its text, text with More, rows as a table, images, the static
+preview) and `BundleLines.tsx` (a message's request line, the thread's
+review progress, a draft's readiness, each shown only when there is
+something to say, and a draft's request fields, `TaskFields`: the kind,
+the words and which file is primary, saved through the task route; a
+member inside an archive is named as primary through `set_message_task`).
+A member a zip lists as a device or pipe is `special_file`.
 
 ## The Network view
 Every paired JARVIS backend is a node on the team's network. Every five
@@ -261,9 +568,10 @@ sent; `GET /api/team/network` returns it unchanged, and a `network` hint on
 (`data_paths.node_id()`, one per data directory), the boot ID and update
 sequence (`team_api`), the machine's CPU and memory (`host_resources.py`),
 each brain's account as a keyed hash with its quota windows
-(`brain_accounts.py`; no email leaves the machine) and the last human
+(`brain_accounts.py`; no email leaves the machine), the last human
 activity (`human_activity.py`: a sequence number, an age and a source, never
-content). The team server binds each node to the member whose session first
+content) and what it can open (`bundle_capabilities.py`, see "Collaboration
+bundles"). The team server binds each node to the member whose session first
 published it, refuses an older boot or sequence, and works out presence
 (online within 15 s, delayed to 45 s, then offline), the brains' pace and
 its own health when the snapshot is built. The brain's `team_network` reads
@@ -293,7 +601,7 @@ nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
 /api/team/connect`, the approval page in a new tab). The reminder's Sign in
 (`signInAgain`) reads `GET /api/team`: with a `last_server_url` it signs in
 there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
-Team (`openSettings("team")`). Later hides it until the page loads again or
+Team (`settings.open {section: "team"}`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
 itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
 started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
@@ -306,11 +614,16 @@ turn-taking); signed in then, nothing is said in that process.
 The subagents a Claude Code session dispatches are read from its own files by
 `session_watch.read_subagents`, the one reader (the counts on the snapshot
 come from it too): `agent-<id>.jsonl` and the `agent-<id>.meta.json` beside it
-in `projects/<encoded cwd>/<sessionId>/subagents/`. Finished means its last
+in `projects/<encoded cwd>/<sessionId>/subagents/`, and the agents the
+Workflow tool starts one level deeper, a folder per run, in
+`subagents/workflows/<run id>/` (the run id, such as `wf_f21d5ed2-0a4`, is
+each one's `workflow_run`, None for the rest; the workflows folder and each
+run folder are entered only when not a symlink). Finished means its last
 message is the assistant's with `stop_reason: end_turn`; otherwise it is
 `working` while written within `AGENT_ACTIVE_WITHIN_SEC`, else `stale`, which
 claims neither. Deduped by name across roots, capped at `MAX_AGENT_FILES`
-(a floor when capped), never through a symlink, never raising. They ride on
+(a floor when capped, counting both levels), never through a symlink,
+never raising. They ride on
 the sessions snapshot (`subagents`), and `/api/sessions/{id}/transcript
 ?subagent=<id>` reads one. The Workflows area shows them, worked out at read
 time and never written to `workflow_store`: a subagent of a session attached
@@ -325,7 +638,8 @@ How voice input is doing is one durable record, `voice_diagnostics.py`:
 `voice_samples` (one a second while a page listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
 start and end, reconnects, every failure with the cause in force and the
-busiest processes, and every line of text the page showed). `classify` gives
+busiest processes, every line of text the page showed, and each switch of
+speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
 timings only; no audio, and no words but the page's own text. Samples are
@@ -365,7 +679,13 @@ figures); `_watch_subsystems` looks every five seconds, sends a
 "Communications with the agents are down, sir." and once that they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
-opens the voice view).
+opens the voice view). Every name and line JARVIS writes itself is sent as a
+code and its values (`name_said`, `said`: `subsystem_diagnostics.say` and
+`named`, from `SAID` and `NAMES`) beside its English, which the brain reads;
+the page words the code in its own language (`subsystems.ts` `subsystemName`,
+`subsystemSummary`, `checkName`, `checkDetail`, catalog `right.subsystem.*`)
+and shows a line with no code (another program's words) as it came. A test
+keeps the Python English and the catalog's English word for word the same.
 
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
@@ -433,12 +753,127 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## Self-update
+A checkout whose `origin` is on github.com updates itself from GitHub through
+one service, `self_update.py`. A version is a pull request merged to main:
+each first-parent merge commit on origin/main newer than HEAD
+(`newer_versions`, newest first, named by the PR number in "Merge pull
+request #N" and the title on its body's first line, with its date; a merge
+that is no pull request, and origin/main's latest when it is not a merge,
+are listed by short sha and subject). The version running here is HEAD
+described the same way (`current_version`). `check` fetches origin and says
+the branch, this commit, origin/main's latest, the current version, the
+newer versions and each one's CI, all from ONE GitHub request
+(`ci_lookup`: the `ci.yml` workflow's runs on main, read without a login,
+matched by head sha, the latest run per sha; the scheduled team server
+health check does not count, and a commit with no `ci` run has no CI
+result). Only a version whose CI passed can be chosen; going back to an
+older one is not offered. `check` and `update` take an optional version (a
+PR number or a sha; origin/main's latest when none), refused when it is the
+running one or older, not one of those listed, or its CI has not passed;
+`update` checks again, moves to the chosen commit (`git merge --ff-only`),
+then runs `.venv/bin/pip install -r requirements.txt` if
+that file changed, `npm ci` if `frontend/package-lock.json` changed, and
+`npm run build` if the page is served from built files (`jarvis/web`) and
+anything under `frontend/` changed; under Vite a changed lock file says to
+restart `npm run dev`. A step that fails moves the checkout back (`git reset
+--keep`), so the update is offered again and runs every step. It is refused,
+with the reason, when not on main, with modified tracked files, with local
+commits not on origin/main, with untracked files the update would add
+(renames included), or when the latest commit's CI has not passed; an
+installed copy or another origin is told why it is not offered.
+`GET /api/update` is the check, with the versions and the current one, and
+`POST /api/update` (optional `{"version": ...}`) the update, then the
+restart (page origin or tool token; no access-key category). The restart is
+one function, `server._restart_server`, shared with `/api/restart`. The
+command `python -m jarvis.update` (`update.py`) asks a running server to do
+it, so it restarts itself, and with the server stopped only updates;
+`--to <PR number or sha>` chooses the version and `--check` only reports,
+listing the versions. It finds the server by the one reader,
+`server_address.running()`: at startup the server writes its scheme, host,
+port and pid to `data_paths.server_address_path()` (`server-address.json`
+in its data folder; the same address the brain's tool channel dials,
+`server_address.own()`) and removes it on a clean shutdown; a record whose
+pid is dead is stale and ignored. With a live record the command asks that
+address with the tool token, and a refused connection there stops it
+without updating. With none it looks at `JARVIS_URL`, else
+`JARVIS_TOOL_URL`'s address, else 127.0.0.1:8340; only a refused connection
+there counts as stopped. An answer that is not an update outcome (a 403, a
+404) stops it without updating. The page's side is Settings, Updates, which the ⋮
+menu's Check for updates opens: the version running, the newer versions
+as a radio list (newest tagged LATEST, the newest that passed chosen, the
+others disabled with why), and Install and restart, which asks once in an
+inline box before "Yes, install PR N". The brain's is `update_status`
+(the versions, titles walled) and the acting `update_jarvis` with an
+optional `version`, which says it is updating, updates after the turn and
+restarts once that has been heard (`_update_by_voice`). Tests point
+`self_update.repo_root` at temporary repositories
+(`conftest._never_update_or_restart_the_real_checkout`).
+
 ## Turn-taking
 JARVIS waits for Tim to finish. The server gathers what he says
 (`server._Utterance`) until he has been quiet for `speech.END_OF_TURN_SEC`, so
 a pause mid-sentence does not send the brain half a sentence; typed words go
 at once. Nothing JARVIS says starts while he has spoken more recently than
 that, replies included, and announcements never start at once.
+
+## Speaking Spanish
+The language in force is `spoken_words.active_language()`, the one place it
+is decided (see "The language setting"); callers reach it through the
+module so there is one answer. Every Fish request body is built
+by `tts.request_body`: the speech path (`_synth_for_speech`, which
+`synthesize_speech` and `/api/tts-test` go through too) and the key check.
+It adds Fish's `language` from `tts.FISH_LANGUAGES` (`es-MX` for Spanish;
+English sends none, as before). The splitter knows Spanish abbreviations
+(`speech._ABBREVIATIONS`) and keeps the spaced "p. m." / "a. m." in one
+piece. `strip_markdown_for_tts` also strips the Spanish banned phrases
+(`server._BANNED_SPANISH`) with their ¡ ¿ marks; every banned phrase is
+matched with accents folded (`spoken_words.fold`) and as whole words
+(`server._banned_match`), so "claro que si" goes as "claro que sí" does and
+"claro que siempre" stays. For Spanish the brain's
+`launch_prompt` adds `brain.language_rule`: `LANGUAGE_RULES` (answer in
+Latin American Spanish, English tool results said in Spanish, memory
+searched in both languages) and how he is addressed ("señor" by default,
+"señora" under Ma'am). It
+is in the launch prompt because an edited persona never receives template
+changes; the persona's "Language" section says the same.
+
+## The language setting
+JARVIS hears and speaks one language at a time, English or Spanish, chosen
+in Settings, Voice and language, Language (`LanguageControl.tsx`), by the brain's acting
+`set_language`, or by one exact spoken phrase: "switch to Spanish" while in
+English, "cambia a inglés" while in Spanish (`Vocabulary.switch_command`,
+matched like the clear command: the whole utterance, optional leading
+"jarvis"; `server._language_switch_asked`). All three go through
+`language_setting.change`: it loads the language's speech model first
+(`speech_models.switch`, a few seconds) and only then saves the choice in
+JARVIS's own store (`data_paths.language_path()`, never .env) and puts it in
+force (`spoken_words.set_active_language`), so a model that is not installed
+or fails to load changes nothing (after a failed load the language in
+force's model is loaded again, so he is still heard). Speech input's model is
+switched only this way: there is no `POST /api/speech/model` route and no
+`switch_speech_model` tool; the language route and `set_language` replaced
+them, so what JARVIS hears and what it speaks can never differ. The page and the phrase are confirmed aloud in the new language
+(`language_setting.choose`: "Speaking English now, sir." / "Ahora hablo en
+español, señor.") through `_say_notice`, whose note tells the brain to answer
+in that language from its next turn; the brain's tool returns the same rule
+and the brain says it. Español is disabled until the Spanish model is
+installed; "Download (124 MB)" is the install route, its progress read every
+second while it runs. At startup, before the brain is spawned (its launch
+prompt carries the language rule), `language_setting.load` puts the saved
+language in force and gives speech input its model, or English for that run
+when the saved one's model is missing (preflight checks the same model,
+`startup_model`). `GET`/`POST /api/settings/language` are the routes; the
+brain's `speech_models` read starts with the language.
+
+The Honorific setting (Settings, You: Sir, Ma'am, Señor, None; `HONORIFIC`
+in .env) is now used: `spoken_words.address` turns it into a fixed word
+from one table, `spoken_words._ADDRESS`, each honorific's word in each
+language (sir is señor in Spanish, ma'am is señora), and any value not on
+that list counting as the default, sir, so nothing typed into .env reaches
+the prompt. `brain.address_rule` adds a launch-prompt line only when
+the address is not plain "sir", so the English prompt is unchanged by
+default; the confirmations use it too.
 
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
@@ -466,15 +901,30 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Fish Audio synthesis, one request per sentence chunk
+- `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
+  request body (`request_body`) with its language
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Audio playback; re-exports voice input
 - `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,
   an AudioWorklet (`pcm-worklet.ts`, `pcm.ts`) making 16 kHz PCM16, streamed
   to `/ws/transcribe`; its finals go to `/ws/voice` as before
-- `transcriber.py` — Local speech recognition: the model's identity and
-  where it lives, the sherpa-onnx engine, and the worker that owns it
-  (one capture at a time, overload refused rather than trimmed)
+- `transcriber.py` — Local speech recognition: the model list (`MODELS`,
+  English and Spanish Kroko, each with its digest) and where each lives, the
+  sherpa-onnx engine, and the worker that owns it (one model loaded at a
+  time, `switch` loads another in its place; one capture at a time, overload
+  refused rather than trimmed)
+- `speech_models.py` — Installing a speech model (`install`: download,
+  SHA-256 check, safe extract, one rename; `scripts/setup_speech_input.py`
+  is a thin command over it) and the service the page's
+  `/api/speech/models*` routes and the brain's `speech_models`,
+  `install_speech_model` share, and `switch`, which only
+  `language_setting.change` calls. A switch ends the
+  open capture with a non-incident `interrupted` (the page reconnects and
+  waits while it loads) and is a `model-load` event in the voice record
+- `language_setting.py` — The language JARVIS hears and speaks: the stored
+  choice, `change` (model first, then saved and in force), the spoken
+  confirmation and `/api/settings/language` (see "The language setting");
+  `frontend/src/LanguageControl.tsx` is the page's side
 - `transcription_api.py` — `/ws/transcribe`; the protocol is
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
@@ -582,9 +1032,24 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/TeamServerTile.tsx` / `TeamServerView.tsx` — The left
   column's Team Server tile and the team server's health in full
 - `frontend/src/humanActivity.ts` — The page's one human-activity collector
+- `frontend/src/locale.ts` / `frontend/src/messages/` — The interface's
+  language, which is the language setting's (`language_setting.py`), never a
+  second preference or browser storage: one store fed by the server's
+  `/api/settings/language`, its `language` frame on `/ws/sessions` (published
+  by `change`) and that socket's snapshot, a read never undoing a newer
+  frame; typed English and Latin American Spanish catalogs with the same
+  keys and placeholders, one part per region; a component's words come from
+  `useT()` (`t("key", { name })`), numbers and dates from its format helpers.
+  Words written in English in a component are the `label-unlocalized`
+  coverage rule; elements are found by registered ids, never by their words
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `frontend/src/Settings.tsx` / `SettingsRow.tsx` — Settings, a centre view
+  opened and closed only by `settings.open`, `settings.section` and
+  `settings.close` (the menu, Check for updates, the sign-in reminder and
+  first-time setup run them): You, Voice and language, Brains, Team,
+  Updates, Server; every control and reading in it a pointer target
 - `frontend/src/TeamSignInReminder.tsx` / `teamSignIn.ts` / `team_reminder.py`
   — The sign-in reminder at the top of the centre area, its Sign in, and the
   one spoken reminder per start (see "The sign-in reminder")
@@ -612,9 +1077,25 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   brain's `attach_message_files` and `draft_message`'s `files`): the folder
   catalog's ordinary-file rule, a held descriptor reached without links,
   and one save at the exact revision under the same sign-in, all or none
+- `attachment_locations.py` — Where a received file is: the location
+  result, lookup and ensure-local, leases, extraction records, the two
+  routes and the hand-over to agents (see "Received file locations")
+- `bundle_archive.py` — Reading a received zip safely: the entry checks,
+  budgets, wrapper folder and staged extraction work packages and ordinary
+  bundles share (see "Work packages")
 - `work_packages.py` — Work packages: unpacking a received zip, finding,
-  running a step, its results, and which files the brain may attach (see
-  "Work packages")
+  running a step, its results, and which files the brain may attach; the
+  three ways a package runs, an agent package's brief, and a page package's
+  files and saved results (see "Work packages")
+- `packages_api.py` — The page's `/api/packages*` routes: the packages here,
+  a page package's files, what its frame saves, opening it, telling its
+  story, and the story helper
+- `package_story.py` / `story_teller.py` / `package_story.js` — A page
+  package's story: its format and cues, the one service that tells and
+  stops it, and the helper that rings its targets inside the frame
+- `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
+  page package in the centre area, its frame's postMessage bridge (save,
+  listen), and the page's packages and the one open
 - `arrival_announcer.py` — Saying that a person's message has come in,
   through the ordinary notice path
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,
@@ -631,6 +1112,36 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/folders.ts` / `FoldersView.tsx` / `FolderDetail.tsx` /
   `FoldersPanel.tsx` — The Folders store, the centre's Folders view and one
   folder in full, and the right panel's Folders tab
+- `self_update.py` / `update.py` — Updating a checkout from GitHub, and the
+  `python -m jarvis.update` command (see "Self-update")
+- `ui_contract/` — The page's navigation and white attention contract:
+  `protocol.json` and one file per family in `families/`, merged and checked
+  by `ui_contract.load`; `frontend/src/uiContract.ts` is generated from it
+  (`scripts/generate_ui_contract.py`), and `tool_specs()` gives the brain's
+  `ui_map`, `ui_navigate`, `ui_indicate`, `ui_journey` and `ui_clear`
+- `ui_control.py` / `frontend/src/uiClient.ts` — Carrying the brain's UI
+  requests to the one page of the turn and its answer back: binding, epochs,
+  one deadline, success only at arrival; stopping JARVIS withdraws them
+- `frontend/src/uiRegistry.ts` — The one registry of navigation commands
+  and mounted targets; `dispatch` (actor always given) and `byHand`
+- `frontend/src/uiNavigation.ts` / `uiNavigationReveal.ts` — The route
+  state (right tab, centre view, detail slots) and bringing one exact
+  presentation into view before anything points at it
+- `frontend/src/uiPipeline.ts` / `uiAttention.ts` / `UiPipelineLayer.tsx` —
+  The pipeline graph and routes, one cue's lifecycle, and the map and cues
+  drawn
+- `frontend/src/uiSignal.ts` — The one schedule and path maths for white
+  attention, from the contract's timing
+- `frontend/src/effectLife.ts` — The one frame scheduler, geometry
+  invalidation and effect lifecycle for everything drawn from the orb (rays
+  and attention alike)
+- `frontend/src/orbSource.ts` — Who holds the orb's overlay (`mainOrb`):
+  a real transmission always, attention waits then answers busy
+- `server_address.py` — This server's own address (`own`), recorded with
+  its pid at startup and removed on shutdown, and the one reader of that
+  record (`running`) that `python -m jarvis.update` uses (see "Self-update")
+- `bundle_contract.py` / `bundle_inspection.py` / `bundle_readers/` — Reading a
+  file someone sent (see "Collaboration bundles")
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -666,7 +1177,8 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
-  database, memory Markdown, usage.json, the tool token. Defaults to `data/`
+  database, memory Markdown, usage.json, the tool token, the running
+  server's address (`server-address.json`). Defaults to `data/`
   (`data_paths.py`). Set it to run an isolated instance without touching live
   data — the test suite gives every test a fresh one this way.
 - `JARVIS_SKIP_PERMISSIONS` (optional) — Defaults to true; passes
@@ -687,9 +1199,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   text may not act, and memory writers are refused for the rest of that
   generation. Off by default, so JARVIS keeps acting after reading foreign
   content. The old `JARVIS_ALLOW_UNTRUSTED_ACTIONS` is obsolete and ignored
-- `JARVIS_STT_MODEL_DIR` (optional) — where the local speech model is.
-  Defaults to `<data>/models/<model>`; `scripts/setup_speech_input.py`
-  installs it there, checked against the release's SHA-256
+- `JARVIS_STT_MODEL_DIR` (optional) — the folder holding the local speech
+  models, one folder per model (`<root>/<model name>`). Defaults to
+  `<data>/models`; `scripts/setup_speech_input.py` and the install route
+  install there, checked against the release's SHA-256
 - `JARVIS_ENV_FILE` (optional) — the `.env` JARVIS loads at startup and the
   settings endpoints read and write. Defaults to the repo's own; the test
   suite redirects it so no test reads or rewrites the developer's real
@@ -732,15 +1245,21 @@ marker there.
 
 The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
-`test_voice_page_rays.py`, `test_voice_page_folders.py`) are marked `page` and deselected too: they build
+`test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without
 node, the frontend's `node_modules`, or Playwright's Chromium.
 
+`tests/test_bundle_readers_mac.py` is marked `osascript`: it runs the PDF
+reader against the real PDFKit and skips off macOS; every other bundle
+test fakes osascript (`tests/bundle_fixtures.FakeOsascript`).
+
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
+
+Every CI run uploads a `test-timing` artifact (14 days, failed runs too): both pytest steps' junit XML (`unit.xml`, `page.xml`), the runner's size, and its load sampled every 30 s through the page step; the steps' logs carry `--durations` and a timed bare vite build and Chromium launch.
 
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
@@ -754,8 +1273,9 @@ needs the network, a real window, or a real `claude`, mark it.
   same service or function as its route (`tests/test_brain_page_parity.py`).
   Changes are ACTING_TOOLS; reads carrying other people's words are wrapped
   as untrusted. Left out on purpose: settings that hold secrets (API keys and
-  the Fish key test), `/api/restart`, and the sign-in and connect flows that
-  need a browser approval
+  the Fish key test), `/api/restart` on its own (`update_jarvis` restarts,
+  through the same `_restart_server`, once an update is in), and the sign-in
+  and connect flows that need a browser approval
 - AppleScript for Terminal and Chrome control (no OAuth needed)
 - SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
   long-term memory is plain Markdown files instead (`jarvis_memory.py`) —

@@ -17,12 +17,12 @@ from datetime import datetime
 from pathlib import Path
 
 from jarvis import data_paths
+from jarvis import spoken_words
 
 MEMORY_INDEX_MAX = 80          # lines in MEMORY.md before we ask for a tidy-up
 SLUG_MAX = 60
 
 _APOSTROPHES = re.compile(r"['’‘\"“”]")
-_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +101,8 @@ def _normalize_title(text: str) -> str:
     lets "Tony's DB choice" and "tonys db choice" count as the same
     memory rather than two.
     """
-    stripped = _APOSTROPHES.sub("", (text or "").lower())
-    return _NON_ALNUM.sub("-", stripped).strip("-")
+    stripped = _APOSTROPHES.sub("", text or "")
+    return "-".join(spoken_words.folded_words(stripped))
 
 
 def slugify(text: str) -> str:
@@ -480,10 +480,16 @@ _STOP_WORDS = frozenset({
 })
 
 
+def _searchable(text: str) -> str:
+    """Text as search compares it: lowercased, accents folded, so "después"
+    and "despues" find each other."""
+    return spoken_words.fold(text).lower()
+
+
 def _score(query_words: set[str], title: str, body: str) -> int:
     """Title matches count for more: a file named for the thing you asked
     about is almost always the one you meant."""
-    title_l, body_l = title.lower(), body.lower()
+    title_l, body_l = _searchable(title), _searchable(body)
     score = 0
     for w in query_words:
         if w in title_l:
@@ -572,10 +578,10 @@ def _excerpt(body: str, query_words: set[str]) -> str:
         candidate = _clean_line(line)
         if candidate is None:
             continue
-        low = candidate.lower()
+        low = _searchable(candidate)
         if not any(w in low for w in query_words):
             continue
-        if set(re.split(r"[^a-z0-9]+", low)) - {""} <= query_words:
+        if set(spoken_words.folded_words(low)) <= query_words:
             if not is_heading:
                 echo_only = echo_only or candidate   # matched, says nothing new
             continue
@@ -610,7 +616,7 @@ def _sources() -> list[tuple[str, Path]]:
 def search(query: str, limit: int = 5) -> list[dict]:
     """Scored scan of the folder. No index, so it can never be stale."""
     words = {
-        w for w in re.split(r"[^a-z0-9]+", (query or "").lower())
+        w for w in spoken_words.folded_words(query)
         if len(w) > 1 and w not in _STOP_WORDS
     }
     if not words:

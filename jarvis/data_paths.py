@@ -173,6 +173,31 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "c7f8ecb68c4a82b1431618e5bbfef9ae91b5153c50a722954f39654dd7214f1f",  # people and the team; every page feature a tool
     "df337fd9c8313b23ea2b1d12fc521f39274338ca5debb55561223417f9dbeb52",  # work packages: open, run, send results back
     "7151dd997fe89a1cfbc2aa2eb04a8bf7277e856e6da7744f42dcaaeeddc96004",  # attach_message_files: files onto a saved draft
+    "9cf23b8d034d94dc4494f5f6d3a445c1fdc198f19798a87c89fd001bcd45861a",  # Spanish clear command: empezar de cero, then sí
+    "c13810ab6c2f8d40d4203738e54a5506ddbd2d5bea81663c79966a220c9623ac",  # update_status, update_jarvis
+    "50c30b27676ea842b717d8e82d24b95db95f7eb073d8baf18a18a51b9f33c79e",  # Spanish clear command with update_status, update_jarvis
+    "d4ed710d0af5dd10e7c7b66088a7f84b40a61763c5f588edff6e661f2a1a60c7",  # Spanish: señor, results in his language, memory in both
+    "3f08a66e67af3f4776fd76b8b03a2d4980de6f217c6c1bbf5d64135ecbd8b93b",  # Spanish speaking and clear command with self-update
+    "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
+    "799e9124a7841f4f0153ff04eb5f5b18b3316fcc0379b314becd246898c01346",  # Spanish: señora under Ma'am
+    "d0a9312fadb148e9cc7bb87aba4e7bdc6addfc880bec13895e4b4660397a2a4b",  # the language setting with self-update
+    "ac5d51b21b3c26a2cec653592065e83e55095f30abd06ce2c2d44668a6ece7ed",  # UI navigation: ui_map, ui_navigate, ui_indicate
+    "2812d44b2001159bdd46abb80193d9b2ddc929c87a44122043c01478dd6f3219",  # UI navigation: the UI tools' turn binding
+    "165255a4d9a01a66b2e8652e54f2be8015c2374a24ed590990c71c84f9dbf986",  # UI navigation: ui_journey and interruption
+    "de87215499c617643fd3c51c945c5835f4f55403d2f2497175dc478ec52b7bd4",  # UI navigation with the language setting
+    "493370b70acd291ce0e4fb125775044c3a701c1bd9df1859b72d59484d1e83af",  # pass ui_map's navigationRevision back
+    "0f0743b0efd1a0a684a75cc9a5f3247c79394c51a703747c1c1744885f948339",  # packages run three ways: conversation, agent, page
+    "c38c882c0d924db7b2f71a30d7d0f5a9b054073c826817562595294dfbc2cc55",  # update_jarvis takes a version: a merged pull request
+    "1f9e95e5be820d75a28ae08e71e46db577c9935659b566e11dddf28f867a9930",  # a received file's location: where it is and handing it on
+    "3d993a2448e2a70f040a05b62d39016bdc6ad8b7600901330798f8e335a3487a",  # a package's package.json in its one top folder
+    "7d3af236e6905373e0ee578839cdb30bd19503b6e52fb1b559442cb8877e5521",  # files people send: inspect, read, cite
+    "7ab19bd7c0ea8b22e2049c6eae55c86b0ce602e210e5bb936c4ab195387a566c",  # received file locations with the one-top-folder package
+    "cf116431e57650e8a6e4f5031e98a0713bc90e959134771aa15d758c8a25c95d",  # files people send, with received file locations
+    "5ee81f0f12d649b69926f36e37cfd1d2456155dde064fe5732d5cd5eb0e0f91c",  # UI navigation merged with files people send
+    "ba5ecd240c8e40c4759f42037d72721fb561e6d1c7ae70cce79377282b01288d",  # a page package's story: tell_package_story
+    "fc653b8811eaeaa30a6d533736a271d2d2093c75479f0feae10857a2c09a8a1b",  # open_local_package: a package zip on this Mac
+    "61fd76c4a1e3c52378319c7eb55225299109f802432e4e033ee92cdea2ab230d",  # UI navigation merged with story packages
+    "f2bd49a89ca5afae1da33eea0e1a73619bfe2634af3396c2c57d73b0a20ffafd",  # a reply's cited files: set_cited_files
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -468,6 +493,13 @@ def messaging_downloads_dir() -> Path:
     return data_dir() / "messaging" / "downloads"
 
 
+def bundle_cache_dir() -> Path:
+    """What bundle readers derived from received files (text pages, page
+    renders, listings), one folder per server and owner (bundle_cache.py).
+    Never an original. Not created here: the cache creates it owner-only."""
+    return data_dir() / "bundle-cache"
+
+
 def packages_dir() -> Path:
     """Work packages received from teammates and unpacked to be run here
     (work_packages.py), one folder each."""
@@ -524,6 +556,19 @@ def human_activity_path() -> Path:
     """The last human activity this backend saw (human_activity.py): its
     sequence number, time and source, never what was said or done."""
     return data_dir() / "human-activity.json"
+
+
+def language_path() -> Path:
+    """The language chosen in Settings (language_setting.py). JARVIS's own
+    store, not .env: it is a choice made on the page or by voice."""
+    return data_dir() / "language.json"
+
+
+def server_address_path() -> Path:
+    """Where the running server says it can be reached: its scheme, host,
+    port and pid, written at startup and removed on a clean shutdown
+    (server_address.py). `python -m jarvis.update` reads it."""
+    return data_dir() / "server-address.json"
 
 
 def tool_token_path() -> Path:

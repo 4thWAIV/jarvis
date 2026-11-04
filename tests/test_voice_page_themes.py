@@ -13,8 +13,7 @@ pytestmark = pytest.mark.page
 METRICS = """() => Object.fromEntries([
  '#left-column','#orb-control','#orb-canvas','#right-column','.centre-tabs',
  '#conversation','.chat-playback','.chat-composer','#footer',
- '.agents-list li:first-child','.settings-panel.settings-view','.settings-nav',
- '#settings-system .status-grid','#settings-system .sysinfo-grid'
+ '.agents-list li:first-child','#settings-view','.settings-nav','#settings-server .settings-row'
 ].flatMap(s=>{
  const e=document.querySelector(s); if(!e || !e.getClientRects().length) return [];
  const r=e.getBoundingClientRect(), c=getComputedStyle(e);
@@ -41,7 +40,7 @@ CONTRAST = """e=>{
 async def open_settings(page):
     await page.get_by_role('button', name='Menu', exact=True).click()
     await page.get_by_role('button', name='Settings', exact=True).click()
-    await page.get_by_role('button', name='System', exact=True).click()
+    await page.get_by_role('button', name='Server', exact=True).click()
     await page.get_by_label('Appearance').scroll_into_view_if_needed()
 
 
@@ -71,11 +70,10 @@ async def test_switching_themes_keeps_geometry_draft_panel_and_connections(page_
             await page.get_by_label('Appearance').select_option(value)
             assert await page.evaluate('document.documentElement.dataset.theme')==value
             assert await page.evaluate('getComputedStyle(document.body).backgroundColor')==f'rgb({rgb})'
-            assert await page.locator('.settings-panel').evaluate('(e)=>getComputedStyle(e).backgroundColor')==f'rgba({rgb}, 0.92)'
+            assert await page.get_by_label('Appearance').evaluate('(e)=>getComputedStyle(e).backgroundColor') == ({'graphite': 'rgb(24, 26, 31)', 'classic': 'rgb(14, 22, 34)'}[value])
             assert await page.evaluate(METRICS)==before
             assert await page.evaluate('window.originalCanvas === document.querySelector("#orb-canvas")')
-            assert await editor.input_value()=='Unsent draft stays here'
-            assert await page.get_by_role('dialog',name='Settings').is_visible()
+            assert await page.locator('#settings-view').is_visible()
             assert len(sockets)==connected
             assert not server.posts, 'a theme change must not post to the backend'
         await page.get_by_label('Appearance').select_option('graphite')
@@ -127,9 +125,9 @@ async def test_queue_owner_identity_and_text_contrast_in_both_themes(page_url):
         await b.close()
 
 
-@pytest.mark.asyncio
-async def test_dashboard_uses_saved_theme_and_cross_tab_changes():
-    async with dashboard(quiet_machine()) as page:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_dashboard_uses_saved_theme_and_cross_tab_changes(page_playwright):
+    async with dashboard(page_playwright, quiet_machine()) as page:
         await page.evaluate("localStorage.setItem('jarvis.theme','graphite')")
         await page.reload()
         await page.wait_for_selector('.brand-mark')

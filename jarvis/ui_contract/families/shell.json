@@ -1,0 +1,331 @@
+{
+  "family": "shell",
+  "owner": "integrator",
+  "views": [
+    {
+      "id": "left.fixed",
+      "region": "left",
+      "kind": "fixed",
+      "label": "Left column"
+    },
+    {
+      "id": "right.tabs",
+      "region": "right",
+      "kind": "fixed",
+      "label": "Right panel tabs"
+    },
+    {
+      "id": "right.folders",
+      "region": "right",
+      "kind": "tab",
+      "label": "Folders",
+      "tab": "folders"
+    },
+    {
+      "id": "right.agents",
+      "region": "right",
+      "kind": "tab",
+      "label": "Agents",
+      "tab": "agents"
+    },
+    {
+      "id": "right.queue",
+      "region": "right",
+      "kind": "tab",
+      "label": "Queue",
+      "tab": "queue"
+    },
+    {
+      "id": "right.workflows",
+      "region": "right",
+      "kind": "tab",
+      "label": "Workflows",
+      "tab": "workflows"
+    },
+    {
+      "id": "right.network",
+      "region": "right",
+      "kind": "tab",
+      "label": "Network",
+      "tab": "network"
+    },
+    {
+      "id": "right.diagnostics",
+      "region": "right",
+      "kind": "tab",
+      "label": "Diagnostics",
+      "tab": "diagnostics"
+    },
+    {
+      "id": "main.tabs",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Centre tabs"
+    },
+    {
+      "id": "main.notice",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Centre notice"
+    },
+    {
+      "id": "main.conversation",
+      "region": "main",
+      "kind": "tab",
+      "label": "Conversation",
+      "tab": "conversation",
+      "kept": true
+    },
+    {
+      "id": "main.folders",
+      "region": "main",
+      "kind": "tab",
+      "label": "Folders",
+      "tab": "folders",
+      "kept": true
+    },
+    {
+      "id": "main.main",
+      "region": "main",
+      "kind": "tab",
+      "label": "Main",
+      "tab": "main",
+      "hidden": true
+    },
+    {
+      "id": "main.workflow",
+      "region": "main",
+      "kind": "detail",
+      "label": "Workflow",
+      "tab": "workflow",
+      "entity": "workflow"
+    },
+    {
+      "id": "main.thread",
+      "region": "main",
+      "kind": "detail",
+      "label": "Thread",
+      "tab": "thread",
+      "entity": "session"
+    },
+    {
+      "id": "main.diagnostics",
+      "region": "main",
+      "kind": "detail",
+      "label": "Voice diagnostics",
+      "tab": "diagnostics"
+    },
+    {
+      "id": "main.subsystem",
+      "region": "main",
+      "kind": "detail",
+      "label": "Subsystem",
+      "tab": "subsystem",
+      "entity": "subsystem"
+    },
+    {
+      "id": "main.network",
+      "region": "main",
+      "kind": "detail",
+      "label": "Team server or instance",
+      "tab": "network",
+      "entity": "node"
+    },
+    {
+      "id": "main.queue",
+      "region": "main",
+      "kind": "detail",
+      "label": "Queue item",
+      "tab": "queue",
+      "entity": "thread"
+    },
+    {
+      "id": "main.package",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work package page",
+      "tab": "package",
+      "entity": "package",
+      "kept": true
+    },
+    {
+      "id": "main.file",
+      "region": "main",
+      "kind": "detail",
+      "label": "Received file",
+      "tab": "file",
+      "entity": "member"
+    },
+    {
+      "id": "main.settings",
+      "region": "main",
+      "kind": "detail",
+      "label": "Settings",
+      "tab": "settings"
+    },
+    {
+      "id": "overlay.controls",
+      "region": "overlay",
+      "kind": "fixed",
+      "label": "Menu button"
+    },
+    {
+      "id": "overlay.menu",
+      "region": "overlay",
+      "kind": "menu",
+      "label": "Menu"
+    },
+    {
+      "id": "footer.fixed",
+      "region": "footer",
+      "kind": "fixed",
+      "label": "Footer"
+    }
+  ],
+  "commands": [
+    {
+      "id": "right.tab.select",
+      "label": "Select one of the right panel's six tabs",
+      "view": "right.tabs",
+      "args": {
+        "tab": {
+          "type": "enum",
+          "values": [
+            "folders",
+            "agents",
+            "queue",
+            "workflows",
+            "network",
+            "diagnostics"
+          ]
+        }
+      },
+      "required": [
+        "tab"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "agents.tab-attention-cleared",
+          "when": {
+            "tab": "agents"
+          }
+        }
+      ]
+    },
+    {
+      "id": "main.tab.select",
+      "label": "Select a centre tab; a detail tab only while its item is open",
+      "view": "main.tabs",
+      "args": {
+        "tab": {
+          "type": "enum",
+          "values": [
+            "conversation",
+            "folders",
+            "main",
+            "workflow",
+            "thread",
+            "diagnostics",
+            "subsystem",
+            "network",
+            "queue",
+            "package",
+            "file",
+            "settings"
+          ]
+        }
+      },
+      "required": [
+        "tab"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ]
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "rightTab",
+      "entity": null,
+      "label": "Right panel tab",
+      "parts": [
+        "label",
+        "attention"
+      ],
+      "presentations": [
+        {
+          "view": "right.tabs"
+        }
+      ],
+      "keys": [
+        "folders",
+        "agents",
+        "queue",
+        "workflows",
+        "network",
+        "diagnostics"
+      ]
+    },
+    {
+      "kind": "mainTab",
+      "entity": null,
+      "label": "Centre tab",
+      "parts": [
+        "label"
+      ],
+      "presentations": [
+        {
+          "view": "main.tabs"
+        }
+      ],
+      "keys": [
+        "conversation",
+        "folders",
+        "main",
+        "workflow",
+        "thread",
+        "diagnostics",
+        "subsystem",
+        "network",
+        "queue"
+      ]
+    },
+    {
+      "kind": "region",
+      "entity": null,
+      "label": "A whole region",
+      "parts": [],
+      "presentations": [
+        {
+          "view": "left.fixed"
+        },
+        {
+          "view": "right.tabs"
+        },
+        {
+          "view": "main.tabs"
+        },
+        {
+          "view": "footer.fixed"
+        }
+      ],
+      "keys": [
+        "left",
+        "right",
+        "main",
+        "overlay",
+        "footer"
+      ]
+    }
+  ]
+}

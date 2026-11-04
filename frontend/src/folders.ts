@@ -17,8 +17,12 @@
  * jarvis/folder_contract.py's ERRORS.
  */
 
+
 import { liveRead } from "./liveRead";
+import { codeWords, formatNumber, t, type Said } from "./locale";
 import { createStore } from "./store";
+import { bind, readForOpen, routeStore, runBinding, showStatic } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type Role = "data" | "source" | "history";
 export type Availability = "available" | "missing" | "access_denied" | "unavailable_node" | "unknown";
@@ -182,7 +186,8 @@ export interface Resolved {
   existing: Folder | null;
 }
 
-/** A refusal from the catalog, with its stable code and fixed words. */
+/** A refusal from the catalog, with its stable code and fixed words (the
+ *  server's English, shown only for a code this page has no words for). */
 export class FolderError extends Error {
   constructor(readonly code: string, message: string, readonly extra: Record<string, unknown> = {},
               readonly status = 0) {
@@ -192,15 +197,36 @@ export class FolderError extends Error {
 
 // ── words ────────────────────────────────────────────────────────────────
 
-export const AVAILABILITY_WORDS: Record<Availability, string> = {
-  available: "Available",
-  missing: "Missing",
-  access_denied: "Access denied",
-  unavailable_node: "Unavailable node",
-  unknown: "Not checked",
-};
+// Each in the language in force: a component showing one renders again
+// when the language changes (useT).
 
-export const ROLE_WORDS: Record<Role, string> = { data: "Data", source: "Source", history: "History" };
+export const availabilityWords = (a: Availability): string => t(`main.folders.availability.${a}`);
+
+export const ROLES: readonly Role[] = ["data", "source", "history"];
+export const roleWords = (r: Role): string => t(`main.folders.role.${r}`);
+
+/** How JARVIS reads a folder, from its reader; the server's description
+ *  only for a reader this page does not know. */
+export const readerWords = (access: Access): string =>
+  codeWords("main.folders.reader", access.reader) ?? access.description;
+
+/** A refusal from the catalog in words: `context`'s own words for the code
+ *  where it has them (`main.folder.refusal.<code>`, said of the folder
+ *  being looked at), else the catalog's words for the code, else the
+ *  server's, shown as they came. Anything else that went wrong is shown as
+ *  it was reported. */
+export function folderRefusal(e: unknown, context: "detail" | "catalog" = "catalog"): Said {
+  if (!(e instanceof FolderError)) {
+    const message = (e as Error)?.message;
+    return message ? { original: message } : { words: () => t("main.folders.error.unknown") };
+  }
+  const code = e.code;
+  const general = () => codeWords("main.folders.error", code);
+  if (context === "detail" && codeWords("main.folder.refusal", code) !== null) {
+    return { words: () => codeWords("main.folder.refusal", code)! };
+  }
+  return general() !== null ? { words: () => general()! } : { original: e.message };
+}
 
 /** A role's icon: a glyph beside the role's word, never instead of it. */
 export const ROLE_ICONS: Record<Role, string> = { data: "▱", source: "⌘", history: "◷" };
@@ -335,17 +361,49 @@ export const candidateAction = (c: Candidate, action: "ignore" | "restore") =>
 
 // ── what is selected ─────────────────────────────────────────────────────
 
-/** The selected folder, the same in the centre and the right panel. */
-export const selectedFolder = createStore<string | null>(null);
+const selected = createStore<string | null>(null);
 
-/** Moves when something asks the centre to show the Folders view. */
-export const showFolders = createStore(0);
+/** The selected folder, the same in the centre and the right panel.
+ *  Writing it runs `folders.open` or `folders.close`, as a person's
+ *  navigation. */
+export const selectedFolder = routeStore<string | null>(selected, (id) =>
+  id === null ? bind("folders.close", {}) : bind("folders.open", { folderId: id }));
 
-/** Select a folder (or none) and show it in the centre. */
+/** Select a folder (or none) and show it in the centre: the right panel's
+ *  rows and its Open button. */
 export function openFolder(id: string | null): void {
-  selectedFolder.set(id);
-  showFolders.set(showFolders.get() + 1);
+  if (id !== null) return runBinding(bind("folders.open", { folderId: id }));
+  if (selected.get() !== null) runBinding(bind("folders.close", {}));
+  runBinding(bind("main.tab.select", { tab: "folders" }));
 }
+
+/** Whether the catalog this page has read lists `id`, active or removed. */
+const catalogued = (id: string) => {
+  const now = catalog.get().value;
+  return !!now && (now.folders.some((f) => f.id === id) || now.removed.some((f) => f.id === id));
+};
+
+// Selecting a folder shows it in the centre's Folders view; one the page
+// has not read yet (one just registered) is read from JARVIS first.
+registerCommand("folders.open", {
+  availability: () => ({ available: true }),
+  async execute({ folderId }, { signal }) {
+    if (!catalogued(folderId)) {
+      const read = await readForOpen(`/api/folders/${encodeURIComponent(folderId)}`, signal);
+      if ("refused" in read) return read.refused;
+    }
+    selected.set(folderId);
+    return { status: "completed", effects: showStatic("folders") };
+  },
+});
+
+registerCommand("folders.close", {
+  availability: () => selected.get() !== null ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    selected.set(null);
+    return { status: "completed", effects: [] };
+  },
+});
 
 /** A folder or candidate matches a search when its name or path holds it. */
 export function matches(text: string, ...fields: string[]): boolean {
@@ -355,13 +413,15 @@ export function matches(text: string, ...fields: string[]): boolean {
 
 /** "This Mac", or another node's ID, shortened. */
 export function nodeWords(f: Folder): string {
-  return f.location.local ? "This Mac" : `Node ${f.location.node_id.slice(0, 8)}`;
+  return f.location.local ? t("main.folders.thisMac") : t("main.folders.node", { id: f.location.node_id.slice(0, 8) });
 }
 
-/** A size in bytes, as a person reads it. */
+/** A size in bytes, as a person reads it: its figure in the language's
+ *  own digits, with the unit's symbol. */
 export function sizeWords(bytes: number | null): string {
   if (bytes === null) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  const figure = (n: number, digits: number) => formatNumber(n, undefined, { maximumFractionDigits: digits });
+  if (bytes < 1024) return `${figure(bytes, 0)} B`;
+  if (bytes < 1024 * 1024) return `${figure(bytes / 1024, bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${figure(bytes / 1024 / 1024, 1)} MB`;
 }

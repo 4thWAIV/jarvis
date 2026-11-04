@@ -56,6 +56,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis import messaging_wire as wire
+from jarvis.bundle_contract import CHECKLIST_MAX, PATH_MAX_CHARS
 
 # -- availability -----------------------------------------------------------------
 
@@ -240,6 +241,21 @@ class LocalSend(_Local):
     next_attempt_at: Optional[datetime] = None
 
 
+class CitedFile(_Local):
+    """A checklist item (bundle_tasks) a reply relies on: a file of the
+    request it answers, or a member of one, as the review's checklist names
+    it. It is read back and marks the checklist once the reply is accepted.
+    `ref` is what the wire names it by (the message it came on, the file's
+    hash and the member's path), stored when it is proposed or set; the
+    mark goes with the reply as one of its `cites` only with it, and only to
+    a team server offering messaging.bundles.cites.v1. A mark saved before
+    there was a `ref` has none and stays here."""
+    attachment_id: UUID
+    member_id: str = Field(min_length=1, max_length=64)
+    path: str = Field(max_length=PATH_MAX_CHARS)
+    ref: Optional[wire.CitedRef] = None
+
+
 class Draft(_Local):
     """The owner's unsent message on an item, or a new conversation's first
     message: local only until approved.
@@ -270,18 +286,64 @@ class Draft(_Local):
     send: LocalSend
     capture_id: Optional[int] = None              # the review's capture, while one is open
     agent_drafted: bool = False                   # shown as a draft the model wrote
+    # A one-off request's task context and the earlier files this draft's
+    # files replace (bundle_tasks). Content: setting either is an edit. Sent
+    # only to a team server offering messaging.bundles.v1.
+    task: Optional[wire.TaskContext] = None
+    supersedes: list[wire.Supersedes] = Field(default_factory=list,
+                                              max_length=wire.ATTACHMENTS_MAX)
+    # On a reply to a request asked of him: the checklist items it relies
+    # on, proposed by JARVIS from the files the text names until the owner
+    # sets them himself (`cited_by_owner`). Read back, and sent as `cites`
+    # only to a team server offering messaging.bundles.cites.v1 (each with
+    # its `ref`); a change is an edit like any other.
+    cited: list[CitedFile] = Field(default_factory=list, max_length=CHECKLIST_MAX)
+    cited_by_owner: bool = False
 
 
-def draft_content(draft: Draft) -> wire.MessageContent:
+def sent_cites(draft: Draft, cites: bool) -> list[wire.CitedRef]:
+    """The marks that go with the draft as its `cites`: each one with a
+    wire reference, and none unless `cites` (the team server offers
+    messaging.bundles.cites.v1)."""
+    if not cites:
+        return []
+    return list(dict.fromkeys(c.ref for c in draft.cited if c.ref is not None))
+
+
+def draft_content(draft: Draft, bundles: bool = False,
+                  cites: bool = False) -> wire.MessageContent:
     """The content a draft would send, as review digests it and approval
-    binds it (refused by the wire rules if it could not be sent)."""
+    binds it (refused by the wire rules if it could not be sent). The task
+    and supersedes links go only when `bundles` (the team server offers
+    messaging.bundles.v1), and the cited files only when `cites` too
+    (`sent_cites`); without them the message goes without them, and the
+    read-back says so."""
     return wire.MessageContent(
         message_id=draft.message_id, thread_id=draft.thread_id,
         in_reply_to_message_id=draft.in_reply_to_message_id,
         related_message_ids=list(draft.related_message_ids),
         recipient_github_id=draft.recipient_github_id,
         content_revision=draft.send.content_revision, subject=draft.subject, text=draft.text,
-        attachments=list(draft.attachments))
+        attachments=list(draft.attachments),
+        task=draft.task if bundles else None,
+        supersedes=list(draft.supersedes) if bundles else [],
+        cites=sent_cites(draft, bundles and cites))
+
+
+def attached_only(draft: Draft) -> dict:
+    """The task and supersedes links of `draft` with every file that is no
+    longer attached left out (a removed file is never sent as named): the
+    fields a save updates with."""
+    files = {a.attachment_id: a.sha256 for a in draft.attachments}
+    task = draft.task
+    if task is not None:
+        def kept(ref: Optional[wire.ArtifactRef]) -> bool:
+            return ref is not None and files.get(ref.attachment_id) == ref.sha256
+        task = task.model_copy(update={
+            "primary": task.primary if kept(task.primary) else None,
+            "supporting": [r for r in task.supporting if kept(r)]})
+    return {"task": task,
+            "supersedes": [s for s in draft.supersedes if s.by_attachment_id in files]}
 
 
 def revise(draft: Draft) -> LocalSend:
@@ -348,6 +410,29 @@ class LocalMessage(_Local):
     receipts: wire.ReceiptFacts
     files: list[LocalFile] = Field(default_factory=list,
                                    max_length=wire.ATTACHMENTS_MAX)   # manifest order
+    # On a message he sent: the cites of it that the other person's replies
+    # in the thread carry, as stored with them (`with_citations`); each
+    # names one of its files by id and hash, or a member of one.
+    cited_in_reply: list[wire.CitedRef] = Field(default_factory=list)
+
+
+def with_citations(messages: list[LocalMessage]) -> list[LocalMessage]:
+    """A thread's messages with each one he sent carrying what the replies
+    he received in it cite of its files (`cited_in_reply`): the one record
+    the Queue's file cards and read_people_thread both read."""
+    cites: dict[UUID, list[wire.CitedRef]] = {}
+    for lm in messages:
+        if lm.direction == "incoming":
+            for c in lm.message.cites:
+                cites.setdefault(c.message_id, []).append(c)
+    out = []
+    for lm in messages:
+        files = {(a.attachment_id, a.sha256) for a in lm.message.attachments}
+        mine = [c for c in cites.get(lm.message.message_id, [])
+                if lm.direction == "outgoing" and (c.attachment_id, c.sha256) in files]
+        out.append(lm.model_copy(update={"cited_in_reply": list(dict.fromkeys(mine))})
+                   if mine else lm)
+    return out
 
 
 class LocalItem(_Local):
@@ -412,8 +497,25 @@ def spoken_size(size_bytes: int) -> str:
     return f"{size_bytes} byte" + ("" if size_bytes == 1 else "s")
 
 
-def human_readback(draft: Draft, recipient_label: str) -> str:
-    """Exactly what is read back, and accepted, for a human message."""
+TASK_NOT_CARRIED = ("The team server can't carry the request's task, so the message "
+                    "goes without it.")
+CITES_NOT_CARRIED = ("The team server can't carry citations, so they stay here and the "
+                     "message goes without them.")
+
+
+def _artifact(draft: Draft, ref: wire.ArtifactRef) -> str:
+    name = next((a.filename for a in draft.attachments if a.attachment_id == ref.attachment_id),
+                "a file")
+    return f"{ref.member_path} in {name}" if ref.member_path else name
+
+
+def human_readback(draft: Draft, recipient_label: str, bundles: bool = False,
+                   cites: bool = False) -> str:
+    """Exactly what is read back, and accepted, for a human message: the
+    files a reply marks cited, with the line saying which of them stay here
+    (all, unless `cites`; else those with no wire reference), and its task,
+    primary file and the files it replaces when they go (`bundles`), or the
+    line saying the task does not."""
     lines = [f"To {recipient_label}."]
     if draft.subject:
         lines.append(f"Subject: {draft.subject}.")
@@ -422,6 +524,28 @@ def human_readback(draft: Draft, recipient_label: str) -> str:
     if draft.attachments:
         lines.append("Files: " + "; ".join(f"{a.filename}, {spoken_size(a.size_bytes)}"
                                            for a in draft.attachments) + ".")
+    if draft.cited:
+        lines.append("Cited: " + "; ".join(c.path for c in draft.cited) + ".")
+        carried = bundles and cites
+        kept = [c.path for c in draft.cited if not (carried and c.ref is not None)]
+        if kept:
+            lines.append(CITES_NOT_CARRIED if not carried else
+                         "Not sent with it: " + "; ".join(kept) + ".")
+    if (draft.task is not None or draft.supersedes) and not bundles:
+        lines.append(TASK_NOT_CARRIED)
+        return "\n".join(lines)
+    if draft.task is not None:
+        lines.append(f"Task: {draft.task.requested_outcome.rstrip('.')}. "
+                     f"Answer to you only.")
+        if draft.task.primary is not None:
+            lines.append(f"Primary: {_artifact(draft, draft.task.primary)}.")
+        if draft.task.supporting:
+            lines.append("Supporting: " + "; ".join(_artifact(draft, r)
+                                                    for r in draft.task.supporting) + ".")
+    for link in draft.supersedes:
+        new = next((a.filename for a in draft.attachments
+                    if a.attachment_id == link.by_attachment_id), "a file")
+        lines.append(f"{new} replaces the earlier copy, which is kept.")
     return "\n".join(lines)
 
 

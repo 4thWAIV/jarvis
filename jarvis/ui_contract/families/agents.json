@@ -1,0 +1,22 @@
+{
+  "family": "agents",
+  "owner": "coverage-right",
+  "views": [],
+  "commands": [
+    {"id": "agents.filter", "label": "Show only the active agents, or all of them, in the Agents list (remembered)",
+     "view": "right.agents", "args": {"show": {"type": "enum", "values": ["active", "all"]}},
+     "required": ["show"], "actors": ["human", "brain"], "effects": [{"effect": "list.filtered"}]},
+    {"id": "agents.page", "label": "Move the Agents list one agent back or on, while more are listed than fit",
+     "view": "right.agents", "args": {"direction": {"type": "enum", "values": ["previous", "next"]}},
+     "required": ["direction"], "actors": ["human", "brain"], "effects": [{"effect": "list.paged"}]},
+    {"id": "agents.reveal", "label": "Move the Agents list until one listed agent's row shows",
+     "view": "right.agents", "args": {"sessionId": {"type": "key", "entity": "session"}},
+     "required": ["sessionId"], "actors": ["human", "brain"], "effects": [{"effect": "list.paged"}]}
+  ],
+  "kinds": [
+    {"kind": "agent", "entity": "session", "label": "Agent", "parts": ["row", "name", "state", "orb"],
+     "presentations": [{"view": "right.agents", "reveal": {"command": "right.tab.select", "args": {"tab": "agents"}}}]},
+    {"kind": "agentsList", "entity": null, "label": "Agents list", "parts": ["filter", "previous", "next"],
+     "presentations": [{"view": "right.agents", "reveal": {"command": "right.tab.select", "args": {"tab": "agents"}}}]}
+  ]
+}

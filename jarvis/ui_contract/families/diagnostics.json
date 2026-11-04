@@ -1,0 +1,32 @@
+{
+  "family": "diagnostics",
+  "owner": "coverage-right",
+  "views": [],
+  "commands": [
+    {"id": "voice.range", "label": "Show the last 15 minutes, hour or day of the voice record in the Diagnostics view (zooming out)",
+     "view": "main.diagnostics", "args": {"range": {"type": "enum", "values": ["15m", "1h", "1d"]}}, "required": ["range"],
+     "actors": ["human", "brain"], "effects": []},
+    {"id": "voice.zoom", "label": "Zoom the voice timeline to the half minute before a moment (seconds since 1970); without one, zoom out",
+     "view": "main.diagnostics", "args": {"at": {"type": "integer", "min": 0}}, "required": [],
+     "actors": ["human", "brain"], "effects": []},
+    {"id": "voice.quiet", "label": "Start or end the quiet page: fewer notifications for a while, to compare drops with and without them",
+     "view": "main.diagnostics", "args": {"quiet": {"type": "boolean"}}, "required": ["quiet"],
+     "actors": ["human", "brain"], "effects": []}
+  ],
+  "kinds": [
+    {"kind": "subsystem", "entity": "subsystem", "label": "Subsystem", "parts": ["row", "status", "header", "close", "checks", "messages"],
+     "presentations": [{"view": "right.diagnostics", "parts": ["row", "status"], "reveal": {"command": "right.tab.select", "args": {"tab": "diagnostics"}}},
+                       {"view": "main.subsystem", "parts": ["header", "close", "checks", "messages"],
+                        "reveal": {"command": "subsystem.open", "args": {"subsystemId": "$key"}}}]},
+    {"kind": "subsystemCheck", "entity": null, "keyOf": ["subsystem", "check"], "label": "Subsystem check", "parts": ["row"],
+     "presentations": [{"view": "main.subsystem"}]},
+    {"kind": "voice", "entity": null, "label": "Voice input health",
+     "parts": ["summary", "open", "range", "zoom", "overview", "timeline", "incidents", "notifications", "messages", "close"],
+     "presentations": [{"view": "right.diagnostics", "parts": ["summary", "open"], "reveal": {"command": "right.tab.select", "args": {"tab": "diagnostics"}}},
+                       {"view": "main.diagnostics", "parts": ["range", "zoom", "overview", "timeline", "incidents",
+                                                             "notifications", "messages", "close"],
+                        "reveal": {"command": "voice.diagnostics.open", "args": {}}}]},
+    {"kind": "voiceIncident", "entity": "incident", "label": "Voice incident", "parts": ["row"],
+     "presentations": [{"view": "main.diagnostics"}]}
+  ]
+}

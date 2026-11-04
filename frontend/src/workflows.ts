@@ -7,8 +7,12 @@
  */
 
 import { liveRead } from "./liveRead";
+import { t, wordsOf } from "./locale";
 import { createStore } from "./store";
 import { shortAgo } from "./timeFormat";
+import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
+import type { CommandArgs } from "./uiContract";
 
 export type WorkflowState = "running" | "waiting" | "blocked" | "needs_you" | "succeeded"
   | "failed" | "cancelled" | "silent";
@@ -84,6 +88,9 @@ export interface SubagentRow {
   state: SubagentState;
   started: number | null;
   written: number;
+  /** The Workflow tool's run that started it (its folder's name, such as
+   *  `wf_f21d5ed2-0a4`), or null for an ordinary subagent. Drawn as text. */
+  workflow_run: string | null;
   /** When one no longer working leaves the list, or null while working. */
   dismiss_at: number | null;
 }
@@ -93,9 +100,8 @@ export const SUBAGENT_LOOK: Record<SubagentState, WorkflowState> = {
   working: "running", finished: "succeeded", stale: "silent",
 };
 
-export const SUBAGENT_WORDS: Record<SubagentState, string> = {
-  working: "Working", finished: "Finished", stale: "Gone quiet",
-};
+export const SUBAGENT_WORDS = wordsOf<SubagentState>(["working", "finished", "stale"],
+  (s) => t(`right.workflows.subagentState.${s}`));
 
 /** The session and subagent a `SubagentRow.key` names, or null for a
  *  workflow's id. */
@@ -160,16 +166,73 @@ export function getSessionTranscript(sessionId: string, before?: number | null,
 /** Moves on every "workflows" hint, and on every (re)connect of /ws/sessions. */
 export const workflowsChanged = createStore(0);
 
-/** The workflow whose detail the centre area shows, or null. */
-export const openWorkflow = createStore<string | null>(null);
+// ── The workflow (or subagent) open in the centre ────────────────────────
+
+const workflowSlot = detailSlot<string>("workflow");
+
+/** The workflow whose detail the centre area shows (or a subagent's key,
+ *  `subagentOf`), or null. Writing it runs `workflow.open`,
+ *  `subagent.open` or `workflow.close`, as a person's navigation. */
+export const openWorkflow = routeStore(workflowSlot.value, (key: string | null) => {
+  if (key === null) return bind("workflow.close", {});
+  const sub = subagentOf(key);
+  return sub ? bind("subagent.open", sub) : bind("workflow.open", { workflowId: key });
+});
+
+/** A subagent's key among the workflows (server: _subagent_row). */
+export const subagentKey = (sessionId: string, agentId: string) => `agent:${sessionId}/${agentId}`;
+
+/** Whether the page lists `key` now: a workflow, or a subagent in the
+ *  Workflows list. Anything else is read from JARVIS before it opens. */
+function listed(key: string): boolean {
+  const now = workflows.get().value;
+  return !!now && (now.workflows.some((w) => w.id === key) || now.subagents.some((a) => a.key === key));
+}
+
+export type WorkflowTab = NonNullable<CommandArgs["workflow.open"]["tab"]>;
+
+/** How workflow.open's `tab` is put in force: by the detail, which keeps
+ *  the open workflow's tab (WorkflowDetail.tsx, `openOnTab`). */
+let selectTab: (workflowId: string, tab: WorkflowTab) => void = () => {};
+export function openOnTab(select: typeof selectTab): void {
+  selectTab = select;
+}
+
+registerCommand("workflow.open", {
+  availability: () => ({ available: true }),
+  async execute({ workflowId, tab }, { signal }) {
+    if (!listed(workflowId)) {
+      const read = await readForOpen(`/api/workflows/${encodeURIComponent(workflowId)}`, signal);
+      if ("refused" in read) return read.refused;
+    }
+    const effects = workflowSlot.show(workflowId);
+    if (tab) selectTab(workflowId, tab);
+    return { status: "completed", effects };
+  },
+});
+
+
+registerCommand("subagent.open", {
+  availability: () => ({ available: true }),
+  async execute({ sessionId, agentId }, { signal }) {
+    const key = subagentKey(sessionId, agentId);
+    if (!listed(key)) {
+      const read = await readForOpen(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?`
+        + new URLSearchParams({ subagent: agentId }), signal);
+      if ("refused" in read) return read.refused;
+    }
+    return { status: "completed", effects: workflowSlot.show(key) };
+  },
+});
+
+registerClose("workflow.close", workflowSlot);
 
 export const FINISHED: ReadonlySet<WorkflowState> = new Set(["succeeded", "failed", "cancelled"]);
 
 /** What the page calls each state. */
-export const STATE_WORDS: Record<WorkflowState, string> = {
-  running: "Running", waiting: "Waiting", blocked: "Blocked", needs_you: "Needs you",
-  succeeded: "Finished", failed: "Failed", cancelled: "Cancelled", silent: "Gone quiet",
-};
+export const STATE_WORDS = wordsOf<WorkflowState>(
+  ["running", "waiting", "blocked", "needs_you", "succeeded", "failed", "cancelled", "silent"],
+  (s) => t(`right.workflows.state.${s}`));
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -229,7 +292,7 @@ export async function dismissWorkflow(id: string): Promise<string | null> {
   left.delete(id);
   dismissedHere.set(left);
   const body = res ? (await res.json().catch(() => ({}))) as { error?: string; detail?: string } : {};
-  return body.error || body.detail || "the server did not answer";
+  return body.error || body.detail || t("right.workflows.noAnswer");
 }
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
@@ -244,7 +307,7 @@ export async function answerDecision(id: string, key: string, answer: string): P
     return null;
   }
   const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
-  return body.error || body.detail || `the server refused it (${res.status})`;
+  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
 }
 
 /** "just now", "2m ago", "3h ago", "2d ago", from a server time in seconds. */
@@ -256,5 +319,6 @@ export function ago(seconds: number, now = Date.now() / 1000): string {
 export function phaseText(w: Workflow): string {
   if (!w.phases_total) return w.phase ?? "";
   const k = Math.min(w.phases_done + (FINISHED.has(w.state) ? 0 : 1), w.phases_total);
-  return `phase ${k}/${w.phases_total}${w.phase ? ` ${w.phase}` : ""}`;
+  return w.phase ? t("right.workflows.phaseNamed", { current: k, total: w.phases_total, phase: w.phase })
+    : t("right.workflows.phase", { current: k, total: w.phases_total });
 }

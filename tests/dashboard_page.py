@@ -44,9 +44,11 @@ import socket
 import subprocess
 import threading
 from contextlib import asynccontextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
+
+from tests.loopback_server import LoopbackThreadingHTTPServer
 
 VIEWPORT = {"width": 1400, "height": 900}
 
@@ -80,14 +82,22 @@ def _newest_source() -> float:
     return newest
 
 
+# The pages `npm run build` writes into DIST: the voice page and the dashboard.
+BUILT_PAGES = ("index.html", "dashboard.html")
+
+
 def build_bundle() -> Path:
-    """`jarvis/web`, rebuilt only if a source file is newer than it.
+    """`jarvis/web`, rebuilt only if a source file is newer than one of its
+    pages (or one is missing).
 
     The same `npm run build` a developer runs — never a bespoke bundling
-    path, or the thing under test stops being the thing that ships.
+    path, or the thing under test stops being the thing that ships. The one
+    build both the dashboard tests and the voice page tests (`page_url` in
+    conftest.py) are served from.
     """
-    target = DIST / "dashboard.html"
-    if not target.is_file() or target.stat().st_mtime < _newest_source():
+    newest = _newest_source()
+    if any(not (DIST / page).is_file() or (DIST / page).stat().st_mtime < newest
+           for page in BUILT_PAGES):
         subprocess.run(["npm", "run", "build"], cwd=FRONTEND, check=True,
                        capture_output=True, text=True,
                        timeout=BUILD_TIMEOUT_SEC)
@@ -152,11 +162,10 @@ class StubServer:
         self._thread.join(timeout=5)
 
 
-class _QuietServer(ThreadingHTTPServer):
+class _QuietServer(LoopbackThreadingHTTPServer):
     """A browser drops keep-alive connections whenever it likes, and the
     stdlib prints a traceback for every one. They are not failures and they
     bury the actual test output."""
-    daemon_threads = True
 
     def handle_error(self, request, client_address):
         pass
@@ -266,23 +275,21 @@ def usage_limits(*keys: str) -> dict:
 
 
 @asynccontextmanager
-async def dashboard(api: Api):
+async def dashboard(playwright, api: Api):
     """The built page, loaded against `api`, as a `page` to drive.
 
-    The browser is launched per test rather than shared: a session-scoped
-    async fixture would need a session-scoped event loop, and the whole
-    point of the async API here is not to fight pytest-asyncio. A launch is
-    about half a second and the bundle is already built.
+    `playwright` is the test's `page_playwright` (conftest.py): the session's
+    one browser, with a new context for this test, so a test runs on the
+    session's event loop (`loop_scope="session"`). The bundle is already
+    built.
 
     The clock is faked BEFORE navigation, so a test can fast-forward to the
     next poll instead of sleeping through it — several of the paths under
     test are only reachable on a second fetch.
     """
-    from playwright.async_api import async_playwright
-
     dist = build_bundle()
     with StubServer(api, dist) as server:
-        async with async_playwright() as p:
+        async with playwright as p:
             browser = await p.chromium.launch(headless=True)
             try:
                 context = await browser.new_context(viewport=VIEWPORT)

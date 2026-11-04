@@ -30,6 +30,17 @@
  *     way: offered while one is open, which clicking its row in the Queue
  *     does. One view however many messages there are; opening another item
  *     replaces it.
+ *   - A page work package (PackageView.tsx), named after it, the same way:
+ *     offered while one is open, which its file's Open page in the Queue or
+ *     the brain's open_package_page does. Opening another replaces it. Kept
+ *     on the page, hidden, while another view is shown, as Folders is, so a
+ *     package part way through is not started again.
+ *   - A file a teammate sent (BundleMemberView.tsx), the same way: offered
+ *     while one is open, which its Open in the Queue or the brain's
+ *     show_bundle_member does. Opening another replaces it.
+ *   - Settings (Settings.tsx), the same way: offered while it is open,
+ *     which the menu's Settings and Check for updates, the sign-in
+ *     reminder's Sign in and first-time setup do.
  *
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
@@ -40,16 +51,18 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { bind, mainView, type MainTab } from "./uiNavigation";
 import { AgentThread } from "./AgentThread";
 import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
+import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
-import { openSubsystem } from "./subsystems";
+import { openSubsystem, subsystemName as nameOf } from "./subsystems";
 import { network, openNetwork } from "./network";
 import { NodeView } from "./NodeView";
 import { TeamServerView } from "./TeamServerView";
@@ -57,10 +70,14 @@ import { useSubsystems } from "./SubsystemList";
 import { SubsystemView } from "./SubsystemView";
 import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 import { directory, openQueue, queue } from "./queue";
-import { showFolders } from "./folders";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
 import { TeamSignInReminder } from "./TeamSignInReminder";
+import { openPackage } from "./packages";
+import { PackageView } from "./PackageView";
+import { openBundleMember } from "./bundles";
+import { BundleMemberView } from "./BundleMemberView";
+import { settingsOpen, SettingsView } from "./Settings";
 
 function MainView() {
   return (
@@ -73,10 +90,13 @@ function MainView() {
   );
 }
 
-const VIEWS: Tab[] = [
+/** A view as defined here: its words come from the catalog by its id when
+ *  the area is drawn (`tabs.main.<id>`), or are its item's own name. */
+type MainTabView = Omit<Tab, "id" | "title"> & { id: MainTab };
+
+const VIEWS: MainTabView[] = [
   {
     id: "conversation",
-    title: "Conversation",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -89,13 +109,11 @@ const VIEWS: Tab[] = [
   },
   {
     id: "folders",
-    title: "Folders",
     icon: null,
     view: () => <FoldersView />,
   },
   {
     id: "main",
-    title: "Main",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -107,104 +125,102 @@ const VIEWS: Tab[] = [
   },
 ];
 
-const THREAD_VIEW: Tab = {
+const THREAD_VIEW: MainTabView = {
   id: "thread",
-  title: "Thread",
   icon: null,
   view: () => null,
 };
 
-const DIAGNOSTICS_VIEW: Tab = {
+const DIAGNOSTICS_VIEW: MainTabView = {
   id: "diagnostics",
-  title: "Diagnostics",
   icon: null,
   view: () => <VoiceDiagnosticsView />,
 };
 
-const SUBSYSTEM_VIEW: Tab = {
+const SUBSYSTEM_VIEW: MainTabView = {
   id: "subsystem",
-  title: "Subsystem",
   icon: null,
   view: () => null,
 };
 
-const NETWORK_VIEW: Tab = {
+const NETWORK_VIEW: MainTabView = {
   id: "network",
-  title: "Network",
   icon: null,
   view: () => null,
 };
 
-const QUEUE_VIEW: Tab = {
+const QUEUE_VIEW: MainTabView = {
   id: "queue",
-  title: "Message",
   icon: null,
   view: () => null,
 };
 
-const WORKFLOW_VIEW: Tab = {
+const PACKAGE_VIEW: MainTabView = {
+  id: "package",
+  icon: null,
+  view: () => null,
+};
+
+const FILE_VIEW: MainTabView = {
+  id: "file",
+  icon: null,
+  view: () => null,
+};
+
+const SETTINGS_VIEW: MainTabView = {
+  id: "settings",
+  icon: null,
+  view: () => <SettingsView />,
+};
+
+const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
-  title: "Workflow",
   icon: null,
   view: () => null,
 };
 
-/** The view the page opens on: `?view=<id>` names any view, hidden or not. */
-function firstView(): string {
-  const asked = new URLSearchParams(window.location.search).get("view");
-  return VIEWS.some((v) => v.id === asked) ? asked! : VIEWS[0].id;
-}
-
+/** The selected view and every detail's item are the shared route state
+ *  (uiNavigation.ts): opening an item shows its view and closing it goes
+ *  back to Conversation, in the open and close commands themselves. This
+ *  area only draws them. */
 export function CentreArea() {
-  const [selected, setSelected] = useState(firstView);
+  const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
-  const subsystemName = useSubsystems().list.find((s) => s.id === subsystem)?.name;
+  const open = useSubsystems().list.find((s) => s.id === subsystem);
+  const subsystemName = open ? nameOf(open) : undefined;
   const networkOpen = useSyncExternalStore(openNetwork.subscribe, openNetwork.get);
   const nodes = useSyncExternalStore(network.subscribe, network.get).value?.snapshot?.nodes;
   const queueOpen = useSyncExternalStore(openQueue.subscribe, openQueue.get)?.thread ?? null;
   const queueState = useSyncExternalStore(queue.subscribe, queue.get);
   const people = useSyncExternalStore(directory.subscribe, directory.get);
-  // Opening a workflow or a thread shows it; closing it goes back to the
-  // first view.
-  useEffect(() => {
-    setSelected((now) => (workflow ? "workflow" : now === "workflow" ? VIEWS[0].id : now));
-  }, [workflow]);
-  useEffect(() => {
-    setSelected((now) => (thread ? "thread" : now === "thread" ? VIEWS[0].id : now));
-  }, [thread]);
-  useEffect(() => {
-    setSelected((now) => (diagnostics ? "diagnostics" : now === "diagnostics" ? VIEWS[0].id : now));
-  }, [diagnostics]);
-  useEffect(() => {
-    setSelected((now) => (subsystem ? "subsystem" : now === "subsystem" ? VIEWS[0].id : now));
-  }, [subsystem]);
-  useEffect(() => {
-    setSelected((now) => (networkOpen ? "network" : now === "network" ? VIEWS[0].id : now));
-  }, [networkOpen]);
-  useEffect(() => {
-    setSelected((now) => (queueOpen ? "queue" : now === "queue" ? VIEWS[0].id : now));
-  }, [queueOpen]);
-  // Choosing a folder in the right panel shows the Folders view.
-  const foldersAsked = useSyncExternalStore(showFolders.subscribe, showFolders.get);
-  useEffect(() => { if (foldersAsked) setSelected("folders"); }, [foldersAsked]);
+  const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
+  const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
+  const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
+  const t = useT();
+  const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
-    ...VIEWS,
-    ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? "Thread",
+    ...VIEWS.map(titled),
+    ...(thread ? [{ ...THREAD_VIEW, title: thread.name ?? t("tabs.main.thread"),
                     view: () => <AgentThread key={thread.sessionId} sessionId={thread.sessionId}
                                              name={thread.name} /> }] : []),
-    ...(diagnostics ? [DIAGNOSTICS_VIEW] : []),
-    ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? "Subsystem",
+    ...(diagnostics ? [titled(DIAGNOSTICS_VIEW)] : []),
+    ...(subsystem ? [{ ...SUBSYSTEM_VIEW, title: subsystemName ?? t("tabs.main.subsystem"),
                        view: () => <SubsystemView key={subsystem} id={subsystem} /> }] : []),
     ...(networkOpen ? [networkOpen.kind === "server"
-      ? { ...NETWORK_VIEW, title: "Team server", view: () => <TeamServerView /> }
-      : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? "Instance",
+      ? { ...NETWORK_VIEW, title: t("tabs.main.teamServer"), view: () => <TeamServerView /> }
+      : { ...NETWORK_VIEW, title: nodes?.find((n) => n.node_id === networkOpen.nodeId)?.label ?? t("tabs.main.network"),
           view: () => <NodeView key={networkOpen.nodeId} nodeId={networkOpen.nodeId} /> }] : []),
     ...(queueOpen ? [{ ...QUEUE_VIEW, title: queueViewTitle(queueState, people, queueOpen),
                        view: () => <QueueItemView thread={queueOpen} /> }] : []),
-    ...(workflow ? [{ ...WORKFLOW_VIEW, title: subagentOf(workflow) ? "Subagent" : WORKFLOW_VIEW.title,
+    ...(packageOpen ? [{ ...PACKAGE_VIEW, title: packageOpen.name || t("tabs.main.package") }] : []),
+    ...(fileOpen ? [{ ...titled(FILE_VIEW),
+                      view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
+                                                    member={fileOpen} /> }] : []),
+    ...(settings ? [titled(SETTINGS_VIEW)] : []),
+    ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];
   const view = views.find((v) => v.id === selected) ?? views[0];
@@ -219,7 +235,8 @@ export function CentreArea() {
   const kept = view.id !== "main";
   return (
     <>
-      <TabRow tabs={views} selected={view.id} onSelect={setSelected} className="centre-tabs" words />
+      <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
+              className="centre-tabs" words box="main.tabs" />
       <TeamSignInReminder />
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}
@@ -233,7 +250,14 @@ export function CentreArea() {
           {folders.view()}
         </div>
       )}
-      {view.id !== conversation.id && view.id !== folders.id && view.view()}
+      {packageOpen && (
+        <div className={`centre-kept${view.id === PACKAGE_VIEW.id ? "" : " hidden"}`}
+             inert={view.id !== PACKAGE_VIEW.id}>
+          <PackageView key={packageOpen.id} info={packageOpen} />
+        </div>
+      )}
+      {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
+        && view.view()}
     </>
   );
 }

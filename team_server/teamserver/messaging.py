@@ -2,6 +2,20 @@
 in `messaging_models`' table except the attachment ones (`attachments.py`),
 their MongoDB repository and its indexes.
 
+Bundles (`messaging.bundles.v1`, always offered beside messaging.v1): a
+message may carry a task context and `supersedes` links, and a recipient's
+node may send openability receipts. A superseded file must be one of an
+earlier message of the same thread between the same two people. An
+openability report must name a file of that message by its hash and
+revision, else it is settled as `not_found`. Cites
+(`messaging.bundles.cites.v1`, always offered too): a reply may name the
+files of earlier messages in its thread, sent to the person replying, that
+it relies on, each by its message, attachment id and hash. An older JARVIS
+refuses fields it does not know, so the routes that answer with messages
+and receipts leave the bundle fields out unless the request asks for them
+(`?bundles=1`), and `cites` unless it also asks for those (`?cites=1`);
+an older team server ignores both (`hidden_fields`, the one rule).
+
 Who may do what is decided here and only here, from the authenticated
 device session: the sender is the session's member, the source node must be
 that member's (`bind_node`), the recipient an active member, a reply's
@@ -42,6 +56,7 @@ from typing import Callable, Optional
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from pymongo import ASCENDING
 from pymongo.asynchronous.database import AsyncDatabase
@@ -51,13 +66,15 @@ from teamserver import clock as clock_mod
 from teamserver import sessions
 from teamserver import team as team_mod
 from teamserver.errors import Problem
-from teamserver.messaging_models import (CAPABILITY, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
+from teamserver.messaging_models import (BUNDLE_FIELDS, BUNDLES_CAPABILITY,
+                                         CAPABILITY, CITES_CAPABILITY, CITES_FIELDS, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
                                          PACKAGE_MAX_BYTES,
                                          SYNC_CONTINUATION_TTL_SEC, SYNC_PAGE_DEFAULT,
                                          SYNC_PAGE_MAX, ERRORS, AcceptedMessage,
                                          AnnouncementLease, AnnouncementRequest,
-                                         ContractError, Faults, ReceiptBatch,
-                                         ReceiptBatchResult, ReceiptFacts, ReceiptKind,
+                                         ContractError, Faults, OpenabilityReport,
+                                         ReceiptBatch, ReceiptBatchResult, ReceiptFacts,
+                                         ReceiptItem, ReceiptKind,
                                          RecipientList, SendRequest, SendResult, SyncEntry,
                                          SyncPage, TeamMember, WorkCommand,
                                          WorkCommandRequest, WorkState, apply_announcement,
@@ -135,8 +152,50 @@ async def ensure_indexes(db: AsyncDatabase) -> None:
 
 
 def capabilities() -> list[str]:
-    """What /version adds to its `capabilities`: messaging is always on."""
-    return [CAPABILITY]
+    """What /version adds to its `capabilities`: messaging, its bundle
+    fields and a reply's cites are always on."""
+    return [CAPABILITY, BUNDLES_CAPABILITY, CITES_CAPABILITY]
+
+
+# -- what an older JARVIS can read ------------------------------------------------
+
+def hidden_fields(bundles: bool, cites: bool) -> tuple[str, ...]:
+    """The fields an answer leaves out for a JARVIS that asked for these:
+    every bundle field unless it asked for them (`?bundles=1`), and `cites`
+    unless it asked for those too (`?cites=1`). Its strict models refuse
+    anything it did not ask for."""
+    if not bundles:
+        return BUNDLE_FIELDS
+    return () if cites else CITES_FIELDS
+
+
+def legacy_view(model, hidden: tuple[str, ...] = BUNDLE_FIELDS) -> dict:
+    """An answer as an older JARVIS reads it: its messages and receipts
+    without the `hidden` fields (by default the messaging.v1 view)."""
+    def kept(value: dict) -> dict:
+        return {k: v for k, v in value.items() if k not in hidden}
+    value = model.model_dump(mode="json")
+    if isinstance(model, AcceptedMessage):
+        return kept(value)
+    if isinstance(model, ReceiptFacts):
+        return kept(value)
+    if isinstance(model, SyncEntry) or isinstance(model, SendResult):
+        return {**value, "message": kept(value["message"]),
+                "receipts": kept(value["receipts"])}
+    if isinstance(model, SyncPage):
+        return {**value, "entries": [{**e, "message": kept(e["message"]),
+                                      "receipts": kept(e["receipts"])}
+                                     for e in value["entries"]]}
+    if isinstance(model, ReceiptBatchResult):
+        return {**value, "facts": [kept(f) for f in value["facts"]]}
+    return value
+
+
+def answer(model, bundles: bool, cites: bool = False):
+    """The route's answer: the model in full for a JARVIS that asked for
+    every field it has, else the view without what it did not ask for."""
+    hidden = hidden_fields(bundles, cites)
+    return JSONResponse(legacy_view(model, hidden)) if hidden else model
 
 
 # -- the repository -------------------------------------------------------------
@@ -284,7 +343,8 @@ class MongoMessages:
         return None if doc is None else ReceiptFacts.model_validate(doc["body"])
 
     async def add_receipt(self, server_id: str, recipient_github_id: int, message_id: UUID,
-                          kind: ReceiptKind, node_id: UUID, now: datetime) -> ReceiptFacts:
+                          kind: ReceiptKind, node_id: UUID, now: datetime,
+                          openability: Optional[OpenabilityReport] = None) -> ReceiptFacts:
         key = str(message_id)
         for _ in range(CAS_RETRIES):
             doc = await self.db.message_receipts.find_one(
@@ -293,7 +353,7 @@ class MongoMessages:
             if doc is None:
                 raise ContractError("message_not_found")
             facts = ReceiptFacts.model_validate(doc["body"])
-            merged = merge_receipt(facts, kind, node_id, _ms(now))
+            merged = merge_receipt(facts, kind, node_id, _ms(now), openability)
             if merged.revision == facts.revision:
                 return facts
             result = await self.db.message_receipts.update_one(
@@ -434,6 +494,17 @@ def parse_send(raw_bytes: bytes) -> SendRequest:
         raise refused("invalid_request") from None
 
 
+def _reports_on(message: AcceptedMessage, item: ReceiptItem) -> bool:
+    """An openability report names one of the message's files by its hash,
+    at the message's revision. Other receipts carry no report."""
+    report: Optional[OpenabilityReport] = item.openability
+    if report is None:
+        return True
+    return report.content_revision == message.content_revision and any(
+        a.attachment_id == report.attachment_id and a.sha256 == report.sha256
+        for a in message.attachments)
+
+
 class Messaging:
     """The routes' work, given the authenticated principal. Dependencies are
     injected; production gets the real clock, uuid4 ids and NO_FAULTS."""
@@ -471,6 +542,18 @@ class Messaging:
         for related in req.related_message_ids:
             m = await self.repo.get_visible(server, sender, related)
             if m is None or {m.sender_github_id, m.recipient_github_id} != pair:
+                raise refused("relation_not_allowed")
+        for old in req.supersedes:
+            m = await self.repo.get_visible(server, sender, old.message_id)
+            if (m is None or m.thread_id != req.thread_id
+                    or {m.sender_github_id, m.recipient_github_id} != pair
+                    or all(a.attachment_id != old.attachment_id for a in m.attachments)):
+                raise refused("relation_not_allowed")
+        for cite in req.cites:
+            m = await self.repo.get_visible(server, sender, cite.message_id)
+            if (m is None or m.thread_id != req.thread_id or m.recipient_github_id != sender
+                    or all((a.attachment_id, a.sha256) != (cite.attachment_id, cite.sha256)
+                           for a in m.attachments)):
                 raise refused("relation_not_allowed")
 
     async def _pin(self, server: str, sender: int, req: SendRequest) -> None:
@@ -545,13 +628,15 @@ class Messaging:
         not_found: list[UUID] = []
         for item in batch.receipts:
             message = await self.repo.get_visible(server, me, item.message_id)
-            if message is None or message.recipient_github_id != me:
+            if (message is None or message.recipient_github_id != me
+                    or not _reports_on(message, item)):
                 if item.message_id not in not_found:
                     not_found.append(item.message_id)
                 continue
             await self.repo.derive_projections(message)
             facts[item.message_id] = await self.repo.add_receipt(
-                server, me, item.message_id, item.kind, batch.node_id, self.now())
+                server, me, item.message_id, item.kind, batch.node_id, self.now(),
+                openability=item.openability)
         return ReceiptBatchResult(facts=list(facts.values()), not_found=not_found)
 
     async def change_work_state(self, p: sessions.Principal, thread_id: UUID,
@@ -624,18 +709,20 @@ def mount(app: FastAPI, *, device: Callable) -> None:
         "schema": _inline(SendRequest.model_json_schema())}}}}
 
     @app.post(PREFIX, response_model=SendResult, responses=responses, openapi_extra=send_body)
-    async def send_message(request: Request, svc: Messaging = Depends(service),
+    async def send_message(request: Request, bundles: bool = False, cites: bool = False,
+                           svc: Messaging = Depends(service),
                            p: sessions.Principal = Depends(device)):
         req = parse_send(await _bounded_body(request, MESSAGE_REQUEST_MAX_BYTES))
-        return await svc.accept(p, req)
+        return answer(await svc.accept(p, req), bundles, cites)
 
     @app.get(PREFIX + "/sync", response_model=SyncPage, responses=responses)
     async def sync_messages(node_id: UUID, continuation: Optional[str] = None,
-                            limit: int = SYNC_PAGE_DEFAULT, svc: Messaging = Depends(service),
+                            limit: int = SYNC_PAGE_DEFAULT, bundles: bool = False,
+                            cites: bool = False, svc: Messaging = Depends(service),
                             p: sessions.Principal = Depends(device)):
         if not 1 <= limit <= SYNC_PAGE_MAX or (continuation and len(continuation) > 512):
             raise refused("invalid_request")
-        return await svc.sync(p, node_id, continuation, limit)
+        return answer(await svc.sync(p, node_id, continuation, limit), bundles, cites)
 
     @app.get(PREFIX + "/recipients", response_model=RecipientList, responses=responses)
     async def message_recipients(svc: Messaging = Depends(service),
@@ -643,9 +730,10 @@ def mount(app: FastAPI, *, device: Callable) -> None:
         return svc.recipients(p)
 
     @app.post(PREFIX + "/receipts", response_model=ReceiptBatchResult, responses=responses)
-    async def message_receipts(body: ReceiptBatch, svc: Messaging = Depends(service),
+    async def message_receipts(body: ReceiptBatch, bundles: bool = False,
+                               svc: Messaging = Depends(service),
                                p: sessions.Principal = Depends(device)):
-        return await svc.receipts(p, body)
+        return answer(await svc.receipts(p, body), bundles)
 
     @app.put(PREFIX + "/threads/{thread_id}/work-state", response_model=WorkState,
              responses=responses)
@@ -655,9 +743,10 @@ def mount(app: FastAPI, *, device: Callable) -> None:
         return await svc.change_work_state(p, thread_id, body)
 
     @app.get(PREFIX + "/{message_id}", response_model=AcceptedMessage, responses=responses)
-    async def get_message(message_id: UUID, svc: Messaging = Depends(service),
+    async def get_message(message_id: UUID, bundles: bool = False, cites: bool = False,
+                          svc: Messaging = Depends(service),
                           p: sessions.Principal = Depends(device)):
-        return await svc.get(p, message_id)
+        return answer(await svc.get(p, message_id), bundles, cites)
 
     @app.post(PREFIX + "/{message_id}/announcement", response_model=AnnouncementLease,
               responses=responses)

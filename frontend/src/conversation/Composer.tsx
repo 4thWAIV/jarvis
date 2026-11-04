@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useT } from "../locale";
 import { sendTyped, voiceConnected } from "../voiceStatus";
 
 const DRAFT_KEY = "jarvis.conversation.draft";
@@ -7,10 +8,11 @@ function keepDraft(text: string) {
   try { text ? sessionStorage.setItem(DRAFT_KEY, text) : sessionStorage.removeItem(DRAFT_KEY); } catch { /* storage is optional */ }
 }
 
-export function Composer() {
+export function Composer({ partRef }: { partRef: (el: Element | null) => void }) {
+  const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(readDraft);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(false);
   const connected = useSyncExternalStore(voiceConnected.subscribe, voiceConnected.get);
   useLayoutEffect(() => {
     const field = input.current;
@@ -22,26 +24,28 @@ export function Composer() {
     const text = draft.trim();
     if (!text) return;
     if (!sendTyped.current(text)) {
-      setError("Not connected. Your message has not been sent. Your draft is kept here; try again after reconnecting.");
+      setError(true);
       return;
     }
-    setDraft(""); keepDraft(""); setError(""); input.current?.focus();
+    setDraft(""); keepDraft(""); setError(false); input.current?.focus();
   }
-  return <form className="chat-composer" onSubmit={e => { e.preventDefault(); send(); }}>
-    <label htmlFor="conversation-draft">Message JARVIS</label>
-    <textarea id="conversation-draft" ref={input} className="hearing-input" rows={1}
-      aria-label="Message JARVIS" aria-describedby="composer-help" placeholder="Ask a question or share an idea…"
-      value={draft} onChange={e => { setDraft(e.target.value); keepDraft(e.target.value); setError(""); }}
+  return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
+    <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>
+    <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}
+      data-ui-action="input" className="hearing-input" rows={1}
+      aria-label={t("main.conversation.messageJarvis")} aria-describedby="composer-help"
+      placeholder={t("main.conversation.draftPlaceholder")}
+      value={draft} onChange={e => { setDraft(e.target.value); keepDraft(e.target.value); setError(false); }}
       onKeyDown={e => {
         if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
           e.preventDefault(); send();
         }
       }} />
-    {error && <p className="composer-error" role="alert">{error}</p>}
+    {error && <p className="composer-error" role="alert">{t("main.conversation.sendDisconnected")}</p>}
     <div className="composer-footer">
-      <span id="composer-help">{connected ? <>Enter to send <span aria-hidden="true">·</span> Shift + Enter for a new line</> : "Reconnecting… your draft is safe"}</span>
-      <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label="Send message">
-        Send <span aria-hidden="true">↑</span>
+      <span id="composer-help">{t(connected ? "main.conversation.composerHelp" : "main.conversation.reconnecting")}</span>
+      <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
+        {t("main.conversation.send")} <span aria-hidden="true">↑</span>
       </button>
     </div>
   </form>;

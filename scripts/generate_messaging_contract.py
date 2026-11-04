@@ -11,6 +11,8 @@ The source is `team_server/teamserver/messaging_models.py` (the wire) and
                                           wire shape, digest test vectors, and
                                           valid examples of the page's shapes
     frontend/src/messagingContract.ts     the page's types and constants
+    frontend/src/bundleContract.ts        the bundle routes' shapes, from
+                                          jarvis/bundle_contract.py
 
 Both test suites run `--check`'s comparison, so a stale output fails CI.
 """
@@ -27,6 +29,7 @@ SOURCE = ROOT / "team_server" / "teamserver" / "messaging_models.py"
 MIRROR = ROOT / "jarvis" / "messaging_wire.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "messaging_contract.json"
 TYPES = ROOT / "frontend" / "src" / "messagingContract.ts"
+BUNDLE_TYPES = ROOT / "frontend" / "src" / "bundleContract.ts"
 
 MIRROR_HEADER = (
     "# GENERATED from team_server/teamserver/messaging_models.py by\n"
@@ -51,6 +54,8 @@ def _load():
 
 SERVER_ID = "00000000-0000-4000-8000-0000000000aa"
 TIM, MATT = 863470, 1001
+# The example requests Matt sends; Tim sends the rest.
+MATTS = ("reply_with_related", "reply_cites")
 T0 = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -82,9 +87,51 @@ def _examples(w) -> dict:
         return w.SendRequest(**content.model_dump(), source_node_id=_id(101),
                              idempotency_key=_id(201 + content.message_id.int % 100),
                              content_digest=digest)
+    # Bundles (messaging.bundles.v1): a review request whose task names its
+    # primary and supporting files by hash, and a repair in the same thread
+    # whose new file supersedes the old one, which is kept.
+    bundle = w.AttachmentRef(attachment_id=_id(33), filename="review-bundle.zip",
+                             media_type="application/zip", size_bytes=179692,
+                             sha256="2" * 64)
+    flat = w.AttachmentRef(attachment_id=_id(34), filename="review-bundle-flat.zip",
+                           media_type="application/zip", size_bytes=179001, sha256="3" * 64)
+    task = w.TaskContext(requested_outcome="Notes on the two-page summary: support for its "
+                                           "claims, wording and layout.",
+                         outcome_kind="notes",
+                         primary=w.ArtifactRef(attachment_id=_id(33), sha256="2" * 64,
+                                               member_path="review/summary.pdf"),
+                         supporting=[w.ArtifactRef(attachment_id=_id(33), sha256="2" * 64,
+                                                   member_path="review/sources.md")])
+    review = w.MessageContent(message_id=_id(11), thread_id=_id(11), recipient_github_id=MATT,
+                              content_revision=1, subject="Summary review",
+                              text="Could you review the summary?", attachments=[bundle],
+                              task=task)
+    repair = w.MessageContent(
+        message_id=_id(12), thread_id=_id(11), in_reply_to_message_id=_id(11),
+        recipient_github_id=MATT, content_revision=1, subject="Summary review",
+        text="The same files without the wrapper folder.", attachments=[flat],
+        task=task.model_copy(update={
+            "primary": w.ArtifactRef(attachment_id=_id(34), sha256="3" * 64,
+                                     member_path="summary.pdf"),
+            "supporting": [w.ArtifactRef(attachment_id=_id(34), sha256="3" * 64,
+                                         member_path="sources.md")]}),
+        supersedes=[w.Supersedes(message_id=_id(11), attachment_id=_id(33),
+                                 by_attachment_id=_id(34), reason="repair")])
+    # Cites (messaging.bundles.cites.v1): Matt's reply relies on the summary
+    # inside the bundle Tim asked him to review, and on the bundle as a whole.
+    cites = [w.CitedRef(message_id=_id(11), attachment_id=_id(33), sha256="2" * 64,
+                        member_path="review/summary.pdf"),
+             w.CitedRef(message_id=_id(11), attachment_id=_id(33), sha256="2" * 64)]
+    notes = w.MessageContent(
+        message_id=_id(13), thread_id=_id(11), in_reply_to_message_id=_id(11),
+        recipient_github_id=TIM, content_revision=1, subject="Summary review",
+        text="The summary's second claim needs a source.", cites=cites)
     requests = {"new_thread": request(root, TIM), "reply_with_related": request(reply, MATT),
                 "self_files_only": request(files_only, TIM),
-                "two_files_in_order": request(two_files, TIM)}
+                "two_files_in_order": request(two_files, TIM),
+                "review_with_task": request(review, TIM),
+                "repair_supersedes": request(repair, TIM),
+                "reply_cites": request(notes, MATT)}
 
     def accepted(req, sender, minutes):
         return w.AcceptedMessage(**req.model_dump(), server_id=SERVER_ID, sender_github_id=sender,
@@ -101,6 +148,36 @@ def _examples(w) -> dict:
             revision=3),
         "read_before_received": w.ReceiptFacts(message_id=_id(2), recipient_github_id=TIM,
                                                read_at=T0 + timedelta(minutes=6), revision=2),
+    }
+    openability = {
+        "verified": w.OpenabilityReport(attachment_id=_id(34), sha256="3" * 64,
+                                        content_revision=1, status="verified",
+                                        members_total=10, members_readable=10,
+                                        checked_at=T0 + timedelta(minutes=20)),
+        "partial_failed_member": w.OpenabilityReport(
+            attachment_id=_id(33), sha256="2" * 64, content_revision=1, status="partial",
+            failed_operation="read_text", failed_member="review/summary.pdf",
+            reason="reader_unavailable", members_total=10, members_readable=9,
+            checked_at=T0 + timedelta(minutes=15)),
+    }
+    receipts["received_with_openability"] = w.ReceiptFacts(
+        message_id=_id(11), recipient_github_id=MATT, received_at=T0 + timedelta(minutes=14),
+        nodes=[w.NodeReceipt(node_id=_id(102), received_at=T0 + timedelta(minutes=14))],
+        openability=[openability["partial_failed_member"]], revision=3)
+    capabilities = {
+        "mac_reads_pdf_zip_text": w.AttachmentCapabilities(
+            observed_age_ms=120_000, max_file_bytes=256 * 1024 * 1024,
+            max_archive_entries=10_000, max_expanded_bytes=1024 * 1024 * 1024,
+            formats=[w.FormatCapability(format="zip", operations=["download", "list_archive"]),
+                     w.FormatCapability(format="pdf", operations=["download", "read_text",
+                                                                  "render"]),
+                     w.FormatCapability(format="markdown", operations=["download",
+                                                                       "read_text"])],
+            work_packages=w.WorkPackageCapability(manifest_versions=[1],
+                                                  modes=["conversation", "agent", "page"])),
+        "download_only": w.AttachmentCapabilities(
+            observed_age_ms=0, max_file_bytes=25 * 1024 * 1024, max_archive_entries=0,
+            max_expanded_bytes=0, formats=[]),
     }
     tim_item = w.new_work_state(server_id=SERVER_ID, owner_github_id=TIM,
                                 message=messages["new_thread"])
@@ -155,7 +232,15 @@ def _examples(w) -> dict:
                                                         work_state=tim_item, duplicate=True))],
         "ReceiptBatch": [("received_and_read", w.ReceiptBatch(node_id=_id(102), receipts=[
             w.ReceiptItem(message_id=_id(1), kind="received"),
-            w.ReceiptItem(message_id=_id(1), kind="read")]))],
+            w.ReceiptItem(message_id=_id(1), kind="read")])),
+            ("openability", w.ReceiptBatch(node_id=_id(102), receipts=[
+                w.ReceiptItem(message_id=_id(11), kind="openability",
+                              openability=openability["partial_failed_member"])]))],
+        "OpenabilityReport": list(openability.items()),
+        "AttachmentCapabilities": list(capabilities.items()),
+        "TaskContext": [("notes_on_primary", task)],
+        "Supersedes": [("repair", repair.supersedes[0])],
+        "CitedRef": [("member_of_a_file", cites[0]), ("whole_file", cites[1])],
         "ReceiptBatchResult": [("one_settled_one_not_found", w.ReceiptBatchResult(
             facts=[receipts["received_and_read"]], not_found=[_id(9)]))],
         "ReceiptFacts": list(receipts.items()),
@@ -184,6 +269,12 @@ def _invalid(valid: dict) -> list[dict]:
     req = valid["SendRequest"]["new_thread"]
     reply = valid["SendRequest"]["reply_with_related"]
     att = valid["AttachmentRef"]["pdf"]
+    task_req = valid["SendRequest"]["review_with_task"]
+    repair_req = valid["SendRequest"]["repair_supersedes"]
+    cites_req = valid["SendRequest"]["reply_cites"]
+    cite = cites_req["cites"][0]
+    report = valid["OpenabilityReport"]["partial_failed_member"]
+    caps = valid["AttachmentCapabilities"]["mac_reads_pdf_zip_text"]
     cases = [
         ("SendRequest", "unknown_field", {**req, "sender_github_id": 1}),
         ("SendRequest", "newer_schema_version", {**req, "schema_version": 2}),
@@ -231,6 +322,50 @@ def _invalid(valid: dict) -> list[dict]:
         ("WorkCommandRequest", "no_expected_revision", {"change": {"command": "open"}}),
         ("WorkState", "unknown_placement",
          {**valid["WorkState"]["self_message"], "placement": "archived"}),
+        ("SendRequest", "task_names_a_file_not_in_the_message",
+         {**task_req, "task": {**task_req["task"], "primary": {
+             **task_req["task"]["primary"], "attachment_id": str(_id(99))}}}),
+        ("SendRequest", "task_names_a_file_by_another_hash",
+         {**task_req, "task": {**task_req["task"], "primary": {
+             **task_req["task"]["primary"], "sha256": "f" * 64}}}),
+        ("SendRequest", "task_outcome_empty",
+         {**task_req, "task": {**task_req["task"], "requested_outcome": ""}}),
+        ("SendRequest", "task_outcome_not_normalized",
+         {**task_req, "task": {**task_req["task"], "requested_outcome": "a\r\nb"}}),
+        ("SendRequest", "task_audience_widened",
+         {**task_req, "task": {**task_req["task"], "reply_audience": "everyone"}}),
+        ("SendRequest", "superseded_by_a_file_not_in_the_message",
+         {**repair_req, "supersedes": [{**repair_req["supersedes"][0],
+                                        "by_attachment_id": str(_id(99))}]}),
+        ("SendRequest", "supersedes_its_own_message",
+         {**repair_req, "supersedes": [{**repair_req["supersedes"][0],
+                                        "message_id": repair_req["message_id"]}]}),
+        ("SendRequest", "supersedes_the_same_file_twice",
+         {**repair_req, "supersedes": repair_req["supersedes"] * 2}),
+        ("SendRequest", "cites_its_own_message",
+         {**cites_req, "cites": [{**cite, "message_id": cites_req["message_id"]}]}),
+        ("SendRequest", "cites_the_same_member_twice", {**cites_req, "cites": [cite, cite]}),
+        ("CitedRef", "empty_member_path", {**cite, "member_path": ""}),
+        ("CitedRef", "upper_case_hash", {**cite, "sha256": "A" * 64}),
+        ("ReceiptBatch", "openability_without_a_report",
+         {"node_id": str(_id(102)), "receipts": [{"message_id": str(_id(11)),
+                                                  "kind": "openability"}]}),
+        ("ReceiptBatch", "read_with_a_report",
+         {"node_id": str(_id(102)), "receipts": [{"message_id": str(_id(11)), "kind": "read",
+                                                  "openability": report}]}),
+        ("OpenabilityReport", "more_readable_than_members",
+         {**report, "members_readable": report["members_total"] + 1}),
+        ("OpenabilityReport", "unknown_status", {**report, "status": "reviewed"}),
+        ("OpenabilityReport", "reason_with_words", {**report, "reason": "it said: hello"}),
+        ("AttachmentCapabilities", "format_twice",
+         {**caps, "formats": caps["formats"] + caps["formats"][:1]}),
+        ("AttachmentCapabilities", "older_than_a_week",
+         {**caps, "observed_age_ms": 7 * 86_400_000 + 1}),
+        ("AttachmentCapabilities", "unknown_operation",
+         {**caps, "formats": [{"format": "pdf", "operations": ["print"]}]}),
+        ("AttachmentCapabilities", "newer_version", {**caps, "version": 2}),
+        ("AttachmentCapabilities", "too_many_formats",
+         {**caps, "formats": [{"format": "pdf", "operations": []}] * 41}),
     ]
     return [{"model": m, "case": c, "value": v} for m, c, v in cases]
 
@@ -241,7 +376,7 @@ def fixtures_data(w) -> dict:
              for model, items in examples.items()}
     vectors = []
     for case, req in examples["SendRequest"]:
-        sender = TIM if case != "reply_with_related" else MATT
+        sender = MATT if case in MATTS else TIM
         content = w.content_of(req)
         vectors.append({"case": case, "server_id": SERVER_ID, "sender_github_id": sender,
                         "content": content.model_dump(mode="json"),
@@ -292,6 +427,13 @@ def _local_examples(w, local) -> dict:
                                                  state="approved",
                                                  content_digest="sha256:" + "c" * 64),
                             capture_id=7)
+    review_req = dict(ex["SendRequest"])["review_with_task"]
+    review_draft = local.Draft(
+        message_id=review_req.message_id, thread_id=review_req.thread_id,
+        recipient_github_id=MATT, draft_revision=2, subject=review_req.subject,
+        text=review_req.text, attachments=list(review_req.attachments), task=review_req.task,
+        send=local.LocalSend(message_id=review_req.message_id, content_revision=1,
+                             state="draft"))
     exchange = local.LocalItem(work_state=work["reply_arrived_your_turn"],
                                messages=[root, reply], drafts=[reply_draft],
                                dismiss_blockers=["send_unresolved"])
@@ -309,7 +451,8 @@ def _local_examples(w, local) -> dict:
         "LocalFile": [("uploading", new_draft.files[0]), ("verified", local.LocalFile(
             attachment_id=pdf.attachment_id, state="verified", bytes_done=48213))],
         "LocalSend": [("submitting", sending), ("failed_transport", failed)],
-        "Draft": [("reply_submitting", reply_draft), ("new_files_only_approved", new_draft)],
+        "Draft": [("reply_submitting", reply_draft), ("new_files_only_approved", new_draft),
+                  ("review_with_task", review_draft)],
         "DraftSave": [("new_conversation", local.DraftSave(recipient_github_id=MATT,
                                                            subject="Deploy window",
                                                            text="Friday?")),
@@ -381,7 +524,10 @@ def types_text(w, local) -> str:
                    w.SendResult, w.NodeReceipt, w.ReceiptFacts, w.ReceiptItem, w.ReceiptBatch,
                    w.ReceiptBatchResult, w.WorkState, w.WorkCommandRequest, w.SyncEntry,
                    w.SyncPage, w.TeamMember, w.RecipientList, w.AnnouncementRequest,
-                   w.AnnouncementLease, w.AttachmentCreate, w.AttachmentStatus]
+                   w.AnnouncementLease, w.AttachmentCreate, w.AttachmentStatus,
+                   w.FormatCapability, w.WorkPackageCapability, w.AttachmentCapabilities,
+                   w.OpenabilityReport, w.ArtifactRef, w.TaskContext, w.Supersedes,
+                   w.CitedRef]
     local_models = [local.LocalFile, local.LocalSend, local.Draft, local.DraftSave,
                     local.DraftAction, local.LocalMessage, local.LocalItem,
                     local.QueueSnapshot, local.HistoryPage, local.WorkCommandResult,
@@ -392,6 +538,7 @@ def types_text(w, local) -> str:
     from typing import get_args
     unions = {
         "Placement": get_args(w.Placement), "ReceiptKind": get_args(w.ReceiptKind),
+        "Openability": get_args(w.Openability),
         "StagingState": get_args(w.StagingState),
         "AnnouncementStep": get_args(w.AnnouncementStep),
         "AnnouncementState": get_args(w.AnnouncementState),
@@ -408,6 +555,8 @@ def types_text(w, local) -> str:
         "// count Unicode code points (`[...text].length`), not UTF-16 units.",
         "",
         f"export const CAPABILITY = {json.dumps(w.CAPABILITY)};",
+        f"export const BUNDLES_CAPABILITY = {json.dumps(w.BUNDLES_CAPABILITY)};",
+        f"export const CITES_CAPABILITY = {json.dumps(w.CITES_CAPABILITY)};",
         f"export const INTERFACE_REVISION = {json.dumps(w.INTERFACE_REVISION)};",
         f"export const SCHEMA_VERSION = {w.SCHEMA_VERSION};",
         f"export const MESSAGES_HINT = {json.dumps(local.MESSAGES_HINT)};",
@@ -416,7 +565,8 @@ def types_text(w, local) -> str:
         "export const LIMITS = {",
     ]
     for name in ("SUBJECT_MAX_CHARS", "TEXT_MAX_CHARS", "RELATED_MAX", "ATTACHMENTS_MAX",
-                 "FILENAME_MAX_BYTES", "FILE_MAX_BYTES", "PACKAGE_MAX_BYTES"):
+                 "FILENAME_MAX_BYTES", "FILE_MAX_BYTES", "PACKAGE_MAX_BYTES",
+                 "TASK_OUTCOME_MAX_CHARS"):
         out.append(f"  {name}: {getattr(w, name)},")
     for name in ("HISTORY_PAGE_DEFAULT", "HISTORY_PAGE_MAX"):
         out.append(f"  {name}: {getattr(local, name)},")
@@ -448,12 +598,54 @@ def types_text(w, local) -> str:
     return "\n".join(out) + "\n"
 
 
+def bundle_types_text() -> str:
+    """The page's types for the bundle routes, from jarvis/bundle_contract.py."""
+    from pydantic import BaseModel
+    from pydantic.json_schema import models_json_schema
+    from typing import get_args
+    from jarvis import bundle_contract as b
+    models = [v for v in vars(b).values() if isinstance(v, type) and issubclass(v, BaseModel)
+              and v is not b._Shape and v.__module__ == b.__name__]
+    _, schema = models_json_schema([(m, "serialization") for m in models],
+                                   ref_template="#/$defs/{model}")
+    defs = schema["$defs"]
+    unions = {name: get_args(getattr(b, name)) for name in (
+        "Operation", "FormatId", "Support", "Reason", "Openability", "Readiness", "GapAction",
+        "ReviewProgress", "ChecklistState", "ArtifactRole", "OutcomeKind", "RefusalCode")}
+    out = [
+        "// GENERATED by scripts/generate_messaging_contract.py from",
+        "// jarvis/bundle_contract.py. Do not edit: edit that and regenerate.",
+        "",
+        f"export const BUNDLE_CONTRACT_VERSION = {b.BUNDLE_CONTRACT_VERSION};",
+        f"export const BUNDLES_HINT = {json.dumps(b.BUNDLES_HINT)};",
+        f"export const BUNDLE_VIEW_FRAME = {json.dumps(b.BUNDLE_VIEW_FRAME)};",
+        f"export const ATTACHMENT_PREFIX = {json.dumps(b.ATTACHMENT_PREFIX)};",
+        "",
+        "export const BUNDLE_LIMITS = {",
+    ]
+    for name in ("MEMBER_PAGE_DEFAULT", "MEMBER_PAGE_MAX", "TEXT_PAGE_DEFAULT_CHARS",
+                 "TEXT_PAGE_MAX_CHARS", "RENDER_EDGE_DEFAULT", "RENDER_EDGE_MIN",
+                 "RENDER_EDGE_MAX"):
+        out.append(f"  {name}: {getattr(b, name)},")
+    out += ["} as const;", ""]
+    for name, values in unions.items():
+        out.append(f"export type {name} = {' | '.join(json.dumps(v) for v in values)};")
+    out += ["", "export const REASONS_SHOWN: Record<Reason, string> = {"]
+    for code, text in b.REASONS_SHOWN.items():
+        out.append(f"  {code}: {json.dumps(text)},")
+    out += ["};", ""]
+    for name in sorted(defs):
+        out += [_ts_interface(name, defs[name]), ""]
+    out.append("export type Location = PageLocation | LineLocation | SheetLocation | SlideLocation;")
+    return "\n".join(out) + "\n"
+
+
 # -- write or check -----------------------------------------------------------------
 
 def outputs() -> dict[Path, str]:
     w, local = _load()
     return {MIRROR: mirror_text(), FIXTURES: fixtures_text(w, local),
-            TYPES: types_text(w, local)}
+            TYPES: types_text(w, local), BUNDLE_TYPES: bundle_types_text()}
 
 
 def stale() -> list[str]:

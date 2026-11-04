@@ -11,46 +11,62 @@
  * so, with the ways out.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
+import { formatNumber, SaidText, useT } from "./locale";
 import { LIMITS, type Draft } from "./messagingContract";
 import {
-  addFiles, directory, discard, edit, editors, keepMine, queue, removeFile, review, roster, takeTheirs,
+  addFiles, askedNoMore, asking, directory, discard, edit, editors, keepMine, openQueue, queue, removeFile, review,
+  roster, takeTheirs,
 } from "./queue";
 import { FileCard } from "./QueueFiles";
+import { ReadinessLine, TaskFields } from "./BundleLines";
 import { personName, previewOf, recipientLabel } from "./queueStore";
+import { bind, bindingProps } from "./uiNavigation";
 
 const MB = 1024 * 1024;
 const LOCKED = new Set(["approved", "submitting", "accept_unknown", "accepted"]);
 
-export function MessageComposer({ editorKey }: { editorKey: string }) {
+export function MessageComposer({ editorKey, request }: {
+  editorKey: string;
+  /** Where its request fields register, as the open item's `request` part. */
+  request?: (el: Element | null) => void;
+}) {
+  const t = useT();
   const ed = useSyncExternalStore(editors.subscribe, editors.get)[editorKey];
   const state = useSyncExternalStore(queue.subscribe, queue.get);
   const dir = useSyncExternalStore(directory.subscribe, directory.get);
   const members = useSyncExternalStore(roster.subscribe, roster.get)?.members ?? [];
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Asked by queue.discard.ask, of the open view's composer only.
+  const asked = useSyncExternalStore(asking.subscribe, asking.get);
+  const open = useSyncExternalStore(openQueue.subscribe, openQueue.get);
+  const confirmDiscard = asked.discard && asked.thread === editorKey && open?.thread === editorKey;
   if (!ed) return null;
   const draft: Draft | undefined = ed.messageId ? state.drafts[ed.messageId] : undefined;
   const locked = !!draft && LOCKED.has(draft.send.state);
   const parent = ed.parent ? state.messages[ed.parent]?.message : undefined;
-  const status = ed.saving ? "Saving…" : ed.dirty ? "Not saved yet" : ed.messageId ? "Draft saved, not sent" : "";
+  const status = ed.saving ? t("main.queue.saving") : ed.dirty ? t("main.queue.composer.notSaved")
+    : ed.messageId ? t("main.queue.composer.saved") : "";
   const canReview = !locked && !ed.saving && ed.adding === 0 && ed.recipient !== null
     && (ed.text.trim() !== "" || ed.attachmentIds.length > 0);
   const id = `composer-${editorKey}`;
+  // The attachment limits: the Attach control's tooltip.
+  const limits = t("main.queue.composer.limits", { count: LIMITS.ATTACHMENTS_MAX, each: formatNumber(LIMITS.FILE_MAX_BYTES / MB),
+                                                   all: formatNumber(LIMITS.PACKAGE_MAX_BYTES / MB) });
   return (
-    <section className="message-composer" aria-label={ed.thread ? "Your response" : "New message"}
+    <section className="message-composer" aria-label={ed.thread ? t("main.queue.composer.response") : t("main.queue.newMessage")}
              data-editor={editorKey}>
       {draft?.agent_drafted && (
-        <p className="composer-agent">Drafted by JARVIS. Nothing is sent until you review and approve it.</p>
+        <p className="composer-agent">{t("main.queue.composer.agentDrafted")}</p>
       )}
       <div className="composer-to">
         {ed.thread
-          ? <span>To <strong>{recipientLabel(dir, ed.recipient!)}</strong></span>
+          ? <span>{t("main.queue.toLead")} <strong>{recipientLabel(dir, ed.recipient!)}</strong></span>
           : (
             <label>
-              To{" "}
-              <select value={ed.recipient ?? ""} disabled={locked}
+              {t("main.queue.toLead")}{" "}
+              <select data-ui-action="recipient" value={ed.recipient ?? ""} disabled={locked}
                       onChange={(e) => edit(editorKey, { recipient: e.target.value ? Number(e.target.value) : null })}>
-                <option value="">Choose who it is for</option>
+                <option value="">{t("main.queue.composer.choose")}</option>
                 {[...members].sort((a, b) => Number(b.github_id === dir.owner) - Number(a.github_id === dir.owner))
                   .map((m) => (
                     <option key={m.github_id} value={m.github_id}>{recipientLabel(dir, m.github_id)}</option>
@@ -58,22 +74,19 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
               </select>
             </label>
           )}
-        <span className="composer-inbox">The message goes to the person; their JARVIS holds their inbox.</span>
       </div>
       {parent && (
         <p className="composer-parent">
-          In reply to {personName(dir, parent.sender_github_id)}: “{previewOf(parent) || parent.subject}”
+          {t("main.queue.inReplyToQuote", { person: personName(dir, parent.sender_github_id),
+                                            quote: previewOf(parent) || parent.subject })}
         </p>
       )}
       <label className="composer-field">
-        <span>Subject</span>
-        <input type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
+        <span>{t("main.queue.subject")}</span>
+        <input data-ui-action="input" type="text" value={ed.subject} maxLength={LIMITS.SUBJECT_MAX_CHARS} disabled={locked}
                onChange={(e) => edit(editorKey, { subject: e.target.value })} />
       </label>
-      <label className="composer-field" htmlFor={id}>
-        <span>Message</span>
-      </label>
-      <textarea id={id} className="composer-text" value={ed.text} rows={6} disabled={locked}
+      <textarea data-ui-action="input" id={id} className="composer-text" aria-label={t("main.queue.composer.message")} value={ed.text} rows={6} disabled={locked}
                 maxLength={LIMITS.TEXT_MAX_CHARS}
                 onChange={(e) => edit(editorKey, { text: e.target.value })} />
       <div className="composer-files">
@@ -82,40 +95,44 @@ export function MessageComposer({ editorKey }: { editorKey: string }) {
                     file={draft!.files.find((f) => f.attachment_id === a.attachment_id)}
                     onRemove={locked ? undefined : () => removeFile(editorKey, a.attachment_id)} />
         ))}
-        {ed.adding > 0 && <p className="composer-adding" role="status">Adding {ed.adding} file{ed.adding === 1 ? "" : "s"}…</p>}
-        <label className="composer-attach">
-          Attach files
-          <input type="file" multiple disabled={locked || ed.recipient === null}
+        {draft && <TaskFields draft={draft} disabled={locked || ed.saving || ed.dirty} target={request} />}
+        {draft && draft.attachments.length > 0 && (
+          <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
+        )}
+        {ed.adding > 0 && <p className="composer-adding" role="status">{t("main.queue.composer.adding", { count: ed.adding })}</p>}
+        <label className={`composer-attach${locked || ed.recipient === null ? " disabled" : ""}`} title={limits}>
+          {t("main.queue.composer.attach")}<span className="visually-hidden"> ({limits})</span>
+          <input data-ui-action="file" type="file" multiple className="visually-hidden" disabled={locked || ed.recipient === null}
                  onChange={(e) => { void addFiles(editorKey, [...(e.target.files ?? [])]); e.target.value = ""; }} />
         </label>
-        <span className="composer-limits">
-          Up to {LIMITS.ATTACHMENTS_MAX} files, {LIMITS.FILE_MAX_BYTES / MB} MB each, {LIMITS.PACKAGE_MAX_BYTES / MB} MB in all.
-        </span>
       </div>
-      {ed.error && <p className="composer-error" role="alert">{ed.error}</p>}
+      {ed.error && <SaidText said={ed.error} as="p" className="composer-error" role="alert" />}
       {ed.conflict && (
         <div className="composer-conflict">
-          <button type="button" onClick={() => keepMine(editorKey)}>Keep my text</button>
-          <button type="button" onClick={() => takeTheirs(editorKey)}>Use the saved draft</button>
+          <button data-ui-action="domain" type="button" onClick={() => keepMine(editorKey)}>{t("main.queue.composer.keepMine")}</button>
+          <button data-ui-action="domain" type="button" onClick={() => takeTheirs(editorKey)}>{t("main.queue.composer.takeTheirs")}</button>
         </div>
       )}
       <div className="composer-actions">
         <span className="composer-status" role="status">{status}</span>
         {confirmDiscard ? (
           <>
-            <span className="composer-confirm">Throw this draft away? It cannot be brought back.</span>
-            <button type="button" className="composer-discard" onClick={() => { setConfirmDiscard(false); void discard(editorKey); }}>
-              Discard draft
+            <span className="composer-confirm">{t("main.queue.composer.discardQuestion")}</span>
+            <button data-ui-action="domain" type="button" className="composer-discard"
+                    onClick={() => { askedNoMore(); void discard(editorKey); }}>
+              {t("main.queue.composer.discardDraft")}
             </button>
-            <button type="button" onClick={() => setConfirmDiscard(false)}>Keep it</button>
+            <button type="button" {...bindingProps(bind("queue.discard.ask", { open: false }))}>{t("main.queue.composer.keep")}</button>
           </>
         ) : (
-          <button type="button" className="composer-discard" disabled={locked} onClick={() => setConfirmDiscard(true)}>
-            Discard…
+          <button type="button" className="composer-discard" disabled={locked}
+                  {...bindingProps(bind("queue.discard.ask", { open: true }))}>
+            {t("main.queue.composer.discard")}
           </button>
+
         )}
-        <button type="button" className="composer-review" disabled={!canReview}
-                onClick={() => void review(editorKey)}>Review</button>
+        <button data-ui-action="domain" type="button" className="composer-review" disabled={!canReview}
+                onClick={() => void review(editorKey)}>{t("main.queue.composer.review")}</button>
       </div>
     </section>
   );

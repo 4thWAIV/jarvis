@@ -1,7 +1,8 @@
 """
-transcriber.py — the ears. Local English speech recognition: Banafo's
-Kroko streaming Zipformer (the 2025-08-06 English community model) through
-sherpa-onnx, on the CPU, with nothing sent off the machine.
+transcriber.py — the ears. Local speech recognition: Banafo's Kroko
+streaming Zipformer (the 2025-08-06 community models, English and Spanish)
+through sherpa-onnx, on the CPU, with nothing sent off the machine. One
+model is loaded at a time; switching language loads the other in its place.
 
 Kroko replaced NVIDIA's Nemotron Speech Streaming EN 0.6B, which decoded at
 0.5 of real time on an idle i9-9980HK but fell to 2.4 times slower than real
@@ -12,16 +13,16 @@ machine and audio, with eight CPU-bound processes running, Kroko decodes at
 
 Three layers, each usable without the one above it:
 
-- The model's identity (`MODEL_NAME`, `MODEL_URL`, `MODEL_SHA256`,
-  `MODEL_FILES`) and where it lives (`model_dir`), shared by the setup helper
-  (scripts/setup_speech_input.py), preflight and the runtime, so they can
-  never disagree about what "installed" means.
+- The models' identities (`MODELS`, one `SpeechModel` per language, and
+  `MODEL_FILES`) and where each lives (`model_dir`), shared by the installer
+  (speech_models.py, and scripts/setup_speech_input.py over it), preflight
+  and the runtime, so they can never disagree about what "installed" means.
 - `RecognitionEngine` / `RecognitionSession`: synchronous recognition of
   PCM16 audio into interim and final `RecognitionEvent`s. `SherpaEngine` is
   the real one; sherpa_onnx is imported only when it is built, so importing
   this module (and running JARVIS typed-only) never loads native code.
 - `TranscriptionService`: the asynchronous adapter. One worker thread owns
-  the engine and the one open session, so the decoder is never called from
+  the engine (one model's) and the one open session, so the decoder is never called from
   two threads at once nor closed while an inference is running; the event
   loop only queues audio and reads results. The audio waiting for it is
   bounded (`QUEUE_LIMIT_SEC`): past that the capture is refused as
@@ -60,12 +61,37 @@ BYTES_PER_SECOND = SAMPLE_RATE * 2
 QUEUE_LIMIT_SEC: float = PROTOCOL["queueLimitSec"]
 INTERIM_EVERY_SEC: float = PROTOCOL["interimEverySec"]
 
-MODEL_NAME = "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06"
-MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-             f"asr-models/{MODEL_NAME}.tar.bz2")
-# The digest GitHub publishes for that release asset (its `digest` field),
-# checked before anything is extracted.
-MODEL_SHA256 = "c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834"
+RELEASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+
+
+@dataclass(frozen=True)
+class SpeechModel:
+    """One model JARVIS can listen with: the language it hears, its release
+    asset's name, the digest GitHub publishes for that asset (its `digest`
+    field, checked before anything is extracted) and the asset's size."""
+    language: str
+    label: str
+    name: str
+    sha256: str
+    archive_bytes: int
+
+    @property
+    def url(self) -> str:
+        return f"{RELEASE_URL}/{self.name}.tar.bz2"
+
+
+MODELS: tuple[SpeechModel, ...] = (
+    SpeechModel("en", "English", "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
+                "c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834",
+                57_267_600),
+    # Measured before it was added (2026-11-01): 0.06 of real time on two
+    # threads, 130-170 MB more memory than English, 4.5-7 s to load on an
+    # i9-9980HK; 6.4% words wrong on synthetic voices, 14.2% on a real one.
+    SpeechModel("es", "Spanish", "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
+                "31b2230a95d23290b308b393da930015a4b2105cb3abb9367aed35f7fcf29cf1",
+                124_394_665),
+)
+DEFAULT_LANGUAGE = "en"
 ENCODER, DECODER, JOINER, TOKENS = "encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"
 MODEL_FILES = (ENCODER, DECODER, JOINER, TOKENS)
 SETUP_COMMAND = ".venv/bin/python scripts/setup_speech_input.py"
@@ -84,28 +110,53 @@ ENDPOINT_SILENCE_SEC = 0.8
 TAIL_PADDING_SEC = 1.5
 
 
-def model_dir() -> Path:
-    """Where the model's files are: JARVIS_STT_MODEL_DIR if set, otherwise
-    `<data>/models/<MODEL_NAME>`."""
+def find_model(language: str) -> Optional[SpeechModel]:
+    """The model for a language code ("en", "es"), or None."""
+    return next((m for m in MODELS if m.language == language), None)
+
+
+def default_model() -> SpeechModel:
+    return find_model(DEFAULT_LANGUAGE)
+
+
+def setup_command(model: Optional[SpeechModel] = None) -> str:
+    """The command that installs `model` (the default one if None)."""
+    model = model or default_model()
+    if model.language == DEFAULT_LANGUAGE:
+        return SETUP_COMMAND
+    return f"{SETUP_COMMAND} --language {model.language}"
+
+
+def models_root() -> Path:
+    """Where the models' folders are, one per model: JARVIS_STT_MODEL_DIR if
+    set, otherwise `<data>/models`."""
     raw = os.getenv("JARVIS_STT_MODEL_DIR", "").strip()
     if raw:
         return Path(raw).expanduser()
-    return data_paths.models_dir() / MODEL_NAME
+    return data_paths.models_dir()
 
 
-def model_problem(directory: Optional[Path] = None) -> Optional[str]:
-    """What stops the model loading from `directory`, said so the user can
-    fix it, or None when every file it needs is there. Checks files only:
-    it never loads the model."""
-    directory = directory or model_dir()
+def model_dir(model: Optional[SpeechModel] = None) -> Path:
+    """Where a model's files are: `<models_root>/<its name>`, the default
+    model's if None."""
+    return models_root() / (model or default_model()).name
+
+
+def model_problem(directory: Optional[Path] = None,
+                  model: Optional[SpeechModel] = None) -> Optional[str]:
+    """What stops `model` loading from `directory` (its own folder if None),
+    said so the user can fix it, or None when every file it needs is there.
+    Checks files only: it never loads the model."""
+    directory = directory or model_dir(model)
+    command = setup_command(model)
     if not directory.is_dir():
         return (f"The speech model is not installed ({directory} is missing). "
-                f"Run {SETUP_COMMAND}.")
+                f"Run {command}.")
     missing = [n for n in MODEL_FILES
                if not (directory / n).is_file() or (directory / n).stat().st_size == 0]
     if missing:
         return (f"The speech model in {directory} is incomplete "
-                f"(missing {', '.join(missing)}). Run {SETUP_COMMAND}.")
+                f"(missing {', '.join(missing)}). Run {command}.")
     return None
 
 
@@ -140,9 +191,10 @@ class SherpaEngine:
     about 260 MB of memory), so it is built on the worker thread, once."""
 
     def __init__(self, directory: Optional[Path] = None,
-                 threads: int = DEFAULT_THREADS) -> None:
-        directory = directory or model_dir()
-        problem = model_problem(directory)
+                 threads: int = DEFAULT_THREADS, *,
+                 model: Optional[SpeechModel] = None) -> None:
+        directory = directory or model_dir(model)
+        problem = model_problem(directory, model)
         if problem:
             raise FileNotFoundError(problem)
         try:
@@ -168,6 +220,11 @@ class SherpaEngine:
 
     def open_session(self) -> "SherpaSession":
         return SherpaSession(self._recognizer)
+
+
+def load_engine(model: SpeechModel) -> SherpaEngine:
+    """The real engine for one model: what the service builds by default."""
+    return SherpaEngine(model=model)
 
 
 class SherpaSession:
@@ -226,11 +283,14 @@ class SherpaSession:
 class TranscriptionError(Exception):
     """A failure the page is told about by code (PROTOCOL["errors"])."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, incident: bool = True) -> None:
         assert code in PROTOCOL["errors"], code
         super().__init__(message)
         self.code = code
         self.message = message
+        # False for an ending JARVIS chose (a language switch), which the
+        # voice record notes as the switch, not as a failure.
+        self.incident = incident
 
 
 Status = Literal["idle", "loading", "ready", "failed", "closed"]
@@ -300,6 +360,13 @@ class Capture:
             return
         self._service._submit(("finish", self.generation, None))
         await self._finished.wait()
+
+    def interrupt(self, error: TranscriptionError) -> None:
+        """Tell the page why this capture ends, then abort it."""
+        if self.closed:
+            return
+        self._out.put_nowait(error)
+        self.abort()
 
     def abort(self) -> None:
         """Discard everything outstanding; nothing more is emitted."""
@@ -377,10 +444,14 @@ class Capture:
 class TranscriptionService:
     """Owns the engine and the one worker thread that uses it, and admits
     one capture at a time. `start` begins loading the model in the
-    background; a capture admitted while it loads waits in `ready`."""
+    background; a capture admitted while it loads waits in `ready`.
+    `switch` loads another model in its place: one model in memory at a
+    time, and the same load path as at start."""
 
-    def __init__(self, engine_factory: Callable[[], RecognitionEngine]) -> None:
+    def __init__(self, engine_factory: Callable[[SpeechModel], RecognitionEngine],
+                 model: Optional[SpeechModel] = None) -> None:
         self._engine_factory = engine_factory
+        self.model: SpeechModel = model or default_model()
         self.status: Status = "idle"
         self.failure: Optional[str] = None
         self._commands: queue.Queue = queue.Queue()
@@ -394,17 +465,45 @@ class TranscriptionService:
         if self._thread is not None:
             return
         self._loop = asyncio.get_running_loop()
-        self._settled = asyncio.Event()
-        self.status = "loading"
         self._thread = threading.Thread(
             target=self._work, name="jarvis-transcriber", daemon=True)
         self._thread.start()
+        self._load(self.model)
+
+    async def switch(self, model: SpeechModel) -> None:
+        """Listen with `model` from now on: the capture now open is ended
+        (the page is told why and reconnects, waiting while it loads), the
+        engine is let go, and `model` is loaded in its place. Returns once
+        it is ready; raises as `ready` does if it could not load."""
+        if self.status == "closed" or self._thread is None:
+            raise TranscriptionError("model-unavailable", "Speech input is not running.")
+        if model == self.model and self.status in ("loading", "ready"):
+            await self.ready()
+            return
+        if self._active is not None:
+            self._active.interrupt(TranscriptionError(
+                "interrupted", f"Speech recognition is switching to {model.label}.",
+                incident=False))
+        self._load(model)
+        await self.ready()
+
+    def _load(self, model: SpeechModel) -> None:
+        self.model = model
+        self.status = "loading"
+        self.failure = None
+        self._settled = asyncio.Event()
+        self._submit(("load", 0, (model, self._settled)))
 
     async def ready(self) -> None:
-        """Wait for the model to finish loading; raise if it could not."""
+        """Wait for the model to finish loading; raise if it could not. A
+        switch made while waiting is waited for too."""
         if self._settled is None:
             raise TranscriptionError("model-unavailable", "Speech input is not running.")
-        await self._settled.wait()
+        while True:
+            settled = self._settled
+            await settled.wait()
+            if settled is self._settled:
+                break
         if self.status != "ready":
             raise TranscriptionError(
                 "model-unavailable", self.failure or "Speech input is not running.")
@@ -456,33 +555,47 @@ class TranscriptionService:
                 capture._deliver(consumed, events or [], error, finished, decode_sec)
         self._loop.call_soon_threadsafe(deliver)
 
-    def _settle(self, status: Status, failure: Optional[str] = None) -> None:
+    def _settle(self, settled: asyncio.Event, status: Status,
+                failure: Optional[str] = None) -> None:
         def apply() -> None:
-            if self.status != "closed":
-                self.status = status
-            self.failure = failure
-            self._settled.set()
+            # A load a later switch has replaced settles nothing but itself.
+            if settled is self._settled:
+                if self.status != "closed":
+                    self.status = status
+                self.failure = failure
+            settled.set()
         self._loop.call_soon_threadsafe(apply)
 
-    def _work(self) -> None:
+    def _build(self, model: SpeechModel,
+               settled: asyncio.Event) -> Optional[RecognitionEngine]:
         started = time.monotonic()
         try:
-            engine = self._engine_factory()
+            engine = self._engine_factory(model)
         except Exception as exc:
-            log.error("speech model failed to load: %s", exc)
-            self._settle("failed", str(exc) if isinstance(exc, FileNotFoundError)
+            log.error("speech model %s failed to load: %s", model.name, exc)
+            self._settle(settled, "failed", str(exc) if isinstance(exc, FileNotFoundError)
                          else f"The speech model failed to load: {exc}")
-            engine = None
-        else:
-            log.info("speech model ready in %.1fs", time.monotonic() - started)
-            self._settle("ready")
+            return None
+        log.info("speech model %s ready in %.1fs", model.name, time.monotonic() - started)
+        self._settle(settled, "ready")
+        return engine
 
+    def _work(self) -> None:
+        engine: Optional[RecognitionEngine] = None
         session: Optional[RecognitionSession] = None
         generation = 0
         while True:
-            kind, gen, pcm = self._commands.get()
+            kind, gen, payload = self._commands.get()
             if kind == "stop":
                 break
+            if kind == "load":
+                if session is not None:
+                    session.close()
+                    session = None
+                # Let the old model go before loading the next: one in memory.
+                engine = None
+                engine = self._build(*payload)
+                continue
             if engine is None:
                 continue
             if kind == "open":
@@ -505,8 +618,8 @@ class TranscriptionService:
             try:
                 if kind == "audio":
                     began = time.perf_counter()
-                    events = session.accept_pcm16(pcm)
-                    self._post(gen, consumed=len(pcm), events=events,
+                    events = session.accept_pcm16(payload)
+                    self._post(gen, consumed=len(payload), events=events,
                                decode_sec=time.perf_counter() - began)
                 elif kind == "finish":
                     self._post(gen, events=session.finish(), finished=True)

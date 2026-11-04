@@ -52,20 +52,21 @@ def record(now: float):
     return summary, {"samples": [sample], "events": events}
 
 
-async def _open(p, url):
+async def _open(p, url, ui=None, reduced=False):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
-    page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    page = await browser.new_page(viewport={"width": 1440, "height": 900},
+                                  reduced_motion="reduce" if reduced else "no-preference")
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route("**/api/voice/diagnostics", lambda r: r.fulfill(
         content_type="application/json", body=json.dumps(record(time.time())[0])))
     await page.route("**/api/voice/diagnostics/samples?*", lambda r: r.fulfill(
         content_type="application/json", body=json.dumps(record(time.time())[1])))
     voice = []
-    await page.route_web_socket("**/ws/voice", lambda ws: (setattr(_open, "voice", ws),
-                                                          ws.on_message(lambda m: voice.append(m))))
+    await page.route_web_socket("**/ws/voice", ui or (lambda ws: (setattr(_open, "voice", ws),
+                                                                ws.on_message(lambda m: voice.append(m)))))
     await page.goto(url + "?view=main")
     await show_diagnostics(page)
     await page.wait_for_function(
@@ -80,9 +81,9 @@ async def _health(page, **fields):
     await page.evaluate(f"window.__transcribers.find(t => t.readyState === 1)._emit({json.dumps(msg)})")
 
 
-@pytest.mark.asyncio
-async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         assert (await page.evaluate("window.__starts[0]"))["diagnostics"] is True
         await page.wait_for_function("window.__telemetry.length >= 3", timeout=8000)
@@ -94,9 +95,9 @@ async def test_the_page_asks_for_diagnostics_and_reports_each_second(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_health_from_the_server_drives_the_tab_and_the_dot(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page)
         await page.wait_for_function(
@@ -118,9 +119,9 @@ async def test_health_from_the_server_drives_the_tab_and_the_dot(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_text_that_was_written_under_the_orb_goes_to_messages(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_text_that_was_written_under_the_orb_goes_to_messages(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         ws = _open.voice
         ws.send(json.dumps({"type": "notice", "text": "Rotating my context; one moment."}))
@@ -140,9 +141,9 @@ async def test_text_that_was_written_under_the_orb_goes_to_messages(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_diagnostics_view_draws_the_record_and_closes(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_diagnostics_view_draws_the_record_and_closes(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".voice-summary-open")
         await page.wait_for_selector("#voice-diagnostics .voice-card")
@@ -158,9 +159,9 @@ async def test_the_diagnostics_view_draws_the_record_and_closes(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_quiet_page_is_reported_in_telemetry(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_quiet_page_is_reported_in_telemetry(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await page.click(".voice-summary-open")
         await page.click(".voice-quiet-button")
@@ -174,9 +175,9 @@ async def test_the_quiet_page_is_reported_in_telemetry(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_summary_shows_heard_share_speed_and_headroom(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page, rtf=0.95, backlogSec=1.6)
         await page.wait_for_function(
@@ -196,9 +197,9 @@ async def test_the_summary_shows_heard_share_speed_and_headroom(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_health_dot_opens_the_diagnostics_view(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_health_dot_opens_the_diagnostics_view(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         await _health(page, state="no-frames", cause="No audio from the microphone",
                       pipeline=pipeline(mic="bad"))
@@ -206,3 +207,46 @@ async def test_the_health_dot_opens_the_diagnostics_view(page_url):
         await page.click("#health-dot")
         await page.wait_for_selector("#voice-diagnostics")
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url):
+    """The dot appears only while voice input has a problem. Then it is a
+    button whose accessible name is the problem in words, and a mounted
+    target, the microphone's `health` part; healthy again, it is gone and
+    pointing at it is refused, never drawn where it was."""
+    from tests.test_voice_page_pipeline import _UiServer
+    ui = _UiServer()
+    health = {"region": "left", "view": "left.fixed", "kind": "mic", "part": "health"}
+
+    async def point():
+        rid, _ = ui.request({"kind": "indicate", "target": health, "reveal": "never"})
+        result = await ui.result(rid)
+        rid, _ = ui.request({"kind": "clear"})
+        await ui.result(rid)
+        return result
+
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, ui=ui, reduced=True)
+        try:
+            await _health(page)
+            assert await page.query_selector("#health-dot") is None
+            assert (await point())["status"] != "completed"
+            await _health(page, state="no-frames", cause="No audio from the microphone",
+                          pipeline=pipeline(mic="bad"))
+            dot = page.locator("#health-dot.bad")
+            await dot.wait_for()
+            assert await dot.evaluate("el => el.tagName") == "BUTTON"
+            name = await dot.get_attribute("aria-label")
+            assert name and "No audio from the microphone" in name
+            assert await dot.get_attribute("title") == name
+            # Shown, it is a mounted target, reached under the mic row (its
+            # leaf would cross the meter straight across), as mute and off
+            # are (test_voice_page_left_settings.LEFT_MISSED).
+            reached = await point()
+            assert reached["status"] == "completed", reached
+            await _health(page)
+            await page.wait_for_selector("#health-dot", state="detached")
+            assert (await point())["status"] != "completed"
+        finally:
+            await browser.close()

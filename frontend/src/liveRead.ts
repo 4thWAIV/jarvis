@@ -35,7 +35,10 @@ export interface LiveStore<T> extends Store<Live<T>> {
   stop(): void;
 }
 
-export function liveRead<T>(read: () => Promise<T>, when: Store<unknown>[] = []): LiveStore<T> {
+/** Something whose moves mean "read again": any store, read-only or not. */
+export type Trigger = Pick<Store<unknown>, "subscribe">;
+
+export function liveRead<T>(read: () => Promise<T>, when: Trigger[] = []): LiveStore<T> {
   const store = createStore<Live<T>>({ value: null, error: null });
   let retry: ReturnType<typeof setTimeout> | null = null;
   let wait = RETRY_FIRST_MS;
@@ -70,7 +73,7 @@ export function liveRead<T>(read: () => Promise<T>, when: Store<unknown>[] = [])
 
 /** `liveRead` for one component's lifetime. */
 export function useLiveRead<T>(read: () => Promise<T>,
-                               when: Store<unknown>[] = []): Live<T> & { refresh(): void } {
+                               when: Trigger[] = []): Live<T> & { refresh(): void } {
   const [live] = useState(() => liveRead(read, when));
   useEffect(() => live.stop, [live]);
   const state = useSyncExternalStore(live.subscribe, live.get);

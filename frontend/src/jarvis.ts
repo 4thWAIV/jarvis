@@ -18,9 +18,15 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted, micOff } from "./mic";
-import { sendTyped, statusText, stopSpeaking, voiceState, voiceConnected, conversationJump } from "./voiceStatus";
+import { sendTyped, stopSpeaking, voiceState, voiceConnected, conversationJump } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
+import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
+import { startUiClient } from "./uiClient";
+import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
+         type StoryState } from "./packages";
+import { showMember } from "./bundles";
+import { BUNDLE_VIEW_FRAME } from "./bundleContract";
 
 export function startJarvis(orb: Orb): void {
   // ---------------------------------------------------------------------------
@@ -32,17 +38,6 @@ export function startJarvis(orb: Orb): void {
   let isMuted = false;
   let isOff = false;
 
-  function updateStatus(state: State) {
-    const labels: Record<State, string> = {
-      idle: "",
-      listening: "listening...",
-      thinking: "thinking...",
-      speaking: "",
-      compacting: "",          // the notice banner carries the words; the orb carries the state
-    };
-    statusText.set(labels[state]);
-  }
-
   // ---------------------------------------------------------------------------
   // Init components
   // ---------------------------------------------------------------------------
@@ -51,6 +46,10 @@ export function startJarvis(orb: Orb): void {
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
   startSessionsSocket();
+  // The interface's language: the one in force on the server (locale.ts).
+  startLocale();
+  // The brain's UI requests come to this page on the same socket.
+  const uiClient = startUiClient(socket);
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());
@@ -62,7 +61,6 @@ export function startJarvis(orb: Orb): void {
     currentState = newState;
     voiceState.set(newState);
     orb.setState(newState as OrbState);
-    updateStatus(newState);
     micFollowsState();
   }
 
@@ -150,6 +148,11 @@ export function startJarvis(orb: Orb): void {
     audioPlayer.stop();
     jarvisQuiet();
     readingUtt = null; readingReply = false; chunkText.clear();
+    chunkCue.clear();
+    // The turn he stopped also stops pointing: its UI requests are
+    // withdrawn and every white signal cleared.
+    uiClient.interrupt();
+    storyCue.set(null);
     socket.send({ type: "hush" });
     transition("listening");
   }
@@ -183,10 +186,17 @@ export function startJarvis(orb: Orb): void {
   // on the sentence being heard. A sentence reading a capture back lights
   // the capture's box instead, and is not added to the captions.
   const chunkText = new Map<string, { text: string; capture?: number; reply: boolean }>();
+  // A story beat's cue, by chunk (packages.ts): shown in the package's frame
+  // as the beat's words START playing, and ended as its last words end.
+  const chunkCue = new Map<string, StoryCue>();
   audioPlayer.onStarted((utt, idx, seconds) => {
     readingUtt = utt; skippedReading = null;
     transition("speaking");
     const key = `${utt}:${idx}`;
+    const cue = chunkCue.get(key);
+    chunkCue.delete(key);
+    if (cue) storyCue.set(cue);
+    else storyCue.set(null);
     const chunk = chunkText.get(key);
     chunkText.delete(key);
     if (!chunk) return;
@@ -206,7 +216,7 @@ export function startJarvis(orb: Orb): void {
   socket.onOpen(() => {
     // Scheduler ids belong to a connection epoch; a restarted backend reuses them.
     jarvisReconnected();
-    skipped.clear(); finishedReplies.clear(); knownReplies.clear(); chunkText.clear();
+    skipped.clear(); finishedReplies.clear(); knownReplies.clear(); chunkText.clear(); chunkCue.clear();
     readingUtt = null; readingReply = false; skippedReading = null;
     voiceConnected.set(true);
   });
@@ -220,6 +230,9 @@ export function startJarvis(orb: Orb): void {
   socket.onOpen(() => reconnected.set(reconnected.get() + 1));
 
   audioPlayer.onPlayed((utt, idx) => {
+    const key = `${utt}:${idx}`;
+    if (chunkCue.get(key)?.last) storyCue.set(null);
+    chunkCue.delete(key);
     socket.send({ type: "played", utt, idx });
   });
 
@@ -228,7 +241,7 @@ export function startJarvis(orb: Orb): void {
   // The highlight goes when nothing is playing.
   audioPlayer.onFinished(() => {
     readingUtt = null; readingReply = false;
-    jarvisQuiet(); captureQuiet();
+    jarvisQuiet(); captureQuiet(); storyCue.set(null);
   });
 
   audioPlayer.onNeedsGesture(() => {
@@ -254,7 +267,7 @@ export function startJarvis(orb: Orb): void {
         if (finishedReplies.size > 64) finishedReplies.delete(finishedReplies.values().next().value!);
       }
       jarvisReply(utt, String(msg.text ?? ""), Boolean(msg.done), typeof msg.at === "number" ? msg.at : undefined);
-      if (msg.done && skippedReading === utt) transition("listening");
+      if (msg.done && currentState === "thinking") transition("listening");
     } else if (type === "reading_skipped") {
       const utt = Number(msg.utt);
       if (readingUtt === utt) skipReading(utt);
@@ -276,6 +289,9 @@ export function startJarvis(orb: Orb): void {
             ...(typeof msg.capture === "number" ? { capture: msg.capture } : {}),
           });
         }
+        if (msg.cue && typeof msg.cue === "object") {
+          chunkCue.set(`${msg.utt}:${msg.idx}`, msg.cue as unknown as StoryCue);
+        }
         audioPlayer.enqueue(data, Number(msg.utt), Number(msg.idx));
       }
       if (msg.text) console.log("[JARVIS]", msg.text);
@@ -293,9 +309,28 @@ export function startJarvis(orb: Orb): void {
     } else if (type === "display") {
       // Shown, never spoken: a Sources item in the conversation (SourcesChip.tsx).
       shown(msg as unknown as Display);
+    } else if (type === "package_page") {
+      // A page package to show in the centre area (PackageView.tsx), on the
+      // page's Open page or the brain's open_package_page.
+      if (msg.package) showPackage(msg.package as unknown as PackageInfo);
+    } else if (type === BUNDLE_VIEW_FRAME) {
+      // A file a teammate sent, to show in the centre area
+      // (BundleMemberView.tsx), on the page's Open or the brain's
+      // show_bundle_member. The frame carries ids only.
+      if (typeof msg.message_id === "string" && typeof msg.attachment_id === "string"
+          && typeof msg.member_id === "string") {
+        showMember({ messageId: msg.message_id, attachmentId: msg.attachment_id,
+                     memberId: msg.member_id });
+      }
+    } else if (type === "package_story") {
+      // A story started, moved to a slide, finished or stopped
+      // (story_teller.py): the package's Tell the story and Stop follow it.
+      storyState.set(msg as unknown as StoryState);
     } else if (type === "stop") {
       readingUtt = null; readingReply = false; chunkText.clear();
       audioPlayer.stop();
+      chunkCue.clear();
+      storyCue.set(null);
       jarvisQuiet();
       transition("listening");
     } else if (type === "drop_queued") {

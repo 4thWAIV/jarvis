@@ -6,6 +6,8 @@ decision on the page and the reporter reads the answer back."""
 
 import asyncio
 import importlib
+import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,6 +166,68 @@ def test_the_reporter_starts_and_reports(wired, monkeypatch, capsys):
     with pytest.raises(SystemExit, match="no phase deploy"):
         workflow_report.main(["workflow_report.py", "event", wid, "phase_started", "Go.",
                               "--item", "deploy"])
+
+
+# --- where the reporter finds JARVIS ---------------------------------------
+
+def _recorded(monkeypatch, scheme, host, port):
+    """This test process as a running server recorded on that address."""
+    from jarvis import server_address
+    monkeypatch.setenv("JARVIS_SCHEME", scheme)
+    monkeypatch.setenv("JARVIS_BIND_HOST", host)
+    monkeypatch.setenv("JARVIS_PORT", str(port))
+    server_address.record()
+
+
+@pytest.mark.parametrize("bind,url", [
+    ("127.0.0.1", "https://localhost:8341"),
+    ("0.0.0.0", "https://localhost:8341"),
+    ("::1", "https://localhost:8341"),
+    ("::", "https://localhost:8341"),
+    ("jarvis.example", "https://jarvis.example:8341"),
+])
+def test_the_reporter_dials_the_recorded_server_with_loopback_as_localhost(
+        monkeypatch, bind, url):
+    from jarvis import workflow_report
+    monkeypatch.delenv("JARVIS_URL", raising=False)
+    _recorded(monkeypatch, "https", bind, 8341)
+    assert workflow_report.base_url() == url
+
+
+def test_the_reporter_keeps_the_recorded_scheme(monkeypatch):
+    from jarvis import workflow_report
+    monkeypatch.delenv("JARVIS_URL", raising=False)
+    _recorded(monkeypatch, "http", "127.0.0.1", 8342)
+    assert workflow_report.base_url() == "http://localhost:8342"
+
+
+def test_jarvis_url_wins_over_the_recorded_server(monkeypatch):
+    from jarvis import workflow_report
+    _recorded(monkeypatch, "https", "127.0.0.1", 8341)
+    monkeypatch.setenv("JARVIS_URL", "https://jarvis.example:9000/")
+    assert workflow_report.base_url() == "https://jarvis.example:9000"
+
+
+def test_with_no_running_server_the_reporter_looks_where_it_always_did(monkeypatch):
+    from jarvis import data_paths, server_address, workflow_report
+    monkeypatch.delenv("JARVIS_URL", raising=False)
+    assert workflow_report.base_url() == workflow_report.DEFAULT_URL == "https://localhost:8340"
+    _recorded(monkeypatch, "https", "127.0.0.1", 8341)
+    server_address.forget()
+    assert not data_paths.server_address_path().exists()
+    assert workflow_report.base_url() == workflow_report.DEFAULT_URL
+
+
+def test_the_reporter_runs_as_a_plain_script_without_third_party_packages():
+    """`-S` leaves out site-packages (no starlette, no fastapi) and `-I` the
+    script's own folder, so this is the session's bare Python running the
+    file by its path, as the talk-to-jarvis skill has it do."""
+    from jarvis import data_paths
+    script = data_paths.PACKAGE_DIR / "workflow_report.py"
+    done = subprocess.run([sys.executable, "-S", "-I", str(script), "--help"],
+                          capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert "workflow_report.py" in done.stdout
 
 
 def test_workflow_status_is_offered_to_the_brain_and_taints_the_turn(wired):

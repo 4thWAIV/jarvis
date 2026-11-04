@@ -62,6 +62,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from jarvis import data_paths
+from jarvis.said import Said, english
 
 log = logging.getLogger("jarvis.team")
 
@@ -103,12 +104,79 @@ NOT_SIGNED_IN = frozenset({"disconnected", "signed_out", "pairing"})
 NodeUpdateBuilder = Callable[[Optional[str]], dict]
 
 
-class TeamError(Exception):
-    """Something to tell the user, already in words they can act on.
-    `unreachable` marks "the team server didn't answer"."""
+# Everything JARVIS says about the team server, by code: the English the
+# brain, the log and `last_error` read, and, word for word and placeholder
+# for placeholder, the page's `team.error.<code>` (frontend/src/messages/
+# shell.en.ts; tests/test_team_client.py holds the two together).
+TEAM_SAID = {
+    "sessionUnusable": "The team server sent an unusable session.",
+    "keychainSaveFailed": "JARVIS couldn't save the team session in your Keychain.",
+    "addressMissing": "Enter the team server's address, like https://team.example.com.",
+    "addressHasPath": "Enter just the server's address, without a path.",
+    "addressNotHttps": "The team server's address must start with https://.",
+    "addressNotFound": "JARVIS couldn't find that server — check the address.",
+    "addressPrivate": "That address is on a private network; JARVIS only connects to public team servers.",
+    "noAnswer": "The team server didn't answer ({kind}).",
+    "redirected": "The team server tried to redirect JARVIS elsewhere; JARVIS doesn't follow team-server redirects.",
+    "notTeamServer": "That address isn't a JARVIS team server.",
+    "versionMismatch": "That team server speaks a different version of the protocol; update JARVIS or the server.",
+    "notReady": "The team server isn't ready yet; try again in a minute.",
+    "identityChangedSinceLast": ("This server's identity changed since JARVIS last connected. "
+                                 "Disconnect first if that's expected."),
+    "pairingRefused": "The team server refused to start pairing ({status}).",
+    "approvalElsewhere": "The team server gave an approval link on another site.",
+    "pairingExpired": "The pairing code expired. Start again.",
+    "pairingDenied": "The pairing was denied on the team server.",
+    "pairingFailed": "Pairing failed ({status}).",
+    "pairingUnexpected": "Pairing failed unexpectedly. Start again.",
+    "identityChangedPairing": "The team server's identity changed during pairing.",
+    "noSessionSignIn": "JARVIS has no saved session for this server; sign in again.",
+    "noSession": "JARVIS has no saved session for this server.",
+    "sessionEnded": "The team server ended this session; sign in again.",
+    "answered": "The team server answered {status}.",
+    "statusUnreadable": "The team server sent an unreadable status.",
+    "identityChanged": ("The team server's identity changed; JARVIS stopped using it. "
+                        "Disconnect and connect again if that's expected."),
+    "databaseUnreachable": "The team server can't reach its database.",
+    "nodeUpdateFailed": "JARVIS couldn't put together its node update.",
+    "snapshotUnreadable": "The team server sent an unreadable network snapshot.",
+    "notConnected": "JARVIS isn't connected to a team server.",
+}
 
-    def __init__(self, message: str, unreachable: bool = False):
-        super().__init__(message)
+
+@dataclass(frozen=True)
+class Problem:
+    """Something to tell the user about the team server: by its code and
+    values (`said`, worded by the page in the interface's language), its
+    English (`english`: the team server's own words when it sent some,
+    else the code's), and those words of the team server's (`detail`),
+    which the page shows as they came. A problem made from English alone
+    has no code, and the page shows the English as it came."""
+    said: Optional[Said]
+    english: str
+    detail: str = ""
+
+    def to_json(self) -> Optional[dict]:
+        """What the page is sent beside the English: code, values, detail."""
+        if self.said is None:
+            return None
+        return {"code": self.said.code, "values": self.said.values, "detail": self.detail}
+
+
+def problem(code: str, detail: str = "", **values) -> Problem:
+    """The problem `code` (TEAM_SAID) with `values`; `detail` is what the
+    team server itself said, if anything, and is then the English too."""
+    return Problem(Said(code, values), detail or english(TEAM_SAID[code], values), detail)
+
+
+class TeamError(Exception):
+    """Something to tell the user, already in words they can act on: a
+    Problem (or bare English). `unreachable` marks "the team server didn't
+    answer"."""
+
+    def __init__(self, message: str | Problem, unreachable: bool = False):
+        self.problem = message if isinstance(message, Problem) else Problem(None, message)
+        super().__init__(self.problem.english)
         self.unreachable = unreachable
 
 
@@ -142,13 +210,13 @@ class KeychainStore:
 
     def set(self, account: str, secret: str) -> None:
         if not secret or any(c in secret for c in " \t\r\n\"'\\"):
-            raise TeamError("The team server sent an unusable session.")
+            raise TeamError(problem("sessionUnusable"))
         line = (f"add-generic-password -U -s \"{self.service}\" -a \"{account}\" "
                 f"-w {secret}\n")
         subprocess.run(["security", "-i"], input=line, capture_output=True,
                        text=True, timeout=10)
         if self.get(account) != secret:
-            raise TeamError("JARVIS couldn't save the team session in your Keychain.")
+            raise TeamError(problem("keychainSaveFailed"))
 
     def delete(self, account: str) -> None:
         subprocess.run(["security", "delete-generic-password", "-s", self.service,
@@ -168,12 +236,12 @@ def normalize_url(value: str) -> str:
     value = (value or "").strip().rstrip("/")
     parts = urlsplit(value)
     if not parts.scheme or not parts.hostname:
-        raise TeamError("Enter the team server's address, like https://team.example.com.")
+        raise TeamError(problem("addressMissing"))
     if parts.username or parts.password or parts.query or parts.fragment or parts.path:
-        raise TeamError("Enter just the server's address, without a path.")
+        raise TeamError(problem("addressHasPath"))
     origin = f"{parts.scheme}://{parts.netloc}".lower()
     if parts.scheme != "https" and origin not in _dev_servers():
-        raise TeamError("The team server's address must start with https://.")
+        raise TeamError(problem("addressNotHttps"))
     return origin
 
 
@@ -201,10 +269,9 @@ async def check_destination(origin: str, resolver: Resolver = _resolve) -> None:
         addresses = await asyncio.to_thread(resolver, parts.hostname,
                                             parts.port or 443)
     except OSError:
-        raise TeamError("JARVIS couldn't find that server — check the address.")
+        raise TeamError(problem("addressNotFound"))
     if not addresses or not all(_public(a) for a in addresses):
-        raise TeamError("That address is on a private network; JARVIS only "
-                        "connects to public team servers.")
+        raise TeamError(problem("addressPrivate"))
 
 
 # -- status --------------------------------------------------------------------
@@ -267,6 +334,8 @@ class NetworkCache:
     received_at: Optional[float] = None
     failed: bool = False
     last_error: Optional[str] = None
+    # The last error by code (Problem.to_json), beside its English.
+    last_error_said: Optional[dict] = None
     round_trip_ms: Optional[int] = None
     failures: int = 0
     retry_after: float = 0.0
@@ -330,6 +399,7 @@ class TeamConnection:
         self.generation = 0
         self.pairing: Optional[Pairing] = None
         self.last_error: Optional[str] = None
+        self.last_error_said: Optional[dict] = None
         # The address last paired with or disconnected from, so the Team
         # section can offer it again once a code expires or is cancelled.
         self.last_server_url: Optional[str] = None
@@ -347,6 +417,11 @@ class TeamConnection:
         self._node_update: Optional[NodeUpdateBuilder] = None
         self._exchanger: Optional[asyncio.Task] = None
         self._network_wake = asyncio.Event()
+
+    def _note(self, p: Optional[Problem]) -> None:
+        """The last error, in English and by code, or none."""
+        self.last_error = p.english if p else None
+        self.last_error_said = p.to_json() if p else None
 
     # -- persistence -----------------------------------------------------------
 
@@ -402,11 +477,9 @@ class TeamConnection:
             async with self._client(timeout) as client:
                 resp = await client.request(method, url, json=json_body, headers=headers)
         except httpx.HTTPError as e:
-            raise TeamError(f"The team server didn't answer ({type(e).__name__}).",
-                            unreachable=True) from None
+            raise TeamError(problem("noAnswer", kind=type(e).__name__), unreachable=True) from None
         if 300 <= resp.status_code < 400:
-            raise TeamError("The team server tried to redirect JARVIS elsewhere; "
-                            "JARVIS doesn't follow team-server redirects.")
+            raise TeamError(problem("redirected"))
         return resp
 
     # -- connecting ------------------------------------------------------------------
@@ -420,17 +493,15 @@ class TeamConnection:
         except ValueError:
             version = {}
         if resp.status_code != 200 or version.get("service") != "jarvis-team-server":
-            raise TeamError("That address isn't a JARVIS team server.")
+            raise TeamError(problem("notTeamServer"))
         if version.get("api_version") != API_VERSION:
-            raise TeamError("That team server speaks a different version of the "
-                            "protocol; update JARVIS or the server.")
+            raise TeamError(problem("versionMismatch"))
         server_id = str(version.get("server_id") or "")
         if not server_id:
-            raise TeamError("The team server isn't ready yet; try again in a minute.")
+            raise TeamError(problem("notReady"))
         if (self.saved and self.saved["server_url"] == origin
                 and self.saved["server_id"] != server_id):
-            raise TeamError("This server's identity changed since JARVIS last "
-                            "connected. Disconnect first if that's expected.")
+            raise TeamError(problem("identityChangedSinceLast"))
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(
             hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -440,7 +511,7 @@ class TeamConnection:
                                               "code_challenge_method": "S256"})
         if resp.status_code != 200:
             code, message = _error_body(resp)
-            raise TeamError(message or f"The team server refused to start pairing ({resp.status_code}).")
+            raise TeamError(problem("pairingRefused", message, status=resp.status_code))
         body = resp.json()
         await self.cancel_pairing()
         expires = _parse_ts(body.get("expires_at")) or (_now() + 600)
@@ -452,8 +523,8 @@ class TeamConnection:
             poll_token=str(body["poll_token"]), verifier=verifier)
         if not self.pairing.verification_uri_complete.startswith(origin + "/"):
             self.pairing = None
-            raise TeamError("The team server gave an approval link on another site.")
-        self.last_error = None
+            raise TeamError(problem("approvalElsewhere"))
+        self._note(None)
         self.pairing.task = asyncio.create_task(self._await_approval(self.pairing))
         return self.snapshot()
 
@@ -467,7 +538,7 @@ class TeamConnection:
         try:
             while self.pairing is p:
                 if _now() > p.expires_at:
-                    self.last_error = "The pairing code expired. Start again."
+                    self._note(problem("pairingExpired"))
                     break
                 await asyncio.sleep(p.interval)
                 try:
@@ -484,16 +555,15 @@ class TeamConnection:
                     await self._adopt(p, resp.json())
                     break
                 code, message = _error_body(resp)
-                self.last_error = {
-                    "access_denied": "The pairing was denied on the team server.",
-                    "expired_token": "The pairing code expired. Start again.",
-                }.get(code, message or f"Pairing failed ({resp.status_code}).")
+                self._note({"access_denied": problem("pairingDenied"),
+                            "expired_token": problem("pairingExpired")}.get(
+                    code, problem("pairingFailed", message, status=resp.status_code)))
                 break
         except asyncio.CancelledError:
             raise
         except Exception as e:  # never let a pairing take anything else down
             log.warning("team: pairing failed (%s)", type(e).__name__)
-            self.last_error = "Pairing failed unexpectedly. Start again."
+            self._note(problem("pairingUnexpected"))
         finally:
             if self.pairing is p:
                 self.pairing = None
@@ -501,7 +571,7 @@ class TeamConnection:
     async def _adopt(self, p: Pairing, body: dict) -> None:
         token = str(body.get("session_token") or "")
         if body.get("server_id") != p.server_id:
-            self.last_error = "The team server's identity changed during pairing."
+            self._note(problem("identityChangedPairing"))
             return
         old = self.saved
         old_token = await self._secret() if old else None
@@ -517,7 +587,7 @@ class TeamConnection:
         self.generation += 1
         self.signed_out = False
         self.failures = 0
-        self.last_error = None
+        self._note(None)
         self._apply_status({"team": body.get("team"), "me": body.get("me"),
                             "session_expires_at": body.get("session_expires_at")})
         self._save()
@@ -539,34 +609,33 @@ class TeamConnection:
                 return
             token = await self._secret()
             if not token:
-                self._sign_out("JARVIS has no saved session for this server; sign in again.")
+                self._sign_out(problem("noSessionSignIn"))
                 return
             try:
                 resp = await self._request("GET", self.saved["server_url"] + "/api/v1/status",
                                            token=token)
             except TeamError as e:
-                self._failed(str(e))
+                self._failed(e.problem)
                 return
             if resp.status_code in (401, 403):
                 code, message = _error_body(resp)
                 await self._forget_secret(self.saved["server_id"])
-                self._sign_out(message or "The team server ended this session; sign in again.")
+                self._sign_out(problem("sessionEnded", message))
                 return
             if resp.status_code != 200:
-                self._failed(f"The team server answered {resp.status_code}.")
+                self._failed(problem("answered", status=resp.status_code))
                 return
             try:
                 status = resp.json()
             except ValueError:
-                self._failed("The team server sent an unreadable status.")
+                self._failed(problem("statusUnreadable"))
                 return
             if status.get("server_id") != self.saved["server_id"]:
                 await self._forget_secret(self.saved["server_id"])
-                self._sign_out("The team server's identity changed; JARVIS stopped "
-                               "using it. Disconnect and connect again if that's expected.")
+                self._sign_out(problem("identityChanged"))
                 return
             self.failures = 0
-            self.last_error = None
+            self._note(None)
             self.saved["last_contact_at"] = _now()
             self._apply_status(status)
             key = status.get("network_account_key")
@@ -575,19 +644,19 @@ class TeamConnection:
             if self.network.failures:
                 self._network_wake.set()   # back in contact: publish now
 
-    def _failed(self, message: str) -> None:
+    def _failed(self, p: Problem) -> None:
         self.failures += 1
-        self.last_error = message
+        self._note(p)
         self.last_failure_at = _now()
 
-    def _sign_out(self, message: str) -> None:
+    def _sign_out(self, p: Problem) -> None:
         self.signed_out = True
-        self.last_error = message
+        self._note(p)
         self._account_key = None
         self._save()
-        log.info("team: signed out (%s)", message)
+        log.info("team: signed out (%s)", p.english)
         if self.network.raw is not None:
-            self._network_failed(message)
+            self._network_failed(p)
 
     def next_delay(self) -> float:
         return _backoff(self.failures, STATUS_INTERVAL_SEC, MAX_BACKOFF_SEC)
@@ -633,14 +702,14 @@ class TeamConnection:
         except Exception as e:  # a hint that fails must not stop the exchange
             log.warning("team: network hint failed (%s)", type(e).__name__)
 
-    def _network_failed(self, message: str, *, round_trip_ms: Optional[int] = None,
+    def _network_failed(self, p: Problem, *, round_trip_ms: Optional[int] = None,
                         retry_after: float = 0.0) -> None:
         """A failed exchange: the last snapshot stays, stale. Only a 503
         with health keeps a round trip (`round_trip_ms`)."""
         n = self.network
         n.failed = True
         n.failures += 1
-        n.last_error = message
+        n.last_error, n.last_error_said = p.english, p.to_json()
         n.round_trip_ms = round_trip_ms
         n.retry_after = retry_after
         self._network_changed()
@@ -655,7 +724,7 @@ class TeamConnection:
             n.raw, n.revision, n.received_at = raw, revision, _now()
         n.failed = False
         n.failures = 0
-        n.last_error = None
+        n.last_error = n.last_error_said = None
         n.round_trip_ms = round_trip_ms
         n.retry_after = 0.0
         self._network_changed()
@@ -667,8 +736,7 @@ class TeamConnection:
             snapshot = json.loads(self.network.raw)
             snapshot["server"] = health
             self.network.raw = json.dumps(snapshot, separators=(",", ":")).encode()
-        self._network_failed("The team server can't reach its database.",
-                             round_trip_ms=round_trip_ms)
+        self._network_failed(problem("databaseUnreachable"), round_trip_ms=round_trip_ms)
 
     async def exchange_once(self) -> None:
         """One node update out, one snapshot back. Never raises."""
@@ -677,14 +745,14 @@ class TeamConnection:
         saved = self.saved
         token = await self._secret()
         if not token:
-            self._network_failed("JARVIS has no saved session for this server.")
+            self._network_failed(problem("noSession"))
             self._wake.set()           # the status poll decides what that means
             return
         try:
             body = self._node_update(self._account_key)
         except Exception as e:
             log.warning("team: the node update could not be built (%s)", type(e).__name__)
-            self._network_failed("JARVIS couldn't put together its node update.")
+            self._network_failed(problem("nodeUpdateFailed"))
             return
         started = time.monotonic()
         try:
@@ -693,7 +761,7 @@ class TeamConnection:
                                        timeout=NETWORK_TIMEOUT_SEC)
         except TeamError as e:
             if self.saved is saved and self._paired():
-                self._network_failed(str(e))
+                self._network_failed(e.problem)
             return
         round_trip_ms = round((time.monotonic() - started) * 1000)
         if self.saved is not saved or not self._paired():
@@ -701,7 +769,7 @@ class TeamConnection:
         if resp.status_code == 200:
             snapshot = _snapshot_of(resp.content)
             if snapshot is None:
-                self._network_failed("The team server sent an unreadable network snapshot.")
+                self._network_failed(problem("snapshotUnreadable"))
             else:
                 self._store_snapshot(resp.content, snapshot["revision"], round_trip_ms)
             return
@@ -709,7 +777,7 @@ class TeamConnection:
             self._store_health(health, round_trip_ms)
             return
         _, message = _error_body(resp)
-        self._network_failed(message or f"The team server answered {resp.status_code}.",
+        self._network_failed(problem("answered", message, status=resp.status_code),
                              retry_after=_retry_after(resp))
         if resp.status_code in (401, 403):
             self._wake.set()           # the status poll decides whether it's over
@@ -748,6 +816,7 @@ class TeamConnection:
             "received_at": iso_utc(n.received_at),
             "stale": stale,
             "last_error": n.last_error,
+            "last_error_said": n.last_error_said,
             "round_trip_ms": n.round_trip_ms,
             "last_contact_at": iso_utc((self.saved or {}).get("last_contact_at")),
             "connection": self.state(),
@@ -779,7 +848,7 @@ class TeamConnection:
         self.signed_out = False
         self._account_key = None
         self._clear_network()
-        self.last_error = None
+        self._note(None)
         self.failures = 0
         self._save()
         if not token:
@@ -795,10 +864,10 @@ class TeamConnection:
     async def _session(self) -> tuple[str, str]:
         """The saved server's URL and this session's credential."""
         if not self.saved or self.signed_out:
-            raise TeamError("JARVIS isn't connected to a team server.")
+            raise TeamError(problem("notConnected"))
         token = await self._secret()
         if not token:
-            raise TeamError("JARVIS has no saved session for this server; sign in again.")
+            raise TeamError(problem("noSessionSignIn"))
         return self.saved["server_url"], token
 
     async def _ended(self, resp: httpx.Response) -> None:
@@ -807,7 +876,7 @@ class TeamConnection:
         if resp.status_code == 401:
             await self._forget_secret(self.saved["server_id"])
             code, message = _error_body(resp)
-            self._sign_out(message or "The team server ended this session; sign in again.")
+            self._sign_out(problem("sessionEnded", message))
 
     async def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
         """Forward one member-management call. Returns (status, JSON body)."""
@@ -816,8 +885,8 @@ class TeamConnection:
         try:
             payload = resp.json()
         except ValueError:
-            payload = {"error": {"code": "bad_response",
-                                 "message": f"The team server answered {resp.status_code}."}}
+            said = problem("answered", status=resp.status_code)
+            payload = {"error": {"code": "bad_response", "message": said.english, "said": said.to_json()}}
         await self._ended(resp)
         return resp.status_code, payload
 
@@ -840,15 +909,13 @@ class TeamConnection:
                 async with client.stream(method, server_url + path, content=content,
                                          headers=headers) as resp:
                     if 300 <= resp.status_code < 400:
-                        raise TeamError("The team server tried to redirect JARVIS elsewhere; "
-                                        "JARVIS doesn't follow team-server redirects.")
+                        raise TeamError(problem("redirected"))
                     if resp.status_code == 401:
                         await resp.aread()
                         await self._ended(resp)
                     yield resp
         except httpx.HTTPError as e:
-            raise TeamError(f"The team server didn't answer ({type(e).__name__}).",
-                            unreachable=True) from None
+            raise TeamError(problem("noAnswer", kind=type(e).__name__), unreachable=True) from None
 
     # -- what the page sees ---------------------------------------------------------------
 
@@ -880,6 +947,7 @@ class TeamConnection:
             "session_expires_at": saved.get("session_expires_at"),
             "last_contact_at": iso_utc(saved.get("last_contact_at")),
             "last_error": self.last_error,
+            "last_error_said": self.last_error_said,
             "poll_interval_sec": STATUS_INTERVAL_SEC,
             "pairing": None if p is None else {
                 "user_code": p.user_code,

@@ -5,16 +5,26 @@
  * per hour with the page quiet and not. Pure: no fetching and no drawing.
  */
 
+import { formatDateTime, t } from "./locale";
 import type { Notice, Sample, VoiceEvent } from "./voiceHealth";
 
 export const DROP_KINDS = new Set(["overload"]);
 export const INCIDENT_KINDS = new Set(["overload", "decoder-failed", "interrupted", "busy",
                                        "model-unavailable"]);
-export const INCIDENT_WORDS: Record<string, string> = {
-  overload: "Speech dropped", "decoder-failed": "Recogniser failed",
-  interrupted: "Last words not finished", busy: "Another page listening",
-  "model-unavailable": "No speech model",
+/** An incident's kind in words, or the kind itself for one this page does
+ *  not know. */
+export const incidentWords = (kind: string): string =>
+  INCIDENT_KINDS.has(kind) ? t(`main.voice.incident.${kind as IncidentKind}`) : kind;
+type IncidentKind = "overload" | "decoder-failed" | "interrupted" | "busy" | "model-unavailable";
+
+// The page's notice sources (the callers of voiceHealth.notice) and their
+// words; a source not here is shown as it was recorded.
+const SOURCE_KEYS: Record<string, "status" | "input" | "playback" | "unvoiced" | "assistant"> = {
+  Status: "status", Input: "input", Playback: "playback", "Unvoiced speech": "unvoiced", Assistant: "assistant",
 };
+/** Where a notice came from, in words. */
+export const sourceWords = (source: string): string =>
+  source in SOURCE_KEYS ? t(`main.voice.source.${SOURCE_KEYS[source]}`) : source;
 // The same line again within this long is one group: "×12".
 const GROUP_WITHIN_SEC = 60;
 // What "just before a drop" means.
@@ -93,4 +103,5 @@ export function quietComparison(samples: Sample[], events: VoiceEvent[]):
 }
 
 /** "14:49:52" in local time, from unix seconds. */
-export const clock = (at: number) => new Date(at * 1000).toLocaleTimeString([], { hour12: false });
+export const clock = (at: number) =>
+  formatDateTime(at * 1000, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });

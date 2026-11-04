@@ -676,13 +676,17 @@ def _check_speech_input_sync() -> Check:
                     "microphone cannot be transcribed. Typing still works.",
             remedy="Run: .venv/bin/pip install -r requirements.txt",
         )
-    problem = transcriber.model_problem()
+    # The model JARVIS starts with (language_setting.py): the chosen
+    # language's, English by default.
+    from jarvis import language_setting
+    model = language_setting.startup_model()
+    problem = transcriber.model_problem(model=model)
     if problem:
         return Check(name="speech_input", status=STATUS_WARN,
                      message=problem + " Typing still works.",
-                     remedy=f"Run: {transcriber.SETUP_COMMAND}")
+                     remedy=f"Run: {transcriber.setup_command(model)}")
     return Check(name="speech_input", status=STATUS_OK,
-                 message=f"The speech model is installed at {transcriber.model_dir()}.")
+                 message=f"The speech model is installed at {transcriber.model_dir(model)}.")
 
 
 # ── running them all ─────────────────────────────────────────────────────
@@ -770,7 +774,8 @@ def _phrase_for(check: Check) -> str:
     if name == "cross_session_inbound":
         return "cross-session steering isn't enabled"
     if name == "speech_input":
-        if "sherpa-onnx" in msg:
+        # Not just "sherpa-onnx": every model's folder name starts with it.
+        if msg.startswith("sherpa-onnx is not installed"):
             return "the speech recognition package isn't installed, so I can't hear you"
         return "the speech model isn't installed, so I can't hear you"
     if name == "session_skill":

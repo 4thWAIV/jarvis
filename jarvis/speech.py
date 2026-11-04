@@ -15,12 +15,35 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Awaitable, Callable, Optional
 
+from jarvis import spoken_words
+
 log = logging.getLogger("jarvis.speech")
 
 _ABBREVIATIONS = {
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "inc", "ltd",
     "co", "no", "approx", "fig", "dept", "e.g", "i.e", "a.m", "p.m", "u.s", "u.k",
+    # Spanish ("sr", "dr" are above). None is an English word.
+    "sra", "srta", "dra", "ud", "uds", "pág", "núm", "aprox",
 }
+# Spanish writes the time of day spaced: "las 3 p. m.". Neither dot ends a
+# sentence, as "p.m." does not.
+_SPACED_MERIDIEM = ("a. m.", "p. m.")
+
+
+def _in_spaced_meridiem(text: str, i: int) -> Optional[bool]:
+    """Whether the dot at `i` is one of "a. m." / "p. m.": True, False, or
+    None when the text so far ends part way into one and the rest decides."""
+    for form in _SPACED_MERIDIEM:
+        for dot in (1, 4):                       # the two dots in the form
+            start = i - dot
+            if start < 0 or (start > 0 and text[start - 1].isalnum()):
+                continue
+            seen = text[start:start + len(form)].lower()
+            if seen == form:
+                return True
+            if len(seen) < len(form) and form.startswith(seen):
+                return None
+    return False
 _CLOSERS = '"\')]'
 _CLAUSE_BREAKS = (", ", "; ", " — ", " – ", ": ")
 _STRONG_BREAKS = (" — ", " – ", "; ", ": ")   # a pause a listener already expects
@@ -102,6 +125,12 @@ class SentenceSplitter:
                     i = k                            # "3.5", "server.py"
                     continue
                 if text[i] == "." and j - i == 1:
+                    meridiem = _in_spaced_meridiem(text, i)
+                    if meridiem is None:
+                        return None                  # "3 p." may be "3 p. m."
+                    if meridiem:
+                        i = k
+                        continue
                     word = _word_before(text, i)
                     if (word.lower() in _ABBREVIATIONS or (len(word) == 1 and word.isupper())
                             or word.isdigit()):      # "Mr.", initials "J.", list markers "1."
@@ -133,7 +162,6 @@ class Priority(IntEnum):
 
 
 BRIDGES = ("As I was saying —", "Back to it —", "Where was I —")
-CANCEL_WORDS = ("wait", "no", "stop", "cancel", "hold on")
 UNREAD_PREFIX = "Before I forget —"
 # The last resort, and only that. An unacked chunk's tokens count as echo
 # because the chunk may still be coming out of the speaker — and nothing plays
@@ -235,49 +263,26 @@ SHORT_UTTERANCE_TOKENS = 2
 Synthesize = Callable[[str], Awaitable[Optional[bytes]]]
 Emit = Callable[[dict], Awaitable[None]]
 
-_TOKEN_RE = re.compile(r"[a-z0-9']+")
-
 
 def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall((text or "").lower())
+    return spoken_words.folded_words(text, apostrophes=True)
 
 
-# "Say that again" must be replayed, not answered — regenerating an answer
-# costs a brain turn AND comes back as different words, which does not even
-# answer what the user asked. So this is matched narrowly, on the tokenized
-# text with a small set of filler words trimmed off BOTH ends only (never the
-# middle, so a filler word embedded in a real sentence cannot accidentally
-# collapse it into a trigger):
-#   "say that again" / "say it again" / "repeat" / "repeat that" /
-#   "repeat it" / "what did you say" / "what was that" / "come again" /
-#   "one more time" / "pardon" / "pardon me"
-# Deliberately NOT matched: anything that asks a real question, however
-# related — "what did you mean by that", "what do you mean", "can you
-# explain that again", "say more about that". Those go to the brain like any
-# other turn.
-_REPLAY_FILLER = frozenset({"sorry", "jarvis", "please", "um", "uh", "i'm"})
-_REPLAY_TRIGGERS = frozenset({
-    ("say", "that", "again"),
-    ("say", "it", "again"),
-    ("repeat",),
-    ("repeat", "that"),
-    ("repeat", "it"),
-    ("what", "did", "you", "say"),
-    ("what", "was", "that"),
-    ("come", "again"),
-    ("one", "more", "time"),
-    ("pardon",),
-    ("pardon", "me"),
-})
+def _is_cancel(toks: list[str]) -> bool:
+    """Is the whole utterance one of the active language's cancel words?"""
+    return " ".join(toks) in spoken_words.vocabulary().cancel_phrases
 
 
 def _is_replay_request(toks: list[str]) -> bool:
+    """Is the whole utterance, filler trimmed off its ends only, a request to
+    say that again? (`spoken_words` has the lists and why they are narrow.)"""
+    words = spoken_words.vocabulary()
     i, j = 0, len(toks)
-    while i < j and toks[i] in _REPLAY_FILLER:
+    while i < j and toks[i] in words.replay_filler:
         i += 1
-    while j > i and toks[j - 1] in _REPLAY_FILLER:
+    while j > i and toks[j - 1] in words.replay_filler:
         j -= 1
-    return tuple(toks[i:j]) in _REPLAY_TRIGGERS
+    return tuple(toks[i:j]) in words.replay_phrases
 
 
 @dataclass
@@ -292,6 +297,10 @@ class Chunk:
     earliest_ack: float = 0.0   # no honest ack can arrive before this (see ACK_FLOOR_FACTOR)
     synthesis: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
     capture: Optional[int] = None   # the capture this chunk reads back, if it does
+    # What the page shows while this chunk plays (a story beat's targets):
+    # sent verbatim on its audio frame as `cue`, never read here. The last
+    # chunk of a cue carries `"last": True`, so the page knows where it ends.
+    cue: Optional[dict] = None
 
 
 @dataclass
@@ -389,7 +398,7 @@ class SpeechScheduler:
                  stale_after: float = 60.0, echo_window: float = 6.0,
                  batch_settle: float = 2.0, ack_timeout: float = 45.0,
                  transport_ready: Optional[Callable[[], bool]] = None,
-                 bridges: tuple = BRIDGES, cancel_words: tuple = CANCEL_WORDS,
+                 bridges: tuple = BRIDGES,
                  clock: Callable[[], float] = time.monotonic):
         """`clock` drives scheduling decisions only; `wait_for` and
         `open_cancel_window` sleep in real time. `transport_ready` says whether
@@ -414,7 +423,6 @@ class SpeechScheduler:
         self.stale_after = stale_after
         self.echo_window = echo_window
         self.bridges = bridges
-        self.cancel_words = tuple(cancel_words)
         self._next_id = 1
         self._current: Optional[Utterance] = None
         self._paused: Optional[Utterance] = None
@@ -557,11 +565,44 @@ class SpeechScheduler:
         self._kick()
         return u
 
-    def _add_reading(self, utt: Utterance, text: str, capture: int) -> None:
+    def narrate(self, beats: list[tuple[str, dict]]) -> Utterance:
+        """Speak `beats` in order as one utterance, after whatever is already
+        queued: each beat's text split into sentences, and every chunk of a
+        beat carrying its cue, so the page shows the cue while those words
+        play. A reply he asked for: his speaking, hush and a cancel word stop
+        it as they stop any reply; wait_for says when it has all been heard."""
+        u = self._new(Priority.NORMAL, "say", immediate=True, label="reply")
+        for text, cue in beats:
+            self._add_reading(u, text, cue=cue)
+        u.closed = True
+        self._pending.append(u)
+        self._kick()
+        return u
+
+    async def withdraw(self, utt: Utterance, reason: str = "") -> None:
+        """Stop this one utterance, playing or queued, and leave everything
+        else as it is: a narration stopped from its own Stop."""
+        if utt.done:
+            return
+        log.info("speech: utterance %s withdrawn%s", utt.id, f" ({reason})" if reason else "")
+        utt.cancelled = True
+        self._pending = [u for u in self._pending if u is not utt]
+        if self._paused is utt:
+            self._paused = None
+        if self._current is utt:
+            self._current = None
+            self._settle(utt.id)
+            await self._emit({"type": "stop"})
+            await self._set_speaking(False)
+        self._kick()
+
+    def _add_reading(self, utt: Utterance, text: str, capture: Optional[int] = None,
+                     cue: Optional[dict] = None) -> None:
         reading = SentenceSplitter()
-        for piece in [*reading.feed(text), reading.flush()]:
-            if piece:
-                self._add_chunk(utt, piece, capture=capture)
+        pieces = [p for p in [*reading.feed(text), reading.flush()] if p]
+        for n, piece in enumerate(pieces):
+            marked = None if cue is None else {**cue, "last": n == len(pieces) - 1}
+            self._add_chunk(utt, piece, capture=capture, cue=marked)
 
     async def wait_played(self, utt: Utterance, idx: int, timeout: float = 60.0) -> bool:
         """True once chunk `idx` of `utt` has been played; False on cancel or
@@ -663,7 +704,7 @@ class SpeechScheduler:
         # sentence. A missed cancel sends a message, or presses a key in
         # somebody's terminal, that the user audibly tried to stop. In this
         # one window, failing toward NOT acting is the right way to be wrong.
-        if allow_cancel and self._cancel_window_open and " ".join(toks) in self.cancel_words:
+        if allow_cancel and self._cancel_window_open and _is_cancel(toks):
             return "cancel"
         if allow_replay and _is_replay_request(toks):
             return "replay"
@@ -781,7 +822,7 @@ class SpeechScheduler:
             # file" over "Deleting the staging files") must still cut him off.
             return True
         toks = _tokens(text)
-        if " ".join(toks) not in self.cancel_words or novel < 1:
+        if not _is_cancel(toks) or novel < 1:
             return False
         return not self._is_stem_echo(toks)
 
@@ -805,9 +846,11 @@ class SpeechScheduler:
         """Is every one of these words just a clipped form of something he is
         currently saying?
 
-        Deliberately narrow. Four characters is the minimum stem — "no"
-        against "nothing" is two characters of evidence, far too little to
-        override a deliberate one-word interruption — and the two words may
+        Deliberately narrow. Four characters of the SHORTER word is the
+        minimum stem — "no" against "nothing" is two characters of evidence,
+        far too little to override a deliberate one-word interruption, and so
+        is "es" or "a" he is saying against "espera" or "alto" heard (or "can"
+        against "cancel") — and the two words may
         differ by at most four characters, which covers the endings ASR
         actually drops (-s, -ed, -ing, -ping, -led) and not much else. Used
         ONLY by the one-word cancel branch above.
@@ -816,7 +859,7 @@ class SpeechScheduler:
         if not recent:
             return False
         return all(
-            any(len(t) >= 4 and abs(len(r) - len(t)) <= 4
+            any(min(len(t), len(r)) >= 4 and abs(len(r) - len(t)) <= 4
                 and (r.startswith(t) or t.startswith(r))
                 for r in recent)
             for t in toks)
@@ -832,7 +875,7 @@ class SpeechScheduler:
             self._last_user_speech = self._clock()
             self._kick_later(self.end_of_turn)
             self._kick_later(self.pause_after)
-        is_cancel_word = " ".join(_tokens(text)) in self.cancel_words
+        is_cancel_word = _is_cancel(_tokens(text))
         if verdict == "cancel":
             self._cancel_event.set()
         if self._speaking and (typed or is_cancel_word or verdict == "replay"
@@ -873,7 +916,7 @@ class SpeechScheduler:
             replay = self._new(Priority.NORMAL, "say", immediate=True, label=u.label)
             for c in u.chunks:
                 replay.chunks.append(Chunk(c.text, audio=c.audio, ready=True,
-                                           capture=c.capture))
+                                           capture=c.capture, cue=c.cue))
             replay.closed = True
             self._pending.append(replay)
             self._kick()
@@ -1000,8 +1043,9 @@ class SpeechScheduler:
         self._kick()
 
     # ── internals ──────────────────────────────────────────────────────
-    def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None) -> None:
-        chunk = Chunk(text, capture=capture)
+    def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None,
+                   cue: Optional[dict] = None) -> None:
+        chunk = Chunk(text, capture=capture, cue=cue)
         utt.chunks.append(chunk)
         chunk.synthesis = self._spawn(self._synthesize(utt, chunk))
 
@@ -1311,6 +1355,8 @@ class SpeechScheduler:
                            "text": chunk.text, "kind": u.label}
                     if chunk.capture is not None:
                         msg["capture"] = chunk.capture
+                    if chunk.cue is not None:
+                        msg["cue"] = chunk.cue
                     await self._emit_raw(msg)
                     u.high_sent = max(u.high_sent, idx)   # it really did go out
                 except Exception as e:

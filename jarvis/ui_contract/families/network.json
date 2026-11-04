@@ -1,0 +1,47 @@
+{
+  "family": "network",
+  "owner": "integrator",
+  "views": [],
+  "commands": [
+    {
+      "id": "network.open",
+      "label": "Open the team server's or one instance's detail in the centre",
+      "view": "main.network",
+      "args": {
+        "kind": {"type": "enum", "values": ["node", "server"]},
+        "nodeId": {"type": "key", "entity": "node"}
+      },
+      "required": ["kind"],
+      "actors": ["human", "brain"],
+      "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}]
+    },
+    {
+      "id": "network.close",
+      "label": "Close the team server or instance detail",
+      "view": "main.network",
+      "args": {},
+      "required": [],
+      "actors": ["human", "brain"],
+      "effects": [{"effect": "centre.detail-closed"}]
+    }
+  ],
+  "kinds": [
+    {"kind": "node", "entity": "node", "label": "JARVIS instance",
+     "parts": ["name", "presence", "human", "cpu", "memory", "pace", "owner", "version", "lastUpdate",
+               "coverage", "remaining", "accounts"],
+     "presentations": [
+       {"view": "right.network", "parts": ["name", "presence", "human", "cpu", "memory", "pace"],
+        "reveal": {"command": "right.tab.select", "args": {"tab": "network"}}},
+       {"view": "main.network", "parts": ["name", "owner", "version", "presence", "lastUpdate", "human",
+                                          "cpu", "memory", "pace", "coverage", "remaining", "accounts"],
+        "reveal": {"command": "network.open", "args": {"kind": "node", "nodeId": "$key"}}}
+     ]},
+    {"kind": "teamServer", "entity": null, "label": "Team server",
+     "parts": ["readiness", "server", "database", "lastWrite", "connection", "service"],
+     "presentations": [
+       {"view": "left.fixed", "parts": ["readiness", "server", "database", "lastWrite"]},
+       {"view": "main.network", "parts": ["connection", "database", "service"],
+        "reveal": {"command": "network.open", "args": {"kind": "server"}}}
+     ]}
+  ]
+}

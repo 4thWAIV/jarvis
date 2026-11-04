@@ -74,9 +74,10 @@ def _canonical(raw) -> Path:
     return Path(os.path.realpath(path.parent)) / path.name
 
 
-def source_path(raw) -> Path:
-    """The file `raw` names, as it will be read, if it may be attached;
-    else NotAttached. Which rule refused is not said: telling a caller that
+def source_path(raw, doing: str = "send") -> Path:
+    """The file `raw` names, as it will be read, if it may be attached (or,
+    with `doing`, opened: the same rule, work_packages.unpack_held); else
+    NotAttached. Which rule refused is not said: telling a caller that
     is a probing oracle (repo_read.sensitive_reason)."""
     path = _canonical(raw)
     packages = Path(os.path.realpath(data_paths.packages_dir()))
@@ -91,7 +92,7 @@ def source_path(raw) -> Path:
             allowed = policy.reader == Reader.FILES and folder_policy.entry_visible(
                 policy, path.parent, Path(path.name), is_dir=False)
     if not allowed:
-        raise NotAttached(f"JARVIS does not send {path.name} from where it is.")
+        raise NotAttached(f"JARVIS does not {doing} {path.name} from where it is.")
     return path
 
 
@@ -112,9 +113,9 @@ class Source:
         self._reading: Optional[asyncio.Future] = None
 
     @classmethod
-    def open(cls, raw) -> "Source":
+    def open(cls, raw, doing: str = "send") -> "Source":
         """Blocking: the check, then the open by the same walk."""
-        path = source_path(raw)
+        path = source_path(raw, doing)
         try:
             fd, info = folder_readers.open_file(_ROOT, path.relative_to(_ROOT))
         except FolderError as e:

@@ -10,7 +10,10 @@
  * before a server record arrives, with utterance/turn correlation where available.
  */
 
+import { codeWords, t, type Said } from "./locale";
 import { createStore } from "./store";
+import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
+import { registerCommand } from "./uiRegistry";
 
 export type ItemKind = "heard" | "typed" | "jarvis" | "capture" | "to_agent"
   | "from_agent" | "answer" | "notice";
@@ -49,8 +52,47 @@ export interface ConversationPage {
 /** Moves on every "conversation" hint and every (re)connect. */
 export const conversationChanged = createStore(0);
 
-/** The agent whose thread the centre area shows, or null. */
-export const openThread = createStore<{ sessionId: string; name: string | null } | null>(null);
+// ── The agent's thread open in the centre ────────────────────────────────
+
+export interface OpenThread { sessionId: string; name: string | null }
+
+const threadSlot = detailSlot<OpenThread>("thread", (a, b) => a.sessionId === b.sessionId);
+
+/** Each agent's name as the conversation record gives it, by session:
+ *  what an opened thread is called before its own page is read. */
+const agentNames = new Map<string, string | null>();
+
+function noteAgents(page: ConversationPage): ConversationPage {
+  for (const i of page.items) {
+    if (i.agent_session_id) agentNames.set(i.agent_session_id, i.agent_name ?? agentNames.get(i.agent_session_id) ?? null);
+  }
+  if (page.agent) agentNames.set(page.agent.session_id, page.agent.name);
+  return page;
+}
+
+/** The agent whose thread the centre area shows, or null. Writing it runs
+ *  `thread.open` or `thread.close`, as a person's navigation. */
+export const openThread = routeStore(threadSlot.value, (next: OpenThread | null) =>
+  next ? bind("thread.open", { sessionId: next.sessionId }) : bind("thread.close", {}));
+
+registerCommand("thread.open", {
+  availability: () => ({ available: true }),
+  async execute({ sessionId }, { signal }) {
+    if (!agentNames.has(sessionId)) {
+      // Not in the record this page has read: JARVIS says whether there
+      // is anything to or from it, and what it is called.
+      const read = await readForOpen<ConversationPage>(
+        `/api/conversation/agents/${encodeURIComponent(sessionId)}`, signal,
+        (page) => page.items.length > 0 || (!!page.agent && page.agent.state !== "gone"));
+      if ("refused" in read) return read.refused;
+      noteAgents(read.body);
+    }
+    return { status: "completed",
+             effects: threadSlot.show({ sessionId, name: agentNames.get(sessionId) ?? null }) };
+  },
+});
+
+registerClose("thread.close", threadSlot);
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -59,22 +101,23 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const getConversation = (before?: number | null) =>
-  getJson<ConversationPage>(`/api/conversation${before != null ? `?before=${before}` : ""}`);
+  getJson<ConversationPage>(`/api/conversation${before != null ? `?before=${before}` : ""}`).then(noteAgents);
 
 export const getThread = (sessionId: string, before?: number | null) =>
   getJson<ConversationPage>(`/api/conversation/agents/${encodeURIComponent(sessionId)}`
-    + (before != null ? `?before=${before}` : ""));
+    + (before != null ? `?before=${before}` : "")).then(noteAgents);
 
 /** What a message's status is called on the page. */
-export const STATUS_WORDS: Record<string, string> = {
-  staged: "Sending", queued: "Queued", cancelled: "Cancelled", sent: "Sent",
-  undelivered: "Not picked up", delivered: "Delivered", working: "Working on it",
-  answered: "Answered", failed: "Failed",
-};
+export const statusWords = (status: string): string => codeWords("main.message.status", status) ?? status;
+
+/** What an agent's session state is called (session_watch.py's derived
+ *  states). */
+export const agentStateWords = (state: string): string => codeWords("main.agent.state", state) ?? state;
 
 /** Restore a cleared capture (the Restore button). Resolves with the
- *  refusal's reason, or null. */
-export async function restoreCapture(item: ConversationItem): Promise<string | null> {
+ *  refusal (the server's own words, shown as they came, or the page's), or
+ *  null. */
+export async function restoreCapture(item: ConversationItem): Promise<Said | null> {
   const res = await fetch(`/api/capture/${item.capture_id}/restore?notice=${item.id}`,
                           { method: "POST" });
   if (res.ok) {
@@ -82,5 +125,6 @@ export async function restoreCapture(item: ConversationItem): Promise<string | n
     return null;
   }
   const body = (await res.json().catch(() => ({}))) as { detail?: string };
-  return body.detail || `the server refused it (${res.status})`;
+  return body.detail ? { original: body.detail } : { words: () => t("main.conversation.restoreRefused", { status: res.status }) };
 }
+

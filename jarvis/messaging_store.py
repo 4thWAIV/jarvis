@@ -3,7 +3,12 @@ sends, the messages this owner has, their receipts, the owner's work items,
 the sync position of this node, receipts and work commands still owed to
 the team server and which arrivals are due to be announced. The
 `human_switch` table (schema 2) held the messaging switch there used to be;
-it is kept, and nothing reads it.
+it is kept, and nothing reads it. Schema 3 adds collaboration bundles' local
+records: the sender's preflight stored with the revision it was made for
+(`human_preflight`), the recipient's openability of each received file per
+content revision with what was last reported (`human_openability`; the
+receipt it owes is a `human_owed` row of kind `openability`), and the
+recipient's review checklist per thread (`human_review`, never sent).
 
 SQLite in the main database (`data_paths.db_path()`), every row namespaced
 by the team server's `server_id` and the owner's GitHub id, so a JARVIS
@@ -28,14 +33,14 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, NamedTuple, Optional
 from uuid import UUID
 
 from jarvis import data_paths, run_store
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Each step takes the schema from the version before it to its own. Only
 # ever appended to; a step never drops a table that holds correspondence.
@@ -90,7 +95,31 @@ _MIGRATIONS: dict[int, str] = {
         CREATE TABLE IF NOT EXISTS human_switch (
             id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL);
     """,
+    3: """
+        CREATE TABLE IF NOT EXISTS human_preflight (
+            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,
+            content_revision INTEGER NOT NULL, capability_digest TEXT NOT NULL,
+            readiness TEXT NOT NULL, body TEXT NOT NULL,
+            PRIMARY KEY (server_id, owner, message_id, content_revision));
+        CREATE TABLE IF NOT EXISTS human_openability (
+            server_id TEXT NOT NULL, owner INTEGER NOT NULL, message_id TEXT NOT NULL,
+            attachment_id TEXT NOT NULL, content_revision INTEGER NOT NULL,
+            facts TEXT NOT NULL, report TEXT, reported TEXT,
+            PRIMARY KEY (server_id, owner, message_id, attachment_id, content_revision));
+        CREATE TABLE IF NOT EXISTS human_review (
+            server_id TEXT NOT NULL, owner INTEGER NOT NULL, thread_id TEXT NOT NULL,
+            revision INTEGER NOT NULL, body TEXT NOT NULL,
+            PRIMARY KEY (server_id, owner, thread_id));
+    """,
 }
+
+
+class OpenabilityRow(NamedTuple):
+    """One received file's openability record: the folded facts (bundle_status
+    owns their shape), the report they make now, and the report last sent."""
+    facts: str
+    report: Optional[str]
+    reported: Optional[str]
 
 # Sends whose state the delivery loop owns from here on: an edit or a
 # discard of their revision is refused until they settle.
@@ -457,6 +486,106 @@ class SqliteMessagingStore:
             conn.execute("INSERT OR REPLACE INTO human_announcements VALUES (?,?,?,?)",
                          (server_id, owner_github_id, str(message_id), state))
 
+    # -- collaboration bundles ------------------------------------------------------------------------------
+
+    def save_preflight(self, server_id: str, owner_github_id: int, message_id: UUID,
+                       content_revision: int, capability_digest: str, readiness: str,
+                       body: str) -> None:
+        """The sender's preflight for one content revision (its approval's)."""
+        with self._tx() as conn:
+            conn.execute("INSERT OR REPLACE INTO human_preflight VALUES (?,?,?,?,?,?,?)",
+                         (server_id, owner_github_id, str(message_id), content_revision,
+                          capability_digest, readiness, body))
+
+    def preflight(self, server_id: str, owner_github_id: int, message_id: UUID,
+                  content_revision: int) -> Optional[str]:
+        with self._tx() as conn:
+            row = conn.execute("SELECT body FROM human_preflight WHERE server_id=? AND owner=? "
+                               "AND message_id=? AND content_revision=?",
+                               (server_id, owner_github_id, str(message_id),
+                                content_revision)).fetchone()
+        return None if row is None else row["body"]
+
+    def openability(self, server_id: str, owner_github_id: int, message_id: UUID,
+                    attachment_id: UUID, content_revision: int) -> Optional[OpenabilityRow]:
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT facts, report, reported FROM human_openability WHERE server_id=? AND "
+                "owner=? AND message_id=? AND attachment_id=? AND content_revision=?",
+                (server_id, owner_github_id, str(message_id), str(attachment_id),
+                 content_revision)).fetchone()
+        return None if row is None else OpenabilityRow(row["facts"], row["report"],
+                                                        row["reported"])
+
+    def save_openability(self, server_id: str, owner_github_id: int, message_id: UUID,
+                         attachment_id: UUID, content_revision: int, facts: str,
+                         report: Optional[str], owe: bool) -> None:
+        """The record and, when its report changed, the openability receipt
+        owed for the message, in one transaction."""
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO human_openability VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT "
+                "(server_id, owner, message_id, attachment_id, content_revision) DO UPDATE "
+                "SET facts=excluded.facts, report=excluded.report",
+                (server_id, owner_github_id, str(message_id), str(attachment_id),
+                 content_revision, facts, report))
+            if owe:
+                conn.execute("INSERT OR IGNORE INTO human_owed VALUES (?,?,?,?)",
+                             (server_id, owner_github_id, str(message_id), "openability"))
+
+    def openability_reports(self, server_id: str, owner_github_id: int,
+                            message_id: UUID) -> list[str]:
+        """Every report this node has made on the message's files, in the
+        order the files were first opened."""
+        with self._tx() as conn:
+            rows = conn.execute("SELECT report FROM human_openability WHERE server_id=? AND "
+                                "owner=? AND message_id=? AND report IS NOT NULL ORDER BY rowid",
+                                (server_id, owner_github_id, str(message_id))).fetchall()
+        return [r["report"] for r in rows]
+
+    def openability_reported(self, server_id: str, owner_github_id: int, message_id: UUID,
+                             sent: list[str]) -> None:
+        """The reports in `sent` reached the team server. A record whose
+        report changed since it was sent owes the receipt again."""
+        with self._tx() as conn:
+            rows = conn.execute("SELECT rowid, report FROM human_openability WHERE "
+                                "server_id=? AND owner=? AND message_id=? AND report IS NOT NULL",
+                                (server_id, owner_github_id, str(message_id))).fetchall()
+            again = False
+            for row in rows:
+                if row["report"] in sent:
+                    conn.execute("UPDATE human_openability SET reported=report WHERE rowid=?",
+                                 (row["rowid"],))
+                else:
+                    again = True
+            if again:
+                conn.execute("INSERT OR IGNORE INTO human_owed VALUES (?,?,?,?)",
+                             (server_id, owner_github_id, str(message_id), "openability"))
+
+    def review(self, server_id: str, owner_github_id: int,
+               thread_id: UUID) -> Optional[tuple[int, str]]:
+        """The recipient's review record of a thread: (revision, body)."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT revision, body FROM human_review WHERE server_id=? AND "
+                               "owner=? AND thread_id=?",
+                               (server_id, owner_github_id, str(thread_id))).fetchone()
+        return None if row is None else (row["revision"], row["body"])
+
+    def save_review(self, server_id: str, owner_github_id: int, thread_id: UUID,
+                    expected_revision: Optional[int], revision: int, body: str) -> bool:
+        """Write the record only if it is still at `expected_revision` (None:
+        only if there is none yet)."""
+        with self._tx() as conn:
+            if expected_revision is None:
+                return conn.execute(
+                    "INSERT OR IGNORE INTO human_review VALUES (?,?,?,?,?)",
+                    (server_id, owner_github_id, str(thread_id), revision, body)).rowcount == 1
+            return conn.execute(
+                "UPDATE human_review SET revision=?, body=? WHERE server_id=? AND owner=? AND "
+                "thread_id=? AND revision=?",
+                (revision, body, server_id, owner_github_id, str(thread_id),
+                 expected_revision)).rowcount == 1
+
     # -- reads ---------------------------------------------------------------------------------------------
 
     @staticmethod
@@ -470,20 +599,29 @@ class SqliteMessagingStore:
             self_message=outgoing and m.recipient_github_id == owner,
             receipts=wire.ReceiptFacts.model_validate_json(facts["body"]))
 
+    def _thread(self, conn, server_id, owner, thread: str) -> list[ports.LocalMessage]:
+        """A thread's messages in order, each he sent with what the replies
+        cite of it (`ports.with_citations`)."""
+        rows = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? AND "
+                            "owner=? AND thread_id=?", (server_id, owner, thread)).fetchall()
+        return ports.with_citations(
+            _sort_messages([self._local_message(conn, server_id, owner, r) for r in rows]))
+
     def message(self, server_id: str, owner_github_id: int,
                 message_id: UUID) -> Optional[ports.LocalMessage]:
         with self._tx() as conn:
-            row = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? "
+            row = conn.execute("SELECT thread_id FROM human_messages WHERE server_id=? "
                                "AND owner=? AND message_id=?",
                                (server_id, owner_github_id, str(message_id))).fetchone()
-            return None if row is None else self._local_message(conn, server_id,
-                                                                 owner_github_id, row)
+            if row is None:
+                return None
+            return next(m for m in self._thread(conn, server_id, owner_github_id,
+                                                row["thread_id"])
+                        if m.message.message_id == message_id)
 
     def _item(self, conn, server_id, owner, state: wire.WorkState) -> ports.LocalItem:
         thread = str(state.thread_id)
-        rows = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? AND "
-                            "owner=? AND thread_id=?", (server_id, owner, thread)).fetchall()
-        messages = _sort_messages([self._local_message(conn, server_id, owner, r) for r in rows])
+        messages = self._thread(conn, server_id, owner, thread)
         drafts = [ports.Draft.model_validate_json(r["body"]) for r in conn.execute(
             "SELECT body FROM human_drafts WHERE server_id=? AND owner=? AND thread_id=? "
             "ORDER BY rowid", (server_id, owner, thread)).fetchall()]

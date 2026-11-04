@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Microphone check</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Microphone check</h1>
+    <p>Press Record and say a sentence. Three seconds are recorded through
+      JARVIS's microphone and measured. Mute JARVIS first (the microphone
+      button on the left) if you do not want JARVIS to hear it too: muted,
+      JARVIS hears nothing and this page still does.</p>
+    <p><button id="record" type="button">Record 3 seconds</button></p>
+    <p id="level" aria-live="polite">Nothing recorded yet.</p>
+    <label for="note">A note for the sender (optional)</label>
+    <textarea id="note" rows="3"></textarea>
+    <p><button id="save" type="button" disabled>Save results</button></p>
+    <p id="status" aria-live="polite"></p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -82,10 +82,10 @@ class _TeamServer(_Server):
         await page.route("**/api/team**", team)
 
 
-@pytest.mark.asyncio
-async def test_connecting_shows_the_code_and_opens_the_approval_page(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_connecting_shows_the_code_and_opens_the_approval_page(page_playwright, page_url):
     server = _TeamServer()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         # The approval page is the team server's; answered here, offline.
@@ -104,12 +104,12 @@ async def test_connecting_shows_the_code_and_opens_the_approval_page(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_after_a_code_expires_the_address_is_offered_again(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_after_a_code_expires_the_address_is_offered_again(page_playwright, page_url):
     server = _TeamServer()
     server.team = dict(BASE, state="disconnected", last_server_url="https://team.example",
                        last_error="The pairing code expired. Start again.")
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         await async_api.expect(page.get_by_placeholder("https://team.example.com")).to_have_value(
@@ -118,11 +118,11 @@ async def test_after_a_code_expires_the_address_is_offered_again(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page_playwright, page_url):
     server = _TeamServer()
     server.team = CONNECTED
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")
@@ -149,10 +149,10 @@ async def test_connected_admin_sees_team_members_as_text_and_can_disconnect(page
 SIGN_IN_LINE = "Signing in to your team server turns on messages between people."
 
 
-@pytest.mark.asyncio
-async def test_signed_out_one_line_says_signing_in_turns_messaging_on(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_signed_out_one_line_says_signing_in_turns_messaging_on(page_playwright, page_url):
     server = _TeamServer()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")
@@ -161,11 +161,11 @@ async def test_signed_out_one_line_says_signing_in_turns_messaging_on(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_signed_in_there_is_no_messaging_switch(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_signed_in_there_is_no_messaging_switch(page_playwright, page_url):
     server = _TeamServer()
     server.team = dict(CONNECTED, me=dict(CONNECTED["me"], role="member"))
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")
@@ -176,11 +176,11 @@ async def test_signed_in_there_is_no_messaging_switch(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_members_by_state_and_a_refused_add_says_nobody_was_added(page_url, tmp_path):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_members_by_state_and_a_refused_add_says_nobody_was_added(page_playwright, page_url, tmp_path):
     server = _TeamServer()
     server.team = CONNECTED
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
         team = page.locator("#settings-team")

@@ -9,9 +9,33 @@
  * a new tab, where the code JARVIS shows is checked and this Mac approved.
  */
 
+import { codedSaid, t, type CodedLine, type Said } from "./locale";
 import type { Connection } from "./network";
 
-/** One /api/team* request; a refusal is thrown with the backend's words. */
+/** What JARVIS says about the team server (team_client's TEAM_SAID): by
+ *  its code (`said` beside the English on a refusal, `last_error_said` on
+ *  the status and the network exchange) in the language in force, with the
+ *  team server's own words after it as they came; without a code, the
+ *  English as it came. */
+export const teamSaid = (line: CodedLine | null | undefined, english: string): Said =>
+  codedSaid("team.error", line, english);
+
+/** A refusal from /api/team*: its English (`message`, as before) and,
+ *  when JARVIS said it, its code. */
+export class TeamRefusal extends Error {
+  constructor(message: string, readonly said: CodedLine | null) {
+    super(message);
+  }
+}
+
+/** What a thrown refusal says to the person. */
+export const refusalSaid = (e: unknown): Said =>
+  teamSaid(e instanceof TeamRefusal ? e.said : null, e instanceof Error ? e.message : String(e));
+
+/** One /api/team* request; a refusal is thrown as a TeamRefusal: the
+ *  backend's words by code where it gave one (team_client's TeamError), else
+ *  as they came (the team server's own refusal); with none, the page's own,
+ *  in the language in force. */
 export async function teamCall<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method, headers: body === undefined ? undefined : { "Content-Type": "application/json" },
@@ -20,8 +44,9 @@ export async function teamCall<T>(method: string, url: string, body?: unknown): 
   let payload: unknown = null;
   try { payload = await res.json(); } catch { /* not JSON */ }
   if (!res.ok) {
-    const err = (payload as { error?: { message?: string } } | null)?.error;
-    throw new Error(err?.message || `The request failed (${res.status}).`);
+    const err = (payload as { error?: { message?: string; said?: CodedLine | null } } | null)?.error;
+    throw new TeamRefusal(err?.message || t("left.team.requestFailed", { status: String(res.status) }),
+                          err?.said ?? null);
   }
   return payload as T;
 }

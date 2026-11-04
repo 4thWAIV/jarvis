@@ -66,9 +66,9 @@ BOXES = """() => {
 }"""
 
 
-@pytest.mark.asyncio
-async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_address(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_address(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         tabs = await page.evaluate(
             "() => [...document.querySelectorAll('.centre-tabs [role=tab]')].map(t => [t.textContent, t.ariaSelected])")
@@ -129,10 +129,10 @@ async def test_final_spoken_turns_and_full_reply_share_one_timeline(page_url):
         assert (await page.evaluate(BOXES))["history"] == got["history"]
         await browser.close()
 
-@pytest.mark.asyncio
-async def test_multiline_composer_sends_with_keyboard_and_button(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_multiline_composer_sends_with_keyboard_and_button(page_playwright, page_url):
     voice = _Voice()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         editor = page.get_by_role("textbox", name="Message JARVIS")
         await editor.fill("check the build")
@@ -152,10 +152,10 @@ async def test_multiline_composer_sends_with_keyboard_and_button(page_url):
         assert await editor.input_value() == ""
         await browser.close()
 
-@pytest.mark.asyncio
-async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_playwright, page_url):
     voice = _Voice()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('tell hammer to ship it', true)")
         await asyncio.sleep(0.2)
@@ -195,8 +195,8 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page_playwright, page_url):
     """"Send to:" over the top left once it is a message, its state over the
     top right; Read, Accept, Delete and Send in the bottom right, each a POST to its
     route; a refusal shown under the text."""
@@ -211,7 +211,7 @@ async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page
         else:
             await route.fulfill(status=200, content_type="application/json", body="{}")
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         await page.route("**/api/capture/*/*", answer)
         voice.send({"type": "capture", "id": 5, "state": "capturing", "text": "Note this.",
@@ -323,13 +323,13 @@ class _Record:
                                   "agent": {"session_id": "h", "name": "hammer", "state": "idle"}})
 
 
-@pytest.mark.asyncio
-async def test_the_history_reads_the_record_with_live_message_status_and_threads(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_history_reads_the_record_with_live_message_status_and_threads(page_playwright, page_url):
     """What was said before the page opened comes from the record and is
     there again after a reload; a message's status moves on a hint and opens
     to the answer; an agent's name opens its thread."""
     voice, record = _Voice(), _Record()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -376,8 +376,8 @@ async def test_the_history_reads_the_record_with_live_message_status_and_threads
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_playwright, page_url):
     voice, posted = _Voice(), []
     restored = {"done": False}
 
@@ -398,7 +398,7 @@ async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_
         restored["done"] = True
         await route.fulfill(json={"capture": 3, "restored": True})
 
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         try:
             browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
         except Exception as e:                              # pragma: no cover
@@ -431,10 +431,12 @@ async def test_text_only_reply_and_sent_draft_stay_visible_without_audio(page_ur
         assert await editor.input_value() == ""
         assert await page.locator('.history-turn.user').inner_text() == "Please reply in text."
         voice.send({"type": "status", "state": "thinking"},
-                   {"type": "text", "utt": 17, "idx": 0, "text": "Text works."},
-                   {"type": "text", "utt": 17, "idx": 1, "text": "No audio needed."},
-                   {"type": "status", "state": "idle"})
+                   {"type": "reply", "utt": 17, "text": "Text works.", "done": False})
+        await page.get_by_text("JARVIS is thinking", exact=True).wait_for()
+        # With no audio, completion of the reply itself must end thinking.
+        voice.send({"type": "reply", "utt": 17, "text": "Text works. No audio needed.", "done": True})
         await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('No audio needed.')")
+        await page.wait_for_selector(".chat-playback", state="detached")
         got = await page.evaluate(BOXES)
         assert got["history"] == ["Please reply in text.", "Text works. No audio needed."]
         assert got["hearing"] == "" and got["speaking"] == ""

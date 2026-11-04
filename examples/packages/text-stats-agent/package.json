@@ -1,0 +1,11 @@
+{
+  "name": "text-stats-agent",
+  "version": "1.0.0",
+  "purpose": "Have a coding agent count the words and sentences in three short texts and write a summary, to show an agent package working end to end.",
+  "runs": "agent",
+  "brief": "BRIEF.md",
+  "returns": [
+    "results/summary.md",
+    "results/counts.json"
+  ]
+}

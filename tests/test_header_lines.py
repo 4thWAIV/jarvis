@@ -315,6 +315,11 @@ def _builds_text(node) -> bool:
         if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                 and sub.func.attr == "join"):
             return True
+        # subsystem_diagnostics says its lines through `say(code, **values)`,
+        # which fills an English template with the values: the same text an
+        # f-string built, so the walk must not go blind at that call.
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == "say":
+            return True
         # `base += "…" + ", ".join(projects) + "."` — the shape
         # `brain.launch_prompt` uses, and the one the old predicate did not
         # know about at all.
@@ -347,6 +352,51 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "ui_control.map_lines": (
+        "it reads a command's `id` only after checking it is a command declared "
+        "in the UI contract, so the id it prints is the contract's own; the "
+        "page's labels it prints go back only inside the server's untrusted "
+        "`ui_map` block (`_ui_said`), never into a header or a spoken line"),
+    "package_story.parse": (
+        "it reads a story file's fields into a Story and refuses one with its own "
+        "sentences, built from slide and beat numbers and fixed words; no title, "
+        "beat or selector from the file is ever put into a refusal"),
+    "server._bundle_reply": (
+        "its head is the refusal's own words (bundle_contract's InspectionRefused or "
+        "messaging_api's Refused, fixed text) or the paging line; the route's JSON, "
+        "which carries the sender's names, paths and text, goes only inside "
+        "_wrap_untrusted"),
+    "server.tool_show_bundle_member": (
+        "it says a refusal's own fixed words or one of its own sentences; the "
+        "member's name and path never reach the reply"),
+    "server._bundle_change": (
+        "it says a refusal's own fixed words, or its callers' sentences built from "
+        "ids, revisions, a count and the scope word, none written by a person"),
+    "bundle_tasks._carry": (
+        "it copies a checklist item's state and read locations onto the same "
+        "member of a repaired copy; it prints nothing"),
+    "server._speech_model_line": (
+        "its `state` is a download's own step, one of speech_models' fixed words, "
+        "and every other value is from transcriber.MODELS or the installer's own "
+        "refusal; no session, run or person writes any of it"),
+    "server.tool_speech_models": (
+        "its `state` is the transcription service's own status word and its labels "
+        "come from transcriber.MODELS; the failure is the loader's own sentence; no "
+        "session, run or person writes any of it"),
+    "speech_models._install": (
+        "its `state` is the download's own step, set from the installer's fixed "
+        "progress words, and its f-string is a log line naming a model from "
+        "transcriber.MODELS; nothing a session wrote reaches it"),
+    "self_update.ci_state": (
+        "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
+        "to compare them with fixed values, and returns one of six fixed CI "
+        "words (passed, pending, failed, cancelled, none, unknown); no text from GitHub "
+        "reaches the string it returns, a header, a spoken line or the brain"),
+    "self_update.version_line": (
+        "it puts a merged pull request's title (a teammate's words) into one line "
+        "of `describe`'s details and never its head; the brain gets those details "
+        "only through `server._update_said`, which walls every one of them in the "
+        "untrusted block, and the command prints them to the terminal"),
     "folder_discovery.claude_history": (
         "it reads a transcript record's `cwd` and `sessionId` only to store them "
         "as an observation in the folder catalog; its one f-string is the "
@@ -862,6 +912,15 @@ EXEMPT = {
         "only through `_run_project`, the wall every run sentence uses, and "
         "otherwise fixed words or `_retry_run`'s refusal, which is fixed words or "
         "the folder service's fixed refusal"),
+    "attachment_locations.shown": (
+        "its `state` is a received file's location state, a Literal the model "
+        "validates, looked up in STATE_SHOWN's fixed words; no name, path or "
+        "other text a teammate or a session wrote reaches the string"),
+    "attachment_locations.spoken": (
+        "its `state` only picks STATE_SHOWN's fixed words; the rest is byte "
+        "counts and a failure code worded by Refused.shown, which returns its "
+        "spec's fixed sentence even for a code it does not know; the file's "
+        "name and paths go in the untrusted block `_location_reply` adds"),
 }
 
 
@@ -1477,6 +1536,64 @@ DRIVERS["server.tool_session_messages"] = _drive_session_messages
 DRIVERS["server.tool_read_session_message"] = _drive_read_session_message
 
 
+def _drive_where_line(server, session, monkeypatch):
+    """A received file's place, through the one tool that prints it,
+    `read_people_thread`. Not a session at all: the file's name is the
+    SENDER's, and its exact path on this Mac ends in that name. The
+    session's `title` carries the payload into both, so the sweep over
+    `FOREIGN_FIELDS` reaches it. One file here and checked (its path is
+    printed), one not downloaded (only a fixed state word is)."""
+    import asyncio
+    import uuid
+    from types import SimpleNamespace
+    from jarvis import attachment_locations
+
+    name = str(session.title or "")
+    here, there = uuid.uuid4(), uuid.uuid4()
+    message_id = uuid.uuid4()
+
+    def _located(attachment_id, state, path):
+        return attachment_locations.AttachmentLocation(
+            message_id=message_id, attachment_id=attachment_id, filename=name,
+            media_type="application/pdf", node_id=uuid.uuid4(), state=state,
+            local_path=path, size_bytes=3, sha256="0" * 64)
+
+    found = {here: _located(here, "verified", f"/Users/e/Downloads/JARVIS/{name}"),
+             there: _located(there, "remote_only", None)}
+    message = SimpleNamespace(
+        message_id=message_id, sender_github_id=2, recipient_github_id=1,
+        accepted_at=None, subject=None, text="the plan",
+        attachments=[SimpleNamespace(filename=name, size_bytes=3, attachment_id=a)
+                     for a in (here, there)])
+    item = SimpleNamespace(
+        work_state=SimpleNamespace(placement="active"), drafts=[],
+        messages=[SimpleNamespace(message=message, direction="incoming",
+                                  self_message=False, cited_in_reply=[],
+                                  receipts=SimpleNamespace(read_at=None,
+                                                           received_at=None))])
+
+    class _Local:
+        def item(self, _thread):
+            return item
+
+        def members(self):
+            return [SimpleNamespace(github_id=2, name=None, login="matt")]
+
+        def pairing(self):
+            return SimpleNamespace(owner_github_id=1)
+
+    class _Context:
+        def lookup(self, _message_id, attachment_id):
+            return found[attachment_id]
+
+    monkeypatch.setattr(server, "messaging", SimpleNamespace(
+        local=_Local(), location_context=lambda: _Context()))
+    return [asyncio.run(server.tool_read_people_thread({"thread": str(uuid.uuid4())}))]
+
+
+DRIVERS["server._where_line"] = _drive_where_line
+
+
 # --- The agents list --------------------------------------------------------
 # An agent's name is a session's voice name, which can carry words from that
 # session's title. It is stored in jarvis.db and printed by the agent tools.
@@ -1558,6 +1675,7 @@ def _blank_run(**over):
         "requested_model": "sonnet",
         "exit_code": 0, "pid": 0, "is_error": 0,
         "folder_id": None,
+        "package_id": None,
         "created_at": now - 300, "started_at": now - 290, "ended_at": now - 10,
     }
     run.update(over)
@@ -1582,6 +1700,7 @@ ALT_RUN = {
     "model": "opus",
     "requested_model": "opus",
     "folder_id": "33333333-3333-4333-8333-333333333333",
+    "package_id": "text-stats-agent-1.0.0-ab12cd34",
 }
 
 
@@ -1724,6 +1843,20 @@ def _drive_announce_run_failure(server, run, monkeypatch):
     return list(speech.said)
 
 
+def _drive_announce_package_run(server, run, monkeypatch):
+    """What JARVIS says, and tells the brain, when an agent package's run
+    ends: each line spoken and each note."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    for status in (server.run_store.RunStatus.SUCCEEDED, server.run_store.RunStatus.FAILED,
+                   server.run_store.RunStatus.TIMED_OUT):
+        asyncio.run(server._announce_package_run(dict(run, status=status)))
+    return list(speech.said) + list(server._notes_for_brain)
+
+
 def _drive_format_runs_for_prompt(server, run, monkeypatch):
     """The brain's system prompt. Not a tool result and not a spoken line —
     trusted operator prose, like `brain.launch_prompt`."""
@@ -1745,6 +1878,7 @@ RUN_DRIVERS = {
     "server.tool_cancel_run": _drive_cancel_run,
     "server._announce_run_stalled": _drive_announce_run_stalled,
     "server._announce_run_failure": _drive_announce_run_failure,
+    "server._announce_package_run": _drive_announce_package_run,
     "server.format_runs_for_prompt": _drive_format_runs_for_prompt,
 }
 

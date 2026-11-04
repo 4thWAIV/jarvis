@@ -18,7 +18,9 @@ every committed change.
 """
 from __future__ import annotations
 
-from typing import Optional
+import asyncio
+import logging
+from typing import Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Request
@@ -29,6 +31,8 @@ from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis.message_approvals import Reviews
 from jarvis.messaging_client import Delivery, Pairing
+
+log = logging.getLogger("jarvis.messaging_api")
 
 PREFIX = "/api/team/messages"
 
@@ -92,11 +96,20 @@ class LocalMessaging:
     def __init__(self, *, store, delivery: Delivery, guard: ports.ApprovalGuard,
                  reviews: Optional[Reviews] = None,
                  snapshots: Optional[ports.AttachmentSnapshots] = None,
-                 ids: Optional[ports.IdSource] = None, clock: ports.Clock = ports.utcnow):
+                 ids: Optional[ports.IdSource] = None, clock: ports.Clock = ports.utcnow,
+                 preflight=None):
+        """`preflight` is bundle_preflight.SenderPreflight: a review of a
+        draft with files stores its readiness with the revision."""
+        self.preflight = preflight
         self.store, self.delivery, self.guard = store, delivery, guard
         self.reviews, self.snapshots = reviews, snapshots
         self.ids, self.clock = ids or ports.RandomIds(), clock
         self._roster: dict[tuple[str, int], wire.RecipientList] = {}
+        # bundle_tasks.BundleTasks.propose_cited, set once both are built:
+        # (ns, the draft as it would be saved) -> the checklist items its
+        # text names, or None where no review was asked of him.
+        self.propose_cited: Optional[Callable[[tuple[str, int], ports.Draft],
+                                              Optional[list[ports.CitedFile]]]] = None
 
     # -- whose records ------------------------------------------------------------------
 
@@ -254,6 +267,8 @@ class LocalMessaging:
             if existing is not None:
                 raise Refused("revision_conflict", self._draft_view(ns, existing))
             thread_id = save.thread_id
+            if not wire.normalize_subject(save.subject):
+                save = save.model_copy(update={"subject": self._conversation_subject(ns, parent)})
         send = ports.LocalSend(message_id=message_id, content_revision=1, state="draft")
         draft = ports.Draft(
             message_id=message_id, thread_id=thread_id,
@@ -262,9 +277,17 @@ class LocalMessaging:
             recipient_github_id=save.recipient_github_id, draft_revision=1,
             attachments=self._attachments(ns, message_id, list(save.attachment_ids)),
             send=send, agent_drafted=agent_drafted, **self._normalized(save))
-        created = self.store.create_draft(*ns, draft)
+        created = self.store.create_draft(*ns, self._proposed(ns, draft))
         self.delivery.changed()
         return self._draft_view(ns, created)
+
+    def _conversation_subject(self, ns, parent: ports.LocalMessage) -> str:
+        """The subject a new reply starts with, for the page and the brain
+        alike: its conversation's, which is the first message's (the thread
+        is named by it), else the parent's when that one is not held here.
+        Only a new reply's empty subject is filled; the owner can change it."""
+        root = self.store.message(*ns, parent.message.thread_id)
+        return (root or parent).message.subject
 
     @staticmethod
     def _normalized(save: ports.DraftSave) -> dict:
@@ -293,19 +316,57 @@ class LocalMessaging:
         if all(getattr(current, k) == v for k, v in fields.items()) and \
                 [a.attachment_id for a in current.attachments] == attachment_ids:
             return self._draft_view(ns, current)          # nothing changed: nothing revised
+        fields["attachments"] = self._attachments(ns, message_id, attachment_ids)
+        return self._edit(ns, current, save.expected_draft_revision, fields, agent_drafted)
+
+    def _edit(self, ns, current: ports.Draft, expected_draft_revision: int, fields: dict,
+              agent_drafted: bool = False) -> ports.Draft:
+        """Save `fields` over `current` as an edit: after review it is the
+        next content revision (its capture closed), a task or supersedes
+        link naming a file no longer attached is left out, and the hint
+        follows the commit."""
         send = ports.revise(current)
-        attachments = self._attachments(ns, message_id, attachment_ids)
         if send.content_revision != current.send.content_revision:
             self._close_capture(current)
         updated = current.model_copy(update={
-            **fields, "attachments": attachments, "send": send,
+            **fields, "send": send,
             "agent_drafted": current.agent_drafted or agent_drafted,
             "capture_id": current.capture_id
             if send.content_revision == current.send.content_revision else None})
+        updated = self._proposed(ns, updated.model_copy(update=ports.attached_only(updated)))
         saved = self.store.save_draft(*ns, ports.Draft.model_validate(updated.model_dump()),
-                                      save.expected_draft_revision)
+                                      expected_draft_revision)
         self.delivery.changed()
         return self._draft_view(ns, saved)
+
+    def _proposed(self, ns, draft: ports.Draft) -> ports.Draft:
+        """`draft` with the files its text relies on proposed as cited, in
+        the same save, until the owner has set them himself."""
+        if self.propose_cited is None or draft.cited_by_owner:
+            return draft
+        proposed = self.propose_cited(ns, draft)
+        return draft if proposed is None else draft.model_copy(update={"cited": proposed})
+
+    def edit_bundle(self, message_id: UUID, expected_draft_revision: int,
+                    **fields) -> ports.Draft:
+        """A bundle change to a draft (bundle_tasks: its task, the earlier
+        files it supersedes, files JARVIS made for it by `attachment_ids`,
+        the files a reply cites):
+        an edit like any other, so it moves the content revision after a
+        review and needs a review of its own. A stale revision is
+        `revision_conflict` with the current draft."""
+        ns = self.pairing().ns
+        current = self.store.draft(*ns, message_id)
+        if current is None:
+            raise Refused("draft_not_found")
+        if current.draft_revision != expected_draft_revision:
+            raise Refused("revision_conflict", self._draft_view(ns, current))
+        if "attachment_ids" in fields:
+            fields["attachments"] = self._attachments(ns, message_id,
+                                                      list(fields.pop("attachment_ids")))
+        if all(getattr(current, k) == v for k, v in fields.items()):
+            return self._draft_view(ns, current)
+        return self._edit(ns, current, expected_draft_revision, fields)
 
     def discard_draft(self, message_id: UUID, expected_draft_revision: int) -> None:
         ns = self.pairing().ns
@@ -351,8 +412,21 @@ class LocalMessaging:
             raise Refused("messaging_unavailable", availability="unsupported")
         await self._on_roster(pairing, draft.recipient_github_id)
         reviewed = self.reviews.review(*ns, message_id, action.expected_draft_revision)
+        if reviewed.attachments and self.preflight is not None:
+            await asyncio.to_thread(self._record_preflight, ns, reviewed)
         self.delivery.changed()
         return self._draft_view(ns, reviewed)
+
+    def _record_preflight(self, ns, draft: ports.Draft) -> None:
+        """The readiness of the revision under review, kept with it (so with
+        its approval). A check that cannot be made never stops a review."""
+        try:
+            result = self.preflight.preflight(*ns, draft.message_id)
+            if result.content_revision == draft.send.content_revision:
+                self.preflight.record_for_approval(*ns, draft.message_id,
+                                                   draft.send.content_revision, result)
+        except Exception as e:
+            log.warning("messaging: readiness not recorded for review (%s)", type(e).__name__)
 
     def cancel(self, message_id: UUID, action: ports.DraftAction) -> ports.Draft:
         """Stop a revision before any attempt is out. After that there is

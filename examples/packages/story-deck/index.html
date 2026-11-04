@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A pot of tea</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="deck">
+    <section id="s1" class="slide">
+      <p class="kicker">The ingredients</p>
+      <h2>Three things a good pot of tea needs</h2>
+      <div class="cards">
+        <div class="card" id="water"><h3>Fresh water</h3><p>Drawn cold, boiled once.</p></div>
+        <div class="card" id="leaves"><h3>Good leaves</h3><p>Loose, and kept dry.</p></div>
+        <div class="card" id="time"><h3>Patience</h3><p>The leaves set the time, not you.</p></div>
+      </div>
+    </section>
+
+    <section id="s2" class="slide">
+      <p class="kicker">The method</p>
+      <h2>Four steps</h2>
+      <ol class="steps">
+        <li data-step="1"><b>Boil</b><span>Bring the water to the boil.</span></li>
+        <li data-step="2"><b>Warm the pot</b><span>Swirl a little hot water, then pour it away.</span></li>
+        <li data-step="3"><b>Steep</b><span>Leaves in, water on, lid on.</span></li>
+        <li data-step="4"><b>Pour</b><span>All of it, so the rest does not stew.</span></li>
+      </ol>
+    </section>
+
+    <section id="s3" class="slide">
+      <p class="kicker">Steeping times</p>
+      <h2>Each tea has its own time</h2>
+      <div class="cards">
+        <button type="button" class="card tea" data-detail="green"><h3>Green</h3><p>Open details</p></button>
+        <button type="button" class="card tea" data-detail="black"><h3>Black</h3><p>Open details</p></button>
+        <button type="button" class="card tea" data-detail="herbal"><h3>Herbal</h3><p>Open details</p></button>
+      </div>
+      <div class="detail" id="detail-green" role="dialog" aria-label="Green tea" hidden>
+        <h3>Green tea</h3>
+        <p class="temp">80 °C, never boiling</p>
+        <p class="minutes">Two to three minutes</p>
+        <button type="button" class="close" aria-label="Close">Close</button>
+      </div>
+      <div class="detail" id="detail-black" role="dialog" aria-label="Black tea" hidden>
+        <h3>Black tea</h3>
+        <p class="temp">Just off the boil</p>
+        <p class="minutes">Three to five minutes</p>
+        <button type="button" class="close" aria-label="Close">Close</button>
+      </div>
+      <div class="detail" id="detail-herbal" role="dialog" aria-label="Herbal tea" hidden>
+        <h3>Herbal tea</h3>
+        <p class="temp">Boiling</p>
+        <p class="minutes">Five minutes or more</p>
+        <button type="button" class="close" aria-label="Close">Close</button>
+      </div>
+    </section>
+  </main>
+  <script src="deck.js"></script>
+  <!-- JARVIS's story helper: points at each part as the story is told. -->
+  <script src="/api/packages/story.js"></script>
+</body>
+</html>

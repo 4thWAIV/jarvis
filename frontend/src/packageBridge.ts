@@ -1,0 +1,128 @@
+/**
+ * The bridge between a page package's frame (PackageView.tsx) and JARVIS.
+ *
+ * The frame is sandboxed with `allow-scripts` alone, so it has no origin:
+ * it can reach none of JARVIS's routes, and Chrome will not give it the
+ * microphone (getUserMedia fails "Invalid security origin" even with
+ * `allow="microphone"`). What it may do, it asks for by postMessage to its
+ * parent, and only messages from that frame's own window are heard. Every
+ * message both ways carries `jarvis: "package"`; docs/work-packages.md has
+ * the protocol.
+ *
+ *   save    {name, data, id?}  data a string (UTF-8), ArrayBuffer, typed
+ *                              array or Blob; written as results/<name>
+ *                              (packages_api.py), answered with `saved`
+ *                              {id, name, ok, saved, bytes} or {.., ok:
+ *                              false, error}
+ *   listen  {on}               the page's own microphone (voiceInput.ts),
+ *                              answered with `listening` {on, microphone,
+ *                              sampleRate, channels, format}, then, while
+ *                              on, one `audio` {pcm, sampleRate, ...} per
+ *                              100 ms frame: PCM16 little-endian mono
+ *
+ * And the story (a page package with one, told by JARVIS's voice): JARVIS
+ * posts `story.cue` {beat, targets, actions} as a beat's words start
+ * playing and `story.clear` as they end or the voice stops; the frame's
+ * helper (jarvis/package_story.js) points at the targets. The frame says
+ * `story.ready` once its helper has loaded (the beat playing now is posted
+ * again) and `story.missing` {beat, targets} for selectors it could not find.
+ */
+
+import { t, type Said } from "./locale";
+import { inputStatus } from "./mic";
+import { saveResult, storyCue } from "./packages";
+import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
+
+export const BRIDGE = "package";
+
+export interface BridgeEvents {
+  /** A save finished: its words for the view. */
+  onSaved(said: Said): void;
+  onListening(on: boolean): void;
+  /** The story's frame could not find some of a beat's targets. */
+  onStoryMissing(said: Said): void;
+}
+
+function asBlob(data: unknown): Blob | null {
+  if (typeof data === "string" || data instanceof ArrayBuffer) return new Blob([data]);
+  if (ArrayBuffer.isView(data)) {
+    return new Blob([new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice()]);
+  }
+  return data instanceof Blob ? data : null;
+}
+
+/** Hear `frame`'s requests for package `packageId`; returns the way to stop. */
+export function connectBridge(frame: HTMLIFrameElement, packageId: string,
+                              events: BridgeEvents): () => void {
+  let stopListening: (() => void) | null = null;
+  const post = (message: Record<string, unknown>, transfer: Transferable[] = []) =>
+    frame.contentWindow?.postMessage({ jarvis: BRIDGE, ...message }, "*", transfer);
+
+  const listen = (on: boolean) => {
+    stopListening?.();
+    stopListening = on
+      ? listenToMicrophone((pcm) => post({ type: "audio", pcm, ...MICROPHONE_FORMAT }, [pcm]))
+      : null;
+    post({ type: "listening", on, microphone: inputStatus.get().state, ...MICROPHONE_FORMAT });
+    events.onListening(on);
+  };
+
+  const save = async (message: Record<string, unknown>) => {
+    const name = message.name;
+    const reply = (fields: Record<string, unknown>) =>
+      post({ type: "saved", id: message.id, name, ...fields });
+    const data = asBlob(message.data);
+    if (typeof name !== "string" || !data) {
+      const error = "A result needs a name and its data: a string, an ArrayBuffer, a typed " +
+        "array or a Blob.";
+      reply({ ok: false, error });
+      events.onSaved({ words: () => t("main.package.notSaved"), detail: error });
+      return;
+    }
+    try {
+      const saved = await saveResult(packageId, name, data);
+      reply({ ok: true, ...saved });
+      events.onSaved({ words: () => t("main.package.saved", { name: saved.saved }) });
+    } catch (e) {
+      const error = (e as Error).message;
+      reply({ ok: false, error });
+      events.onSaved({ words: () => t("main.package.notSaved"), detail: error });
+    }
+  };
+
+  // The beat playing now, if it is this package's, else nothing.
+  let shown: string | null = null;
+  const showCue = (again = false) => {
+    const cue = storyCue.get();
+    const mine = cue && cue.package === packageId ? cue : null;
+    if (!mine) {
+      if (shown !== null) post({ type: "story.clear" });
+      shown = null;
+      return;
+    }
+    if (shown === mine.beat && !again) return;
+    shown = mine.beat;
+    post({ type: "story.cue", beat: mine.beat, targets: mine.targets, actions: mine.actions });
+  };
+  const unsubscribe = storyCue.subscribe(() => showCue());
+
+  const onMessage = (event: MessageEvent) => {
+    if (event.source !== frame.contentWindow) return;
+    const message = event.data;
+    if (!message || typeof message !== "object" || message.jarvis !== BRIDGE) return;
+    if (message.type === "save") void save(message);
+    else if (message.type === "listen") listen(Boolean(message.on));
+    else if (message.type === "story.ready") showCue(true);
+    else if (message.type === "story.missing" && Array.isArray(message.targets)) {
+      events.onStoryMissing({ words: () => t("main.package.story.notFound"),
+                              detail: message.targets.map(String).join(", ") });
+    }
+  };
+
+  window.addEventListener("message", onMessage);
+  return () => {
+    window.removeEventListener("message", onMessage);
+    unsubscribe();
+    stopListening?.();
+  };
+}

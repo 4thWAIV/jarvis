@@ -54,9 +54,9 @@ async def _top(page, selector: str) -> float:
     return await page.locator(selector).evaluate("e => e.getBoundingClientRect().top")
 
 
-@pytest.mark.asyncio
-async def test_shown_while_signed_out_covers_nothing_and_later_hides_it(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_shown_while_signed_out_covers_nothing_and_later_hides_it(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _Team(SIGNED_OUT), routes=_Status().routes())
         reminder = page.locator("#team-reminder")
         await async_api.expect(reminder).to_contain_text(TEXT)
@@ -78,10 +78,10 @@ async def test_shown_while_signed_out_covers_nothing_and_later_hides_it(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_gone_by_itself_once_signed_in(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_gone_by_itself_once_signed_in(page_playwright, page_url):
     team, sessions = _Team(NOT_PAIRED), _Sessions()
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, team, sessions=sessions, routes=_Status().routes())
         reminder = page.locator("#team-reminder")
         await async_api.expect(reminder).to_contain_text(TEXT)
@@ -92,10 +92,10 @@ async def test_gone_by_itself_once_signed_in(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_sign_in_with_a_saved_address_runs_the_team_sections_flow(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_sign_in_with_a_saved_address_runs_the_team_sections_flow(page_playwright, page_url):
     status = _Status(state="signed_out", last_server_url=ADDRESS)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _Team(SIGNED_OUT), routes=status.routes())
         await page.context.route(ADDRESS + "/**", lambda route: route.fulfill(
             status=200, content_type="text/html", body="<p>approve</p>"))
@@ -110,10 +110,10 @@ async def test_sign_in_with_a_saved_address_runs_the_team_sections_flow(page_url
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_sign_in_with_no_saved_address_opens_settings_at_team(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_sign_in_with_no_saved_address_opens_settings_at_team(page_playwright, page_url):
     status = _Status(state="disconnected", last_server_url=None)
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _Team(NOT_PAIRED), routes=status.routes())
         await page.locator("#team-reminder").get_by_role("button", name="Sign in").click()
         team = page.locator("#settings-team")

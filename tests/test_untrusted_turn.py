@@ -302,6 +302,32 @@ def test_answering_a_dialog_survives(call):
     assert server.TAINT_EXEMPT_ACTING == {"answer_dialog"}
 
 
+def test_pointing_after_reading_the_map_survives_but_opening_his_messages_does_not(call):
+    """"Show me the CPU on the Mac mini" is ui_map (which taints: its labels
+    are other people's words) then ui_indicate, in one turn. Pointing and
+    plain navigation carry a registered command and a validated target,
+    never text, so they survive; a command that declares an effect on his
+    messages (a waiting Queue item made Active, a read receipt) does not."""
+    _call, brain, server, _project = call
+    cpu = {"region": "main", "view": "main.network", "kind": "node", "key": "n1", "part": "cpu"}
+    _call("ui_map")
+    assert brain.turn_untrusted_source
+    refused = "untrusted_content_in_this_turn"
+    pointed = _call("ui_indicate", target=cpu, reveal="navigate")
+    assert refused not in pointed["text"], pointed
+    shown = _call("ui_navigate", command="right.tab.select", args={"tab": "network"})
+    assert refused not in shown["text"], shown
+    cleared = _call("ui_clear")
+    assert refused not in cleared["text"], cleared
+    opened = _call("ui_navigate", command="queue.open", args={"threadId": "t1"})
+    assert not opened["ok"] and refused in opened["text"], opened
+    journey = _call("ui_journey", steps=[{"command": "right.tab.select", "args": {"tab": "queue"}},
+                                         {"command": "queue.next", "args": {}}])
+    assert not journey["ok"] and refused in journey["text"], journey
+    # The exemption is the UI tools' alone; the one general exemption is unchanged.
+    assert server.UI_TAINT_EXEMPT_ACTING == {"ui_navigate", "ui_indicate", "ui_journey"}
+
+
 def test_steering_and_running_a_command_are_no_longer_exempt(call):
     """They were exempt because they are read back aloud with a cancel
     window. That is a weak gate against attacker-composed text: the user

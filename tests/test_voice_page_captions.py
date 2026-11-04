@@ -156,9 +156,9 @@ NOW = """() => { const w = document.querySelector('#caption-box .spoken-word.now
   return {word: w.textContent.trim(), glow: css.textShadow, background: css.backgroundColor}; }"""
 
 
-@pytest.mark.asyncio
-async def test_always_four_lines_left_aligned_between_the_side_columns(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_always_four_lines_left_aligned_between_the_side_columns(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url)
         box = await page.evaluate("""() => {
           const el = document.getElementById('caption-box');
@@ -179,9 +179,9 @@ async def test_always_four_lines_left_aligned_between_the_side_columns(page_url)
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_url):
-    async with async_api.async_playwright() as p:
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_playwright, page_url):
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _speaker(
             [["Good evening, sir.", "All six agents are idle."]], after_user=True))
         await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
@@ -206,12 +206,12 @@ async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_only_the_word_being_spoken_glows_and_it_moves_along(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_only_the_word_being_spoken_glows_and_it_moves_along(page_playwright, page_url):
     """One word at a time glows (bright text and a halo, no box); it moves
     through the sentence while the sentence plays; nothing glows after."""
     sentence = "one two three four five six seven eight"
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _speaker([[sentence]], clip_seconds=3.0))
         await page.wait_for_function(
             "document.querySelector('#caption-box .spoken-word.now')", timeout=10000)
@@ -232,11 +232,11 @@ async def test_only_the_word_being_spoken_glows_and_it_moves_along(page_url):
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_it_scrolls_to_what_is_being_said_now(page_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_it_scrolls_to_what_is_being_said_now(page_playwright, page_url):
     long = [[f"Sentence {u}-{i} with enough words in it to take up a line or so."
              for i in range(3)] for u in range(4)]
-    async with async_api.async_playwright() as p:
+    async with page_playwright as p:
         browser, page = await _open(p, page_url, _speaker(long, clip_seconds=0.2))
         await page.wait_for_function(
             "document.querySelector('#caption-box').textContent.includes('Sentence 3-2')",

@@ -5,7 +5,7 @@
  * selected one below. Agents is selected to begin with.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { AgentsControl } from "./AgentsControl";
 import { FoldersPanel } from "./FoldersPanel";
 import { NetworkPanel } from "./NetworkPanel";
@@ -14,8 +14,11 @@ import { QueueIcon } from "./QueueIcons";
 import { QueuePanel } from "./QueuePanel";
 import { attention } from "./queueStore";
 import { agentsTabLit } from "./agents";
+import { bind, rightTab, type RightTab } from "./uiNavigation";
 import { SubsystemList, useAnyDown } from "./SubsystemList";
+import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
+import { useUiBox } from "./uiRegistry";
 import { VoiceSummary } from "./VoiceSummary";
 import { WorkflowsView } from "./WorkflowsView";
 
@@ -31,9 +34,8 @@ function DiagnosticsView() {
   );
 }
 
-const FOLDERS_TAB: Tab = {
+const FOLDERS_TAB: RightTabView = {
   id: "folders",
-  title: "Folders",
   icon: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -43,12 +45,15 @@ const FOLDERS_TAB: Tab = {
   view: () => <FoldersPanel />,
 };
 
+/** A tab as defined here: its words come from the catalog by its id when
+ *  the panel is drawn (`tabs.right.<id>`), in the interface's language. */
+type RightTabView = Omit<Tab, "id" | "title"> & { id: RightTab };
+
 // Defined in no particular order; ORDER below is how they are laid out.
-const TABS: Tab[] = [
+const TABS: RightTabView[] = [
   FOLDERS_TAB,
   {
     id: "agents",
-    title: "Agents",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -64,7 +69,6 @@ const TABS: Tab[] = [
   },
   {
     id: "diagnostics",
-    title: "Diagnostics",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -75,7 +79,6 @@ const TABS: Tab[] = [
   },
   {
     id: "workflows",
-    title: "Workflows",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -89,7 +92,6 @@ const TABS: Tab[] = [
   },
   {
     id: "network",
-    title: "Network",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -103,35 +105,35 @@ const TABS: Tab[] = [
   },
   {
     id: "queue",
-    title: "Queue",
     icon: <QueueIcon kind="queue" size={18} />,
     view: () => <QueuePanel />,
   },
 ];
 
 // Left to right, top row first: two rows of three.
-const ORDER = ["folders", "agents", "queue", "workflows", "network", "diagnostics"];
+const ORDER: RightTab[] = ["folders", "agents", "queue", "workflows", "network", "diagnostics"];
 const LAID_OUT = ORDER.map((id) => TABS.find((t) => t.id === id)!);
-const FIRST = "agents";
 
 export function RightPanel() {
-  const [selected, setSelected] = useState(FIRST);
+  const t = useT();
+  const laidOut: Tab[] = LAID_OUT.map((tab) => ({ ...tab, title: t(`tabs.right.${tab.id}`) }));
+  const selected = useSyncExternalStore(rightTab.subscribe, rightTab.get);
+  const panel = useUiBox("right.panel");
   const lit = useSyncExternalStore(agentsTabLit.subscribe, agentsTabLit.get);
   // Something waiting and unread lights the Queue tab while another is open.
   const unread = attention(useSyncExternalStore(queue.subscribe, queue.get));
   // Something down shows on the Diagnostics tab whichever tab is open.
   const down = useAnyDown();
-  const tab = TABS.find((t) => t.id === selected) ?? TABS.find((t) => t.id === FIRST)!;
-  const select = (id: string) => {
-    setSelected(id);
-    if (id === "agents") agentsTabLit.set(false);   // its message is seen now
-  };
+  const tab = laidOut.find((v) => v.id === selected)!;
   return (
     <div id="right-column">
-      <TabRow tabs={LAID_OUT} selected={selected} onSelect={select} className="right-tabs" labelled
-              lit={(t) => t.id !== selected && ((t.id === "agents" && lit) || (t.id === "queue" && unread))}
-              alert={(t) => t.id === "diagnostics" && down} />
-      <div className="right-panel" role="tabpanel" aria-label={tab.title}>
+      <TabRow tabs={laidOut} selected={selected} className="right-tabs" labelled box="right.tabs"
+              // Selecting Agents clears its lit mark: in right.tab.select's
+              // handler (uiNavigation.ts), which the brain's request runs too.
+              binding={(v) => bind("right.tab.select", { tab: v.id as RightTab })}
+              lit={(v) => v.id !== selected && ((v.id === "agents" && lit) || (v.id === "queue" && unread))}
+              alert={(v) => v.id === "diagnostics" && down} />
+      <div className="right-panel" role="tabpanel" aria-label={tab.title} ref={panel}>
         {tab.view()}
       </div>
     </div>

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from jarvis import jarvis_mcp
+from tests.loopback_server import LoopbackHTTPServer
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -88,7 +89,7 @@ def fake_endpoint(tmp_path):
         def log_message(self, *a):
             pass
 
-    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    srv = LoopbackHTTPServer(("127.0.0.1", 0), H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     yield srv.server_address[1], calls, body_holder

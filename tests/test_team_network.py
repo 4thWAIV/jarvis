@@ -115,9 +115,9 @@ async def test_the_cache_is_the_team_servers_answer_byte_for_byte(conn, server):
     # The route's body carries those bytes as they came, not re-encoded.
     assert body.startswith(b'{"snapshot":' + _snapshot_bytes() + b",")
     status = json.loads(body)
-    assert set(status) == {"snapshot", "received_at", "stale", "last_error", "round_trip_ms",
-                           "last_contact_at", "connection"}
-    assert status["stale"] is False and status["last_error"] is None
+    assert set(status) == {"snapshot", "received_at", "stale", "last_error", "last_error_said",
+                           "round_trip_ms", "last_contact_at", "connection"}
+    assert status["stale"] is False and status["last_error"] is None and status["last_error_said"] is None
     assert status["connection"] == "connected"
     assert isinstance(status["round_trip_ms"], int) and status["round_trip_ms"] >= 0
     assert status["received_at"] and status["last_contact_at"]
@@ -180,6 +180,8 @@ async def test_a_timeout_keeps_the_last_values_stale_with_no_round_trip(conn, se
     assert conn.network.raw == _snapshot_bytes()
     assert status["stale"] is True and status["round_trip_ms"] is None
     assert "ReadTimeout" in status["last_error"]
+    # By code beside the English, for the page to word in its language.
+    assert status["last_error_said"] == {"code": "noAnswer", "values": {"kind": "ReadTimeout"}, "detail": ""}
     assert status["snapshot"]["nodes"][0]["resources"]["cpu_percent"] == 77.0
 
 
@@ -196,7 +198,8 @@ async def test_a_503_with_health_takes_the_health_and_keeps_the_nodes(conn, serv
     assert status["snapshot"]["server"] == _health("unreachable")
     assert status["stale"] is True
     assert isinstance(status["round_trip_ms"], int)          # a 503 with health is an answer
-    assert status["last_error"]
+    assert status["last_error"] == "The team server can't reach its database."
+    assert status["last_error_said"]["code"] == "databaseUnreachable"
 
 
 @pytest.mark.asyncio
@@ -210,6 +213,8 @@ async def test_a_503_without_health_is_an_ordinary_failure(conn, server):
     assert status["snapshot"]["server"] == _health()
     assert status["stale"] is True and status["round_trip_ms"] is None
     assert status["last_error"] == "No database."
+    # The team server's own words are the detail, shown as they came.
+    assert status["last_error_said"] == {"code": "answered", "values": {"status": 503}, "detail": "No database."}
 
 
 @pytest.mark.asyncio
@@ -363,7 +368,7 @@ async def test_the_route_returns_the_envelope_unchanged(conn, server, monkeypatc
 def test_the_node_update_is_built_from_the_collectors_alone():
     update = team_api.node_update(None)
     assert set(update) == {"node_id", "boot_id", "seq", "label", "jarvis_version", "os",
-                           "resources", "brains", "activity"}
+                           "resources", "brains", "activity", "attachments"}
     assert update["node_id"] == data_paths.node_id() and update["boot_id"] == team_api.BOOT_ID
     assert update["brains"] == []                            # no key, no brains
     assert team_api.node_update(None)["seq"] > update["seq"]
