@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-latest
+    runs-on: macos-15-intel  # experiment: Intel runner for PR 62 during the arm64 shortage (not for merge)
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
