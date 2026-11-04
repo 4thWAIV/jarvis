@@ -52,6 +52,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "targets.status": "Estado",
   "targets.teamServer": "Servidor del equipo",
   "targets.signInReminder": "Recordatorio para iniciar sesión",
+  "targets.updatesNotice": "Novedades pendientes",
   "targets.voiceHealth": "Salud de la voz",
   "targets.account": "Cuenta de {provider}",
   "targets.settingsSection": "Configuración, {section}",

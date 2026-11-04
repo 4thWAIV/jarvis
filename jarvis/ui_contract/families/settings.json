@@ -23,7 +23,11 @@
      "effects": [{"effect": "centre.detail-closed"}]},
     {"id": "reminder.later",
      "label": "Hide the sign-in reminder until the page or its connection to JARVIS starts again",
-     "view": "main.notice", "args": {}, "required": [], "actors": ["human", "brain"], "effects": []}
+     "view": "main.notice", "args": {}, "required": [], "actors": ["human", "brain"], "effects": []},
+    {"id": "updates.review",
+     "label": "Open or close the list of updates waiting (Review updates), at the top of the centre",
+     "view": "main.notice", "args": {"open": {"type": "boolean"}}, "required": ["open"],
+     "actors": ["human", "brain"], "effects": []}
   ],
   "kinds": [
     {"kind": "menu", "entity": null, "label": "Menu", "parts": ["toggle", "settings", "updates", "restart"],
@@ -66,6 +70,10 @@
      "presentations": [{"view": "main.settings",
                         "reveal": {"command": "settings.open", "args": {"section": "updates"}}}]},
     {"kind": "teamReminder", "entity": null, "label": "Sign-in reminder", "parts": ["text", "signIn", "later"],
+     "presentations": [{"view": "main.notice"}]},
+    {"kind": "updatesNotice", "entity": null,
+     "label": "Updates waiting: their count, Review updates, Mark all seen, Hold spoken updates and the list",
+     "parts": ["text", "review", "markSeen", "away", "list"],
      "presentations": [{"view": "main.notice"}]},
     {"kind": "footer", "entity": null, "label": "Footer", "parts": ["label"],
      "presentations": [{"view": "footer.fixed"}]}
