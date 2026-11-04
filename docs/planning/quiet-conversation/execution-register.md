@@ -4,7 +4,7 @@ Updated: 2026-11-04.
 
 ## Count and scope
 
-12 tracked workstreams: 1 authorized execution workflow and 11 deferred backlog workflows. The immediate incoming/outgoing audio delivery requires the one core workflow; the 11 future workflows are enhancements or separate projects, not prerequisites except when their stated entry condition exposes a current release failure.
+13 tracked workstreams: 1 authorized execution workflow and 12 deferred backlog workflows. The immediate incoming/outgoing audio delivery requires the one core workflow; the 11 future workflows are enhancements or separate projects, not prerequisites except when their stated entry condition exposes a current release failure.
 
 The core workflow contains seven phases/tasks, not seven separately launched workflows. GitHub Issues is disabled; the live workflow is tracked by JARVIS and each backlog item is filed below in the repository. Backlog entries have no live workflow ID until promoted.
 
@@ -21,6 +21,7 @@ The core workflow contains seven phases/tasks, not seven separately launched wor
 | Durable typed delivery and safe retry | Backlog; not started | Diagnostics planning | [typed-delivery](backlog/typed-delivery.md) |
 | Provider conversation/context recovery | Backlog; not started | Diagnostics planning | [provider-context-recovery](backlog/provider-context-recovery.md) |
 | Windows and mobile audio qualification | Backlog; not started | Diagnostics planning | [platform-audio](backlog/platform-audio.md) |
+| Cancelling a reply in progress | Backlog; not started (left out of the core build by Tim, 2026-11-04) | Diagnostics | [reply-cancellation](backlog/reply-cancellation.md) |
 | Additional notification channels | Backlog; not started | Diagnostics planning | [notification-channels](backlog/notification-channels.md) |
 
 ## Core phases
