@@ -77,8 +77,9 @@ def test_connect_sends_config_and_idle(client):
 def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(client):
     c, server = client
     with c.websocket_connect("/ws/transcribe") as ws:
-        ws.send_json({"type": "start", "version": 1, "sampleRate": 16000,
-                      "channels": 1, "format": "pcm_s16le"})
+        ws.send_json({"type": "start", "version": 2, "sampleRate": 16000,
+                      "channels": 1, "format": "pcm_s16le", "clientId": "page-a",
+                      "captureEpoch": 1})
         msg = ws.receive_json()
         assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
         assert "setup_speech_input.py" in msg["message"]
