@@ -9,8 +9,13 @@ import type { OrbState } from "./orb";
 import { createStore } from "./store";
 
 export const voiceState = createStore<OrbState>("idle");
-// Stopping him mid-sentence; jarvis.ts puts its handler here.
+// Stop speaking: all of his audio, now (the status control's Stop).
+// jarvis.ts puts its handler here.
 export const stopSpeaking = { current: () => {} };
+// Skip the rest: only the reading sounding now (the playback bar's Skip and
+// Escape), never another reading, never the request. jarvis.ts puts its
+// handler here.
+export const skipReading = { current: () => {} };
 // Sending what Tim typed into the white box instead of saying it; jarvis.ts
 // puts its handler here.
 export const sendTyped = { current: (_text: string): boolean => false };
