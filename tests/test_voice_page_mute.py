@@ -14,6 +14,7 @@ import pytest
 pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.voice_page_input import start_listening
 
 FAKE_MIC = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
 LIT = "document.querySelectorAll('#mic-meter .mic-segment.on').length"
@@ -46,6 +47,7 @@ async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_mic
         page = await browser.new_page()
         await page.add_init_script(COUNT_ASKS)
         await page.goto(page_url)
+        await start_listening(page)
 
         assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
         asks = await page.evaluate("window.__micAsks")
@@ -72,6 +74,7 @@ async def test_mic_off_releases_the_microphone_and_on_asks_for_it_again(page_pla
         page = await browser.new_page()
         await page.add_init_script(COUNT_ASKS)
         await page.goto(page_url)
+        await start_listening(page)
 
         assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
         asks = await page.evaluate("window.__micAsks")

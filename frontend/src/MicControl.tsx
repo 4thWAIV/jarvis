@@ -1,6 +1,9 @@
 /**
  * The microphone control, directly below the orb: the level meter (a red
- * "Muted" or "Mic off" in its place while nothing is sent), mute, mic off, and
+ * "Muted", "Muted · microphone inactive" or "Mic off" in its place while
+ * nothing is sent, "Finishing" while the words from before a stop are
+ * finished, and Start listening while this page is not listening), mute,
+ * mic off, and
  * the health dot while voice input has a problem (loading, blocked, busy in
  * another tab, interrupted, unavailable, or the recogniser falling behind).
  * The words are in the dot's title and in the Diagnostics view's Messages,
@@ -8,12 +11,14 @@
  *
  * The dot runs the registered `voice.diagnostics.open`, as the brain's
  * request does. The whole control and its meter, dot, mute and off are a
- * target the brain can point at; mute and off stay his own switches.
+ * target the brain can point at; mute and off stay his own switches, and
+ * Start listening is his alone: nothing else starts it (mic.ts), and it
+ * waits until his voice input settings have been read.
  */
 
 import { useSyncExternalStore } from "react";
 import { codeWords, saidShown, useT, type Translate } from "./locale";
-import { inputStatus, micMuted, micOff } from "./mic";
+import { inputStatus, quiet, startListening, voiceInputSettings } from "./mic";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
@@ -22,7 +27,7 @@ import { useUiTarget } from "./uiRegistry";
 import { causeSaid, health, type Cause } from "./voiceHealth";
 import type { InputStatus } from "./voiceInput";
 
-const QUIET_STATES = new Set(["listening", "paused", "muted", "off"]);
+const QUIET_STATES = new Set(["listening", "paused", "muted", "muted-inactive", "off", "finishing"]);
 const LOST_STATES = new Set(["interrupted", "unavailable", "permission"]);
 
 /** What the dot says, in the language in force, and whether words were
@@ -56,22 +61,57 @@ function HealthDot({ partRef }: { partRef: PartRef }) {
   );
 }
 
-/** The meter, or what stands in for it while nothing is sent. */
-function MicLevel({ partRef }: { partRef: PartRef }) {
+/** States in which this page is not listening and Start listening is offered. */
+const STARTABLE = new Set(["disarmed", "busy"]);
+
+/** What stands in for the meter while nothing is sent, by state, or null
+ *  for the meter itself. */
+function silencedKey(state: string): "left.mic.off" | "left.mic.muted" | "left.mic.mutedInactive"
+                                     | "left.mic.finishing" | null {
+  if (state === "off") return "left.mic.off";
+  if (state === "muted") return "left.mic.muted";
+  if (state === "muted-inactive") return "left.mic.mutedInactive";
+  if (state === "finishing") return "left.mic.finishing";
+  return null;
+}
+
+/** Start listening on this page: his click, and nothing else. */
+function StartButton({ partRef }: { partRef: PartRef }) {
   const t = useT();
-  const muted = useSyncExternalStore(micMuted.subscribe, micMuted.get);
-  const off = useSyncExternalStore(micOff.subscribe, micOff.get);
-  if (!muted && !off) return <MicMeter partRef={partRef} />;
-  return <span id="mic-silenced" ref={partRef}>{t(off ? "left.mic.off" : "left.mic.muted")}</span>;
+  const settings = useSyncExternalStore(voiceInputSettings.subscribe, voiceInputSettings.get);
+  const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
+  const label = t(status.state === "busy" ? "left.mic.listenHere" : "left.mic.startListening");
+  return (
+    <button id="btn-listen" type="button" ref={partRef} data-ui-action="microphone"
+            className="control-button small listen" disabled={!settings}
+            title={settings ? label : t("left.mic.settingsUnread")} aria-label={label}
+            onClick={(e) => { e.stopPropagation(); startListening.current(); }}>
+      {label}
+    </button>
+  );
+}
+
+/** The meter, or what stands in for it while nothing is sent. */
+function MicLevel({ partRef, listenRef }: { partRef: PartRef; listenRef: PartRef }) {
+  const t = useT();
+  const preference = useSyncExternalStore(quiet.subscribe, quiet.get);
+  const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
+  if (preference === "none" && STARTABLE.has(status.state)) return <StartButton partRef={listenRef} />;
+  const key = preference === "off" ? "left.mic.off" : silencedKey(status.state)
+    ?? (preference === "muted" ? "left.mic.muted" : null);
+  if (!key) return <MicMeter partRef={partRef} />;
+  return <span id="mic-silenced" data-state={status.state} ref={partRef}>{t(key)}</span>;
 }
 
 export function MicControl() {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: t("targets.microphone"),
                            socket: { rail: "rail.left", side: "left" } });
+  const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
   return (
     <div id="mic-control" ref={ui.whole}>
-      <MicLevel partRef={ui.part("meter")} />
+      <span id="mic-state" className="visually-hidden" role="status">{t(`left.mic.state.${status.state}`)}</span>
+      <MicLevel partRef={ui.part("meter")} listenRef={ui.part("listen")} />
       <MuteButton partRef={ui.part("mute")} />
       <MicOffButton partRef={ui.part("off")} />
       <HealthDot partRef={ui.part("health")} />

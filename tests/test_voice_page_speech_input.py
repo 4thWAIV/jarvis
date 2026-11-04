@@ -20,6 +20,7 @@ pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
+from tests.voice_page_input import start_listening
 
 # Counts the page's getUserMedia calls and the tracks still live.
 COUNT_MICROPHONES = """
@@ -70,7 +71,7 @@ class Voice:
         return [m["text"] for m in self.sent if m.get("type") == "transcript"]
 
 
-async def _open(p, url, script=None):
+async def _open(p, url, script=None, listen=True):
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -83,6 +84,8 @@ async def _open(p, url, script=None):
     voice = Voice()
     await page.route_web_socket("**/ws/voice", voice)
     await page.goto(url + "?view=main")
+    if listen:
+        await start_listening(page)
     return browser, page, voice
 
 
@@ -131,7 +134,11 @@ async def test_what_is_heard_goes_to_jarvis_as_before(page_playwright, page_url)
         assert voice.finals() == ["open the pod bay doors"]
         final = [m for m in voice.sent if m.get("type") == "transcript"][0]
         assert final["isFinal"] is True and "typed" not in final
-        assert {"type": "interim", "text": "open the"} in voice.sent
+        interim = [m for m in voice.sent if m.get("type") == "interim"][0]
+        assert interim["text"] == "open the"
+        # Every word carries this page and the capture epoch it was heard in.
+        assert interim["clientId"] == final["clientId"] and interim["clientId"].startswith("page-")
+        assert final["captureEpoch"] == interim["captureEpoch"] >= 1
         await browser.close()
 
 
