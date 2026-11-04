@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_conversation import _Voice
@@ -78,6 +79,7 @@ async def test_the_package_page_runs_without_an_origin_and_saves_through_the_bri
         await page.route_web_socket("**/ws/sessions", lambda ws: None)
         await page.route("**/api/packages/**", _through(client, token))
         await page.goto(page_url)
+        await start_listening(page)
         await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)",
                                      timeout=10000)
 
