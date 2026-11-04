@@ -77,6 +77,7 @@ class Harness:
         self.msgs = []
         self.fail_texts = set()
         self.synth_calls = []          # every text actually sent to TTS
+        kw.setdefault("end_of_turn", 0.2)
         self.sched = SpeechScheduler(self.synth, self.emit, pause_after=0.2, stale_after=0.6,
                                      echo_window=0.5, batch_interval=0.3, batch_settle=0.05, **kw)
 

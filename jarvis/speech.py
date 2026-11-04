@@ -381,10 +381,11 @@ class _Spoken:
 
 
 # How long he must have been quiet before JARVIS takes it that he has
-# finished. The server waits this long after the last words it heard before
-# it sends them to the brain (so a pause mid-sentence does not send half of
-# it), and nothing JARVIS says starts while he has spoken more recently than
-# this, his replies included.
+# finished: his patience when he has set none (voice_control.py). The
+# server's turn controller waits this long after the last words it heard
+# before it commits them to the brain (so a pause mid-sentence does not send
+# half of it), and nothing JARVIS says starts while he has spoken more
+# recently than this, his replies included. One value governs both.
 END_OF_TURN_SEC = 1.5
 
 
@@ -417,9 +418,10 @@ class SpeechScheduler:
         self.prefetch = prefetch
         self.batch_interval = batch_interval
         self.pause_after = pause_after
-        # Never longer than announcements wait for him (pause_after).
-        self.end_of_turn = min(END_OF_TURN_SEC if end_of_turn is None else end_of_turn,
-                               pause_after)
+        # The same patience the turn controller holds his turn for: never
+        # clamped shorter, so JARVIS cannot start talking before his turn
+        # could have ended.
+        self.end_of_turn = END_OF_TURN_SEC if end_of_turn is None else end_of_turn
         self.stale_after = stale_after
         self.echo_window = echo_window
         self.bridges = bridges

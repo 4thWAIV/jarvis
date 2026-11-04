@@ -1111,6 +1111,30 @@ html, body {
 .mic-segment.mid.on { background: #f5c518; }
 .mic-segment.high.on { background: #ff4d4f; }
 
+/* In the meter's place while this page is not listening: listening starts
+   only on this click. No taller than the meter, so the pointer's paths to
+   mute and off pass under it as they pass under the meter. */
+#btn-listen {
+  width: auto;
+  min-width: 94px;
+  height: 12px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+#btn-listen:hover { background: none; }
+#btn-listen:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+/* Finishing the words from before a stop: on its way out, not an alarm. */
+#mic-silenced[data-state="finishing"] { color: var(--ui-muted); }
+
 /* In the meter's place while muted or off: nothing is being sent. */
 #mic-silenced {
   min-width: 94px;

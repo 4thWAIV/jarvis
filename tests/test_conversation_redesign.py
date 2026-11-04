@@ -4,6 +4,7 @@ import json
 import time
 
 import pytest
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_conversation import _Voice, _open, _record_item
 from tests.test_voice_page_captions import _silence_wav
@@ -51,6 +52,7 @@ async def test_draft_survives_reload_and_is_removed_after_send(page_url):
         editor = page.get_by_role('textbox', name='Message JARVIS')
         await editor.fill('A draft\nwith a second line')
         await page.reload()
+        await start_listening(page)
         await page.wait_for_function("window.__transcribers.some(t => t.readyState === 1)")
         assert await editor.input_value() == 'A draft\nwith a second line'
         await page.get_by_role('button', name='Send message').click()

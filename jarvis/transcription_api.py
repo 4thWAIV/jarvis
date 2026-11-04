@@ -11,6 +11,13 @@ reconnect is always a new session. The web boundary (web_auth.OriginGuard)
 covers this route like every other socket: the page's own Origin or the tool
 token, and no access-key category includes it.
 
+Version 2: the start also says whose capture it is: the page's `clientId`,
+the `captureEpoch` it is started in, and `claim`, true only when his Start
+listening on that page means to take the recogniser from another page
+(transcriber.TranscriptionService.admit). A page that is not the owner is
+told `busy`; the owner a claim displaces is told `taken`. A version 1 start
+is refused with `invalid-format`.
+
 A page that asks for diagnostics (`"diagnostics": true` in its start) sends
 `telemetry` once a second and is sent `health` once a second: a
 voice_diagnostics.CaptureMonitor samples the capture, records the sample and
@@ -37,6 +44,7 @@ from jarvis.voice_diagnostics import Event
 log = logging.getLogger("jarvis.transcription")
 
 START_WAIT_SEC = 10.0
+CLIENT_ID_MAX = 64
 # A capture that becomes ready this soon after a failure is the page
 # reconnecting after it, and is recorded as a reconnect.
 RECONNECT_WITHIN_SEC = 10.0
@@ -84,6 +92,13 @@ def _start_problem(msg: object) -> Optional[str]:
     if wrong:
         return ("Unsupported audio: expected " +
                 ", ".join(f"{k}={expected[k]}" for k in wrong) + ".")
+    client, epoch = msg.get("clientId"), msg.get("captureEpoch")
+    if not isinstance(client, str) or not 0 < len(client) <= CLIENT_ID_MAX:
+        return "The start must name the page (clientId)."
+    if type(epoch) is not int or epoch < 0:
+        return "The start must carry its capture epoch (captureEpoch)."
+    if not isinstance(msg.get("claim", False), bool):
+        return "claim must be true or false."
     return None
 
 
@@ -141,7 +156,8 @@ async def transcribe(ws: WebSocket):
             await fail(TranscriptionError("model-unavailable", "Speech input is not running."))
             return
         try:
-            capture = service.admit()
+            capture = service.admit(first["clientId"], first["captureEpoch"],
+                                    claim=first.get("claim") is True)
             if service.status == "loading":
                 await send("loading")
             await service.ready()

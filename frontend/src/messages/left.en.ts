@@ -30,6 +30,25 @@ export const leftEn = {
   "left.mic.turnOn": "Turn the microphone on",
   "left.mic.turnOff": "Turn the microphone off",
   "left.mic.healthCause": "{state}: {cause}",
+  "left.mic.mutedInactive": "Muted · microphone inactive",
+  "left.mic.finishing": "Finishing",
+  "left.mic.startListening": "Start listening",
+  "left.mic.listenHere": "Listen here",
+  "left.mic.settingsUnread": "Listening can start once your voice input settings have been read.",
+  // The microphone's state, as assistive technology reads it (MicControl.tsx).
+  "left.mic.state.disarmed": "Not listening",
+  "left.mic.state.starting": "Starting",
+  "left.mic.state.permission": "Waiting for the browser",
+  "left.mic.state.loading": "Starting speech recognition",
+  "left.mic.state.listening": "Listening",
+  "left.mic.state.paused": "Paused while JARVIS speaks",
+  "left.mic.state.muted": "Muted",
+  "left.mic.state.muted-inactive": "Muted · microphone inactive",
+  "left.mic.state.finishing": "Finishing the last words",
+  "left.mic.state.off": "Mic off",
+  "left.mic.state.busy": "Busy in another tab",
+  "left.mic.state.interrupted": "Interrupted",
+  "left.mic.state.unavailable": "Unavailable",
 
   // What voice input says while it is not simply listening (voiceInput.ts).
   "left.input.asking": "Asking for the microphone…",
@@ -54,6 +73,22 @@ export const leftEn = {
   "left.input.tooSlow": "Speech recognition took too long to start, so what you said was not sent. Say it again once it is listening.",
   "left.input.backedUp": "The connection to speech recognition is backed up, so that was not sent. Listening again.",
   "left.input.muteUnfinished": "The last words before mute could not be finished, so they were not sent.",
+  "left.input.taken": "Listening moved to another JARVIS page. Start listening here to take it back.",
+  "left.input.settingsUnread": "Your voice input settings could not be read, so listening has not started.",
+  "left.input.stopUnfinished": "The last words before the stop could not be finished: they are in the message box, not sent.",
+
+  // His two voice input settings (VoiceInputSettingsControl.tsx).
+  "left.voiceInput.stop": "When I stop the microphone",
+  "left.voiceInput.stop.keep": "Keep captured words",
+  "left.voiceInput.stop.discard": "Discard unfinished input",
+  "left.voiceInput.stopHelp": "Keep finishes only what you said before the stop and handles it like anything else you say; it never sends anything by itself. Discard throws away what was not yet sent.",
+  "left.voiceInput.switch": "When I switch away from JARVIS",
+  "left.voiceInput.switch.continue": "Continue listening",
+  "left.voiceInput.switch.stop": "Stop listening",
+  "left.voiceInput.switchHelp": "Continue keeps a listening session you started; Stop ends it, and what you were saying follows the setting above. Coming back never starts listening, and neither turns on a muted or switched-off microphone.",
+  "left.voiceInput.defaults": "These are the defaults: you have not chosen yet. A change applies from the next stop or switch.",
+  "left.voiceInput.unread": "Your voice input settings have not been read, so listening cannot start yet.",
+  "left.voiceInput.notSaved": "Not saved ({error}).",
 
   // Speech model and language refusals (speech_models.Refused codes).
   "left.speech.unknownLanguage": "That is not a language JARVIS speaks.",

@@ -135,11 +135,11 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment")
+            "update_jarvis", "reveal_attachment", "set_voice_input_settings")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
-NEW_OWN_READS = ("speech_models",)
+NEW_OWN_READS = ("speech_models", "voice_input_settings")
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
@@ -169,6 +169,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("retry_run", {"run": "x"}),
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
+    ("set_voice_input_settings", {"stop": "discard"}),
     ("update_jarvis", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
@@ -599,3 +600,27 @@ def test_update_jarvis_says_what_stops_it_and_starts_nothing(wired, monkeypatch)
     assert "The update is refused: Tracked files have been changed here." in got["text"]
     _walled(got["text"])
     assert started == []
+
+
+# ── his voice input settings ─────────────────────────────────────────────
+
+def test_voice_input_settings_read_and_change_through_the_route_s_service(wired):
+    """The tool reads what the route reads and saves what the route saves,
+    with the same refusals; changing them starts and sends nothing."""
+    from jarvis import voice_control
+    read = _call(wired, "voice_input_settings")
+    assert read["ok"] and "the defaults: he has not chosen yet" in read["text"]
+    got = _call(wired, "set_voice_input_settings", stop="discard", switch="continue")
+    assert got["ok"] and got["text"].startswith("Saved.")
+    page = wired.client.get(voice_control.PATH).json()
+    assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
+                    "scope": "member"}
+    assert voice_control.user_key() == f"github:{TIM}"
+    assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
+    refused = _call(wired, "set_voice_input_settings", stop="forever")
+    assert "Nothing was changed" in refused["text"]
+    from jarvis import data_paths
+    page_post = wired.client.post(voice_control.PATH, json={"stop": "forever"}, headers={
+        "Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
+    assert (page_post.status_code, page_post.json()["code"]) == (400, "invalid-stop")
+    assert wired.client.get(voice_control.PATH).json() == page

@@ -126,6 +126,8 @@ from jarvis import notifier
 from jarvis import transcription_api
 from jarvis import speech_models
 from jarvis import language_setting
+from jarvis import voice_control
+from jarvis.turn_controller import TurnController
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -136,7 +138,7 @@ from jarvis.folder_contract import FolderError
 from jarvis import tts
 from jarvis import spoken_words
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
-from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
+from jarvis.speech import Priority, SpeechScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 log = logging.getLogger("jarvis")
@@ -3057,6 +3059,7 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
+voice_control.mount(app, publish=_send_to_session_clients)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
@@ -4941,52 +4944,37 @@ _turn_heard: Optional[int] = None
 _turn_lock = asyncio.Lock()
 
 
-class _Utterance:
-    """What he says, gathered until he has finished. Each final the
-    recogniser gives is held for END_OF_TURN_SEC, and anything more he says
-    in that time (an interim or another final) joins it and starts the wait
-    again, so a pause mid-sentence does not send the brain half a sentence.
-    `send` gets the whole of it once he has been quiet that long, with the
-    id of the last final in it. What he types is not gathered: `now` sends
-    whatever was heard first, then the caller handles the typed words."""
+def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:
+    """The page and capture epoch a voice frame names (voice control
+    contract, section 4), or None for what it does not carry."""
+    client, epoch = msg.get("clientId"), msg.get("captureEpoch")
+    client = client if isinstance(client, str) and 0 < len(client) <= 64 else None
+    epoch = epoch if type(epoch) is int and epoch >= 0 else None
+    return client, epoch
 
-    def __init__(self, send: Callable[[str, Optional[int]], Awaitable[None]],
-                 hold: float = END_OF_TURN_SEC) -> None:
-        self._send = send
-        self._hold = hold
-        self._parts: list[str] = []
-        self._heard: Optional[int] = None
-        self._timer: Optional[asyncio.TimerHandle] = None
 
-    def heard(self, text: str, heard: Optional[int]) -> None:
-        self._parts.append(text)
-        self._heard = heard if heard is not None else self._heard
-        self._wait()
+def _capture_coverage(client: str) -> Optional[tuple[int, int]]:
+    service = transcription_api.service
+    return service.coverage_of(client) if service is not None else None
 
-    def still_talking(self) -> None:
-        if self._parts:
-            self._wait()
 
-    async def now(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        if not self._parts:
-            return
-        text, heard = " ".join(self._parts), self._heard
-        self._parts, self._heard = [], None
-        await self._send(text, heard)
+def _capture_epoch(client: str) -> Optional[int]:
+    service = transcription_api.service
+    return service.epoch_of(client) if service is not None else None
 
-    def drop(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-        self._parts, self._heard, self._timer = [], None, None
 
-    def _wait(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-        self._timer = asyncio.get_running_loop().call_later(
-            self._hold, lambda: _spawn(self.now()))
+async def _take_back_the_floor(turn_id: int) -> None:
+    """He spoke again after his turn was committed and before its reply was
+    heard: the reply's reading stops before it starts (its text stays, and
+    what the turn did is not undone), and what he says is the next turn."""
+    if speech is None:
+        return
+    for utt in list(speech.utterances.values()):
+        if (utt.kind == "turn" and utt.label == "reply" and not utt.done
+                and utt.first_sent_at is None):
+            log.info("turn %d: he went on before its reply was heard; reply %d not read",
+                     turn_id, utt.id)
+            await speech.skip_reply(utt.id)
 
 
 def _transcript_id(msg: dict) -> Optional[int]:
@@ -8418,6 +8406,51 @@ async def tool_set_language(args: dict) -> str:
         return f"JARVIS's language is already {name}, sir."
     return (f"JARVIS's language is {name} now, sir: speech input hears it and you speak "
             f"it. Tell him so in {name}. {language_setting.brain_rule(language)}")
+
+
+def _voice_input_settings_said(settings: dict) -> str:
+    stop = {"keep": "keep the words already captured",
+            "discard": "discard unfinished input"}[settings["stop"]]
+    switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
+    patience = f"His turn ends after {settings['patience']:g} seconds of quiet. "
+    whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
+    said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
+            f"from JARVIS, it will {switch}. {patience}These are {whose}'s settings")
+    return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
+
+
+async def tool_voice_input_settings(args: dict) -> str:
+    """His two voice input settings: what the Settings route reads."""
+    try:
+        return _voice_input_settings_said(voice_control.read())
+    except voice_control.Unreadable as e:
+        return f"{e} Listening cannot be started until they can."
+
+
+async def tool_set_voice_input_settings(args: dict) -> str:
+    """Change one or both voice input settings: the Settings route's
+    `voice_control.change`, with its validation. An ACTING tool. It starts,
+    stops and sends nothing; it applies from the next stop or page switch."""
+    try:
+        settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
+                                        patience=args.get("patience"))
+    except voice_control.Invalid as e:
+        return f"Nothing was changed, sir: {e.message}"
+    except voice_control.Unreadable as e:
+        return f"Nothing was changed, sir: {e}"
+    return ("Saved. " + _voice_input_settings_said(settings)
+            + " It applies from the next time he stops the microphone or leaves the page.")
+
+
+TOOL_HANDLERS.update({
+    "voice_input_settings": tool_voice_input_settings,
+    "set_voice_input_settings": tool_set_voice_input_settings,
+})
+ACTING_TOOLS.update({"set_voice_input_settings"})
+TAINT_EXEMPT_TOOLS.update({
+    "voice_input_settings": "it reads his own two voice input settings: fixed values",
+    "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
+})
 
 
 TOOL_HANDLERS.update({
@@ -11877,7 +11910,23 @@ async def voice_handler(ws: WebSocket):
             return
         _spawn(_handle_utterance(text, heard))
 
-    utterance = _Utterance(take_utterance)
+    def show_turn(frame: dict) -> None:
+        _enqueue(queue, {"type": "turn", **frame})
+
+    async def commit_turn(text: str, heard: Optional[int], turn_id: int) -> None:
+        show_turn({"state": "committed", "turnId": turn_id})
+        await take_utterance(text, heard)
+
+    # His patience: one value for the hold here and for when JARVIS may
+    # start talking (voice_control.py).
+    patience = voice_control.patience()
+    if speech is not None:
+        speech.end_of_turn = patience
+    turns = TurnController(
+        commit_turn, hold=patience, coverage=_capture_coverage, epoch_floor=_capture_epoch,
+        on_stalled=lambda turn_id, text: show_turn(
+            {"state": "stalled", "turnId": turn_id, "text": text}),
+        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)))
 
     try:
         # Through this client's own queue, not straight down the socket, so
@@ -11928,6 +11977,18 @@ async def voice_handler(ws: WebSocket):
                 # it drives nothing.
                 log.info("mic: %s", str(msg.get("text", ""))[:120])
                 continue
+            if kind == "turn_discard":
+                # His stop under Discard (voice control contract, rows 11
+                # and 14): what was being gathered from this page is thrown
+                # away, never sent, and its late words are refused.
+                turns.discard(*_page_identity(msg))
+                continue
+            if kind == "turn_send_now":
+                # Send now: commit what he has said at once, once the
+                # recogniser has caught up with him.
+                if not turns.send_now():
+                    log.info("send now: nothing to send yet")
+                continue
             if kind == "hush":
                 # The user pressed the key, or the button. Deliberately NOT a
                 # spoken word: over a speaker his own voice comes back through
@@ -11949,8 +12010,11 @@ async def voice_handler(ws: WebSocket):
                 # wrong happened after this point.
                 text = str(msg.get("text", ""))
                 log.info("mic-hears: %s", text[-70:])
+                client, epoch = _page_identity(msg)
+                if not turns.current(client, epoch):
+                    continue
                 if await speech.user_interim(text) == "speech":
-                    utterance.still_talking()
+                    turns.interim(text, client, epoch)
             elif kind == "played":
                 try:
                     # OverflowError is in there because `int(float('inf'))`
@@ -11969,6 +12033,9 @@ async def voice_handler(ws: WebSocket):
                     text = apply_speech_corrections(text)
                 if not text:
                     continue
+                client, epoch = _page_identity(msg)
+                if not typed and not turns.current(client, epoch):
+                    continue                 # a stopped capture's late words
                 verdict = await speech.user_final(text, typed=typed)
                 if not typed and verdict != "echo":
                     # Accepted as his words (stop, cancel and "say that
@@ -11997,17 +12064,23 @@ async def voice_handler(ws: WebSocket):
                 # the turn they start go to it and no other.
                 ui_clients.note_turn(ws, _transcript_id(msg))
                 if typed:
-                    await utterance.now()
+                    # Typed Send is his whole message: voice words still
+                    # being gathered are not merged into it, and go on as
+                    # their own turn.
                     await take_utterance(text, _transcript_id(msg), typed=True)
                 else:
-                    utterance.heard(text, _transcript_id(msg))
+                    turns.final(text, _transcript_id(msg), client, epoch)
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:
         log.error(f"WebSocket error: {e}", exc_info=True)
     finally:
-        # Words still being gathered when the page went are sent, not lost.
-        _spawn(utterance.now())
+        # Words still being gathered when the page went are not sent: an
+        # abandoned partial is never turned into a request. The page keeps
+        # what it heard as an unsent draft.
+        unsent = turns.close()
+        if unsent:
+            log.info("voice socket closed with words not sent: %r", unsent[:120])
         ui_clients.gone(ws)
         _drop_voice_client(ws)
 

@@ -1,16 +1,17 @@
 /**
  * Turns the microphone off and on: off releases it, so the browser's
  * recording indicator goes out, and on asks for it again, which takes longer
- * than unmuting. See `micOff()` in voiceInput.ts.
+ * than unmuting. Off is kept across a reload (mic.ts); turning it on is a
+ * deliberate start of listening. See `setQuiet` in voiceInput.ts.
  */
 
 import { useSyncExternalStore } from "react";
 import { useT } from "./locale";
-import { micOff } from "./mic";
+import { chooseQuiet, quiet } from "./mic";
 
 export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
   const t = useT();
-  const off = useSyncExternalStore(micOff.subscribe, micOff.get);
+  const off = useSyncExternalStore(quiet.subscribe, quiet.get) === "off";
   return (
     <button
       id="btn-mic-off"
@@ -18,9 +19,11 @@ export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => vo
       data-ui-action="microphone"
       className={`control-button small${off ? " muted" : ""}`}
       title={t(off ? "left.mic.turnOn" : "left.mic.turnOff")}
+      aria-label={t(off ? "left.mic.turnOn" : "left.mic.turnOff")}
+      aria-pressed={off}
       onClick={(e) => {
         e.stopPropagation();
-        micOff.set(!micOff.get());
+        chooseQuiet(off ? "none" : "off");
       }}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"

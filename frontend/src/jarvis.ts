@@ -17,7 +17,10 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
-import { inputStatus, micLevel, micMuted, micOff } from "./mic";
+import { inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
+import { loadVoiceInputSettings } from "./voiceSettings";
+import { CLIENT_ID } from "./uiClient";
+import { offerDraft } from "./conversation/Composer";
 import { sendTyped, stopSpeaking, voiceState, voiceConnected, conversationJump } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
@@ -35,8 +38,6 @@ export function startJarvis(orb: Orb): void {
 
   type State = "idle" | "listening" | "thinking" | "speaking" | "compacting";
   let currentState: State = "idle";
-  let isMuted = false;
-  let isOff = false;
 
   // ---------------------------------------------------------------------------
   // Init components
@@ -67,7 +68,7 @@ export function startJarvis(orb: Orb): void {
   // Mute and mic off only stop the microphone; they have no say in the orb's
   // state.
   function micFollowsState() {
-    if (isMuted || isOff) return;
+    if (quiet.get() !== "none") return;
     if (currentState === "speaking" && muteMicDuringSpeech) {
       voiceInput.pause();
     } else {
@@ -79,16 +80,36 @@ export function startJarvis(orb: Orb): void {
   // Voice input
   // ---------------------------------------------------------------------------
 
+  // What he said that the server has not yet committed as a turn: if the
+  // voice socket drops, it is not sent but kept as an unsent draft, and a
+  // turn the recogniser could not finish comes back the same way.
+  let unsent: string[] = [];
+  const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); unsent = []; };
+  socket.onMessage((msg) => {
+    if (msg.type !== "turn") return;
+    if (msg.state === "committed") unsent = [];
+    else if (msg.state === "stalled") keepUnsent(String(msg.text ?? ""));
+  });
+  socket.onClose(() => keepUnsent(unsent.join(" ")));
+  // A listening page stops while the voice socket is down and resumes, in
+  // this open page, once it is back (voiceInput.ts `connection`).
+  socket.onClose(() => voiceInput.connection(false));
+  socket.onOpen(() => voiceInput.connection(true));
+
+  // Every word heard carries this page and the capture epoch it was heard
+  // in (voice control contract, section 4).
   const voiceInput = createVoiceInput(
-    (text: string) => {
+    (text: string, captureEpoch: number) => {
       // The server decides whether this is echo, a barge-in, or a new turn.
       // The turn's id goes with it, so a capture made from it can name it.
+      unsent.push(text);
       const id = showHeard(text, true);
-      socket.send({ type: "transcript", text, isFinal: true, ...(id === null ? {} : { id }) });
+      socket.send({ type: "transcript", text, isFinal: true, clientId: CLIENT_ID, captureEpoch,
+                    ...(id === null ? {} : { id }) });
     },
-    (text: string) => {
+    (text: string, captureEpoch: number) => {
       showHeard(text, false);
-      socket.send({ type: "interim", text });
+      socket.send({ type: "interim", text, clientId: CLIENT_ID, captureEpoch });
     },
     (event: string) => {
       // Mirror the microphone's lifecycle to the server log: a browser-side
@@ -108,6 +129,24 @@ export function startJarvis(orb: Orb): void {
       // A final heard while the voice socket is down would be dropped by
       // socket.send; it is reported as not sent instead, and not replayed.
       canDeliver: () => socket.isConnected(),
+      // His two voice input settings (voiceSettings.ts): no listening until
+      // they are read.
+      settings: () => voiceInputSettings.get(),
+      // Discarded under his stop setting: the server drops what it was
+      // gathering from this page.
+      onDiscard: (captureEpoch: number) => {
+        unsent = [];
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
+      // Kept words that could not be finished, or finished after Mute: never
+      // sent, an unsent draft.
+      onDraft: offerDraft,
+      // Muted: the server drops what it was gathering, and the words it had
+      // become an unsent draft too.
+      onMute: (captureEpoch: number) => {
+        keepUnsent(unsent.join(" "));
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
     }
   );
 
@@ -361,9 +400,12 @@ export function startJarvis(orb: Orb): void {
   // Kick off
   // ---------------------------------------------------------------------------
 
-  // At once: there is no recogniser to wait for, and the microphone is
-  // taken as soon as the browser allows.
-  voiceInput.start();
+  // Quiet: no microphone is asked for until he starts listening on this
+  // page (MicControl.tsx), or unmutes or turns the microphone on. A reload
+  // keeps Mute and Mic off (mic.ts) and never keeps listening.
+  voiceInput.setQuiet(quiet.get(), false);
+  startListening.current = () => { voiceInput.start(); };
+  void loadVoiceInputSettings();
   transition("listening");
 
   // Resume AudioContext on ANY user interaction (browser autoplay policy)
@@ -384,28 +426,13 @@ export function startJarvis(orb: Orb): void {
   // UI Controls
   // ---------------------------------------------------------------------------
 
-  // The mute button (MuteButton.tsx) sets this: nothing is sent while
-  // muted, and the microphone stays open.
-  micMuted.subscribe(() => {
-    isMuted = micMuted.get();
-    if (isMuted) {
-      voiceInput.mute();           // the meter reads zero and nothing is sent
-    } else {
-      voiceInput.unmute();
-      micFollowsState();
-    }
-  });
-
-  // The mic-off button (MicOffButton.tsx) sets this: the microphone itself
-  // is released.
-  micOff.subscribe(() => {
-    isOff = micOff.get();
-    if (isOff) {
-      voiceInput.micOff();
-    } else {
-      voiceInput.micOn();
-      micFollowsState();
-    }
+  // The mute and mic-off buttons (MuteButton.tsx, MicOffButton.tsx) and
+  // another tab of this browser set the quiet preference (mic.ts): muted
+  // sends nothing and keeps the microphone open, off releases it. Only this
+  // page's own Unmute or Mic on starts listening again.
+  quiet.subscribe(() => {
+    voiceInput.setQuiet(quiet.get(), quietBy === "here");
+    micFollowsState();
   });
 
 }

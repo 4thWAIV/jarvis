@@ -2279,7 +2279,8 @@ export const UI_CONTRACT = {
         "meter",
         "health",
         "mute",
-        "off"
+        "off",
+        "listen"
       ],
       "presentations": [
         {
@@ -2399,6 +2400,8 @@ export const UI_CONTRACT = {
         "saveYou",
         "language",
         "spanishModel",
+        "voiceInputStop",
+        "voiceInputSwitch",
         "voiceId",
         "saveVoiceId",
         "fishKey",

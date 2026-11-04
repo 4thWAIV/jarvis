@@ -1947,6 +1947,36 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "voice_input_settings",
+        "description": (
+            "His two voice input settings (Settings, Voice and language): what happens to "
+            "what he was saying when he stops the microphone (keep or discard), and whether "
+            "listening continues or stops when he switches away from JARVIS."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_voice_input_settings",
+        "description": (
+            "Change one or both voice input settings, only when he asks. It applies from the "
+            "next time he stops the microphone or leaves the page; it starts, stops and "
+            "sends nothing now, and can never start listening."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "stop": {"type": "string", "enum": ["keep", "discard"],
+                         "description": "When he stops the microphone: keep the words "
+                                        "already captured, or discard unfinished input."},
+                "switch": {"type": "string", "enum": ["continue", "stop"],
+                           "description": "When he switches away from JARVIS: continue "
+                                          "listening, or stop listening."},
+                "patience": {"type": "number", "minimum": 0.5, "maximum": 10,
+                             "description": "Seconds of quiet that end his turn; it also "
+                                            "governs when JARVIS may start talking. From "
+                                            "the next time the page connects."},
+            },
+        },
+    },
+    {
         "name": "answer_workflow_decision",
         "description": (
             "Record his answer to a workflow's open decision, only when he gives it: the "

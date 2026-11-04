@@ -23,6 +23,7 @@ import pytest
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 
 # Autoplay without a click, and Chromium's fake microphone (a tone) granted
@@ -184,6 +185,7 @@ async def test_the_user_s_words_show_as_heard_and_then_jarvis_answers(page_playw
     async with page_playwright as p:
         browser, page = await _open(p, page_url, _speaker(
             [["Good evening, sir.", "All six agents are idle."]], after_user=True))
+        await start_listening(page)
         await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
         await page.evaluate("window.__hear('how are the', false)")
         await page.evaluate("window.__hear('how are the agents', false)")
