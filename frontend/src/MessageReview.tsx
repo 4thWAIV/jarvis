@@ -11,6 +11,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { bundleWords } from "./bundles";
 import { captures } from "./capture";
 import { CaptureButtons } from "./CaptureBox";
 import type { Draft } from "./messagingContract";
@@ -38,6 +39,12 @@ export function MessageReview({ draft }: { draft: Draft }) {
         <dd className="review-to">{recipientLabel(dir, draft.recipient_github_id)}</dd>
         <dt>{t("main.queue.subject")}</dt>
         <dd className="review-subject">{draft.subject || t("main.queue.noSubject")}</dd>
+        {draft.cited.length > 0 && (
+          <>
+            <dt>{bundleWords.cited}</dt>
+            <dd className="review-cited">{draft.cited.map((c) => c.path).join("; ")}</dd>
+          </>
+        )}
       </dl>
       {draft.text
         ? <div className="review-text message-text">{draft.text}</div>

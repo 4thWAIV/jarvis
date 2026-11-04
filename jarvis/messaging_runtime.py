@@ -26,8 +26,10 @@ exactly one instance and one source for who this JARVIS is:
                    openability, its receipts sent by delivery),
                    bundle_preflight.SenderPreflight (a draft's readiness,
                    stored with the revision reviewed) and
-                   bundle_tasks.BundleTasks (task, companions, repair and
-                   the review checklist), each bound in its module
+                   bundle_tasks.BundleTasks (task, companions, repair, the
+                   review checklist and the files a reply cites, which
+                   `local` proposes through it on every save), each bound
+                   in its module
     bundles        bundle_inspection.BundleInspection over the received
                    files (the same instance as `received`), behind
                    bundle_api's routes and the brain's bundle tools
@@ -155,6 +157,7 @@ class MessagingRuntime:
         self.tasks = bundle_tasks.BundleTasks(
             self.store, self.local, self.files, drafts=self.preflight.inspection,
             messages=self.received, status=self.openability.status, on_loop=self.on_loop)
+        self.local.propose_cited = self.tasks.propose_cited
         bundle_status.bind(self.openability, also=(self.tasks.observe,))
         bundle_preflight.bind(self.preflight)
         bundle_tasks.bind(self.tasks)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Request
@@ -105,6 +105,11 @@ class LocalMessaging:
         self.reviews, self.snapshots = reviews, snapshots
         self.ids, self.clock = ids or ports.RandomIds(), clock
         self._roster: dict[tuple[str, int], wire.RecipientList] = {}
+        # bundle_tasks.BundleTasks.propose_cited, set once both are built:
+        # (ns, the draft as it would be saved) -> the checklist items its
+        # text names, or None where no review was asked of him.
+        self.propose_cited: Optional[Callable[[tuple[str, int], ports.Draft],
+                                              Optional[list[ports.CitedFile]]]] = None
 
     # -- whose records ------------------------------------------------------------------
 
@@ -272,7 +277,7 @@ class LocalMessaging:
             recipient_github_id=save.recipient_github_id, draft_revision=1,
             attachments=self._attachments(ns, message_id, list(save.attachment_ids)),
             send=send, agent_drafted=agent_drafted, **self._normalized(save))
-        created = self.store.create_draft(*ns, draft)
+        created = self.store.create_draft(*ns, self._proposed(ns, draft))
         self.delivery.changed()
         return self._draft_view(ns, created)
 
@@ -328,16 +333,25 @@ class LocalMessaging:
             "agent_drafted": current.agent_drafted or agent_drafted,
             "capture_id": current.capture_id
             if send.content_revision == current.send.content_revision else None})
-        updated = updated.model_copy(update=ports.attached_only(updated))
+        updated = self._proposed(ns, updated.model_copy(update=ports.attached_only(updated)))
         saved = self.store.save_draft(*ns, ports.Draft.model_validate(updated.model_dump()),
                                       expected_draft_revision)
         self.delivery.changed()
         return self._draft_view(ns, saved)
 
+    def _proposed(self, ns, draft: ports.Draft) -> ports.Draft:
+        """`draft` with the files its text relies on proposed as cited, in
+        the same save, until the owner has set them himself."""
+        if self.propose_cited is None or draft.cited_by_owner:
+            return draft
+        proposed = self.propose_cited(ns, draft)
+        return draft if proposed is None else draft.model_copy(update={"cited": proposed})
+
     def edit_bundle(self, message_id: UUID, expected_draft_revision: int,
                     **fields) -> ports.Draft:
         """A bundle change to a draft (bundle_tasks: its task, the earlier
-        files it supersedes, files JARVIS made for it by `attachment_ids`):
+        files it supersedes, files JARVIS made for it by `attachment_ids`,
+        the files a reply cites):
         an edit like any other, so it moves the content revision after a
         review and needs a review of its own. A stale revision is
         `revision_conflict` with the current draft."""

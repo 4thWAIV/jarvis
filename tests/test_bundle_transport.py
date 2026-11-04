@@ -73,6 +73,7 @@ class Side:
         self.tasks = bundle_tasks.BundleTasks(self.store, self.local, self.files,
                                               drafts=self.inspection, messages=self.inspection,
                                               status=self.status.status)
+        self.local.propose_cited = self.tasks.propose_cited
 
     async def _no_wait(self, seconds):
         self.waits.append(seconds)
@@ -688,6 +689,130 @@ def test_a_repair_carries_a_read_only_to_the_same_bytes(tmp_path, serve, clock):
     bf.hold(matt.store, MATT, again)
     assert [i.state for i in matt.tasks.review_state(SERVER, MATT, m.thread_id).items] == \
         ["unread"], "a copy whose bytes cannot be compared is not taken as read"
+
+
+# -- the files his reply cites -------------------------------------------------------------------
+
+def asked(tmp_path, serve, clock):
+    """Tim's request, as Matt's JARVIS holds it once synced."""
+    tim, matt, sent, r = sent_bundle(tmp_path, serve, clock)
+    matt.specs[r.attachment_id] = bf.Spec(r, members=MEMBERS, wrapper="review")
+    matt.tick()
+    asyncio.run(matt.delivery.availability())
+    return matt, sent, r
+
+
+def read(side: Side, sent, r, path: str) -> None:
+    side.inspection.read_member(side.me, AttachmentKey(sent.message_id, r.attachment_id),
+                                member_id(r.sha256, path))
+
+
+def reply(side: Side, sent, text: str) -> ports.Draft:
+    return side.local.create_draft(ports.DraftSave(
+        thread_id=sent.thread_id, in_reply_to_message_id=sent.message_id,
+        recipient_github_id=TIM, text=text))
+
+
+def states(side: Side, sent) -> list[tuple[str, str]]:
+    return [(i.path, i.state)
+            for i in side.tasks.review_state(SERVER, side.owner, sent.thread_id).items]
+
+
+def test_a_reply_proposes_the_read_files_it_names_and_reads_them_back(tmp_path, serve, clock):
+    matt, sent, r = asked(tmp_path, serve, clock)
+    read(matt, sent, r, "review/summary.pdf")
+    draft = reply(matt, sent, "Summary.pdf overstates page 1; sources.md and run.sh are fine.")
+    assert [c.path for c in draft.cited] == ["review/summary.pdf"], "sources.md is not read"
+    assert not draft.cited_by_owner
+    read(matt, sent, r, "review/sources.md")
+    again = matt.store.draft(SERVER, MATT, draft.message_id)
+    assert again.draft_revision == draft.draft_revision + 1, "a new proposal is a new revision"
+    assert [c.path for c in again.cited] == ["review/summary.pdf", "review/sources.md"]
+    reviewed = asyncio.run(matt.local.review(draft.message_id, ports.DraftAction(
+        expected_draft_revision=again.draft_revision)))
+    readback = list(matt.captures.open.values())[-1]["text"]
+    assert "Cited: review/summary.pdf; review/sources.md." in readback
+    assert states(matt, sent) == [("review/summary.pdf", "read"),
+                                  ("review/sources.md", "read")], "not cited before it goes"
+    went = matt.send(reviewed)
+    assert "cited" not in json.dumps(went.model_dump(mode="json")), "never sent"
+    assert states(matt, sent) == [("review/summary.pdf", "cited"),
+                                  ("review/sources.md", "cited")]
+    obs(matt, sent, r, "read_text", member_id(r.sha256, "review/summary.pdf"), "blocked",
+        "budget")
+    assert states(matt, sent)[0] == ("review/summary.pdf", "cited"), "a cited item stays cited"
+
+
+def test_his_marks_replace_the_proposal_and_a_change_after_review_is_reviewed_again(
+        tmp_path, serve, clock):
+    matt, sent, r = asked(tmp_path, serve, clock)
+    read(matt, sent, r, "review/summary.pdf")
+    draft = reply(matt, sent, "See summary.pdf.")
+    reviewed = asyncio.run(matt.local.review(draft.message_id, ports.DraftAction(
+        expected_draft_revision=draft.draft_revision)))
+    unread = [{"attachment_id": str(r.attachment_id),
+               "member_id": member_id(r.sha256, "review/sources.md")}]
+    for revision, cited, code in ((reviewed.draft_revision, unread, "invalid_request"),
+                                  (reviewed.draft_revision + 3, [], "revision_conflict"),
+                                  (reviewed.draft_revision, [{"member_id": "x"}],
+                                   "invalid_request")):
+        with pytest.raises(messaging_api.Refused) as e:
+            matt.tasks.set_cited(SERVER, MATT, draft.message_id, revision, cited)
+        assert e.value.code == code
+    marked = matt.tasks.set_cited(SERVER, MATT, draft.message_id, reviewed.draft_revision, [])
+    assert marked.cited == [] and marked.cited_by_owner
+    assert (marked.send.state, marked.send.content_revision) == \
+        ("draft", reviewed.send.content_revision + 1)
+    with pytest.raises(ports.NotApproved):
+        matt.guard.approve(SERVER, MATT, draft.message_id, reviewed.send.content_revision,
+                           reviewed.send.content_digest, matt.node, "gui")
+    edited = matt.local.save_draft(draft.message_id, ports.DraftSave.keeping(
+        marked, text="See summary.pdf, page 1."))
+    assert edited.cited == [], "his own marks are not proposed over"
+    again = asyncio.run(matt.local.review(draft.message_id, ports.DraftAction(
+        expected_draft_revision=edited.draft_revision)))
+    assert "Cited:" not in list(matt.captures.open.values())[-1]["text"]
+    matt.send(again)
+    assert states(matt, sent)[0] == ("review/summary.pdf", "read")
+
+
+def test_no_review_asked_means_nothing_to_cite(tmp_path, serve, clock):
+    tim = Side(tmp_path, serve, TIM, 1, clock)
+    draft = bf.draft_for(tim.local, MATT, text="About summary.pdf")
+    assert draft.cited == []
+    with pytest.raises(messaging_api.Refused) as e:
+        tim.tasks.set_cited(SERVER, TIM, draft.message_id, draft.draft_revision, [])
+    assert e.value.code == "invalid_request"
+
+
+def test_a_cited_item_carries_across_a_repair_only_to_the_same_bytes(tmp_path, serve, clock):
+    matt, sent, r = asked(tmp_path, serve, clock)
+    for path in ("review/summary.pdf", "review/sources.md"):
+        read(matt, sent, r, path)
+    matt.send(reply(matt, sent, "summary.pdf and sources.md agree."))
+    flat = bf.ref(32, "review (flattened).zip")
+    matt.specs[flat.attachment_id] = bf.Spec(flat, members=(
+        ("summary.pdf", "pdf", "readable"), ("sources.md", "markdown", "readable")),
+        contents={"sources.md": b"different sources"})
+    repair = bf.accepted(TIM, MATT, [flat], n=5, reply_to=sent, supersedes=[
+        wire.Supersedes(message_id=sent.message_id, attachment_id=r.attachment_id,
+                        by_attachment_id=flat.attachment_id, reason="repair")],
+        task=bf.task_on(flat, primary="summary.pdf", supporting=("sources.md",)))
+    bf.hold(matt.store, MATT, repair)
+    assert states(matt, sent) == [("summary.pdf", "cited"), ("sources.md", "unread")]
+
+
+def test_a_file_is_named_by_its_path_or_name_as_words_with_accents_folded():
+    from jarvis import spoken_words
+    from jarvis.bundle_tasks import _named
+
+    def said(text: str) -> str:
+        return f" {' '.join(spoken_words.folded_words(text))} "
+    assert _named(said("Notes on RESUME final.pdf, page 2"), "review/Résumé final.pdf")
+    assert _named(said("see review/summary.pdf"), "review/summary.pdf")
+    assert _named(said("summary pdf, as said aloud"), "review/summary.pdf")
+    assert not _named(said("the summary was fine"), "review/summary.pdf"), "a word, not a file"
+    assert not _named(said("summary.pdfs"), "review/summary.pdf")
 
 
 # -- downloads ---------------------------------------------------------------------------------

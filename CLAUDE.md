@@ -484,7 +484,23 @@ read on the replaced file carries to the repaired copy's member only when
 budgets) is the same on both, never on the path alone; each
 item keeps where it was read (`read`: the pages and line ranges an
 `Observation`'s `locations` carried, ranges that touch joined,
-`bundle_tasks.read_locations`). Nothing marks an item `cited` yet. A received
+`bundle_tasks.read_locations`). His reply in a thread whose task was asked
+of him carries the items it relies on (`Draft.cited`, local, never sent):
+`BundleTasks.propose_cited`, which `LocalMessaging` calls in the same save
+as every edit (`propose_cited`, set by `messaging_runtime`), proposes the
+read items whose name or path the reply's text names as words
+(`spoken_words.folded_words`), again as a new revision when an item is
+read while the reply is still a draft, until he sets them himself
+(`set_cited`: the composer's Cited ticks in `TaskFields`, `PUT
+/api/team/messages/drafts/{id}/cited`, and the acting `set_cited_files`;
+`cited_by_owner` then stops the proposal). The read-back has a `Cited:`
+line, and the hand-over checks the read-back again, since the digest cannot
+see what is never sent; a change is an edit, so a reviewed reply is
+reviewed again. Once the team server has accepted the reply at the revision
+that carried them, those items are `cited` (`_cited_by_replies`, worked
+out each time the record is brought up to date); a cited item stays cited
+and carries across a repair as a read does. The sender is not told: the
+wire has no field for it. A received
 file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
 transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
 `messaging_runtime` builds and binds the three records; a draft edit from a

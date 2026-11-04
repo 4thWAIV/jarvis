@@ -379,13 +379,19 @@ class HumanRecipient:
         if m is None or self.who is None or m.availability() != "available":
             return UNAVAILABLE, (f"Messaging isn't available on this JARVIS just now, sir, "
                                  f"so nothing has gone to {self.label}.")
-        draft = m.approvals.awaiting(*self.who.ns, self.message_id,
-                                     self.bound["content_revision"],
-                                     self.bound["content_digest"])
-        if (draft is None or draft.recipient_github_id != self.bound["github_id"]
-                or ports.human_readback(draft, self.label, m.approvals.bundles()) != self.text):
+        if not self.as_heard(self.who):
             return NOT_APPROVED, _changed(self.label)
         return None
+
+    def as_heard(self, who: Identity) -> bool:
+        """Whether the draft still awaits approval at the reviewed revision
+        and reads back exactly as he heard it: the read-back also says what
+        is never sent (the files a reply cites), which the digest cannot."""
+        approvals = self.messaging.approvals
+        draft = approvals.awaiting(*who.ns, self.message_id, self.bound["content_revision"],
+                                   self.bound["content_digest"])
+        return (draft is not None and draft.recipient_github_id == self.bound["github_id"]
+                and ports.human_readback(draft, self.label, approvals.bundles()) == self.text)
 
     def unheard(self) -> str:
         return (f"I can't read that back to you right now, sir, so I won't send it to "
@@ -411,6 +417,7 @@ class HumanDestination:
         self.capture_id = recipient.capture_id
         self.label, self.via, self.messaging = recipient.label, recipient.via, recipient.messaging
         self.bound, self.message_id, self.who = recipient.bound, recipient.message_id, who
+        self.recipient = recipient
         self.approved: Optional[ports.ApprovedSend] = None
         self.status: Optional[str] = None
 
@@ -426,6 +433,11 @@ class HumanDestination:
         return None
 
     async def deliver(self) -> str:
+        approvals = self.messaging.approvals
+        if approvals.store.approved(*self.who.ns, self.message_id,
+                                    self.bound["content_revision"]) is None \
+                and not self.recipient.as_heard(self.who):
+            return NOT_APPROVED                           # changed in the window
         try:
             self.approved = self.messaging.approvals.approve(
                 *self.who.ns, self.message_id, self.bound["content_revision"],

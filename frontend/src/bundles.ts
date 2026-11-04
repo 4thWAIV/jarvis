@@ -25,7 +25,7 @@ import {
   type Reason, type ReviewProgress, type ReviewState, type TextPage,
 } from "./bundleContract";
 import { codeWords, t, wordsOf } from "./locale";
-import type { Draft, Openability, TaskContext } from "./messagingContract";
+import type { CitedFile, Draft, Openability, TaskContext } from "./messagingContract";
 import { createStore } from "./store";
 import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
 import { dispatch, registerCommand } from "./uiRegistry";
@@ -86,6 +86,8 @@ export const bundleWords = {
   get primary() { return t("main.bundle.primary"); },
   get request() { return t("main.bundle.request"); },
   get noRequest() { return t("main.bundle.noRequest"); },
+  /** The files a reply relies on, marked on the draft and read back. */
+  get cited() { return t("main.bundle.cited"); },
   /** The recipient's JARVIS's report on a file it was told to open. */
   openability: wordsOf(OPENABILITY, (c) => t(`main.bundle.openability.${c}`)) as Readonly<Record<Openability, string>>,
   reason: (reason: Reason | null | undefined) =>
@@ -186,6 +188,16 @@ export async function setTask(messageId: string, expectedRevision: number,
   return answer(await fetch(`/api/team/messages/drafts/${enc(messageId)}/task`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expected_draft_revision: expectedRevision, task }),
+  }));
+}
+
+/** The files his reply relies on, by checklist item: his own marks, which
+ *  replace JARVIS's proposal; the draft as saved. */
+export async function setCited(messageId: string, expectedRevision: number,
+                               cited: Pick<CitedFile, "attachment_id" | "member_id">[]): Promise<Draft> {
+  return answer(await fetch(`/api/team/messages/drafts/${enc(messageId)}/cited`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_draft_revision: expectedRevision, cited }),
   }));
 }
 

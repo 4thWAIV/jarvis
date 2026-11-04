@@ -37,6 +37,17 @@ a source counts as checked only once it was read. A repair of what was
 reviewed carries the items already done across (the same bytes, checked);
 a revision starts them again.
 
+Cited files: on his reply in such a thread, the checklist items the reply
+relies on (`Draft.cited`). JARVIS proposes them in the same save as each
+edit, from the files the reply's text names (each item's name or path,
+matched as words with accents folded, `spoken_words.folded_words`), read
+items only, until he sets them himself (`set_cited`), and again when an
+item is read while the reply is still a draft. They are read back; a change
+is an edit, so a reviewed reply is reviewed again. Once the team server has
+accepted the reply, at the revision that carried them, those items are
+`cited`, and a cited item stays cited and carries across a repair as a read
+does. They are never sent: the wire has no field for them.
+
     file_ready            the files can be opened
     evidence_unavailable  a required member could not be read
     review_in_progress    the owner accepted a scope (full, or partial with
@@ -58,6 +69,7 @@ from uuid import UUID
 from jarvis import bundle_archive
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis import spoken_words
 from jarvis.bundle_contract import (CHECKLIST_MAX, TEXT_PAGE_MAX_CHARS, ChecklistItem,
                                     InspectionRefused, LineLocation, Location, ReviewState,
                                     member_id)
@@ -470,22 +482,24 @@ class BundleTasks:
 
     def _write(self, ns, thread_id: UUID, change: Callable[[ReviewState], ReviewState]
                ) -> ReviewState:
-        """The record brought up to date (reseeded when a newer task arrived
-        in the thread, done items carried across a repair), then `change`d,
+        """The record brought up to date (items his accepted replies cited
+        marked cited, reseeded when a newer task arrived in the thread, done
+        items carried across a repair), then `change`d,
         its progress worked out, and saved by compare-and-set when anything
         moved (its revision with it)."""
         for _ in range(4):
             stored, source_id = self._load(ns, thread_id)
-            state = stored or ReviewState(thread_id=thread_id, revision=1)
+            cited = self._cited_by_replies(ns, thread_id)
+            state = _marked_cited(stored or ReviewState(thread_id=thread_id, revision=1), cited)
             source = self._source(ns, thread_id)
             new_source = str(source.message.message_id) if source else None
             if source is not None and new_source != source_id:
                 repair = any(s.reason == "repair" for s in source.message.supersedes)
                 items = self._seed(ns, source)
                 if stored is not None and repair:
-                    items = self._carry(ns, stored.items, items, source.message)
-                state = state.model_copy(update={"items": items,
-                                                 "scope": state.scope if repair else None})
+                    items = self._carry(ns, state.items, items, source.message)
+                state = _marked_cited(state.model_copy(update={
+                    "items": items, "scope": state.scope if repair else None}), cited)
             state = change(state)
             state = state.model_copy(update={"progress": self._progress(ns, thread_id, state)})
             if stored is not None and state.model_copy(update={"revision": stored.revision}) \
@@ -518,6 +532,87 @@ class BundleTasks:
         ns = self._ns(server_id, owner_github_id)
         return self._write(ns, thread_id, lambda state: state.model_copy(update={"scope": scope}))
 
+    # -- the files his reply cites -------------------------------------------------------
+
+    def _cited_by_replies(self, ns, thread_id: UUID) -> set[tuple[UUID, str]]:
+        """The items his replies in the thread cited, each reply accepted by
+        the team server at the revision its draft carried them in."""
+        item = self.store.item(*ns, thread_id)
+        cited: set[tuple[UUID, str]] = set()
+        for held in (item.messages if item else []):
+            m = held.message
+            if m.sender_github_id != ns[1]:
+                continue
+            draft = self.store.draft(*ns, m.message_id)
+            if draft is not None and draft.send.content_revision == m.content_revision:
+                cited |= {(c.attachment_id, c.member_id) for c in draft.cited}
+        return cited
+
+    def _citable(self, ns, thread_id: UUID) -> Optional[list[ChecklistItem]]:
+        """The checklist items a reply in the thread may cite (read ones),
+        or None where no review was asked of him."""
+        if self._source(ns, thread_id) is None:
+            return None
+        state = self._write(ns, thread_id, lambda state: state)
+        return [i for i in state.items if i.state in ("read", "cited")]
+
+    def propose_cited(self, ns, draft: ports.Draft) -> Optional[list[ports.CitedFile]]:
+        """The read checklist items a reply's text names, in checklist
+        order; None where it is no reply to a request asked of him (or the
+        checklist cannot be brought up to date: the draft keeps its marks)."""
+        if draft.thread_id == draft.message_id:
+            return None
+        try:
+            items = self._citable(ns, draft.thread_id)
+        except Refused:
+            return None
+        if items is None:
+            return None
+        said = f" {' '.join(spoken_words.folded_words(draft.text))} "
+        return [_cited_file(i) for i in items if _named(said, i.path)]
+
+    def set_cited(self, server_id: str, owner_github_id: int, message_id: UUID,
+                  expected_draft_revision: int, cited: list) -> ports.Draft:
+        """The owner's own marks on his reply: each a read item of the
+        thread's checklist by attachment and member id. From then on JARVIS
+        proposes no more for that draft. An edit, so a reviewed reply is
+        reviewed again."""
+        ns = self._ns(server_id, owner_github_id)
+        draft = self._draft(ns, message_id, expected_draft_revision)
+        if not isinstance(cited, list) or draft.thread_id == draft.message_id:
+            raise Refused("invalid_request")
+        items = self._citable(ns, draft.thread_id)
+        if items is None:
+            raise Refused("invalid_request")
+        chosen: set[tuple[UUID, str]] = set()
+        for c in cited:
+            try:
+                chosen.add((UUID(str(c["attachment_id"])), str(c["member_id"])))
+            except (KeyError, TypeError, ValueError):
+                raise Refused("invalid_request") from None
+        if chosen - {(i.attachment_id, i.member_id) for i in items}:
+            raise Refused("invalid_request")
+        return self._edit(message_id, expected_draft_revision, cited=[
+            _cited_file(i) for i in items if (i.attachment_id, i.member_id) in chosen],
+            cited_by_owner=True)
+
+    def _repropose(self, ns, thread_id: UUID) -> None:
+        """After an item is read: the proposal on his reply in the thread
+        again, saved as a new revision when it changed, while the reply is
+        still a draft (never pulling one out of review) and he has not set
+        its marks himself."""
+        item = self.store.item(*ns, thread_id)
+        draft = next((d for d in (item.drafts if item else []) if d.send.state == "draft"), None)
+        if draft is None or draft.cited_by_owner:
+            return
+        proposed = self.propose_cited(ns, draft)
+        if proposed is None or proposed == draft.cited:
+            return
+        try:
+            self._edit(draft.message_id, draft.draft_revision, cited=proposed)
+        except (Refused, wire.ContractError, ports.SendRefused):
+            log.info("cited files not proposed again: message=%s", draft.message_id)
+
     def observe(self, o: Observation) -> None:
         """A read or a failure marks the matching checklist item; a cited
         item stays cited, and a member once read is not unread by a later
@@ -546,7 +641,39 @@ class BundleTasks:
 
         def marked(state: ReviewState) -> ReviewState:
             return state.model_copy(update={"items": [changed(i) for i in state.items]})
-        self._write(ns, held.message.thread_id, marked)
+        before, _ = self._load(ns, held.message.thread_id)
+        after = self._write(ns, held.message.thread_id, marked)
+        if mark == "read" and _done(after) != (_done(before) if before else set()):
+            self._repropose(ns, held.message.thread_id)
+
+
+def _done(state: ReviewState) -> set[tuple[UUID, str]]:
+    return {(i.attachment_id, i.member_id) for i in state.items if i.state in ("read", "cited")}
+
+
+def _marked_cited(state: ReviewState, cited: set[tuple[UUID, str]]) -> ReviewState:
+    """`state` with each read item in `cited` marked cited."""
+    if not cited:
+        return state
+    return state.model_copy(update={"items": [
+        i.model_copy(update={"state": "cited"})
+        if i.state == "read" and (i.attachment_id, i.member_id) in cited else i
+        for i in state.items]})
+
+
+def _cited_file(item: ChecklistItem) -> ports.CitedFile:
+    return ports.CitedFile(attachment_id=item.attachment_id, member_id=item.member_id,
+                           path=item.path)
+
+
+def _named(said: str, path: str) -> bool:
+    """Whether `said` (folded words, space-joined and space-padded) names
+    the file at `path`, by its whole path or its name, as words."""
+    for name in {path, path.rsplit("/", 1)[-1]}:
+        words = spoken_words.folded_words(name)
+        if words and f" {' '.join(words)} " in said:
+            return True
+    return False
 
 
 READ_LOCATIONS_MAX = 50       # ChecklistItem.read's own bound
@@ -652,6 +779,13 @@ def prepare_repair(server_id: str, owner_github_id: int, message_id: UUID,
     its supersedes link; the Draft."""
     return _service().prepare_repair(server_id, owner_github_id, message_id, attachment_id,
                                      mode)
+
+
+def set_cited(server_id: str, owner_github_id: int, message_id: UUID,
+              expected_draft_revision: int, cited: list):
+    """Mark which read checklist items his reply relies on; the Draft."""
+    return _service().set_cited(server_id, owner_github_id, message_id,
+                                expected_draft_revision, cited)
 
 
 def review_state(server_id: str, owner_github_id: int, thread_id: UUID) -> ReviewState:

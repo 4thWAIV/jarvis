@@ -333,6 +333,7 @@ def test_every_bundle_tool_is_specified_handled_granted_and_decided_by_the_table
     ("prepare_repair", {"message": str(MID), "attachment": str(AID),
                         "mode": "flatten_wrapper"}),
     ("set_review_scope", {"thread": str(MID), "scope": "partial"}),
+    ("set_cited_files", {"message": str(MID), "cited": []}),
 ])
 def test_every_acting_bundle_tool_acts_only_on_his_own_turn(brain, tool, args):
     refused = _call(brain, tool, origin="event", **args)
@@ -366,6 +367,29 @@ def test_set_message_task_names_files_by_id_and_hash_at_the_draft_s_revision(bra
         "primary": {"attachment_id": str(ref.attachment_id), "sha256": ref.sha256,
                     "member_path": "review/summary.pdf"},
         "supporting": [], "reply_audience": "sender_only"})]
+
+
+def test_set_cited_files_is_the_request_fields_marks_at_the_draft_s_revision(brain,
+                                                                             monkeypatch):
+    draft = brain.page.draft("Notes on summary.pdf")
+    mid = UUID(draft["message_id"])
+    seen = []
+
+    def set_cited(server_id, owner, message_id, revision, cited):
+        seen.append((message_id, revision, cited))
+        return {"message_id": str(message_id), "draft_revision": revision + 1, "cited": cited}
+
+    monkeypatch.setattr(bundle_tasks, "set_cited", set_cited)
+    marks = [{"attachment_id": str(AID), "member_id": MEMBER}]
+    got = _call(brain, "set_cited_files", message=str(mid),
+                cited=[{"attachment": str(AID), "member": MEMBER}])
+    assert got["text"].startswith("Marked, sir: 1 cited; the draft is at revision 2.")
+    assert seen == [(mid, draft["draft_revision"], marks)]
+    r = brain.client.put(f"/api/team/messages/drafts/{mid}/cited",
+                         json={"expected_draft_revision": draft["draft_revision"],
+                               "cited": marks}, headers=PAGE_ORIGIN)
+    assert r.status_code == 200 and seen[-1] == seen[0], "the page sends what the brain sends"
+    assert brain.server.brain_instance.marks == []
 
 
 def test_set_review_scope_sends_the_revision_it_read(brain, monkeypatch):

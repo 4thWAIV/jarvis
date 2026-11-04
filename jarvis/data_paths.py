@@ -197,6 +197,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "ba5ecd240c8e40c4759f42037d72721fb561e6d1c7ae70cce79377282b01288d",  # a page package's story: tell_package_story
     "fc653b8811eaeaa30a6d533736a271d2d2093c75479f0feae10857a2c09a8a1b",  # open_local_package: a package zip on this Mac
     "61fd76c4a1e3c52378319c7eb55225299109f802432e4e033ee92cdea2ab230d",  # UI navigation merged with story packages
+    "f2bd49a89ca5afae1da33eea0e1a73619bfe2634af3396c2c57d73b0a20ffafd",  # a reply's cited files: set_cited_files
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

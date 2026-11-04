@@ -7570,6 +7570,22 @@ async def tool_set_message_task(args: dict) -> str:
         f"again with request_message_review before it can go."))
 
 
+async def tool_set_cited_files(args: dict) -> str:
+    """Which files his reply relies on, from the review's checklist:
+    PUT .../cited. His marks replace JARVIS's proposal."""
+    message_id = _uuid_arg(args, "message")
+    if message_id is None:
+        return "Which draft, sir? Give me its message id."
+    cited = [{"attachment_id": str(c.get("attachment") or ""),
+              "member_id": str(c.get("member") or "")}
+             for c in (args.get("cited") or []) if isinstance(c, dict)]
+    return await _bundle_change(
+        lambda: _bundles.set_cited(message_id, _draft_now(message_id).draft_revision, cited),
+        lambda d: (f"Marked, sir: {len(d.get('cited') or [])} cited; the draft is at revision "
+                   f"{d['draft_revision']}. It needs reviewing again with "
+                   f"request_message_review before it can go."))
+
+
 async def tool_add_companion_files(args: dict) -> str:
     """Readable copies made from one of his draft's files, added beside it:
     POST .../companions. The original stays."""
@@ -7640,6 +7656,7 @@ TOOL_HANDLERS.update({
     "prepare_repair": tool_prepare_repair,
     "review_checklist": tool_review_checklist,
     "set_review_scope": tool_set_review_scope,
+    "set_cited_files": tool_set_cited_files,
 })
 _BUNDLE_CLEAN = {
     "show_bundle_member": "it opens a file on his screen and reads nothing back",
@@ -7649,6 +7666,8 @@ _BUNDLE_CLEAN = {
     "prepare_repair": ("it makes a new draft of his own with a repaired copy and gives back "
                        "only its id and revision"),
     "set_review_scope": "it records the scope he accepted, and reads nothing back",
+    "set_cited_files": ("it marks his own reply's cited files and gives back only a count "
+                        "and a revision"),
 }
 assert set(_BUNDLE_CLEAN) == {n for n, t in BRAIN_TOOLS.items() if t.taints is None}, \
     "every clean bundle tool says why, and only those"

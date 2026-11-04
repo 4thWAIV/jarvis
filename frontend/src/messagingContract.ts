@@ -177,6 +177,13 @@ export interface AttachmentStatus {
   expires_at: string | null;
 }
 
+/** A checklist item (bundle_tasks) a reply relies on: a file of the request it answers, or a member of one, as the review's checklist names it. Local only: it is read back and marks the checklist once the reply is accepted, and never sent. */
+export interface CitedFile {
+  attachment_id: string;
+  member_id: string;
+  path: string;
+}
+
 /** JARVIS refuses this locally while the item has unsent text or an unresolved send (`dismiss_blockers`); the server cannot see those. */
 export interface Dismiss {
   expected_revision: number;
@@ -200,6 +207,8 @@ export interface Draft {
   agent_drafted: boolean;
   task: TaskContext | null;
   supersedes: Supersedes[];
+  cited: CitedFile[];
+  cited_by_owner: boolean;
 }
 
 /** Review, cancel or retry the draft as it was at this revision. */

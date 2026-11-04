@@ -14,6 +14,7 @@ the rest need the page's origin or the tool token like every change.
     POST {A}/repair                                   -> Draft
     GET  /api/team/messages/drafts/{message_id}/readiness  -> PreflightResult
     PUT  /api/team/messages/drafts/{message_id}/task       -> Draft
+    PUT  /api/team/messages/drafts/{message_id}/cited      -> Draft
     POST /api/team/messages/drafts/{message_id}/companions -> Draft
     GET  /api/team/messages/threads/{thread_id}/review     -> ReviewState
     PUT  /api/team/messages/threads/{thread_id}/review/scope -> ReviewState
@@ -203,6 +204,11 @@ class Calls:
         return await self._owned(bundle_tasks.set_task, message_id, expected_draft_revision,
                                  task)
 
+    async def set_cited(self, message_id: UUID, expected_draft_revision: int,
+                        cited: list[dict]):
+        return await self._owned(bundle_tasks.set_cited, message_id, expected_draft_revision,
+                                 cited)
+
     async def add_companions(self, message_id: UUID, expected_draft_revision: int,
                              attachment_id: UUID, kinds: list[str]):
         return await self._owned(bundle_tasks.add_companions, message_id,
@@ -224,6 +230,16 @@ class Calls:
 class TaskBody(BaseModel):
     expected_draft_revision: int
     task: Optional[dict] = None
+
+
+class CitedRef(BaseModel):
+    attachment_id: UUID
+    member_id: str
+
+
+class CitedBody(BaseModel):
+    expected_draft_revision: int
+    cited: list[CitedRef]
 
 
 class CompanionsBody(BaseModel):
@@ -273,6 +289,12 @@ def router(context: Context, show: Optional[Show] = None) -> APIRouter:
     async def set_task(message_id: UUID, body: TaskBody):
         return _sent(await answer(calls.set_task(message_id, body.expected_draft_revision,
                                                  body.task)))
+
+    @routes.put(MESSAGES + "/drafts/{message_id}/cited")
+    async def set_cited(message_id: UUID, body: CitedBody):
+        return _sent(await answer(calls.set_cited(
+            message_id, body.expected_draft_revision,
+            [c.model_dump(mode="json") for c in body.cited])))
 
     @routes.post(MESSAGES + "/drafts/{message_id}/companions")
     async def add_companions(message_id: UUID, body: CompanionsBody):
