@@ -153,6 +153,10 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__speech_models",
     "mcp__jarvis__install_speech_model",
     "mcp__jarvis__set_language",
+    # His two voice input settings (voice_control.py): reading them, and the
+    # acting change the Settings route also calls.
+    "mcp__jarvis__voice_input_settings",
+    "mcp__jarvis__set_voice_input_settings",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",

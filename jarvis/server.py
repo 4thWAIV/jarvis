@@ -126,6 +126,7 @@ from jarvis import notifier
 from jarvis import transcription_api
 from jarvis import speech_models
 from jarvis import language_setting
+from jarvis import voice_control
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -3057,6 +3058,7 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
+voice_control.mount(app, publish=_send_to_session_clients)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
@@ -8420,6 +8422,49 @@ async def tool_set_language(args: dict) -> str:
             f"it. Tell him so in {name}. {language_setting.brain_rule(language)}")
 
 
+def _voice_input_settings_said(settings: dict) -> str:
+    stop = {"keep": "keep the words already captured",
+            "discard": "discard unfinished input"}[settings["stop"]]
+    switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
+    whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
+    said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
+            f"from JARVIS, it will {switch}. These are {whose}'s settings")
+    return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
+
+
+async def tool_voice_input_settings(args: dict) -> str:
+    """His two voice input settings: what the Settings route reads."""
+    try:
+        return _voice_input_settings_said(voice_control.read())
+    except voice_control.Unreadable as e:
+        return f"{e} Listening cannot be started until they can."
+
+
+async def tool_set_voice_input_settings(args: dict) -> str:
+    """Change one or both voice input settings: the Settings route's
+    `voice_control.change`, with its validation. An ACTING tool. It starts,
+    stops and sends nothing; it applies from the next stop or page switch."""
+    try:
+        settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"))
+    except voice_control.Invalid as e:
+        return f"Nothing was changed, sir: {e.message}"
+    except voice_control.Unreadable as e:
+        return f"Nothing was changed, sir: {e}"
+    return ("Saved. " + _voice_input_settings_said(settings)
+            + " It applies from the next time he stops the microphone or leaves the page.")
+
+
+TOOL_HANDLERS.update({
+    "voice_input_settings": tool_voice_input_settings,
+    "set_voice_input_settings": tool_set_voice_input_settings,
+})
+ACTING_TOOLS.update({"set_voice_input_settings"})
+TAINT_EXEMPT_TOOLS.update({
+    "voice_input_settings": "it reads his own two voice input settings: fixed values",
+    "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
+})
+
+
 TOOL_HANDLERS.update({
     "speech_models": tool_speech_models,
     "install_speech_model": tool_install_speech_model,
@@ -11927,6 +11972,13 @@ async def voice_handler(ws: WebSocket):
                 # back rather than guessed at. Text only, length-capped, and
                 # it drives nothing.
                 log.info("mic: %s", str(msg.get("text", ""))[:120])
+                continue
+            if kind == "turn_discard":
+                # His stop under Discard (voice control contract, rows 11
+                # and 14): what was being gathered from this page is thrown
+                # away, never sent.
+                log.info("turn discarded by the page")
+                utterance.drop()
                 continue
             if kind == "hush":
                 # The user pressed the key, or the button. Deliberately NOT a
