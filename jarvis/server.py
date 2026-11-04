@@ -12135,7 +12135,11 @@ def _write_env_key(key: str, value: str) -> None:
     problem = _env_value_problem(key, value)
     if problem:
         raise ValueError(problem)
-    lines, _ = _read_env(create=True)
+    lines, saved = _read_env(create=True)
+    if key == "FISH_VOICE_ID" and value and value in (saved.get("FISH_API_KEY"), os.getenv("FISH_API_KEY")):
+        raise ValueError("Use a Fish Audio voice model ID in Voice ID")
+    if key == "FISH_API_KEY" and value and value in (saved.get("FISH_VOICE_ID"), os.getenv("FISH_VOICE_ID")):
+        raise ValueError("Replace the key in Voice ID with a Fish Audio voice model ID first")
     found = False
     new_lines = []
     for line in lines:
@@ -12176,6 +12180,8 @@ async def api_test_fish(body: KeyTest):
     key = body.key_value or os.getenv("FISH_API_KEY", "")
     if not key:
         return {"valid": False, "error": "No key provided"}
+    if FISH_VOICE_ID == key:
+        return {"valid": False, "error": "Use a Fish Audio voice model ID in Voice ID", "status_code": 400}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Not `synthesize_chunk`: this check needs the status code, to
@@ -12188,9 +12194,9 @@ async def api_test_fish(body: KeyTest):
             if resp.status_code in (200, 201):
                 return {"valid": True}
             elif resp.status_code == 401:
-                return {"valid": False, "error": "Invalid API key"}
+                return {"valid": False, "error": "Invalid API key", "status_code": 401}
             else:
-                return {"valid": False, "error": f"HTTP {resp.status_code}"}
+                return {"valid": False, "error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 

@@ -297,10 +297,16 @@ function YouSection() {
   );
 }
 
+const fishTestErrors: Partial<Record<number, "invalidKey" | "noCredit" | "badVoiceId">> = {
+  400: "badVoiceId",
+  401: "invalidKey",
+  402: "noCredit",
+};
+
 function VoiceSection({ status, reload }: { status: Status | null; reload: () => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<"saveFailed" | "installFailed" | "previewFailed" | null>(null);
+  const [error, setError] = useState<"saveFailed" | "installFailed" | "previewFailed" | "keySaveFailed" | "voiceIdSaveFailed" | null>(null);
   const [sample, setSample] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const output = status?.voice_output;
@@ -334,37 +340,40 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
   const previewUi = useSettingsItem("previewVoice", t("left.voice.preview"));
   const [key, setKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
-  const [tested, setTested] = useState<Dot | null>(null);
-  const [savedKey, setSavedKey] = useState(false);
+  const [tested, setTested] = useState<"testing" | "testPassed" | "invalidKey" | "noCredit" | "badVoiceId" | "testFailed" | null>(null);
+  const [restartNeeded, setRestartNeeded] = useState(false);
   const voiceUi = useSettingsItem("voiceId", t("left.voice.voiceId"), provider === "fish");
   const saveVoiceUi = useSettingsItem("saveVoiceId", t("left.settings.save"), provider === "fish");
   const keyUi = useSettingsItem("fishKey", t("left.voice.fishKey"), provider === "fish");
   const testUi = useSettingsItem("testFishKey", t("left.voice.test"), provider === "fish");
   const saveKeyUi = useSettingsItem("saveFishKey", t("left.settings.save"), provider === "fish");
-  // The dot says a test's result, or that no key is saved; a saved key is
-  // the ordinary state and shows none.
-  const dot: Dot | null = tested ?? (status && !status.env_keys_set.fish_audio ? "red" : null);
+  const hasSavedKey = status?.env_keys_set.fish_audio;
+  const testing = tested === "testing";
+  const dot: Dot | null = tested ? (testing ? "yellow" : tested === "testPassed" ? "green" : "red") : null;
 
   const test = async () => {
-    setTested("yellow");
+    setError(null); setTested("testing");
     try {
-      const r = await postJson<{ valid: boolean }>("/api/settings/test-fish",
-                                                    { key_value: key.trim() || undefined });
-      setTested(r.valid ? "green" : "red");
+      const r = await postJson<{ valid: boolean; status_code?: number }>("/api/settings/test-fish",
+                                                                        { key_value: key.trim() || undefined });
+      setTested(r.valid ? "testPassed" : fishTestErrors[r.status_code ?? 0] ?? "testFailed");
     } catch {
-      setTested("red");
+      setTested("testFailed");
     }
   };
-  const saveKey = async () => {
-    const value = key.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: value });
-    setTested(null);
-    reload();
-    setSavedKey(Boolean(value));
-  };
-  const saveVoice = async () => {
-    const value = voiceId.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_VOICE_ID", key_value: value });
+  const saveFishSetting = async (name: "FISH_API_KEY" | "FISH_VOICE_ID", value: string) => {
+    setSaving(true); setError(null);
+    try {
+      await postJson("/api/settings/keys", { key_name: name, key_value: value.trim() });
+      if (name === "FISH_API_KEY") setKey("");
+      setTested(null);
+      setRestartNeeded(true);
+      reload();
+    } catch {
+      setError(name === "FISH_API_KEY" ? "keySaveFailed" : "voiceIdSaveFailed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -396,21 +405,26 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
       {provider === "fish" && <>
       <SettingsRow label={t("left.voice.voiceId")} labelRef={voiceUi.part("label")} htmlFor="settings-voice-id">
         <input data-ui-action="input" id="settings-voice-id" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe"
-               value={voiceId} ref={voiceUi.whole} onChange={(e) => setVoiceId(e.target.value)} />
-        <button data-ui-action="domain" className="settings-btn" onClick={saveVoice} ref={saveVoiceUi.whole}>
+               value={voiceId} ref={voiceUi.whole} disabled={saving} onChange={(e) => setVoiceId(e.target.value)} />
+        <button data-ui-action="domain" className="settings-btn" disabled={!voiceId.trim() || testing || saving}
+                onClick={() => void saveFishSetting("FISH_VOICE_ID", voiceId)} ref={saveVoiceUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
       <SettingsRow label={t("left.voice.fishKey")} labelRef={keyUi.part("label")} htmlFor="settings-fish-key">
         <input data-ui-action="input" id="settings-fish-key" type="password" autoComplete="off"
                placeholder={t("left.voice.fishKeyPlaceholder")} value={key} ref={keyUi.whole}
-               onChange={(e) => setKey(e.target.value)} />
-        <button data-ui-action="domain" className="settings-btn" onClick={test} ref={testUi.whole}>
+               disabled={testing || saving} onChange={(e) => { setKey(e.target.value); setTested(null); }} />
+        <button data-ui-action="domain" className="settings-btn" disabled={testing || saving}
+                onClick={test} ref={testUi.whole}>
           {t("left.voice.test")}</button>
         {dot && <StatusDot status={dot} />}
-        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKey} ref={saveKeyUi.whole}>
+        <button data-ui-action="domain" className="settings-btn primary" disabled={!key.trim() || testing || saving}
+                onClick={() => void saveFishSetting("FISH_API_KEY", key)} ref={saveKeyUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
-      {savedKey && (
+      {hasSavedKey !== undefined && <p role="status">{t(hasSavedKey ? "left.voice.keySaved" : "left.voice.keyMissing")}</p>}
+      {tested && <p role="status">{t(`left.voice.${tested}`)}</p>}
+      {restartNeeded && (
         <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
       )}
       </>}
