@@ -88,6 +88,9 @@ export interface SubagentRow {
   state: SubagentState;
   started: number | null;
   written: number;
+  /** The Workflow tool's run that started it (its folder's name, such as
+   *  `wf_f21d5ed2-0a4`), or null for an ordinary subagent. Drawn as text. */
+  workflow_run: string | null;
   /** When one no longer working leaves the list, or null while working. */
   dismiss_at: number | null;
 }

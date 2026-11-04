@@ -86,6 +86,7 @@ export const rightEn = {
   "right.workflows.subagent": "Subagent",
   "right.workflows.subagentOf": "Subagent of {session}",
   "right.workflows.backgroundSubagentOf": "Background subagent of {session}",
+  "right.workflows.workflowRun": "workflow run {run}",
   "right.workflows.noAnswer": "the server did not answer",
   "right.workflows.refused": "the server refused it ({status})",
   "right.workflows.phase": "phase {current}/{total}",

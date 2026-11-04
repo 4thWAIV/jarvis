@@ -1150,6 +1150,7 @@ class Subagent:
     state: str                    # AGENT_WORKING, AGENT_FINISHED or AGENT_STALE
     started: float | None         # its first timestamped line; None if none was found
     written: float                # its transcript's last write
+    workflow_run: str | None = None   # the Workflow tool's run that started it, if one did
 
 
 def _finished(path: Path) -> bool:
@@ -1202,6 +1203,57 @@ def _agent_facts(path: Path, st: os.stat_result) -> dict:
     return facts
 
 
+# The agents the Workflow tool starts are written one level deeper than the
+# rest, a folder per workflow run, measured 2026-11-03:
+# `<sessionId>/subagents/workflows/wf_f21d5ed2-0a4/agent-<id>.jsonl`, each
+# with its `agent-<id>.meta.json` beside it (`agentType`
+# "workflow-subagent"). The run folder's name is the run's id.
+_WORKFLOWS_DIR = "workflows"
+
+
+def _plain_dir(d: Path) -> bool:
+    """A folder in its own right, never one reached through a symlink."""
+    try:
+        return stat.S_ISDIR(d.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _transcripts_in(d: Path, run: str | None):
+    """(each `agent-*.jsonl` listed in `d`, `run`); nothing if `d` is gone."""
+    try:
+        entries = list(d.iterdir())
+    except OSError:
+        return
+    for f in entries:
+        if f.name.startswith(_AGENT_PREFIX) and f.name.endswith(".jsonl"):
+            yield f, run
+
+
+def _subagent_files(roots, cwd: str, session_id: str):
+    """(every subagent transcript a conversation's folders list, the workflow
+    run it belongs to or None), root by root: the conversation's own
+    `subagents/` first, then each `subagents/workflows/<run id>/`. The one
+    listing `read_subagents` and `subagent_transcript_path` both go by.
+    Listed only, never stat'ed as files here: that is the readers' to do,
+    under the cap. The workflows folder and each run folder are entered only
+    when they are folders themselves, never through a symlink."""
+    for root in ([roots] if isinstance(roots, (str, Path)) else roots):
+        d = (Path(root) / "projects" / encode_cwd(cwd) / session_id
+             / "subagents")
+        yield from _transcripts_in(d, None)
+        workflows = d / _WORKFLOWS_DIR
+        if not _plain_dir(workflows):
+            continue
+        try:
+            runs = sorted(workflows.iterdir())
+        except OSError:
+            continue
+        for run in runs:
+            if _AGENT_ID_RE.fullmatch(run.name) and _plain_dir(run):
+                yield from _transcripts_in(run, run.name)
+
+
 def read_subagents(roots, cwd: str, session_id: str,
                    now: float) -> tuple[list[Subagent], bool]:
     """(the subagents this conversation dispatched, capped?), working ones
@@ -1214,7 +1266,9 @@ def read_subagents(roots, cwd: str, session_id: str,
 
     The CLI puts one file per dispatched subagent in
     `projects/<encoded cwd>/<sessionId>/subagents/`. Measured 2026-09-03:
-    1,573 such files against 947 conversations.
+    1,573 such files against 947 conversations. The agents the Workflow
+    tool starts are one level deeper, a folder per run (`_subagent_files`),
+    and are read, deduped, capped and judged exactly as the rest.
 
     THE CAP COUNTS TRANSCRIPTS, NOT DIRECTORY ENTRIES. Every `agent-x.jsonl`
     has an `agent-x.meta.json` sidecar beside it, so one live folder held 418
@@ -1230,22 +1284,14 @@ def read_subagents(roots, cwd: str, session_id: str,
     Never raises, and never reads through a symlink: this folder belongs to
     another process, and files appear and vanish underneath it.
     """
-    by_name: dict[str, Path] = {}
-    for root in ([roots] if isinstance(roots, (str, Path)) else roots):
-        d = (Path(root) / "projects" / encode_cwd(cwd) / session_id
-             / "subagents")
-        try:
-            entries = list(d.iterdir())
-        except OSError:
-            continue
-        for f in entries:
-            if f.name.startswith(_AGENT_PREFIX) and f.name.endswith(".jsonl"):
-                by_name.setdefault(f.name, f)
+    by_name: dict[str, tuple[Path, str | None]] = {}
+    for f, run in _subagent_files(roots, cwd, session_id):
+        by_name.setdefault(f.name, (f, run))
 
     transcripts = [by_name[name] for name in sorted(by_name)]
     capped = len(transcripts) > MAX_AGENT_FILES
     agents: list[Subagent] = []
-    for f in transcripts[:MAX_AGENT_FILES]:
+    for f, run in transcripts[:MAX_AGENT_FILES]:
         try:
             st = f.lstat()
         except OSError:
@@ -1263,7 +1309,7 @@ def read_subagents(roots, cwd: str, session_id: str,
             agent_id=f.name[len(_AGENT_PREFIX):-len(".jsonl")],
             description=facts["description"], agent_type=facts["agent_type"],
             background=facts["background"], depth=facts["depth"], state=state,
-            started=facts["started"], written=st.st_mtime))
+            started=facts["started"], written=st.st_mtime, workflow_run=run))
     agents.sort(key=lambda a: (a.state != AGENT_WORKING, -a.written))
     return agents, capped
 
@@ -1287,9 +1333,10 @@ def subagent_transcript_path(roots, cwd: str, session_id: str,
     nothing that could leave the folder."""
     if not _AGENT_ID_RE.fullmatch(agent_id or ""):
         return None
-    for root in ([roots] if isinstance(roots, (str, Path)) else roots):
-        path = (Path(root) / "projects" / encode_cwd(cwd) / session_id / "subagents"
-                / f"{_AGENT_PREFIX}{agent_id}.jsonl")
+    name = f"{_AGENT_PREFIX}{agent_id}.jsonl"
+    for path, _run in _subagent_files(roots, cwd, session_id):
+        if path.name != name:
+            continue
         try:
             if stat.S_ISREG(path.lstat().st_mode):
                 return path
@@ -2255,4 +2302,4 @@ def session_to_dict(s: SessionState) -> dict:
 def subagent_to_dict(a: Subagent) -> dict:
     return {"id": a.agent_id, "description": a.description, "type": a.agent_type,
             "background": a.background, "depth": a.depth, "state": a.state,
-            "started": a.started, "written": a.written}
+            "started": a.started, "written": a.written, "workflow_run": a.workflow_run}

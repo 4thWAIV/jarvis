@@ -577,11 +577,16 @@ turn-taking); signed in then, nothing is said in that process.
 The subagents a Claude Code session dispatches are read from its own files by
 `session_watch.read_subagents`, the one reader (the counts on the snapshot
 come from it too): `agent-<id>.jsonl` and the `agent-<id>.meta.json` beside it
-in `projects/<encoded cwd>/<sessionId>/subagents/`. Finished means its last
+in `projects/<encoded cwd>/<sessionId>/subagents/`, and the agents the
+Workflow tool starts one level deeper, a folder per run, in
+`subagents/workflows/<run id>/` (the run id, such as `wf_f21d5ed2-0a4`, is
+each one's `workflow_run`, None for the rest; the workflows folder and each
+run folder are entered only when not a symlink). Finished means its last
 message is the assistant's with `stop_reason: end_turn`; otherwise it is
 `working` while written within `AGENT_ACTIVE_WITHIN_SEC`, else `stale`, which
 claims neither. Deduped by name across roots, capped at `MAX_AGENT_FILES`
-(a floor when capped), never through a symlink, never raising. They ride on
+(a floor when capped, counting both levels), never through a symlink,
+never raising. They ride on
 the sessions snapshot (`subagents`), and `/api/sessions/{id}/transcript
 ?subagent=<id>` reads one. The Workflows area shows them, worked out at read
 time and never written to `workflow_store`: a subagent of a session attached

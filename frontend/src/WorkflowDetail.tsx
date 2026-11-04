@@ -344,6 +344,8 @@ function SubagentLine({ a }: { a: SubagentRow }) {
         <span className={`subagent-dot subagent-${a.state}`} ref={ui.part("state")} />
         <span className="workflow-subagent-name" ref={ui.part("row")}>{title}</span>
         <span className="workflow-subagent-of">{a.session_name}</span>
+        {a.workflow_run && <span className="workflow-subagent-of workflow-subagent-run">
+          {t("main.workflow.workflowRun", { run: a.workflow_run })}</span>}
         <span className="workflow-subagent-age">{ago(a.written)}</span>
         <span className={`workflow-subagent-state subagent-${a.state}`}>{SUBAGENT_WORDS[a.state]}</span>
       </button>
