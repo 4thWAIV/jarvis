@@ -1,7 +1,8 @@
 """Collaboration bundles on the team server (messaging.bundles.v1), against a
 real MongoDB: a node's attachment capabilities on the network, a message's
-task context and supersedes links, openability receipts, and what an older
-JARVIS (no `?bundles=1`) is answered with."""
+task context and supersedes links, openability receipts, a reply's cites
+(messaging.bundles.cites.v1), and what an older JARVIS (no `?bundles=1`, or
+no `?cites=1`) is answered with."""
 from __future__ import annotations
 
 import uuid
@@ -68,14 +69,14 @@ def ref(n: int, sha: str) -> mm.AttachmentRef:
                             media_type="application/zip", size_bytes=10, sha256=sha)
 
 
-def request(member: Member, to: int, *, files=(), task=None, supersedes=(),
+def request(member: Member, to: int, *, files=(), task=None, supersedes=(), cites=(),
             reply_to: Optional[dict] = None) -> dict:
     mid = uuid.uuid4()
     content = mm.MessageContent(
         message_id=mid, thread_id=reply_to["thread_id"] if reply_to else mid,
         in_reply_to_message_id=reply_to["message_id"] if reply_to else None,
         recipient_github_id=to, content_revision=1, text="Please review.",
-        attachments=list(files), task=task, supersedes=list(supersedes))
+        attachments=list(files), task=task, supersedes=list(supersedes), cites=list(cites))
     return mm.SendRequest(
         **content.model_dump(), source_node_id=member.node, idempotency_key=uuid.uuid4(),
         content_digest=mm.content_digest(content, server_id=member.server_id,
@@ -83,8 +84,13 @@ def request(member: Member, to: int, *, files=(), task=None, supersedes=(),
     ).model_dump(mode="json")
 
 
-def send(member: Member, body: dict, bundles: bool = True) -> dict:
-    r = member.client.post(PREFIX + ("?bundles=1" if bundles else ""), json=body,
+def asks(bundles: bool, cites: bool = False) -> str:
+    """The query a JARVIS sends: an older one asks for less."""
+    return "?bundles=1" + ("&cites=1" if cites else "") if bundles else ""
+
+
+def send(member: Member, body: dict, bundles: bool = True, cites: bool = False) -> dict:
+    r = member.client.post(PREFIX + asks(bundles, cites), json=body,
                            headers=bearer(member.token))
     assert r.status_code == 200, r.text
     return r.json()["message"]
@@ -112,16 +118,31 @@ def openability(member: Member, message_id, value: dict, node=None):
                                    "openability": value}]})
 
 
-def scan(member: Member, bundles: bool) -> list[dict]:
+def scan(member: Member, bundles: bool, cites: bool = False) -> list[dict]:
     params = {"node_id": str(member.node), "limit": 25}
     if bundles:
         params["bundles"] = "1"
+    if cites:
+        params["cites"] = "1"
     r = member.client.get(PREFIX + "/sync", params=params, headers=bearer(member.token))
     assert r.status_code == 200, r.text
     return r.json()["entries"]
 
 
 # -- the contract's rules ---------------------------------------------------------------
+
+def test_cites_are_offered_only_beside_bundles():
+    assert mm.cites_offered([mm.CAPABILITY, mm.BUNDLES_CAPABILITY, mm.CITES_CAPABILITY])
+    assert not mm.cites_offered([mm.CAPABILITY, mm.CITES_CAPABILITY])
+    assert not mm.cites_offered([mm.CAPABILITY, mm.BUNDLES_CAPABILITY])
+
+
+def test_an_answer_hides_exactly_what_was_not_asked_for():
+    assert messaging.hidden_fields(bundles=False, cites=False) == mm.BUNDLE_FIELDS
+    assert messaging.hidden_fields(bundles=False, cites=True) == mm.BUNDLE_FIELDS
+    assert messaging.hidden_fields(bundles=True, cites=False) == ("cites",)
+    assert messaging.hidden_fields(bundles=True, cites=True) == ()
+
 
 def test_bundles_are_offered_only_beside_messaging():
     assert mm.bundles_offered([mm.CAPABILITY, mm.BUNDLES_CAPABILITY])
@@ -264,6 +285,68 @@ def test_a_repair_supersedes_a_file_of_an_earlier_message_in_its_thread(tim, ali
                            reason="repair")
     body = request(tim, ALICE.id, files=[new], supersedes=[theirs], reply_to=first)
     assert error(tim.post(body)) == "relation_not_allowed"
+
+
+# -- a reply's cites ----------------------------------------------------------------------
+
+def cite(message: dict, r: mm.AttachmentRef, path: Optional[str] = "review/summary.pdf",
+         **over) -> mm.CitedRef:
+    return mm.CitedRef(**{"message_id": uuid.UUID(message["message_id"]),
+                          "attachment_id": r.attachment_id, "sha256": r.sha256,
+                          "member_path": path, **over})
+
+
+def test_a_reply_cites_the_files_it_relies_on_and_only_a_jarvis_that_asks_sees_them(
+        tim, alice, pins):
+    bundle = ref(81, "b" * 64)
+    pins.ready.add(bundle.attachment_id)
+    asked = send(tim, request(tim, ALICE.id, files=[bundle], task=task_on(bundle)))
+    cites = [cite(asked, bundle), cite(asked, bundle, None)]
+    body = request(alice, ADMIN.id, cites=cites, reply_to=asked)
+    full = send(alice, body, cites=True)
+    assert full["cites"] == [c.model_dump(mode="json") for c in cites]
+
+    # A JARVIS on main asks for the bundle fields and not for cites: its
+    # strict copy refuses a field it does not know, so it never gets one.
+    older = alice.client.post(PREFIX + asks(True), json=body, headers=bearer(alice.token))
+    assert older.status_code == 200, older.text
+    assert "cites" not in older.json()["message"] and older.json()["duplicate"]
+    for entry in scan(tim, bundles=True):
+        assert "cites" not in entry["message"]
+        assert "task" in entry["message"] and "supersedes" in entry["message"]
+    got = tim.client.get(f"{PREFIX}/{full['message_id']}{asks(True)}",
+                         headers=bearer(tim.token)).json()
+    assert "cites" not in got and "task" in got
+    assert all("cites" not in e["message"] for e in scan(tim, bundles=False))
+
+    (_, reply) = scan(tim, bundles=True, cites=True)
+    assert reply["message"]["cites"] == full["cites"]
+    got = tim.client.get(f"{PREFIX}/{full['message_id']}{asks(True, True)}",
+                         headers=bearer(tim.token)).json()
+    assert got["cites"] == full["cites"]
+
+
+def test_a_cite_names_a_file_sent_to_the_replier_in_the_same_thread(tim, alice, bob, pins):
+    bundle, other = ref(91, "c" * 64), ref(92, "d" * 64)
+    pins.ready |= {bundle.attachment_id, other.attachment_id}
+    asked = send(tim, request(tim, ALICE.id, files=[bundle], task=task_on(bundle)))
+    elsewhere = send(tim, request(tim, ALICE.id, files=[other]))
+    pins.ready.add(ref(93, "e" * 64).attachment_id)
+    own = send(alice, request(alice, ADMIN.id, files=[ref(93, "e" * 64)], reply_to=asked))
+    for bad in (cite(asked, bundle, sha256="f" * 64),                   # another hash
+                cite(asked, bundle, attachment_id=uuid.UUID(int=99)),   # not its file
+                cite(elsewhere, other),                                 # another thread
+                cite(own, ref(93, "e" * 64)),                           # sent by the replier
+                cite(asked, bundle, message_id=uuid.uuid4())):          # no such message
+        body = request(alice, ADMIN.id, cites=[bad], reply_to=asked)
+        assert error(alice.post(body)) == "relation_not_allowed", bad
+    # Someone outside the thread cannot cite it either.
+    pins.ready.add(ref(94, "1" * 64).attachment_id)
+    bobs = send(bob, request(bob, ALICE.id, files=[ref(94, "1" * 64)]))
+    body = request(alice, BOB.id, cites=[cite(asked, bundle)], reply_to=bobs)
+    assert error(alice.post(body)) == "relation_not_allowed"
+    ok = request(alice, ADMIN.id, cites=[cite(asked, bundle)], reply_to=asked)
+    assert send(alice, ok, cites=True)["cites"][0]["message_id"] == asked["message_id"]
 
 
 # -- openability receipts -----------------------------------------------------------------

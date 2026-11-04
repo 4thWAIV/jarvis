@@ -74,8 +74,9 @@ SYNC_PAGES_PER_PASS = 20
 CAPABILITIES_TTL_SEC = 30.0
 PREFIX = "/api/v1/messages"
 # Asks a team server for the messaging.bundles.v1 fields of messages and
-# receipts; an older one ignores it and answers messaging.v1.
-BUNDLES_QUERY = "bundles=1"
+# receipts, and for the files a reply cites (messaging.bundles.cites.v1);
+# an older one ignores what it does not know and answers without them.
+BUNDLES_QUERY = "bundles=1&cites=1"
 
 
 # -- the team connection, as delivery uses it -------------------------------------
@@ -322,22 +323,29 @@ class Delivery:
             caps = await self._capabilities_of(pairing)
         return ports.availability(paired=pairing is not None, capabilities=caps)
 
+    def _known_capabilities(self) -> list[str]:
+        """The current team server's capabilities as already known, without
+        asking it: nothing known yet (or for another pairing) is none."""
+        pairing = self.pairing()
+        known = self._capabilities.get(pairing.server_id) if pairing else None
+        return known[2] if known and known[0] == pairing.generation else []
+
     def known_availability(self) -> ports.Availability:
         """`availability` from what is already known, without asking the
         team server: for callers that cannot wait (the capture path)."""
-        pairing = self.pairing()
-        known = self._capabilities.get(pairing.server_id) if pairing else None
-        caps = known[2] if known and known[0] == pairing.generation else []
-        return ports.availability(paired=pairing is not None, capabilities=caps)
+        return ports.availability(paired=self.pairing() is not None,
+                                  capabilities=self._known_capabilities())
 
     def bundles_offered(self) -> bool:
         """Whether the current team server takes task context, supersedes
         links and openability receipts (messaging.bundles.v1), from what is
         already known: nothing known yet is no."""
-        pairing = self.pairing()
-        known = self._capabilities.get(pairing.server_id) if pairing else None
-        return bool(known and known[0] == pairing.generation
-                    and wire.bundles_offered(known[2]))
+        return wire.bundles_offered(self._known_capabilities())
+
+    def cites_offered(self) -> bool:
+        """Whether it also takes the files a reply cites
+        (messaging.bundles.cites.v1), the same way."""
+        return wire.cites_offered(self._known_capabilities())
 
     async def _capabilities_of(self, pairing: Pairing) -> list[str]:
         known = self._capabilities.get(pairing.server_id)

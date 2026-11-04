@@ -128,8 +128,10 @@ class MessagingRuntime:
             held=lambda server_id, owner: self.locations.held(server_id, owner))
         self.locations = attachment_locations.AttachmentLocations(
             self.files, node_id=lambda: str(self.node))
-        self.approvals = MessageApprovals(self.store, self.files, ids=ports.RandomIds(),
-                                          clock=clock, bundles=lambda: self.delivery.bundles_offered())
+        self.approvals = MessageApprovals(
+            self.store, self.files, ids=ports.RandomIds(), clock=clock,
+            bundles=lambda: self.delivery.bundles_offered(),
+            cites=lambda: self.delivery.cites_offered())
         current = _CurrentTransport(self._transport_now)
         self.presentation = ServePresentation(transport=current, node_id=self.node,
                                               send=send_frame, clock=clock)

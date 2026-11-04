@@ -22,7 +22,9 @@ What it holds:
                        the recipient node's technical report on each file
     bundles            (capability `messaging.bundles.v1`) a node's attachment
                        capabilities, a message's one-off task context and the
-                       attachments a repair supersedes
+                       attachments a repair supersedes; (capability
+                       `messaging.bundles.cites.v1`) the earlier files a reply
+                       relies on
     work state         one owner's view of one exchange: placement, the
                        reminder, addressed, dismissed and whose turn it is
     sync               keyset pages of a full reconciliation scan
@@ -82,12 +84,18 @@ BUNDLES_CAPABILITY = "messaging.bundles.v1"
 # them as unknown, so a request leaves each out while unset
 # (`request_body`) and an answer to an older JARVIS strips them
 # (`messaging.legacy_view`).
-BUNDLE_FIELDS = ("task", "supersedes", "openability")
+BUNDLE_FIELDS = ("task", "supersedes", "openability", "cites")
+# Offered beside messaging.bundles.v1 by a team server that takes the files
+# a reply cites (`MessageContent.cites`). A JARVIS asks for them with
+# `?cites=1` beside `?bundles=1`; one that does not is answered without
+# them, since its strict copy refuses a field it does not know.
+CITES_CAPABILITY = "messaging.bundles.cites.v1"
+CITES_FIELDS = ("cites",)
 SCHEMA_VERSION = 1                   # every envelope carries it
 # Changes when any wire shape, rule or fixture changes. Workers build
 # against one revision; a breaking change bumps the number and regenerates
 # every consumer in the same batch.
-INTERFACE_REVISION = "messaging.v1-contract.4"
+INTERFACE_REVISION = "messaging.v1-contract.5"
 DIGEST_VERSION = 1
 
 
@@ -102,6 +110,12 @@ def bundles_offered(capabilities: list[str] | tuple[str, ...]) -> bool:
     """Whether a team server also takes task context, supersedes links and
     openability receipts (and messaging itself)."""
     return messaging_offered(capabilities) and BUNDLES_CAPABILITY in capabilities
+
+
+def cites_offered(capabilities: list[str] | tuple[str, ...]) -> bool:
+    """Whether a team server also takes the files a reply cites (and the
+    bundle fields)."""
+    return bundles_offered(capabilities) and CITES_CAPABILITY in capabilities
 
 
 def _unset(value) -> bool:
@@ -161,6 +175,9 @@ CAPABILITY_AGE_MAX_MS = 7 * 86_400_000
 TASK_OUTCOME_MAX_CHARS = 500
 TASK_SUPPORTING_MAX = 50
 ARCHIVE_PATH_MAX_CHARS = 1024
+# A reply cites at most CITES_MAX files or members (the size of a review's
+# checklist, which they come from).
+CITES_MAX = 200
 
 # Files, proposed defaults recorded at the contract gate (handoff stage 5,
 # "Define lease/fencing and retention at the contract gate"). The team
@@ -400,6 +417,16 @@ class Supersedes(_Strict):
     reason: Literal["repair", "revision"]
 
 
+class CitedRef(_Strict):
+    """A file of an earlier message in this thread, or one member of it by
+    its archive path, that this message relies on."""
+    message_id: UUID
+    attachment_id: UUID
+    sha256: str = Field(pattern=_SHA256)
+    member_path: Optional[str] = Field(default=None, min_length=1,
+                                       max_length=ARCHIVE_PATH_MAX_CHARS)
+
+
 # -- the envelope -------------------------------------------------------------
 
 class AttachmentRef(_Strict):
@@ -438,6 +465,8 @@ class MessageContent(_Strict):
     # messaging.bundles.v1 only; absent from the digest while unset.
     task: Optional[TaskContext] = None
     supersedes: list[Supersedes] = Field(default_factory=list, max_length=ATTACHMENTS_MAX)
+    # messaging.bundles.cites.v1 only; absent from the digest while empty.
+    cites: list[CitedRef] = Field(default_factory=list, max_length=CITES_MAX)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -468,6 +497,10 @@ class MessageContent(_Strict):
                 s.by_attachment_id not in files or s.message_id == self.message_id
                 for s in self.supersedes):
             raise ValueError("a file supersedes an earlier message's file, each once")
+        cited = [(c.message_id, c.attachment_id, c.member_path) for c in self.cites]
+        if len(set(cited)) != len(cited) or any(c.message_id == self.message_id
+                                                for c in self.cites):
+            raise ValueError("a message cites an earlier message's files, each once")
         return self
 
 
@@ -498,14 +531,16 @@ class AcceptedMessage(MessageContent):
 def digest_input(content: MessageContent, *, server_id: str, sender_github_id: int) -> dict:
     """Everything that can change what the owner sends. Not in it: the source
     node (the session's transport context), the idempotency key (the
-    operation, not the content) and anything presentational. `task` and
-    `supersedes` are in it only when set, so a message without them digests
-    exactly as it did before they existed."""
+    operation, not the content) and anything presentational. `task`,
+    `supersedes` and `cites` are in it only when set, so a message without
+    them digests exactly as it did before they existed."""
     extra: dict = {}
     if content.task is not None:
         extra["task"] = content.task.model_dump(mode="json")
     if content.supersedes:
         extra["supersedes"] = [s.model_dump(mode="json") for s in content.supersedes]
+    if content.cites:
+        extra["cites"] = [c.model_dump(mode="json") for c in content.cites]
     return {
         **extra,
         "digest_version": DIGEST_VERSION,

@@ -6,7 +6,8 @@
 
 export const CAPABILITY = "messaging.v1";
 export const BUNDLES_CAPABILITY = "messaging.bundles.v1";
-export const INTERFACE_REVISION = "messaging.v1-contract.4";
+export const CITES_CAPABILITY = "messaging.bundles.cites.v1";
+export const INTERFACE_REVISION = "messaging.v1-contract.5";
 export const SCHEMA_VERSION = 1;
 export const MESSAGES_HINT = "messages";
 export const TRANSFER_FRAME = "human_transfer";
@@ -105,6 +106,7 @@ export interface AcceptedMessage {
   attachments: AttachmentRef[];
   task: TaskContext | null;
   supersedes: Supersedes[];
+  cites: CitedRef[];
   server_id: string;
   sender_github_id: number;
   source_node_id: string;
@@ -177,11 +179,20 @@ export interface AttachmentStatus {
   expires_at: string | null;
 }
 
-/** A checklist item (bundle_tasks) a reply relies on: a file of the request it answers, or a member of one, as the review's checklist names it. Local only: it is read back and marks the checklist once the reply is accepted, and never sent. */
+/** A checklist item (bundle_tasks) a reply relies on: a file of the request it answers, or a member of one, as the review's checklist names it. It is read back and marks the checklist once the reply is accepted. `ref` is what the wire names it by (the message it came on, the file's hash and the member's path), stored when it is proposed or set; the mark goes with the reply as one of its `cites` only with it, and only to a team server offering messaging.bundles.cites.v1. A mark saved before there was a `ref` has none and stays here. */
 export interface CitedFile {
   attachment_id: string;
   member_id: string;
   path: string;
+  ref: CitedRef | null;
+}
+
+/** A file of an earlier message in this thread, or one member of it by its archive path, that this message relies on. */
+export interface CitedRef {
+  message_id: string;
+  attachment_id: string;
+  sha256: string;
+  member_path: string | null;
 }
 
 /** JARVIS refuses this locally while the item has unsent text or an unresolved send (`dismiss_blockers`); the server cannot see those. */
@@ -268,6 +279,7 @@ export interface LocalMessage {
   self_message: boolean;
   receipts: ReceiptFacts;
   files: LocalFile[];
+  cited_in_reply: CitedRef[];
 }
 
 /** One revision's way out. Never content: the page has that already. */
@@ -295,6 +307,7 @@ export interface MessageContent {
   attachments: AttachmentRef[];
   task: TaskContext | null;
   supersedes: Supersedes[];
+  cites: CitedRef[];
 }
 
 export interface NodeReceipt {
@@ -392,6 +405,7 @@ export interface SendRequest {
   attachments: AttachmentRef[];
   task: TaskContext | null;
   supersedes: Supersedes[];
+  cites: CitedRef[];
   source_node_id: string;
   idempotency_key: string;
   content_digest: string;

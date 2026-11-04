@@ -2,7 +2,7 @@
 
 The team server (`team_server/`) is a small FastAPI service, deployed on its own, that gives one team GitHub sign-in, administrator-managed membership and a way to connect JARVIS to it. It is separate from JARVIS: its own dependencies (`team_server/requirements.txt`), its own image (`team_server/Dockerfile`) and its own tests. JARVIS keeps working, voice and agents included, when the team server is down or was never set up.
 
-The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Messages between members (below) are always on; `/version` lists exactly what it offers (`network` and `messaging.v1` among its capabilities).
+The first release has sign-in and sign-out, the team's creation on the first administrator's sign-in, members (add, suspend, re-enable, promote, demote, remove before first sign-in), device pairing for JARVIS, connection status, version and health, and the team's network: every paired JARVIS backend, its presence and load, and the server's own health. Messages between members (below) are always on; `/version` lists exactly what it offers (`network`, `messaging.v1`, `messaging.bundles.v1` and `messaging.bundles.cites.v1` among its capabilities).
 
 ## Configuration
 

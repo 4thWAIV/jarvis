@@ -28,6 +28,7 @@ from tests.test_bundle_capabilities import Health
 from tests.test_messaging_client import Connection
 
 BUNDLES = [wire.CAPABILITY, wire.BUNDLES_CAPABILITY]
+CITES = [*BUNDLES, wire.CITES_CAPABILITY]
 
 
 class Side:
@@ -52,7 +53,8 @@ class Side:
                                   for m in self.specs[k.attachment_id].members})
         self.guard = message_approvals.MessageApprovals(
             self.store, self.files, ids=fakes.SeqIds(start=node * 2000), clock=clock,
-            bundles=lambda: self.delivery.bundles_offered())
+            bundles=lambda: self.delivery.bundles_offered(),
+            cites=lambda: self.delivery.cites_offered())
         self.captures = fakes.ReviewCaptures()
         self.delivery = Delivery(store=self.store, connection=Connection(owner),
                                  guard=self.guard, snapshots=self.files,
@@ -693,12 +695,18 @@ def test_a_repair_carries_a_read_only_to_the_same_bytes(tmp_path, serve, clock):
 
 # -- the files his reply cites -------------------------------------------------------------------
 
-def asked(tmp_path, serve, clock):
-    """Tim's request, as Matt's JARVIS holds it once synced."""
+def asked_both(tmp_path, serve, clock):
+    """Tim's request, as Matt's JARVIS holds it once synced, and Tim's side."""
     tim, matt, sent, r = sent_bundle(tmp_path, serve, clock)
     matt.specs[r.attachment_id] = bf.Spec(r, members=MEMBERS, wrapper="review")
     matt.tick()
     asyncio.run(matt.delivery.availability())
+    return tim, matt, sent, r
+
+
+def asked(tmp_path, serve, clock):
+    """Tim's request, as Matt's JARVIS holds it once synced."""
+    _, matt, sent, r = asked_both(tmp_path, serve, clock)
     return matt, sent, r
 
 
@@ -800,6 +808,80 @@ def test_a_cited_item_carries_across_a_repair_only_to_the_same_bytes(tmp_path, s
         task=bf.task_on(flat, primary="summary.pdf", supporting=("sources.md",)))
     bf.hold(matt.store, MATT, repair)
     assert states(matt, sent) == [("summary.pdf", "cited"), ("sources.md", "unread")]
+
+
+def review(side: Side, draft: ports.Draft) -> tuple[ports.Draft, str]:
+    reviewed = asyncio.run(side.local.review(draft.message_id, ports.DraftAction(
+        expected_draft_revision=draft.draft_revision)))
+    return reviewed, list(side.captures.open.values())[-1]["text"]
+
+
+def test_a_reply_sends_its_cites_where_the_server_takes_them_and_the_sender_sees_them(
+        tmp_path, serve, clock):
+    serve.capabilities = list(CITES)
+    tim, matt, sent, r = asked_both(tmp_path, serve, clock)
+    read(matt, sent, r, "review/summary.pdf")
+    draft = reply(matt, sent, "summary.pdf overstates page 1.")
+    (mark,) = draft.cited
+    assert mark.ref == wire.CitedRef(message_id=sent.message_id, attachment_id=r.attachment_id,
+                                     sha256=r.sha256, member_path="review/summary.pdf")
+    reviewed, readback = review(matt, draft)
+    assert "Cited: review/summary.pdf." in readback
+    assert ports.CITES_NOT_CARRIED not in readback and "Not sent with it" not in readback
+    went = matt.send(reviewed)
+    assert went.cites == [mark.ref]
+    assert states(matt, sent)[0] == ("review/summary.pdf", "cited")
+
+    asyncio.run(tim.delivery.availability())
+    tim.tick()
+    item = tim.store.item(SERVER, TIM, sent.thread_id)
+    mine = {m.message.message_id: m.cited_in_reply for m in item.messages}
+    assert mine == {sent.message_id: [mark.ref], went.message_id: []}
+    assert tim.store.message(SERVER, TIM, sent.message_id).cited_in_reply == [mark.ref], \
+        "one message read alone says the same"
+    assert matt.store.item(SERVER, MATT, sent.thread_id).messages[0].cited_in_reply == [], \
+        "only the sender's own files are shown cited"
+
+
+def test_without_the_capability_the_read_back_says_the_citations_stay_here(
+        tmp_path, serve, clock):
+    matt, sent, r = asked(tmp_path, serve, clock)
+    read(matt, sent, r, "review/summary.pdf")
+    reviewed, readback = review(matt, reply(matt, sent, "summary.pdf overstates page 1."))
+    assert "Cited: review/summary.pdf." in readback and ports.CITES_NOT_CARRIED in readback
+    assert matt.send(reviewed).cites == []
+
+
+def test_a_mark_without_its_reference_is_read_back_as_staying_here(tmp_path, serve, clock):
+    serve.capabilities = list(CITES)
+    matt, sent, r = asked(tmp_path, serve, clock)
+    for path in ("review/summary.pdf", "review/sources.md"):
+        read(matt, sent, r, path)
+    draft = reply(matt, sent, "summary.pdf and sources.md agree.")
+    first, second = draft.cited
+    # A mark saved before marks kept their reference (#58) has none.
+    old = second.model_dump(mode="json")
+    del old["ref"]
+    draft = matt.store.save_draft(SERVER, MATT, draft.model_copy(update={
+        "cited": [first, ports.CitedFile.model_validate(old)],
+        "cited_by_owner": True}), draft.draft_revision)
+    reviewed, readback = review(matt, draft)
+    assert "Not sent with it: review/sources.md." in readback
+    assert matt.send(reviewed).cites == [first.ref]
+
+
+def test_a_server_change_between_review_and_yes_changes_the_cites_and_needs_a_new_review(
+        tmp_path, serve, clock):
+    serve.capabilities = list(CITES)
+    matt, sent, r = asked(tmp_path, serve, clock)
+    read(matt, sent, r, "review/summary.pdf")
+    reviewed, _ = review(matt, reply(matt, sent, "summary.pdf overstates page 1."))
+    serve.capabilities = list(BUNDLES)
+    matt.delivery._capabilities.clear()
+    asyncio.run(matt.delivery.availability())
+    with pytest.raises(ports.NotApproved):
+        matt.guard.approve(SERVER, MATT, reviewed.message_id, reviewed.send.content_revision,
+                           reviewed.send.content_digest, matt.node, "gui")
 
 
 def test_a_file_is_named_by_its_path_or_name_as_words_with_accents_folded():

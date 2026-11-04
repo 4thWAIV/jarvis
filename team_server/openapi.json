@@ -18,6 +18,14 @@
             "title": "Attachments",
             "type": "array"
           },
+          "cites": {
+            "items": {
+              "$ref": "#/components/schemas/CitedRef"
+            },
+            "maxItems": 200,
+            "title": "Cites",
+            "type": "array"
+          },
           "content_digest": {
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Content Digest",
@@ -687,6 +695,47 @@
           "accounts"
         ],
         "title": "BrainSummary",
+        "type": "object"
+      },
+      "CitedRef": {
+        "additionalProperties": false,
+        "description": "A file of an earlier message in this thread, or one member of it by\nits archive path, that this message relies on.",
+        "properties": {
+          "attachment_id": {
+            "format": "uuid",
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "member_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Path"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "attachment_id",
+          "sha256"
+        ],
+        "title": "CitedRef",
         "type": "object"
       },
       "DeviceDecided": {
@@ -3569,6 +3618,16 @@
               "title": "Bundles",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "cites",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Cites",
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -3625,6 +3684,52 @@
                     },
                     "maxItems": 10,
                     "title": "Attachments",
+                    "type": "array"
+                  },
+                  "cites": {
+                    "items": {
+                      "additionalProperties": false,
+                      "description": "A file of an earlier message in this thread, or one member of it by\nits archive path, that this message relies on.",
+                      "properties": {
+                        "attachment_id": {
+                          "format": "uuid",
+                          "title": "Attachment Id",
+                          "type": "string"
+                        },
+                        "member_path": {
+                          "anyOf": [
+                            {
+                              "maxLength": 1024,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "title": "Member Path"
+                        },
+                        "message_id": {
+                          "format": "uuid",
+                          "title": "Message Id",
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[0-9a-f]{64}$",
+                          "title": "Sha256",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message_id",
+                        "attachment_id",
+                        "sha256"
+                      ],
+                      "title": "CitedRef",
+                      "type": "object"
+                    },
+                    "maxItems": 200,
+                    "title": "Cites",
                     "type": "array"
                   },
                   "content_digest": {
@@ -4248,6 +4353,16 @@
               "title": "Bundles",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "cites",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Cites",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -4486,6 +4601,16 @@
             "schema": {
               "default": false,
               "title": "Bundles",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cites",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Cites",
               "type": "boolean"
             }
           }

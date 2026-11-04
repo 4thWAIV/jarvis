@@ -6597,10 +6597,19 @@ _OPENED_THERE = {"verified": "has been read there", "ready": "opens there",
                  "corrupt": "damaged there", "unavailable": "not opened there"}
 
 
-def _file_lines(attachments, reports=()) -> list[str]:
+def _file_lines(attachments, reports=(), cites=()) -> list[str]:
     """A message's or a draft's files, one line each: name, size and id,
     and on a sent file the recipient's JARVIS's report once it opened it
-    (the same report the Queue's file card shows)."""
+    and whether a reply cites it or members of it (`LocalMessage.
+    cited_in_reply`; the same report and record the Queue's file card
+    shows)."""
+    def cited(a) -> str:
+        found = [c for c in cites if (c.attachment_id, c.sha256) == (a.attachment_id, a.sha256)]
+        if not found:
+            return ""
+        members = [c.member_path for c in found if c.member_path]
+        return "; cited in reply" + (f": {', '.join(members)}" if members else "")
+
     def opened(a) -> str:
         r = next((r for r in reports if r.attachment_id == a.attachment_id
                   and r.sha256 == a.sha256), None)
@@ -6616,7 +6625,7 @@ def _file_lines(attachments, reports=()) -> list[str]:
             said += ")"
         return said
     return [f"File: {a.filename} ({messaging_ports.spoken_size(a.size_bytes)}), "
-            f"attachment {a.attachment_id}{opened(a)}" for a in attachments]
+            f"attachment {a.attachment_id}{opened(a)}{cited(a)}" for a in attachments]
 
 
 def _where_line(message_id: uuid.UUID, attachment_id: uuid.UUID) -> str:
@@ -6650,7 +6659,8 @@ def _thread_text(local, item) -> str:
         received = m.direction == "incoming" or m.self_message
         reports = m.receipts.openability if m.direction == "outgoing" else ()
         out += [line + (_where_line(msg.message_id, a.attachment_id) if received else "")
-                for line, a in zip(_file_lines(msg.attachments, reports), msg.attachments)]
+                for line, a in zip(_file_lines(msg.attachments, reports, m.cited_in_reply),
+                                   msg.attachments)]
         out.append("")
     for d in item.drafts:
         out.append(f"Unsent draft {d.message_id}, revision {d.draft_revision}, "

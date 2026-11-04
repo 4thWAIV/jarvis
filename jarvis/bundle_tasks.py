@@ -46,7 +46,10 @@ item is read while the reply is still a draft. They are read back; a change
 is an edit, so a reviewed reply is reviewed again. Once the team server has
 accepted the reply, at the revision that carried them, those items are
 `cited`, and a cited item stays cited and carries across a repair as a read
-does. They are never sent: the wire has no field for them.
+does. Each mark keeps its wire reference (`CitedFile.ref`: the message he
+received the file on, its hash and the member's path, `_marks`), and goes
+with the reply as one of its `cites` to a team server offering
+messaging.bundles.cites.v1; the read-back says which stay here.
 
     file_ready            the files can be opened
     evidence_unavailable  a required member could not be read
@@ -569,7 +572,7 @@ class BundleTasks:
         if items is None:
             return None
         said = f" {' '.join(spoken_words.folded_words(draft.text))} "
-        return [_cited_file(i) for i in items if _named(said, i.path)]
+        return self._marks(ns, draft.thread_id, [i for i in items if _named(said, i.path)])
 
     def set_cited(self, server_id: str, owner_github_id: int, message_id: UUID,
                   expected_draft_revision: int, cited: list) -> ports.Draft:
@@ -592,9 +595,20 @@ class BundleTasks:
                 raise Refused("invalid_request") from None
         if chosen - {(i.attachment_id, i.member_id) for i in items}:
             raise Refused("invalid_request")
-        return self._edit(message_id, expected_draft_revision, cited=[
-            _cited_file(i) for i in items if (i.attachment_id, i.member_id) in chosen],
+        return self._edit(message_id, expected_draft_revision, cited=self._marks(
+            ns, draft.thread_id, [i for i in items if (i.attachment_id, i.member_id) in chosen]),
             cited_by_owner=True)
+
+    def _marks(self, ns, thread_id: UUID, items: list[ChecklistItem]) -> list[ports.CitedFile]:
+        """`items` as a reply's cited marks, each with its wire reference:
+        the message in the thread he received the file on and its hash
+        (`_cited_file`)."""
+        item = self.store.item(*ns, thread_id)
+        files = {a.attachment_id: (held.message.message_id, a.sha256)
+                 for held in (item.messages if item else [])
+                 if held.message.recipient_github_id == ns[1]
+                 for a in held.message.attachments}
+        return [_cited_file(i, files.get(i.attachment_id)) for i in items]
 
     def _repropose(self, ns, thread_id: UUID) -> None:
         """After an item is read: the proposal on his reply in the thread
@@ -661,9 +675,25 @@ def _marked_cited(state: ReviewState, cited: set[tuple[UUID, str]]) -> ReviewSta
         for i in state.items]})
 
 
-def _cited_file(item: ChecklistItem) -> ports.CitedFile:
+def _cited_file(item: ChecklistItem,
+                file: Optional[tuple[UUID, str]]) -> ports.CitedFile:
+    """A checklist item as a cited mark. `file` is the message it came on
+    and its hash: the reference names the whole file when the item is the
+    file itself (its member id at path ""), else the member by its path,
+    and only when that path gives the item's own member id. Without one it
+    has no reference, and stays here."""
+    ref = None
+    if file is not None:
+        message_id, sha256 = file
+        path = None if item.member_id == member_id(sha256, "") else item.path
+        if path is None or (path and member_id(sha256, path) == item.member_id):
+            try:
+                ref = wire.CitedRef(message_id=message_id, attachment_id=item.attachment_id,
+                                    sha256=sha256, member_path=path)
+            except ValueError:
+                ref = None
     return ports.CitedFile(attachment_id=item.attachment_id, member_id=item.member_id,
-                           path=item.path)
+                           path=item.path, ref=ref)
 
 
 def _named(said: str, path: str) -> bool:

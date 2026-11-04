@@ -599,20 +599,29 @@ class SqliteMessagingStore:
             self_message=outgoing and m.recipient_github_id == owner,
             receipts=wire.ReceiptFacts.model_validate_json(facts["body"]))
 
+    def _thread(self, conn, server_id, owner, thread: str) -> list[ports.LocalMessage]:
+        """A thread's messages in order, each he sent with what the replies
+        cite of it (`ports.with_citations`)."""
+        rows = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? AND "
+                            "owner=? AND thread_id=?", (server_id, owner, thread)).fetchall()
+        return ports.with_citations(
+            _sort_messages([self._local_message(conn, server_id, owner, r) for r in rows]))
+
     def message(self, server_id: str, owner_github_id: int,
                 message_id: UUID) -> Optional[ports.LocalMessage]:
         with self._tx() as conn:
-            row = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? "
+            row = conn.execute("SELECT thread_id FROM human_messages WHERE server_id=? "
                                "AND owner=? AND message_id=?",
                                (server_id, owner_github_id, str(message_id))).fetchone()
-            return None if row is None else self._local_message(conn, server_id,
-                                                                 owner_github_id, row)
+            if row is None:
+                return None
+            return next(m for m in self._thread(conn, server_id, owner_github_id,
+                                                row["thread_id"])
+                        if m.message.message_id == message_id)
 
     def _item(self, conn, server_id, owner, state: wire.WorkState) -> ports.LocalItem:
         thread = str(state.thread_id)
-        rows = conn.execute("SELECT message_id, body FROM human_messages WHERE server_id=? AND "
-                            "owner=? AND thread_id=?", (server_id, owner, thread)).fetchall()
-        messages = _sort_messages([self._local_message(conn, server_id, owner, r) for r in rows])
+        messages = self._thread(conn, server_id, owner, thread)
         drafts = [ports.Draft.model_validate_json(r["body"]) for r in conn.execute(
             "SELECT body FROM human_drafts WHERE server_id=? AND owner=? AND thread_id=? "
             "ORDER BY rowid", (server_id, owner, thread)).fetchall()]

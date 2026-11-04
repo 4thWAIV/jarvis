@@ -88,6 +88,8 @@ export const bundleWords = {
   get noRequest() { return t("main.bundle.noRequest"); },
   /** The files a reply relies on, marked on the draft and read back. */
   get cited() { return t("main.bundle.cited"); },
+  /** On a sent file a reply relies on (`LocalMessage.cited_in_reply`). */
+  get citedInReply() { return t("main.bundle.citedInReply"); },
   /** The recipient's JARVIS's report on a file it was told to open. */
   openability: wordsOf(OPENABILITY, (c) => t(`main.bundle.openability.${c}`)) as Readonly<Record<Openability, string>>,
   reason: (reason: Reason | null | undefined) =>

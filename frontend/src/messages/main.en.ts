@@ -702,6 +702,7 @@ export const mainEn = {
   "main.bundle.request": "Request",
   "main.bundle.noRequest": "No request",
   "main.bundle.cited": "Cited",
+  "main.bundle.citedInReply": "Cited in reply",
   "main.bundle.openability.verified": "Read there",
   "main.bundle.openability.ready": "Opens there",
   "main.bundle.openability.partial": "Partly readable there",

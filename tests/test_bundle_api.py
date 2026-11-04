@@ -435,6 +435,22 @@ def test_a_sent_files_report_is_in_the_brains_thread_read(wired):
     assert "recipient" not in wired.server._file_lines([ref], [other])[0]
 
 
+def test_a_sent_files_cites_are_in_the_brains_thread_read(wired):
+    from jarvis import messaging_wire as wire
+    ref = SimpleNamespace(filename="review.zip", size_bytes=2048, attachment_id=AID,
+                          sha256="a" * 64)
+
+    def cite(path=None, sha="a" * 64):
+        return wire.CitedRef(message_id=UUID(int=9), attachment_id=AID, sha256=sha,
+                             member_path=path)
+    (line,) = wired.server._file_lines([ref], (), [cite("review/summary.pdf"),
+                                                   cite("review/sources.md")])
+    assert line.endswith("; cited in reply: review/summary.pdf, review/sources.md")
+    (whole,) = wired.server._file_lines([ref], (), [cite()])
+    assert whole.endswith("; cited in reply")
+    assert "cited" not in wired.server._file_lines([ref], (), [cite(sha="b" * 64)])[0]
+
+
 # ── the routes and tools over the real inspection service and readers ──
 
 def test_the_routes_and_tools_read_a_real_bundle_through_the_real_readers(
