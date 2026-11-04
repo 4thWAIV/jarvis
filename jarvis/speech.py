@@ -426,6 +426,7 @@ class _Spoken:
     acked_at: Optional[float] = None
     expires_at: Optional[float] = None   # nobody will ever ack this; believe it
                                           # is playing only until here
+    started: bool = False                 # the page said its audio began
 
 
 # How long he must have been quiet before JARVIS takes it that he has
@@ -490,6 +491,11 @@ class SpeechScheduler:
         self._tick_task: Optional[asyncio.Task] = None
         self._tasks: set[asyncio.Task] = set()
         self._tts_failures = 0
+        # Whether the page says when each chunk starts to sound. Until it
+        # does (an older page), every chunk sent counts as possibly audible;
+        # once it does, a chunk only queued behind the one playing has made
+        # no sound, so its words are not echo.
+        self._starts_reported = False
         self.utterances: dict[int, Utterance] = {}
 
     # ── lifecycle ──────────────────────────────────────────────────────
@@ -1060,6 +1066,10 @@ class SpeechScheduler:
         if u is None or not 0 <= idx <= min(u.high_sent, len(u.chunks) - 1):
             return
         chunk = u.chunks[idx]
+        self._starts_reported = True
+        for spoken in self._recent:
+            if spoken.utt == utt_id and spoken.idx == idx:
+                spoken.started = True
         if chunk.outcome == Outcome.QUEUED:
             chunk.outcome = Outcome.STARTED
             chunk.started_at = self._clock()
@@ -1259,6 +1269,7 @@ class SpeechScheduler:
         and no longer.
         """
         self._settle_in_flight()
+        self._starts_reported = False      # the next page says for itself
         self._kick()
 
     def _settle_in_flight(self) -> None:
@@ -1280,10 +1291,16 @@ class SpeechScheduler:
         return now - s.sent_at < RECENT_BACKSTOP_SEC
 
     def _recent_tokens(self) -> set:
+        """The words that could be coming back through the microphone now.
+        Once the page reports starts, only chunks that actually began to
+        sound: words still queued behind the one playing (or skipped before
+        they began) are the user's if he says them."""
         now = self._clock()
         self._recent = [s for s in self._recent if self._still_relevant(s, now)]
         out: set = set()
         for s in self._recent:
+            if self._starts_reported and not s.started:
+                continue
             out |= s.tokens
         return out
 
