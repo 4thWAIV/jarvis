@@ -142,9 +142,12 @@ async def test_readable_reply_and_multiline_draft_fit_both_themes_at_narrow_widt
 @pytest.mark.asyncio
 async def test_history_failure_is_visible_and_retry_recovers_without_losing_draft(page_url):
     voice = _Voice()
-    state = {'fail':True}
+    # The page also retries a failed read by itself (liveRead.ts, after 1 s,
+    # 2 s, ...). Reads fail until Retry is pressed, so it is Retry that
+    # recovers, and the banner cannot go while the click is on its way.
     async def read(route):
-        if state['fail']: await route.fulfill(status=503, json={})
+        if not await page.evaluate("window.__retried === true"):
+            await route.fulfill(status=503, json={})
         else: await route.fulfill(json={'items':[_record_item(1,'jarvis','History recovered.')],'earlier':None})
     async with async_api.async_playwright() as p:
         browser, page = await _open(p,page_url,voice)
@@ -152,7 +155,8 @@ async def test_history_failure_is_visible_and_retry_recovers_without_losing_draf
         voice.send({'type':'conversation'})
         await page.wait_for_selector('.conversation-read-error')
         await page.get_by_role('textbox',name='Message JARVIS').fill('Keep my draft')
-        state['fail'] = False
+        await page.evaluate("""() => document.addEventListener('click', (e) => {
+          if (e.target.closest('.conversation-read-error button')) window.__retried = true; }, true)""")
         await page.get_by_role('button',name='Retry',exact=True).click()
         await page.wait_for_selector('.conversation-read-error',state='detached')
         assert await page.get_by_role('textbox',name='Message JARVIS').input_value() == 'Keep my draft'
