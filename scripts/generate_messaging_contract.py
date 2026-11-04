@@ -54,6 +54,8 @@ def _load():
 
 SERVER_ID = "00000000-0000-4000-8000-0000000000aa"
 TIM, MATT = 863470, 1001
+# The example requests Matt sends; Tim sends the rest.
+MATTS = ("reply_with_related", "reply_cites")
 T0 = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -115,11 +117,21 @@ def _examples(w) -> dict:
                                          member_path="sources.md")]}),
         supersedes=[w.Supersedes(message_id=_id(11), attachment_id=_id(33),
                                  by_attachment_id=_id(34), reason="repair")])
+    # Cites (messaging.bundles.cites.v1): Matt's reply relies on the summary
+    # inside the bundle Tim asked him to review, and on the bundle as a whole.
+    cites = [w.CitedRef(message_id=_id(11), attachment_id=_id(33), sha256="2" * 64,
+                        member_path="review/summary.pdf"),
+             w.CitedRef(message_id=_id(11), attachment_id=_id(33), sha256="2" * 64)]
+    notes = w.MessageContent(
+        message_id=_id(13), thread_id=_id(11), in_reply_to_message_id=_id(11),
+        recipient_github_id=TIM, content_revision=1, subject="Summary review",
+        text="The summary's second claim needs a source.", cites=cites)
     requests = {"new_thread": request(root, TIM), "reply_with_related": request(reply, MATT),
                 "self_files_only": request(files_only, TIM),
                 "two_files_in_order": request(two_files, TIM),
                 "review_with_task": request(review, TIM),
-                "repair_supersedes": request(repair, TIM)}
+                "repair_supersedes": request(repair, TIM),
+                "reply_cites": request(notes, MATT)}
 
     def accepted(req, sender, minutes):
         return w.AcceptedMessage(**req.model_dump(), server_id=SERVER_ID, sender_github_id=sender,
@@ -228,6 +240,7 @@ def _examples(w) -> dict:
         "AttachmentCapabilities": list(capabilities.items()),
         "TaskContext": [("notes_on_primary", task)],
         "Supersedes": [("repair", repair.supersedes[0])],
+        "CitedRef": [("member_of_a_file", cites[0]), ("whole_file", cites[1])],
         "ReceiptBatchResult": [("one_settled_one_not_found", w.ReceiptBatchResult(
             facts=[receipts["received_and_read"]], not_found=[_id(9)]))],
         "ReceiptFacts": list(receipts.items()),
@@ -258,6 +271,8 @@ def _invalid(valid: dict) -> list[dict]:
     att = valid["AttachmentRef"]["pdf"]
     task_req = valid["SendRequest"]["review_with_task"]
     repair_req = valid["SendRequest"]["repair_supersedes"]
+    cites_req = valid["SendRequest"]["reply_cites"]
+    cite = cites_req["cites"][0]
     report = valid["OpenabilityReport"]["partial_failed_member"]
     caps = valid["AttachmentCapabilities"]["mac_reads_pdf_zip_text"]
     cases = [
@@ -327,6 +342,11 @@ def _invalid(valid: dict) -> list[dict]:
                                         "message_id": repair_req["message_id"]}]}),
         ("SendRequest", "supersedes_the_same_file_twice",
          {**repair_req, "supersedes": repair_req["supersedes"] * 2}),
+        ("SendRequest", "cites_its_own_message",
+         {**cites_req, "cites": [{**cite, "message_id": cites_req["message_id"]}]}),
+        ("SendRequest", "cites_the_same_member_twice", {**cites_req, "cites": [cite, cite]}),
+        ("CitedRef", "empty_member_path", {**cite, "member_path": ""}),
+        ("CitedRef", "upper_case_hash", {**cite, "sha256": "A" * 64}),
         ("ReceiptBatch", "openability_without_a_report",
          {"node_id": str(_id(102)), "receipts": [{"message_id": str(_id(11)),
                                                   "kind": "openability"}]}),
@@ -356,7 +376,7 @@ def fixtures_data(w) -> dict:
              for model, items in examples.items()}
     vectors = []
     for case, req in examples["SendRequest"]:
-        sender = TIM if case != "reply_with_related" else MATT  # the bundle cases are Tim's
+        sender = MATT if case in MATTS else TIM
         content = w.content_of(req)
         vectors.append({"case": case, "server_id": SERVER_ID, "sender_github_id": sender,
                         "content": content.model_dump(mode="json"),
@@ -506,7 +526,8 @@ def types_text(w, local) -> str:
                    w.SyncPage, w.TeamMember, w.RecipientList, w.AnnouncementRequest,
                    w.AnnouncementLease, w.AttachmentCreate, w.AttachmentStatus,
                    w.FormatCapability, w.WorkPackageCapability, w.AttachmentCapabilities,
-                   w.OpenabilityReport, w.ArtifactRef, w.TaskContext, w.Supersedes]
+                   w.OpenabilityReport, w.ArtifactRef, w.TaskContext, w.Supersedes,
+                   w.CitedRef]
     local_models = [local.LocalFile, local.LocalSend, local.Draft, local.DraftSave,
                     local.DraftAction, local.LocalMessage, local.LocalItem,
                     local.QueueSnapshot, local.HistoryPage, local.WorkCommandResult,
@@ -535,6 +556,7 @@ def types_text(w, local) -> str:
         "",
         f"export const CAPABILITY = {json.dumps(w.CAPABILITY)};",
         f"export const BUNDLES_CAPABILITY = {json.dumps(w.BUNDLES_CAPABILITY)};",
+        f"export const CITES_CAPABILITY = {json.dumps(w.CITES_CAPABILITY)};",
         f"export const INTERFACE_REVISION = {json.dumps(w.INTERFACE_REVISION)};",
         f"export const SCHEMA_VERSION = {w.SCHEMA_VERSION};",
         f"export const MESSAGES_HINT = {json.dumps(local.MESSAGES_HINT)};",

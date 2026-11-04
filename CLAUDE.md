@@ -466,9 +466,12 @@ shows a member with no reader is `partial` before anything is tried on it,
 and a review's progress is only worked out on a thread whose task was asked
 of him), owes the receipt when the report changes, and delivery sends it only to a server offering bundles.
 JARVIS asks every message and receipt route for the bundle fields
-(`?bundles=1`); a team server answers a JARVIS that does not ask with the
-messaging.v1 fields only (`messaging.legacy_view`), so older nodes keep
-working. `bundle_preflight.SenderPreflight` inspects the draft's own
+(`?bundles=1`) and for a reply's cites (`?cites=1`, `BUNDLES_QUERY`); a
+team server answers a JARVIS that does not ask for the bundle fields with
+the messaging.v1 fields only, and one that asks for them but not for cites
+without `cites` (`messaging.hidden_fields`, the one rule, applied by
+`messaging.legacy_view`), so older nodes, whose strict wire copy refuses a
+field it does not know, keep working. `bundle_preflight.SenderPreflight` inspects the draft's own
 snapshots (`DraftFiles`) with the same inspection service, derives what
 the message needs, and judges each of the recipient's nodes on its own:
 blocked, ready, partial or unknown, with only the gaps the sender can act
@@ -485,7 +488,7 @@ budgets) is the same on both, never on the path alone; each
 item keeps where it was read (`read`: the pages and line ranges an
 `Observation`'s `locations` carried, ranges that touch joined,
 `bundle_tasks.read_locations`). His reply in a thread whose task was asked
-of him carries the items it relies on (`Draft.cited`, local, never sent):
+of him carries the items it relies on (`Draft.cited`):
 `BundleTasks.propose_cited`, which `LocalMessaging` calls in the same save
 as every edit (`propose_cited`, set by `messaging_runtime`), proposes the
 read items whose name or path the reply's text names as words
@@ -493,14 +496,32 @@ read items whose name or path the reply's text names as words
 read while the reply is still a draft, until he sets them himself
 (`set_cited`: the composer's Cited ticks in `TaskFields`, `PUT
 /api/team/messages/drafts/{id}/cited`, and the acting `set_cited_files`;
-`cited_by_owner` then stops the proposal). The read-back has a `Cited:`
-line, and the hand-over checks the read-back again, since the digest cannot
-see what is never sent; a change is an edit, so a reviewed reply is
-reviewed again. Once the team server has accepted the reply at the revision
-that carried them, those items are `cited` (`_cited_by_replies`, worked
-out each time the record is brought up to date); a cited item stays cited
-and carries across a repair as a read does. The sender is not told: the
-wire has no field for it. A received
+`cited_by_owner` then stops the proposal). Each mark stores its wire
+reference when it is proposed or set (`CitedFile.ref`, a `CitedRef`: the
+message in the thread he received the file on, the file's SHA-256 and the
+member's archive path, or none for the whole file; `BundleTasks._marks`);
+a mark saved before that has none. The reply carries the marks with one
+as `cites` (`ports.sent_cites`, at most `CITES_MAX`, in the digest only
+when set) only while the team server offers `messaging.bundles.cites.v1`
+(`messaging_models.cites_offered`, `MessageApprovals(cites=...)` from
+`Delivery.cites_offered`, as bundles are). The read-back has a `Cited:`
+line and says which stay here (`CITES_NOT_CARRIED` when the server takes
+none, else "Not sent with it:" and the marks with no reference), and the
+hand-over checks the read-back again, since the digest cannot see what is
+not sent; a change is an edit, so a reviewed reply is reviewed again, and a
+change of server between review and yes is a new digest. The team server
+takes a cite only of a file of an earlier message in the same thread that
+was sent to the person replying, by its attachment id and hash, else
+`relation_not_allowed`. Once the team server has accepted the reply at the
+revision that carried them, those items are `cited` (`_cited_by_replies`,
+worked out each time the record is brought up to date); a cited item stays
+cited and carries across a repair as a read does. On the sender's side the
+cites stay with the reply as it is stored, and `ports.with_citations`
+(called by the messaging store for every thread it reads) gives each
+message he sent the cites the other person's replies make of its files
+(`LocalMessage.cited_in_reply`): the one record the Queue's file card
+("Cited in reply", with the members) and `read_people_thread`'s file lines
+("cited in reply") both read. A received
 file fetched for a look (`FileSnapshots.downloaded`) is tried again on a
 transient failure, at most `DOWNLOAD_ATTEMPTS` times, against its hash.
 `messaging_runtime` builds and binds the three records; a draft edit from a

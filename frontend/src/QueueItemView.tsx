@@ -357,6 +357,10 @@ function MessageCard({ m, state, dir, itemSubject, reply }: {
                       report={fromMe
                         ? m.receipts?.openability.find((r) => r.attachment_id === a.attachment_id
                                                               && r.sha256 === a.sha256)
+                        : undefined}
+                      cites={fromMe
+                        ? m.cited_in_reply.filter((c) => c.attachment_id === a.attachment_id
+                                                          && c.sha256 === a.sha256)
                         : undefined} />
           ))}
         </div>

@@ -8,7 +8,8 @@
  * Open package on a zip not unpacked yet, and Open page once it is unpacked
  * as a page work package, packages.ts).
  * Either side: failed, with the reason and Retry, or missing. A sent file:
- * the recipient's JARVIS's report once it opened it.
+ * the recipient's JARVIS's report once it opened it, and Cited in reply
+ * (with the members) once a reply relies on it.
  *
  * A file on an accepted message is a `queueAttachment` target; its
  * Download, Retry, location, Open page and archive contents are parts of it.
@@ -20,7 +21,7 @@ import { openPackagePage, openReceivedPackage, packageFrom, packageList } from "
 import { downloadFile, messagingSaid } from "./queue";
 import { FileLocation } from "./QueueFileLocation";
 import { formatPercent, SaidText, saidShown, t as tNow, useT, type Said } from "./locale";
-import type { AttachmentRef, LocalFile, OpenabilityReport } from "./messagingContract";
+import type { AttachmentRef, CitedRef, LocalFile, OpenabilityReport } from "./messagingContract";
 import { bundleWords } from "./bundles";
 import type { Reason } from "./bundleContract";
 import { QueueIcon } from "./QueueIcons";
@@ -69,11 +70,26 @@ function OpenedThere({ report }: { report: OpenabilityReport }) {
   );
 }
 
-export function FileCard({ fileRef, file, messageId, incoming, report, onRemove, showType }: {
+/** A reply relies on a sent file: the members it names by their last
+ *  part (in full in the tooltip), or nothing more when it names the file. */
+function CitedThere({ cites }: { cites: CitedRef[] }) {
+  useT();
+  const members = cites.flatMap((c) => (c.member_path ? [c.member_path] : []));
+  return (
+    <span className="file-state" title={members.join("\n") || undefined}>
+      {bundleWords.citedInReply}
+      {members.length > 0 ? ` · ${members.map((m) => m.split("/").pop()).join(", ")}` : ""}
+    </span>
+  );
+}
+
+export function FileCard({ fileRef, file, messageId, incoming, report, cites, onRemove, showType }: {
   fileRef: AttachmentRef;
   file?: LocalFile;
   /** On a sent file: the recipient's JARVIS's report, once it opened it. */
   report?: OpenabilityReport;
+  /** On a sent file: what the replies to it cite of it. */
+  cites?: CitedRef[];
   /** The accepted message it is on; absent on a draft. */
   messageId?: string;
   incoming: boolean;
@@ -99,6 +115,7 @@ export function FileCard({ fileRef, file, messageId, incoming, report, onRemove,
       </span>
       {words && <span className="file-state">{words}</span>}
       {!incoming && report && <OpenedThere report={report} />}
+      {!incoming && cites && cites.length > 0 && <CitedThere cites={cites} />}
       {canDownload && (
         <button data-ui-action="file" type="button" className="file-action" ref={ui.part("download")}
                 onClick={() => void downloadFile(messageId!, fileRef.attachment_id)}>

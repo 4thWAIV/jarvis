@@ -7,10 +7,14 @@ message may carry a task context and `supersedes` links, and a recipient's
 node may send openability receipts. A superseded file must be one of an
 earlier message of the same thread between the same two people. An
 openability report must name a file of that message by its hash and
-revision, else it is settled as `not_found`. An older JARVIS refuses fields
-it does not know, so the routes that answer with messages and receipts
-leave the bundle fields out unless the request asks for them
-(`?bundles=1`, which an older team server ignores).
+revision, else it is settled as `not_found`. Cites
+(`messaging.bundles.cites.v1`, always offered too): a reply may name the
+files of earlier messages in its thread, sent to the person replying, that
+it relies on, each by its message, attachment id and hash. An older JARVIS
+refuses fields it does not know, so the routes that answer with messages
+and receipts leave the bundle fields out unless the request asks for them
+(`?bundles=1`), and `cites` unless it also asks for those (`?cites=1`);
+an older team server ignores both (`hidden_fields`, the one rule).
 
 Who may do what is decided here and only here, from the authenticated
 device session: the sender is the session's member, the source node must be
@@ -63,7 +67,7 @@ from teamserver import sessions
 from teamserver import team as team_mod
 from teamserver.errors import Problem
 from teamserver.messaging_models import (BUNDLE_FIELDS, BUNDLES_CAPABILITY,
-                                         CAPABILITY, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
+                                         CAPABILITY, CITES_CAPABILITY, CITES_FIELDS, MESSAGE_REQUEST_MAX_BYTES, NO_FAULTS,
                                          PACKAGE_MAX_BYTES,
                                          SYNC_CONTINUATION_TTL_SEC, SYNC_PAGE_DEFAULT,
                                          SYNC_PAGE_MAX, ERRORS, AcceptedMessage,
@@ -148,41 +152,50 @@ async def ensure_indexes(db: AsyncDatabase) -> None:
 
 
 def capabilities() -> list[str]:
-    """What /version adds to its `capabilities`: messaging and its bundle
-    fields are always on."""
-    return [CAPABILITY, BUNDLES_CAPABILITY]
+    """What /version adds to its `capabilities`: messaging, its bundle
+    fields and a reply's cites are always on."""
+    return [CAPABILITY, BUNDLES_CAPABILITY, CITES_CAPABILITY]
 
 
 # -- what an older JARVIS can read ------------------------------------------------
 
-def _legacy(value: dict) -> dict:
-    return {k: v for k, v in value.items() if k not in BUNDLE_FIELDS}
+def hidden_fields(bundles: bool, cites: bool) -> tuple[str, ...]:
+    """The fields an answer leaves out for a JARVIS that asked for these:
+    every bundle field unless it asked for them (`?bundles=1`), and `cites`
+    unless it asked for those too (`?cites=1`). Its strict models refuse
+    anything it did not ask for."""
+    if not bundles:
+        return BUNDLE_FIELDS
+    return () if cites else CITES_FIELDS
 
 
-def legacy_view(model) -> dict:
-    """An answer as a JARVIS without messaging.bundles.v1 reads it: the
-    messaging.v1 fields only. Its strict models refuse anything more."""
+def legacy_view(model, hidden: tuple[str, ...] = BUNDLE_FIELDS) -> dict:
+    """An answer as an older JARVIS reads it: its messages and receipts
+    without the `hidden` fields (by default the messaging.v1 view)."""
+    def kept(value: dict) -> dict:
+        return {k: v for k, v in value.items() if k not in hidden}
     value = model.model_dump(mode="json")
     if isinstance(model, AcceptedMessage):
-        return _legacy(value)
+        return kept(value)
     if isinstance(model, ReceiptFacts):
-        return _legacy(value)
+        return kept(value)
     if isinstance(model, SyncEntry) or isinstance(model, SendResult):
-        return {**value, "message": _legacy(value["message"]),
-                "receipts": _legacy(value["receipts"])}
+        return {**value, "message": kept(value["message"]),
+                "receipts": kept(value["receipts"])}
     if isinstance(model, SyncPage):
-        return {**value, "entries": [{**e, "message": _legacy(e["message"]),
-                                      "receipts": _legacy(e["receipts"])}
+        return {**value, "entries": [{**e, "message": kept(e["message"]),
+                                      "receipts": kept(e["receipts"])}
                                      for e in value["entries"]]}
     if isinstance(model, ReceiptBatchResult):
-        return {**value, "facts": [_legacy(f) for f in value["facts"]]}
+        return {**value, "facts": [kept(f) for f in value["facts"]]}
     return value
 
 
-def answer(model, bundles: bool):
-    """The route's answer: the model in full for a JARVIS that asked for the
-    bundle fields, else its messaging.v1 view."""
-    return model if bundles else JSONResponse(legacy_view(model))
+def answer(model, bundles: bool, cites: bool = False):
+    """The route's answer: the model in full for a JARVIS that asked for
+    every field it has, else the view without what it did not ask for."""
+    hidden = hidden_fields(bundles, cites)
+    return JSONResponse(legacy_view(model, hidden)) if hidden else model
 
 
 # -- the repository -------------------------------------------------------------
@@ -536,6 +549,12 @@ class Messaging:
                     or {m.sender_github_id, m.recipient_github_id} != pair
                     or all(a.attachment_id != old.attachment_id for a in m.attachments)):
                 raise refused("relation_not_allowed")
+        for cite in req.cites:
+            m = await self.repo.get_visible(server, sender, cite.message_id)
+            if (m is None or m.thread_id != req.thread_id or m.recipient_github_id != sender
+                    or all((a.attachment_id, a.sha256) != (cite.attachment_id, cite.sha256)
+                           for a in m.attachments)):
+                raise refused("relation_not_allowed")
 
     async def _pin(self, server: str, sender: int, req: SendRequest) -> None:
         for ref in req.attachments:
@@ -690,20 +709,20 @@ def mount(app: FastAPI, *, device: Callable) -> None:
         "schema": _inline(SendRequest.model_json_schema())}}}}
 
     @app.post(PREFIX, response_model=SendResult, responses=responses, openapi_extra=send_body)
-    async def send_message(request: Request, bundles: bool = False,
+    async def send_message(request: Request, bundles: bool = False, cites: bool = False,
                            svc: Messaging = Depends(service),
                            p: sessions.Principal = Depends(device)):
         req = parse_send(await _bounded_body(request, MESSAGE_REQUEST_MAX_BYTES))
-        return answer(await svc.accept(p, req), bundles)
+        return answer(await svc.accept(p, req), bundles, cites)
 
     @app.get(PREFIX + "/sync", response_model=SyncPage, responses=responses)
     async def sync_messages(node_id: UUID, continuation: Optional[str] = None,
                             limit: int = SYNC_PAGE_DEFAULT, bundles: bool = False,
-                            svc: Messaging = Depends(service),
+                            cites: bool = False, svc: Messaging = Depends(service),
                             p: sessions.Principal = Depends(device)):
         if not 1 <= limit <= SYNC_PAGE_MAX or (continuation and len(continuation) > 512):
             raise refused("invalid_request")
-        return answer(await svc.sync(p, node_id, continuation, limit), bundles)
+        return answer(await svc.sync(p, node_id, continuation, limit), bundles, cites)
 
     @app.get(PREFIX + "/recipients", response_model=RecipientList, responses=responses)
     async def message_recipients(svc: Messaging = Depends(service),
@@ -724,10 +743,10 @@ def mount(app: FastAPI, *, device: Callable) -> None:
         return await svc.change_work_state(p, thread_id, body)
 
     @app.get(PREFIX + "/{message_id}", response_model=AcceptedMessage, responses=responses)
-    async def get_message(message_id: UUID, bundles: bool = False,
+    async def get_message(message_id: UUID, bundles: bool = False, cites: bool = False,
                           svc: Messaging = Depends(service),
                           p: sessions.Principal = Depends(device)):
-        return answer(await svc.get(p, message_id), bundles)
+        return answer(await svc.get(p, message_id), bundles, cites)
 
     @app.post(PREFIX + "/{message_id}/announcement", response_model=AnnouncementLease,
               responses=responses)

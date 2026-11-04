@@ -454,7 +454,7 @@ def test_the_transports_answers_map_onto_the_contracts_codes():
         assert e.value.code == code and check(e.value)
     assert asyncio.run(t.sync(UUID(int=1), "c/1", 5)).scan_complete
     assert conn.calls[-1][1] == (f"/api/v1/messages/sync?node_id={UUID(int=1)}"
-                                 "&limit=5&continuation=c%2F1&bundles=1")
+                                 "&limit=5&continuation=c%2F1&bundles=1&cites=1")
 
 
 def test_the_loop_backs_off_with_jitter_and_stops_cleanly(tim):
@@ -521,6 +521,40 @@ def test_a_send_with_a_task_or_supersedes_carries_them():
     assert "supersedes" in body
     assert body["supersedes"] == [s.model_dump(mode="json") for s in repair.supersedes]
     assert wire.SendRequest.model_validate(body) == repair
+
+
+def test_a_reply_with_cites_carries_them_and_digests_as_before_without():
+    notes = wire.SendRequest.model_validate(CONTRACT["SendRequest"]["reply_cites"])
+    body = _send_body(notes)
+    assert set(body) == V1_SEND_FIELDS | {"cites"}
+    assert body["cites"] == [c.model_dump(mode="json") for c in notes.cites]
+    assert wire.SendRequest.model_validate(body) == notes
+    content = wire.content_of(notes)
+    assert wire.content_digest(content.model_copy(update={"cites": []}), server_id=SERVER,
+                               sender_github_id=TIM) != \
+        wire.content_digest(content, server_id=SERVER, sender_github_id=TIM)
+    assert "cites" not in wire.digest_input(content.model_copy(update={"cites": []}),
+                                            server_id=SERVER, sender_github_id=TIM)
+
+
+def test_cites_are_offered_only_beside_bundles():
+    full = [wire.CAPABILITY, wire.BUNDLES_CAPABILITY, wire.CITES_CAPABILITY]
+    assert wire.cites_offered(full)
+    assert not wire.cites_offered([wire.CAPABILITY, wire.CITES_CAPABILITY])
+    assert not wire.cites_offered([wire.CAPABILITY, wire.BUNDLES_CAPABILITY])
+
+
+def test_every_route_with_messages_asks_for_bundles_and_cites():
+    for call in (lambda t: t.send(wire.SendRequest.model_validate(
+                     CONTRACT["SendRequest"]["new_thread"])),
+                 lambda t: t.get(UUID(int=1)),
+                 lambda t: t.sync(UUID(int=1), None, 5),
+                 lambda t: t.receipts(wire.ReceiptBatch.model_validate(
+                     CONTRACT["ReceiptBatch"]["received_and_read"]))):
+        conn = Answers(REFUSED)
+        with pytest.raises(ports.TransportError):
+            asyncio.run(call(transport(conn)))
+        assert conn.calls[0][1].endswith("bundles=1&cites=1")
 
 
 def test_a_receipt_without_a_report_is_a_messaging_v1_item():

@@ -28,7 +28,7 @@
 
 import { formatNumber, t } from "./locale";
 import type {
-  AcceptedMessage, Availability, DismissBlocker, Draft, HistoryPage, LocalFile, LocalItem,
+  AcceptedMessage, Availability, CitedRef, DismissBlocker, Draft, HistoryPage, LocalFile, LocalItem,
   LocalMessage, QueueSnapshot, ReceiptFacts, SendState, TeamMember, WorkCommand,
   WorkCommandRequest, WorkState,
 } from "./messagingContract";
@@ -49,6 +49,8 @@ export interface MessageRecord {
   direction: "incoming" | "outgoing";
   self_message: boolean;
   files: LocalFile[];
+  /** On a message he sent: what the replies to it cite of its files. */
+  cited_in_reply: CitedRef[];
 }
 
 export interface QueueState {
@@ -119,9 +121,11 @@ function withMessage(state: QueueState, local: LocalMessage): QueueState {
     ...state,
     messages: {
       ...state.messages,
-      // The message itself never changes; its files' states do.
+      // The message itself never changes; its files' states and what
+      // replies cite of it do.
       [id]: { message: held?.message ?? local.message, direction: local.direction,
-              self_message: local.self_message, files: local.files },
+              self_message: local.self_message, files: local.files,
+              cited_in_reply: local.cited_in_reply },
     },
     receipts: { ...state.receipts, [id]: higher(state.receipts[id], local.receipts) },
   };

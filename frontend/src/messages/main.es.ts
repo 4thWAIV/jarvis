@@ -669,6 +669,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.bundle.request": "Solicitud",
   "main.bundle.noRequest": "Sin solicitud",
   "main.bundle.cited": "Citados",
+  "main.bundle.citedInReply": "Citado en la respuesta",
   "main.bundle.openability.verified": "Leído allí",
   "main.bundle.openability.ready": "Se abre allí",
   "main.bundle.openability.partial": "Legible en parte allí",
