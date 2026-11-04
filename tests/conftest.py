@@ -13,6 +13,7 @@ import pytest_asyncio
 
 from tests.fixtures.local_config import read_local_skips
 from tests.fixtures.memory_secrets import MemorySecrets
+from tests.loopback_server import LoopbackThreadingHTTPServer
 
 # server.py loads its .env the moment it is imported, and test modules import
 # it at collection, before any fixture runs. Pointing JARVIS_ENV_FILE at a file
@@ -284,7 +285,7 @@ def page_url():
         pytest.skip(reason)
     web = dashboard_page.build_bundle()
     handler = functools.partial(_PageHandler, directory=str(web))
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd = LoopbackThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}/index.html"
     httpd.shutdown()
