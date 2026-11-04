@@ -1,0 +1,33 @@
+{
+  "family": "conversation",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [
+    {"id": "conversation.earlier", "label": "Load the earlier page of the Conversation history",
+     "view": "main.conversation", "args": {}, "required": [], "actors": ["human", "brain"],
+     "effects": [{"effect": "list.paged"}]},
+    {"id": "conversation.record.expand", "label": "Open or close one record of the history or a thread (a long turn, an agent's answer, a capture or sources item)",
+     "view": "main.conversation",
+     "args": {"recordId": {"type": "key", "entity": "record"}, "open": {"type": "boolean"}},
+     "required": ["recordId", "open"], "actors": ["human", "brain"], "effects": []},
+    {"id": "thread.earlier", "label": "Load the earlier page of the open agent's thread",
+     "view": "main.thread", "args": {}, "required": [], "actors": ["human", "brain"],
+     "effects": [{"effect": "list.paged"}]}
+  ],
+  "kinds": [
+    {"kind": "conversation", "entity": null, "label": "Conversation", "parts": ["history", "earlier", "speaking", "input"],
+     "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
+    {"kind": "conversationRecord", "entity": "record", "label": "Conversation record",
+     "parts": ["record", "text", "answer", "agent", "expand", "restore"],
+     "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
+    {"kind": "capture", "entity": "capture", "label": "Capture", "parts": ["box", "body", "recipient", "actions"],
+     "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}, {"view": "main.main", "reveal": {"command": "main.tab.select", "args": {"tab": "main"}}}]},
+    {"kind": "sources", "entity": "record", "label": "Sources", "parts": ["chip", "items"],
+     "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
+    {"kind": "agentThread", "entity": "session", "label": "Agent thread", "parts": ["header", "state", "close", "earlier"],
+     "presentations": [{"view": "main.thread", "reveal": {"command": "thread.open", "args": {"sessionId": "$key"}}}]},
+    {"kind": "threadRecord", "entity": null, "keyOf": ["session", "record"], "label": "Thread record",
+     "parts": ["record", "text", "answer", "agent", "expand", "restore"],
+     "presentations": [{"view": "main.thread"}]}
+  ]
+}

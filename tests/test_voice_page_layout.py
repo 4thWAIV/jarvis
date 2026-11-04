@@ -17,10 +17,11 @@ pytestmark = pytest.mark.page
 LAYOUT = """() => {
   const footer = document.getElementById('footer').getBoundingClientRect();
   // Everything visible on the page that is not the footer, the full-page
-  // ray layer, or a closed menu.
+  // ray layer, the full-page pipeline layers (pointer-transparent, like the
+  // rays), or a closed menu.
   const over = [];
   for (const el of document.body.querySelectorAll('*')) {
-    if (el.closest('#footer') || el.closest('#ray-lane')) continue;
+    if (el.closest('#footer') || el.closest('#ray-lane') || el.closest('[id^="ui-pipeline"]')) continue;
     const css = getComputedStyle(el);
     if (css.display === 'none' || css.visibility === 'hidden') continue;
     const r = el.getBoundingClientRect();

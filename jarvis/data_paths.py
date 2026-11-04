@@ -181,6 +181,11 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "c1d0fe7132987f961df70fa9b24e7f45702a193ef5ffc98c308c044ab5a13ff2",  # both Spanish steps together
     "799e9124a7841f4f0153ff04eb5f5b18b3316fcc0379b314becd246898c01346",  # Spanish: señora under Ma'am
     "d0a9312fadb148e9cc7bb87aba4e7bdc6addfc880bec13895e4b4660397a2a4b",  # the language setting with self-update
+    "ac5d51b21b3c26a2cec653592065e83e55095f30abd06ce2c2d44668a6ece7ed",  # UI navigation: ui_map, ui_navigate, ui_indicate
+    "2812d44b2001159bdd46abb80193d9b2ddc929c87a44122043c01478dd6f3219",  # UI navigation: the UI tools' turn binding
+    "165255a4d9a01a66b2e8652e54f2be8015c2374a24ed590990c71c84f9dbf986",  # UI navigation: ui_journey and interruption
+    "de87215499c617643fd3c51c945c5835f4f55403d2f2497175dc478ec52b7bd4",  # UI navigation with the language setting
+    "493370b70acd291ce0e4fb125775044c3a701c1bd9df1859b72d59484d1e83af",  # pass ui_map's navigationRevision back
     "0f0743b0efd1a0a684a75cc9a5f3247c79394c51a703747c1c1744885f948339",  # packages run three ways: conversation, agent, page
     "c38c882c0d924db7b2f71a30d7d0f5a9b054073c826817562595294dfbc2cc55",  # update_jarvis takes a version: a merged pull request
     "1f9e95e5be820d75a28ae08e71e46db577c9935659b566e11dddf28f867a9930",  # a received file's location: where it is and handing it on
@@ -188,8 +193,10 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "7d3af236e6905373e0ee578839cdb30bd19503b6e52fb1b559442cb8877e5521",  # files people send: inspect, read, cite
     "7ab19bd7c0ea8b22e2049c6eae55c86b0ce602e210e5bb936c4ab195387a566c",  # received file locations with the one-top-folder package
     "cf116431e57650e8a6e4f5031e98a0713bc90e959134771aa15d758c8a25c95d",  # files people send, with received file locations
+    "5ee81f0f12d649b69926f36e37cfd1d2456155dde064fe5732d5cd5eb0e0f91c",  # UI navigation merged with files people send
     "ba5ecd240c8e40c4759f42037d72721fb561e6d1c7ae70cce79377282b01288d",  # a page package's story: tell_package_story
     "fc653b8811eaeaa30a6d533736a271d2d2093c75479f0feae10857a2c09a8a1b",  # open_local_package: a package zip on this Mac
+    "61fd76c4a1e3c52378319c7eb55225299109f802432e4e033ee92cdea2ab230d",  # UI navigation merged with story packages
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

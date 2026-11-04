@@ -2,7 +2,7 @@
 brain list, the running brain on the orb and Diagnostics are
 read again on every reconnect and whenever a brain becomes ready; a read that
 fails is retried and said, not hidden; Settings changes reach Diagnostics at
-once; and Save Preferences waits until the preferences have been read.
+once; and the You section's Save waits until the preferences have been read.
 
 Headless Chromium on the built page, with the server's answers played by the
 test (including answers that fail, as during a restart)."""
@@ -149,7 +149,7 @@ async def test_preferences_cannot_be_saved_until_they_have_been_read(page_playwr
         await page.goto(page_url)
         await page.click("#btn-menu")
         await page.get_by_role("button", name="Settings", exact=True).click()
-        save = page.get_by_role("button", name="Save Preferences")
+        save = page.locator("#settings-you").get_by_role("button", name="Save", exact=True)
         await page.get_by_text("Your preferences could not be read").wait_for(timeout=10000)
         assert await save.is_disabled(), "a blank name must not be saved over the real one"
 

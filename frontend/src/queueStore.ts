@@ -21,9 +21,12 @@
  * another pairing replaces everything: it is not this owner's.
  *
  * Wire names stay snake_case, as messagingContract.ts has them; there is no
- * second shape to convert to.
+ * second shape to convert to. The words it gives (turns, deliveries, sends,
+ * sizes, who) are in the interface's language when they are asked for
+ * (locale.ts); names, subjects and messages are shown as they are.
  */
 
+import { formatNumber, t } from "./locale";
 import type {
   AcceptedMessage, Availability, DismissBlocker, Draft, HistoryPage, LocalFile, LocalItem,
   LocalMessage, QueueSnapshot, ReceiptFacts, SendState, TeamMember, WorkCommand,
@@ -419,7 +422,7 @@ export function previewOf(message: { text: string; attachments: unknown[] } | un
   const line = message.text.split("\n").find((l) => l.trim()) ?? "";
   if (line) return line;
   const n = message.attachments.length;
-  return n ? `${n} file${n === 1 ? "" : "s"}` : "";
+  return n ? t("right.queue.files", { count: n }) : "";
 }
 
 /** Something waiting that the owner has not read: the Queue tab's cue. */
@@ -432,29 +435,18 @@ export function attention(state: QueueState): boolean {
  *  before the team server answered. */
 export function sendWords(draft: Draft): string {
   const s = draft.send.state;
-  if (s === "approved" && draft.files.some((f) => f.state === "uploading")) return "Uploading files";
-  if (s === "approved" && draft.files.some((f) => f.state === "staged")) return "Preparing files";
-  return SEND_WORDS[s];
+  if (s === "approved" && draft.files.some((f) => f.state === "uploading")) return t("right.queue.send.uploading");
+  if (s === "approved" && draft.files.some((f) => f.state === "staged")) return t("right.queue.send.preparing");
+  return t(`right.queue.send.${s}`);
 }
 
-const SEND_WORDS: Record<SendState, string> = {
-  draft: "Draft",
-  awaiting_approval: "Awaiting approval",
-  approved: "Sending",
-  submitting: "Sending",
-  accept_unknown: "Unconfirmed",
-  accepted: "Sent",
-  failed: "Not sent",
-  cancelled: "Cancelled",
-  superseded: "Replaced",
-};
-
-/** "0 bytes", "812 bytes", "47.1 KB", "3.2 MB". */
+/** "0 bytes", "812 bytes", "47.1 KB", "3.2 MB", in the interface's
+ *  language ("47,1 KB"). */
 export function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} byte${bytes === 1 ? "" : "s"}`;
+  if (bytes < 1024) return formatNumber(bytes, undefined, { style: "unit", unit: "byte", unitDisplay: "long" });
   const [n, unit] = bytes < 1024 ** 2 ? [bytes / 1024, "KB"] : bytes < 1024 ** 3
     ? [bytes / 1024 ** 2, "MB"] : [bytes / 1024 ** 3, "GB"];
-  return `${n.toFixed(1)} ${unit}`;
+  return `${formatNumber(n, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${unit}`;
 }
 
 // ── Who and which JARVIS ─────────────────────────────────────────────────
@@ -476,16 +468,13 @@ export interface Directory {
   selfNodeId: string | null;
 }
 
-export const UNKNOWN_PERSON = "A member no longer listed";
-export const UNKNOWN_JARVIS = "a JARVIS no longer listed";
-
 /** "Me" for the owner; the member's name, or their login; a safe fallback
  *  for someone the roster and network no longer list. */
 export function personName(dir: Directory, githubId: number): string {
-  if (githubId === dir.owner) return "Me";
+  if (githubId === dir.owner) return t("right.queue.me");
   const member = dir.members.find((m) => m.github_id === githubId);
   if (member) return member.name || member.login;
-  return dir.nodes.find((n) => n.owner_github_id === githubId)?.owner_login ?? UNKNOWN_PERSON;
+  return dir.nodes.find((n) => n.owner_github_id === githubId)?.owner_login ?? t("right.queue.unknownPerson");
 }
 
 /** The GitHub handle, when the roster or network knows it. */
@@ -496,19 +485,21 @@ export function handle(dir: Directory, githubId: number): string | null {
 }
 
 export function jarvisLabel(dir: Directory, nodeId: string): string {
-  return dir.nodes.find((n) => n.node_id === nodeId)?.label ?? UNKNOWN_JARVIS;
+  return dir.nodes.find((n) => n.node_id === nodeId)?.label ?? t("right.queue.unknownJarvis");
 }
 
 /** "Your turn" or "Matt’s turn". */
 export function turnWords(dir: Directory, work: WorkState): string {
-  return turn(work) === "mine" ? "Your turn" : `${personName(dir, work.correspondent_github_id)}’s turn`;
+  return turn(work) === "mine" ? t("right.queue.yourTurn")
+    : t("right.queue.theirTurn", { name: personName(dir, work.correspondent_github_id) });
 }
 
 export const DELIVERY_WORDS = (dir: Directory, recipient: number): Record<Delivery, string> => (
   recipient === dir.owner
-    ? { awaiting: "Awaiting receipt", received: "Received by your JARVIS", read: "Received by your JARVIS" }
-    : { awaiting: "Awaiting receipt", received: "Received by their JARVIS",
-        read: `Read by ${personName(dir, recipient)}` });
+    ? { awaiting: t("right.queue.awaitingReceipt"), received: t("right.queue.receivedByYours"),
+        read: t("right.queue.receivedByYours") }
+    : { awaiting: t("right.queue.awaitingReceipt"), received: t("right.queue.receivedByTheirs"),
+        read: t("right.queue.readBy", { name: personName(dir, recipient) }) });
 
 /** A recipient as the picker names them: the person, and the JARVIS that
  *  holds their inbox ("Me · Tim’s i9", "Matt · Matt’s Mac"). An offline
@@ -516,8 +507,8 @@ export const DELIVERY_WORDS = (dir: Directory, recipient: number): Record<Delive
 export function recipientLabel(dir: Directory, githubId: number): string {
   if (githubId === dir.owner) {
     const self = dir.nodes.find((n) => n.node_id === dir.selfNodeId);
-    return `Me · ${self?.label ?? "this JARVIS"}`;
+    return `${t("right.queue.me")} · ${self?.label ?? t("right.queue.thisJarvis")}`;
   }
   const labels = dir.nodes.filter((n) => n.owner_github_id === githubId).map((n) => n.label);
-  return `${personName(dir, githubId)} · ${labels.length ? labels.join(", ") : "their JARVIS"}`;
+  return `${personName(dir, githubId)} · ${labels.length ? labels.join(", ") : t("right.queue.theirJarvis")}`;
 }

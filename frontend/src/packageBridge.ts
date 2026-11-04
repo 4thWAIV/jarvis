@@ -28,6 +28,7 @@
  * again) and `story.missing` {beat, targets} for selectors it could not find.
  */
 
+import { t, type Said } from "./locale";
 import { inputStatus } from "./mic";
 import { saveResult, storyCue } from "./packages";
 import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
@@ -36,10 +37,10 @@ export const BRIDGE = "package";
 
 export interface BridgeEvents {
   /** A save finished: its words for the view. */
-  onSaved(words: string): void;
+  onSaved(said: Said): void;
   onListening(on: boolean): void;
   /** The story's frame could not find some of a beat's targets. */
-  onStoryMissing(words: string): void;
+  onStoryMissing(said: Said): void;
 }
 
 function asBlob(data: unknown): Blob | null {
@@ -75,17 +76,17 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
       const error = "A result needs a name and its data: a string, an ArrayBuffer, a typed " +
         "array or a Blob.";
       reply({ ok: false, error });
-      events.onSaved(`Not saved: ${error}`);
+      events.onSaved({ words: () => t("main.package.notSaved"), detail: error });
       return;
     }
     try {
       const saved = await saveResult(packageId, name, data);
       reply({ ok: true, ...saved });
-      events.onSaved(`Saved ${saved.saved}.`);
+      events.onSaved({ words: () => t("main.package.saved", { name: saved.saved }) });
     } catch (e) {
       const error = (e as Error).message;
       reply({ ok: false, error });
-      events.onSaved(`Not saved: ${error}`);
+      events.onSaved({ words: () => t("main.package.notSaved"), detail: error });
     }
   };
 
@@ -113,7 +114,8 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     else if (message.type === "listen") listen(Boolean(message.on));
     else if (message.type === "story.ready") showCue(true);
     else if (message.type === "story.missing" && Array.isArray(message.targets)) {
-      events.onStoryMissing(`Not found on the page: ${message.targets.map(String).join(", ")}`);
+      events.onStoryMissing({ words: () => t("main.package.story.notFound"),
+                              detail: message.targets.map(String).join(", ") });
     }
   };
 

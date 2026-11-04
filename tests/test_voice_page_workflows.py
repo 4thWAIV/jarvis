@@ -109,11 +109,13 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_p
         assert got["decisions"] == "1", got
 
         await row.click()
-        await page.wait_for_selector("#workflow-detail .workflow-detail-name")
-        assert await page.text_content(".workflow-detail-name") == "Speech migration"
+        # The detail is drawn before its own read lands (a busy machine
+        # shows that): wait for the record's words, not the element.
+        await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text(
+            "Speech migration", timeout=10000)
         # Ages in the page's one short form (timeFormat.shortAgo): decades are years.
-        assert re.fullmatch(r"started \d\dy ago · heard from just now",
-                            await page.text_content(".workflow-times"))
+        await async_api.expect(page.locator(".workflow-times")).to_have_text(
+            re.compile(r"^started \d\dy ago · heard from just now$"), timeout=10000)
         overview = await page.evaluate("""() => ({
           orb: document.querySelector('.workflow-detail-head .workflow-orb canvas').getBoundingClientRect().width,
           steps: document.querySelectorAll('.workflow-overview .phase-track .phase-segment').length,

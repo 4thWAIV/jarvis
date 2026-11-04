@@ -1,14 +1,14 @@
 """The Settings view, by what the user sees and does: opened from the ⋮
-menu; the Fish Audio key saved (with the note to restart), and tested; the
-voice id saved; name and honorific loaded and saved; the status dots green
-on a good reading and not green on a failed one; and, with no Fish key set,
-the first-time setup that opens by itself and walks through the key, then
-the name. Then the Brains section, the menu, the Updates section the menu's
-Check for updates opens, and both brains in Diagnostics.
+menu as a centre view, beside Conversation, covering neither the orb nor a
+side column; the Fish Audio key saved (with the note to restart), and
+tested; the voice id saved; name and honorific loaded and saved; a state
+shown only when it is not the ordinary one (a server that does not answer,
+a failing brain check); and, with no Fish key set, the first-time setup
+that opens by itself and walks through the key, then the name, then gives
+the centre back to Conversation. Then the Brains section, the menu, the
+Updates section the menu's Check for updates opens, and both brains in
+Diagnostics.
 
-The first five were written against the dialog as it was before it moved
-into React, and the React view is held to the same behaviour. The one change
-is where the Claude Code dot lives: on Claude's card in the Brains section.
 Headless Chromium on the built page, with the endpoints answered by the test.
 """
 
@@ -66,6 +66,8 @@ def _update_status(behind=3, blockers=()):
 
 
 CLAUDE_CHECKS = [{"name": "claude_cli", "status": "ok", "message": "claude 2.1.306 on PATH.", "remedy": None}]
+CODEX_FAILING = [{"name": "codex_login", "status": "fail", "message": "Not signed in to Codex.",
+                  "remedy": "Sign in with ChatGPT."}]
 
 
 class _Server:
@@ -92,7 +94,7 @@ class _Server:
         return [_card("anthropic", "Claude", True, default=self.default == "anthropic", active=True,
                       checks=CLAUDE_CHECKS),
                 _card("openai", "OpenAI (Codex)", self.codex_added, default=self.default == "openai",
-                      signed_in=self.codex_signed_in)]
+                      signed_in=self.codex_signed_in, checks=None if self.codex_signed_in else CODEX_FAILING)]
 
     async def install(self, page):
         async def status(route):
@@ -206,9 +208,9 @@ async def _open_settings(page):
 
 
 # A status dot's colour as seen: green, red, yellow, or off (the dim grey of
-# no reading). Found by the words on its row.
+# no reading). Found by the words on its row; null when the row has none.
 DOT = """(name) => {
-  const rows = [...document.querySelectorAll('.status-row, .settings-input-row, .check-row')];
+  const rows = [...document.querySelectorAll('.settings-row, .settings-state, .check-row')];
   const row = rows.find(r => r.textContent.includes(name));
   if (!row) return null;
   const dot = row.querySelector('.status-dot');
@@ -227,8 +229,28 @@ async def test_settings_opens_from_the_menu_with_the_preferences_filled_in(page_
         await _open_settings(page)
         assert await page.get_by_placeholder("Your name").input_value() == "Tim"
         assert await page.locator("select:has(option[value='none'])").input_value() == "sir"
-        await async_api.expect(page.locator("text=Uptime").locator("..")).to_contain_text("1h")
+        await async_api.expect(page.locator("#settings-server .settings-row", has_text="Uptime")).to_contain_text("1h")
+        # A centre view: its own tab, selected, and nothing over the orb or
+        # either column.
+        await async_api.expect(page.locator(".centre-tabs [aria-selected=true]")).to_have_text("Settings")
+        assert await page.evaluate(CENTRED) == {"orb": True, "inside": True}
+        # The sections in the order a person comes to them.
+        assert await page.locator(".settings-nav button").all_text_contents() == [
+            "You", "Voice and language", "Brains", "Team", "Updates", "Server"]
         await browser.close()
+
+
+# The orb is not covered (it is what the point there finds), and the view
+# lies between the two columns.
+CENTRED = """() => {
+  const orb = document.getElementById('orb-control').getBoundingClientRect();
+  const top = document.elementFromPoint(orb.left + orb.width / 2, orb.top + orb.height / 2);
+  const view = document.getElementById('settings-view').getBoundingClientRect();
+  const left = document.getElementById('left-column').getBoundingClientRect();
+  const right = document.getElementById('right-column').getBoundingClientRect();
+  return {orb: !!top && !!top.closest('#orb-control'),
+          inside: view.left >= left.right - 1 && view.right <= right.left + 1};
+}"""
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -237,16 +259,19 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
     async with page_playwright as p:
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
+        key = page.locator(".settings-row", has=page.locator("#settings-fish-key"))
+        assert await key.locator("#settings-fish-key").get_attribute("type") == "password"
         await page.get_by_placeholder("Fish Audio key...").fill("good-key")
-        await page.get_by_role("button", name="Test", exact=True).click()
+        await key.get_by_role("button", name="Test", exact=True).click()
         await page.wait_for_function(f"({DOT})('Test') === 'green'")
-        await page.get_by_role("button", name="Save Keys").click()
+        await key.get_by_role("button", name="Save", exact=True).click()
         await page.get_by_text("Restart the server").wait_for()
         assert ("test-fish", {"key_value": "good-key"}) in server.posts
         assert ("keys", {"key_name": "FISH_API_KEY", "key_value": "good-key"}) in server.posts
 
         await page.get_by_placeholder("612b878b113047d9a770c069c8b4fdfe").fill("voice-42")
-        await page.get_by_role("button", name="Save", exact=True).click()
+        voice = page.locator(".settings-row", has=page.locator("#settings-voice-id"))
+        await voice.get_by_role("button", name="Save", exact=True).click()
         await page.wait_for_function("1")
         await page.wait_for_timeout(300)
         assert ("keys", {"key_name": "FISH_VOICE_ID", "key_value": "voice-42"}) in server.posts
@@ -261,7 +286,7 @@ async def test_name_and_honorific_are_saved(page_playwright, page_url):
         await _open_settings(page)
         await page.get_by_placeholder("Your name").fill("Timothy")
         await page.locator("select:has(option[value='none'])").select_option("none")
-        await page.get_by_role("button", name="Save Preferences").click()
+        await page.locator("#settings-you").get_by_role("button", name="Save", exact=True).click()
         await page.wait_for_timeout(300)
         assert ("preferences", {"user_name": "Timothy", "honorific": "none"}) in server.posts
         await browser.close()
@@ -276,8 +301,10 @@ async def test_espanol_waits_for_its_model_then_is_chosen(page_playwright, page_
         espanol = page.locator("#settings-language option[value='es']")
         await async_api.expect(espanol).to_be_disabled()
         await page.get_by_role("button", name="Download (124 MB)").click()
-        await async_api.expect(page.get_by_text("Installed", exact=True)).to_be_visible()
+        # Installed is the ordinary state: the model's row goes, and Español
+        # is on offer.
         await async_api.expect(espanol).to_be_enabled()
+        await async_api.expect(page.get_by_text("Spanish speech model")).to_have_count(0)
         await page.locator("#settings-language").select_option("es")
         await async_api.expect(page.locator("#settings-language")).to_have_value("es")
         assert ("install", {}) in server.posts
@@ -287,21 +314,30 @@ async def test_espanol_waits_for_its_model_then_is_chosen(page_playwright, page_
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_the_status_dots_are_green_on_a_reading_and_not_on_a_failed_one(page_playwright, page_url):
+async def test_a_state_is_shown_only_when_it_is_not_the_ordinary_one(page_playwright, page_url):
     async with page_playwright as p:
-        server = _Server()
+        server = _Server(codex_added=True)
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
-        await page.wait_for_function(f"({DOT})('Server') === 'green'")
-        await page.wait_for_function(f"({DOT})('Claude Code') === 'green'")
+        server_section = page.locator("#settings-server")
+        await async_api.expect(server_section.locator(".settings-row", has_text="Port")).to_contain_text("8340")
+        # A good reading, a saved key and a passing check say nothing more.
+        assert await server_section.locator(".settings-state").count() == 0
+        assert await page.evaluate(DOT, "Test") is None
+        claude = page.locator(".brain-card[data-brain='anthropic']")
+        await async_api.expect(claude.locator(".check-row")).to_have_count(0)
+        # A failing check is said, with what to do.
+        codex = page.locator(".brain-card[data-brain='openai']")
+        await async_api.expect(codex.locator(".check-row")).to_contain_text("Not signed in to Codex.")
+        assert await page.evaluate(DOT, "Signed in") == "red"
         await browser.close()
 
         server = _Server(status_ok=False)
         browser, page = await _open(p, page_url, server)
         await _open_settings(page)
-        await page.wait_for_function(f"({DOT})('Server') === 'red'")
-        # Drawn from the answer that never came: not green. (The Claude Code
-        # dot is Claude's own setup check now, read with the brains.)
+        await page.wait_for_function(f"({DOT})('No answer from the server.') === 'red'")
+        # Drawn from the answer that never came: no figures, and not green.
+        await async_api.expect(page.locator("#settings-server .settings-row", has_text="Port")).to_contain_text("—")
         assert await page.evaluate(DOT, "Test") != "green"
         await browser.close()
 
@@ -318,8 +354,11 @@ async def test_with_no_fish_key_setup_opens_by_itself_and_walks_key_then_name(pa
         assert await page.get_by_placeholder("Your name").is_visible()
         assert not await page.get_by_placeholder("Fish Audio key...").is_visible()
         await page.get_by_role("button", name="Finish Setup").click()
-        await page.wait_for_timeout(600)
+        await page.wait_for_selector("#settings-view", state="detached")
         assert not await page.get_by_placeholder("Your name").is_visible()
+        # The centre is Conversation's again, and Settings' tab has gone.
+        await async_api.expect(page.locator(".centre-tabs [aria-selected=true]")).to_have_text("Conversation")
+        assert await page.locator(".centre-tabs [role=tab]", has_text="Settings").count() == 0
         await browser.close()
 
 
@@ -408,7 +447,7 @@ async def test_check_for_updates_lists_the_versions_and_installs_the_chosen_one(
         await async_api.expect(rows.nth(0)).to_contain_text("PR 42: Agent and page work packages")
         await async_api.expect(rows.nth(0).locator(".update-tag")).to_have_text("LATEST")
         await async_api.expect(rows.nth(0)).to_contain_text(
-            "1 Nov · bbbbbbb · can be chosen once its tests pass")
+            "Nov 1 · bbbbbbb · can be chosen once its tests pass")
         await async_api.expect(rows.nth(0)).to_contain_text("Tests running")
         await async_api.expect(rows.nth(1)).to_contain_text("can't be chosen: its tests failed")
         await async_api.expect(rows.nth(1)).to_contain_text("Tests failed")

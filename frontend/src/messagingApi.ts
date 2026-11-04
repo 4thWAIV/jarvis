@@ -6,15 +6,16 @@
  * credential); no address or setting on the page changes that.
  *
  * A refusal is the team server's error body, `{"error": {"code", "message",
- * "latest"?}}`; it arrives here as a `MessagingError` whose `shown` is the
- * contract's own wording for its code.
+ * "latest"?}}`; it arrives here as a `MessagingError` carrying its code,
+ * which the Queue words in the interface's language (queue.ts
+ * `messagingSaid`).
  *
  * Approving is not here: the inline review's Send is the existing
  * `POST /api/capture/{n}/send` (capture.ts) on the capture the review opened.
  */
 
 import {
-  ERRORS, LOCAL_ERRORS, type Draft, type DraftSave, type HistoryPage, type LocalFile,
+  type Draft, type DraftSave, type HistoryPage, type LocalFile,
   type LocalItem, type LocalMessage, type QueueSnapshot, type RecipientList,
   type WorkCommand, type WorkCommandResult,
 } from "./messagingContract";
@@ -30,18 +31,6 @@ export class MessagingError extends Error {
   ) {
     super(message);
   }
-
-  /** The contract's words for this refusal. */
-  get shown(): string {
-    return shownFor(this.code, this.message);
-  }
-}
-
-/** What the owner is told about a refusal with this code. */
-export function shownFor(code: string, fallback: string): string {
-  return (ERRORS as Record<string, { shown: string }>)[code]?.shown
-    ?? (LOCAL_ERRORS as Record<string, { shown: string }>)[code]?.shown
-    ?? fallback;
 }
 
 export interface MessagingApi {

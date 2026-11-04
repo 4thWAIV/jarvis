@@ -305,3 +305,73 @@ def test_a_refused_spoken_switch_is_said(server, monkeypatch):
     asyncio.run(server._switch_language_by_voice("es"))
     assert server.speech.lines == ["The language was not changed, sir. "
                                    "The Spanish speech model is not installed yet."]
+
+
+# ── the page's interface language ────────────────────────────────────────
+
+@pytest.fixture
+def published(monkeypatch):
+    """The frames language_setting hands every open page."""
+    frames = []
+    monkeypatch.setattr(language_setting, "_publish", frames.append)
+    return frames
+
+
+def test_a_change_is_published_once_to_every_page(client, said, published):
+    _put(SPANISH)
+    _choose(client, "es")
+    assert published == [{"type": "language", "language": "es"}]
+    _choose(client, "es")                                   # already in force: nothing
+    _choose(client, "en")
+    assert published == [{"type": "language", "language": "es"},
+                         {"type": "language", "language": "en"}]
+
+
+def test_a_refused_change_publishes_nothing(client, published):
+    assert _choose(client, "es").status_code == 409          # not installed
+    assert _choose(client, "fr").status_code == 404
+    assert published == []
+
+
+def test_a_model_that_fails_to_load_publishes_nothing(said, published, monkeypatch):
+    def factory(model):
+        if model == SPANISH:
+            raise RuntimeError("bad weights")
+        return FakeEngine()
+
+    _put(ENGLISH)
+    _put(SPANISH)
+    with TestClient(_app_heard(factory, monkeypatch, said)) as c:
+        monkeypatch.setattr(language_setting, "_publish", published.append)
+        assert _choose(c, "es").status_code == 500
+    assert published == []
+
+
+def test_the_brain_s_change_is_published_too(published):
+    """The brain's tool calls `change` itself, not the route: it is the one
+    path every change takes."""
+    async def switch(language):
+        return None
+
+    from jarvis import speech_models
+    _put(SPANISH)
+    original = speech_models.switch
+    speech_models.switch = switch
+    try:
+        assert asyncio.run(language_setting.change("es")) is True
+    finally:
+        speech_models.switch = original
+    assert published == [{"type": "language", "language": "es"}]
+
+
+def test_every_page_hears_it_and_a_page_that_connects_reads_it(monkeypatch, tmp_path):
+    import importlib
+    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    from jarvis import server
+    importlib.reload(server)
+    assert language_setting._publish == server._send_to_session_clients
+    with TestClient(server.app) as c:
+        spoken_words.set_active_language("es")              # after startup's load()
+        with c.websocket_connect("/ws/sessions", headers=PAGE) as ws:
+            first = ws.receive_json()
+    assert first["type"] == "snapshot" and first["language"] == "es"

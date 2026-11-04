@@ -103,6 +103,8 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
         "mcp__jarvis__retry_run,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"
+        "mcp__jarvis__ui_map,mcp__jarvis__ui_navigate,"
+        "mcp__jarvis__ui_indicate,mcp__jarvis__ui_journey,mcp__jarvis__ui_clear,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch,Skill")

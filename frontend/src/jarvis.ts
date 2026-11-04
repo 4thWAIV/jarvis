@@ -18,9 +18,11 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
 import { inputStatus, micLevel, micMuted, micOff } from "./mic";
-import { sendTyped, statusText, stopSpeaking, voiceState } from "./voiceStatus";
+import { sendTyped, stopSpeaking, voiceState } from "./voiceStatus";
 import { countVoiceMessage, notice } from "./voiceHealth";
+import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
+import { startUiClient } from "./uiClient";
 import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
          type StoryState } from "./packages";
 import { showMember } from "./bundles";
@@ -36,17 +38,6 @@ export function startJarvis(orb: Orb): void {
   let isMuted = false;
   let isOff = false;
 
-  function updateStatus(state: State) {
-    const labels: Record<State, string> = {
-      idle: "",
-      listening: "listening...",
-      thinking: "thinking...",
-      speaking: "",
-      compacting: "",          // the notice banner carries the words; the orb carries the state
-    };
-    statusText.set(labels[state]);
-  }
-
   // ---------------------------------------------------------------------------
   // Init components
   // ---------------------------------------------------------------------------
@@ -55,6 +46,10 @@ export function startJarvis(orb: Orb): void {
   const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
   const socket = createSocket(WS_URL);
   startSessionsSocket();
+  // The interface's language: the one in force on the server (locale.ts).
+  startLocale();
+  // The brain's UI requests come to this page on the same socket.
+  const uiClient = startUiClient(socket);
 
   const audioPlayer = createAudioPlayer();
   orb.setAnalyser(audioPlayer.getAnalyser());
@@ -66,7 +61,6 @@ export function startJarvis(orb: Orb): void {
     currentState = newState;
     voiceState.set(newState);
     orb.setState(newState as OrbState);
-    updateStatus(newState);
     micFollowsState();
   }
 
@@ -128,6 +122,9 @@ export function startJarvis(orb: Orb): void {
     // Locally first: the round trip is real and silence should be instant.
     audioPlayer.stop();
     jarvisQuiet();
+    // The turn he stopped also stops pointing: its UI requests are
+    // withdrawn and every white signal cleared.
+    uiClient.interrupt();
     storyCue.set(null);
     socket.send({ type: "hush" });
     transition("listening");

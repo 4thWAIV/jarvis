@@ -233,19 +233,22 @@ async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-@pytest.mark.parametrize("code, message", [
-    ("busy", "Another JARVIS page is listening. Typing still works here."),
-    ("model-unavailable", "The speech model is not installed. Run setup."),
+@pytest.mark.parametrize("code, message, shown", [
+    ("busy", "Another JARVIS page is listening. Typing still works here.",
+     "Another JARVIS page is listening. Typing still works here."),
+    # Worded by its code in the interface's language, the server's own text after it.
+    ("model-unavailable", "The speech model is not installed. Run setup.",
+     "Speech recognition is not available. Detail: The speech model is not installed. Run setup."),
 ])
-async def test_a_busy_or_missing_recogniser_stays_on_screen(page_playwright, page_url, code, message):
+async def test_a_busy_or_missing_recogniser_stays_on_screen(page_playwright, page_url, code, message, shown):
     async with page_playwright as p:
         browser, page, voice = await _open(p, page_url, {"error": {"code": code,
                                                                    "message": message}})
         await page.wait_for_function(
-            f"document.querySelector('#health-dot')?.title === {json.dumps(message)}",
+            f"document.querySelector('#health-dot')?.title === {json.dumps(shown)}",
             timeout=10000)
         await page.wait_for_timeout(6000)       # longer than the old error toast
-        assert await page.evaluate(STATUS) == message
+        assert await page.evaluate(STATUS) == shown
         await browser.close()
 
 

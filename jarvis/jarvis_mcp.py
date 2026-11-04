@@ -22,6 +22,8 @@ import urllib.request
 
 # The one limit on a message's files, from the messaging contract.
 from jarvis.messaging_wire import ATTACHMENTS_MAX
+# The ui_* tools' schemas come from the UI contract, the page's own declarations.
+from jarvis import ui_contract
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -1989,6 +1991,8 @@ TOOL_SPECS = [
                                        "for the latest."},
         }},
     },
+    # The page's navigation and white attention (server.py, ui_control.py).
+    *ui_contract.tool_specs(),
 ]
 
 

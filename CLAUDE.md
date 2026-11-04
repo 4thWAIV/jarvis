@@ -564,7 +564,7 @@ nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
 /api/team/connect`, the approval page in a new tab). The reminder's Sign in
 (`signInAgain`) reads `GET /api/team`: with a `last_server_url` it signs in
 there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
-Team (`openSettings("team")`). Later hides it until the page loads again or
+Team (`settings.open {section: "team"}`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
 itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
 started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
@@ -637,7 +637,13 @@ figures); `_watch_subsystems` looks every five seconds, sends a
 "Communications with the agents are down, sir." and once that they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
-opens the voice view).
+opens the voice view). Every name and line JARVIS writes itself is sent as a
+code and its values (`name_said`, `said`: `subsystem_diagnostics.say` and
+`named`, from `SAID` and `NAMES`) beside its English, which the brain reads;
+the page words the code in its own language (`subsystems.ts` `subsystemName`,
+`subsystemSummary`, `checkName`, `checkDetail`, catalog `right.subsystem.*`)
+and shows a line with no code (another program's words) as it came. A test
+keeps the Python English and the catalog's English word for word the same.
 
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
@@ -792,7 +798,7 @@ changes; the persona's "Language" section says the same.
 
 ## The language setting
 JARVIS hears and speaks one language at a time, English or Spanish, chosen
-in Settings, Voice, Language (`LanguageControl.tsx`), by the brain's acting
+in Settings, Voice and language, Language (`LanguageControl.tsx`), by the brain's acting
 `set_language`, or by one exact spoken phrase: "switch to Spanish" while in
 English, "cambia a inglés" while in Spanish (`Vocabulary.switch_command`,
 matched like the clear command: the whole utterance, optional leading
@@ -984,9 +990,24 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/TeamServerTile.tsx` / `TeamServerView.tsx` — The left
   column's Team Server tile and the team server's health in full
 - `frontend/src/humanActivity.ts` — The page's one human-activity collector
+- `frontend/src/locale.ts` / `frontend/src/messages/` — The interface's
+  language, which is the language setting's (`language_setting.py`), never a
+  second preference or browser storage: one store fed by the server's
+  `/api/settings/language`, its `language` frame on `/ws/sessions` (published
+  by `change`) and that socket's snapshot, a read never undoing a newer
+  frame; typed English and Latin American Spanish catalogs with the same
+  keys and placeholders, one part per region; a component's words come from
+  `useT()` (`t("key", { name })`), numbers and dates from its format helpers.
+  Words written in English in a component are the `label-unlocalized`
+  coverage rule; elements are found by registered ids, never by their words
 - `frontend/src/timeFormat.ts` — How long ago something was, the one way the
   page says it
 - `frontend/src/TeamSection.tsx` — Settings → Team: connect, status, members
+- `frontend/src/Settings.tsx` / `SettingsRow.tsx` — Settings, a centre view
+  opened and closed only by `settings.open`, `settings.section` and
+  `settings.close` (the menu, Check for updates, the sign-in reminder and
+  first-time setup run them): You, Voice and language, Brains, Team,
+  Updates, Server; every control and reading in it a pointer target
 - `frontend/src/TeamSignInReminder.tsx` / `teamSignIn.ts` / `team_reminder.py`
   — The sign-in reminder at the top of the centre area, its Sign in, and the
   one spoken reminder per start (see "The sign-in reminder")
@@ -1051,6 +1072,29 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   folder in full, and the right panel's Folders tab
 - `self_update.py` / `update.py` — Updating a checkout from GitHub, and the
   `python -m jarvis.update` command (see "Self-update")
+- `ui_contract/` — The page's navigation and white attention contract:
+  `protocol.json` and one file per family in `families/`, merged and checked
+  by `ui_contract.load`; `frontend/src/uiContract.ts` is generated from it
+  (`scripts/generate_ui_contract.py`), and `tool_specs()` gives the brain's
+  `ui_map`, `ui_navigate`, `ui_indicate`, `ui_journey` and `ui_clear`
+- `ui_control.py` / `frontend/src/uiClient.ts` — Carrying the brain's UI
+  requests to the one page of the turn and its answer back: binding, epochs,
+  one deadline, success only at arrival; stopping JARVIS withdraws them
+- `frontend/src/uiRegistry.ts` — The one registry of navigation commands
+  and mounted targets; `dispatch` (actor always given) and `byHand`
+- `frontend/src/uiNavigation.ts` / `uiNavigationReveal.ts` — The route
+  state (right tab, centre view, detail slots) and bringing one exact
+  presentation into view before anything points at it
+- `frontend/src/uiPipeline.ts` / `uiAttention.ts` / `UiPipelineLayer.tsx` —
+  The pipeline graph and routes, one cue's lifecycle, and the map and cues
+  drawn
+- `frontend/src/uiSignal.ts` — The one schedule and path maths for white
+  attention, from the contract's timing
+- `frontend/src/effectLife.ts` — The one frame scheduler, geometry
+  invalidation and effect lifecycle for everything drawn from the orb (rays
+  and attention alike)
+- `frontend/src/orbSource.ts` — Who holds the orb's overlay (`mainOrb`):
+  a real transmission always, attention waits then answers busy
 - `server_address.py` — This server's own address (`own`), recorded with
   its pid at startup and removed on shutdown, and the one reader of that
   record (`running`) that `python -m jarvis.update` uses (see "Self-update")

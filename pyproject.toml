@@ -39,6 +39,8 @@ include = ["jarvis", "jarvis.*"]
 jarvis = [
     ".env.example",
     "transcribeProtocol.json",
+    "ui_contract/*.json",
+    "ui_contract/families/*.json",
     "package_story.js",
     "jarvis_home/*",
     "skills/**/*",

@@ -15,9 +15,17 @@ const SECURITY_HEADERS = {
   "Referrer-Policy": "no-referrer",
 };
 
+// Where the dev server sends /api and /ws: the live JARVIS by default. An
+// isolated instance on another port sets JARVIS_API_TARGET (and its own
+// JARVIS_VITE_PORT), so a test page never talks to the live backend.
+const API_TARGET = process.env.JARVIS_API_TARGET || "https://localhost:8340";
+const VITE_PORT = Number(process.env.JARVIS_VITE_PORT || 5173);
+
 export default defineConfig({
   server: {
-    port: 5173,
+    port: VITE_PORT,
+    // An asked-for port is that port or nothing: never another page's.
+    strictPort: Boolean(process.env.JARVIS_VITE_PORT),
     headers: SECURITY_HEADERS,
     // The page imports the transcription protocol from the Python package,
     // which both sides read.
@@ -26,12 +34,12 @@ export default defineConfig({
     },
     proxy: {
       "/ws": {
-        target: "https://localhost:8340",
+        target: API_TARGET,
         ws: true,
         secure: false,
       },
       "/api": {
-        target: "https://localhost:8340",
+        target: API_TARGET,
         secure: false,
       },
     },

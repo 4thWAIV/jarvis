@@ -9,13 +9,20 @@
  * brain's `open_local_package` both reach `_open_local_package`.
  *
  * The server holds the page package shown, so a page that connects later (a
- * reload) is sent it too; the view's × tells the server to forget it.
+ * reload) is sent it too; `package.close` (the view's ×, or the brain's
+ * navigation) tells the server to forget it.
  *
  * A page package opens one way, whoever asks: the page's Open page (on its
  * file in the Queue, QueueFiles.tsx) and the brain's `open_package_page`
  * both reach the server's `_open_package_page`, which tells every JARVIS
  * page to show it with a `package_page` frame on the voice socket
  * (jarvis.ts). The page's own request opens it here at once as well.
+ *
+ * Showing it is the centre's `package` detail (uiNavigation.ts): the
+ * registered `package.open` and `package.close` commands are the only
+ * way it opens or closes, run by Open page, by Close, by the frame (as the
+ * brain's: the server sends it for the brain's tool, and a page that asked
+ * itself already shows it) and by the brain's own navigation.
  *
  * A page package with a story is told one way too: the page's Tell the story
  * and Stop and the brain's `tell_package_story` both reach the server's
@@ -28,7 +35,10 @@
  */
 
 import { liveRead, type LiveStore } from "./liveRead";
+import { t, type Said } from "./locale";
 import { createStore } from "./store";
+import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
+import { dispatch, registerCommand } from "./uiRegistry";
 
 export interface PackageInfo {
   id: string;
@@ -80,8 +90,14 @@ export const storyState = createStore<StoryState | null>(null);
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
 
-/** The page package shown in the centre area, or none. */
-export const openPackage = createStore<PackageInfo | null>(null);
+const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id);
+/** The page package shown in the centre area, or none. Read-only: the
+ *  controls run `package.open` and `package.close`. */
+export const openPackage = packageSlot.value;
+
+/** Packages the server has described in a `package_page` frame, by id,
+ *  for one that is not in the list read yet. */
+const described = new Map<string, PackageInfo>();
 
 const base = (id: string) => `/api/packages/${encodeURIComponent(id)}`;
 
@@ -108,20 +124,48 @@ export function packageFrom(list: PackageInfo[] | null, attachmentId: string) {
   return list?.find((p) => p.sources.some((s) => s && key.startsWith(s)));
 }
 
-/** Show it, unless it is already showing. */
-export function showPackage(info: PackageInfo): void {
-  if (openPackage.get()?.id !== info.id) openPackage.set(info);
+/** A page package this page knows by id. */
+function pagePackage(id: string): PackageInfo | undefined {
+  const found = described.get(id) ?? packages?.get().value?.find((p) => p.id === id);
+  return found?.runs === "page" ? found : undefined;
 }
 
-/** The page's Open page: the server's one way to open it. Null once it
- *  is open, else why not. */
-export async function openPackagePage(id: string): Promise<string | null> {
+registerCommand("package.open", {
+  availability: ({ packageId }) => pagePackage(packageId) ? { available: true } : { available: false, reason: "no-entity" },
+  execute: ({ packageId }) => ({ status: "completed", effects: packageSlot.show(pagePackage(packageId)!) }),
+});
+
+registerClose("package.close", packageSlot, (shown) => {
+  void fetch(`${base(shown.id)}/page`, { method: "DELETE" }).catch(() => undefined);
+});
+
+/** The server's words, kept as they came. */
+const original = (e: unknown): Said => ({ original: (e as Error).message });
+
+/** Unpacked, but it runs another way than as a page: ask JARVIS. */
+function unpackedElsewhere(info: PackageInfo): Said {
+  return { words: () => t(info.runs === "agent" ? "main.package.unpackedAgent" : "main.package.unpackedConversation",
+                          { id: info.id }) };
+}
+
+/** The server's `package_page` frame: show it, unless it is already
+ *  showing. */
+export function showPackage(info: PackageInfo): void {
+  described.set(info.id, info);
+  if (openPackage.get()?.id !== info.id) void dispatch("package.open", { packageId: info.id }, { actor: "brain" });
+}
+
+/** The page's Open page: the server's one way to open it, then shown here
+ *  at once. Null once it is open, else why not. */
+export async function openPackagePage(id: string): Promise<Said | null> {
   try {
-    showPackage((await answer<{ package: PackageInfo }>(
-      await fetch(`${base(id)}/page`, { method: "POST" }))).package);
+    const info = (await answer<{ package: PackageInfo }>(
+      await fetch(`${base(id)}/page`, { method: "POST" }))).package;
+    described.set(info.id, info);
+    runBinding(bind("package.open", { packageId: info.id }));
     return null;
   } catch (e) {
-    return (e as Error).message;
+    return original(e);
   }
 }
 
@@ -129,7 +173,7 @@ export async function openPackagePage(id: string): Promise<string | null> {
  *  server's `_open_received_package` (the brain's `open_package` too), and
  *  show it at once when it runs as a page. Null once done, else why not; a
  *  package that runs another way says to ask JARVIS. */
-export async function openReceivedPackage(messageId: string, attachmentId: string): Promise<string | null> {
+export async function openReceivedPackage(messageId: string, attachmentId: string): Promise<Said | null> {
   try {
     const { package: info } = await answer<{ package: PackageInfo }>(await fetch("/api/packages/received", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -137,16 +181,16 @@ export async function openReceivedPackage(messageId: string, attachmentId: strin
     }));
     packagesChanged.set(packagesChanged.get() + 1);
     if (info.runs === "page") return openPackagePage(info.id);
-    return `Unpacked as ${info.id}. It runs as ${info.runs === "agent" ? "an agent" : "a conversation"}: ask JARVIS to run it.`;
+    return unpackedElsewhere(info);
   } catch (e) {
-    return (e as Error).message;
+    return original(e);
   }
 }
 
 /** The Folders view's Open package: a package zip on this Mac, by its
  *  path, unpacked here; a page package then shows at once (the server's
  *  `package_page` frame, and here). Null once done, else why not. */
-export async function openLocalPackage(path: string): Promise<string | null> {
+export async function openLocalPackage(path: string): Promise<Said | null> {
   try {
     const got = await answer<{ package: PackageInfo; problem: string | null }>(await fetch("/api/packages/local", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
@@ -154,25 +198,18 @@ export async function openLocalPackage(path: string): Promise<string | null> {
     packagesChanged.set(packagesChanged.get() + 1);
     if (got.package.runs === "page") {
       if (!got.problem) showPackage(got.package);
-      return got.problem;
+      return got.problem ? { original: got.problem } : null;
     }
-    return `Unpacked as ${got.package.id}. It runs as ${got.package.runs === "agent" ? "an agent" : "a conversation"}: ask JARVIS to run it.`;
+    return unpackedElsewhere(got.package);
   } catch (e) {
-    return (e as Error).message;
+    return original(e);
   }
-}
-
-/** The view's ×: closed here, and forgotten by the server, so a reload
- *  does not show it again. */
-export function closePackage(id: string): void {
-  openPackage.set(null);
-  void fetch(`${base(id)}/page`, { method: "DELETE" }).catch(() => undefined);
 }
 
 /** Tell its story from `slide` (from 1), or stop it: null once done, else
  *  why not. */
 export async function tellStory(id: string, action: "tell" | "stop",
-                                slide?: number): Promise<string | null> {
+                                slide?: number): Promise<Said | null> {
   try {
     await answer(await fetch(`${base(id)}/story`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -180,7 +217,7 @@ export async function tellStory(id: string, action: "tell" | "stop",
     }));
     return null;
   } catch (e) {
-    return (e as Error).message;
+    return original(e);
   }
 }
 

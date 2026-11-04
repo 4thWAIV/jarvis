@@ -16,63 +16,121 @@
  * where it is in the file (page, lines, sheet or slide), so notes can cite
  * it. What is shown is never more than was read: a page that is not the end
  * says so with More.
+ *
+ * Registered for pointing at as `bundleMember` (its head, Preview and Text,
+ * Close, the page turner, the text and More); Close runs
+ * `bundle.member.close`, as the brain does.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { Location, MemberInfo, Preview, TextChunk, TextPage } from "./bundleContract";
 import {
   bundleWords as W, cells, openBundleMember, PAGED_FORMATS, pageUrl, readPreview, readText,
   TABLE_FORMATS, type MemberKey,
 } from "./bundles";
+import { CENTRE_SOCKET } from "./ConversationView";
+import { t as tNow, useT } from "./locale";
 import { sizeText } from "./queueStore";
+import { createStore } from "./store";
+import type { CommandArgs } from "./uiContract";
+import { bind, bindingProps } from "./uiNavigation";
+import { registerCommand, useUiTarget } from "./uiRegistry";
 
 function where(location: Location): string {
   switch (location.kind) {
-    case "page": return `Page ${location.page}`;
-    case "lines": return location.start === location.end ? `Line ${location.start}`
-      : `Lines ${location.start}–${location.end}`;
-    case "sheet": return `${location.sheet}, rows ${location.start_row}–${location.end_row}`;
-    case "slide": return `Slide ${location.slide}`;
+    case "page": return tNow("main.bundle.where.page", { page: location.page });
+    case "lines": return location.start === location.end ? tNow("main.bundle.where.line", { line: location.start })
+      : tNow("main.bundle.where.lines", { start: location.start, end: location.end });
+    case "sheet": return tNow("main.bundle.where.sheet", { sheet: location.sheet, start: location.start_row,
+                                                           end: location.end_row });
+    case "slide": return tNow("main.bundle.where.slide", { slide: location.slide });
   }
 }
 
-export function BundleMemberView({ member }: { member: MemberKey }) {
-  const [pages, setPages] = useState<TextPage[]>([]);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [reading, setReading] = useState(true);
-  const [showText, setShowText] = useState(false);
-  const [page, setPage] = useState(1);
-  const { messageId, attachmentId, memberId } = member;
+/** The open member as shown: its text pages read so far, its preview,
+ *  whether its text or its preview is shown, which rendered page, and what
+ *  went wrong. Kept here, for the one member the centre shows; changed by
+ *  `bundle.member.view` and `bundle.member.more`, a click's and the
+ *  brain's alike. */
+interface Shown {
+  key: string;
+  pages: TextPage[];
+  preview: Preview | null;
+  problem: string | null;
+  reading: boolean;
+  showText: boolean;
+  page: number;
+}
 
-  useEffect(() => {
-    let live = true;
-    const key = { messageId, attachmentId, memberId };
-    Promise.allSettled([readText(key), readPreview(key)]).then(([text, shown]) => {
-      if (!live) return;
-      if (text.status === "fulfilled") setPages([text.value]);
-      if (shown.status === "fulfilled") setPreview(shown.value);
-      if (text.status === "rejected" && shown.status === "rejected") {
-        setProblem((text.reason as Error).message);
-      }
-      setReading(false);
+const lastOf = (pages: TextPage[]): TextPage | undefined => pages[pages.length - 1];
+const keyOf = (m: MemberKey) => `${m.messageId}/${m.attachmentId}/${m.memberId}`;
+const shown = createStore<Shown | null>(null);
+const put = (key: string, change: Partial<Shown>) => {
+  const now = shown.get();
+  if (now?.key === key) shown.set({ ...now, ...change });
+};
+
+/** Read a member afresh: its first text page and its preview. */
+function readFirst(m: MemberKey): void {
+  const key = keyOf(m);
+  shown.set({ key, pages: [], preview: null, problem: null, reading: true, showText: false, page: 1 });
+  void Promise.allSettled([readText(m), readPreview(m)]).then(([text, seen]) => {
+    put(key, {
+      pages: text.status === "fulfilled" ? [text.value] : [],
+      preview: seen.status === "fulfilled" ? seen.value : null,
+      problem: text.status === "rejected" && seen.status === "rejected" ? (text.reason as Error).message : null,
+      reading: false,
     });
-    return () => { live = false; };
-  }, [messageId, attachmentId, memberId]);
+  });
+}
 
-  const more = async () => {
-    const last = pages[pages.length - 1];
-    if (!last?.continuation) return;
-    setReading(true);
+const showing = () => {
+  const now = shown.get();
+  const open = openBundleMember.get();
+  return now && open && now.key === keyOf(open) ? now : null;
+};
+
+registerCommand("bundle.member.view", {
+  availability: () => showing() ? { available: true } : { available: false, reason: "no-entity" },
+  execute({ show, page }) {
+    const now = showing()!;
+    put(now.key, { ...(show ? { showText: show === "text" } : {}), ...(page ? { page } : {}) });
+    return { status: "completed", effects: [] };
+  },
+});
+
+registerCommand("bundle.member.more", {
+  availability: () => lastOf(showing()?.pages ?? [])?.continuation && !showing()!.reading
+    ? { available: true } : { available: false, reason: "no-entity" },
+  async execute() {
+    const now = showing()!;
+    const member = openBundleMember.get()!;
+    put(now.key, { reading: true });
     try {
-      const next = await readText(member, last.continuation);
-      setPages((now) => [...now, next]);
+      const next = await readText(member, lastOf(now.pages)!.continuation);
+      put(now.key, { pages: [...(shown.get()?.pages ?? []), next] });
     } catch (e) {
-      setProblem((e as Error).message);
+      put(now.key, { problem: (e as Error).message });
     } finally {
-      setReading(false);
+      put(now.key, { reading: false });
     }
-  };
+    return { status: "completed", effects: ["list.paged"] };
+  },
+});
+
+export function BundleMemberView({ member }: { member: MemberKey }) {
+  useT();
+  const { messageId, attachmentId, memberId } = member;
+  useEffect(() => { readFirst({ messageId, attachmentId, memberId }); }, [messageId, attachmentId, memberId]);
+  const now = useSyncExternalStore(shown.subscribe, shown.get);
+  const current = now?.key === keyOf(member) ? now : null;
+  const pages = current?.pages ?? [];
+  const preview = current?.preview ?? null;
+  const problem = current?.problem ?? null;
+  const reading = current?.reading ?? true;
+  const showText = current?.showText ?? false;
+  const page = current?.page ?? 1;
+  const view = (args: CommandArgs["bundle.member.view"]) => bindingProps(bind("bundle.member.view", args));
 
   const info: MemberInfo | undefined = pages[0]?.member ?? preview?.member;
   const chunks = pages.flatMap((p) => p.chunks);
@@ -84,25 +142,27 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
   const pageCount = last?.extent.pages ?? preview?.extent.pages ?? null;
   const blocked = preview?.blocked_resources.length ?? 0;
 
+  const ui = useUiTarget({ ref: { region: "main", view: "main.file", kind: "bundleMember", key: memberId },
+                           label: info?.name ?? W.reading, socket: CENTRE_SOCKET });
   const text = chunks.length > 0 && (
     <TextChunks chunks={chunks} table={info ? TABLE_FORMATS.has(info.format) : false}
                 format={info?.format ?? "text"} />
   );
   return (
-    <div id="bundle-member-view" data-member-id={memberId}>
-      <section className="package-head">
+    <div id="bundle-member-view" data-member-id={memberId} ref={ui.whole}>
+      <section className="package-head" ref={ui.part("header")}>
         <div className="package-head-words">
           <h2>{info?.name ?? W.reading}</h2>
           {info && <p>{info.path} · {info.format} · {sizeText(info.size_bytes)}</p>}
         </div>
         {html && chunks.length > 0 && (
-          <div className="item-actions" role="group" aria-label="Show">
-            <button type="button" aria-pressed={!showText} onClick={() => setShowText(false)}>{W.preview}</button>
-            <button type="button" aria-pressed={showText} onClick={() => setShowText(true)}>{W.text}</button>
+          <div className="item-actions" role="group" aria-label={W.show} ref={ui.part("show")}>
+            <button type="button" aria-pressed={!showText} {...view({ show: "preview" })}>{W.preview}</button>
+            <button type="button" aria-pressed={showText} {...view({ show: "text" })}>{W.text}</button>
           </div>
         )}
-        <button type="button" className="workflow-close" title={W.close} aria-label={W.close}
-                onClick={() => openBundleMember.set(null)}>×</button>
+        <button type="button" className="workflow-close" title={W.close} aria-label={W.close} ref={ui.part("close")}
+                {...bindingProps(bind("bundle.member.close", {}))}>×</button>
       </section>
       {notes.length > 0 && <p className="bundle-notes">{notes.map((n) => W.reason(n)).join(" ")}</p>}
       {problem && <p className="file-state bundle-problem" role="status">{problem}</p>}
@@ -110,11 +170,11 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
         {paged && (
           <figure className="bundle-page">
             <img src={pageUrl(member, page)} alt={`${info?.name ?? ""} ${W.pageOf(page, pageCount)}`} />
-            <figcaption className="item-actions">
-              <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>{W.previous}</button>
+            <figcaption className="item-actions" ref={ui.part("pages")}>
+              <button type="button" disabled={page <= 1} {...view({ page: page - 1 })}>{W.previous}</button>
               <span className="bundle-page-number">{W.pageOf(page, pageCount)}</span>
               <button type="button" disabled={pageCount !== null && page >= pageCount}
-                      onClick={() => setPage(page + 1)}>{W.next}</button>
+                      {...view({ page: page + 1 })}>{W.next}</button>
             </figcaption>
           </figure>
         )}
@@ -127,12 +187,13 @@ export function BundleMemberView({ member }: { member: MemberKey }) {
           </div>
         )}
         {(!html || showText) && (
-          <div className="bundle-text">
+          <div className="bundle-text" ref={ui.part("body")}>
             {text}
             {!reading && chunks.length === 0 && !image && !paged && !problem && <p className="file-state">{W.nothing}</p>}
             {reading && <p className="file-state">{W.reading}</p>}
             {last?.continuation && !reading && (
-              <button type="button" className="file-action" onClick={() => void more()}>{W.more}</button>
+              <button type="button" className="file-action" ref={ui.part("more")}
+                      {...bindingProps(bind("bundle.member.more", {}))}>{W.more}</button>
             )}
           </div>
         )}

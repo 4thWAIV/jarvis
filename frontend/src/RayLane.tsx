@@ -25,12 +25,13 @@
  * and an outgoing one counted still lights its tab's icon.
  */
 
-import { useEffect, useState, type CSSProperties } from "react";
-import { mainOrb } from "./OrbControl";
+import { useEffect, useState } from "react";
+import { EffectLife, onFrame, onGeometryChange, VISUALLY_HIDDEN } from "./effectLife";
+import { transferReceive, transferTransmit } from "./orbSource";
 import { takeRayColour } from "./rayColours";
 import { RAY_MS, RAY_TRAVEL_MS } from "./agents";
 import { rayArrival, rayDirection, rayEnd, rayOrigin } from "./rayGeometry";
-import { LAYOUT_SIGNALS, measure, type Endpoint } from "./transferEndpoints";
+import { measure, type Endpoint } from "./transferEndpoints";
 import { onTransfer, RAYS_SHOWN_MAX, transferMotion, type Direction, type Motion,
          type Transfer } from "./transfers";
 
@@ -48,44 +49,6 @@ interface Ray {
   words: string;
 }
 
-/** Everything one transfer holds while it shows: its frame callbacks, its
- *  timers and its colour. `end` cancels and gives back all of them, at
- *  expiry or when the lane goes, so nothing outlives the ray. */
-class Showing {
-  private frames = new Set<number>();
-  private timers = new Set<ReturnType<typeof setTimeout>>();
-  private releases: (() => void)[] = [];
-
-  frame(callback: () => void): void {
-    const id = requestAnimationFrame(() => { this.frames.delete(id); callback(); });
-    this.frames.add(id);
-  }
-
-  after(ms: number, callback: () => void): void {
-    const id = setTimeout(() => { this.timers.delete(id); callback(); }, ms);
-    this.timers.add(id);
-  }
-
-  hold(release: () => void): void {
-    this.releases.push(release);
-  }
-
-  end(): void {
-    this.frames.forEach(cancelAnimationFrame);
-    this.timers.forEach(clearTimeout);
-    this.releases.splice(0).forEach((release) => release());
-    this.frames.clear();
-    this.timers.clear();
-  }
-}
-
-/** A transfer's ray, as the screen reader hears it: the visually hidden
- *  status line says what is under way while it shows. */
-const HIDDEN: CSSProperties = {
-  position: "absolute", width: 1, height: 1, margin: -1, padding: 0, overflow: "hidden",
-  clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
-};
-
 export function RayLane() {
   const [rays, setRays] = useState<Ray[]>([]);
   const [overflow, setOverflow] = useState(0);
@@ -94,7 +57,7 @@ export function RayLane() {
   // listeners are called once per message, where reading a store during
   // render would see only the last.
   useEffect(() => {
-    const showing = new Set<Showing>();
+    const showing = new Set<EffectLife>();
     let shown = 0;
 
     // An outgoing message whose view is not open lights its tab's icon
@@ -109,7 +72,7 @@ export function RayLane() {
     const draw = (transfer: Transfer) => {
       const motion = transferMotion(transfer);
       if (motion === "none") return;          // the quiet page draws no rays
-      const life = new Showing();
+      const life = new EffectLife();
       showing.add(life);
       const finish = () => { life.end(); showing.delete(life); };
       if (shown >= RAYS_SHOWN_MAX) {
@@ -141,7 +104,7 @@ export function RayLane() {
         // Outgoing, the orb goes into its transmitting state for as long as
         // the ray shows, leaning the way the ray leaves it.
         if (moving && outgoing) {
-          mainOrb.current?.transmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
+          transferTransmit(colour, { direction: rayDirection(d), seconds: RAY_MS / 1000 });
         }
         const ray: Ray = { id: transfer.id, end: transfer.end, direction: transfer.direction,
                            motion, d, colour, words: transfer.words };
@@ -154,7 +117,7 @@ export function RayLane() {
         life.after(RAY_TRAVEL_MS, () => {
           const seconds = (RAY_MS - RAY_TRAVEL_MS) / 1000;
           if (!outgoing) {
-            if (moving) mainOrb.current?.receive(colour, { direction: rayDirection(d), seconds });
+            if (moving) transferReceive(colour, { direction: rayDirection(d), seconds });
             return;
           }
           if (reachedTab(transfer, colour, seconds)) return;
@@ -184,7 +147,6 @@ export function RayLane() {
   // that commit is painted.
   useEffect(() => {
     if (!rays.length) return;
-    let frame = 0;
     const remeasure = () => setRays((now) => {
       let moved = false;
       const next = now.map((ray) => {
@@ -194,15 +156,11 @@ export function RayLane() {
       });
       return moved ? next : now;
     });
-    const follow = () => {
-      remeasure();
-      frame = requestAnimationFrame(follow);
-    };
-    frame = requestAnimationFrame(follow);
-    const unsubscribe = LAYOUT_SIGNALS.map((signal) => signal.subscribe(remeasure));
+    const stopFrames = onFrame(remeasure);
+    const stopGeometry = onGeometryChange(remeasure);
     return () => {
-      cancelAnimationFrame(frame);
-      unsubscribe.forEach((u) => u());
+      stopFrames();
+      stopGeometry();
     };
   }, [rays.length]);
 
@@ -240,7 +198,7 @@ export function RayLane() {
                 fill="rgba(229, 231, 235, 0.9)" fontSize={11}>+{overflow}</text>
         )}
       </svg>
-      <div id="ray-status" role="status" style={HIDDEN}>{words.join(". ")}</div>
+      <div id="ray-status" role="status" style={VISUALLY_HIDDEN}>{words.join(". ")}</div>
     </>
   );
 }

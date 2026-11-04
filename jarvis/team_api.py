@@ -92,7 +92,9 @@ def node_update(account_key: Optional[str]) -> dict:
 
 
 def _refusal(e: TeamError) -> dict:
-    return {"error": {"code": "team", "message": str(e)}}
+    """A refusal's body: its English as `message`, as before, and beside it
+    its code, values and the team server's own words (`said`, or null)."""
+    return {"error": {"code": "team", "message": str(e), "said": e.problem.to_json()}}
 
 
 def _refused(e: TeamError, status: int = 400) -> JSONResponse:

@@ -7,12 +7,20 @@
  *
  * Clicking voice input opens the voice Diagnostics view; clicking any other
  * row opens that subsystem's detail in the centre area (SubsystemView.tsx).
+ * Both run `subsystem.open`, the command the brain's request runs. Each row
+ * is a target the brain can point at (`subsystem`: row, status), this page's
+ * own row too, which has no detail.
  */
 
 import { useSyncExternalStore } from "react";
+import { RIGHT_SOCKET, row } from "./uiRight";
+import { useT } from "./locale";
 import { graphicsTrouble } from "./orb";
-import { openSubsystem, sessionsConnected, STATE_WORDS, subsystems, withPage, type Subsystem } from "./subsystems";
-import { openDiagnostics } from "./voiceHealth";
+import {
+  sessionsConnected, STATE_WORDS, subsystemName, subsystems, subsystemSummary, withPage, type Subsystem,
+} from "./subsystems";
+import { bind, bindingProps } from "./uiNavigation";
+import { useUiTarget } from "./uiRegistry";
 
 export function useSubsystems(): { list: Subsystem[]; error: string | null; read: boolean } {
   const live = useSyncExternalStore(subsystems.subscribe, subsystems.get);
@@ -27,36 +35,35 @@ export function useAnyDown(): boolean {
   return useSubsystems().list.some((s) => s.state === "down");
 }
 
-/** Open one subsystem's detail: voice input has its own view. */
-export function openSubsystemRow(id: string) {
-  if (id === "voice_input") {
-    openSubsystem.set(null);
-    openDiagnostics.set(true);
-  } else {
-    openDiagnostics.set(false);
-    openSubsystem.set(id);
-  }
-}
-
 export function SubsystemList() {
+  const t = useT();
   const { list, read } = useSubsystems();
   return (
-    <section className="subsystems" aria-label="Subsystems">
+    <section className="subsystems" aria-label={t("right.subsystems.label")}>
       <ul>
-        {list.map((s) => (
-          <li key={s.id}>
-            <button type="button" className={`subsystem-row state-${s.state}`} data-subsystem={s.id}
-                    title={`${s.name}: ${STATE_WORDS[s.state]}. ${s.summary}`}
-                    disabled={s.id === "page"} onClick={() => openSubsystemRow(s.id)}>
-              <span className={`subsystem-dot state-${s.state}`} aria-hidden="true" />
-              <span className="subsystem-name">{s.name}</span>
-              <span className="subsystem-state">{STATE_WORDS[s.state]}</span>
-              <span className="subsystem-summary">{s.summary}</span>
-            </button>
-          </li>
-        ))}
+        {list.map((s) => <SubsystemRow key={s.id} subsystem={s} />)}
       </ul>
-      {!read && <p className="subsystem-waiting">Reading JARVIS's subsystems…</p>}
+      {!read && <p className="subsystem-waiting">{t("right.subsystems.reading")}</p>}
     </section>
+  );
+}
+
+function SubsystemRow({ subsystem: s }: { subsystem: Subsystem }) {
+  useT();
+  const name = subsystemName(s);
+  const summary = subsystemSummary(s);
+  const ui = useUiTarget({ ref: { region: "right", view: "right.diagnostics", kind: "subsystem", key: s.id },
+                           label: name, socket: RIGHT_SOCKET });
+  return (
+    <li>
+      <button type="button" className={`subsystem-row state-${s.state}`} data-subsystem={s.id}
+              title={`${name}: ${STATE_WORDS[s.state]}. ${summary}`} ref={row(ui)}
+              disabled={s.id === "page"} {...bindingProps(bind("subsystem.open", { subsystemId: s.id }))}>
+        <span className={`subsystem-dot state-${s.state}`} aria-hidden="true" />
+        <span className="subsystem-name">{name}</span>
+        <span className="subsystem-state" ref={ui.part("status")}>{STATE_WORDS[s.state]}</span>
+        <span className="subsystem-summary">{summary}</span>
+      </button>
+    </li>
   );
 }

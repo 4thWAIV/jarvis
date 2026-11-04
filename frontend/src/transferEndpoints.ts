@@ -21,6 +21,7 @@
 import { agentReceipt, agentsLaidOut, agentsTabLit } from "./agents";
 import { createStore, type Store } from "./store";
 import { rayRoute, type Box } from "./rayGeometry";
+import type { RightTab } from "./uiNavigation";
 
 /** The attribute a queue row (or its icon) carries for the rays. */
 export const TRANSFER_ENDPOINT_ATTR = "data-transfer-endpoint";
@@ -44,8 +45,10 @@ export interface Endpoint {
   laidOut: Store<number>;
 }
 
-const tabIcon = (title: string) =>
-  document.querySelector(`.right-tabs [aria-label='${title}']`);
+/** A right-panel tab, found by its registered id (Tabs.tsx `data-ui-tab`),
+ *  never by its words, which follow the interface's language. */
+const tabIcon = (tab: RightTab) =>
+  document.querySelector(`.right-tabs [data-ui-tab="${tab}"]`);
 
 export function agentEndpoint(sessionId: string, n: number): Endpoint {
   return {
@@ -53,7 +56,7 @@ export function agentEndpoint(sessionId: string, n: number): Endpoint {
       const list = document.querySelector(".agents-list");
       const el = list
         ? list.querySelector(`li[data-session-id="${CSS.escape(sessionId)}"] .agent-orb`)
-        : tabIcon("Agents");
+        : tabIcon("agents");
       return el ? { box: el.getBoundingClientRect(), toTab: !list } : null;
     },
     reached(toTab, how) {
@@ -68,7 +71,7 @@ export function queueEndpoint(threadId: string): Endpoint {
   return {
     find() {
       const row = document.querySelector(`[${TRANSFER_ENDPOINT_ATTR}="${CSS.escape(threadId)}"]`);
-      const el = row ?? tabIcon("Queue");
+      const el = row ?? tabIcon("queue");
       return el ? { box: el.getBoundingClientRect(), toTab: !row } : null;
     },
     // The Queue's own unread cue is the lasting sign; the ray adds none.
@@ -80,14 +83,24 @@ export function queueEndpoint(threadId: string): Endpoint {
 /** Every end's layout signal, for a ray to re-measure on. */
 export const LAYOUT_SIGNALS: Store<number>[] = [agentsLaidOut, queueLaidOut];
 
+/** The fixed boxes every route from the orb is laid out against, measured
+ *  now: the main orb, the right column and the menu button's right edge.
+ *  Null while the orb or the column is not on the page. The rays and the
+ *  pipeline (uiPipeline.ts) both read them here. */
+export function lanes(): { orb: DOMRect; column: DOMRect; menuRight: number; width: number } | null {
+  const orb = document.getElementById("orb-control")?.getBoundingClientRect();
+  const column = document.getElementById("right-column")?.getBoundingClientRect();
+  if (!orb || !column) return null;
+  const menu = document.getElementById("controls")?.getBoundingClientRect();
+  return { orb, column, menuRight: menu?.right ?? 0, width: window.innerWidth };
+}
+
 /** The ray's path to `end` now, and whether it ends at a tab's icon; null
  *  while there is nothing to draw to. */
 export function measure(end: Endpoint): { d: string; toTab: boolean } | null {
-  const orb = document.getElementById("orb-control")?.getBoundingClientRect();
-  const column = document.getElementById("right-column")?.getBoundingClientRect();
+  const at = lanes();
   const found = end.find();
-  if (!orb || !column || !found) return null;
-  const menu = document.getElementById("controls")?.getBoundingClientRect();
-  return { d: rayRoute(orb, found.box, found.toTab, column, menu?.right ?? 0, window.innerWidth),
+  if (!at || !found) return null;
+  return { d: rayRoute(at.orb, found.box, found.toTab, at.column, at.menuRight, at.width),
            toTab: found.toTab };
 }

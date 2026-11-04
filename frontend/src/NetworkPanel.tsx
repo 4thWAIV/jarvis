@@ -10,22 +10,24 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT, type Translate } from "./locale";
 import { NetworkTile } from "./NetworkTile";
 import { network, rosterCurrent, selfFirst, sinceMs, type NetworkStatus } from "./network";
 import { shortAge } from "./timeFormat";
 import { useTick } from "./WorkflowsView";
 
 /** What to say when there is no roster to show. */
-function waiting(status: NetworkStatus | null, error: string | null): string {
-  if (!status) return error ? `Couldn't read the network (${error}); trying again.` : "Reading the network…";
+function waiting(t: Translate, status: NetworkStatus | null, error: string | null): string {
+  if (!status) return error ? t("right.network.readFailed", { error }) : t("right.network.reading");
   if (status.connection === "disconnected" || status.connection === "pairing") {
-    return "Not connected to a team server. Connect in Settings → Team.";
+    return t("right.network.notConnected");
   }
-  if (status.connection === "signed_out") return "Signed out of the team server. Sign in again in Settings → Team.";
-  return "Waiting for the team server's first answer.";
+  if (status.connection === "signed_out") return t("right.network.signedOut");
+  return t("right.network.firstAnswer");
 }
 
 export function NetworkPanel() {
+  const t = useT();
   useTick(1000);
   const live = useSyncExternalStore(network.subscribe, network.get);
   const status = live.value;
@@ -37,16 +39,19 @@ export function NetworkPanel() {
   return (
     <div className="right-view network-view">
       <div className="network-heading">
-        <span>Network</span>
-        {snapshot && <span className="roster-count">{current ? `${online} online` : `Last-known: ${nodes.length}`}</span>}
+        <span>{t("tabs.right.network")}</span>
+        {snapshot && <span className="roster-count">
+          {current ? t("right.network.online", { count: online }) : t("right.network.lastKnown", { count: nodes.length })}
+        </span>}
       </div>
       {snapshot && (
         <p className={`roster-freshness${current ? "" : " stale"}`}>
-          From Team Server · {age === null ? "" : current ? `updated ${shortAge(age)} ago` : `stale, ${shortAge(age)} old`}
+          {age === null ? t("right.network.from")
+            : t(current ? "right.network.fromUpdated" : "right.network.fromStale", { age: shortAge(age) })}
         </p>
       )}
-      {!snapshot && <p className="network-waiting">{waiting(status, live.error)}</p>}
-      {snapshot && !nodes.length && <p className="network-waiting">The team server lists no instances.</p>}
+      {!snapshot && <p className="network-waiting">{waiting(t, status, live.error)}</p>}
+      {snapshot && !nodes.length && <p className="network-waiting">{t("right.network.noInstances")}</p>}
       {nodes.map((n) => (
         <NetworkTile key={n.node_id} node={n} self={n.node_id === snapshot!.you_node_id} current={current} />
       ))}

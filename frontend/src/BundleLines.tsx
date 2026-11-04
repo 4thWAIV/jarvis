@@ -4,6 +4,9 @@
  * progress on a thread (its cues), and before sending, whether the
  * recipient's JARVIS should read the draft's files (MessageComposer.tsx).
  * Each says nothing while there is nothing out of the ordinary to say.
+ * Their words are `bundleWords`', in the language in force. A message's
+ * request line and a draft's request fields are each the `request` part of
+ * the target they sit in (`target`).
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -11,16 +14,23 @@ import type { Readiness, ReviewProgress } from "./bundleContract";
 import {
   bundlesChanged, bundleWords as W, readReadiness, readReview, setTask,
 } from "./bundles";
+import { useT } from "./locale";
 import { LIMITS, type AttachmentRef, type Draft, type TaskContext } from "./messagingContract";
 import type { OutcomeKind } from "./bundleContract";
 
+/** Where a line registers as its target's part. */
+type Target = (el: Element | null) => void;
+
 /** What the sender asked for, and which file is the one to review. */
-export function TaskLine({ task, attachments }: { task: TaskContext | null; attachments: AttachmentRef[] }) {
+export function TaskLine({ task, attachments, target }: {
+  task: TaskContext | null; attachments: AttachmentRef[]; target?: Target;
+}) {
+  useT();
   if (!task) return null;
   const primary = task.primary && attachments.find((a) => a.attachment_id === task.primary!.attachment_id
                                                         && a.sha256 === task.primary!.sha256);
   return (
-    <p className="message-task">
+    <p className="message-task" ref={target}>
       <span className="bundle-badge">{W.outcome[task.outcome_kind]}</span>{" "}
       <span className="message-task-words">{task.requested_outcome}</span>
       {primary && (
@@ -47,6 +57,7 @@ function useHinted<T>(read: () => Promise<T>, key: string): T | null {
 
 /** The owner's review progress on a thread, as one label. */
 export function ReviewProgressLabel({ thread }: { thread: string }) {
+  useT();
   const review = useHinted(() => readReview(thread), thread);
   const progress: ReviewProgress | null | undefined = review?.progress;
   if (!progress) return null;
@@ -55,6 +66,7 @@ export function ReviewProgressLabel({ thread }: { thread: string }) {
 
 /** Before sending: shown only when the recipient may not read the files. */
 export function ReadinessLine({ messageId, revision }: { messageId: string; revision: number }) {
+  useT();
   const result = useHinted(() => readReadiness(messageId), `${messageId}:${revision}`);
   const readiness: Readiness | undefined = result?.readiness;
   if (!result || readiness === "ready") return null;
@@ -71,7 +83,8 @@ export function ReadinessLine({ messageId, revision }: { messageId: string; revi
  *  file is the one to review (a member inside an archive is named through
  *  the brain's set_message_task). Saved as the draft's task when changed;
  *  "No request" clears it. */
-export function TaskFields({ draft, disabled }: { draft: Draft; disabled: boolean }) {
+export function TaskFields({ draft, disabled, target }: { draft: Draft; disabled: boolean; target?: Target }) {
+  useT();
   const task = draft.task;
   const [kind, setKind] = useState<OutcomeKind | "">(task?.outcome_kind ?? "");
   const [words, setWords] = useState(task?.requested_outcome ?? "");
@@ -103,20 +116,20 @@ export function TaskFields({ draft, disabled }: { draft: Draft; disabled: boolea
     }
   };
   return (
-    <div className="composer-task">
-      <select aria-label={W.request} value={kind} disabled={disabled}
+    <div className="composer-task" ref={target}>
+      <select data-ui-action="input" aria-label={W.request} value={kind} disabled={disabled}
               onChange={(e) => { const k = e.target.value as OutcomeKind | ""; setKind(k); void save({ kind: k }); }}>
         <option value="">{W.noRequest}</option>
         {(Object.keys(W.outcome) as OutcomeKind[]).map((k) => <option key={k} value={k}>{W.outcome[k]}</option>)}
       </select>
       {kind && (
-        <input type="text" aria-label={W.request} placeholder={W.request} value={words}
+        <input data-ui-action="input" type="text" aria-label={W.request} placeholder={W.request} value={words}
                maxLength={LIMITS.TASK_OUTCOME_MAX_CHARS} disabled={disabled}
                onChange={(e) => setWords(e.target.value)}
                onBlur={() => void save({})} />
       )}
       {kind && draft.attachments.length > 1 && (
-        <select aria-label={W.primary} disabled={disabled || !task}
+        <select data-ui-action="input" aria-label={W.primary} disabled={disabled || !task}
                 value={task?.primary?.attachment_id ?? ""}
                 onChange={(e) => void save({ primary: e.target.value })}>
           {draft.attachments.map((a) => <option key={a.attachment_id} value={a.attachment_id}>{a.filename}</option>)}

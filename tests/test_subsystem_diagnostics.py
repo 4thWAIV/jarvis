@@ -217,17 +217,24 @@ def test_a_message_held_in_the_queue_says_what_jarvis_takes_its_session_for():
 
 # ── messages from sessions, the needs board, the loops ────────────────────
 
+def _loop(b):
+    """A loop's state and its English."""
+    state, (_, text) = sd.judge(b, NOW)
+    return state, text
+
+
 def test_a_loop_s_states():
-    assert sd.judge_loop(None, NOW)[0] == sd.UNKNOWN
-    assert sd.judge_loop(live_beat("a", ok_ago=None, started_ago=1), NOW)[0] == sd.UNKNOWN
-    assert sd.judge_loop(live_beat("b", ok_ago=2), NOW)[0] == sd.OK
+    assert _loop(None)[0] == sd.UNKNOWN
+    assert _loop(live_beat("a", ok_ago=None, started_ago=1))[0] == sd.UNKNOWN
+    assert _loop(live_beat("b", ok_ago=2))[0] == sd.OK
     b = live_beat("c", every=5.0, ok_ago=51)           # 4 x 5 s + 30 s
-    assert sd.judge_loop(b, NOW) == (sd.DOWN, "Has not finished a look for 51 s")
+    assert _loop(b) == (sd.DOWN, "Has not finished a look for 51 s")
+    assert sd.judge(b, NOW)[1][0] == sd.Said("loopSilent", {"age": "51 s"})
     b = live_beat("d", ok_ago=None, started_ago=60)    # never finished one
-    assert sd.judge_loop(b, NOW)[0] == sd.DOWN
+    assert _loop(b)[0] == sd.DOWN
     b = live_beat("e", ok_ago=3)
     b.failed("disk full")
-    assert sd.judge_loop(b, NOW) == (sd.DEGRADED, "The last look failed: disk full")
+    assert _loop(b) == (sd.DEGRADED, "The last look failed: disk full")
 
 
 def test_message_files_left_waiting_are_degraded(tmp_path):
@@ -452,7 +459,8 @@ def test_the_route_lists_every_subsystem(server):
                    "workflows", "folders", "team_server"]
     for s in body["subsystems"]:
         assert s["state"] in ("ok", "degraded", "down", "idle", "unknown") and s["summary"]
-        assert all(set(c) == {"id", "name", "state", "detail"} for c in s["checks"])
+        assert all(set(c) == {"id", "name", "state", "detail", "name_said", "said"} for c in s["checks"])
+        assert s["name_said"]["code"] == s["id"] or s["id"] == "brain"
     comms_row = body["subsystems"][0]
     assert comms_row["messages"][0]["agentName"] == "hammer"
     assert "messages" not in body["subsystems"][1]
@@ -551,3 +559,57 @@ def test_team_server_unreachable_is_degraded_never_down():
 def test_team_server_not_connected_is_idle():
     assert sd.team_server({}, 0.0).state == sd.IDLE
     assert sd.team_server({"state": "disconnected"}, 0.0).summary == "Not connected"
+
+
+# ── the page's words for the same lines ──────────────────────────────────
+
+def test_every_line_and_name_is_in_the_page_catalog_with_the_same_english():
+    """The page says each line by its code (frontend/src/messages/right.en.ts,
+    and right.es.ts in Spanish). Its English is this module's, word for word
+    and placeholder for placeholder, so the two never drift apart. `badCheck`
+    is not a catalog line: the page puts the failing check's own name and
+    detail together."""
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is needed to read the page's catalog")
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run([node, "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
+                          "import { rightEn } from './frontend/src/messages/right.en.ts';"
+                          "console.log(JSON.stringify(rightEn))"],
+                         capture_output=True, text=True, cwd=root, timeout=60)
+    assert out.returncode == 0, out.stderr[-2000:]
+    catalog = json.loads(out.stdout)
+    said = {code: text for code, text in sd.SAID.items() if code != "badCheck"}
+    assert {code: catalog.get(f"right.subsystem.said.{code}") for code in said} == said
+    assert {code: catalog.get(f"right.subsystem.name.{code}") for code in sd.NAMES} == sd.NAMES
+
+
+def test_each_line_carries_its_code_and_values():
+    s = sd.team_server({"state": "stale", "last_contact_at": "1970-01-12T13:46:20+00:00"}, NOW)
+    assert s.said == sd.Said("teamStaleSince", {"age": "20 s"})
+    assert s.name_said == sd.Said("team_server", {})
+    assert s.checks[0].name_said == sd.Said("connection", {})
+    # Another program's words have no code: they are shown as they came.
+    s = sd.team_server({"state": "signed_out", "last_error": "session revoked"}, NOW)
+    assert (s.said, s.summary) == (None, "session revoked")
+    # team_client's own words carry their code beside the English.
+    said = {"code": "sessionEnded", "values": {}, "detail": ""}
+    s = sd.team_server({"state": "signed_out", "last_error": "The team server ended this session; sign in again.",
+                        "last_error_said": said}, NOW)
+    assert s.summary == "The team server ended this session; sign in again."
+    assert s.said == sd.Said("teamError", {"error": s.summary, "errorSaid": said})
+
+
+def test_a_voice_cause_s_code_rides_beside_its_english():
+    summary = {"state": "decoder-slow", "cause": "Machine busy (load 16.9)", "causeCode": "machineBusy",
+               "causeValues": {"load": 16.9}, "lastDropAt": None,
+               "pipeline": {"mic": {"state": "ok", "value": 10}}}
+    s = sd.voice_input(summary, NOW)
+    assert s.summary == "Falling behind: Machine busy (load 16.9)"
+    assert s.said == sd.Said("voiceBehind", {"cause": "Machine busy (load 16.9)",
+                                             "causeSaid": {"code": "machineBusy", "values": {"load": 16.9}}})

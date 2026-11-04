@@ -5,15 +5,19 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { useT } from "./locale";
 import { micMuted } from "./mic";
 
-export function MuteButton() {
+export function MuteButton({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
+  const t = useT();
   const muted = useSyncExternalStore(micMuted.subscribe, micMuted.get);
   return (
     <button
       id="btn-mute"
+      ref={partRef}
+      data-ui-action="microphone"
       className={`control-button small${muted ? " muted" : ""}`}
-      title="Mute/Unmute"
+      title={t("left.mic.mute")}
       onClick={(e) => {
         e.stopPropagation();
         micMuted.set(!micMuted.get());

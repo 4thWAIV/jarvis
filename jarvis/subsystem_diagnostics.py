@@ -37,6 +37,7 @@ from typing import Optional
 
 from jarvis import (data_paths, run_store, session_messages, session_steer, voice_diagnostics,
                     workflow_store)
+from jarvis.said import Said, english as _english
 from jarvis.session_watch import DELIVERY_TIMEOUT_SEC, GONE
 
 OK, DEGRADED, DOWN, IDLE, UNKNOWN = "ok", "degraded", "down", "idle", "unknown"
@@ -92,12 +93,174 @@ WORKFLOW_LOOP = "workflow silence"
 FOLDERS_LOOP = "folder discovery"
 
 
+# ── the words: a code and its values, and the English said from them ─────
+#
+# Every line here is JARVIS's own, so each is a code and the values it names
+# (`Said`), as well as the English the brain reads (`detail`, `summary`,
+# `name`). The page says the code in the interface's language from its
+# catalog (frontend/src/messages/right.en.ts, `right.subsystem.said.<code>`
+# and `right.subsystem.name.<code>`, with these same English words and
+# placeholders: tests/test_subsystem_diagnostics.py holds the two together).
+# A value is never translated: an agent's name, an error another program
+# wrote, a figure. A name with no code (a product, a stage's raw id) is
+# shown as it is.
+
+# The English of every line, by code. A dict is plural forms, chosen by the
+# value `count`.
+SAID: dict[str, str | dict[str, str]] = {
+    "starting": "Starting",
+    "notStarted": "Not started",
+    "loopSilent": "Has not finished a look for {age}",
+    "loopFailed": "The last look failed: {error}",
+    "loopOk": "Last look {age} ago",
+    "badCheck": "{name}: {detail}",
+    "watcherNotRunning": "Not running: no session is being watched",
+    "watcherFailing": "{failures} looks failed in a row: {error}",
+    "watcherSilent": "Has not finished a look at the sessions for {age}",
+    "watcherOk": {"one": "Watching {count} session; last look {age} ago",
+                  "other": "Watching {count} sessions; last look {age} ago"},
+    "outgoingNone": "No messages sent in the last hour",
+    "outgoingLostMany": "The last {count} messages, to {agents} different agents, did not reach them",
+    "outgoingLostManyUnseen": ("The last {count} messages, to {agents} different agents, did not reach "
+                               "them; the latest: it never showed up in the agent's conversation"),
+    "outgoingLostManyWhy": ("The last {count} messages, to {agents} different agents, did not reach "
+                            "them; the latest: {why}"),
+    # One message lost, or several (`count`): the one is never counted.
+    "outgoingLostOne": "The last message to {agent} did not reach it",
+    "outgoingLostOneUnseen": ("The last message to {agent} did not reach it: it never showed up in the "
+                              "agent's conversation"),
+    "outgoingLostOneWhy": "The last message to {agent} did not reach it: {why}",
+    "outgoingLost": "The last {count} messages to {agent} did not reach it",
+    "outgoingLostUnseen": ("The last {count} messages to {agent} did not reach it: it never showed up in "
+                           "the agent's conversation"),
+    "outgoingLostWhy": "The last {count} messages to {agent} did not reach it: {why}",
+    "outgoingOk": {"one": "{count} reached their agents in the last hour",
+                   "other": "{count} reached their agents in the last hour"},
+    "outgoingOkSomeLost": {"one": "{count} reached their agents in the last hour, {lost} did not",
+                           "other": "{count} reached their agents in the last hour, {lost} did not"},
+    "queuedNone": "No message waiting for its turn",
+    "queuedOk": {"one": "{count} message waiting for its turn, the oldest {age}",
+                 "other": "{count} messages waiting for their turn, the oldest {age}"},
+    "queuedHeld": "A message to {agent} has waited {age} for its turn",
+    "queuedHeldSeen": "A message to {agent} has waited {age} for its turn; JARVIS sees it as {state}",
+    "incomingWaiting": {"one": "{count} message waiting over {age} to be picked up",
+                        "other": "{count} messages waiting over {age} to be picked up"},
+    "voiceIdle": "Not listening",
+    "voiceDropping": "Dropping speech",
+    "voiceDroppingCause": "Dropping speech: {cause}",
+    "voiceBehind": "Falling behind: {cause}",
+    "voiceOk": "Hearing you",
+    "brainAtLimit": "At the usage limit",
+    "brainWithinLimit": "Within the limit",
+    "toolsFailing": "Tool calls are failing: {error}",
+    "brainLoginExpired": "Its login has expired",
+    "brainCrashed": "Stopped after crashing repeatedly",
+    "brainRestarting": "Restarting after a crash or a stall",
+    "brainAutostartOff": "Not started (autostart is off)",
+    "brainNoProcess": "No brain process is running",
+    "brainWarming": "Warming up",
+    "brainRestarted": {"one": "Restarted {count} time in the last {age}",
+                       "other": "Restarted {count} times in the last {age}"},
+    "brainReady": "Ready",
+    "outputNoKey": "No Fish Audio key: nothing can be said",
+    "outputNothing": "Nothing said yet",
+    "outputFailing": "The last {count} sentences could not be voiced",
+    "outputSomeFailed": {"one": "{count} sentence not voiced in the last {age}",
+                         "other": "{count} sentences not voiced in the last {age}"},
+    "outputOk": "Last sentence voiced {age} ago",
+    "callsLast": "Last tool call {age} ago",
+    "callsNone": "No tool calls yet",
+    "toolsBrainStopped": "The brain is not running",
+    "toolsUnreported": "The brain has not reported its tools",
+    "toolsWouldNotStart": "The brain's link to JARVIS's tools would not start",
+    "toolsLink": "The brain's link to JARVIS's tools is {status}",
+    "toolsNotConnected": "The brain's link to JARVIS's tools is not connected",
+    "connected": "Connected",
+    "workflowsQuiet": {"one": "{count} workflow has gone quiet", "other": "{count} workflows have gone quiet"},
+    "workflowsRunning": {"one": "{count} workflow running", "other": "{count} workflows running"},
+    "workflowsNone": "No workflows running",
+    "foldersOff": "Not running",
+    "foldersUnavailable": ("{count} of {total} not available ({missing} missing, {denied} access denied, "
+                           "{elsewhere} on an unavailable node)"),
+    "foldersOk": {"one": "{count} folder, all available", "other": "{count} folders, all available"},
+    "foldersNone": "No folders registered",
+    "discoveryOff": "Discovery is switched off",
+    "discoveryFailed": "Could not read {source}: {error}",
+    "discoveryPending": "{count} history files still to read",
+    "discoveryPendingSince": "{count} history files still to read; last full look {age} ago",
+    "discoveryDone": "Up to date",
+    "discoveryDoneSince": "Up to date; last full look {age} ago",
+    "discoveryNotYet": "Not yet looked",
+    "teamOnline": "Online",
+    "teamOnlineSince": "Online, last contact {age} ago",
+    "teamOnlineAs": "Online as {login}",
+    "teamOnlineAsSince": "Online as {login}, last contact {age} ago",
+    "teamOnlineTeam": "Online: {team}",
+    "teamOnlineTeamSince": "Online: {team}, last contact {age} ago",
+    "teamOnlineTeamAs": "Online: {team} as {login}",
+    "teamOnlineTeamAsSince": "Online: {team} as {login}, last contact {age} ago",
+    "teamStale": "Can't reach the team server",
+    "teamStaleSince": "Can't reach the team server; last contact {age} ago",
+    "teamSignedOut": "Signed out; sign in again in Settings",
+    # Why it signed out, in team_client's words; its code rides beside it
+    # as `errorSaid`, which the page words from its own catalog.
+    "teamError": "{error}",
+    "teamConnecting": "Connecting",
+    "teamPairing": "Waiting for this Mac to be approved on the team server",
+    "teamNotConnected": "Not connected",
+}
+
+# The English of every subsystem's and check's name, by code.
+NAMES: dict[str, str] = {
+    "communications": "Communications",
+    "voice_input": "Voice input",
+    "brain": "Brain",
+    "brainProvider": "Brain ({provider})",
+    "voice_output": "Voice output",
+    "tool_channel": "Tool channel",
+    "workflows": "Workflow monitor",
+    "folders": "Folder catalog",
+    "team_server": "Team server",
+    "watcher": "Session watcher",
+    "outgoing": "Messages to agents",
+    "queued": "Queued messages",
+    "incoming": "Messages from agents",
+    "needs": "Needs board",
+    "mic": "Microphone",
+    "browser": "Page",
+    "connection": "Connection",
+    "recogniser": "Recogniser",
+    "server": "Server",
+    "usage": "Usage limit",
+    "process": "Process",
+    "toolCalls": "Tool calls",
+    "toolServer": "JARVIS's tools in the brain",
+    "workflowsRunning": "Workflows",
+    "workflowsWatch": "Watch for quiet",
+    "folderList": "Folders",
+    "discovery": "Discovery",
+    "discoveryLoop": "Discovery loop",
+}
+
+
+def say(code: str, **values) -> tuple[Said, str]:
+    """A line by its code: what the page is sent, and its English."""
+    return Said(code, values), _english(SAID[code], values)
+
+
+def named(code: str, **values) -> tuple[Said, str]:
+    """A name by its code: what the page is sent, and its English."""
+    return Said(code, values), _english(NAMES[code], values)
+
+
 @dataclass(frozen=True)
 class Check:
     id: str
     name: str
     state: str
     detail: str
+    name_said: Optional[Said] = None
+    said: Optional[Said] = None
 
 
 @dataclass
@@ -108,19 +271,38 @@ class Subsystem:
     summary: str
     checks: list[Check] = field(default_factory=list)
     messages: Optional[list[dict]] = None       # communications only
+    name_said: Optional[Said] = None
+    said: Optional[Said] = None
+
+
+Line = tuple[str, tuple[Said, str]]     # a state, and what is said of it
+
+
+def check(id: str, name: str, state: str, line: tuple[Said, str]) -> Check:
+    """A check whose name is the name code `name` and whose detail is `line`."""
+    name_said, name_text = named(name)
+    return Check(id, name_text, state, line[1], name_said, line[0])
+
+
+def subsystem(id: str, state: str, line: tuple[Said, str], checks: list[Check],
+              name: Optional[tuple[Said, str]] = None, **extra) -> Subsystem:
+    """A subsystem named by its id's name code (or `name`), saying `line`."""
+    name_said, name_text = name or named(id)
+    return Subsystem(id, name_text, state, line[1], checks, name_said=name_said, said=line[0], **extra)
 
 
 def worst(states) -> str:
     return max(states, key=_RANK.__getitem__, default=UNKNOWN)
 
 
-def from_checks(id: str, name: str, checks: list[Check], fine: str, **extra) -> Subsystem:
+def from_checks(id: str, checks: list[Check], fine: tuple[Said, str], **extra) -> Subsystem:
     """A subsystem as bad as its worst check, saying which check and why
     when that is down or degraded, and `fine` otherwise."""
     state = worst(c.state for c in checks)
     bad = next((c for c in checks if c.state == state), None) if state in (DOWN, DEGRADED) else None
-    summary = f"{bad.name}: {bad.detail}" if bad else "Starting" if state == UNKNOWN else fine
-    return Subsystem(id, name, state, summary, checks, **extra)
+    line = (Said("badCheck", {"check": bad.id}), f"{bad.name}: {bad.detail}") if bad \
+        else say("starting") if state == UNKNOWN else fine
+    return subsystem(id, state, line, checks, **extra)
 
 
 def age(seconds: float) -> str:
@@ -184,46 +366,47 @@ tool_calls = Outcomes()
 
 # ── the probes ───────────────────────────────────────────────────────────
 
-def judge_loop(b: Optional[Beat], now: float) -> tuple[str, str]:
+def judge(b: Optional[Beat], now: float) -> Line:
+    """A background loop's state, and what is said of it."""
     if b is None:
-        return UNKNOWN, "Not started"
+        return UNKNOWN, say("notStarted")
     quiet = now - (b.last_ok_at or b.started_at)
     if quiet > b.down_after():
-        return DOWN, f"Has not finished a look for {age(quiet)}"
+        return DOWN, say("loopSilent", age=age(quiet))
     if b.failures:
-        return DEGRADED, f"The last look failed: {b.error}"
+        return DEGRADED, say("loopFailed", error=b.error)
     if b.last_ok_at is None:
-        return UNKNOWN, "Starting"
-    return OK, f"Last look {age(quiet)} ago"
+        return UNKNOWN, say("starting")
+    return OK, say("loopOk", age=age(quiet))
 
 
 def watcher_check(watcher, now: float, started_at: float) -> Check:
     """The session watcher: the one thing that sees the agents' sessions,
     sends queued messages and follows every message sent."""
-    name = "Session watcher"
+    def one(state: str, line: tuple[Said, str]) -> Check:
+        return check("watcher", "watcher", state, line)
     young = now - started_at < STARTUP_GRACE_SEC
     if watcher is None or not watcher.running:
         if young:
-            return Check("watcher", name, UNKNOWN, "Starting")
-        return Check("watcher", name, DOWN, "Not running: no session is being watched")
+            return one(UNKNOWN, say("starting"))
+        return one(DOWN, say("watcherNotRunning"))
     if watcher.poll_failures >= WATCHER_FAILURES_DOWN:
-        return Check("watcher", name, DOWN,
-                     f"{watcher.poll_failures} looks failed in a row: {watcher.last_poll_error}")
+        return one(DOWN, say("watcherFailing", failures=watcher.poll_failures,
+                             error=watcher.last_poll_error))
     if watcher.last_poll_ok_at is None:
         if young:
-            return Check("watcher", name, UNKNOWN, "Starting")
+            return one(UNKNOWN, say("starting"))
         quiet = now - started_at
     else:
         quiet = now - watcher.last_poll_ok_at
     if quiet > WATCHER_DOWN_SEC:
-        return Check("watcher", name, DOWN, f"Has not finished a look at the sessions for {age(quiet)}")
+        return one(DOWN, say("watcherSilent", age=age(quiet)))
     if watcher.poll_failures:
-        return Check("watcher", name, DEGRADED, f"The last look failed: {watcher.last_poll_error}")
+        return one(DEGRADED, say("loopFailed", error=watcher.last_poll_error))
     if quiet > WATCHER_LATE_SEC:
-        return Check("watcher", name, DEGRADED, f"Last look {age(quiet)} ago")
+        return one(DEGRADED, say("loopOk", age=age(quiet)))
     sessions = sum(s.state != GONE for s in watcher.snapshot.sessions)
-    return Check("watcher", name, OK,
-                 f"Watching {sessions} session{'s' if sessions != 1 else ''}; last look {age(quiet)} ago")
+    return one(OK, say("watcherOk", count=sessions, age=age(quiet)))
 
 
 def message_outcome(m, now: float) -> Optional[str]:
@@ -241,24 +424,26 @@ def message_outcome(m, now: float) -> Optional[str]:
     return None
 
 
-def _why_lost(m) -> Optional[str]:
-    """What the channel said when this message was lost, if it said more
-    than the bare outcome."""
+def _why_lost(m) -> tuple[str, dict]:
+    """How a lost message's line ends: "Unseen" when it never showed up in
+    the agent's conversation, "Why" with what the channel said when it said
+    more than the bare outcome, else nothing."""
     if str(m.status) == "undelivered":
-        return "it never showed up in the agent's conversation"
+        return "Unseen", {}
     failure = m.failure or ""
     reason = failure.split(":", 1)[1].strip() if ":" in failure else ""
-    return reason or None
+    return ("Why", {"why": reason}) if reason else ("", {})
 
 
 def outgoing_check(messages: list, now: float) -> Check:
     """Messages to sessions, newest first, from the last hour."""
-    name = "Messages to agents"
+    def one(state: str, line: tuple[Said, str]) -> Check:
+        return check("outgoing", "outgoing", state, line)
     recent = [(m, message_outcome(m, now)) for m in messages
               if now - (m.sent_at or m.staged_at) <= MESSAGES_WINDOW_SEC]
     judged = [(m, o) for m, o in recent if o is not None]
     if not judged:
-        return Check("outgoing", name, IDLE, "No messages sent in the last hour")
+        return one(IDLE, say("outgoingNone"))
     streak = []
     for m, outcome in judged:
         if outcome == "reached":
@@ -266,52 +451,45 @@ def outgoing_check(messages: list, now: float) -> Check:
         streak.append(m)
     sessions = {m.session_id for m in streak}
     if len(sessions) >= LOST_SESSIONS_DOWN:
-        why = _why_lost(streak[0])
-        return Check("outgoing", name, DOWN,
-                     f"The last {len(streak)} messages, to {len(sessions)} different agents, "
-                     f"did not reach them" + (f"; the latest: {why}" if why else ""))
+        end, why = _why_lost(streak[0])
+        return one(DOWN, say("outgoingLostMany" + end, count=len(streak), agents=len(sessions), **why))
     if streak:
-        n = len(streak)
-        why = _why_lost(streak[0])
-        return Check("outgoing", name, DEGRADED,
-                     f"The last {'message' if n == 1 else f'{n} messages'} to "
-                     f"{streak[0].agent_name} did not reach it" + (f": {why}" if why else ""))
+        end, why = _why_lost(streak[0])
+        if len(streak) == 1:
+            return one(DEGRADED, say("outgoingLostOne" + end, agent=streak[0].agent_name, **why))
+        return one(DEGRADED, say("outgoingLost" + end, count=len(streak), agent=streak[0].agent_name, **why))
     reached = sum(o == "reached" for _, o in judged)
     lost = len(judged) - reached
-    return Check("outgoing", name, OK,
-                 f"{reached} reached their agents in the last hour"
-                 + (f", {lost} did not" if lost else ""))
+    return one(OK, say("outgoingOkSomeLost", count=reached, lost=lost) if lost
+               else say("outgoingOk", count=reached))
 
 
 def queued_check(queued: list, watcher, now: float) -> Check:
     """Messages waiting for their session's turn, oldest first: one held
     too long names its agent and what JARVIS takes that session to be doing."""
-    name = "Queued messages"
+    def one(state: str, line: tuple[Said, str]) -> Check:
+        return check("queued", "queued", state, line)
     if not queued:
-        return Check("queued", name, IDLE, "No message waiting for its turn")
+        return one(IDLE, say("queuedNone"))
     oldest = min(queued, key=lambda m: m.staged_at)
     waited = now - oldest.staged_at
     if waited <= QUEUED_LONG_SEC:
-        n = len(queued)
-        return Check("queued", name, OK,
-                     f"{n} message{'s' if n != 1 else ''} waiting for {'its' if n == 1 else 'their'} "
-                     f"turn, the oldest {age(waited)}")
+        return one(OK, say("queuedOk", count=len(queued), age=age(waited)))
     snapshot = getattr(watcher, "snapshot", None)
     session = snapshot.by_id(oldest.session_id) if hasattr(snapshot, "by_id") else None
-    seen = f"; JARVIS sees it as {session.state}" if session is not None else ""
-    return Check("queued", name, DEGRADED,
-                 f"A message to {oldest.agent_name} has waited {age(waited)} for its turn{seen}")
+    if session is not None:
+        return one(DEGRADED, say("queuedHeldSeen", agent=oldest.agent_name, age=age(waited),
+                                 state=str(session.state)))
+    return one(DEGRADED, say("queuedHeld", agent=oldest.agent_name, age=age(waited)))
 
 
 def incoming_check(b: Optional[Beat], waiting: int, now: float) -> Check:
     """Messages sessions drop for Tim: the loop that takes them, and any file
     left waiting."""
-    name = "Messages from agents"
-    state, detail = judge_loop(b, now)
+    state, line = judge(b, now)
     if state in (OK, UNKNOWN) and waiting:
-        state, detail = DEGRADED, (f"{waiting} message{'s' if waiting != 1 else ''} "
-                                   f"waiting over {age(FILE_WAITING_SEC)} to be picked up")
-    return Check("incoming", name, state, detail)
+        state, line = DEGRADED, say("incomingWaiting", count=waiting, age=age(FILE_WAITING_SEC))
+    return check("incoming", "incoming", state, line)
 
 
 def communications(watcher, messages: list, beats_now: dict, waiting: int,
@@ -321,9 +499,10 @@ def communications(watcher, messages: list, beats_now: dict, waiting: int,
         outgoing_check(messages, now),
         queued_check(list(queued), watcher, now),
         incoming_check(beats_now.get(SESSION_MESSAGES_LOOP), waiting, now),
-        Check("needs", "Needs board", *judge_loop(beats_now.get(NEEDS_LOOP), now)),
+        check("needs", "needs", *judge(beats_now.get(NEEDS_LOOP), now)),
     ]
-    return from_checks("communications", "Communications", checks, checks[0].detail,
+    first = checks[0]
+    return from_checks("communications", checks, (first.said, first.detail),
                        messages=[message_json(m, now) for m in messages[:20]])
 
 
@@ -334,129 +513,135 @@ def message_json(m, now: float) -> dict:
 
 
 _STAGE_STATES = {"ok": OK, "warn": DEGRADED, "bad": DOWN, "unknown": UNKNOWN}
-_STAGE_NAMES = {"mic": "Microphone", "browser": "Page", "connection": "Connection",
-                "recogniser": "Recogniser", "jarvis": "Server"}
+# The audio's stages, by their names' codes (the page's own voice stages).
+_STAGE_NAMES = {"mic": "mic", "browser": "browser", "connection": "connection",
+                "recogniser": "recogniser", "jarvis": "server"}
+
+
+def _stage(stage: str, state: str, detail: str) -> Check:
+    """One stage of the audio: a figure, no words."""
+    code = _STAGE_NAMES.get(stage)
+    name_said, name_text = named(code) if code else (None, stage)
+    return Check(stage, name_text, state, detail, name_said)
 
 
 def voice_input(summary: dict, now: float) -> Subsystem:
     """Voice input, judged from the voice record's own summary."""
     state = summary["state"]
     dropped = summary.get("lastDropAt")
-    checks = [Check(stage, _STAGE_NAMES.get(stage, stage), _STAGE_STATES.get(v["state"], UNKNOWN),
-                    "" if v["value"] is None else f"{v['value']:.2f}")
+    checks = [_stage(stage, _STAGE_STATES.get(v["state"], UNKNOWN),
+                     "" if v["value"] is None else f"{v['value']:.2f}")
               for stage, v in summary["pipeline"].items()]
     if state == "idle":
-        return Subsystem("voice_input", "Voice input", IDLE, "Not listening",
-                         [Check(c.id, c.name, IDLE, "") for c in checks])
+        return subsystem("voice_input", IDLE, say("voiceIdle"),
+                         [Check(c.id, c.name, IDLE, "", c.name_said) for c in checks])
     cause = summary.get("cause") or ""
+    # The cause's own code rides beside its English (`causeSaid`), for the
+    # page to word from its catalog (voice_diagnostics.CAUSES).
+    coded = ({"causeSaid": {"code": summary["causeCode"], "values": summary.get("causeValues") or {}}}
+             if summary.get("causeCode") else {})
     if state == "no-frames" or (dropped is not None and now - dropped < VOICE_DROPPING_SEC):
-        return Subsystem("voice_input", "Voice input", DOWN,
-                         f"Dropping speech{': ' + cause if cause else ''}", checks)
+        return subsystem("voice_input", DOWN,
+                         say("voiceDroppingCause", cause=cause, **coded) if cause else say("voiceDropping"), checks)
     if state != "healthy":
-        return Subsystem("voice_input", "Voice input", DEGRADED, f"Falling behind: {cause}", checks)
-    return Subsystem("voice_input", "Voice input", OK, "Hearing you", checks)
+        return subsystem("voice_input", DEGRADED, say("voiceBehind", cause=cause, **coded), checks)
+    return subsystem("voice_input", OK, say("voiceOk"), checks)
 
 
 def brain(b, autostart: bool, now: float, started_at: float,
           calls: Optional[Outcomes] = None) -> Subsystem:
     """The brain, from the live Brain; and its tool calls, since a brain that
     cannot use a tool cannot do anything he asks of it."""
-    def one(state: str, summary: str) -> Subsystem:
-        usage = (Check("usage", "Usage limit", DEGRADED, "At the usage limit")
+    def one(state: str, line: tuple[Said, str]) -> Subsystem:
+        usage = (check("usage", "usage", DEGRADED, say("brainAtLimit"))
                  if b is not None and b.rate_limited else
-                 Check("usage", "Usage limit", OK, "Within the limit"))
+                 check("usage", "usage", OK, say("brainWithinLimit")))
         provider = getattr(getattr(b, "provider", None), "name", None)
-        checks = [Check("process", "Process", state, summary), usage]
+        checks = [check("process", "process", state, line), usage]
         if calls is not None and calls.items and not calls.items[-1][1]:
-            failing = f"Tool calls are failing: {calls.items[-1][2]}"
-            checks.append(Check("tools", "Tool calls", DOWN, failing))
+            failing = say("toolsFailing", error=calls.items[-1][2])
+            checks.append(check("tools", "toolCalls", DOWN, failing))
             if state in (OK, DEGRADED):
-                state, summary = DOWN, failing
-        return Subsystem("brain", f"Brain ({provider})" if provider else "Brain", state, summary,
-                         checks)
+                state, line = DOWN, failing
+        return subsystem("brain", state, line, checks,
+                         name=named("brainProvider", provider=provider) if provider else None)
     if b is None:
-        return one(UNKNOWN, "Not started")
+        return one(UNKNOWN, say("notStarted"))
     if b.failed:
-        return one(DOWN, "Its login has expired" if b.failure_reason == "auth"
-                   else "Stopped after crashing repeatedly")
+        return one(DOWN, say("brainLoginExpired") if b.failure_reason == "auth" else say("brainCrashed"))
     if b.restarting:
-        return one(DEGRADED, "Restarting after a crash or a stall")
+        return one(DEGRADED, say("brainRestarting"))
     if not b.running:
         if not autostart:
-            return one(UNKNOWN, "Not started (autostart is off)")
+            return one(UNKNOWN, say("brainAutostartOff"))
         if now - started_at < STARTUP_GRACE_SEC:
-            return one(UNKNOWN, "Starting")
-        return one(DOWN, "No brain process is running")
+            return one(UNKNOWN, say("starting"))
+        return one(DOWN, say("brainNoProcess"))
     if not b.ready:
-        return one(UNKNOWN, "Warming up")
+        return one(UNKNOWN, say("brainWarming"))
     if b.rate_limited:
-        return one(DEGRADED, "At the usage limit")
+        return one(DEGRADED, say("brainAtLimit"))
     if b.recent_restarts:
-        n = b.recent_restarts
-        return one(DEGRADED, f"Restarted {n} time{'s' if n != 1 else ''} in the last "
-                             f"{age(b.config.restart_window)}")
-    return one(OK, "Ready")
+        return one(DEGRADED, say("brainRestarted", count=b.recent_restarts,
+                                 age=age(b.config.restart_window)))
+    return one(OK, say("brainReady"))
 
 
 def voice_output(has_key: bool, calls: Outcomes, now: float) -> Subsystem:
     """Fish Audio, from each synthesis's outcome."""
-    def one(state: str, summary: str) -> Subsystem:
-        return Subsystem("voice_output", "Voice output", state, summary,
-                         [Check("fish", "Fish Audio", state, summary)])
+    def one(state: str, line: tuple[Said, str]) -> Subsystem:
+        # Fish Audio is a product's name: it has no code, and is shown as it is.
+        return subsystem("voice_output", state, line,
+                         [Check("fish", "Fish Audio", state, line[1], None, line[0])])
     if not has_key:
-        return one(DOWN, "No Fish Audio key: nothing can be said")
+        return one(DOWN, say("outputNoKey"))
     items = list(calls.items)
     if not items:
-        return one(UNKNOWN, "Nothing said yet")
+        return one(UNKNOWN, say("outputNothing"))
     last = items[-VOICE_FAILURES_DOWN:]
     if len(last) == VOICE_FAILURES_DOWN and not any(ok for _, ok, _ in last):
-        return one(DOWN, f"The last {VOICE_FAILURES_DOWN} sentences could not be voiced")
+        return one(DOWN, say("outputFailing", count=VOICE_FAILURES_DOWN))
     failed = [at for at, ok, _ in items if not ok and now - at < VOICE_FAILURE_RECENT_SEC]
     if failed:
-        n = len(failed)
-        return one(DEGRADED, f"{n} sentence{'s' if n != 1 else ''} not voiced in the last "
-                             f"{age(VOICE_FAILURE_RECENT_SEC)}")
-    return one(OK, f"Last sentence voiced {age(now - items[-1][0])} ago")
+        return one(DEGRADED, say("outputSomeFailed", count=len(failed), age=age(VOICE_FAILURE_RECENT_SEC)))
+    return one(OK, say("outputOk", age=age(now - items[-1][0])))
 
 
 def tool_channel(b, calls: Outcomes, now: float) -> Subsystem:
     """The brain's MCP child and /internal/tool."""
-    def one(state: str, summary: str) -> Subsystem:
+    def one(state: str, line: tuple[Said, str]) -> Subsystem:
         taken = [at for at, ok, _ in calls.items if ok]
-        last = (f"last tool call {age(now - taken[-1])} ago" if taken else "no tool calls yet")
-        return Subsystem("tool_channel", "Tool channel", state, summary,
-                         [Check("server", "JARVIS's tools in the brain", state, summary),
-                          Check("calls", "Tool calls", OK if taken else IDLE, last.capitalize())])
+        last = say("callsLast", age=age(now - taken[-1])) if taken else say("callsNone")
+        return subsystem("tool_channel", state, line,
+                         [check("server", "toolServer", state, line),
+                          check("calls", "toolCalls", OK if taken else IDLE, last)])
     if calls.items and not calls.items[-1][1]:
-        return one(DOWN, f"Tool calls are failing: {calls.items[-1][2]}")
+        return one(DOWN, say("toolsFailing", error=calls.items[-1][2]))
     if b is None or not b.running:
-        return one(UNKNOWN, "The brain is not running")
+        return one(UNKNOWN, say("toolsBrainStopped"))
     server = next((s for s in b.mcp_servers if s.get("name") == TOOL_SERVER), None)
     if server is None:
-        return one(UNKNOWN, "The brain has not reported its tools")
+        return one(UNKNOWN, say("toolsUnreported"))
     status = str(server.get("status", "")).lower()
     if status == "failed":
-        return one(DOWN, "The brain's link to JARVIS's tools would not start")
+        return one(DOWN, say("toolsWouldNotStart"))
     if status != "connected":
-        return one(DEGRADED, f"The brain's link to JARVIS's tools is {status or 'not connected'}")
-    return one(OK, "Connected")
+        return one(DEGRADED, say("toolsLink", status=status) if status else say("toolsNotConnected"))
+    return one(OK, say("connected"))
 
 
 def workflows(active: list, b: Optional[Beat], now: float) -> Subsystem:
     """The workflow monitor: its watch for quiet, and the workflows running."""
-    loop_state, loop_detail = judge_loop(b, now)
     quiet = [w for w in active if w.state == workflow_store.SILENT]
     if quiet:
-        n = len(quiet)
-        shown = (DEGRADED, f"{n} workflow{'s have' if n != 1 else ' has'} gone quiet")
+        shown = (DEGRADED, say("workflowsQuiet", count=len(quiet)))
     elif active:
-        n = len(active)
-        shown = (OK, f"{n} workflow{'s' if n != 1 else ''} running")
+        shown = (OK, say("workflowsRunning", count=len(active)))
     else:
-        shown = (IDLE, "No workflows running")
-    checks = [Check("running", "Workflows", *shown),
-              Check("watch", "Watch for quiet", loop_state, loop_detail)]
-    s = from_checks("workflows", "Workflow monitor", checks, shown[1])
+        shown = (IDLE, say("workflowsNone"))
+    checks = [check("running", "workflowsRunning", *shown),
+              check("watch", "workflowsWatch", *judge(b, now))]
+    s = from_checks("workflows", checks, shown[1])
     if s.state == OK and shown[0] == IDLE:
         s.state = IDLE                  # watching, with nothing to watch
     return s
@@ -467,38 +652,38 @@ def folder_catalog(health: Optional[dict], b: Optional[Beat], now: float) -> Sub
     there, and how far discovery has read the sessions' records. Never
     worse than degraded: nothing JARVIS says or sends waits on it."""
     if health is None:
-        return Subsystem("folders", "Folder catalog", IDLE, "Not running")
+        return subsystem("folders", IDLE, say("foldersOff"), [])
     counts = health.get("counts") or {}
     total = sum(counts.values())
     unavailable = {k: n for k, n in counts.items() if k != "available" and n}
     if unavailable:
-        words = ", ".join(f"{n} {k.replace('_', ' ')}" for k, n in sorted(unavailable.items()))
-        shown = (DEGRADED, f"{sum(unavailable.values())} of {total} not available ({words})")
+        shown = (DEGRADED, say("foldersUnavailable", count=sum(unavailable.values()), total=total,
+                               missing=counts.get("missing", 0), denied=counts.get("access_denied", 0),
+                               elsewhere=counts.get("unavailable_node", 0)))
     elif total:
-        shown = (OK, f"{total} folder{'s' if total != 1 else ''}, all available")
+        shown = (OK, say("foldersOk", count=total))
     else:
-        shown = (IDLE, "No folders registered")
-    checks = [Check("folders", "Folders", *shown)]
+        shown = (IDLE, say("foldersNone"))
+    checks = [check("folders", "folderList", *shown)]
     coverage = health.get("coverage") or {}
     failed = [x for x in coverage.get("sources", []) if x.get("error")]
     pending = sum(x.get("pending") or 0 for x in coverage.get("sources", []))
     last_ok = max((x.get("last_ok_at") or 0 for x in coverage.get("sources", [])), default=0)
-    since = f"; last full look {age(now - last_ok)} ago" if last_ok else ""
+    since = {"age": age(now - last_ok)} if last_ok else {}
     if not health.get("discovery", True):
-        found = (IDLE, "Discovery is switched off")
+        found = (IDLE, say("discoveryOff"))
     elif failed:
-        found = (DEGRADED, f"Could not read {failed[0]['source']}: {failed[0]['error']}")
+        found = (DEGRADED, say("discoveryFailed", source=failed[0]["source"], error=failed[0]["error"]))
     elif pending:
-        found = (OK, f"{pending} history files still to read{since}")
+        found = (OK, say("discoveryPending" + ("Since" if since else ""), count=pending, **since))
     elif last_ok:
-        found = (OK, f"Up to date{since}")
+        found = (OK, say("discoveryDoneSince", **since))
     else:
-        found = (UNKNOWN, "Not yet looked")
-    checks.append(Check("discovery", "Discovery", *found))
+        found = (UNKNOWN, say("discoveryNotYet"))
+    checks.append(check("discovery", "discovery", *found))
     if health.get("discovery", True):
-        loop_state, loop_detail = judge_loop(b, now)
-        checks.append(Check("watch", "Discovery loop", loop_state, loop_detail))
-    s = from_checks("folders", "Folder catalog", checks, shown[1])
+        checks.append(check("watch", "discoveryLoop", *judge(b, now)))
+    s = from_checks("folders", checks, shown[1])
     if s.state == DOWN:
         s.state = DEGRADED
     if s.state == OK and shown[0] == IDLE:
@@ -519,26 +704,33 @@ def team_server(team: dict, now: float) -> Subsystem:
         except ValueError:
             since = ""
     server = team.get("server_url") or team.get("last_server_url") or ""
+    contact = {"age": since} if since else {}
     if state == "connected":
         me = (team.get("me") or {}).get("login")
         name = (team.get("team") or {}).get("name")
-        shown = (OK, "Online" + (f": {name}" if name else "") + (f" as {me}" if me else "")
-                     + (f", last contact {since} ago" if since else ""))
+        values = {**({"team": name} if name else {}), **({"login": me} if me else {}), **contact}
+        code = "teamOnline" + ("Team" if name else "") + ("As" if me else "") + ("Since" if since else "")
+        shown = (OK, say(code, **values))
     elif state == "stale":
-        shown = (DEGRADED, "Can't reach the team server"
-                           + (f"; last contact {since} ago" if since else ""))
+        shown = (DEGRADED, say("teamStaleSince" if since else "teamStale", **contact))
     elif state == "signed_out":
-        shown = (DEGRADED, team.get("last_error") or "Signed out; sign in again in Settings")
+        error = team.get("last_error")
+        said = team.get("last_error_said")
+        # Said by team_client's code where it has one; English with no code
+        # (another program's words) is shown as it came.
+        shown = (DEGRADED, say("teamError", error=error, errorSaid=said) if error and said
+                 else (None, error) if error else say("teamSignedOut"))
     elif state == "connecting":
-        shown = (UNKNOWN, "Connecting")
+        shown = (UNKNOWN, say("teamConnecting"))
     elif state == "pairing":
-        shown = (IDLE, "Waiting for this Mac to be approved on the team server")
+        shown = (IDLE, say("teamPairing"))
     else:
-        shown = (IDLE, "Not connected")
-    checks = [Check("connection", "Connection", *shown)]
+        shown = (IDLE, say("teamNotConnected"))
+    checks = [check("connection", "connection", *shown)]
     if server:
-        checks.append(Check("server", "Server", IDLE, server))
-    return Subsystem("team_server", "Team server", shown[0], shown[1], checks)
+        name_said, name_text = named("server")
+        checks.append(Check("server", name_text, IDLE, server, name_said))
+    return subsystem("team_server", shown[0], shown[1], checks)
 
 
 # ── all of them ──────────────────────────────────────────────────────────
@@ -566,6 +758,9 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
 
 
 def to_json(subsystems: list[Subsystem], now: float) -> dict:
+    """The route's body. A name or line with no code (`name_said` or `said`
+    null) is shown as it came: a product's name, a figure, another program's
+    words."""
     out = []
     for s in subsystems:
         row = asdict(s)

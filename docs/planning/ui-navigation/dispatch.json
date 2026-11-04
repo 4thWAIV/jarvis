@@ -1,0 +1,14 @@
+{
+  "workflow_id": "wf-dc741957b946",
+  "name": "UI navigation and white pipeline",
+  "diagnostics_session": "a5b4be76-7b3d-4a0c-9220-817d38b9e5f3",
+  "source_checkout": "/Users/timothystockstill/code/macos/4thWAIV/jarvis",
+  "state": "queued",
+  "merge_authorized": false,
+  "artifacts": {
+    "docs/planning/ui-navigation/implementation.md": "4f1110da84f0402848f8157d6d5d7467aac73b07a63714280afb493b369bfa15",
+    "docs/planning/ui-navigation/diagnostics-prompt.txt": "c3d01cf3c75e02443cf760cbc895a10206b31584f33c7716ae8538e8792f4716",
+    "docs/design/ui-map/design.html": "14cef6629157bca83b1d81fd2e53f913d08508f1dcfeb3a13e21c3163f4d63af"
+  },
+  "message_id": 723
+}

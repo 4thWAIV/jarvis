@@ -315,6 +315,11 @@ def _builds_text(node) -> bool:
         if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                 and sub.func.attr == "join"):
             return True
+        # subsystem_diagnostics says its lines through `say(code, **values)`,
+        # which fills an English template with the values: the same text an
+        # f-string built, so the walk must not go blind at that call.
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == "say":
+            return True
         # `base += "…" + ", ".join(projects) + "."` — the shape
         # `brain.launch_prompt` uses, and the one the old predicate did not
         # know about at all.
@@ -347,6 +352,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "ui_control.map_lines": (
+        "it reads a command's `id` only after checking it is a command declared "
+        "in the UI contract, so the id it prints is the contract's own; the "
+        "page's labels it prints go back only inside the server's untrusted "
+        "`ui_map` block (`_ui_said`), never into a header or a spoken line"),
     "package_story.parse": (
         "it reads a story file's fields into a Story and refuses one with its own "
         "sentences, built from slide and beat numbers and fixed words; no title, "

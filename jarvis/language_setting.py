@@ -21,6 +21,13 @@ when the saved language's model is not installed (the saved choice is kept).
 call. The page and the phrase are then confirmed aloud in the new language
 (`choose`), through the announcer the server gives `mount`, which also tells
 the brain at its next turn. The brain's tool is not: the brain says it.
+
+The same language is the page's interface language. Every change that takes
+effect, whoever made it, is published once from `change` (`state_frame`,
+through the publisher the server gives `mount`: a `language` frame on
+/ws/sessions), and the socket's opening snapshot carries it too, so every
+open page follows a change and a page that (re)connects reads the language in
+force. A refused change publishes nothing.
 """
 from __future__ import annotations
 
@@ -51,6 +58,11 @@ CONFIRMATIONS = {
 # (the line said, the note the brain gets at its next turn)
 Announce = Callable[[str, str], None]
 _announce: Optional[Announce] = None
+# Hands one frame to every open page (the server's /ws/sessions clients).
+Publish = Callable[[dict], None]
+_publish: Optional[Publish] = None
+# The frame's type on /ws/sessions.
+FRAME = "language"
 _lock = asyncio.Lock()
 
 
@@ -101,12 +113,18 @@ def status() -> dict:
     return {"language": spoken_words.active_language(), "speech": speech_models.models()}
 
 
+def state_frame() -> dict:
+    """The language in force, as the page's interface language: the frame
+    published on a change and the field of the opening snapshot."""
+    return {"type": FRAME, "language": spoken_words.active_language()}
+
+
 def _language(language: str) -> str:
     language = str(language or "").strip().lower()
     if language not in spoken_words.VOCABULARIES:
         raise Refused(404, "JARVIS speaks "
                       + " and ".join(f"{NAMES[k]} ({k})" for k in spoken_words.VOCABULARIES)
-                      + " only.")
+                      + " only.", code="unknown-language")
     return language
 
 
@@ -126,6 +144,8 @@ async def change(language: str) -> bool:
             raise
         _save(language)
         spoken_words.set_active_language(language)
+        if _publish is not None:
+            _publish(state_frame())
     log.info("language changed to %s", NAMES[language])
     return True
 
@@ -182,12 +202,14 @@ async def api_choose(language: str = Body(embed=True)):
     try:
         await choose(language)
     except Refused as refused:
-        return JSONResponse(status_code=refused.status, content={"error": refused.message})
+        return JSONResponse(status_code=refused.status, content=refused.to_json())
     return status()
 
 
-def mount(app: FastAPI, announce: Optional[Announce] = None) -> None:
-    global _announce
+def mount(app: FastAPI, announce: Optional[Announce] = None,
+          publish: Optional[Publish] = None) -> None:
+    global _announce, _publish
     _announce = announce
+    _publish = publish
     app.add_api_route("/api/settings/language", api_status, methods=["GET"])
     app.add_api_route("/api/settings/language", api_choose, methods=["POST"])

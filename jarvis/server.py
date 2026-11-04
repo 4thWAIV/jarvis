@@ -89,6 +89,8 @@ from jarvis import repo_read
 from jarvis import session_messages
 from jarvis import server_address
 from jarvis import spoken_words
+from jarvis import ui_control
+from jarvis import ui_contract
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -2976,7 +2978,8 @@ app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan,
 app.add_middleware(web_auth.OriginGuard)
 transcription_api.mount(app)
 speech_models.mount(app)
-language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")))
+language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
+                       publish=_send_to_session_clients)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
@@ -3100,8 +3103,14 @@ async def api_brains(brief: bool = False):
 
 
 def _brains_change(change) -> dict:
+    """A brains change; a refusal's `detail` carries its English words and,
+    for `brains_config.Refused`, its code and values, which the page words
+    in its own language (brains.ts)."""
     try:
         change()
+    except brains_config.Refused as e:
+        raise HTTPException(status_code=400,
+                            detail={"message": str(e), "code": e.code, "values": e.values})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True}
@@ -3796,6 +3805,17 @@ UNTRUSTED_READING_TOOLS = {"read_page", "look_at_page", "github_repo",
 # "… allow it".
 TAINT_EXEMPT_ACTING = {"answer_dialog"}
 
+# The UI tools survive a tainted turn too, for the same kind of reason: what
+# they carry is a registered command and a target the contract validates,
+# never text sent anywhere, and pointing is useless without ui_map first,
+# which taints ("show me the CPU on the Mac mini" is ui_map, then
+# ui_indicate). They do NOT survive when the commands they would run declare
+# an effect on his messages: opening a waiting Queue item moves it to Active,
+# and showing a body can send a read receipt. Those stay his to ask for on a
+# clean turn.
+UI_TAINT_EXEMPT_ACTING = {"ui_navigate", "ui_indicate", "ui_journey"}
+UI_EFFECTS_REFUSED_WHEN_TAINTED = {"queue.item-activated", "queue.read-marked"}
+
 # Writers whose output outlives the turn. `jarvis_memory.write_memory` puts
 # the model's text verbatim into `memory/*.md` and `add_to_index` into
 # `MEMORY.md`, which `CLAUDE.md` `@`-imports into every future turn as TRUSTED
@@ -3858,7 +3878,8 @@ def _untrusted_actions_refused() -> bool:
 
 
 def _untrusted_content_refusal(tool: str, read_untrusted: bool,
-                               source: str = "something I read") -> str | None:
+                               source: str = "something I read",
+                               args: dict | None = None) -> str | None:
     """The sentence refusing an unsupervised action in a turn that has read
     something JARVIS did not write, or None if the call may proceed.
 
@@ -3896,6 +3917,10 @@ def _untrusted_content_refusal(tool: str, read_untrusted: bool,
     if tool not in ACTING_TOOLS:
         return None
     if tool in UNTRUSTED_READING_TOOLS or tool in TAINT_EXEMPT_ACTING:
+        return None
+    if tool in UI_TAINT_EXEMPT_ACTING and not (
+            ui_contract.declared_effects(UI_OPERATIONS[tool](args or {}))
+            & UI_EFFECTS_REFUSED_WHEN_TAINTED):
         return None
     if tool in MEMORY_WRITERS:
         return (f"untrusted_content_in_this_session — I've had {source} in "
@@ -3987,7 +4012,7 @@ async def internal_tool(request: Request):
         # `_untrusted_content_refusal`.
         source = _writer_untrusted_source(tool)
         refusal = _untrusted_content_refusal(
-            tool, source is not None, source=source or "something I read")
+            tool, source is not None, source=source or "something I read", args=args)
         if refusal:
             log.warning("refused %s: %s was read in this %s", tool, source,
                         "session" if tool in MEMORY_WRITERS else "turn")
@@ -11381,8 +11406,11 @@ async def ws_sessions(websocket: WebSocket):
         # Same filter as /api/sessions, and for the same reason: the opening
         # snapshot is what the page draws before its first reconcile, so a
         # run leaking in here is a run on screen.
+        # The language in force rides on it, so a page that (re)connects
+        # shows its interface in that language (language_setting.py).
         await websocket.send_json({
             "type": "snapshot",
+            "language": language_setting.state_frame()["language"],
             "sessions": [session_watch.session_to_dict(s)
                          for s in _snapshot_or_empty().sessions]})
         # People's messages drawn in the last few seconds, marked replay: a
@@ -11758,9 +11786,22 @@ async def voice_handler(ws: WebSocket):
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            kind = msg.get("type")
+            # The page's UI frames (ui_control.py): who it is, and its answers
+            # to the brain's requests. Never speech, so before the mouth.
+            if kind == "ui_hello":
+                welcome = ui_clients.hello(ws, msg)
+                if welcome is not None:
+                    _enqueue(queue, welcome)
+                continue
+            if kind == "ui_result":
+                ui_clients.result(ws, msg)
+                continue
+            if kind == "ui_event":
+                ui_clients.event(ws, msg)
+                continue
             if speech is None:
                 continue
-            kind = msg.get("type")
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
                 # whose failures were invisible from here: it can go deaf with
@@ -11836,6 +11877,9 @@ async def voice_handler(ws: WebSocket):
                         else "with nothing of his played yet"
                     log.info(f"User ({verdict}, ignored, {ago}): {text}")
                     continue
+                # His words came from this page: the brain's UI requests in
+                # the turn they start go to it and no other.
+                ui_clients.note_turn(ws, _transcript_id(msg))
                 if typed:
                     await utterance.now()
                     await take_utterance(text, _transcript_id(msg), typed=True)
@@ -11848,6 +11892,7 @@ async def voice_handler(ws: WebSocket):
     finally:
         # Words still being gathered when the page went are sent, not lost.
         _spawn(utterance.now())
+        ui_clients.gone(ws)
         _drop_voice_client(ws)
 
 
@@ -12215,6 +12260,167 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.add("update_jarvis")
 TAINTING_TOOLS["update_status"] = "the new commits' messages, written by the team"
 TAINT_EXEMPT_TOOLS["update_jarvis"] = "it updates and restarts JARVIS, it does not read"
+
+
+# ---------------------------------------------------------------------------
+# The page's navigation and white attention, for the brain (ui_control.py)
+# ---------------------------------------------------------------------------
+#
+# The brain asks; the one page of this turn does it with the same registered
+# handlers Tim's own clicks run, and answers when it has (an indication at
+# arrival). The contract (jarvis/ui_contract/) validates every request here
+# and again on the page. Never broadcast: a request goes to one page.
+
+def _send_ui_frame(ws, frame: dict) -> bool:
+    queue = _voice_queues.get(ws)
+    return queue is not None and _enqueue(queue, frame)
+
+
+ui_clients = ui_control.UiClients(_send_ui_frame)
+
+
+def _ui_origin() -> str | None:
+    return brain_instance.current_origin if brain_instance else None
+
+
+UI_SAID_MAX = 1200
+# A map page leaves room for the status lines above it and the untrusted
+# block's own wrapping, inside the one tool-result cap.
+UI_MAP_BUDGET = _WRAP_CONTENT_CAP - 200
+
+
+def _ui_pair(key: str, value) -> str:
+    if isinstance(value, dict):
+        value = " ".join(f"{k}:{v}" for k, v in value.items())
+    elif isinstance(value, list):
+        value = "+".join(str(v) for v in value)
+    return f"{key}: {value}"
+
+
+def _ui_said(result: dict, *, map_cursor: int | None = None) -> str:
+    """A UI result for the brain, as `field: value` pairs: its status,
+    reason, effects and the page's ids. A map's labels (agents', folders',
+    instances' names) come back in an untrusted block, one page of it that
+    fits the tool-result cap, with the cursor for the next."""
+    lines = [_ui_pair(k, result[k]) for k in ("status", "arrival", "reason", "claimed", "effects", "cueId",
+                                           "resolvedTarget", "navigationRevision", "delivery", "events")
+             if result.get(k) not in (None, [], "")]
+    for n, step in enumerate(result.get("steps") or [], 1):
+        lines.append(_ui_pair(f"step {n}", {k: step.get(k) for k in ("status", "arrival", "reason", "effects")
+                                            if step.get(k)}))
+    if map_cursor is not None and result.get("map") is not None:
+        # Labels on the page are other people's words: the whole map in
+        # the untrusted block.
+        return _wrap_untrusted("ui_map", "\n".join(lines) + "\n"
+                               + ui_control.map_page(result["map"], map_cursor, UI_MAP_BUDGET))
+    # A reason can quote what was asked for: walled like any echo.
+    return _safe_label(" / ".join(lines), UI_SAID_MAX)
+
+
+def _ui_client_arg(args: dict) -> tuple[str | None, str | None]:
+    """The page a request names, checked against this turn's page: on his
+    turn only his own page may be named."""
+    client = args.get("client")
+    if client is not None and not isinstance(client, str):
+        return None, "client must be a page's client ID"
+    if client and _ui_origin() == "user":
+        bound, _ = ui_clients.bound_page(_turn_heard)
+        if bound is not None and bound.client_id != client:
+            return None, "only the page you are speaking from can be changed on your turn"
+    return client, None
+
+
+async def _ui_request(operation: dict, args: dict) -> dict:
+    """One request to the page of this turn (or the one named), bound to
+    this turn: its caller, the id of the words that started it and the
+    speech turn answering them, and the navigation revision the brain last
+    saw there (from ui_map), so a person's navigation since makes it stale."""
+    client, problem = _ui_client_arg(args)
+    if problem:
+        return {"status": "invalid", "reason": problem}
+    expected = args.get("expectedNavigationRevision")
+    if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool) or expected < 0):
+        return {"status": "invalid", "reason": "expectedNavigationRevision must be a whole number from 0"}
+    return await ui_clients.request(operation, client=client, origin=_ui_origin(),
+                                    heard=_turn_heard,
+                                    turn=str(_turn_utt.id) if _turn_utt is not None else None,
+                                    expected_revision=expected)
+
+
+def _ui_indicate_op(args: dict) -> dict:
+    return {"kind": "indicate", "target": args.get("target"),
+            **{k: args[k] for k in ("reveal", "style", "holdMs", "label") if k in args}}
+
+
+def _ui_navigate_op(args: dict) -> dict:
+    return {"kind": "navigate", "commandId": args.get("command"), "args": args.get("args") or {}}
+
+
+def _ui_journey_op(args: dict) -> dict:
+    steps = args.get("steps") if isinstance(args.get("steps"), list) else []
+    return {"kind": "journey", "steps": [
+        _ui_navigate_op(s) if isinstance(s, dict) and "command" in s
+        else _ui_indicate_op(s) if isinstance(s, dict) and "target" in s
+        else s                     # refused, with its position, by the contract
+        for s in steps]}
+
+
+# The page operation each acting UI tool asks for, from its arguments: what
+# the untrusted-turn policy reads the declared effects of.
+UI_OPERATIONS = {"ui_navigate": _ui_navigate_op, "ui_indicate": _ui_indicate_op,
+                 "ui_journey": _ui_journey_op}
+
+
+async def tool_ui_map(args: dict) -> str:
+    """What the page shows, its commands and its targets, one bounded page."""
+    cursor = args.get("cursor", 0)
+    if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
+        return _ui_said({"status": "invalid", "reason": "cursor must be a whole number from 0"})
+    op = {"kind": "map", **{k: args[k] for k in ("region", "view") if k in args}}
+    return _ui_said(await _ui_request(op, args), map_cursor=cursor)
+
+
+async def tool_ui_navigate(args: dict) -> str:
+    """Run one registered navigation command on the page of this turn."""
+    return _ui_said(await _ui_request(_ui_navigate_op(args), args))
+
+
+async def tool_ui_indicate(args: dict) -> str:
+    """Point at one exact target with the white signal; answered at arrival."""
+    return _ui_said(await _ui_request(_ui_indicate_op(args), args))
+
+
+async def tool_ui_journey(args: dict) -> str:
+    """Navigate and point in order, each signal from the orb once the step
+    before it has finished; a person's own navigation ends the rest. Each
+    step is a ui_navigate (`command`) or a ui_indicate (`target`)."""
+    if not isinstance(args.get("steps"), list):
+        return _ui_said({"status": "invalid", "reason": "steps must be a list"})
+    return _ui_said(await _ui_request(_ui_journey_op(args), args))
+
+
+async def tool_ui_clear(args: dict) -> str:
+    """Clear one of the brain's cues, or all of them."""
+    op = {"kind": "clear", **({"cueId": args["cueId"]} if args.get("cueId") else {})}
+    return _ui_said(await _ui_request(op, args))
+
+
+TOOL_HANDLERS.update({
+    "ui_map": tool_ui_map,
+    "ui_navigate": tool_ui_navigate,
+    "ui_indicate": tool_ui_indicate,
+    "ui_journey": tool_ui_journey,
+    "ui_clear": tool_ui_clear,
+})
+# Changing what he is looking at is his to ask for: only on his turn.
+ACTING_TOOLS.update({"ui_navigate", "ui_indicate", "ui_journey"})
+TAINTING_TOOLS["ui_map"] = "what is on your screen"
+TAINT_EXEMPT_TOOLS.update({
+    "ui_navigate": "it changes the view through a registered command; it returns ids and effects, no text",
+    "ui_indicate": "it points at a target; it returns ids, a status and effects, no text",
+    "ui_journey": "it navigates and points in order; it returns each step's ids, status and effects, no text",
+    "ui_clear": "it clears the brain's own pointing; it reads nothing",
+})
 
 
 # ---------------------------------------------------------------------------

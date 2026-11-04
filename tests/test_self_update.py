@@ -199,6 +199,7 @@ def test_an_installed_copy_or_another_origin_is_told_why_not(repos, monkeypatch)
     assert installed.source == self_update.INSTALLED and "installed copy" in installed.reason
     out = self_update.update()
     assert not out.ok and out.refused == installed.reason
+    assert out.refused_code == self_update.REFUSED_SOURCE
 
 
 def test_under_test_the_real_checkout_is_never_the_one_checked():
@@ -485,7 +486,10 @@ def test_an_untracked_file_where_upstream_renamed_one_to_is_named(repos):
 def test_a_local_commit_or_another_branch_is_refused(repos):
     repos.push({"a.py": "1\n"}, "Add a")
     _commit(repos.checkout, {"mine.py": "x\n"}, "Mine")
-    assert [b.code for b in self_update.check().blockers] == [self_update.LOCAL_COMMITS]
+    blockers = self_update.check().blockers
+    assert [b.code for b in blockers] == [self_update.LOCAL_COMMITS]
+    # Its count apart from the words, for the page's own plural.
+    assert blockers[0].values == {"count": 1}
     _git(repos.checkout, "checkout", "-b", "work")
     codes = [b.code for b in self_update.check().blockers]
     assert codes[0] == self_update.NOT_ON_MAIN
@@ -499,6 +503,7 @@ def test_a_fetch_that_fails_is_said_not_raised(repos):
     assert self_update.describe(status)[0] == self_update.CANNOT_CHECK
     out = self_update.update()
     assert out.refused == self_update.CANNOT_CHECK and not out.ok
+    assert out.refused_code == self_update.REFUSED_CANNOT_CHECK
 
 
 # --- update ---------------------------------------------------------------
@@ -515,6 +520,7 @@ def test_update_moves_to_the_checked_commit_and_installs_what_changed(repos):
          str(repos.checkout)),
         (["npm", "ci"], str(repos.checkout / "frontend"))]
     assert out.notes == ["The frontend's packages changed: restart npm run dev."]
+    assert out.note_codes == [self_update.NOTE_FRONTEND_PACKAGES]
     head, steps = self_update.describe_outcome(out)
     assert head == (f"Updated to {latest[:7]}. "
                     "The frontend's packages changed: restart npm run dev.")
@@ -585,6 +591,7 @@ def test_a_refused_update_changes_nothing(repos):
     out = self_update.update()
     assert not out.ok and not out.updated and repos.head() == before
     assert out.refused == "The latest commit's CI has not passed."
+    assert out.refused_code == self_update.REFUSED_BLOCKED
     assert self_update.describe_outcome(out)[0] == (
         "Not updated. The latest commit's CI has not passed.")
 
@@ -602,6 +609,7 @@ def test_one_update_at_a_time(repos):
     finally:
         self_update._updating.release()
     assert out.refused == "An update is already under way." and not out.ok
+    assert out.refused_code == self_update.REFUSED_BUSY
 
 
 def test_an_outcome_reads_back_as_it_was_written(repos):
@@ -669,6 +677,7 @@ def test_post_api_update_refused_is_409_and_does_not_restart(server, repos):
     r = server.client.post("/api/update", headers=server.auth)
     assert r.status_code == 409 and not r.json()["ok"]
     assert r.json()["status"]["blockers"][0]["text"] == "Tracked files have been changed here."
+    assert r.json()["refused_code"] == "blocked"
     assert server.restarts == []
 
 

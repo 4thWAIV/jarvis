@@ -4,22 +4,28 @@
  * a word with a mark beside it, so neither depends on colour.
  */
 
-import { AVAILABILITY_WORDS, ROLE_ICONS, ROLE_WORDS, type Availability, type Role } from "./folders";
+import { availabilityWords, ROLE_ICONS, roleWords, type Availability, type Role } from "./folders";
+import { useLanguage } from "./locale";
 
 export function RoleMark({ role, short }: { role: Role; short?: boolean }) {
+  useLanguage();
+  const words = roleWords(role);
   return (
-    <span className={`folder-role role-${role}`} title={short ? ROLE_WORDS[role] : undefined}>
+    <span className={`folder-role role-${role}`} title={short ? words : undefined}>
       <span aria-hidden="true">{ROLE_ICONS[role]}</span>
-      {short ? <span className="visually-hidden">{ROLE_WORDS[role]}</span> : ` ${ROLE_WORDS[role]}`}
+      {short ? <span className="visually-hidden">{words}</span> : ` ${words}`}
     </span>
   );
 }
 
-export function AvailabilityMark({ availability }: { availability: Availability }) {
+/** `ref` is a registered target's part (the availability itself). */
+export function AvailabilityMark({ availability, ref }: {
+  availability: Availability; ref?: (el: Element | null) => void }) {
+  useLanguage();
   return (
-    <span className={`folder-availability availability-${availability}`}>
+    <span className={`folder-availability availability-${availability}`} ref={ref}>
       <span className="folder-availability-dot" aria-hidden="true" />
-      {AVAILABILITY_WORDS[availability]}
+      {availabilityWords(availability)}
     </span>
   );
 }

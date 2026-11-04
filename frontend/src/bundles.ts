@@ -8,8 +8,15 @@
  * (BundleInventory.tsx) and the brain's `show_bundle_member` both reach the
  * show route, which sends every JARVIS page a `bundle_view` frame on the
  * voice socket (jarvis.ts); the page's own request opens it here at once as
- * well. `bundleWords` holds every string the bundle views show, so moving
- * them into locale catalogs later is one change.
+ * well. Showing it is the centre's `file` detail (uiNavigation.ts): the
+ * registered `bundle.member.open` and `bundle.member.close` commands are
+ * the only way it opens or closes, run by Open, by Close, by the frame (as
+ * the brain's) and by the brain's own navigation.
+ *
+ * `bundleWords` holds every word the bundle views show, from the catalogs
+ * (`main.bundle.*`) in the language in force each time one is read; a
+ * component that reads them with `useT()` is drawn again when it changes.
+ * A reason the catalog has no words for keeps the contract's English.
  */
 
 import {
@@ -17,8 +24,11 @@ import {
   type MemberPage, type OutcomeKind, type PreflightResult, type Preview, type Readiness,
   type Reason, type ReviewProgress, type ReviewState, type TextPage,
 } from "./bundleContract";
+import { codeWords, t, wordsOf } from "./locale";
 import type { Draft, Openability, TaskContext } from "./messagingContract";
 import { createStore } from "./store";
+import { bind, detailSlot, registerClose, runBinding } from "./uiNavigation";
+import { dispatch, registerCommand } from "./uiRegistry";
 
 /** A received file, by its message and attachment ids. */
 export interface FileKey {
@@ -31,63 +41,56 @@ export interface MemberKey extends FileKey {
   memberId: string;
 }
 
-/** The member shown in the centre area, or none. */
-export const openBundleMember = createStore<MemberKey | null>(null);
+const memberSlot = detailSlot<MemberKey>("file", (a, b) =>
+  a.memberId === b.memberId && a.attachmentId === b.attachmentId && a.messageId === b.messageId);
+/** The member shown in the centre area, or none. Read-only: the controls
+ *  run `bundle.member.open` and `bundle.member.close`. */
+export const openBundleMember = memberSlot.value;
+
+registerCommand("bundle.member.open", {
+  availability: () => ({ available: true }),
+  execute: (m) => ({ status: "completed", effects: memberSlot.show({ ...m }) }),
+});
+
+registerClose("bundle.member.close", memberSlot);
 
 /** Moves on every "bundles" hint on /ws/sessions: a thread's bundle state
  *  (openability, review progress) changed. */
 export const bundlesChanged = createStore(0);
 
+const PROGRESS: readonly ReviewProgress[] = ["file_ready", "evidence_unavailable", "review_in_progress", "notes_ready"];
+const READINESS: readonly Readiness[] = ["ready", "partial", "unknown", "blocked"];
+const OUTCOMES: readonly OutcomeKind[] = ["notes", "revised_copy", "data", "answer", "other"];
+const OPENABILITY: readonly Openability[] = ["verified", "ready", "partial", "unsupported", "corrupt", "unavailable"];
+
 export const bundleWords = {
-  open: "Open",
-  contents: "Contents",
-  close: "Close",
-  more: "More",
-  previous: "Previous",
-  next: "Next",
-  text: "Text",
-  pages: "Pages",
-  preview: "Preview",
-  package: "Work package",
-  files: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
+  get open() { return t("main.bundle.open"); },
+  get contents() { return t("main.bundle.contents"); },
+  get close() { return t("main.common.close"); },
+  get more() { return t("main.bundle.more"); },
+  get previous() { return t("main.bundle.previous"); },
+  get next() { return t("main.bundle.next"); },
+  get text() { return t("main.bundle.text"); },
+  get preview() { return t("main.bundle.preview"); },
+  get show() { return t("main.bundle.show"); },
+  get folder() { return t("main.bundle.folder"); },
+  get package() { return t("main.bundle.package"); },
+  files: (n: number) => t("main.bundle.files", { count: n }),
   pageOf: (n: number, of: number | null | undefined) => (of ? `${n} / ${of}` : String(n)),
-  blocked: (n: number) => `${n} link${n === 1 ? "" : "s"} not loaded`,
-  reading: "Reading…",
-  nothing: "Nothing to read.",
-  notShown: "No JARVIS page is open.",
-  progress: {
-    file_ready: "File ready",
-    evidence_unavailable: "Some evidence unreadable",
-    review_in_progress: "Review in progress",
-    notes_ready: "Notes ready",
-  } satisfies Record<ReviewProgress, string>,
-  readiness: {
-    ready: "Ready",
-    partial: "Partly readable there",
-    unknown: "Readability unknown",
-    blocked: "Unreadable",
-  } satisfies Record<Readiness, string>,
-  outcome: {
-    notes: "Notes",
-    revised_copy: "Revised copy",
-    data: "Data",
-    answer: "Answer",
-    other: "Request",
-  } satisfies Record<OutcomeKind, string>,
-  primary: "Primary",
-  request: "Request",
-  noRequest: "No request",
+  blocked: (n: number) => t("main.bundle.blocked", { count: n }),
+  get reading() { return t("main.bundle.reading"); },
+  get nothing() { return t("main.bundle.nothing"); },
+  progress: wordsOf(PROGRESS, (c) => t(`main.bundle.progress.${c}`)) as Readonly<Record<ReviewProgress, string>>,
+  readiness: wordsOf(READINESS, (c) => t(`main.bundle.readiness.${c}`)) as Readonly<Record<Readiness, string>>,
+  outcome: wordsOf(OUTCOMES, (c) => t(`main.bundle.outcome.${c}`)) as Readonly<Record<OutcomeKind, string>>,
+  get primary() { return t("main.bundle.primary"); },
+  get request() { return t("main.bundle.request"); },
+  get noRequest() { return t("main.bundle.noRequest"); },
   /** The recipient's JARVIS's report on a file it was told to open. */
-  openability: {
-    verified: "Read there",
-    ready: "Opens there",
-    partial: "Partly readable there",
-    unsupported: "Can't be read there",
-    corrupt: "Damaged there",
-    unavailable: "Not opened there",
-  } satisfies Record<Openability, string>,
-  reason: (reason: Reason | null | undefined) => (reason ? REASONS_SHOWN[reason] : ""),
-} as const;
+  openability: wordsOf(OPENABILITY, (c) => t(`main.bundle.openability.${c}`)) as Readonly<Record<Openability, string>>,
+  reason: (reason: Reason | null | undefined) =>
+    (reason ? codeWords("main.bundle.reason", reason) ?? REASONS_SHOWN[reason] ?? reason : ""),
+};
 
 /** A refused bundle call: the contract's code, its words and the member's
  *  own reason where one applies. */
@@ -151,11 +154,12 @@ export function pageUrl(m: MemberKey, page: number,
   return `${memberBase(m)}/pages/${page}${query({ max_edge: maxEdge })}`;
 }
 
-/** Show it, unless it is already showing. */
+/** The server's `bundle_view` frame: show it, unless it is already
+ *  showing. */
 export function showMember(m: MemberKey): void {
   const now = openBundleMember.get();
   if (!now || now.memberId !== m.memberId || now.attachmentId !== m.attachmentId
-      || now.messageId !== m.messageId) openBundleMember.set(m);
+      || now.messageId !== m.messageId) void dispatch("bundle.member.open", { ...m }, { actor: "brain" });
 }
 
 /** The page's Open: the server's one way to open it, on every page. Shown
@@ -164,7 +168,7 @@ export async function openMember(m: MemberKey): Promise<string | null> {
   try {
     const r = await fetch(`${memberBase(m)}/show`, { method: "POST" });
     if (!r.ok) await answer(r);
-    showMember(m);
+    runBinding(bind("bundle.member.open", { ...m }));
     return null;
   } catch (e) {
     return (e as Error).message;
