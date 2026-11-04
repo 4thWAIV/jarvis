@@ -308,6 +308,7 @@ export const mainEn = {
   "main.workflow.unknownState": "Unknown",
   "main.workflow.subagentOf": "Subagent of {name}",
   "main.workflow.subagentOfLower": "subagent of {name}",
+  "main.workflow.workflowRun": "workflow run {run}",
   "main.workflow.item.pending": "pending",
   "main.workflow.item.running": "running",
   "main.workflow.item.waiting": "waiting",

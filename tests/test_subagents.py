@@ -49,6 +49,23 @@ def _agent(root, agent_id, lines, *, written, meta=None, cwd="/p/one", session_i
     return p
 
 
+RUN = "wf_f21d5ed2-0a4"
+WF_META = {"agentType": "workflow-subagent", "isBuiltIn": True, "description": "investigate:language-rules",
+           "workflowPhase": "Investigate", "spawnDepth": 1, "requestShape": "foreground"}
+
+
+def _workflow_agent(root, agent_id, lines, *, written, run=RUN, meta=None):
+    """An agent the Workflow tool started: one level deeper, a folder per run."""
+    d = _folder(root) / "workflows" / run
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"agent-{agent_id}.jsonl"
+    p.write_text("".join(json.dumps(o) + "\n" for o in lines))
+    os.utime(p, (written, written))
+    if meta is not None:
+        (d / f"agent-{agent_id}.meta.json").write_text(json.dumps(meta))
+    return p
+
+
 META = {"agentType": "general-purpose", "description": "Write the release notes",
         "toolUseId": "toolu_1", "spawnDepth": 1, "requestShape": "background"}
 
@@ -236,6 +253,82 @@ def test_the_counts_are_made_from_the_same_reading(tmp_path):
     assert sw.count_agents(tmp_path, "/p/one", "s", NOW) == (3, 2, False)
 
 
+# ── the Workflow tool's agents, one level deeper ────────────────────────────
+
+def test_workflow_agents_are_found_with_their_run(tmp_path):
+    _agent(tmp_path, "plain", [_line("user")], written=NOW - 5, meta=META)
+    _workflow_agent(tmp_path, "wf1", [_line("user")], written=NOW - 3, meta=WF_META)
+    _workflow_agent(tmp_path, "wf2", [_line("assistant", stop="end_turn")], written=NOW - 100,
+                    run="wf_00000000-111")
+
+    agents, capped = _read(tmp_path)
+
+    got = {a.agent_id: (a.workflow_run, a.agent_type, a.description, a.state) for a in agents}
+    assert got == {
+        "plain": (None, "general-purpose", "Write the release notes", sw.AGENT_WORKING),
+        "wf1": (RUN, "workflow-subagent", "investigate:language-rules", sw.AGENT_WORKING),
+        "wf2": ("wf_00000000-111", "", "", sw.AGENT_FINISHED),
+    }
+    assert capped is False
+    assert sw.count_agents(tmp_path, "/p/one", "s", NOW) == (3, 2, False)
+
+
+def test_a_workflow_agent_under_two_roots_is_one_subagent(tmp_path):
+    a, b = tmp_path / ".claude", tmp_path / ".claude-orcha"
+    for root in (a, b):
+        _workflow_agent(root, "same", [_line("user")], written=NOW - 5, meta=WF_META)
+    _workflow_agent(b, "only-b", [_line("user")], written=NOW - 5)
+
+    agents, _ = sw.read_subagents([a, b], "/p/one", "s", NOW)
+
+    assert sorted((x.agent_id, x.workflow_run) for x in agents) == [("only-b", RUN), ("same", RUN)]
+
+
+def test_the_cap_counts_both_levels(tmp_path):
+    half = sw.MAX_AGENT_FILES // 2 + 3
+    for i in range(half):
+        _agent(tmp_path, f"n{i:04d}", [_line("user")], written=NOW - 4000)
+        _workflow_agent(tmp_path, f"w{i:04d}", [_line("user")], written=NOW - 4000)
+
+    agents, capped = _read(tmp_path)
+
+    assert len(agents) == sw.MAX_AGENT_FILES and capped is True
+
+
+def test_a_symlinked_run_folder_is_never_followed(tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "agent-evil.jsonl").write_text(json.dumps(_line("user")) + "\n")
+    _workflow_agent(tmp_path, "real", [_line("user")], written=NOW - 5)
+    (_folder(tmp_path) / "workflows" / "wf_linked-run").symlink_to(outside, target_is_directory=True)
+
+    agents, _ = _read(tmp_path)
+
+    assert [a.agent_id for a in agents] == ["real"]
+    assert sw.subagent_transcript_path([tmp_path], "/p/one", "s", "evil") is None
+
+
+def test_a_symlinked_workflows_folder_is_never_followed(tmp_path):
+    outside = tmp_path / "elsewhere"
+    (outside / RUN).mkdir(parents=True)
+    (outside / RUN / "agent-evil.jsonl").write_text(json.dumps(_line("user")) + "\n")
+    root = tmp_path / ".claude"
+    (_folder(root) / "workflows").symlink_to(outside, target_is_directory=True)
+
+    assert sw.read_subagents(root, "/p/one", "s", NOW) == ([], False)
+    assert sw.subagent_transcript_path([root], "/p/one", "s", "evil") is None
+
+
+def test_a_workflow_agents_transcript_is_found_by_its_id(tmp_path):
+    p = _workflow_agent(tmp_path, "wf1", [_line("user", text="go"),
+                                          _line("assistant", stop="end_turn", text="Done.")],
+                        written=NOW - 5)
+
+    assert sw.subagent_transcript_path([tmp_path], "/p/one", "s", "wf1") == p
+    entries = sw.read_subagent_transcript("/p/one", "s", "wf1", roots=[tmp_path])
+    assert [e.text for e in entries] == ["go", "Done."]
+
+
 # ── on the snapshot ─────────────────────────────────────────────────────────
 
 def _live_session(root, monkeypatch):
@@ -256,9 +349,11 @@ def test_the_snapshot_carries_each_subagent(tmp_path, monkeypatch):
     assert body["subagents"] == [
         {"id": "w", "description": "Write the release notes", "type": "general-purpose",
          "background": True, "depth": 1, "state": "working",
-         "started": pytest.approx(NOW - 50), "written": pytest.approx(NOW - 5)},
+         "started": pytest.approx(NOW - 50), "written": pytest.approx(NOW - 5),
+         "workflow_run": None},
         {"id": "f", "description": "", "type": "", "background": False, "depth": 0,
-         "state": "finished", "started": pytest.approx(NOW - 60), "written": pytest.approx(NOW - 500)},
+         "state": "finished", "started": pytest.approx(NOW - 60), "written": pytest.approx(NOW - 500),
+         "workflow_run": None},
     ]
 
 
@@ -382,6 +477,28 @@ def test_a_subagents_transcript_is_served_by_the_sessions_route(server):
         ("you", "go and look"), ("agent", "Found it.")]
     for bad in ("nope", "../w"):
         assert client.get("/api/sessions/s/transcript", params={"subagent": bad}).status_code == 404
+
+
+def test_a_workflow_agent_is_in_the_workflows_area_and_its_transcript_is_served(server):
+    srv, _run_store, workflow_store, watcher, root = server
+    wid = _attach(workflow_store, "Release", "s")
+    _workflow_agent(root, "wf1", [_line("user", text="go"), _line("assistant", text="Looking.")],
+                    written=time.time(), meta=WF_META)
+    watcher.poll_once()
+    client = TestClient(srv.app)
+
+    (row,) = client.get(f"/api/workflows/{wid}").json()["subagents"]
+    assert (row["key"], row["workflow_run"], row["type"], row["state"]) == (
+        "agent:s/wf1", RUN, "workflow-subagent", "working")
+    assert srv._snapshot_or_empty().by_id("s").agents_active == 1
+    body = client.get("/api/sessions/s/transcript", params={"subagent": "wf1"}).json()
+    assert (body["name"], [e["text"] for e in body["entries"]]) == (
+        "investigate:language-rules", ["go", "Looking."])
+
+    workflow_store.record(workflow_store.WorkflowEvent(wid, "workflow_finished", None, "Done.",
+                                                       {"outcome": "succeeded"}))
+    lone = client.get("/api/workflows").json()["subagents"]
+    assert [(a["id"], a["workflow_run"]) for a in lone] == [("wf1", RUN)]
 
 
 def test_a_change_in_any_sessions_subagents_is_a_reason_to_tell_the_pages(server):

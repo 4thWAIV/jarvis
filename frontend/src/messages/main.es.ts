@@ -284,6 +284,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.workflow.unknownState": "Desconocido",
   "main.workflow.subagentOf": "Subagente de {name}",
   "main.workflow.subagentOfLower": "subagente de {name}",
+  "main.workflow.workflowRun": "ejecución de flujo {run}",
   "main.workflow.item.pending": "pendiente",
   "main.workflow.item.running": "en curso",
   "main.workflow.item.waiting": "en espera",

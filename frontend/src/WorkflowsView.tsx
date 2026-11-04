@@ -245,6 +245,8 @@ function SubagentRow({ agent: a, selected }: { agent: Subagent; selected: boolea
       <span className="workflow-strip subagent-parent">
         {t(a.background ? "right.workflows.backgroundSubagentOf" : "right.workflows.subagentOf",
            { session: a.session_name })}
+        {a.workflow_run && <span className="subagent-run">
+          {" · " + t("right.workflows.workflowRun", { run: a.workflow_run })}</span>}
       </span>
     </button>
   );

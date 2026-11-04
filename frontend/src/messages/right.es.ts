@@ -76,6 +76,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.workflows.subagent": "Subagente",
   "right.workflows.subagentOf": "Subagente de {session}",
   "right.workflows.backgroundSubagentOf": "Subagente en segundo plano de {session}",
+  "right.workflows.workflowRun": "ejecución de flujo {run}",
   "right.workflows.noAnswer": "el servidor no respondió",
   "right.workflows.refused": "el servidor lo rechazó ({status})",
   "right.workflows.phase": "fase {current}/{total}",
