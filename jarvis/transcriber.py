@@ -295,6 +295,9 @@ class TranscriptionError(Exception):
 
 Status = Literal["idle", "loading", "ready", "failed", "closed"]
 
+# Pages whose newest capture epoch is remembered (one per page load).
+EPOCHS_KEPT = 256
+
 
 @dataclass
 class Window:
@@ -471,6 +474,9 @@ class TranscriptionService:
         self._settled: Optional[asyncio.Event] = None
         self._active: Optional[Capture] = None
         self._generation = 0
+        # Each page's newest capture epoch admitted: words from an older one
+        # are stale (the turn controller's epoch check).
+        self._epochs: dict[str, int] = {}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -529,6 +535,16 @@ class TranscriptionService:
         active = self._active
         return active if active is not None and active.client_id == client_id else None
 
+    def epoch_of(self, client_id: str) -> Optional[int]:
+        """The newest capture epoch admitted for this page, if any."""
+        return self._epochs.get(client_id)
+
+    def coverage_of(self, client_id: str) -> Optional[tuple[int, int]]:
+        """(frames received, frames decoded) of this page's open capture,
+        or None when it has none open."""
+        capture = self.capture_of(client_id)
+        return None if capture is None else (capture.frames_received, capture.frames_decoded)
+
     def admit(self, client_id: Optional[str] = None, epoch: Optional[int] = None,
               claim: bool = False) -> Capture:
         """The one capture. One page owns the recogniser at a time: another
@@ -550,6 +566,10 @@ class TranscriptionService:
             active.interrupt(TranscriptionError(
                 "taken", "Listening moved to another JARVIS page.", incident=False))
         self._generation += 1
+        if client_id is not None and epoch is not None:
+            self._epochs[client_id] = max(epoch, self._epochs.pop(client_id, epoch))
+            while len(self._epochs) > EPOCHS_KEPT:      # the oldest pages first
+                self._epochs.pop(next(iter(self._epochs)))
         capture = Capture(self, self._generation, client_id, epoch)
         self._active = capture
         self._submit(("open", capture.generation, None))
