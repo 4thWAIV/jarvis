@@ -145,6 +145,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__prepare_repair",
     "mcp__jarvis__review_checklist",
     "mcp__jarvis__set_review_scope",
+    "mcp__jarvis__set_cited_files",
     "mcp__jarvis__diagnostics",
     # Speech input's models (speech_models.py) and the language
     # (language_setting.py): reading them, and the acting install and

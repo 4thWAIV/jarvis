@@ -701,6 +701,7 @@ export const mainEn = {
   "main.bundle.primary": "Primary",
   "main.bundle.request": "Request",
   "main.bundle.noRequest": "No request",
+  "main.bundle.cited": "Cited",
   "main.bundle.openability.verified": "Read there",
   "main.bundle.openability.ready": "Opens there",
   "main.bundle.openability.partial": "Partly readable there",

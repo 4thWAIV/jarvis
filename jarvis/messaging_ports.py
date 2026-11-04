@@ -56,6 +56,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis import messaging_wire as wire
+from jarvis.bundle_contract import CHECKLIST_MAX, PATH_MAX_CHARS
 
 # -- availability -----------------------------------------------------------------
 
@@ -240,6 +241,16 @@ class LocalSend(_Local):
     next_attempt_at: Optional[datetime] = None
 
 
+class CitedFile(_Local):
+    """A checklist item (bundle_tasks) a reply relies on: a file of the
+    request it answers, or a member of one, as the review's checklist names
+    it. Local only: it is read back and marks the checklist once the reply
+    is accepted, and never sent."""
+    attachment_id: UUID
+    member_id: str = Field(min_length=1, max_length=64)
+    path: str = Field(max_length=PATH_MAX_CHARS)
+
+
 class Draft(_Local):
     """The owner's unsent message on an item, or a new conversation's first
     message: local only until approved.
@@ -276,6 +287,12 @@ class Draft(_Local):
     task: Optional[wire.TaskContext] = None
     supersedes: list[wire.Supersedes] = Field(default_factory=list,
                                               max_length=wire.ATTACHMENTS_MAX)
+    # On a reply to a request asked of him: the checklist items it relies
+    # on, proposed by JARVIS from the files the text names until the owner
+    # sets them himself (`cited_by_owner`). Read back, never sent; a change
+    # is an edit like any other.
+    cited: list[CitedFile] = Field(default_factory=list, max_length=CHECKLIST_MAX)
+    cited_by_owner: bool = False
 
 
 def draft_content(draft: Draft, bundles: bool = False) -> wire.MessageContent:
@@ -450,9 +467,10 @@ def _artifact(draft: Draft, ref: wire.ArtifactRef) -> str:
 
 
 def human_readback(draft: Draft, recipient_label: str, bundles: bool = False) -> str:
-    """Exactly what is read back, and accepted, for a human message: with
-    its task, primary file and the files it replaces when they go
-    (`bundles`), or the line saying the task does not."""
+    """Exactly what is read back, and accepted, for a human message: the
+    files a reply marks cited (kept here, never sent), and its task, primary
+    file and the files it replaces when they go (`bundles`), or the line
+    saying the task does not."""
     lines = [f"To {recipient_label}."]
     if draft.subject:
         lines.append(f"Subject: {draft.subject}.")
@@ -461,6 +479,8 @@ def human_readback(draft: Draft, recipient_label: str, bundles: bool = False) ->
     if draft.attachments:
         lines.append("Files: " + "; ".join(f"{a.filename}, {spoken_size(a.size_bytes)}"
                                            for a in draft.attachments) + ".")
+    if draft.cited:
+        lines.append("Cited: " + "; ".join(c.path for c in draft.cited) + ".")
     if (draft.task is not None or draft.supersedes) and not bundles:
         lines.append(TASK_NOT_CARRIED)
         return "\n".join(lines)

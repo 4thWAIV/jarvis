@@ -466,6 +466,8 @@ BRAIN_TOOLS: dict[str, BrainTool] = {
                                   "GET /api/team/messages/threads/{thread_id}/review"),
     "set_review_scope": BrainTool(True, None,
                                   "PUT /api/team/messages/threads/{thread_id}/review/scope"),
+    "set_cited_files": BrainTool(True, None,
+                                 "PUT /api/team/messages/drafts/{message_id}/cited"),
 }
 
 # `{A}` in a route above.

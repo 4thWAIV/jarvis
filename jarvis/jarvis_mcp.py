@@ -1855,6 +1855,30 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "set_cited_files",
+        "description": (
+            "On his reply to a review a person asked him for: mark which files the reply "
+            "relies on, from review_checklist's items that were read (by attachment id and "
+            "member id). JARVIS proposes them from the files the reply names; this replaces "
+            "the proposal with his choice, and an empty list marks none. Once the reply is "
+            "accepted those items are cited. Only when he says which. The draft must be "
+            "reviewed again afterwards."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The reply draft's message id."},
+                "cited": {"type": "array", "description": "The files it relies on.",
+                          "items": {"type": "object", "properties": {
+                              "attachment": {"type": "string",
+                                             "description": "The item's attachment id."},
+                              "member": {"type": "string",
+                                         "description": "The item's member id."}},
+                              "required": ["attachment", "member"]}},
+            },
+            "required": ["message", "cited"],
+        },
+    },
+    {
         "name": "package_results",
         "description": (
             "The files an open package has produced that its package.json says to send "

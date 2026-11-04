@@ -95,11 +95,9 @@ export function MessageComposer({ editorKey, request }: {
                     file={draft!.files.find((f) => f.attachment_id === a.attachment_id)}
                     onRemove={locked ? undefined : () => removeFile(editorKey, a.attachment_id)} />
         ))}
+        {draft && <TaskFields draft={draft} disabled={locked || ed.saving || ed.dirty} target={request} />}
         {draft && draft.attachments.length > 0 && (
-          <>
-            <TaskFields draft={draft} disabled={locked || ed.saving || ed.dirty} target={request} />
-            <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
-          </>
+          <ReadinessLine messageId={draft.message_id} revision={draft.draft_revision} />
         )}
         {ed.adding > 0 && <p className="composer-adding" role="status">{t("main.queue.composer.adding", { count: ed.adding })}</p>}
         <label className={`composer-attach${locked || ed.recipient === null ? " disabled" : ""}`} title={limits}>

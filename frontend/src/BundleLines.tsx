@@ -10,9 +10,9 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { Readiness, ReviewProgress } from "./bundleContract";
+import type { ChecklistItem, Readiness, ReviewProgress } from "./bundleContract";
 import {
-  bundlesChanged, bundleWords as W, readReadiness, readReview, setTask,
+  bundlesChanged, bundleWords as W, readReadiness, readReview, setCited, setTask,
 } from "./bundles";
 import { useT } from "./locale";
 import { LIMITS, type AttachmentRef, type Draft, type TaskContext } from "./messagingContract";
@@ -79,13 +79,23 @@ export function ReadinessLine({ messageId, revision }: { messageId: string; revi
   );
 }
 
+const itemKey = (i: { attachment_id: string; member_id: string }) => `${i.attachment_id}/${i.member_id}`;
+
 /** On a draft with files: what the owner asks of the recipient, and which
  *  file is the one to review (a member inside an archive is named through
  *  the brain's set_message_task). Saved as the draft's task when changed;
- *  "No request" clears it. */
+ *  "No request" clears it. On a reply to a review asked of him: the read
+ *  files it relies on, ticked where JARVIS proposes them or he chose them;
+ *  a tick saves his own marks at once (the brain's set_cited_files). Says
+ *  nothing when there is neither. */
 export function TaskFields({ draft, disabled, target }: { draft: Draft; disabled: boolean; target?: Target }) {
   useT();
   const task = draft.task;
+  const reply = draft.thread_id !== draft.message_id;
+  const review = useHinted(() => (reply ? readReview(draft.thread_id) : Promise.resolve(null)),
+                           `${draft.thread_id}:${draft.draft_revision}`);
+  const citable: ChecklistItem[] = (review?.items ?? []).filter((i) => i.state === "read" || i.state === "cited");
+  const cited = new Set(draft.cited.map(itemKey));
   const [kind, setKind] = useState<OutcomeKind | "">(task?.outcome_kind ?? "");
   const [words, setWords] = useState(task?.requested_outcome ?? "");
   const [problem, setProblem] = useState<string | null>(null);
@@ -115,25 +125,53 @@ export function TaskFields({ draft, disabled, target }: { draft: Draft; disabled
       setProblem((e as Error).message);
     }
   };
+  const toggle = async (item: ChecklistItem) => {
+    const next = citable.filter((i) => (itemKey(i) === itemKey(item)) !== cited.has(itemKey(i)))
+      .map((i) => ({ attachment_id: i.attachment_id, member_id: i.member_id }));
+    try {
+      await setCited(draft.message_id, draft.draft_revision, next);
+      setProblem(null);
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+  };
+  const files = draft.attachments.length > 0;
+  if (!files && citable.length === 0) return null;
   return (
     <div className="composer-task" ref={target}>
-      <select data-ui-action="input" aria-label={W.request} value={kind} disabled={disabled}
-              onChange={(e) => { const k = e.target.value as OutcomeKind | ""; setKind(k); void save({ kind: k }); }}>
-        <option value="">{W.noRequest}</option>
-        {(Object.keys(W.outcome) as OutcomeKind[]).map((k) => <option key={k} value={k}>{W.outcome[k]}</option>)}
-      </select>
-      {kind && (
-        <input data-ui-action="input" type="text" aria-label={W.request} placeholder={W.request} value={words}
-               maxLength={LIMITS.TASK_OUTCOME_MAX_CHARS} disabled={disabled}
-               onChange={(e) => setWords(e.target.value)}
-               onBlur={() => void save({})} />
+      {files && (
+        <>
+          <select data-ui-action="input" aria-label={W.request} value={kind} disabled={disabled}
+                  onChange={(e) => { const k = e.target.value as OutcomeKind | ""; setKind(k); void save({ kind: k }); }}>
+            <option value="">{W.noRequest}</option>
+            {(Object.keys(W.outcome) as OutcomeKind[]).map((k) => <option key={k} value={k}>{W.outcome[k]}</option>)}
+          </select>
+          {kind && (
+            <input data-ui-action="input" type="text" aria-label={W.request} placeholder={W.request} value={words}
+                   maxLength={LIMITS.TASK_OUTCOME_MAX_CHARS} disabled={disabled}
+                   onChange={(e) => setWords(e.target.value)}
+                   onBlur={() => void save({})} />
+          )}
+          {kind && draft.attachments.length > 1 && (
+            <select data-ui-action="input" aria-label={W.primary} disabled={disabled || !task}
+                    value={task?.primary?.attachment_id ?? ""}
+                    onChange={(e) => void save({ primary: e.target.value })}>
+              {draft.attachments.map((a) => <option key={a.attachment_id} value={a.attachment_id}>{a.filename}</option>)}
+            </select>
+          )}
+        </>
       )}
-      {kind && draft.attachments.length > 1 && (
-        <select data-ui-action="input" aria-label={W.primary} disabled={disabled || !task}
-                value={task?.primary?.attachment_id ?? ""}
-                onChange={(e) => void save({ primary: e.target.value })}>
-          {draft.attachments.map((a) => <option key={a.attachment_id} value={a.attachment_id}>{a.filename}</option>)}
-        </select>
+      {citable.length > 0 && (
+        <fieldset className="composer-cited" disabled={disabled}>
+          <legend>{W.cited}</legend>
+          {citable.map((i) => (
+            <label key={itemKey(i)}>
+              <input data-ui-action="input" type="checkbox" checked={cited.has(itemKey(i))}
+                     onChange={() => void toggle(i)} />
+              {i.path}
+            </label>
+          ))}
+        </fieldset>
       )}
       {problem && <span className="composer-readiness readiness-blocked" role="alert">{problem}</span>}
     </div>

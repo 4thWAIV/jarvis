@@ -96,7 +96,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__show_bundle_member,mcp__jarvis__attachment_readiness,"
         "mcp__jarvis__set_message_task,mcp__jarvis__add_companion_files,"
         "mcp__jarvis__prepare_repair,mcp__jarvis__review_checklist,"
-        "mcp__jarvis__set_review_scope,"
+        "mcp__jarvis__set_review_scope,mcp__jarvis__set_cited_files,"
         "mcp__jarvis__diagnostics,"
         "mcp__jarvis__speech_models,mcp__jarvis__install_speech_model,"
         "mcp__jarvis__set_language,"

@@ -2131,6 +2131,8 @@
           }
         ],
         "capture_id": 7,
+        "cited": [],
+        "cited_by_owner": false,
         "draft_revision": 1,
         "files": [
           {
@@ -2163,6 +2165,8 @@
         "agent_drafted": false,
         "attachments": [],
         "capture_id": null,
+        "cited": [],
+        "cited_by_owner": false,
         "draft_revision": 4,
         "files": [],
         "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
@@ -2196,6 +2200,8 @@
           }
         ],
         "capture_id": null,
+        "cited": [],
+        "cited_by_owner": false,
         "draft_revision": 2,
         "files": [],
         "in_reply_to_message_id": null,
@@ -2427,6 +2433,8 @@
             "agent_drafted": false,
             "attachments": [],
             "capture_id": null,
+            "cited": [],
+            "cited_by_owner": false,
             "draft_revision": 4,
             "files": [],
             "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
@@ -2961,6 +2969,8 @@
                 "agent_drafted": false,
                 "attachments": [],
                 "capture_id": null,
+                "cited": [],
+                "cited_by_owner": false,
                 "draft_revision": 4,
                 "files": [],
                 "in_reply_to_message_id": "00000000-0000-4000-8000-000000000002",
@@ -3092,6 +3102,8 @@
               }
             ],
             "capture_id": 7,
+            "cited": [],
+            "cited_by_owner": false,
             "draft_revision": 1,
             "files": [
               {
