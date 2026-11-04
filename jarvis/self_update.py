@@ -58,8 +58,8 @@ GITHUB, INSTALLED, OTHER = "github", "installed", "other"
 
 # The latest commit's CI: its run of the ci workflow, as GitHub says it.
 CI_WORKFLOW = ".github/workflows/ci.yml"
-CI_PASSED, CI_PENDING, CI_FAILED, CI_NONE, CI_UNKNOWN = (
-    "passed", "pending", "failed", "none", "unknown")
+CI_PASSED, CI_PENDING, CI_FAILED, CI_CANCELLED, CI_NONE, CI_UNKNOWN = (
+    "passed", "pending", "failed", "cancelled", "none", "unknown")
 _CI_GOOD = {"success", "skipped", "neutral"}
 
 # What stops an update, each with its own fixed sentence.
@@ -86,6 +86,7 @@ _CI_WORDS = {
     CI_PASSED: "its CI passed",
     CI_PENDING: "its CI is still running",
     CI_FAILED: "its CI failed",
+    CI_CANCELLED: "its CI was cancelled",
     CI_NONE: "it has no CI result",
     CI_UNKNOWN: "GitHub could not be asked about its CI",
 }
@@ -94,6 +95,7 @@ _CI_WORDS = {
 _UNCHOSEN_WORDS = {
     CI_PENDING: "can be chosen once its tests pass",
     CI_FAILED: "can't be chosen: its tests failed",
+    CI_CANCELLED: "can't be chosen: its CI run was cancelled",
     CI_NONE: "can't be chosen: it has no test result",
     CI_UNKNOWN: "can be chosen once GitHub can be asked about its tests",
 }
@@ -355,6 +357,8 @@ def ci_state(runs: list, sha: str) -> str:
     latest = max(mine, key=lambda r: (str(r.get("created_at") or ""), r.get("id") or 0))
     if latest.get("status") != "completed":
         return CI_PENDING
+    if latest.get("conclusion") == "cancelled":
+        return CI_CANCELLED
     if latest.get("conclusion") not in _CI_GOOD:
         return CI_FAILED
     return CI_PASSED
