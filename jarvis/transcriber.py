@@ -312,9 +312,18 @@ class Capture:
     Interims are coalesced to at most one per `INTERIM_EVERY_SEC`; finals
     are never delayed or coalesced."""
 
-    def __init__(self, service: "TranscriptionService", generation: int) -> None:
+    def __init__(self, service: "TranscriptionService", generation: int,
+                 client_id: Optional[str] = None, epoch: Optional[int] = None) -> None:
         self._service = service
         self.generation = generation
+        # Whose capture this is: the page (its client id) and the capture
+        # epoch it was started in (voice control contract, section 4).
+        self.client_id = client_id
+        self.epoch = epoch
+        # Frames fed, and frames the recogniser has decoded (decodedSeq):
+        # the turn controller's coverage check compares them.
+        self.frames_received = 0
+        self.frames_decoded = 0
         self._loop = asyncio.get_running_loop()
         self._out: asyncio.Queue = asyncio.Queue()
         self.pending_bytes = 0
@@ -338,6 +347,7 @@ class Capture:
             raise TranscriptionError(
                 "overload", "Speech recognition fell behind, so this was not heard.")
         self.pending_bytes += len(pcm)
+        self.frames_received += 1
         self._window.received_bytes += len(pcm)
         self._oldest.append(now)
         self._service._submit(("audio", self.generation, pcm))
@@ -391,6 +401,7 @@ class Capture:
         self._window.decode_sec += decode_sec
         if consumed:
             self.pending_bytes -= consumed
+            self.frames_decoded += 1
             self._window.decoded_bytes += consumed
             if self._oldest:
                 delay = time.monotonic() - self._oldest.pop(0)
@@ -513,16 +524,33 @@ class TranscriptionService:
         """The capture now admitted, if any."""
         return self._active
 
-    def admit(self) -> Capture:
-        """The one capture, or busy if another page already has it."""
+    def capture_of(self, client_id: str) -> Optional[Capture]:
+        """The capture now admitted, if it is this page's."""
+        active = self._active
+        return active if active is not None and active.client_id == client_id else None
+
+    def admit(self, client_id: Optional[str] = None, epoch: Optional[int] = None,
+              claim: bool = False) -> Capture:
+        """The one capture. One page owns the recogniser at a time: another
+        page's capture is taken from it only on a claim (his Start
+        listening there), and that page is told (`taken`), never silently;
+        without a claim it is busy. The same page starting again replaces
+        its own older capture, which it has already let go."""
         if self.status in ("failed", "closed", "idle"):
             raise TranscriptionError(
                 "model-unavailable", self.failure or "Speech input is not running.")
-        if self._active is not None:
-            raise TranscriptionError(
-                "busy", "Another JARVIS page is listening. Typing still works here.")
+        active = self._active
+        if active is not None:
+            mine = client_id is not None and active.client_id == client_id
+            if not (mine or claim):
+                raise TranscriptionError(
+                    "busy", "Another JARVIS page is listening. Typing still works here.")
+            log.info("speech capture of %s taken by %s", active.client_id or "a page",
+                     client_id or "a page")
+            active.interrupt(TranscriptionError(
+                "taken", "Listening moved to another JARVIS page.", incident=False))
         self._generation += 1
-        capture = Capture(self, self._generation)
+        capture = Capture(self, self._generation, client_id, epoch)
         self._active = capture
         self._submit(("open", capture.generation, None))
         return capture
