@@ -282,6 +282,24 @@ def test_each_version_has_its_own_ci_from_the_one_request(repos):
     assert chosen.can_update and chosen.target == a and chosen.blockers == []
 
 
+def test_a_cancelled_ci_run_is_said_as_cancelled_and_cannot_be_chosen(repos):
+    # GitHub cancels a run on main when a newer push supersedes it.
+    cancelled = repos.merge(40, "Timings")
+    repos.merge(42, "Packages")
+    repos.set_ci(cancelled, _run("completed", "cancelled"))
+    status = self_update.check()
+    version = next(v for v in status.versions if v.pr == 40)
+    assert (version.ci, version.can_choose, version.unchosen) == (
+        self_update.CI_CANCELLED, False, "can't be chosen: its CI run was cancelled")
+    assert "its CI was cancelled" in self_update.version_line(version)
+    before = repos.head()
+    chosen = self_update.check(version="40")
+    assert [(b.code, b.detail) for b in chosen.blockers] == [
+        (self_update.VERSION_CI_NOT_PASSED, ["PR 40"])]
+    out = self_update.update(version="40")
+    assert out.refused == "That version's CI has not passed." and repos.head() == before
+
+
 def test_github_unreachable_makes_every_version_unknown(repos):
     repos.merge(41, "Orbs")
     repos.ci["raise"] = OSError("offline")
@@ -428,7 +446,7 @@ def test_untracked_files_are_judged_against_the_chosen_version(repos):
 @pytest.mark.parametrize("ci,state", [
     ({"workflow_runs": [_run("in_progress", None)]}, "pending"),
     ({"workflow_runs": [_run("completed", "failure")]}, "failed"),
-    ({"workflow_runs": [_run("completed", "cancelled")]}, "failed"),
+    ({"workflow_runs": [_run("completed", "cancelled")]}, "cancelled"),
     ({"workflow_runs": []}, "none"),
     ({"raise": OSError("offline")}, "unknown"),
     ({"workflow_runs": [_run("completed", "skipped")]}, "passed"),

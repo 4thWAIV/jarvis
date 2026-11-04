@@ -389,8 +389,8 @@ EXEMPT = {
         "transcriber.MODELS; nothing a session wrote reaches it"),
     "self_update.ci_state": (
         "it reads a GitHub Actions run's `status`, `conclusion` and `path` only "
-        "to compare them with fixed values, and returns one of five fixed CI "
-        "words (passed, pending, failed, none, unknown); no text from GitHub "
+        "to compare them with fixed values, and returns one of six fixed CI "
+        "words (passed, pending, failed, cancelled, none, unknown); no text from GitHub "
         "reaches the string it returns, a header, a spoken line or the brain"),
     "self_update.version_line": (
         "it puts a merged pull request's title (a teammate's words) into one line "

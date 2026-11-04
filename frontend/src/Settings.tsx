@@ -359,7 +359,7 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
 
 // GET /api/update (self_update.Status.to_json) and POST /api/update
 // (self_update.Outcome.to_json).
-type CiState = "" | "passed" | "pending" | "failed" | "none" | "unknown";
+type CiState = "" | "passed" | "pending" | "failed" | "cancelled" | "none" | "unknown";
 
 // A version: a pull request merged to main (self_update.Version.to_json).
 interface UpdateVersion {
@@ -406,13 +406,15 @@ interface UpdateOutcome {
 // Each version's tests, as its row says them, and the colour they take.
 const CI_WORDS = {
   passed: ["left.updates.ci.passed", "pass"], pending: ["left.updates.ci.pending", "wait"],
-  failed: ["left.updates.ci.failed", "fail"], none: ["left.updates.ci.none", "fail"],
+  failed: ["left.updates.ci.failed", "fail"], cancelled: ["left.updates.ci.cancelled", "fail"],
+  none: ["left.updates.ci.none", "fail"],
   unknown: ["left.updates.ci.unknown", "wait"],
 } as const;
 
 // Why a version whose tests have not passed cannot be chosen, by its CI.
 const UNCHOSEN_WORDS = {
   pending: "left.updates.unchosen.pending", failed: "left.updates.unchosen.failed",
+  cancelled: "left.updates.unchosen.cancelled",
   none: "left.updates.unchosen.none", unknown: "left.updates.unchosen.unknown",
 } as const;
 
