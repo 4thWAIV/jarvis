@@ -91,6 +91,10 @@ export function startJarvis(orb: Orb): void {
     else if (msg.state === "stalled") keepUnsent(String(msg.text ?? ""));
   });
   socket.onClose(() => keepUnsent(unsent.join(" ")));
+  // A listening page stops while the voice socket is down and resumes, in
+  // this open page, once it is back (voiceInput.ts `connection`).
+  socket.onClose(() => voiceInput.connection(false));
+  socket.onOpen(() => voiceInput.connection(true));
 
   // Every word heard carries this page and the capture epoch it was heard
   // in (voice control contract, section 4).
@@ -134,8 +138,15 @@ export function startJarvis(orb: Orb): void {
         unsent = [];
         socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
       },
-      // Kept words that could not be finished: never sent, an unsent draft.
+      // Kept words that could not be finished, or finished after Mute: never
+      // sent, an unsent draft.
       onDraft: offerDraft,
+      // Muted: the server drops what it was gathering, and the words it had
+      // become an unsent draft too.
+      onMute: (captureEpoch: number) => {
+        keepUnsent(unsent.join(" "));
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
     }
   );
 

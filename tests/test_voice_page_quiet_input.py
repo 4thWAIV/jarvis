@@ -22,6 +22,7 @@ pytestmark = pytest.mark.page
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_speech_input import COUNT_MICROPHONES, Voice, _until
+from tests.test_voice_page_packages import jarvis_app  # noqa: F401  (the fixture)
 from tests.voice_page_input import LISTEN, route_settings, start_listening
 
 SILENCED = "document.querySelector('#mic-silenced')?.textContent ?? null"
@@ -415,4 +416,117 @@ async def test_typing_works_while_voice_is_quiet(page_playwright, page_url):
         assert await _until(lambda: [m for m in page.voice.sent
                                      if m.get("type") == "transcript" and m.get("typed")])
         await _quiet_since_load(page, 300)
+        await context.close()
+
+
+# ── Mute and reconnecting, as decided ────────────────────────────────────
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_mute_turns_what_was_said_into_an_unsent_draft_and_unmute_never_sends_it(
+        page_playwright, page_url):
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await _page(context, page_url, view="", script={"finalOnFinish": "at seven"})
+        await _listening(page)
+        await page.evaluate("window.__hear('book a table', true)")      # gathered, not committed
+        assert await _until(page.voice.finals)
+        await page.evaluate("window.__hear('at', false)")
+        await page.click("#btn-mute")
+        await page.wait_for_function(
+            "document.querySelector('#conversation-draft')?.value === 'book a table at seven'",
+            timeout=5000)
+        discard = _sent(page.voice, "turn_discard")
+        assert len(discard) == 1
+        assert page.voice.finals() == ["book a table"], "the finished words were sent"
+        await page.click("#btn-mute")
+        await page.wait_for_function("window.__starts.length === 2", timeout=10000)
+        assert (await page.evaluate("window.__starts"))[1]["captureEpoch"] == discard[0]["captureEpoch"] + 1
+        await page.wait_for_timeout(500)
+        assert page.voice.finals() == ["book a table"]
+        assert await page.evaluate("document.querySelector('#conversation-draft').value") == \
+            "book a table at seven"
+        await context.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_listening_page_resumes_under_a_new_epoch_once_the_voice_socket_is_back(
+        page_playwright, page_url):
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context()
+        page = await _page(context, page_url)
+        await _listening(page)
+        await page.voice.socket.close()
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=5000)
+        assert await page.evaluate(STATE) == "Not listening"
+        # The page's socket reconnects by itself (ws.ts); the route answers again.
+        await page.wait_for_function("window.__starts.length === 2", timeout=20000)
+        starts = await page.evaluate("window.__starts")
+        assert starts[1]["claim"] is False and starts[1]["captureEpoch"] > starts[0]["captureEpoch"]
+        await page.wait_for_function("window.__liveTracks() === 1", timeout=5000)
+        assert await page.evaluate("window.__micOpens") == 2
+        await context.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_page_that_was_not_listening_or_was_muted_does_not_resume(page_playwright, page_url):
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context()
+        page = await _page(context, page_url)
+        assert await _until(lambda: page.voice.socket is not None)
+        await page.voice.socket.close()
+        await page.wait_for_timeout(4000)
+        await _quiet_since_load(page, 100)
+
+        await _listening(page)
+        await page.click("#btn-mute")
+        await page.voice.socket.close()
+        await page.wait_for_timeout(4000)
+        assert await page.evaluate("window.__starts.length") == 1
+        assert await page.evaluate(SILENCED) == "Muted · microphone inactive"
+        await context.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_muted_or_not_listening_no_frame_reaches_a_package_listener(page_playwright, page_url, jarvis_app):
+    """Mute suspends PCM to every consumer: the page package's listener as
+    much as the recogniser."""
+    from jarvis import packages_api
+    from tests.test_voice_page_packages import _through
+    client, token, package = jarvis_app
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await context.new_page()
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.add_init_script(COUNT_MICROPHONES)
+        await route_settings(page)
+        voice = Voice()
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.route_web_socket("**/ws/sessions", lambda ws: None)
+        await page.route("**/api/packages/**", _through(client, token))
+        await page.goto(page_url)
+        await page.wait_for_selector(LISTEN)
+        assert await _until(lambda: voice.socket is not None)
+        voice.socket.send(json.dumps({"type": "package_page", "package": packages_api.describe(package)}))
+        await page.wait_for_selector("#package-view iframe")
+        inner = None
+        for _ in range(100):
+            inner = next((f for f in page.frames if f.url.endswith("/files/index.html")), None)
+            if inner:
+                break
+            await page.wait_for_timeout(100)
+        await inner.evaluate("""() => { window.__audio = 0;
+            addEventListener("message", (e) => { if (e.data?.type === "audio") window.__audio++; });
+            parent.postMessage({jarvis: "package", type: "listen", on: true}, "*"); }""")
+        await page.wait_for_timeout(800)
+        assert await inner.evaluate("window.__audio") == 0, "heard without the grant"
+
+        await start_listening(page)
+        await inner.wait_for_function("window.__audio > 5", timeout=10000)
+        await page.click("#btn-mute")
+        await page.wait_for_timeout(300)
+        muted = await inner.evaluate("window.__audio")
+        await page.wait_for_timeout(1000)
+        assert await inner.evaluate("window.__audio") == muted, "a package heard while muted"
+        await page.click("#btn-mute")
+        await inner.wait_for_function(f"window.__audio > {muted + 5}", timeout=10000)
         await context.close()

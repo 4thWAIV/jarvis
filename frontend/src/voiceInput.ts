@@ -163,6 +163,11 @@ export interface VoiceInput {
    *  discarded as echo. */
   pause(): void;
   resume(): void;
+  /** The voice socket went down (false) or came back (true). Down, a page
+   *  that was listening stops under its old epoch and releases the
+   *  microphone; back in the same open page, it resumes under a new epoch
+   *  without a second click, taking the recogniser from no other page. */
+  connection(up: boolean): void;
 }
 
 export interface VoiceInputHooks {
@@ -175,9 +180,13 @@ export interface VoiceInputHooks {
   /** Unfinished input was discarded: the server drops the turn it was
    *  gathering from this page and refuses words from before `epoch`. */
   onDiscard?: (epoch: number) => void;
-  /** Words kept on a stop that could not be finished: never sent, offered
-   *  as an unsent draft. */
+  /** Words kept on a stop that could not be finished, or finished after a
+   *  Mute: never sent, offered as an unsent draft. */
   onDraft?: (text: string) => void;
+  /** Muted: nothing he said is committed by itself any more. The server
+   *  drops the turn it was gathering (refusing words from before `epoch`),
+   *  and what it had becomes an unsent draft. */
+  onMute?: (epoch: number) => void;
 }
 
 const FRAME_MS = 1000 * (protocol.frameBytes / 2) / protocol.sampleRate;
@@ -239,6 +248,8 @@ interface Session {
    *  then go together, or become a draft if it cannot finish. Null: each
    *  final goes as it comes. */
   held: string[] | null;
+  /** Muted: its held words become an unsent draft when it finishes. */
+  toDraft: boolean;
 }
 
 export function createVoiceInput(
@@ -256,6 +267,9 @@ export function createVoiceInput(
   let closing: Session | null = null;   // the stopped or muted session, finishing
   let epoch = 0;             // the capture epoch (voice control contract, section 4)
   let claim = false;         // the next session takes the recogniser from another page
+  // Listening when the voice socket dropped: resumed when it is back, in
+  // this open page only (never across a reload).
+  let resumeOnReconnect = false;
   let retryDelay = 1000;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let status: InputStatus = { state: "disarmed", message: "", words: null };
@@ -434,7 +448,7 @@ export function createVoiceInput(
     ws.binaryType = "arraybuffer";
     const s: Session = { ws, id: null, epoch, ready: false, closing: false, lastFrame: false,
                          finishSent: false, closed: false, outbox: [], credit: PACE_PER_TICK,
-                         finals: new Set(), held: null };
+                         finals: new Set(), held: null, toDraft: false };
     const claiming = claim;
     session = s;
     // Credit by the time that has passed, not by ticks: a busy page's timers
@@ -509,7 +523,8 @@ export function createVoiceInput(
       } else if (type === "finished") {
         const held = s.held;
         s.held = null;
-        held?.forEach((text) => deliver(s, text));
+        if (s.toDraft) { if (held?.length) hooks.onDraft?.(held.join(" ")); }
+        else held?.forEach((text) => deliver(s, text));
         ws.close();
       } else if (type === "error") {
         onServerError(s, String(msg.code ?? ""), String(msg.message ?? ""));
@@ -609,7 +624,9 @@ export function createVoiceInput(
       return;
     }
     framesCaptured++;
-    frameListeners.forEach((listener) => listener(pcm.slice(0)));
+    // Muted or off, no consumer hears anything: the recogniser and package
+    // listeners alike.
+    if (!quiet()) frameListeners.forEach((listener) => listener(pcm.slice(0)));
     // While quiet, only the frames the worklet flushes for the muted session.
     const s = quiet() ? (closing && !closing.lastFrame ? closing : null) : session;
     if (!s || (paused && !quiet())) return;
@@ -678,12 +695,13 @@ export function createVoiceInput(
    *  still loading (it is sent once ready). `hold`: its words wait for the
    *  finish and go together, or become an unsent draft if it cannot
    *  finish (a stop under Keep); otherwise each goes as it comes (mute). */
-  function finishSession(hold: boolean) {
+  function finishSession(hold: boolean, toDraft = false) {
     const s = session;
     session = null;
     if (s) {
       s.closing = true;
       if (hold) s.held = [];
+      s.toDraft = toDraft;
       closing = s;
       setTimeout(() => {
         if (s.closed) return;
@@ -837,10 +855,15 @@ export function createVoiceInput(
       if (next === "muted") {
         quietNow = next;
         if (was === "none" && armed) {
-          // Mute: the words already spoken are finished and sent; the
-          // microphone stays open.
+          // Mute: nothing reaches any consumer and nothing he said is
+          // committed by itself. The capture finishes only what was said
+          // before the Mute, and that, with what the server was gathering,
+          // becomes an unsent draft. The microphone stays open; Unmute
+          // starts a new epoch and never sends the draft.
           cancelRetry();
-          finishSession(false);
+          epoch++;
+          finishSession(true, true);
+          hooks.onMute?.(epoch);
           hooks.onLevel?.(0);
         }
         rest();
@@ -866,6 +889,24 @@ export function createVoiceInput(
       paused = true;
       dropSession();
       if (armed && !quiet()) setStatus("paused");
+    },
+    connection(up: boolean) {
+      if (!up) {
+        if (!armed) return;
+        resumeOnReconnect = !quiet();
+        mark("voice socket lost: listening stops under its epoch");
+        revoke();
+        rest(inputWords("left.input.lostJarvis"));
+        return;
+      }
+      if (!resumeOnReconnect) return;
+      resumeOnReconnect = false;
+      if (quiet() || armed) return;
+      if (document.visibilityState === "hidden" && hooks.settings?.()?.switch === "stop") return;
+      if (!arm()) return;
+      claim = false;              // resumed, not his Start: takes nothing from another page
+      mark("voice socket back: listening resumes under a new epoch");
+      void openMicrophone();
     },
     resume() {
       if (!paused) return;

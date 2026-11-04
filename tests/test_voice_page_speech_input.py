@@ -143,15 +143,19 @@ async def test_what_is_heard_goes_to_jarvis_as_before(page_playwright, page_url)
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_playwright, page_url):
+async def test_mute_commits_nothing_and_takes_nothing_with_the_microphone_kept(page_playwright, page_url):
+    """Mute (decided as proposed): the words already spoken are finished but
+    not sent (they become an unsent draft), the server drops what it was
+    gathering, nothing more is sent, and the microphone stays open."""
     async with page_playwright as p:
         browser, page, voice = await _open(p, page_url,
                                            {"finalOnFinish": "turn off the lights"})
         await _ready(page)
         await page.evaluate("window.__hear('turn off the', false)")
         await page.click("#btn-mute")
-        assert await _until(voice.finals)
-        assert voice.finals() == ["turn off the lights"]
+        assert await _until(lambda: [m for m in voice.sent if m.get("type") == "turn_discard"])
+        await page.wait_for_function("window.__transcribers[0].readyState === 3", timeout=5000)
+        assert voice.finals() == []
         assert await page.evaluate("window.__liveTracks()") == 1, "mute released the microphone"
         after = await page.evaluate("window.__framesSent")
         await page.wait_for_timeout(1500)
@@ -159,11 +163,13 @@ async def test_mute_sends_the_words_already_spoken_then_takes_nothing(page_playw
         lit = await page.evaluate("document.querySelectorAll('#mic-meter .mic-segment.on').length")
         assert lit == 0
 
-        # Unmuted: the same microphone and a fresh session, streaming again.
+        # Unmuted: the same microphone and a fresh session in a new epoch.
         await page.click("#btn-mute")
         assert await _until(lambda: page.evaluate(f"window.__framesSent > {after + 5}"))
         assert await page.evaluate("window.__micOpens") == 1
-        assert await page.evaluate("window.__transcribers.length") == 2
+        starts = await page.evaluate("window.__starts")
+        assert len(starts) == 2 and starts[1]["captureEpoch"] > starts[0]["captureEpoch"]
+        assert voice.finals() == [], "unmuting sent the old words"
         await browser.close()
 
 
@@ -260,14 +266,16 @@ async def test_a_busy_or_missing_recogniser_stays_on_screen(page_playwright, pag
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_a_final_heard_while_jarvis_is_disconnected_is_reported_not_lost(page_playwright, page_url):
+async def test_listening_stops_while_jarvis_is_disconnected_and_says_so(page_playwright, page_url):
+    """Nothing is heard under the old epoch once the voice socket drops: the
+    recogniser and the microphone are let go, and the page says why."""
     async with page_playwright as p:
         browser, page, voice = await _open(p, page_url)
         await _ready(page)
         await voice.socket.close()
-        await page.wait_for_timeout(200)
-        await page.evaluate("window.__hear('deploy it', true)")
+        await page.wait_for_function("window.__liveTracks() === 0", timeout=5000)
         await page.wait_for_function(
             "document.querySelector('#health-dot')?.title.includes('not sent')")
+        assert await page.evaluate("window.__transcribers.every((t) => t.readyState === 3)")
         assert voice.finals() == []
         await browser.close()
