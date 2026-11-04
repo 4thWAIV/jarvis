@@ -108,13 +108,15 @@ export function MicControl() {
   const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: t("targets.microphone"),
                            socket: { rail: "rail.left", side: "left" } });
   const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
-  return (
+  // The state as assistive technology reads it: beside the control, not in
+  // it, so its (hidden) words are not something the pointer must avoid.
+  return (<>
+    <span id="mic-state" className="visually-hidden" role="status">{t(`left.mic.state.${status.state}`)}</span>
     <div id="mic-control" ref={ui.whole}>
-      <span id="mic-state" className="visually-hidden" role="status">{t(`left.mic.state.${status.state}`)}</span>
       <MicLevel partRef={ui.part("meter")} listenRef={ui.part("listen")} />
       <MuteButton partRef={ui.part("mute")} />
       <MicOffButton partRef={ui.part("off")} />
       <HealthDot partRef={ui.part("health")} />
     </div>
-  );
+  </>);
 }

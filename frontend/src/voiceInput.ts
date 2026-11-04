@@ -173,8 +173,8 @@ export interface VoiceInputHooks {
   /** The voice input settings in force, or null until they have been read. */
   settings?: () => VoiceInputSettings | null;
   /** Unfinished input was discarded: the server drops the turn it was
-   *  gathering from this page. */
-  onDiscard?: () => void;
+   *  gathering from this page and refuses words from before `epoch`. */
+  onDiscard?: (epoch: number) => void;
   /** Words kept on a stop that could not be finished: never sent, offered
    *  as an unsent draft. */
   onDraft?: (text: string) => void;
@@ -578,7 +578,7 @@ export function createVoiceInput(
       // He started listening on another page: this one lets go, as if he
       // had stopped it here, and does not take it back by itself.
       revoke();
-      if (hooks.settings?.()?.stop !== "keep") hooks.onDiscard?.();
+      if (hooks.settings?.()?.stop !== "keep") hooks.onDiscard?.(epoch);
       rest(inputWords("left.input.taken"));
       return;
     }
@@ -759,14 +759,16 @@ export function createVoiceInput(
     dropSession();
     if (!keep) {
       abortClosing();
-      hooks.onDiscard?.();
+      hooks.onDiscard?.(epoch);
     }
     closeMicrophone();
     rest();
   }
 
   function scheduleRetry(what: () => void) {
-    if (retryTimer) return;
+    // One retry at a time, for the epoch in force now: an older one would
+    // never run (its epoch has passed), so it is replaced.
+    cancelRetry();
     const delay = retryDelay;
     const at = epoch;
     retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);

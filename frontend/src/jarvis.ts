@@ -80,12 +80,25 @@ export function startJarvis(orb: Orb): void {
   // Voice input
   // ---------------------------------------------------------------------------
 
+  // What he said that the server has not yet committed as a turn: if the
+  // voice socket drops, it is not sent but kept as an unsent draft, and a
+  // turn the recogniser could not finish comes back the same way.
+  let unsent: string[] = [];
+  const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); unsent = []; };
+  socket.onMessage((msg) => {
+    if (msg.type !== "turn") return;
+    if (msg.state === "committed") unsent = [];
+    else if (msg.state === "stalled") keepUnsent(String(msg.text ?? ""));
+  });
+  socket.onClose(() => keepUnsent(unsent.join(" ")));
+
   // Every word heard carries this page and the capture epoch it was heard
   // in (voice control contract, section 4).
   const voiceInput = createVoiceInput(
     (text: string, captureEpoch: number) => {
       // The server decides whether this is echo, a barge-in, or a new turn.
       // The turn's id goes with it, so a capture made from it can name it.
+      unsent.push(text);
       const id = showHeard(text, true);
       socket.send({ type: "transcript", text, isFinal: true, clientId: CLIENT_ID, captureEpoch,
                     ...(id === null ? {} : { id }) });
@@ -117,7 +130,10 @@ export function startJarvis(orb: Orb): void {
       settings: () => voiceInputSettings.get(),
       // Discarded under his stop setting: the server drops what it was
       // gathering from this page.
-      onDiscard: () => { socket.send({ type: "turn_discard", clientId: CLIENT_ID }); },
+      onDiscard: (captureEpoch: number) => {
+        unsent = [];
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
       // Kept words that could not be finished: never sent, an unsent draft.
       onDraft: offerDraft,
     }
