@@ -135,7 +135,8 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment", "set_voice_input_settings")
+            "update_jarvis", "reveal_attachment", "set_voice_input_settings",
+            "skip_reading", "stop_speaking")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
@@ -171,6 +172,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("set_language", {"language": "es"}),
     ("set_voice_input_settings", {"stop": "discard"}),
     ("update_jarvis", {}),
+    ("skip_reading", {}),
+    ("stop_speaking", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
@@ -624,3 +627,41 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
         "Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
     assert (page_post.status_code, page_post.json()["code"]) == (400, "invalid-stop")
     assert wired.client.get(voice_control.PATH).json() == page
+
+
+# ── Skip the rest and Stop speaking ──────────────────────────────────────
+
+class _Mouth:
+    """speech.SpeechScheduler as the two calls use it."""
+
+    def __init__(self, speaking=True, reading=True):
+        self.is_speaking, self._reading, self.calls = speaking, reading, []
+
+    async def skip_reading(self, utt=None):
+        self.calls.append(("skip", utt))
+        return self._reading
+
+    async def barge_in(self, keep_unread=True, reason=""):
+        self.calls.append(("stop", keep_unread))
+
+
+def test_skip_reading_is_the_page_s_skip_on_the_reading_sounding_now(wired, monkeypatch):
+    mouth = _Mouth()
+    monkeypatch.setattr(wired.server, "speech", mouth)
+    got = _call(wired, "skip_reading")
+    assert got["ok"] and "nothing it asked for has been approved" in got["text"]
+    assert mouth.calls == [("skip", None)]
+    mouth._reading = False
+    assert "Nothing is being read aloud" in _call(wired, "skip_reading")["text"]
+
+
+def test_stop_speaking_is_the_page_s_stop_and_touches_nothing_when_silent(wired, monkeypatch):
+    mouth = _Mouth()
+    monkeypatch.setattr(wired.server, "speech", mouth)
+    got = _call(wired, "stop_speaking")
+    assert got["ok"] and "nothing was undone" in got["text"]
+    assert mouth.calls == [("stop", False)], "be quiet, not hold that thought"
+    quiet = _Mouth(speaking=False)
+    monkeypatch.setattr(wired.server, "speech", quiet)
+    assert "Nothing was being said" in _call(wired, "stop_speaking")["text"]
+    assert quiet.calls == []

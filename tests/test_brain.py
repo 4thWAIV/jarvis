@@ -100,6 +100,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__diagnostics,"
         "mcp__jarvis__speech_models,mcp__jarvis__install_speech_model,"
         "mcp__jarvis__set_language,"
+        "mcp__jarvis__skip_reading,mcp__jarvis__stop_speaking,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
         "mcp__jarvis__retry_run,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"

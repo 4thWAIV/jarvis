@@ -89,6 +89,8 @@ from jarvis import repo_read
 from jarvis import session_messages
 from jarvis import server_address
 from jarvis import spoken_words
+from jarvis import voice_control
+from jarvis.voice_control import ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
 from jarvis import session_needs
@@ -2741,8 +2743,10 @@ class _ReplyText:
     """Full assistant text, independent of narration filters and audio acks.
 
     One pending snapshot coalesces fast deltas; finishing cancels that timer
-    and publishes the provider's canonical result last. No background task
-    or provider generation is cancelled when the user skips its reading.
+    and publishes the provider's canonical result last, with how it ended
+    (`ReplyOutcome`), so a reply cut short by a failure is never shown as
+    complete. No background task or provider generation is cancelled when
+    the user skips its reading.
     """
 
     def __init__(self, utt: int):
@@ -2765,7 +2769,10 @@ class _ReplyText:
         _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
                       "text": self.text, "done": False})
 
-    def finish(self, text: Optional[str] = None) -> None:
+    def finish(self, text: Optional[str] = None,
+               outcome: str = ReplyOutcome.FAILED) -> None:
+        """The last frame. Only a turn the provider finished is `succeeded`;
+        a finish with nothing to say about it was cut short."""
         if self._done:
             return
         self._done = True
@@ -2775,7 +2782,7 @@ class _ReplyText:
         if text is not None:
             self.text = text
         _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
-                      "text": self.text, "done": True})
+                      "text": self.text, "done": True, "outcome": outcome})
 
 
 async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
@@ -2813,11 +2820,15 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                                                    origin="user",
                                                    on_delta=delta,
                                                    on_tool=hold.tool_started)
-                reply.finish(result.text)
+                reply.finish(result.text, ReplyOutcome.SUCCEEDED
+                             if result.stop_reason == "result" else ReplyOutcome.FAILED)
                 hold.finish()    # the one line this turn is allowed
                 screen.finish()  # a "Sources:" block it held goes on the screen
+            except asyncio.CancelledError:
+                reply.finish(outcome=ReplyOutcome.CANCELLED)
+                raise
             finally:
-                reply.finish()  # errors/cancellation also close the live text stream
+                reply.finish()  # an error also closes the live text stream, as failed
                 _turn_utt, _turn_heard = None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
@@ -4974,7 +4985,7 @@ async def _take_back_the_floor(turn_id: int) -> None:
                 and utt.first_sent_at is None):
             log.info("turn %d: he went on before its reply was heard; reply %d not read",
                      turn_id, utt.id)
-            await speech.skip_reply(utt.id)
+            await speech.skip_reading(utt.id)
 
 
 def _transcript_id(msg: dict) -> Optional[int]:
@@ -8466,6 +8477,60 @@ TAINT_EXEMPT_TOOLS.update({
 })
 
 
+# --- Skip the rest and Stop speaking ------------------------------------------
+#
+# The page's Skip (`skip_to_end`) and Stop (`hush`) frames and the brain's
+# acting `skip_reading` and `stop_speaking` share these two. Neither cancels
+# a request or undoes anything a tool has done: they are about audio only.
+
+async def _skip_reading(utt: Optional[int] = None) -> bool:
+    """Skip the rest of one reading (`utt`, or the one sounding now): its
+    text stays, its generation goes on, nothing else stops. A read-back that
+    is skipped is not heard in full, so it approves nothing."""
+    if speech is None:
+        return False
+    return await speech.skip_reading(utt)
+
+
+async def _stop_speaking(by: str) -> bool:
+    """Stop speaking: every chunk playing or queued, now. Whether anything
+    was sounding."""
+    if speech is None:
+        return False
+    was = speech.is_speaking
+    log.info("hush: stopped by %s", by)
+    await speech.barge_in(keep_unread=False, reason=f"hush ({by})")
+    return was
+
+
+async def tool_skip_reading(args: dict) -> str:
+    """The page's Skip, by voice: the rest of what is being read aloud now."""
+    if not await _skip_reading():
+        return "Nothing is being read aloud, sir."
+    return ("Skipped the rest of that reading, sir; its text is still on screen, and "
+            "nothing it asked for has been approved or undone.")
+
+
+async def tool_stop_speaking(args: dict) -> str:
+    """The page's Stop, by voice: all audio, now. Nothing sounding, nothing
+    is touched: his own reply still to come is not silenced in advance."""
+    if speech is None or not speech.is_speaking:
+        return "Nothing was being said, sir."
+    await _stop_speaking("the brain")
+    return "Stopped speaking, sir. No request was cancelled and nothing was undone."
+
+
+TOOL_HANDLERS.update({
+    "skip_reading": tool_skip_reading,
+    "stop_speaking": tool_stop_speaking,
+})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking"})
+TAINT_EXEMPT_TOOLS.update({
+    "skip_reading": "it stops one reading aloud, it does not read",
+    "stop_speaking": "it stops all audio, it does not read",
+})
+
+
 # --- Subagents in the Workflows area ------------------------------------------
 #
 # The subagents sessions dispatch are shown with the workflows, worked out
@@ -11870,7 +11935,13 @@ async def voice_handler(ws: WebSocket):
                                                      typed into the white box
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
-        {"type": "skip_to_end", "utt": 3}           stop this reply's reading, not generation
+        {"type": "skip_to_end", "utt": 3}           Skip the rest: stop this one reading
+                                                     (reply, read-back, announcement), not
+                                                     its generation
+        {"type": "hush"}                             Stop speaking: all audio, now
+        {"type": "playback", "utt": 3, "idx": 1, "outcome": "started"|"failed"}
+                                                     a chunk began to sound, or could not
+                                                     be decoded (failed is never played)
 
     Server -> Client:
         {"type": "config", "muteMicDuringSpeech": false}
@@ -11880,8 +11951,10 @@ async def voice_handler(ws: WebSocket):
         {"type": "status", "state": "thinking"|"speaking"|"idle"}
         {"type": "text", "text": "..."}              a chunk TTS could not voice
         {"type": "reply", "utt": 3, "at": 1234.5, "text": "...", "done": false}
-                                                     cumulative text; `at` is stable per turn
-        {"type": "reading_skipped", "utt": 3}       drop only this reply's audio, no fake ack
+                                                     cumulative text; `at` is stable per turn;
+                                                     the last (done) carries `outcome`:
+                                                     succeeded | failed | cancelled
+        {"type": "reading_skipped", "utt": 3}       drop only this reading's audio, no fake ack
 
     Run lifecycle events are published on /ws/runs, not here.
     """
@@ -11965,7 +12038,15 @@ async def voice_handler(ws: WebSocket):
             if kind == "skip_to_end":
                 target = msg.get("utt")
                 if type(target) is int and target > 0:
-                    await speech.skip_reply(target)
+                    await _skip_reading(target)
+                continue
+            if kind == voice_control.PLAYBACK_FRAME:
+                utt_id, idx, outcome = msg.get("utt"), msg.get("idx"), msg.get("outcome")
+                if type(utt_id) is int and type(idx) is int:
+                    if outcome == voice_control.PLAYBACK_STARTED:
+                        speech.playback_started(utt_id, idx)
+                    elif outcome == voice_control.PLAYBACK_FAILED:
+                        speech.playback_failed(utt_id, idx)
                 continue
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
@@ -11998,8 +12079,7 @@ async def voice_handler(ws: WebSocket):
                 #
                 # keep_unread=False: this is "be quiet", not "hold that
                 # thought" — nothing is saved to say later.
-                log.info("hush: stopped by the user")
-                await speech.barge_in(keep_unread=False, reason="hush (key)")
+                await _stop_speaking("the page")
                 continue
             if kind == "interim":
                 # Logged because its ABSENCE is the diagnosis. A session that

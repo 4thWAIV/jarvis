@@ -1,7 +1,9 @@
 """
 voice_control.py — the voice control contract's shared pieces on the server
 (docs/planning/quiet-conversation/contract.md): for now, the two voice input
-settings and the one service the page's route and the brain's tools call.
+settings and the one service the page's route and the brain's tools call,
+and the words the page and the server both name on the voice socket
+(the page's copy is `frontend/src/voiceControl.ts`).
 
   stop    "When I stop the microphone": `keep` the words already captured
           (only the audio from before the stop is finished, and its words go
@@ -229,3 +231,22 @@ def mount(app: FastAPI, publish: Optional[Publish] = None) -> None:
     _publish = publish
     app.add_api_route(PATH, api_read, methods=["GET"])
     app.add_api_route(PATH, api_change, methods=["POST"])
+
+
+# ── the voice socket's shared words ─────────────────────────────────────
+
+class ReplyOutcome:
+    """How a reply's text ended, sent on its last `reply` frame as
+    `outcome`, so unfinished text is never shown as complete."""
+    SUCCEEDED = "succeeded"    # the provider finished the turn
+    FAILED = "failed"          # it stopped with an error, timed out, died or hit a limit
+    CANCELLED = "cancelled"    # the turn itself was cancelled before it finished
+    ALL = frozenset({SUCCEEDED, FAILED, CANCELLED})
+
+
+# The `playback` frame the page sends about one audio chunk: what it alone
+# can know. `played` keeps its own frame; skipped and interrupted are the
+# server's own doing (skip_to_end, hush, stop), so the page never reports them.
+PLAYBACK_FRAME = "playback"
+PLAYBACK_STARTED = "started"
+PLAYBACK_FAILED = "failed"

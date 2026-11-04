@@ -191,7 +191,7 @@ async def test_backend_restart_can_reuse_utterance_after_skip_without_overwritin
 
 
 @pytest.mark.asyncio
-async def test_disconnected_partial_reply_is_marked_and_capture_stop_uses_hush(page_url):
+async def test_disconnected_partial_reply_is_marked_and_escape_skips_only_the_readback(page_url):
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p,page_url,voice)
@@ -208,8 +208,10 @@ async def test_disconnected_partial_reply_is_marked_and_capture_stop_uses_hush(p
         await page.wait_for_selector('.chat-playback')
         await page.keyboard.press('Escape')
         await page.wait_for_selector('.chat-playback', state='detached')
-        assert [m for m in voice.got if m.get('type') == 'hush']
-        assert not [m for m in voice.got if m.get('type') == 'skip_to_end']
+        # Escape is Skip the rest, for a read-back as for a reply: that one
+        # reading only, never Stop speaking.
+        assert [m for m in voice.got if m.get('type') == 'skip_to_end'] == [{'type':'skip_to_end','utt':2}]
+        assert not [m for m in voice.got if m.get('type') == 'hush']
         assert 'partial reply is retained' in await page.locator('.history-turn.jarvis').inner_text()
         await browser.close()
 

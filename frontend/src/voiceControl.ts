@@ -36,3 +36,13 @@ export function parseVoiceInputSettings(value: unknown): VoiceInputSettings | nu
   return { stop: v.stop as StopMode, switch: v.switch as SwitchMode, saved: v.saved === true,
            scope: v.scope === "member" ? "member" : "local" };
 }
+
+// ── the voice socket's shared words ──────────────────────────────────────
+
+/** How a reply's text ended (`outcome` on its last `reply` frame). */
+export type ReplyOutcome = "succeeded" | "failed" | "cancelled";
+export const REPLY_OUTCOMES: readonly ReplyOutcome[] = ["succeeded", "failed", "cancelled"];
+
+/** The `playback` frame: what only the page can know about one chunk. */
+export const PLAYBACK_FRAME = "playback";
+export type PlaybackReport = "started" | "failed";

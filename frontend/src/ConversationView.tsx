@@ -278,6 +278,21 @@ function kindClass(turn: Turn): string {
 }
 
 
+const OUTCOME_NOTE = { failed: "main.conversation.replyFailed",
+                       cancelled: "main.conversation.replyCancelled" } as const;
+const READING_NOTE = { skipped: "main.conversation.readingSkipped",
+                       stopped: "main.conversation.readingStopped",
+                       failed: "main.conversation.readingFailed" } as const;
+
+/** How a live JARVIS turn ended, when not complete and heard: a reply the
+ *  provider did not finish, and a reading not heard in full. */
+function turnNotes(turn: Turn, t: Translate): string[] {
+  const notes: string[] = [];
+  if (turn.complete && turn.outcome && turn.outcome !== "succeeded") notes.push(t(OUTCOME_NOTE[turn.outcome]));
+  if (turn.reading) notes.push(t(READING_NOTE[turn.reading]));
+  return notes;
+}
+
 function HistoryTurn({ turn }: { turn: Turn }) {
   const t = useT();
   const key = turnKey(turn);
@@ -286,6 +301,7 @@ function HistoryTurn({ turn }: { turn: Turn }) {
   return <ChatMessage speaker={turn.speaker} at={turn.at}
     text={turn.text ?? turn.sentences.join(" ")} kind={kindClass(turn)}
     pending={turn.complete === false && !turn.interrupted} interrupted={turn.interrupted}
+    notes={turnNotes(turn, t)}
     wholeRef={ui.whole} textRef={ui.part("text")}>
     {turn.capture ? <TurnWords turn={turn} speaking={null} partRef={ui.part} /> : undefined}
   </ChatMessage>;

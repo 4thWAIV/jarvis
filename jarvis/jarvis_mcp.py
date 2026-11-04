@@ -1977,6 +1977,22 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "skip_reading",
+        "description": (
+            "Skip the rest of what JARVIS is reading aloud now (a reply, a read-back or an "
+            "announcement) — the page's Skip — only when he asks. Only that reading stops; "
+            "its text stays on screen and nothing it asked for is approved: a read-back "
+            "skipped is not heard in full."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "stop_speaking",
+        "description": (
+            "Stop all of JARVIS's audio now — the page's Stop — only when he asks. It "
+            "cancels no request and undoes nothing a tool has done."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "answer_workflow_decision",
         "description": (
             "Record his answer to a workflow's open decision, only when he gives it: the "

@@ -326,6 +326,7 @@ def test_complete_reply_reaches_screen_without_any_audio_ack(client):
         seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
         final = seen[-1]
         assert final["text"] == "Echo: full reply."
+        assert final["outcome"] == "succeeded"
         assert final["at"] > 0
         records = c.get("/api/conversation").json()["items"]
         user = next(i for i in records if i["kind"] == "typed" and i["text"] == "full reply")
@@ -383,3 +384,80 @@ def test_reply_stream_closes_with_partial_text_when_provider_raises(client):
         ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
         seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
         assert seen[-1]["text"] == "Partial answer before failure."
+        assert seen[-1]["outcome"] == "failed", "unfinished text is never shown as complete"
+
+
+@pytest.mark.parametrize("stop_reason", ["error", "timeout", "died", "rate_limited"])
+def test_a_reply_the_provider_did_not_finish_ends_failed(client, stop_reason):
+    c, server = client
+    class StoppingBrain(FakeBrain):
+        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
+            from jarvis.brain import TurnResult
+            on_delta("Half an ans")
+            return TurnResult(origin, "Half an ans", stop_reason)
+
+    server.brain_instance = StoppingBrain()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
+        assert (seen[-1]["text"], seen[-1]["outcome"]) == ("Half an ans", "failed")
+
+
+def test_a_cancelled_turn_ends_its_reply_cancelled(client):
+    import asyncio
+    c, server = client
+    class CancelledBrain(FakeBrain):
+        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
+            on_delta("Begun")
+            raise asyncio.CancelledError
+
+    server.brain_instance = CancelledBrain()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
+        assert seen[-1]["outcome"] == "cancelled"
+
+
+def test_the_page_s_playback_reports_reach_the_chunk_s_outcome(client):
+    """`started` and `failed` from the page; a decode failure moves the
+    transport on and is never counted as played."""
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "speak", "isFinal": True, "typed": True})
+        audio = _drain_until(ws, lambda m: m["type"] == "audio", limit=30)[-1]
+        utt = server.speech.utterances[audio["utt"]]
+        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "started"})
+        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "bogus"})
+        ws.send_json({"type": "playback", "utt": "x", "idx": 0, "outcome": "failed"})
+        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "failed"})
+        _drain_until(ws, lambda m: m["type"] == "status" and m["state"] == "idle", limit=30)
+        assert utt.outcomes() == ["failed"] and utt.played == 0
+        assert not utt.heard_in_full
+
+
+def test_hush_is_stop_speaking_and_skip_is_one_reading(client, monkeypatch):
+    c, server = client
+    calls = []
+
+    async def stop(by):
+        calls.append(("stop", by))
+
+    async def skip(utt=None):
+        calls.append(("skip", utt))
+
+    monkeypatch.setattr(server, "_stop_speaking", stop)
+    monkeypatch.setattr(server, "_skip_reading", skip)
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "skip_to_end", "utt": 7})
+        ws.send_json({"type": "skip_to_end", "utt": "7"})
+        ws.send_json({"type": "hush"})
+        ws.send_json({"type": "mic", "text": "sync"})
+        for _ in range(50):
+            if len(calls) == 2:
+                break
+            time.sleep(0.02)
+    assert calls == [("skip", 7), ("stop", "the page")]
