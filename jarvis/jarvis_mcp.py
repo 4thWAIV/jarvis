@@ -1947,6 +1947,50 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "attention_updates",
+        "description": (
+            "What is waiting for him: the background updates (Review updates on the page) "
+            "that JARVIS recorded instead of announcing them, such as messages delivered or "
+            "answered, sessions' messages and needs, runs that ended, people's messages "
+            "arriving. Gives the pending count, each update's kind, event and facts, whether "
+            "he is engaged, away or unknown, and the settings for when updates may be "
+            "spoken. Use it when he asks what he missed or what is new."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "mark_updates_seen",
+        "description": (
+            "Mark updates seen (Review updates, Mark seen), only when he says he has dealt "
+            "with them: the ids attention_updates gives, or every pending one when ids is "
+            "left out."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
+        },
+    },
+    {
+        "name": "set_attention_settings",
+        "description": (
+            "Change when background updates may be spoken, only when he asks: away (true "
+            "holds every spoken update; false when he is back), oldest_event_sec, "
+            "digest_cooldown_sec, settled_exchange_sec and engagement_sec (seconds). Gives "
+            "the saved settings."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"changes": {
+                "type": "object",
+                "properties": {
+                    "away": {"type": "boolean"},
+                    "oldest_event_sec": {"type": "number"},
+                    "digest_cooldown_sec": {"type": "number"},
+                    "settled_exchange_sec": {"type": "number"},
+                    "engagement_sec": {"type": "number"},
+                },
+                "additionalProperties": False}},
+            "required": ["changes"],
+        },
+    },
+    {
         "name": "answer_workflow_decision",
         "description": (
             "Record his answer to a workflow's open decision, only when he gives it: the "

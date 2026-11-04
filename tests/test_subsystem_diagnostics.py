@@ -499,13 +499,15 @@ def _subsystem(id, state):
     return sd.Subsystem(id, id, state, "why", [sd.Check("watcher", "Session watcher", state, "")])
 
 
-def test_communications_down_and_back_are_said_once_each(server, monkeypatch):
-    """Down is said once however long it lasts, back once when it is no
-    longer down, and starting (unknown) is not taken for back. Every change
-    of state hints the pages to read again."""
+def test_communications_down_and_back_are_one_update(server, monkeypatch):
+    """Down is recorded once however long it lasts and resolved once it is
+    no longer down; starting (unknown) is not taken for back. Nothing is
+    spoken. Every change of state hints the pages to read again."""
+    from jarvis.attention_store import AttentionStore
     seq = [sd.OK, sd.DOWN, sd.DOWN, sd.UNKNOWN, sd.DEGRADED, sd.DEGRADED, sd.DOWN]
     looks = iter(seq)
-    hints, said, notes = [], [], []
+    hints = []
+    store = AttentionStore()
 
     def subsystems():
         state = next(looks, None)
@@ -513,12 +515,9 @@ def test_communications_down_and_back_are_said_once_each(server, monkeypatch):
             raise RuntimeError("no more looks")
         return [_subsystem("communications", state), _subsystem("brain", sd.OK)]
 
-    async def say(line, note, what):
-        said.append(line)
-        notes.append(note)
-
     monkeypatch.setattr(server, "_subsystems", subsystems)
-    monkeypatch.setattr(server, "_say_about_message", say)
+    monkeypatch.setattr(server, "attention_record", store)
+    monkeypatch.setattr(server, "speech", None)
     monkeypatch.setattr(server, "_send_to_session_clients", hints.append)
     monkeypatch.setattr(server, "SUBSYSTEMS_POLL_SEC", 0.001)
 
@@ -532,8 +531,12 @@ def test_communications_down_and_back_are_said_once_each(server, monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
-    assert said == [server.COMMS_DOWN_LINE, server.COMMS_BACK_LINE, server.COMMS_DOWN_LINE]
-    assert "what is down: session watcher" in notes[0]
+    (item,) = store.items()
+    assert (item.kind, item.source_id, item.event) == ("communications", "agents", "down")
+    assert item.facts == {"down": ["watcher"]}, "the parts down by their fixed ids"
+    assert [h["event"] for h in store.history(item.id)] == ["down", "down"], \
+        "down, back (resolved), down again: its history"
+    assert item.state == "pending"
     # ok>down, down>unknown, unknown>degraded, degraded>down: four changes.
     assert hints == [{"type": "subsystems"}] * 4
 

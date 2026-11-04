@@ -246,30 +246,31 @@ _MESSAGE = {"id": 7, "body": "use Postgres for the store, not SQLite, and say wh
 
 
 @pytest.mark.asyncio
-async def test_the_answer_is_announced_and_the_brain_is_told(wired, monkeypatch):
+async def test_the_answer_is_an_update_and_on_record(wired, monkeypatch):
     server, _root, _watcher = wired
+    from jarvis.attention_store import AttentionStore
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
     monkeypatch.setattr(server, "_notes_for_brain", [])
+    monkeypatch.setattr(server, "attention_record", AttentionStore())
 
-    await server._announce_reply({"session": {"voice_name": "agent-guard"},
+    await server._attend_message({"kind": "answered", "session": {"voice_name": "agent-guard"},
                                   "message": _MESSAGE})
 
-    assert sp.said == ["agent-guard has answered your message about use Postgres "
-                       "for the store, not SQLite, and…, sir — shall I read it?"]
-    turn = server._with_notes_for_brain("yes")
-    assert turn.startswith("(JARVIS, not the user:")
-    assert "read_message_reply with message 7" in turn
-    assert turn.endswith("\nyes")
-    assert server._with_notes_for_brain("next") == "next", "a note is given once"
+    assert sp.said == [] and server._with_notes_for_brain("yes") == "yes"
+    (item,) = server.attention_record.items()
+    assert (item.kind, item.source_id, item.event) == ("agent_message", "7", "answered")
+    assert item.facts == {"message_id": 7}, "read_message_reply finds it by this id"
 
 
 @pytest.mark.asyncio
-async def test_an_answered_event_is_routed_to_the_announcement(wired, monkeypatch):
+async def test_an_answered_event_is_routed_to_the_record(wired, monkeypatch):
     server, _root, _watcher = wired
+    from jarvis.attention_store import AttentionStore
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
     monkeypatch.setattr(server, "_notes_for_brain", [])
+    monkeypatch.setattr(server, "attention_record", AttentionStore())
     broadcast = []
 
     async def _quiet(event):
@@ -282,7 +283,8 @@ async def test_an_answered_event_is_routed_to_the_announcement(wired, monkeypatc
     for _ in range(5):
         await asyncio.sleep(0)
 
-    assert sp.said == ["guard has answered your message about go on, sir — shall I read it?"]
+    assert sp.said == []
+    assert [i.event for i in server.attention_record.items()] == ["answered"]
     assert broadcast == [], "a message's progress is not a change to a session row"
 
 

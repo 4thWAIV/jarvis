@@ -25,15 +25,18 @@ def wired(monkeypatch, tmp_path):
     from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
-    hints, said = [], []
+    hints = []
     monkeypatch.setattr(server_module, "_send_to_session_clients", hints.append)
+    from jarvis.attention_store import AttentionStore
+    store = AttentionStore()
+    monkeypatch.setattr(server_module, "attention_record", store)
+    return server_module, hints, store
 
-    async def say(line, note, what):
-        said.append(line)
-        server_module._notes_for_brain.append(note)
 
-    monkeypatch.setattr(server_module, "_say_about_message", say)
-    return server_module, hints, said
+def _events(store):
+    """Every attention event recorded for workflows, in order."""
+    return [h["event"] for i in store.items(("pending", "seen", "resolved"))
+            for h in store.history(i.id)]
 
 
 def _key(category="workflows"):
@@ -74,8 +77,8 @@ def test_a_refused_step_says_why(wired):
     assert r.status_code == 409 and "no phase deploy" in r.json()["error"]
 
 
-def test_the_steps_worth_saying_are_said_once(wired):
-    server, _, said = wired
+def test_the_steps_worth_an_update_are_recorded_once(wired):
+    server, _, store = wired
     client = TestClient(server.app)
     key = _key()
     wid = _start(client, key)
@@ -86,9 +89,9 @@ def test_the_steps_worth_saying_are_said_once(wired):
                  {"kind": "blocker_raised", "summary": "Tests are red.", "detail": {"key": "red"}}):
         assert client.post(f"/api/workflows/{wid}/events", json=body, headers=key).status_code == 200
     asyncio.run(asyncio.sleep(0))
-    assert said == ["Speech migration has started plan, sir.",
-                    "Speech migration needs your decision, sir.",
-                    "Speech migration is blocked, sir."]
+    assert _events(store) == ["phase_started", "decision_needed", "blocker_raised"]
+    (item,) = store.items()
+    assert item.untrusted == {"workflow": "Speech migration"}, "one item per workflow"
 
 
 def test_the_brain_reads_the_record_and_another_session_s_words_stay_walled(wired):
@@ -108,8 +111,8 @@ def test_the_brain_reads_the_record_and_another_session_s_words_stay_walled(wire
     assert "No workflow is called rebrand." in server.tool_workflow_status({"workflow": "rebrand"})
 
 
-def test_quiet_is_said_once_and_again_only_after_it_reported(wired, monkeypatch):
-    server, _, said = wired
+def test_quiet_is_recorded_once_and_again_only_after_it_reported(wired, monkeypatch):
+    server, _, store = wired
     from jarvis import workflow_store as ws
     wid = ws.start("Speech migration", "jarvis", [])
     real = ws.time.time
@@ -122,7 +125,7 @@ def test_quiet_is_said_once_and_again_only_after_it_reported(wired, monkeypatch)
 
     monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)
     asyncio.run(twice())
-    assert said == ["Speech migration has gone quiet, sir."]
+    assert _events(store) == ["gone_quiet"]
     monkeypatch.setattr(ws.time, "time", real)
     w = ws.record(ws.WorkflowEvent(wid, "note", None, "Back.", {}))
     server._workflow_recorded(w, ws.WorkflowEvent(wid, "note", None, "Back.", {}))

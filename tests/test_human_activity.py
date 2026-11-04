@@ -2,7 +2,6 @@
 import importlib
 import json
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -96,7 +95,6 @@ def server(monkeypatch, data_dir):
         return b"MP3:" + text.encode()
 
     monkeypatch.setattr(server, "_synth_for_speech", fake_synth)
-    server._last_greeting_time = time.time()
     with TestClient(server.app) as c:
         server.brain_instance = FakeBrain()
         yield c, server, human_activity
@@ -149,8 +147,9 @@ def test_loading_the_page_and_reading_status_is_not_activity(server):
 
 def test_jarvis_speaking_is_not_activity(server):
     c, srv, activity = server
-    srv._last_greeting_time = 0                      # he greets on connect
     with c.websocket_connect("/ws/voice", headers=PAGE) as ws:
+        ws.receive_json(); ws.receive_json()
+        c.portal.call(srv.speech.say, "Good evening.")
         _drain_until(ws, lambda m: m["type"] == "audio")
     assert activity.recorder.current() is None
 

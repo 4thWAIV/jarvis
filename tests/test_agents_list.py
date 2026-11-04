@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jarvis import session_watch as sw
+from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
 
 ORIGIN = {"Origin": "http://localhost:5173"}
 
@@ -300,10 +301,11 @@ def test_busy_agents_come_first_then_the_most_recently_messaged(wired, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_announcements_and_the_brain_s_note_use_the_official_name(wired, monkeypatch):
+async def test_updates_and_broadcasts_use_the_official_name(wired, monkeypatch, attention):
     """A watcher event carries the derived name; the server puts the official
-    one on it before anything speaks, notes or broadcasts it."""
+    one on it before anything records or broadcasts it."""
     server, store = wired
+    monkeypatch.setattr(server, "attention_record", attention)
     store.sync_agents({"s1": ("hammer", "idle")})
     server._rename_agent("s1", "Forge")
 
@@ -329,9 +331,8 @@ async def test_announcements_and_the_brain_s_note_use_the_official_name(wired, m
     for coro in spawned:
         await coro
 
-    assert said[0] == "Forge has answered your message about carry on, sir — shall I read it?"
-    note = server._with_notes_for_brain("go on")
-    assert "Forge" in note and "hammer" not in note
+    assert said == [], "nothing is spoken"
+    assert {i.untrusted["agent"] for i in attention.items()} == {"Forge"}
     assert broadcast[0]["session"]["voice_name"] == "Forge"
 
 
@@ -405,9 +406,7 @@ async def test_a_changed_count_tells_the_pages_to_fetch_the_list_again(wired, mo
     monkeypatch.setattr(server, "_hint_agents_changed", lambda: hints.append(1))
     monkeypatch.setattr(server, "NEEDS_POLL_SEC", 0.01)
 
-    async def quiet(board):
-        pass
-    monkeypatch.setattr(server, "_announce_board", quiet)
+    monkeypatch.setattr(server, "_attend_board", lambda board: None)
     task = asyncio.ensure_future(server._watch_needs_board())
     await asyncio.sleep(0.05)
     assert hints == [], "the first look only records"

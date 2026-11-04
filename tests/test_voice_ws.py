@@ -1,6 +1,5 @@
 import importlib
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -48,7 +47,6 @@ def client(monkeypatch, tmp_path):
         return b"MP3:" + text.encode()
 
     monkeypatch.setattr(server, "_synth_for_speech", fake_synth)
-    server._last_greeting_time = time.time()          # suppress the greeting by default
     # The voice page's own Origin. /ws/voice refuses any other, because a
     # socket that reaches _handle_utterance speaks with origin="user".
     with TestClient(server.app,
@@ -91,14 +89,25 @@ def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(cl
         assert server.brain_instance.turns == [("typed words", "user")]
 
 
-def test_greeting_is_spoken_through_the_scheduler(client):
+def test_a_page_connecting_is_not_greeted(client):
+    """A connection is not a person arriving: nothing is said, only the
+    opening frames go out."""
     c, server = client
-    server._last_greeting_time = 0
-    with c.websocket_connect("/ws/voice") as ws:
-        seen = _drain_until(ws, lambda m: m["type"] == "audio")
-        audio = seen[-1]
-        assert audio["idx"] == 0 and audio["text"].startswith("Good ")
-        assert audio["text"].endswith("sir.")
+    spoken = []
+    real = server.speech.say
+
+    async def say(text, *a, **k):
+        spoken.append(text)
+        return await real(text, *a, **k)
+
+    server.speech.say = say
+    try:
+        with c.websocket_connect("/ws/voice") as ws:
+            ws.receive_json(); ws.receive_json()
+            ws.send_json({"type": "ping"})
+    finally:
+        server.speech.say = real
+    assert spoken == []
 
 
 def test_transcript_streams_chunks_and_acks_return_to_idle(client):

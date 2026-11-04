@@ -130,12 +130,13 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status", "attachment_location")
+             "update_status", "attachment_location", "attention_updates")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment")
+            "update_jarvis", "reveal_attachment", "mark_updates_seen",
+            "set_attention_settings")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
@@ -174,6 +175,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
     ("open_local_package", {"path": "/tmp/x.zip"}),
+    ("mark_updates_seen", {}),
+    ("set_attention_settings", {"changes": {"away": True}}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -599,3 +602,58 @@ def test_update_jarvis_says_what_stops_it_and_starts_nothing(wired, monkeypatch)
     assert "The update is refused: Tracked files have been changed here." in got["text"]
     _walled(got["text"])
     assert started == []
+
+
+# ── updates waiting: the attention record ─────────────────────────────────
+
+BROWSER = {"Origin": "http://localhost:5173"}
+
+@pytest.fixture
+def updates(wired, monkeypatch):
+    from jarvis import attention_store
+    store = attention_store.AttentionStore()
+    monkeypatch.setattr(wired.server, "attention_record", store)
+    store.record("agent_message", "7", "answered", facts={"message_id": 7},
+                 untrusted={"agent": HOSTILE})
+    store.record("run", "r1", "failed", untrusted={"project": "jarvis"})
+    return store
+
+
+def test_attention_updates_is_review_updates_walled(wired, updates):
+    page = wired.client.get("/api/attention").json()
+    got = _call(wired, "attention_updates")
+    assert got["ok"]
+    _walled(got["text"])
+    block = got["text"].split("\n", 1)[1]
+    told = json.loads(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
+    assert page["pending"] == told["pending"] == 2
+    assert [(i["id"], i["kind"], i["event"]) for i in told["items"]] == \
+        [(i["id"], i["kind"], i["event"]) for i in page["items"]]
+    assert told["settings"] == page["settings"]
+    assert page["items"][1]["untrusted"]["agent"] == HOSTILE, "the page shows it as written"
+
+
+def test_mark_updates_seen_is_the_seen_button(wired, updates):
+    first = updates.items()[-1].id
+    page = wired.client.post("/api/attention/seen", json={"ids": [first]},
+                             headers=BROWSER).json()
+    assert page == {"marked": 1, "pending": 1}
+    got = _call(wired, "mark_updates_seen")
+    assert got["ok"] and json.loads(got["text"]) == {"marked": 1, "pending": 0}
+    refused = _call(wired, "mark_updates_seen", ids="all")
+    assert "Nothing was marked" in refused["text"]
+    assert wired.client.post("/api/attention/seen", json={"ids": "all"},
+                             headers=BROWSER).status_code == 400
+
+
+def test_set_attention_settings_is_hold_spoken_updates(wired, updates):
+    page = wired.client.put("/api/attention/settings", json={"away": True},
+                            headers=BROWSER).json()
+    assert page["away"] is True
+    got = _call(wired, "set_attention_settings", changes={"away": False, "oldest_event_sec": 90})
+    assert got["ok"] and json.loads(got["text"])["away"] is False
+    assert wired.client.get("/api/attention/settings").json()["oldest_event_sec"] == 90
+    refused = _call(wired, "set_attention_settings", changes={"oldest_event_sec": -5})
+    assert "Nothing was changed" in refused["text"]
+    assert wired.client.put("/api/attention/settings", json={"oldest_event_sec": -5},
+                            headers=BROWSER).status_code == 400
