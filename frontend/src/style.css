@@ -2767,12 +2767,21 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* The sign-in reminder: one line under the centre tabs, in the amber the
    Team Server tile says Sign in with, with its two buttons on the right. */
-#team-reminder {
+/* The centre's notice stack (CentreNotices.tsx): the sign-in reminder and
+   updates waiting, one above the other; its height is --centre-notice-height. */
+#centre-notices {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-notice-top);
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#centre-notices:empty { display: none; }
+
+#team-reminder, #updates-notice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2791,6 +2800,26 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 #team-reminder p { flex: 1 1 240px; margin: 0; }
 #team-reminder .team-reminder-problem { flex-basis: 100%; color: #fca5a5; font-size: 12px; }
+
+/* Updates waiting (UpdatesNotice.tsx): calm, not a warning. */
+#updates-notice {
+  border-color: rgba(94, 234, 212, 0.3);
+  background: rgba(94, 234, 212, 0.06);
+}
+#updates-notice p { flex: 1 1 200px; margin: 0; }
+#updates-notice .updates-list {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#updates-notice .updates-list li { display: flex; align-items: center; gap: 8px; }
+#updates-notice .updates-words { flex: 1; overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }

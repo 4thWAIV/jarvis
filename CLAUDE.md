@@ -128,14 +128,14 @@ transcript by the text after the signature (`session_steer.STEER_SIGNATURE`)
 and its staged time, and reports when it arrived, when the turn that took it
 began and ended, and that turn's final answer, which is stored as `reply`.
 Not seen within `session_watch.DELIVERY_TIMEOUT_SEC` (60s) it becomes
-`undelivered` and Tim hears "<agent> hasn't picked it up", but it is still
+`undelivered` (an attention item, see "Attention"), but it is still
 looked for: arriving late (behind a permission prompt he then approves) it is
 delivered and answered as usual. Anything unresolved
 `session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
 watcher only ever looks for a bounded set; settled messages are never read
-again. Seen, he hears "Delivered to
-<agent>"; answered, he hears "<agent> has answered your message about …" and
-the brain's note carries the message's id. The record is written before each
+again. Each step (queued, sent, delivered, undelivered, answered) moves the
+message's one attention item to its next revision; nothing is spoken of it.
+The record is written before each
 event, and the open messages are read from the store each poll, so a restart
 follows on from where it stopped. The brain reads the record with
 `list_messages` and a stored answer with `read_message_reply`;
@@ -150,8 +150,8 @@ first line `# <subject>`, the rest the message. `session_messages.collect`
 takes each file once it has not changed for `SETTLE_SEC`, never through a
 symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
-session's sign it was picked up), then says "<agent> has sent you a message"
-and nothing of its text. The agent is every listed agent in that project
+session's sign it was picked up), then records an attention item naming the
+agent and nothing of its text. The agent is every listed agent in that project
 (`_project_owner`, shared with the needs board). The brain reads the record
 with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
@@ -173,8 +173,8 @@ stored. Sessions report with `workflow_report.py` and an access key in the
 `workflows` category (the talk-to-jarvis skill teaches them);
 `POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the
 page reads `GET /api/workflows*`, and a `workflows` hint on `/ws/sessions`
-says when to read again. JARVIS says a new phase, a decision needed, a
-blocker, a finish and going quiet, once each. The brain answers anything
+says when to read again. A new phase, a decision needed, a blocker, a finish
+and going quiet are each an attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
 and he answers them on the Workflows view or by voice: the page's answer and
@@ -237,7 +237,8 @@ must be reviewed again. `messaging_runtime.py` builds the one store
 (`messaging_store.py`), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
-announcer (`arrival_announcer.py`, the ordinary notice path) at startup,
+announcer (`arrival_announcer.py`: each arrival an attention item, its
+presentation lease claimed only while he is engaged here) at startup,
 and mounts `/api/team/messages*` (`messaging_api.py`). The team server's
 side is `team_server/teamserver/messaging.py` and `attachments.py`; the
 page's is the Queue tab (`QueuePanel.tsx`, `QueueItemView.tsx`,
@@ -333,9 +334,9 @@ follows its `skill`), `agent` and `page`. An agent package's `brief` is
 carried out by one run through `RunExecutor` in its folder, started by the
 acting `run_package_agent` and recorded in `runs.package_id` (added by
 `run_store.init_db`'s column backfill; one active run per package, and a
-retry keeps it); `_on_run_event` hands its end to `_announce_package_run`,
-which says it through `_say_notice` and tells the brain to call
-`package_results` and `draft_message` once he agrees. A page package's
+retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
+attention item; the brain calls `package_results` and `draft_message` once
+he agrees. A page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
 (`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
@@ -603,12 +604,11 @@ nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
 there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
 Team (`settings.open {section: "team"}`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
-itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
-started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
-once `SETTLE_SEC` (30 s) after startup and, not signed in, says
-"You're not signed in to the team server, sir; messages between people are
-off until you are." through `_say_notice` (the ordinary notice path and its
-turn-taking); signed in then, nothing is said in that process.
+itself once signed in. Once per process, `team_reminder.remind_once`,
+started by `team_api.start(attention=...)` and cancelled by `team_api.stop`,
+looks once `SETTLE_SEC` (30 s) after startup and, not signed in, records an
+attention item (`sign_in`), resolved once it is signed in; nothing is said
+by it.
 
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
@@ -675,8 +675,9 @@ or reading the needs board has stopped. A message held in the queue for its sess
 reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 (one row in full on request, voice input with `voice_diagnostics.summary`'s
 figures); `_watch_subsystems` looks every five seconds, sends a
-`subsystems` hint on `/ws/sessions` when any state moves, and says once
-"Communications with the agents are down, sir." and once that they are back.
+`subsystems` hint on `/ws/sessions` when any state moves, and records an
+attention item once communications with the agents are down, resolved once
+they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view). Every name and line JARVIS writes itself is sent as a
@@ -809,6 +810,38 @@ optional `version`, which says it is updating, updates after the turn and
 restarts once that has been heard (`_update_by_voice`). Tests point
 `self_update.repo_root` at temporary repositories
 (`conftest._never_update_or_restart_the_real_checkout`).
+
+## Attention
+Routine events are never spoken by the server. Each (an agent's message
+queued, sent, delivered, not picked up or answered; a session's message,
+needs board or needs-you; a session finishing; a run or package run ending;
+a person's message arriving; a workflow's news; communications down; not
+signed in; a person's message that did not go) is first an item in
+`attention_store.py` (JARVIS's database, schema `attention_schema`): one
+item per source object (kind, source id), each change its next revision and
+a line of `attention_events`, JARVIS's own facts apart from other people's
+words (`untrusted`). `server._attend` is the one way in. `attention.py` is
+the one admission policy: engaged (his last trusted interaction within
+`engagement_sec`, not away; a connected page is not engagement), the
+conversation controller's floor `idle`, `settled_exchange_sec` since it was
+last busy and since his last interaction, `digest_cooldown_sec` since the
+last digest attempt, and the oldest candidate at least `oldest_event_sec`
+old (trial values 120, 10, 120 and 60 s, settings in `attention_settings`).
+What changed while he was away or unknown is counted, never played. When
+all pass, one digest: the candidates' facts to the brain with other
+people's words walled, under the `digest` origin, where `/internal/tool`
+refuses every tool; at most two sentences or SILENT; discarded if the floor,
+the activity revision or any item moved meanwhile. A failed brain or voice
+says nothing in its place. Played (or SILENT) finishes with the items'
+revisions; only he marks them seen. The floor comes from the input lane's
+turn controller through `attention.TurnState` (`server._StandInTurnState`
+until it lands). The page shows a grouped count with Review updates, Mark
+all seen and Hold spoken updates (`UpdatesNotice.tsx`); the brain's
+`attention_updates`, `mark_updates_seen` and `set_attention_settings` call
+the same `attention_api` functions as `/api/attention*`.
+`tests/test_speech_call_sites.py` fails any call to the voice outside the
+approved entry points it lists, and drives every routine producer against a
+voice that must stay silent.
 
 ## Turn-taking
 JARVIS waits for Tim to finish. The server gathers what he says
@@ -1096,8 +1129,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open
-- `arrival_announcer.py` — Saying that a person's message has come in,
-  through the ordinary notice path
+- `arrival_announcer.py` — Recording that a person's message has come in,
+  as an attention item, under the presentation lease
+- `attention_store.py` / `attention.py` / `attention_api.py` — The attention
+  record, the one admission policy and digest, and their shared calls (see
+  "Attention"); `frontend/src/attention.ts` / `UpdatesNotice.tsx` /
+  `CentreNotices.tsx` are the page's side
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,
   and the announcement lease
 - `frontend/src/QueuePanel.tsx` / `queue.ts` — The Queue tab, and the Queue's

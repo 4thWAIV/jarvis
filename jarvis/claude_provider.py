@@ -160,6 +160,9 @@ ALLOWED_TOOLS = [
     # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
     "mcp__jarvis__skip_reading",
     "mcp__jarvis__stop_speaking",
+    "mcp__jarvis__attention_updates",
+    "mcp__jarvis__mark_updates_seen",
+    "mcp__jarvis__set_attention_settings",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",

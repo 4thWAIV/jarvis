@@ -161,8 +161,6 @@ class Priority(IntEnum):
     URGENT = 2
 
 
-BRIDGES = ("As I was saying —", "Back to it —", "Where was I —")
-UNREAD_PREFIX = "Before I forget —"
 # The last resort, and only that. An unacked chunk's tokens count as echo
 # because the chunk may still be coming out of the speaker — and nothing plays
 # for two minutes, so this number is not a claim about audio. It is the bound
@@ -309,8 +307,8 @@ def _is_replay_request(toks: list[str]) -> bool:
 @dataclass
 class Chunk:
     """One speakable piece of an utterance. Synthesis writes to the object, never
-    to an index, so chunks can be inserted (the resume bridge) while synthesis
-    for later chunks is still in flight."""
+    to an index, so a chunk's audio lands where it belongs while synthesis for
+    later chunks is still in flight."""
     text: str
     audio: Optional[bytes] = None
     ready: bool = False
@@ -342,7 +340,7 @@ class Utterance:
     high_sent: int = -1                         # highest index EVER sent; only ever grows.
                                                  # `sent` is rolled BACKWARDS by a preemption
                                                  # (the client keeps only the playing chunk)
-                                                 # and by a resume bridge, so it is not a
+                                                 # and by a resume, so it is not a
                                                  # bound on what the client may legitimately
                                                  # ack — an ack already in flight for a chunk
                                                  # that really did go out is not a forgery
@@ -436,6 +434,8 @@ class _Spoken:
 # half of it), and nothing JARVIS says starts while he has spoken more
 # recently than this, his replies included. One value governs both.
 END_OF_TURN_SEC = 1.5
+# How soon an announcement waiting for the floor looks again.
+FLOOR_RECHECK_SEC = 0.25
 
 
 class SpeechScheduler:
@@ -448,11 +448,10 @@ class SpeechScheduler:
                  stale_after: float = 60.0, echo_window: float = 6.0,
                  batch_settle: float = 2.0, ack_timeout: float = 45.0,
                  transport_ready: Optional[Callable[[], bool]] = None,
-                 bridges: tuple = BRIDGES,
                  clock: Callable[[], float] = time.monotonic):
         """`clock` drives scheduling decisions only; `wait_for` and
         `open_cancel_window` sleep in real time. `transport_ready` says whether
-        anyone can hear us — proactive (unread/batched) speech waits for it."""
+        anyone can hear us — proactive (batched) speech waits for it."""
         self._clock = clock
         self.ack_timeout = ack_timeout             # a chunk unacked this long = the client is gone
         self._transport_ready = transport_ready or (lambda: True)
@@ -473,13 +472,11 @@ class SpeechScheduler:
         self.end_of_turn = END_OF_TURN_SEC if end_of_turn is None else end_of_turn
         self.stale_after = stale_after
         self.echo_window = echo_window
-        self.bridges = bridges
         self._next_id = 1
         self._current: Optional[Utterance] = None
         self._paused: Optional[Utterance] = None
         self._pending: list[Utterance] = []
         self._batch: list[Utterance] = []
-        self._unread: list[str] = []
         self._recent: list[_Spoken] = []
         self._last_spoken: Optional[Utterance] = None   # for "say that again"
         self._last_user_speech: Optional[float] = None
@@ -499,6 +496,12 @@ class SpeechScheduler:
         # no sound, so its words are not echo.
         self._starts_reported = False
         self.utterances: dict[int, Utterance] = {}
+        # Whether the conversation floor is his or the brain's (a turn being
+        # gathered or committed, the recogniser behind, a brain turn under
+        # way): routine announcements wait while it is, checked when one is
+        # picked and again just before its first audio goes out. The server
+        # sets it from the turn controllers (contract section 7).
+        self.floor_held: Callable[[], bool] = lambda: False
 
     # ── lifecycle ──────────────────────────────────────────────────────
     async def start(self) -> None:
@@ -554,6 +557,12 @@ class SpeechScheduler:
     @property
     def is_speaking(self) -> bool:
         return self._speaking
+
+    def has_speech_in_flight(self) -> bool:
+        """Anything said, queued or waiting to be said, or a read-back's
+        cancel window open: the mouth is in use."""
+        return bool(self._current is not None or self._paused is not None or self._pending
+                    or self._batch or self._cancel_window_open)
 
     # ── inputs ─────────────────────────────────────────────────────────
     def _new(self, priority: Priority, kind: str, immediate: bool,
@@ -1006,8 +1015,7 @@ class SpeechScheduler:
         `_perform_dialog` and the command path use as "the user has heard the
         read-back" before opening the cancel window. It also defeated the
         prefetch gate (`sent - played < prefetch`), emptying the whole
-        utterance into the socket at once, and dropped an URGENT utterance's
-        remaining text from `_unread`.
+        utterance into the socket at once.
 
         Only the page itself can send this (the Origin gate holds), so it is
         a buggy or racing tab rather than an attacker — which is why this
@@ -1015,8 +1023,8 @@ class SpeechScheduler:
         that is merely late or duplicated is still simply ignored.
 
         The bound is `high_sent`, not `sent`: a preemption and a resume
-        bridge both roll `sent` backwards, and an ack already in the air for
-        a chunk that really did go out must still count.
+        both roll `sent` backwards, and an ack already in the air for a chunk
+        that really did go out must still count.
         """
         u = self.utterances.get(utt_id)
         now = self._clock()
@@ -1153,7 +1161,11 @@ class SpeechScheduler:
         return True
 
     async def barge_in(self, keep_unread: bool = True, reason: str = "") -> None:
-        """The user is talking: stop everything now."""
+        """The user is talking: stop everything now. Nothing cut off is kept to
+        be said later: what was routine is in the attention record, and an
+        unread pile replayed on its own is the burst it replaced.
+        `keep_unread` is accepted from the callers that still pass it
+        (contract section 8's hush) and changes nothing."""
         cur = self._current
         # Barging in and resuming are the only things that make him say the
         # same sentence twice, and neither left any trace at all — which is
@@ -1167,10 +1179,6 @@ class SpeechScheduler:
         # Flag first, emit second: a send loop suspended in an await sees the
         # flag before it can emit anything after our `stop`.
         if cur is not None:
-            if keep_unread and cur.priority == Priority.URGENT and not cur.done:
-                rest = cur.remaining_text()
-                if rest:
-                    self._unread.append(rest)
             cur.close_outcomes(Outcome.INTERRUPTED)
             cur.cancel()
             self._current = None
@@ -1228,7 +1236,24 @@ class SpeechScheduler:
         quiet for `end_of_turn`: JARVIS never starts talking over him."""
         if u.cancelled or not self._user_finished(now):
             return False
+        if self._waits_for_floor(u):
+            return False
         return u.immediate or self._user_silent(now)
+
+    def _waits_for_floor(self, u: Utterance) -> bool:
+        """A routine announcement that has not yet sounded waits while the
+        floor is held, and the pump looks again shortly."""
+        if u.label != "announcement" or u.first_sent_at is not None:
+            return False
+        try:
+            held = self.floor_held()
+        except Exception:
+            log.warning("speech: the floor could not be read; the announcement waits",
+                        exc_info=True)
+            held = True
+        if held:
+            self._kick_later(FLOOR_RECHECK_SEC)
+        return held
 
     def _settle(self, utt_id: int, *, above: int = -1) -> None:
         """Chunks the client will never play (dropped or cancelled) count as heard now."""
@@ -1319,12 +1344,6 @@ class SpeechScheduler:
     def _release_gated(self, now: float) -> None:
         if not self._user_silent(now) or not self._transport_ready():
             return
-        if self._unread:
-            text = f"{UNREAD_PREFIX} " + " ".join(self._unread)
-            self._unread.clear()
-            u = self._new(Priority.URGENT, "say", immediate=True, label="announcement")
-            self._fill(u, text)
-            self._pending.append(u)
         if (self._batch and self._current is None
                 and now - self._last_batch_flush >= self.batch_interval
                 and now - (self._batch_since or now) >= self.batch_settle):
@@ -1383,7 +1402,7 @@ class SpeechScheduler:
                     self._last_spoken = finished
             if self._paused is not None:
                 # Another URGENT waiting? Speak it before resuming, or the
-                # resumed utterance would be preempted again and bridged twice.
+                # resumed utterance would be preempted again at once.
                 urgent = self._next_pending(now, Priority.URGENT)
                 if urgent is not None:
                     self._pending.remove(urgent)
@@ -1396,11 +1415,9 @@ class SpeechScheduler:
                         and not stale and ack_floor_seconds(kept.audio) > 0
                         and now < kept.earliest_ack + RESUME_ACK_GRACE_SEC):
                     # The chunk the client kept is still coming out of the
-                    # speaker, and its ack will name the index it was SENT
-                    # under. The bridge shifts every index above `played`,
-                    # so inserting it now would let that ack land on the
-                    # bridge. Wait for the ack — at most the audio's own
-                    # length plus a grace — before resuming. Only audio with
+                    # speaker. Resuming re-sends it from `played + 1`, so it
+                    # would play twice. Wait for its ack — at most the
+                    # audio's own length plus a grace — before resuming. Only audio with
                     # a readable length (mp3, which is all tts.py asks for)
                     # can be waited for; a blob with no floor resumes at once,
                     # as before.
@@ -1415,7 +1432,7 @@ class SpeechScheduler:
                     self._settle(p.id, above=p.played + 1)   # the kept chunk may still be playing
                     self._orphan(p.id)                       # ...but not for two minutes
                 else:
-                    self._insert_bridge(p)
+                    self._resume(p)
                     self._current = p
                     return True
             nxt = self._next_pending(now)
@@ -1437,32 +1454,32 @@ class SpeechScheduler:
             # No ack for far longer than any chunk takes to play: the client is
             # gone or wedged. Never let that pin the mouth forever.
             log.warning(f"speech: no ack for {self.ack_timeout:.0f}s on utterance {cur.id}; abandoning")
-            self._abandon(cur, keep_unread=True)
+            self._abandon(cur)
             return True
         return await self._send_ready(cur, now)
 
-    def _insert_bridge(self, u: Utterance) -> None:
-        """Resume after a preemption: a bridge phrase goes in front of the first
-        unplayed chunk. Chunks own their audio, so shifting positions is safe even
-        while synthesis for later chunks is still running."""
-        bridge = Chunk(self.bridges[u.resumes % len(self.bridges)])
+    def _resume(self, u: Utterance) -> None:
+        """Resume after a preemption from the first unplayed chunk, with
+        nothing put in front of it: no "as I was saying"."""
         u.resumes += 1
         log.info("speech: resuming utterance %s (resume %d of %d) from chunk %d",
                  u.id, u.resumes, MAX_RESUMES, u.played + 1)
-        pos = u.played + 1
-        u.chunks.insert(pos, bridge)
-        if u.high_sent >= pos:
-            u.high_sent += 1        # every frame that went out at >= pos now sits one higher
         u.sent = u.played
-        # A hold taken while paused is an INDEX, and the bridge just moved
-        # every index from `pos` up by one: discharged now, it would mark the
-        # bridge played before its audio exists. The chunks it referred to
-        # are re-sent behind the bridge, so the client acks them again.
+        # A hold taken while paused is for a chunk that is re-sent now, so
+        # the client acks it again.
         u.held_ack = -1
-        bridge.synthesis = self._spawn(self._synthesize(u, bridge))
 
     async def _send_ready(self, u: Utterance, now: float) -> bool:
         progressed = False
+        # Synthesis takes time: the floor may have been taken back since this
+        # announcement was picked. Checked again before its first audio; held,
+        # it goes back to the queue, so the reply to his turn is not stuck
+        # behind it.
+        if self._waits_for_floor(u):
+            if self._current is u:
+                self._current = None
+                self._pending.append(u)
+            return False
         while not u.cancelled and u.sent - u.played < self.prefetch:
             idx = u.sent + 1
             if idx >= len(u.chunks):
@@ -1543,13 +1560,9 @@ class SpeechScheduler:
                 self._abandon(u)
                 return False
 
-    def _abandon(self, u: Utterance, keep_unread: bool = True) -> None:
-        """The client cannot hear this. An URGENT item is kept as unread so it is
-        re-raised once someone is listening; everything else is simply lost."""
-        if keep_unread and u.priority == Priority.URGENT and not u.done:
-            rest = u.remaining_text()
-            if rest:
-                self._unread.append(rest)
+    def _abandon(self, u: Utterance) -> None:
+        """The client cannot hear this. It is lost, never re-raised later as an
+        unread pile: what was routine is in the attention record."""
         u.close_outcomes(Outcome.INTERRUPTED)
         u.cancel()
         u.abandoned = True

@@ -72,6 +72,15 @@ def _english_until_a_test_chooses(monkeypatch):
     monkeypatch.setattr(spoken_words, "_active", spoken_words.ENGLISH)
 
 
+@pytest.fixture(autouse=True)
+def _nobody_has_been_here_until_a_test_says(monkeypatch):
+    """Every test starts with no human activity recorded, whatever a test
+    before it heard (the recorder is one per process, and whether he is
+    engaged decides what the attention policy does)."""
+    from jarvis import human_activity
+    monkeypatch.setattr(human_activity, "recorder", human_activity.HumanActivity())
+
+
 @pytest.fixture
 def spanish(monkeypatch):
     """Speak Spanish to JARVIS for one test: the active language is "es"."""
