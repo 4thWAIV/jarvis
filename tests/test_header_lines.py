@@ -1568,7 +1568,7 @@ def _drive_where_line(server, session, monkeypatch):
     item = SimpleNamespace(
         work_state=SimpleNamespace(placement="active"), drafts=[],
         messages=[SimpleNamespace(message=message, direction="incoming",
-                                  self_message=False,
+                                  self_message=False, cited_in_reply=[],
                                   receipts=SimpleNamespace(read_at=None,
                                                            received_at=None))])
 
