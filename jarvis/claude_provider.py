@@ -153,6 +153,9 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__speech_models",
     "mcp__jarvis__install_speech_model",
     "mcp__jarvis__set_language",
+    # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
+    "mcp__jarvis__skip_reading",
+    "mcp__jarvis__stop_speaking",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",
