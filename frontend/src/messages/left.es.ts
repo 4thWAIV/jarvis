@@ -12,7 +12,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.status.listening": "escuchando...",
   "left.status.thinking": "pensando...",
   "left.status.stop": "Detener",
-  "left.status.stopTitle": "Dejar de hablar (Esc)",
+  "left.status.stopTitle": "Detener toda la voz ahora",
 
   "left.mic.muted": "Silenciado",
   "left.mic.off": "Micrófono apagado",

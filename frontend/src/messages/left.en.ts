@@ -20,7 +20,7 @@ export const leftEn = {
   "left.status.listening": "listening...",
   "left.status.thinking": "thinking...",
   "left.status.stop": "Stop",
-  "left.status.stopTitle": "Stop speaking (Esc)",
+  "left.status.stopTitle": "Stop all speech now",
 
   // The microphone control (MicControl.tsx, MicMeter.tsx, MuteButton.tsx, MicOffButton.tsx).
   "left.mic.muted": "Muted",
