@@ -54,6 +54,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/test-timing"
           { sysctl -n hw.ncpu hw.memsize; sw_vers; } | tee "$RUNNER_TEMP/test-timing/runner-size.txt"
       - uses: ./.github/actions/setup
+      - name: Reverse lookup of 127.0.0.1
+        continue-on-error: true
+        run: time python -c "import socket; socket.getfqdn('127.0.0.1')"
       - name: Test suite
         env:
           JARVIS_BRAIN_AUTOSTART: "0"

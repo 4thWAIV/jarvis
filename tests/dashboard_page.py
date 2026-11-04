@@ -44,9 +44,11 @@ import socket
 import subprocess
 import threading
 from contextlib import asynccontextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
+
+from tests.loopback_server import LoopbackThreadingHTTPServer
 
 VIEWPORT = {"width": 1400, "height": 900}
 
@@ -160,11 +162,10 @@ class StubServer:
         self._thread.join(timeout=5)
 
 
-class _QuietServer(ThreadingHTTPServer):
+class _QuietServer(LoopbackThreadingHTTPServer):
     """A browser drops keep-alive connections whenever it likes, and the
     stdlib prints a traceback for every one. They are not failures and they
     bury the actual test output."""
-    daemon_threads = True
 
     def handle_error(self, request, client_address):
         pass
