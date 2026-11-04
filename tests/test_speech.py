@@ -1842,3 +1842,70 @@ async def test_his_own_accented_words_come_back_as_echo(h, spanish):
 ])
 def test_spanish_replay_classification(h, spanish, text, expected):
     assert h.sched.classify(text) == expected
+
+
+# ── the conversation floor (contract section 7) ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_an_announcement_waits_while_the_floor_is_held_and_a_reply_does_not(h):
+    """Routine speech waits while his turn or the brain's holds the floor;
+    the reply to his turn is never stuck behind it."""
+    s = h.sched
+    held = [True]
+    s.floor_held = lambda: held[0]
+    note = await s.say("Routine update.", label="announcement")
+    await asyncio.sleep(0.4)
+    assert h.audio() == [], "nothing routine while the floor is his"
+    reply = s.begin_turn()
+    s.feed(reply, "Your answer.")
+    await s.end_turn(reply)
+    await asyncio.sleep(0.3)
+    assert [t for _, _, t in h.audio()] == ["Your answer."]
+    await h.ack_all()
+    held[0] = False
+    await asyncio.sleep(0.6)
+    await h.ack_all()
+    assert [t for _, _, t in h.audio()] == ["Your answer.", "Routine update."]
+    assert not note.cancelled
+
+
+@pytest.mark.asyncio
+async def test_an_announcement_is_checked_again_before_its_first_audio():
+    """Picked while the floor was free, its synthesis finishing after he has
+    started again: it goes back to the queue unheard."""
+    gate = asyncio.Event()
+    harness = Harness()
+
+    async def slow(text):
+        await gate.wait()
+        return b"A:" + text.encode()
+
+    harness.sched._synth = slow
+    held = [False]
+    harness.sched.floor_held = lambda: held[0]
+    await harness.sched.start()
+    try:
+        note = await harness.sched.say("Routine update.", label="announcement")
+        await asyncio.sleep(0.4)
+        held[0] = True                     # he starts again while it synthesises
+        gate.set()
+        await asyncio.sleep(0.4)
+        assert harness.audio() == [] and not note.cancelled
+        held[0] = False
+        await asyncio.sleep(0.6)
+        assert [t for _, _, t in harness.audio()] == ["Routine update."]
+    finally:
+        await harness.sched.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_floor_that_cannot_be_read_holds_routine_speech(h):
+    s = h.sched
+
+    def broken():
+        raise RuntimeError("no floor")
+
+    s.floor_held = broken
+    await s.say("Routine update.", label="announcement")
+    await asyncio.sleep(0.4)
+    assert h.audio() == []
