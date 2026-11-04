@@ -41,11 +41,6 @@ export function historyRows(turns: Turn[], items: ConversationItem[], _everythin
   return rows.sort((a, b) => a.at - b.at);
 }
 
-/** Whether the list is laid out: a list kept hidden behind another centre
- *  view has no box, and scrolling it or deciding it follows would lose
- *  where it was left. */
-const shown = (box: HTMLElement | null): box is HTMLElement => !!box && box.getClientRects().length > 0;
-
 function merge(a: ConversationItem[], b: ConversationItem[]) {
   return [...new Map([...a, ...b].map(i => [i.id, i])).values()].sort((a, b) => a.id - b.id);
 }
@@ -67,6 +62,22 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   const follow = useRef(true);
   const scroll = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  // Where following last put the list. Moved up from there and away from
+  // the bottom, the list was scrolled by him, even when its scroll event
+  // has not been handled yet: it stops following and stays where he left it.
+  const pinned = useRef<number | null>(null);
+  function stick() {
+    const box = scroll.current;
+    if (!box || !follow.current) return;
+    if (pinned.current !== null && box.scrollTop < pinned.current - 1
+        && box.scrollHeight - box.scrollTop - box.clientHeight >= 64) {
+      follow.current = false;
+      setFollowing(false);
+      return;
+    }
+    box.scrollTop = box.scrollHeight;
+    pinned.current = box.scrollTop;
+  }
   const items = merge(merge(older, retained), live.value?.items ?? []);
   const rows = historyRows(turns, items);
   useEffect(() => {
@@ -75,16 +86,13 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   function jump() {
     follow.current = true;
     setFollowing(true);
-    if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+    pinned.current = null;
+    stick();
   }
-  useLayoutEffect(() => {
-    if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items.length, turns]);
+  useLayoutEffect(stick, [items.length, turns]);
   useEffect(() => { if (jumpSignal) jump(); }, [jumpSignal]);
   useEffect(() => {
-    const resize = new ResizeObserver(() => {
-      if (follow.current && shown(scroll.current)) scroll.current.scrollTop = scroll.current.scrollHeight;
-    });
+    const resize = new ResizeObserver(stick);
     if (scroll.current) resize.observe(scroll.current);
     if (content.current) resize.observe(content.current);
     return () => resize.disconnect();
@@ -112,9 +120,6 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
       ref={el => { scroll.current = el; history(el); }}
       onScroll={() => {
         const box = scroll.current!;
-        // Hidden behind another centre view it measures nothing; whether it
-        // follows stays as it was, so it comes back exactly as it was left.
-        if (!shown(box)) return;
         follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 64;
         setFollowing(follow.current);
       }}>
