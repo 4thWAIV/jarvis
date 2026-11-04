@@ -291,17 +291,24 @@ def page_url():
     httpd.shutdown()
 
 
+# His voice input settings as a JARVIS with nothing chosen answers them
+# (voice_control.py): without them the page never offers Start listening.
+PAGE_VOICE_INPUT = {"stop": "keep", "switch": "stop", "saved": False, "scope": "local"}
+PAGE_ANSWERS = {"/api/agents": PAGE_AGENTS, "/api/settings/voice-input": PAGE_VOICE_INPUT}
+
+
 class _PageHandler(http.server.SimpleHTTPRequestHandler):
-    """The built page read-only, and /api/agents answered here, so nothing is
-    written into the package."""
+    """The built page read-only, and /api/agents and the voice input
+    settings answered here, so nothing is written into the package."""
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
-        if urllib.parse.urlparse(self.path).path != "/api/agents":
+        answer = PAGE_ANSWERS.get(urllib.parse.urlparse(self.path).path)
+        if answer is None:
             return super().do_GET()
-        body = json.dumps(PAGE_AGENTS).encode()
+        body = json.dumps(answer).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
