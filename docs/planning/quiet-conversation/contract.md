@@ -43,27 +43,24 @@ From "Prepare the shared control contract":
 
 > Live microphone grants and playback permission are session-only; never restore them from disk. Do not persist raw room audio or credentials for this feature.
 
-## 2. Pending Tim's decision: the Mute proposal
+## 2. The Mute proposal: decided
 
-The plan's Mute proposal is **pending Tim's decision**. Quoted:
+Tim approved the plan's Mute proposal as proposed (4 November 2026). Quoted:
 
 > Mute proposal: suspend PCM delivery to every consumer, stop automatic turn commitment and retain recognized text as an unsent draft. A device already open may remain open, visibly labelled. Unmute is explicit and begins a new capture epoch; it does not silently submit the old draft. This separate Mute behavior remains a proposal for review.
 
-Everything else in this contract is independent of it. Concretely:
+So Mute suspends PCM delivery to every consumer (the recogniser and
+package listeners alike), stops automatic turn commitment for this page
+(the turn being gathered is dropped on the server and its words, with what
+the stopped capture still finishes, become an unsent draft in the
+composer), and keeps the device open, labelled Muted. Unmute is explicit,
+begins a new capture epoch, and never submits the old draft.
 
 - Mute surviving reload, Mute never acquiring a device on reload, and
   Muted being shown as "Muted · microphone inactive" when no device is open
-  are settled (section 1) and are built in `quiet-input-settings`
-  regardless.
+  are settled (section 1).
 - The keep/discard and continue/stop settings do not depend on Mute. They
   govern Mic Off and leaving the tab (section 5).
-- Until Tim decides, what Mute does to words already spoken, and whether
-  muted PCM still reaches package listeners, stays as it is today
-  (`voiceInput.ts` `mute()` finishes the session and sends its words;
-  `onFrame` dispatches `frameListeners` before the quiet check). Every
-  row below that depends on the decision is marked **[Mute decision]**
-  and has one cell for today's behaviour and one for the proposal. Only
-  that cell changes once he decides.
 
 ## 3. State owners
 
@@ -150,9 +147,9 @@ Mute and Off, the state as accessible text).
 | 4 | any | load, preference storage missing, unreadable or invalid | `disarmed` | Never treated as permission. Settings (section 6) not yet loaded also keeps the Start control disabled. |
 | 5 | `disarmed` | human Start listening | `starting` → `listening` | New `captureEpoch`; grant set; claims ownership (row 18). AudioContext unlock, unrelated clicks and existing browser permission are not a Start. |
 | 6 | `off` | human Mic on | `starting` | Clears Off preference; counts as the deliberate enable. |
-| 7 | `muted-inactive` | human Unmute | `starting` | Clears Muted preference; counts as the deliberate enable. **[Mute decision]**: proposal adds "new epoch; old draft not submitted"; today there is no old session in this case, so both agree. |
-| 8 | `muted` | human Unmute | `listening` | **[Mute decision]** today: fresh session once the muted one finished. Proposal: new `captureEpoch`; held text stays an unsent draft. |
-| 9 | `listening`/`starting` | human Mute | `muted` | Preference saved before anything else. **[Mute decision]** today: finish session, words sent; PCM still reaches package listeners. Proposal: PCM to every consumer suspended, auto-commit stopped, text kept as unsent draft. |
+| 7 | `muted-inactive` | human Unmute | `starting` | Clears Muted preference; counts as the deliberate enable. New `captureEpoch`; no old draft is submitted. |
+| 8 | `muted` | human Unmute | `listening` | New `captureEpoch` and a fresh session once the muted one has finished; the draft made at Mute stays an unsent draft. |
+| 9 | `listening`/`starting` | human Mute | `muted` | Preference saved before anything else. PCM to every consumer suspended; the device stays open. New `captureEpoch`; `turn_discard` drops the server's gathered turn; its words and what the stopped capture finishes (only audio from before the Mute) become an unsent draft. Nothing is committed automatically. |
 | 10 | `listening` | human Mic off, **K** | `finishing` → `off` | Preference saved first. Snapshot `frameSeq`; no frame after it is sent; tracks released at once; drain only up to the snapshot under a finishing epoch; resulting words go to the normal turn rules (section 7). Timeout leaves the words as an unsent draft with an error, never a partial automatic submission. |
 | 11 | `listening` | human Mic off, **D** | `off` | Preference saved first. Abort live and closing sessions; revoke both epochs; server drops the gathered-but-uncommitted turn for this client (`turn_discard`); late finals ignored (rule 1). |
 | 12 | `listening` | tab hidden, **C** | `listening` | Session continues only because it was explicitly enabled. |
@@ -163,7 +160,7 @@ Mute and Off, the state as accessible text).
 | 17 | any | stop or tab-switch setting changed | unchanged | Takes effect at the next stop or visibility change. Changing it submits, discards and starts nothing. |
 | 18 | `starting` | server says another client owns capture | `busy` | No silent takeover. The tab does not acquire the device while waiting. Only a human Start in this tab takes ownership, and the server tells the previous owner, which goes `disarmed` under its own stop rules. |
 | 19 | `listening` | sibling tab Mute or Mic off (same browser) | sibling's quiet state | Quiet propagates: the preference is shared by the browser (section 6), so every tab applies it; the owner releases. |
-| 20 | `listening` | voice socket (`/ws/voice`) lost | `disarmed`-with-draft until reconnected | Stop accepting input under the old epoch. Server no longer submits buffered words on teardown (`voice_handler` `finally: _spawn(utterance.now())` removed). Words gathered but not committed become an unsent draft in Matt's composer. On reconnect the tab needs a deliberate enable unless it was `listening` and the grant is still in this load; then it resumes under a new epoch. |
+| 20 | `listening` | voice socket (`/ws/voice`) lost | `disarmed`-with-draft until reconnected | Stop accepting input under the old epoch; the device is released. Server no longer submits buffered words on teardown. Words gathered but not committed become an unsent draft in Matt's composer. Decided: a tab that was listening resumes on reconnect, in the same open page, under a new epoch without a second click (it does not claim the recogniser from another page). A reload or a new tab starts not listening, with no microphone. |
 | 21 | `listening` | transcribe socket lost or recogniser error | `starting` (retry) or `unavailable` | Retries recheck the same grant and epoch; a retry can never arm a tab that is not armed. Words in flight shown as lost, as today. |
 | 22 | `listening` | device lost (track ended) | `unavailable` → retry | Same retry rule. |
 | 23 | `finishing` | late `final` after its epoch was revoked | unchanged | Dropped (rule 1). |
@@ -356,14 +353,14 @@ files. Anything listed under the integrator goes through the integrator.
 `jarvis.ts` and `speech.py` are split by region between lanes; any change
 outside a lane's region goes through the integrator.
 
-## 12. Open questions for Tim
+## 12. Questions for Tim (decided)
 
-1. **Mute proposal** (section 2): accept, change or reject. Nothing else
-   waits on it.
-2. **"Per user" for the two settings.** Proposed: keyed by the signed-in
-   team member's GitHub ID when signed in, otherwise a local owner key,
-   in this node's SQLite. Never a team-wide setting.
-3. **Reconnect after a voice-socket drop** (row 20): proposed that a tab
-   that was listening in this same page load resumes under a new epoch
-   without a second click, since the grant is still this load's. The
-   stricter reading is a fresh click every time. Pick one.
+All three are decided.
+
+1. **Mute proposal** (section 2): approved as proposed.
+2. **"Per user" for the two settings**: keyed by the signed-in team
+   member's GitHub ID when signed in, otherwise a local owner key, in this
+   node's SQLite. Never a team-wide setting (accepted as proposed).
+3. **Reconnect after a voice-socket drop** (row 20): approved as
+   proposed; a tab that was listening in the same open page resumes under
+   a new epoch without a second click.
