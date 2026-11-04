@@ -65,7 +65,9 @@ class Activity:
 
 
 def wrap(name: str, text: str) -> str:
-    return f'<session-output name="{name}" untrusted="true">\n{text}\n</session-output>'
+    """server._wrap_untrusted's shape: the delimiter inside is broken."""
+    safe = text.replace("</session-output", "</session‑output")
+    return f'<session-output name="{name}" untrusted="true">\n{safe}\n</session-output>'
 
 
 @pytest.fixture
@@ -274,10 +276,15 @@ async def test_other_people_s_words_reach_the_brain_walled(world):
     digest, brain, _ = ready(world)
     await digest.consider()
     prompt = brain.prompts[0]
-    facts, _, walled = prompt.partition("<session-output")
-    assert "hammer" not in facts and "jarvis" not in facts.split("\n", 1)[1]
-    assert 'untrusted="true"' in walled and "hammer" in walled
-    assert json.loads(facts.split("\n", 1)[1])[0]["kind"] == "agent_message"
+    header, _, walled = prompt.partition("<session-output")
+    for ch in ("<", ">", '"'):
+        assert ch not in header, "the instruction is JARVIS's own words only"
+    assert "hammer" not in header and 'untrusted="true"' in walled
+    assert walled.count("</session-output>") == 1, "a name cannot close the block"
+    body = walled[walled.index("\n") + 1:walled.rindex("\n</session-output>")]
+    updates = json.loads(body)
+    assert [u["kind"] for u in updates] == ["agent_message", "run"]
+    assert updates[1]["words"] == {"project": "jarvis"}
 
 
 @pytest.mark.asyncio

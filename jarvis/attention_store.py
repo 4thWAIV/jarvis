@@ -265,10 +265,10 @@ class AttentionStore:
     def record(self, kind: str, source_id: str, event: str, *, facts: Optional[dict] = None,
                untrusted: Optional[dict] = None, audible: bool = True) -> Item:
         """Record what happened to one source object. The same event with the
-        same facts again changes nothing (a poll seeing it twice); anything
-        new is the item's next revision, pending again, and a line of its
-        history. `audible` is only ever raised here, never lowered: whether
-        this node may speak of it is `set_audible`'s."""
+        same facts again changes nothing (a poll seeing it twice) but may
+        make it this node's to speak of; anything new is the item's next
+        revision, pending again, and a line of its history. `audible` is only
+        ever raised here, never lowered (`set_audible` lowers it)."""
         now = self._clock()
         facts_text, untrusted_text = _text(facts or {}), _text(untrusted or {})
         with closing(_connect()) as conn, conn:
@@ -276,6 +276,11 @@ class AttentionStore:
                                (kind, str(source_id))).fetchone()
             if row is not None and (row["event"], row["facts"], row["untrusted"]) == (
                     event, facts_text, untrusted_text) and row["state"] != RESOLVED:
+                if audible and not row["audible"]:
+                    conn.execute("UPDATE attention_items SET audible = 1 WHERE id = ?",
+                                 (row["id"],))
+                    row = conn.execute("SELECT * FROM attention_items WHERE id = ?",
+                                       (row["id"],)).fetchone()
                 return _item(row)
             if row is None:
                 cur = conn.execute(
@@ -452,3 +457,17 @@ class AttentionStore:
                             "updated_at": r["updated_at"], "outcome": r["outcome"],
                             "reason": r["reason"], "items": items})
         return out
+
+
+# The record the running server attends with, for the adapters it does not
+# build itself (a human message's send outcome). None outside a server.
+_current: Optional[AttentionStore] = None
+
+
+def use(store: Optional[AttentionStore]) -> None:
+    global _current
+    _current = store
+
+
+def current() -> Optional[AttentionStore]:
+    return _current
