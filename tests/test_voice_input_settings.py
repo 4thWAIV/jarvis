@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from jarvis import run_store, team_client, voice_control
+from jarvis.speech import END_OF_TURN_SEC
 
 
 @pytest.fixture
@@ -29,14 +30,14 @@ def _signed_in(monkeypatch, github_id=7, signed_out=False):
 
 
 def test_nothing_chosen_reads_the_defaults_and_says_so():
-    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "scope": "local"}
+    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "patience": END_OF_TURN_SEC, "scope": "local"}
 
 
 @pytest.mark.parametrize("stop,switch", [("keep", "continue"), ("keep", "stop"),
                                          ("discard", "continue"), ("discard", "stop")])
 def test_each_of_the_four_combinations_is_saved_and_read_back(published, stop, switch):
     got = voice_control.change(stop=stop, switch=switch)
-    assert got == {"stop": stop, "switch": switch, "saved": True, "scope": "local"}
+    assert got == {"stop": stop, "switch": switch, "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
     assert voice_control.read() == got
     assert published == [{"type": voice_control.FRAME}]
 
@@ -44,7 +45,7 @@ def test_each_of_the_four_combinations_is_saved_and_read_back(published, stop, s
 def test_changing_one_setting_keeps_the_other():
     voice_control.change(stop="discard", switch="continue")
     assert voice_control.change(switch="stop") == {
-        "stop": "discard", "switch": "stop", "saved": True, "scope": "local"}
+        "stop": "discard", "switch": "stop", "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
 
 
 def test_a_default_never_overwrites_a_saved_choice(monkeypatch):
@@ -59,6 +60,10 @@ def test_a_default_never_overwrites_a_saved_choice(monkeypatch):
     ({"stop": 1}, "invalid-stop"),
     ({"switch": "pause"}, "invalid-switch"),
     ({"stop": "keep", "switch": ""}, "invalid-switch"),
+    ({"patience": 0.1}, "invalid-patience"),
+    ({"patience": 11}, "invalid-patience"),
+    ({"patience": "4"}, "invalid-patience"),
+    ({"patience": True}, "invalid-patience"),
 ])
 def test_a_bad_change_is_refused_and_nothing_is_saved_or_published(published, change, code):
     with pytest.raises(voice_control.Invalid) as refused:
@@ -72,7 +77,7 @@ def test_settings_are_per_user_never_shared(monkeypatch):
     voice_control.change(stop="discard", switch="continue")             # the local owner
     _signed_in(monkeypatch, github_id=7)
     assert voice_control.user_key() == "github:7"
-    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "scope": "member"}
+    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "patience": END_OF_TURN_SEC, "scope": "member"}
     voice_control.change(stop="keep", switch="stop")
     _signed_in(monkeypatch, github_id=8)
     assert voice_control.read()["saved"] is False
@@ -114,7 +119,7 @@ def test_the_routes_read_and_change_with_the_same_answers(client, published):
     r = client.post(voice_control.PATH, json={"stop": "discard"})
     assert r.status_code == 200
     assert r.json() == voice_control.read() == {
-        "stop": "discard", "switch": voice_control.DEFAULTS["switch"], "saved": True, "scope": "local"}
+        "stop": "discard", "switch": voice_control.DEFAULTS["switch"], "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
     assert published == [{"type": voice_control.FRAME}]
 
 
@@ -131,3 +136,20 @@ def test_the_route_says_unreadable_and_the_page_keeps_listening_off(client, monk
     monkeypatch.setattr(run_store, "_connect", broken)
     r = client.get(voice_control.PATH)
     assert (r.status_code, r.json()["code"]) == (503, "unreadable")
+
+
+def test_patience_is_one_saved_value_that_keeps_the_other_settings_and_falls_back():
+    assert voice_control.patience() == END_OF_TURN_SEC
+    voice_control.change(stop="discard")
+    assert voice_control.read()["patience"] == END_OF_TURN_SEC      # not saved by the change
+    got = voice_control.change(patience=4)
+    assert (got["stop"], got["patience"]) == ("discard", 4.0)
+    voice_control.change(switch="continue")
+    assert voice_control.patience() == 4.0
+
+
+def test_patience_falls_back_to_the_constant_when_the_store_cannot_be_read(monkeypatch):
+    voice_control.change(patience=4)
+    monkeypatch.setattr(run_store, "_connect", lambda *_a, **_k: (_ for _ in ()).throw(
+        sqlite3.OperationalError("locked")))
+    assert voice_control.patience() == END_OF_TURN_SEC

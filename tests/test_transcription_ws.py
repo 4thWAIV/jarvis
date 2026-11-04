@@ -264,8 +264,23 @@ def test_the_capture_counts_the_frames_it_was_given_and_decoded(client, engine):
         while capture.frames_decoded < 3 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert capture.frames_decoded == 3
-        assert transcription_api.service.capture_of("page-a") is capture
-        assert transcription_api.service.capture_of("page-b") is None
+        service = transcription_api.service
+        assert service.capture_of("page-a") is capture and service.capture_of("page-b") is None
+        assert service.coverage_of("page-a") == (3, 3) and service.coverage_of("page-b") is None
+        assert service.epoch_of("page-a") == 1 and service.epoch_of("page-b") is None
+
+
+def test_each_page_s_newest_epoch_is_kept_after_its_capture_ends(client):
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "captureEpoch": 4}))
+        _until(ws, "ready")
+        ws.send_text(json.dumps({"type": "abort"}))
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "captureEpoch": 2}))     # an older one, late
+        _until(ws, "ready")
+    service = transcription_api.service
+    assert service.epoch_of("page-a") == 4
+    assert service.coverage_of("page-a") is None or service.capture_of("page-a").epoch == 2
 
 
 def test_finish_drains_what_was_sent_then_says_finished(client, engine):

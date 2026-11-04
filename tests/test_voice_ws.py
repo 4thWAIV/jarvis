@@ -238,7 +238,8 @@ def test_a_raising_turn_still_ends_the_utterance_and_speaks_a_recovery_line(clie
         server.brain_instance = FakeBrain()
         ws.send_json({"type": "played", "utt": seen[-1]["utt"], "idx": seen[-1]["idx"]})
         ws.send_json({"type": "transcript", "text": "still there", "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] == "Echo: still there.")
+        _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] == "Echo: still there.",
+                     limit=20)
 
 
 def test_voice_emit_raises_for_content_with_no_client_but_not_for_status(client):

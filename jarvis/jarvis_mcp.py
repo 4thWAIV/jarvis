@@ -1969,6 +1969,10 @@ TOOL_SPECS = [
                 "switch": {"type": "string", "enum": ["continue", "stop"],
                            "description": "When he switches away from JARVIS: continue "
                                           "listening, or stop listening."},
+                "patience": {"type": "number", "minimum": 0.5, "maximum": 10,
+                             "description": "Seconds of quiet that end his turn; it also "
+                                            "governs when JARVIS may start talking. From "
+                                            "the next time the page connects."},
             },
         },
     },

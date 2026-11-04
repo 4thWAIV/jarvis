@@ -613,7 +613,8 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     got = _call(wired, "set_voice_input_settings", stop="discard", switch="continue")
     assert got["ok"] and got["text"].startswith("Saved.")
     page = wired.client.get(voice_control.PATH).json()
-    assert page == {"stop": "discard", "switch": "continue", "saved": True, "scope": "member"}
+    assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
+                    "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
     refused = _call(wired, "set_voice_input_settings", stop="forever")
