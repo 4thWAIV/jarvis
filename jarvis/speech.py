@@ -260,6 +260,27 @@ SHORT_ECHO_GRACE_SEC = 0.75
 ECHO_SHARE_WHILE_AUDIBLE = 0.5
 SHORT_UTTERANCE_TOKENS = 2
 
+class Outcome:
+    """What became of one chunk on its way out of the speaker. Each is a
+    fact, never a hope: `queued` is sent to the page, `started` is the page
+    saying its audio began, `played` is the page saying it ended. `failed`
+    is a chunk with no audio to play (synthesis or the page's decoding
+    failed); `skipped` is one the user skipped with Skip the rest;
+    `interrupted` is one stopped by Stop speaking, a barge-in, a withdrawal
+    or a lost connection. The transport moving past a chunk (`played` on the
+    utterance) is a separate fact: a failed chunk advances it, and is still
+    not played."""
+    PENDING = "pending"
+    QUEUED = "queued"
+    STARTED = "started"
+    PLAYED = "played"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    INTERRUPTED = "interrupted"
+    # Still on its way: the ones a skip or a stop decides.
+    OPEN = frozenset({PENDING, QUEUED, STARTED})
+
+
 Synthesize = Callable[[str], Awaitable[Optional[bytes]]]
 Emit = Callable[[dict], Awaitable[None]]
 
@@ -301,6 +322,8 @@ class Chunk:
     # sent verbatim on its audio frame as `cue`, never read here. The last
     # chunk of a cue carries `"last": True`, so the page knows where it ends.
     cue: Optional[dict] = None
+    outcome: str = Outcome.PENDING   # what became of it (Outcome)
+    started_at: Optional[float] = None
 
 
 @dataclass
@@ -323,13 +346,16 @@ class Utterance:
                                                  # bound on what the client may legitimately
                                                  # ack — an ack already in flight for a chunk
                                                  # that really did go out is not a forgery
-    played: int = -1                            # highest chunk index the client acked
+    played: int = -1                            # highest chunk index the transport moved
+                                                 # past: acked as played, or reported failed.
+                                                 # Each chunk's own `outcome` says which
     held_ack: int = -1                          # an ack that arrived before its chunk could
                                                  # have finished; applied by `_step` when it could
     closed: bool = False                        # no more chunks coming
     cancelled: bool = False
     abandoned: bool = False                     # set only by _abandon(): a transport
                                                  # failure, never a genuine user cancel
+    skipped: bool = False                       # set only by skip_reading(): Skip the rest
     paused_at: Optional[float] = None
     resumes: int = 0
     first_sent_at: Optional[float] = None
@@ -361,6 +387,28 @@ class Utterance:
         this flag. Distinguishes the two so a caller checking `was_cancelled`
         can tell a dead client from the user's own decision."""
         return (self.alias or self).abandoned
+
+    @property
+    def was_skipped(self) -> bool:
+        return (self.alias or self).skipped
+
+    @property
+    def heard_in_full(self) -> bool:
+        """Done, not cancelled, and every chunk PLAYED: a chunk that failed
+        (no audio, or the page could not decode it) was not heard, however
+        far the transport moved past it."""
+        u = self.alias or self
+        return (self.done and not u.cancelled
+                and all(c.outcome == Outcome.PLAYED for c in u.chunks))
+
+    def outcomes(self) -> list[str]:
+        return [c.outcome for c in (self.alias or self).chunks]
+
+    def close_outcomes(self, outcome: str) -> None:
+        """Every chunk still on its way ends as `outcome`."""
+        for c in (self.alias or self).chunks:
+            if c.outcome in Outcome.OPEN:
+                c.outcome = outcome
 
     def remaining_text(self) -> str:
         return " ".join(c.text for c in self.chunks[self.played + 1:])
@@ -586,6 +634,7 @@ class SpeechScheduler:
             return
         log.info("speech: utterance %s withdrawn%s", utt.id, f" ({reason})" if reason else "")
         utt.cancelled = True
+        utt.close_outcomes(Outcome.INTERRUPTED)
         self._pending = [u for u in self._pending if u is not utt]
         if self._paused is utt:
             self._paused = None
@@ -605,16 +654,28 @@ class SpeechScheduler:
             self._add_chunk(utt, piece, capture=capture, cue=marked)
 
     async def wait_played(self, utt: Utterance, idx: int, timeout: float = 60.0) -> bool:
-        """True once chunk `idx` of `utt` has been played; False on cancel or
-        timeout."""
+        """True once chunk `idx` of `utt` has been played and so has every
+        chunk of the reading it ends (the chunks reading the same capture, or
+        for a chunk reading none, every chunk before it); False on cancel,
+        skip, a chunk that failed, or timeout. The transport moving past a
+        failed chunk is not hearing it."""
         deadline = self._clock() + timeout
         while self._clock() < deadline:
             if utt.was_cancelled:
                 return False
             if utt.played >= idx:
-                return True
+                return self._read_in_full(utt, idx)
             await asyncio.sleep(0.02)
         return False
+
+    @staticmethod
+    def _read_in_full(utt: Utterance, idx: int) -> bool:
+        chunks = utt.chunks[:idx + 1]
+        if not chunks:
+            return False
+        capture = chunks[-1].capture
+        reading = [c for c in chunks if capture is None or c.capture == capture]
+        return all(c.outcome == Outcome.PLAYED for c in reading)
 
     async def end_turn(self, utt: Utterance) -> None:
         if not utt.cancelled:
@@ -656,11 +717,14 @@ class SpeechScheduler:
         return u
 
     async def wait_for(self, utt: Utterance, timeout: float = 60.0) -> bool:
-        """True when the utterance has been fully played; False on cancel/timeout."""
+        """Waits until the utterance is done. True only when it was heard in
+        full (`heard_in_full`); False on cancel, skip, a failed chunk or
+        timeout. A read-back gate reads this, so it is never True for words
+        that did not come out of the speaker."""
         deadline = self._clock() + timeout
         while self._clock() < deadline:
             if utt.done:
-                return not utt.was_cancelled
+                return utt.heard_in_full
             await asyncio.sleep(0.02)
         return False
 
@@ -964,6 +1028,14 @@ class SpeechScheduler:
         self._accept_ack(u, utt_id, idx, now)
 
     def _accept_ack(self, u: Optional[Utterance], utt_id: int, idx: int, now: float) -> None:
+        if u is not None:
+            # Played in order: every chunk up to this one that went out has
+            # now ended. One already failed or skipped stays so; one marked
+            # interrupted whose audio the page let finish (the chunk kept
+            # playing under a preemption) was, after all, played.
+            for c in u.chunks[:idx + 1]:
+                if c.outcome in (Outcome.QUEUED, Outcome.STARTED, Outcome.INTERRUPTED):
+                    c.outcome = Outcome.PLAYED
         if u is not None and idx > u.played:
             u.played = idx
             u.last_progress_at = now
@@ -981,23 +1053,86 @@ class SpeechScheduler:
                 u.held_ack = -1
                 self._accept_ack(u, u.id, idx, now)
 
-    async def skip_reply(self, utt_id: int) -> bool:
-        """Cancel only a conversation reply's reading, never its generation.
-
-        Played indices remain truthful. Unlike hush/barge-in this does not
-        touch other speech, unread notices, or approval cancellation windows.
-        The client drops this utterance's queued audio on reading_skipped.
-        """
+    def playback_started(self, utt_id: int, idx: int) -> None:
+        """The page says chunk `idx` of `utt_id` has begun to sound. Only a
+        chunk that went out and is still queued can start."""
         u = self.utterances.get(utt_id)
-        if u is None or u.kind != "turn" or u.label != "reply" or u.done:
+        if u is None or not 0 <= idx <= min(u.high_sent, len(u.chunks) - 1):
+            return
+        chunk = u.chunks[idx]
+        if chunk.outcome == Outcome.QUEUED:
+            chunk.outcome = Outcome.STARTED
+            chunk.started_at = self._clock()
+            u.last_progress_at = chunk.started_at
+
+    def playback_failed(self, utt_id: int, idx: int) -> None:
+        """The page could not play chunk `idx` of `utt_id` (its audio would
+        not decode). The transport moves past it so the next chunk can go,
+        but it is `failed`, never played: nothing came out of the speaker,
+        so its words are not echo either, and the floor it held under the
+        chunks after it is given back."""
+        u = self.utterances.get(utt_id)
+        now = self._clock()
+        if u is None or not 0 <= idx <= min(u.high_sent, len(u.chunks) - 1):
+            log.warning(f"speech: ignoring a failure report beyond what was sent "
+                        f"(utterance {utt_id}, chunk {idx})")
+            return
+        chunk = u.chunks[idx]
+        if chunk.outcome not in (Outcome.QUEUED, Outcome.STARTED):
+            return
+        log.warning("speech: the page could not play chunk %s of utterance %s", idx, utt_id)
+        chunk.outcome = Outcome.FAILED
+        # Its length was chained into the floor of every chunk sent after it;
+        # nothing played, so take it back out (a floor may only get lower).
+        unheard = ack_floor_seconds(chunk.audio)
+        previous = u.chunks[idx - 1].earliest_ack if idx > 0 else 0.0
+        chunk.earliest_ack = max(previous, chunk.earliest_ack - unheard)
+        for later in u.chunks[idx + 1:]:
+            if later.earliest_ack:
+                later.earliest_ack = max(chunk.earliest_ack, later.earliest_ack - unheard)
+        for spoken in self._recent:
+            if spoken.utt == utt_id and spoken.idx == idx and spoken.acked_at is None:
+                spoken.acked_at = now - self.echo_window   # never audible: no echo window
+        if idx > u.played:
+            u.played = idx
+        u.last_progress_at = now
+        self._kick()
+
+    def reading(self, utt_id: Optional[int] = None) -> Optional[Utterance]:
+        """The reading `utt_id` names (a batched item: the announcement it
+        joined), or with none, the one sounding now."""
+        if utt_id is None:
+            return self._current
+        u = self.utterances.get(utt_id)
+        return u.alias or u if u is not None else None
+
+    async def skip_reading(self, utt_id: Optional[int] = None) -> bool:
+        """Skip the rest: stop ONE reading (a reply, a read-back, an
+        announcement or digest), never its generation, never anything else.
+
+        `utt_id` names it; None is the one sounding now. Its unplayed chunks
+        are `skipped`, its queued and late audio is dropped (the page drops
+        it on `reading_skipped`, and nothing more of it is sent), and played
+        indices stay truthful. It is cancelled, so a read-back that is
+        skipped is not heard in full: `wait_for` and `wait_played` say False
+        and its approval stays pending. Unlike Stop speaking and a barge-in,
+        other utterances, unread notices and an open cancel window are left
+        alone."""
+        u = self.reading(utt_id)
+        if u is None or u.done:
             return False
+        u.skipped = True
+        u.close_outcomes(Outcome.SKIPPED)
         u.cancel()  # flag/cancel synthesis before awaiting a transport operation
+        log.info("speech: utterance %s skipped (%s); %d chunk(s) unplayed", u.id, u.label,
+                 sum(1 for o in u.outcomes() if o == Outcome.SKIPPED))
         active = self._current is u
         if active:
             self._current = None
         if self._paused is u:
             self._paused = None
         self._pending = [p for p in self._pending if p is not u]
+        self._batch = [b for b in self._batch if b.alias is not u and b is not u]
         self._settle(u.id)  # retire echo bookkeeping, not played acknowledgements
         await self._emit({"type": "reading_skipped", "utt": u.id})
         if active:
@@ -1024,13 +1159,16 @@ class SpeechScheduler:
                 rest = cur.remaining_text()
                 if rest:
                     self._unread.append(rest)
+            cur.close_outcomes(Outcome.INTERRUPTED)
             cur.cancel()
             self._current = None
         if self._paused is not None:
+            self._paused.close_outcomes(Outcome.INTERRUPTED)
             self._paused.cancel()
             self._paused = None
         for u in self._pending:
             if u.priority == Priority.NORMAL:
+                u.close_outcomes(Outcome.INTERRUPTED)
                 u.cancel()
             else:
                 u.immediate = False          # anything that survives waits for a pause
@@ -1253,6 +1391,7 @@ class SpeechScheduler:
                 spoke = self._last_user_speech is not None and p.paused_at is not None \
                     and self._last_user_speech > p.paused_at
                 if p.cancelled or stale or spoke or p.resumes >= MAX_RESUMES:
+                    p.close_outcomes(Outcome.INTERRUPTED)
                     p.cancel()
                     self._settle(p.id, above=p.played + 1)   # the kept chunk may still be playing
                     self._orphan(p.id)                       # ...but not for two minutes
@@ -1319,6 +1458,7 @@ class SpeechScheduler:
                 # "heard in full" 22 ms into ten seconds of audio.
                 previous = u.chunks[idx - 1].earliest_ack if idx > 0 else 0.0
                 chunk.earliest_ack = max(previous, now)
+                chunk.outcome = Outcome.FAILED       # shown as text, never heard
                 u.sent = idx
                 u.high_sent = max(u.high_sent, idx)
                 if now >= chunk.earliest_ack:
@@ -1345,6 +1485,7 @@ class SpeechScheduler:
                 # before it could, plus its own length.
                 previous = u.chunks[idx - 1].earliest_ack if idx > 0 else 0.0
                 chunk.earliest_ack = max(previous, now) + ack_floor_seconds(chunk.audio)
+                chunk.outcome = Outcome.QUEUED
                 u.sent = idx
                 if u.first_sent_at is None:
                     u.first_sent_at = now
@@ -1390,6 +1531,7 @@ class SpeechScheduler:
             rest = u.remaining_text()
             if rest:
                 self._unread.append(rest)
+        u.close_outcomes(Outcome.INTERRUPTED)
         u.cancel()
         u.abandoned = True
         self._settle(u.id)
