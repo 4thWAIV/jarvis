@@ -86,6 +86,8 @@ export const leftEn = {
   "left.voiceInput.switch.continue": "Continue listening",
   "left.voiceInput.switch.stop": "Stop listening",
   "left.voiceInput.switchHelp": "Continue keeps a listening session you started; Stop ends it, and what you were saying follows the setting above. Coming back never starts listening, and neither turns on a muted or switched-off microphone.",
+  "left.voiceInput.patience": "Patience (seconds)",
+  "left.voiceInput.patienceHelp": "How long you can pause before what you said is sent, and before JARVIS may start talking: {min} to {max} seconds. It applies from the next time this page connects.",
   "left.voiceInput.defaults": "These are the defaults: you have not chosen yet. A change applies from the next stop or switch.",
   "left.voiceInput.unread": "Your voice input settings have not been read, so listening cannot start yet.",
   "left.voiceInput.notSaved": "Not saved ({error}).",

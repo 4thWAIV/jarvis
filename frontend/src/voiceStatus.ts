@@ -20,6 +20,18 @@ export const skipReading = { current: () => {} };
 // puts its handler here.
 export const sendTyped = { current: (_text: string): boolean => false };
 
+// What he has said aloud and the server has gathered but not yet sent
+// (the `turn` frames on /ws/voice): only words the server accepted as his,
+// never echo. `stalled` is a turn the recogniser could not finish, waiting
+// for his Retry, Send now or Keep as draft (VoiceTurnBar.tsx).
+export type VoiceTurnState = "gathering" | "commit-pending" | "stalled";
+export interface VoiceTurn { state: VoiceTurnState; turnId: number | null; text: string }
+export const voiceTurn = createStore<VoiceTurn | null>(null);
+// Send now, Retry and Keep as draft: the same calls as the brain's
+// voice_turn. jarvis.ts puts its handler here.
+export type VoiceTurnAction = "send_now" | "retry" | "keep_as_draft";
+export const turnAction = { current: (_action: VoiceTurnAction): boolean => false };
+
 // Connection and explicit user navigation, shared by the composer/playback UI.
 export const voiceConnected = createStore(false);
 export const conversationJump = createStore(0);

@@ -169,16 +169,63 @@ def test_a_lagging_recogniser_holds_the_commit_until_it_has_caught_up():
     assert h.texts() == ["open the"]
 
 
-def test_lag_with_no_new_interims_never_sends_the_old_fragment_it_becomes_a_draft():
+def _stalled():
     frames = {"page-a": (40, 10)}
     h = Harness(frames=frames)
     h.c.final("transfer the", 1, client="page-a", epoch=1)
     h.clock.advance(1.5 + 3.1)
+    return h, frames
+
+
+def test_lag_with_no_new_interims_never_sends_the_old_fragment_it_stalls():
+    h, _frames = _stalled()
     assert h.committed == []
     assert [text for _, text in h.stalled] == ["transfer the"]
+    assert h.c.state == "stalled" and h.c.gathered_text == "transfer the"
+    h.clock.advance(60)
+    assert h.committed == [] and h.c.state == "stalled", "it waits for his choice"
+
+
+def test_a_stalled_turn_kept_as_a_draft_sends_nothing():
+    h, _frames = _stalled()
+    assert h.c.keep_as_draft() == "transfer the"
     assert h.c.state == "idle" and h.c.turn_id is None
     h.clock.advance(10)
     assert h.committed == []
+    assert h.c.keep_as_draft() is None, "nothing stalled any more"
+
+
+def test_send_now_on_a_stalled_turn_sends_it_as_heard_on_his_word():
+    h, _frames = _stalled()
+    assert h.c.send_now()
+    assert h.texts() == ["transfer the"] and h.c.state == "awaiting-reply"
+
+
+def test_retry_waits_for_the_recogniser_again_and_commits_once_it_catches_up():
+    h, frames = _stalled()
+    assert h.c.retry() and h.c.state == "commit-pending"
+    h.clock.advance(1.0)
+    assert h.committed == []
+    frames["page-a"] = (40, 40)
+    h.clock.advance(0.2)
+    assert h.texts() == ["transfer the"]
+    assert not h.c.retry(), "nothing stalled to retry"
+
+
+def test_retry_that_still_cannot_catch_up_stalls_again():
+    h, _frames = _stalled()
+    h.c.retry()
+    h.clock.advance(3.1)
+    assert h.c.state == "stalled" and len(h.stalled) == 2 and h.committed == []
+
+
+def test_more_speech_carries_a_stalled_turn_on():
+    h, frames = _stalled()
+    frames["page-a"] = (50, 50)
+    h.c.final("money to savings", 2, client="page-a", epoch=1)
+    assert h.c.state == "gathering"
+    h.clock.advance(1.6)
+    assert h.texts() == ["transfer the money to savings"]
 
 
 def test_a_delayed_final_after_the_deadline_rejoins_the_turn_while_it_waits():

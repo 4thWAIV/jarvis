@@ -302,7 +302,8 @@ def page_url():
 
 # His voice input settings as a JARVIS with nothing chosen answers them
 # (voice_control.py): without them the page never offers Start listening.
-PAGE_VOICE_INPUT = {"stop": "keep", "switch": "stop", "saved": False, "scope": "local"}
+PAGE_VOICE_INPUT = {"stop": "keep", "switch": "stop", "patience": 1.5, "saved": False,
+                    "scope": "local"}
 PAGE_ANSWERS = {"/api/agents": PAGE_AGENTS, "/api/settings/voice-input": PAGE_VOICE_INPUT}
 
 

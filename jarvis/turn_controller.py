@@ -14,9 +14,12 @@ cancelling a timer is never relied on, because its callback may already be
 on its way. The recogniser must also have caught up with him: it must have
 decoded every frame the page had sent when the hold began (coverage, read
 from the transcriber's capture for the page, so the page's own word is not
-trusted for it). Not yet: it waits, up to `coverage_bound`, then gives the
-turn back to the page as an unsent draft (`stalled`), never an old
-fragment sent on its own.
+trusted for it). Not yet: it waits, up to `coverage_bound`, then the turn
+is `stalled`: kept, never an old fragment sent on its own, and the page
+offers his three ways on (`retry` waits for the recogniser again,
+`send_now` sends what was heard as it is, on his word, and
+`keep_as_draft` gives it back as an unsent draft). Anything more he says
+carries the stalled turn on.
 
 Words carry the page (`clientId`) and the capture epoch they were heard in
 (`captureEpoch`). Words from an epoch older than the page's current one
@@ -68,6 +71,7 @@ class _Turn:
 
 class TurnController:
     """One voice client's turns. States: idle, gathering, commit-pending,
+    stalled (the recogniser did not catch up; waiting for his choice),
     awaiting-reply (committed; until the server says its reply has started
     or ended)."""
 
@@ -109,6 +113,12 @@ class TurnController:
     @property
     def turn_id(self) -> Optional[int]:
         return self._turn.id if self._turn else None
+
+    @property
+    def gathered_text(self) -> str:
+        """What has been gathered into the turn so far: only words accepted
+        as his (never echo, never a stale epoch's)."""
+        return " ".join(self._turn.parts) if self._turn else ""
 
     def current(self, client: Optional[str], epoch: Optional[int]) -> bool:
         """Whether words from this page and epoch may be gathered (rule 1).
@@ -169,15 +179,34 @@ class TurnController:
         return self._drop()
 
     def send_now(self) -> bool:
-        """Commit now, on his word: the coverage check still applies.
-        False when there is nothing to send or the recogniser has not
-        caught up."""
-        if self._turn is None or not self._turn.parts or self._open_interim:
+        """Commit now, on his word. While gathering the coverage check still
+        applies; a stalled turn is sent as it was heard, because he has seen
+        it could not be finished and chose to send it. False when there is
+        nothing to send or the recogniser has not caught up."""
+        if self._turn is None or not self._turn.parts:
             return False
-        if not self._covered():
+        if self.state != "stalled" and (self._open_interim or not self._covered()):
             return False
         self._commit_turn()
         return True
+
+    def retry(self) -> bool:
+        """A stalled turn waits for the recogniser again, for another
+        `coverage_bound`. False when no turn is stalled."""
+        if self.state != "stalled" or self._turn is None:
+            return False
+        self.state = "commit-pending"
+        self._deadline = self._clock()
+        token = (self._turn.id, self.revision, self._deadline)
+        self._arm(0.0, token)
+        return True
+
+    def keep_as_draft(self) -> Optional[str]:
+        """A stalled turn becomes an unsent draft: nothing is sent. Returns
+        its words, or None when no turn is stalled."""
+        if self.state != "stalled":
+            return None
+        return self._drop()
 
     def reply_started(self, turn_id: int) -> None:
         """Its reply's audio has started: speech now is a barge-in, the
@@ -261,9 +290,14 @@ class TurnController:
     def _stall(self) -> None:
         turn = self._turn
         assert turn is not None
-        text = self._drop() or ""
-        log.warning("turn %d stalled: the recogniser did not catch up; kept as a draft", turn.id)
-        self._on_stalled(turn.id, text)
+        cancel = getattr(self._timer, "cancel", None)
+        if cancel:
+            cancel()
+        self._timer = None
+        self.state = "stalled"
+        log.warning("turn %d stalled: the recogniser did not catch up; waiting for his choice",
+                    turn.id)
+        self._on_stalled(turn.id, " ".join(turn.parts))
 
     def _drop(self) -> Optional[str]:
         cancel = getattr(self._timer, "cancel", None)
@@ -273,6 +307,6 @@ class TurnController:
         self._turn, self._deadline, self._need, self._timer = None, None, None, None
         self._open_interim = False
         self.revision += 1
-        if self.state in ("gathering", "commit-pending"):
+        if self.state in ("gathering", "commit-pending", "stalled"):
             self.state = "idle"
         return " ".join(turn.parts) if turn and turn.parts else None

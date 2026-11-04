@@ -136,7 +136,7 @@ def test_echo_of_jarvis_own_words_is_ignored(client):
         ws.send_json({"type": "transcript", "text": "echo hello there", "isFinal": True})
         ws.send_json({"type": "interim", "text": "echo hello"})
         ws.send_json({"type": "transcript", "text": "what is the weather like", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.")
+        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.", limit=20)
         assert seen[-1]["text"] == "Echo: what is the weather like."
         assert [t for t, _ in server.brain_instance.turns] == ["hello there", "what is the weather like"]
 
@@ -168,7 +168,7 @@ def test_a_real_question_is_not_treated_as_a_replay(client):
         ws.send_json({"type": "transcript", "text": "hello there", "isFinal": True})
         _drain_until(ws, lambda m: m["type"] == "audio")
         ws.send_json({"type": "transcript", "text": "what did you mean by that", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.")
+        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.", limit=20)
         assert seen[-1]["text"] == "Echo: what did you mean by that."
         assert [t for t, _ in server.brain_instance.turns] == \
             ["hello there", "what did you mean by that"]

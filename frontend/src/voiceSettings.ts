@@ -44,7 +44,7 @@ export class SettingsRefused extends Error {
 /** Change one or both settings: the same call as the brain's
  *  set_voice_input_settings. Answers the settings now saved. */
 export async function changeVoiceInputSettings(
-    change: { stop?: StopMode; switch?: SwitchMode }): Promise<VoiceInputSettings> {
+    change: { stop?: StopMode; switch?: SwitchMode; patience?: number }): Promise<VoiceInputSettings> {
   ++reads;
   const res = await fetch(VOICE_INPUT_SETTINGS_PATH, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),

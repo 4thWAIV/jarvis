@@ -136,7 +136,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings",
-            "skip_reading", "stop_speaking", "mark_updates_seen",
+            "skip_reading", "stop_speaking", "voice_turn", "mark_updates_seen",
             "set_attention_settings")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
@@ -175,6 +175,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("update_jarvis", {}),
     ("skip_reading", {}),
     ("stop_speaking", {}),
+    ("voice_turn", {"action": "send_now"}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),

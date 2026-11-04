@@ -1986,6 +1986,20 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "voice_turn",
+        "description": (
+            "What he has said aloud and not yet sent (the page's Send now, Retry and Keep as "
+            "draft), only when he asks: send_now sends it at once (a turn the speech "
+            "recogniser could not finish is sent as it was heard); retry waits for the "
+            "recogniser again; keep_as_draft puts it in the message box unsent."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"action": {"type": "string",
+                                      "enum": ["send_now", "retry", "keep_as_draft"]}},
+            "required": ["action"],
+        },
+    },
+    {
         "name": "stop_speaking",
         "description": (
             "Stop all of JARVIS's audio now — the page's Stop — only when he asks. It "

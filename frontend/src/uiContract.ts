@@ -2421,6 +2421,7 @@ export const UI_CONTRACT = {
         "spanishModel",
         "voiceInputStop",
         "voiceInputSwitch",
+        "voicePatience",
         "voiceId",
         "saveVoiceId",
         "fishKey",
@@ -3341,6 +3342,7 @@ export const UI_CONTRACT = {
         "history",
         "earlier",
         "speaking",
+        "turn",
         "input"
       ],
       "presentations": [

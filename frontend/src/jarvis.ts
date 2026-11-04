@@ -22,7 +22,8 @@ import { inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettin
 import { loadVoiceInputSettings } from "./voiceSettings";
 import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
-import { sendTyped, skipReading, stopSpeaking, voiceState, voiceConnected, conversationJump } from "./voiceStatus";
+import { sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
+         conversationJump } from "./voiceStatus";
 import { PLAYBACK_FRAME, REPLY_OUTCOMES, type PlaybackReport, type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
@@ -82,17 +83,32 @@ export function startJarvis(orb: Orb): void {
   // Voice input
   // ---------------------------------------------------------------------------
 
-  // What he said that the server has not yet committed as a turn: if the
-  // voice socket drops, it is not sent but kept as an unsent draft, and a
-  // turn the recogniser could not finish comes back the same way.
-  let unsent: string[] = [];
-  const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); unsent = []; };
+  // What the server has gathered from him and not yet committed as a turn
+  // (its `turn` frames: only words it accepted as his, never echo). If the
+  // voice socket drops it is not sent but kept as an unsent draft; a turn
+  // the recogniser could not finish waits for his Retry, Send now or Keep
+  // as draft (VoiceTurnBar.tsx), and kept as a draft it comes back here.
+  const unsentText = () => voiceTurn.get()?.text ?? "";
+  const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); voiceTurn.set(null); };
   socket.onMessage((msg) => {
     if (msg.type !== "turn") return;
-    if (msg.state === "committed") unsent = [];
-    else if (msg.state === "stalled") keepUnsent(String(msg.text ?? ""));
+    const turnId = typeof msg.turnId === "number" ? msg.turnId : null;
+    const text = String(msg.text ?? "");
+    if (msg.state === "gathering" || msg.state === "commit-pending" || msg.state === "stalled") {
+      voiceTurn.set({ state: msg.state, turnId, text });
+    } else if (msg.state === "draft") {
+      keepUnsent(text);
+    } else {
+      voiceTurn.set(null);             // committed, or dropped (idle)
+    }
   });
-  socket.onClose(() => keepUnsent(unsent.join(" ")));
+  socket.onClose(() => keepUnsent(unsentText()));
+  const TURN_FRAMES = { send_now: "turn_send_now", retry: "turn_retry", keep_as_draft: "turn_keep_draft" } as const;
+  turnAction.current = (action) => {
+    if (!socket.isConnected()) return false;
+    socket.send({ type: TURN_FRAMES[action] });
+    return true;
+  };
   // A listening page stops while the voice socket is down and resumes, in
   // this open page, once it is back (voiceInput.ts `connection`).
   socket.onClose(() => voiceInput.connection(false));
@@ -104,7 +120,6 @@ export function startJarvis(orb: Orb): void {
     (text: string, captureEpoch: number) => {
       // The server decides whether this is echo, a barge-in, or a new turn.
       // The turn's id goes with it, so a capture made from it can name it.
-      unsent.push(text);
       const id = showHeard(text, true);
       socket.send({ type: "transcript", text, isFinal: true, clientId: CLIENT_ID, captureEpoch,
                     ...(id === null ? {} : { id }) });
@@ -137,7 +152,7 @@ export function startJarvis(orb: Orb): void {
       // Discarded under his stop setting: the server drops what it was
       // gathering from this page.
       onDiscard: (captureEpoch: number) => {
-        unsent = [];
+        voiceTurn.set(null);
         socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
       },
       // Kept words that could not be finished, or finished after Mute: never
@@ -146,7 +161,7 @@ export function startJarvis(orb: Orb): void {
       // Muted: the server drops what it was gathering, and the words it had
       // become an unsent draft too.
       onMute: (captureEpoch: number) => {
-        keepUnsent(unsent.join(" "));
+        keepUnsent(unsentText());
         socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
       },
     }

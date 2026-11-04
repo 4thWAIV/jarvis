@@ -42,8 +42,9 @@ def test_a_stale_epoch_s_words_are_never_gathered(client):
                       "clientId": "page-a", "captureEpoch": 5})
         seen = _drain_until(ws, lambda m: m.get("text") == "Echo: fresh words.", limit=30)
         assert server.brain_instance.turns == [("fresh words", "user")]
-        assert {"type": "turn", "state": "committed", "turnId": next(
-            m["turnId"] for m in seen if m.get("type") == "turn")} in seen
+        gathered = next(m for m in seen if m.get("type") == "turn" and m["state"] == "gathering")
+        assert gathered["text"] == "fresh words", "the late words were never gathered"
+        assert {"type": "turn", "state": "committed", "turnId": gathered["turnId"]} in seen
 
 
 def test_a_closed_socket_sends_nothing_it_was_gathering(client):
@@ -105,3 +106,69 @@ async def test_a_reply_already_being_heard_is_left_to_barge_in(monkeypatch):
         assert {"type": "reading_skipped", "utt": reply.id} not in h.msgs
     finally:
         await h.sched.stop()
+
+
+# ── what the page is told it has said, and a turn that cannot finish ─────
+
+def test_the_page_is_told_only_the_words_accepted_as_his(client):
+    """The gathering frame carries what the server gathered: words heard
+    as JARVIS's own echo are never in it, so a dropped socket cannot turn
+    them into his draft."""
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        server.speech._last_spoken = None
+        ws.send_json({"type": "transcript", "text": "check the build", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "gathering")
+        assert seen[-1]["text"] == "check the build"
+
+
+@pytest.fixture
+def stalls(client, monkeypatch):
+    """A recogniser that never catches up with page-a."""
+    c, server = client
+    monkeypatch.setattr(server, "_capture_coverage", lambda page: (40, 10))
+    return c, server
+
+
+def _stall(ws):
+    ws.receive_json(); ws.receive_json()
+    ws.send_json({"type": "transcript", "text": "transfer the", "isFinal": True,
+                  "clientId": "page-a", "captureEpoch": 1})
+    return _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "stalled",
+                        limit=40)[-1]
+
+
+def test_a_stalled_turn_kept_as_a_draft_goes_back_to_the_page_unsent(stalls):
+    c, server = stalls
+    with c.websocket_connect("/ws/voice") as ws:
+        stalled = _stall(ws)
+        assert stalled["text"] == "transfer the"
+        ws.send_json({"type": "turn_keep_draft"})
+        draft = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "draft")
+        assert draft[-1]["text"] == "transfer the" and draft[-1]["turnId"] == stalled["turnId"]
+    assert server.brain_instance.turns == []
+
+
+def test_send_now_on_a_stalled_turn_sends_it_as_heard(stalls):
+    c, server = stalls
+    with c.websocket_connect("/ws/voice") as ws:
+        _stall(ws)
+        ws.send_json({"type": "turn_send_now"})
+        _drain_until(ws, lambda m: m.get("text") == "Echo: transfer the.", limit=40)
+    assert server.brain_instance.turns == [("transfer the", "user")]
+
+
+def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
+    c, server = stalls
+    with c.websocket_connect("/ws/voice") as ws:
+        _stall(ws)
+        said = c.portal.call(server.tool_voice_turn, {"action": "keep_as_draft"})
+        assert "nothing was sent" in said
+        draft = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "draft")
+        assert draft[-1]["text"] == "transfer the"
+        assert "Nothing was done" in c.portal.call(server.tool_voice_turn,
+                                                   {"action": "retry"})
+        assert "Nothing was done" in c.portal.call(server.tool_voice_turn, {"action": "explode"})
+    assert server.brain_instance.turns == []

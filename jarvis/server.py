@@ -4980,6 +4980,68 @@ async def _take_back_the_floor(turn_id: int) -> None:
             await speech.skip_reading(utt.id)
 
 
+# His three ways on with a turn (contract section 7): the page's Send now,
+# Retry and Keep as draft, and the brain's acting `voice_turn`, call this.
+TURN_ACTIONS = ("send_now", "retry", "keep_as_draft")
+
+
+def _show_turn(ws, frame: dict) -> None:
+    queue = _voice_queues.get(ws)
+    if queue is not None:
+        _enqueue(queue, {"type": "turn", **frame})
+
+
+def _turn_action(ws, action: str) -> str:
+    """Act on one page's turn. Answers what happened, as a code: `sent`
+    (committed now), `retrying` (waiting for the recogniser again), `kept`
+    (an unsent draft on that page), or `nothing` (no turn it applies to)."""
+    turns = _voice_turns.get(ws)
+    if turns is None or action not in TURN_ACTIONS:
+        return "nothing"
+    turn_id = turns.turn_id
+    if action == "send_now":
+        return "sent" if turns.send_now() else "nothing"
+    if action == "retry":
+        if not turns.retry():
+            return "nothing"
+        _show_turn(ws, {"state": "commit-pending", "turnId": turn_id,
+                        "text": turns.gathered_text})
+        return "retrying"
+    text = turns.keep_as_draft()
+    if text is None:
+        return "nothing"
+    _show_turn(ws, {"state": "draft", "turnId": turn_id, "text": text})
+    return "kept"
+
+
+_TURN_SAID = {
+    "sent": "Sent what he had said, sir.",
+    "retrying": "Waiting for the speech recogniser to catch up again, sir.",
+    "kept": "Put what he had said in the message box as an unsent draft, sir; nothing was sent.",
+}
+
+
+async def tool_voice_turn(args: dict) -> str:
+    """The page's Send now, Retry and Keep as draft, by voice or typing: on
+    the turn the recogniser could not finish first, else the one being
+    gathered."""
+    action = args.get("action")
+    if action not in TURN_ACTIONS:
+        return "Say which: send_now, retry or keep_as_draft. Nothing was done."
+    pages = sorted(_voice_turns.items(),
+                   key=lambda kv: kv[1].state != "stalled")
+    for ws, turns in pages:
+        if turns.turn_id is None:
+            continue
+        done = _turn_action(ws, action)
+        if done != "nothing":
+            return _TURN_SAID[done]
+    if action == "send_now":
+        return ("There is nothing of his to send yet, sir, or the recogniser has not caught "
+                "up with it.")
+    return "No turn is waiting for the recogniser, sir. Nothing was done."
+
+
 def _transcript_id(msg: dict) -> Optional[int]:
     """The id the page gave a final transcript (its caption turn), or None."""
     value = msg.get("id")
@@ -8453,11 +8515,13 @@ async def tool_stop_speaking(args: dict) -> str:
 TOOL_HANDLERS.update({
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
+    "voice_turn": tool_voice_turn,
 })
-ACTING_TOOLS.update({"skip_reading", "stop_speaking"})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn"})
 TAINT_EXEMPT_TOOLS.update({
     "skip_reading": "it stops one reading aloud, it does not read",
     "stop_speaking": "it stops all audio, it does not read",
+    "voice_turn": "it sends, retries or keeps his own words; it reads nothing",
 })
 
 
@@ -11965,7 +12029,7 @@ async def voice_handler(ws: WebSocket):
         _spawn(_handle_utterance(text, heard))
 
     def show_turn(frame: dict) -> None:
-        _enqueue(queue, {"type": "turn", **frame})
+        _show_turn(ws, frame)
 
     async def commit_turn(text: str, heard: Optional[int], turn_id: int) -> None:
         show_turn({"state": "committed", "turnId": turn_id})
@@ -12043,12 +12107,16 @@ async def voice_handler(ws: WebSocket):
                 # and 14): what was being gathered from this page is thrown
                 # away, never sent, and its late words are refused.
                 turns.discard(*_page_identity(msg))
+                show_turn({"state": "idle"})
                 continue
-            if kind == "turn_send_now":
-                # Send now: commit what he has said at once, once the
-                # recogniser has caught up with him.
-                if not turns.send_now():
-                    log.info("send now: nothing to send yet")
+            if kind in ("turn_send_now", "turn_retry", "turn_keep_draft"):
+                # Send now (at once, once the recogniser has caught up, or as
+                # heard for a turn it could not finish), Retry and Keep as
+                # draft: the same calls as the brain's voice_turn.
+                action = {"turn_send_now": "send_now", "turn_retry": "retry",
+                          "turn_keep_draft": "keep_as_draft"}[kind]
+                if _turn_action(ws, action) == "nothing":
+                    log.info("turn %s: nothing to act on", action)
                 continue
             if kind == "hush":
                 # The user pressed the key, or the button. Deliberately NOT a
@@ -12128,8 +12196,11 @@ async def voice_handler(ws: WebSocket):
                     # being gathered are not merged into it, and go on as
                     # their own turn.
                     await take_utterance(text, _transcript_id(msg), typed=True)
-                else:
-                    turns.final(text, _transcript_id(msg), client, epoch)
+                elif turns.final(text, _transcript_id(msg), client, epoch):
+                    # What the server has gathered, so the page keeps only
+                    # accepted words (never echo) if the socket drops.
+                    show_turn({"state": "gathering", "turnId": turns.turn_id,
+                               "text": turns.gathered_text})
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:

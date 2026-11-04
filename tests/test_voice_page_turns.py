@@ -1,8 +1,11 @@
 """What the voice page does with his turns (voice control contract, rows 20
 and section 7): words the server has not committed when the voice socket
-drops are kept as an unsent draft, never sent again by themselves; a turn
-the recogniser could not finish comes back as a draft; a committed turn
-leaves nothing behind; and a discard says which epoch it moved to.
+drops are kept as an unsent draft, never sent again by themselves, and only
+the words the server gathered as his (never ones it took for echo); a turn
+the recogniser could not finish offers Retry, Send now and Keep as draft,
+each a frame to the server, and kept as a draft it comes back in the box;
+Send now is offered while a turn is gathered; a committed turn leaves
+nothing behind; and a discard says which epoch it moved to.
 
 Headless Chromium on the built page, with the fake transcription socket and
 a fake /ws/voice that can send `turn` frames and drop the page."""
@@ -21,6 +24,12 @@ from tests.test_voice_page_speech_input import _until
 DRAFT = "document.querySelector('#conversation-draft')?.value ?? null"
 
 
+def _turn(page, state, turn_id, text):
+    """The server's `turn` frame."""
+    page.voice.socket.send(json.dumps({"type": "turn", "state": state, "turnId": turn_id,
+                                       "text": text}))
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_words_not_committed_when_the_voice_socket_drops_become_an_unsent_draft(page_playwright, page_url):
     async with page_playwright as p:
@@ -29,9 +38,26 @@ async def test_words_not_committed_when_the_voice_socket_drops_become_an_unsent_
         await _listening(page)
         await page.evaluate("window.__hear('remind me to call', true)")
         assert await _until(page.voice.finals)
+        _turn(page, "gathering", 1, "remind me to call")
+        await page.wait_for_selector("#voice-turn-send", timeout=5000)
         await page.voice.socket.close()
         await page.wait_for_function(f"{DRAFT} === 'remind me to call'", timeout=5000)
         assert page.voice.finals() == ["remind me to call"]
+        await context.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_words_the_server_took_for_echo_never_reach_the_draft(page_playwright, page_url):
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await _page(context, page_url, view="")
+        await _listening(page)
+        await page.evaluate("window.__hear('as I was saying sir', true)")
+        assert await _until(page.voice.finals)
+        await page.wait_for_timeout(300)        # no gathering frame: the server judged it echo
+        await page.voice.socket.close()
+        await page.wait_for_timeout(500)
+        assert await page.evaluate(DRAFT) == ""
         await context.close()
 
 
@@ -45,9 +71,17 @@ async def test_a_committed_turn_leaves_no_draft_and_a_stalled_one_comes_back(pag
         assert await _until(page.voice.finals)
         page.voice.socket.send(json.dumps({"type": "turn", "state": "committed", "turnId": 1}))
         await page.wait_for_timeout(300)
-        page.voice.socket.send(json.dumps({"type": "turn", "state": "stalled", "turnId": 2,
-                                           "text": "transfer the"}))
+        assert await page.query_selector("#voice-turn") is None
+        _turn(page, "stalled", 2, "transfer the")
+        await page.wait_for_selector("#voice-turn-retry", timeout=5000)
+        assert await page.evaluate(DRAFT) == "", "it waits for his choice"
+        for button, frame in (("#voice-turn-retry", "turn_retry"), ("#voice-turn-send", "turn_send_now"),
+                              ("#voice-turn-draft", "turn_keep_draft")):
+            await page.click(button)
+            assert await _until(lambda: _sent(page.voice, frame)), frame
+        _turn(page, "draft", 2, "transfer the")
         await page.wait_for_function(f"{DRAFT} === 'transfer the'", timeout=5000)
+        assert await page.query_selector("#voice-turn") is None
         await page.voice.socket.close()
         await page.wait_for_timeout(500)
         assert await page.evaluate(DRAFT) == "transfer the"

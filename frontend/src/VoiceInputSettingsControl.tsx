@@ -4,6 +4,7 @@
  *
  *   When I stop the microphone      Keep captured words | Discard unfinished input
  *   When I switch away from JARVIS  Continue listening  | Stop listening
+ *   Patience                        seconds of quiet that end his turn
  *
  * Each shows the value in force, read with the page (voiceSettings.ts) and
  * again whenever another page or the brain changes it. Changing one saves
@@ -17,7 +18,8 @@ import { useState, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { voiceInputSettings } from "./mic";
 import { SettingsRow, useSettingsItem } from "./SettingsRow";
-import { STOP_MODES, SWITCH_MODES, type StopMode, type SwitchMode } from "./voiceControl";
+import { PATIENCE_MAX, PATIENCE_MIN, STOP_MODES, SWITCH_MODES, type StopMode,
+         type SwitchMode } from "./voiceControl";
 import { changeVoiceInputSettings } from "./voiceSettings";
 
 export function VoiceInputSettingsControl() {
@@ -27,8 +29,11 @@ export function VoiceInputSettingsControl() {
   const [failed, setFailed] = useState<string | null>(null);
   const stopUi = useSettingsItem("voiceInputStop", t("left.voiceInput.stop"));
   const switchUi = useSettingsItem("voiceInputSwitch", t("left.voiceInput.switch"));
+  const patienceUi = useSettingsItem("voicePatience", t("left.voiceInput.patience"));
+  // Typed, and saved when he leaves the field or presses Enter.
+  const [patience, setPatience] = useState<string | null>(null);
 
-  const save = async (change: { stop?: StopMode; switch?: SwitchMode }) => {
+  const save = async (change: { stop?: StopMode; switch?: SwitchMode; patience?: number }) => {
     setSaving(true);
     setFailed(null);
     try {
@@ -61,6 +66,22 @@ export function VoiceInputSettingsControl() {
         </select>
       </SettingsRow>
       <p className="settings-hint">{t("left.voiceInput.switchHelp")}</p>
+      <SettingsRow label={t("left.voiceInput.patience")} labelRef={patienceUi.part("label")} htmlFor="settings-voice-patience">
+        <input id="settings-voice-patience" type="number" data-ui-action="input" ref={patienceUi.whole}
+               min={PATIENCE_MIN} max={PATIENCE_MAX} step={0.5} disabled={disabled}
+               value={patience ?? (settings?.patience != null ? String(settings.patience) : "")}
+               onChange={(e) => setPatience(e.target.value)}
+               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+               onBlur={() => {
+                 if (patience === null || !settings) return;
+                 const seconds = Number(patience);
+                 setPatience(null);
+                 if (patience.trim() && Number.isFinite(seconds) && seconds !== settings.patience) {
+                   void save({ patience: seconds });
+                 }
+               }} />
+      </SettingsRow>
+      <p className="settings-hint">{t("left.voiceInput.patienceHelp", { min: PATIENCE_MIN, max: PATIENCE_MAX })}</p>
       {settings && !settings.saved && <p className="settings-hint">{t("left.voiceInput.defaults")}</p>}
       {!settings && <p className="settings-hint read-failure">{t("left.voiceInput.unread")}</p>}
       {failed && <p className="settings-hint read-failure">{t("left.voiceInput.notSaved", { error: failed })}</p>}

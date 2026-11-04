@@ -74,6 +74,8 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.voiceInput.switch.continue": "Seguir escuchando",
   "left.voiceInput.switch.stop": "Dejar de escuchar",
   "left.voiceInput.switchHelp": "Seguir mantiene una escucha que usted empezó; Dejar la termina, y lo que estaba diciendo sigue la opción de arriba. Volver nunca empieza a escuchar, y ninguna enciende un micrófono silenciado o apagado.",
+  "left.voiceInput.patience": "Paciencia (segundos)",
+  "left.voiceInput.patienceHelp": "Cuánto puede hacer una pausa antes de que se envíe lo que dijo, y antes de que JARVIS pueda empezar a hablar: de {min} a {max} segundos. Se aplica desde la próxima vez que esta página se conecte.",
   "left.voiceInput.defaults": "Son los valores predeterminados: aún no ha elegido. Un cambio se aplica desde la próxima vez que detenga o salga.",
   "left.voiceInput.unread": "No se ha leído su configuración de entrada de voz, así que todavía no se puede escuchar.",
   "left.voiceInput.notSaved": "No se guardó ({error}).",

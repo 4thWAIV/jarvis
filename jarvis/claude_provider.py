@@ -160,6 +160,8 @@ ALLOWED_TOOLS = [
     # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
     "mcp__jarvis__skip_reading",
     "mcp__jarvis__stop_speaking",
+    # Send now, Retry and Keep as draft on what he has said: the page's own.
+    "mcp__jarvis__voice_turn",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",

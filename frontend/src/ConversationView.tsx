@@ -17,6 +17,7 @@ import { MessageList, historyRows, type ConversationRow } from "./conversation/M
 import { ChatMessage } from "./conversation/ChatMessage";
 import { Composer } from "./conversation/Composer";
 import { PlaybackBar } from "./conversation/PlaybackBar";
+import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
 import "./conversation/conversation.css";
 
 export { historyRows };
@@ -144,6 +145,7 @@ export function ConversationView() {
       {hearing && <div className="conversation-interim" role="status">
         <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
       </div>}
+      <VoiceTurnBar partRef={ui.part("turn")} />
       <Composer partRef={ui.part("input")} />
     </div>
   </section>;
