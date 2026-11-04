@@ -1,5 +1,7 @@
 # What the JARVIS server says or shows on its own
 
+> Historical inventory from 21 October 2026. Revalidated on 3 November: use the [current speech audit](planning/quiet-conversation/speech-audit.md) for additional sources and the [quiet-conversation implementation proposal](planning/quiet-conversation/implementation.md) for the replacement policy. The recommendations below are historical; they are not the current proposal. No application changes are implied by this documentation update.
+
 Every line of speech the JARVIS server speaks, or sends to the voice page, itself: words the server writes, not words the brain writes. Taken from server.py, preflight.py and speech.py on 2026-10-21. Nothing in the code was changed to make this list.
 
 `<name>` is a session's name (its official name if one has been set), `<project>` a run's project, `<key>` a key such as Return. File and line point at the `speech.say` (or the message sent to the page) that says it; where the words are kept in a constant, that line is given too.

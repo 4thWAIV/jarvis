@@ -1,0 +1,8 @@
+{
+  "message_id": 805,
+  "source_message_id": 804,
+  "diagnostics_session": "a5b4be76-7b3d-4a0c-9220-817d38b9e5f3",
+  "status": "working",
+  "separate_build": true,
+  "plan_sha256": "ed3f32c9d6723d1d7e9af708d311344d34628226e8d48e776e57fe6facd8e696"
+}

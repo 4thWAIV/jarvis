@@ -1,0 +1,9 @@
+Read docs/planning/openai-completeness/report-and-plan.md from the source checkout; it may be untracked. This is the complete OpenAI-only product audit and repair plan, superseding the old brain-only and observed-session-only scopes.
+
+Execute in an isolated worktree through the JARVIS workflow system when this repair is assigned. Coordinate shared-file ownership with UI navigation, localization and capability parity before editing. Do not modify the live install or uninstall Claude.
+
+First delivery: create a new ad hoc Codex agent in a selected project or registered folder, show it in Agents, edit/test a disposable artifact, accept follow-ups, cancel and resume its native history. Use a provider-neutral execution adapter with explicit provider/thread/turn identity in the existing SQLite database. Reuse scheduler/workflow/approval/UI infrastructure. Do not ship a launcher that creates an invisible, unmanageable process.
+
+Then complete builds and decisions, restart recovery, OpenAI-only onboarding, memory/skills/context and provider-specific usage. Test with Claude absent in an isolated configuration, while preserving Claude compatibility. Treat externally launched Codex terminals separately from JARVIS-owned workers; never silently take over a live thread. Use the installed app-server schema and actual protocol probes, not guessed CLI flags or blanket permissions.
+
+Record actual progress, evidence and remaining blockers by the plan's delivery milestones. Bring back the first usable agent promptly and deliver a running integrated local candidate for Tim's validation before merge. No production deployment is authorized by this handoff.

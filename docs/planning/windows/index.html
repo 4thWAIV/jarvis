@@ -1,0 +1,249 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Windows execution plan · reconciled</title><style>*{box-sizing:border-box}body{margin:0;background:#f1f5f3;color:#20382d;font:16px/1.65 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:38px 28px 70px}h1{font-size:38px;line-height:1.15;letter-spacing:-1px}h2{font-size:25px;margin-top:42px;border-top:1px solid #cadacf;padding-top:25px}h3{font-size:19px;margin-top:30px}p,li{max-width:1000px}a{color:#216c4a}nav{display:flex;gap:12px;flex-wrap:wrap}nav a{background:white;border:1px solid #c2d5c8;padding:8px 13px;border-radius:7px;text-decoration:none;font-size:13px}table{width:100%;border-collapse:collapse;background:white;font-size:13px;margin:20px 0}th{text-align:left;background:#e3eee7}th,td{padding:13px;border:1px solid #d2dfd6;vertical-align:top}code{font-size:12px;overflow-wrap:anywhere;background:#e7eee9;padding:2px 4px;border-radius:3px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:25px 0}.stat{background:white;border:1px solid #c3d5c7;border-radius:12px;padding:23px}.stat b{display:block;font-size:35px;color:#1f6946;line-height:1.2}.stat span{display:block;font-size:13px;color:#54705e}.bar-row{display:grid;grid-template-columns:180px 1fr 100px;align-items:center;gap:15px;padding:13px 0;font-size:13px}.bar{height:18px;background:#dae7df;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:#4b8c68}.callout{padding:20px 24px;background:#e0ece4;border-left:4px solid #5c8c6c;margin:24px 0}.small{font-size:12px;color:#597262}.timeline{display:flex;gap:10px;margin:20px 0}.timeline div{flex:1;background:white;border:1px solid #cbdad0;padding:16px;border-radius:8px;font-size:13px}.timeline b{display:block}details{background:white;padding:18px;border:1px solid #d0ded4;margin:14px 0;border-radius:8px}summary{cursor:pointer;font-weight:600}@media(max-width:700px){.stats,.timeline{display:block}.stat,.timeline div{margin-bottom:10px}.bar-row{grid-template-columns:120px 1fr 70px}table{display:block;overflow-x:auto}main{padding:22px 16px}h1{font-size:30px}}</style></head><body><main><nav><a href="index.html">Execution plan</a><a href="estimate.html">Visual estimate</a><a href="reconciliation.md">Source document</a></nav><h1>Windows support: reconciled execution plan</h1>
+<p>Updated 31 October 2026 against <code>61c9761f47eed67c1754144e1ba4bcea5abbec49</code>. Workflow: <strong>Windows plan reconciliation</strong> (<code>wf-054417dbc31f</code>). Three read-only agent audits covered foundations, providers, and desktop/voice/release. The integration review checked their source evidence and removed overlapping assignments.</p>
+<p><strong>Remaining implementation budget: 46–85 active agent-hours.</strong> With three implementation workers and an integration owner, the modeled critical path is <strong>25–47 active elapsed hours</strong>, approximately <strong>4–6 eight-hour working days</strong> after host access and sign-ins are ready. These are source-based planning allowances, not measured agent throughput or a delivery commitment. Native probe failures trigger a package-specific reforecast.</p>
+<p>This work updated the plan and estimate. It did not implement Windows support, install dependencies, run native Windows tests, change production, or qualify audio hardware. Current Windows host availability was not established by this audit.</p>
+<h2>What changed since the earlier plan</h2>
+<p>The 28 October plan used main <code>73190ca</code> and team-client branch <code>98124d5</code>. The audited checkout now contains team pairing, messaging, file transfer, presence, host resource reporting, persistent local folders, and brain/page tools for those capabilities.</p>
+<table>
+<thead>
+<tr>
+  <th>Earlier material</th>
+  <th>Current evidence</th>
+  <th>Consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Team-client row: “main has no team client.”</td>
+  <td><code>jarvis/team_client.py</code> and <code>team_api.py</code> are in this checkout.</td>
+  <td>Reuse pairing and connection management. Implement and qualify the Windows <code>SecretStore</code> backend.</td>
+</tr>
+<tr>
+  <td>Messaging row: “Messaging and presence stay deferred.”</td>
+  <td><code>messaging_runtime.py</code>, <code>messaging_client.py</code>, <code>messaging_files.py</code>, <code>team_api.py</code>, and <code>host_resources.py</code> exist.</td>
+  <td>Include the existing messaging, attachment and network features in Windows acceptance. Do not build another team server.</td>
+</tr>
+<tr>
+  <td>Generic filesystem review</td>
+  <td><code>folder_readers.py:38–39</code> now evaluates POSIX-only constants at import, reached through <code>server.py:120</code> → <code>folder_service.py:40</code>.</td>
+  <td>A new startup prerequisite and a scoped-reader implementation, not just path formatting.</td>
+</tr>
+<tr>
+  <td>Desktop and voice adaptation</td>
+  <td>The audited desktop and voice files have no changes from <code>73190ca</code>.</td>
+  <td>Retain their Windows work; current Mac behavior is not native Windows evidence.</td>
+</tr>
+<tr>
+  <td>Mac-only CI</td>
+  <td>CI now shares setup and builds the frontend once, but still uses <code>macos-latest</code>.</td>
+  <td>Extend the existing workflow; retain its reduced duplicate-run structure.</td>
+</tr>
+<tr>
+  <td>33–66 aggregate agent-hours; 18–32 elapsed hours</td>
+  <td>New local-folder and attachment security/desktop work, explicit process identity and prompt targeting, and wider release coverage.</td>
+  <td>Replace the prior total with 46–85 aggregate hours and 25–47 modeled elapsed hours for the scope below.</td>
+</tr>
+</tbody>
+</table>
+<p>The estimate increase is 13–19 aggregate hours at the range endpoints. It reflects changed scope and clearer accounting, not measured slowdown. Existing team and UI implementation removes the need to recreate those features; no numerical saving is claimed without execution evidence.</p>
+<h2>Target and scope</h2>
+<p>Proposed initial release target: native Windows 11 x64, retaining macOS Intel and Apple Silicon behavior. Start native qualification with Python 3.12 and Node 22, matching current CI. <code>pyproject.toml</code> advertises Python &gt;=3.11: test that minimum or explicitly change the supported-version policy before release. Node is a frontend build dependency; provider CLIs have their own requirements.</p>
+<p>Included: current Python/React product, Claude and Codex brains and supported session operations, local folder catalog and scoped reads, team pairing, messages and files, network CPU/memory readings, current Kroko/sherpa-onnx input and Fish output, desktop tools, installation and CI. Preserve current provider capability differences rather than inventing Codex prompt-answer parity.</p>
+<p>Separately scoped: Windows ARM64, Windows 10, WSL agent hosting, remote desktop qualification, .NET/Avalonia hosting, signed installer/auto-update service, new project/folder UI designs, new speech engines, and a new explicit echo-cancellation engine. Existing folders use local SQLite; the proposed project relationship model is not part of this port. Server infrastructure and MongoDB are not desktop prerequisites.</p>
+<p>The separate shared AEC handoff remains relevant. Windows voice acceptance is included; implementing a new cross-platform echo engine is not. If existing processing fails required overlap or repeated-human-word tests, the corresponding acceptance gate stays open until shared work resolves it. A core preview is not a full-parity release.</p>
+<h2>Evidence and implementation tasks</h2>
+<h3>Installed paths and private storage — foundation worker</h3>
+<p><strong>Installed paths: 1–2 hours.</strong> <code>data_paths.py:26–27</code> still selects <code>~/Library/Application Support/JARVIS</code> outside a checkout. Implement Windows installed roots while preserving checkout isolation and explicit data overrides. Separate config overrides from data overrides. Test outside the source tree, paths with spaces/Unicode, persistence and first/second startup.</p>
+<p><strong>Shared private-file operations: 3–5 hours.</strong> <code>data_paths.ensure_tool_token</code> uses <code>O_NOFOLLOW</code>, <code>getuid</code>, and <code>fchmod</code>; <code>access_keys._write</code> uses <code>O_NOFOLLOW</code>; generated MCP and Codex configs rely on <code>chmod(0600)</code>. Define one platform boundary for private creation, reopen, replacement and directory access, then reuse it at all callers. A Windows permission failure must fail the affected operation. Test second-user access, reparse/junction substitution, concurrent create, writable parents and atomic replacement. Preserve same-user child access. Prove the native operations before committing to a binding/dependency.</p>
+<h3>Existing folders and attachment storage — foundation worker</h3>
+<p><strong>Scoped folder readers: 3–6 hours.</strong> <code>folder_readers.py</code> uses <code>dir_fd</code>, <code>scandir(fd)</code> and <code>pread</code>, as well as import-time POSIX constants. Port the underlying operations without replacing race-resistant containment with resolve-then-read. Retain policies, bounded reads, pagination and cursor behavior. Qualify drive/UNC paths, case aliases, Unicode, reserved names, reconnects, symlink/junction replacement, and filesystem identity. Existing <code>folder_store.py</code>, <code>folder_policy.py</code>, <code>folder_service.py</code> and frontend are reused.</p>
+<p><strong>Attachment storage: 1.5–3 hours.</strong> <code>messaging_files.private_dir</code>, <code>_open_new</code>, <code>_hash_file</code>, and <code>_read_copy</code> use Unix ownership/opening rules. Apply shared private storage to immutable snapshots and verified downloads. Preserve byte hashes, cancellation cleanup, retries and revision-bound manifests. <code>download_path()</code> currently uses the manifest filename directly; introduce a Windows-safe local filename mapping for device names, trailing dots and alternate-stream syntax without changing the approved display name or wire manifest. Desktop marking and reveal belong to the desktop package below.</p>
+<h3>Team credentials and resources — foundation worker</h3>
+<p><strong>Team secrets: 1.5–3 hours.</strong> <code>SecretStore</code> already defines get/set/delete; <code>TeamConnection</code> defaults to <code>KeychainStore</code>, which calls Apple's <code>security</code>. Add platform selection and a Windows backend. Reuse pairing, saved-session reuse, revocation and outage logic. Verify standard-user storage, server/account isolation, reuse after restart and delete/logout.</p>
+<p><strong>Host metrics: 1–2 hours.</strong> <code>host_resources.default_reader()</code> implements Mac and Linux and returns no Windows reader. Add a Windows <code>Reader</code> and validate CPU deltas and memory against observed host values. Preserve unknown, warming-up, stale and unsupported semantics. Do not substitute process CPU or load average for whole-host CPU.</p>
+<p>Foundation subtotal: <strong>11–21 hours</strong>. Storage primitives precede scoped readers and attachment adaptation. Paths, credential backend and host sampler can be prepared independently.</p>
+<h3>Provider and session work — provider worker</h3>
+<table>
+<thead>
+<tr>
+  <th>Package</th>
+  <th style="text-align:right">Hours</th>
+  <th>Work and completion evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Non-destructive process identity</td>
+  <td style="text-align:right">1–2</td>
+  <td>Replace <code>session_watch.pid_alive</code>'s <code>os.kill(pid, 0)</code> boundary. Preserve live disposable children during repeated discovery; handle invalid/reused PIDs, exit and access-denied/unknown state.</td>
+</tr>
+<tr>
+  <td>Native provider probes</td>
+  <td style="text-align:right">2–3</td>
+  <td>Record actual installed CLI versions, Claude endpoint/auth shape, Codex schema/queue availability, same-project targeting and prompt-target feasibility. Observe receipt in the intended transcript.</td>
+</tr>
+<tr>
+  <td>Shared launch and bounded pipes</td>
+  <td style="text-align:right">2–4</td>
+  <td>Replace repeated <code>shlex.split</code>/plain split assumptions with executable/argv contracts in Claude, Codex, run executor, auth and send paths. Test actual supported wrappers, spaces, Unicode and metacharacters. Make <code>AppServer._next</code> time out while reading, not only before blocking <code>readline</code>. Qualify async pipes in normal and reload startup.</td>
+</tr>
+<tr>
+  <td>Owned lifecycle and restart</td>
+  <td style="text-align:right">2–4</td>
+  <td>Current kill/close paths address direct children and restart uses <code>os.execv</code>. Implement/prove race-free owned-tree cleanup and restart handoff. Test grandchildren, nested ownership, cancellation during spawn, hung pipes, retained origin/port/environment and no duplicate instances.</td>
+</tr>
+<tr>
+  <td>Native discovery and delivery</td>
+  <td style="text-align:right">3–6</td>
+  <td>Replace <code>ps</code>/<code>lsof</code> and POSIX executable-name assumptions in <code>codex_sessions</code>. Qualify file URI/path identity, <code>state_5.sqlite</code> shape and actual queue semantics. Claude currently requires <code>Path(socket_path).exists()</code> and <code>AF_UNIX</code>. Use the observed native endpoint, not an assumed named-pipe design. Refuse ambiguous session association.</td>
+</tr>
+<tr>
+  <td>Login, usage and transcript qualification</td>
+  <td style="text-align:right">1–2</td>
+  <td>Preserve provider-owned authentication and isolated homes. Claude usage currently reads Apple Keychain. Qualify native credentials without independently refreshing provider tokens. Preserve unknown usage/expiry. Exercise drive, case, UNC and resumed transcript fixtures.</td>
+</tr>
+<tr>
+  <td>Exact-target prompt implementation</td>
+  <td style="text-align:right">2–4</td>
+  <td>Only after the native feasibility probe identifies a reliable route: implement supported-terminal prompt answers with target/lifetime checks. Never substitute foreground keystrokes silently. Retain current provider capability limits.</td>
+</tr>
+<tr>
+  <td><strong>Provider subtotal</strong></td>
+  <td style="text-align:right"><strong>13–25</strong></td>
+  <td>Includes process identity and prompt implementation once.</td>
+</tr>
+</tbody>
+</table>
+<p>Reuse <code>SessionProvider</code>, current normalized brain protocols, turn state, output draining, run queue/cancellation state and transcript tracking. <code>session_steer.py:78–94</code> already documents why successful transport writes do not prove target acceptance. Codex's newest-update association heuristic needs ambiguity tests, not an assumption of correctness on Windows.</p>
+<p>The blocking-read timeout issue in <code>codex_provider.AppServer._next</code> is platform-independent. It belongs to the shared launch/pipe package rather than a separate unbudgeted rewrite.</p>
+<h3>Desktop work — desktop/client worker</h3>
+<table>
+<thead>
+<tr>
+  <th>Package</th>
+  <th style="text-align:right">Hours</th>
+  <th>Work and completion evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Terminal/browser/editor launch</td>
+  <td style="text-align:right">1–2</td>
+  <td>Replace AppleScript and <code>open</code> paths in <code>actions.py</code>; retain structured arguments, cwd, validation and explicit unsupported results.</td>
+</tr>
+<tr>
+  <td>Capture, scaling, windows and URL inspection</td>
+  <td style="text-align:right">2–4</td>
+  <td><code>screen.py</code> invokes <code>screencapture</code>, <code>sips</code> and AppleScript. Add native capture and enumeration; test mixed DPI, negative coordinates, multiple monitors, blank/protected/inaccessible capture. Actual URL inspection or an explicit unavailable capability; a title alone is not URL evidence.</td>
+</tr>
+<tr>
+  <td>Notifications</td>
+  <td style="text-align:right">1–2</td>
+  <td><code>notifier.available()</code> currently permits Darwin/osascript only. Implement and test standard-user installation identity and delivery, including OS-disabled notifications.</td>
+</tr>
+<tr>
+  <td>Received-file marking and reveal</td>
+  <td style="text-align:right">1–2</td>
+  <td><code>messaging_files.py:173–189</code> calls <code>open -R</code> and <code>/usr/bin/xattr</code>. Use a tested Windows downloaded-file marking mechanism and Explorer reveal without executing the file. Marking failure must not become success.</td>
+</tr>
+<tr>
+  <td>Capability/preflight integration</td>
+  <td style="text-align:right">1</td>
+  <td>Reuse shared UI/error contracts and diagnostics. Expose available/unsupported states and retain Mac behavior.</td>
+</tr>
+<tr>
+  <td><strong>Desktop subtotal</strong></td>
+  <td style="text-align:right"><strong>6–11</strong></td>
+  <td>Prompt targeting belongs to the provider package, private snapshot operations to foundations.</td>
+</tr>
+</tbody>
+</table>
+<p>Existing attachment tests inject reveal/quarantine callbacks; live-transfer fixtures use no-op callbacks. Those successes do not qualify Windows marking or Explorer behavior.</p>
+<h3>Existing voice path — desktop/client worker</h3>
+<p><strong>3–5 hours.</strong> Qualify the pinned <code>sherpa-onnx==2.0.0</code> runtime and Kroko model hash/load on native Windows. Preserve existing streaming PCM, bounded queues and Fish output. Test first-word retention, backlog under representative CPU load, overload recovery, mute/reconnect, browser microphone permission, autoplay and output routing. Collect actual browser capture settings in diagnostics. Test human speech during playback, repeated words and stop requests with real devices. Coordinate shared AEC work once; do not build another recognizer or TTS system for this port.</p>
+<p><code>voiceInput.ts</code> requests browser echo cancellation; <code>speech.py</code> still has recent-word rejection. Browser constraints and fake-mic tests do not prove acoustic cancellation. The older AEC document's human-day implementation allowances are not silently added here. If explicit AEC is necessary, first perform its separately scoped <strong>4–8 active agent-hour feasibility spike</strong>, then estimate from the result.</p>
+<h3>CI, installed release and integration</h3>
+<p><strong>Release implementation: 5–9 hours.</strong> Allocate 2–3 hours to native Windows CI/fixture portability, 2–4 hours to installed-wheel and model-provisioning tests, and 1–2 hours to installation/upgrade documentation. Current CI uses <code>macos-latest</code>; wheel smoke hardcodes <code>/tmp/wheel-check/bin</code>. <code>scripts/setup_speech_input.py</code> is outside packaged <code>jarvis</code> resources, so provide a supported installed-package model setup route. Test an ordinary user without developer PATH, first/second startup, packaged assets, normal/reload startup and chosen loopback/TLS origin. Record actual Mac architecture results; one moving runner label is insufficient.</p>
+<p><strong>Baseline/setup: 2–4 hours.</strong> Record base commit, host and versions, isolate fixtures and agree actual platform interfaces before dependent implementation. This includes preparing the worktree and focused Mac baseline; host delivery and consent waits are outside the allowance.</p>
+<p><strong>Integration/review: 6–10 hours.</strong> One owner controls shared entrypoint/configuration changes, dependency contracts, merge order, cross-platform review and the acceptance report. This is coordination and review of merged work, not a second charge for package implementation tests. Allocate 3–5 of these hours to final integrated review; the remainder overlaps worker execution.</p>
+<h2>Parallel execution and critical path</h2>
+<p>Start one integration owner and three bounded implementation lanes. Native probes are included within their package hours, not an extra fourth workstream.</p>
+<table>
+<thead>
+<tr>
+  <th>Lane</th>
+  <th>Work</th>
+  <th style="text-align:right">Active hours</th>
+  <th>Dependency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Foundation worker</td>
+  <td>Paths, private storage, folders, attachments, team secrets, host sampler</td>
+  <td style="text-align:right">11–21</td>
+  <td>Private storage contract before reader/snapshot integration</td>
+</tr>
+<tr>
+  <td>Provider worker</td>
+  <td>Process identity, probes, launch/pipes, lifecycle, discovery/auth, supported prompts</td>
+  <td style="text-align:right">13–25</td>
+  <td>Contract handoff; native endpoint evidence before adapter commitments</td>
+</tr>
+<tr>
+  <td>Desktop/client worker</td>
+  <td>Desktop and existing voice path</td>
+  <td style="text-align:right">9–16</td>
+  <td>Can probe independently; full-app tests after safe startup</td>
+</tr>
+<tr>
+  <td>Integration owner / release handoff</td>
+  <td>Setup, shared review and release implementation</td>
+  <td style="text-align:right">13–23</td>
+  <td>CI preparation can overlap; installed acceptance uses merged bytes</td>
+</tr>
+</tbody>
+</table>
+<p>For a conservative elapsed model: <strong>2–4 setup + 2–4 dependent handoff delay + max(11–21, 13–25, 9–16) worker lane + 5–9 release acceptance + 3–5 final review = 25–47 active elapsed hours</strong>. Handoff delay is a scheduling allowance within worker dependencies, not additional aggregate effort. Release CI preparation can overlap; this model reserves its full package after integration instead of assuming perfect overlap. Final review is part of the 6–10 integration budget, not added twice to aggregate hours.</p>
+<p>With eight productive hours per working day, 25–47 hours is roughly 4–6 working days after rounding to whole days. Host delivery, user consent, physical-device scheduling, runner queues and failed native feasibility experiments are not assigned invented durations. The estimate is not obtained by dividing total effort by three.</p>
+<h3>First 4–6 active elapsed hours: resolve the uncertain routes</h3>
+<ul>
+<li>Record native Python, provider CLI, terminal and browser versions. Probe isolated code; do not launch the unchanged watcher against real sessions.</li>
+<li>Demonstrate secure create/reopen/replace and scoped reads under reparse/junction changes.</li>
+<li>Open two disposable same-project Claude sessions and two Codex sessions. Target each and observe its transcript. Test resumed and ambiguous cases.</li>
+<li>Prove an exact-target prompt route for the supported terminal, or report the unsupported capability immediately.</li>
+<li>Load the pinned recognizer and provision its model from an installed package; test fixed PCM inference before real audio acceptance.</li>
+<li>Test native capture/URL inspection, notification registration and received-file marking/reveal.</li>
+<li>Return observed failures, completed adapters, remaining edits and a new package-level estimate. A failed route is a named decision, not a blanket buffer on the whole project.</li>
+</ul>
+<h2>Minimise CI/CD runs without deferring verification</h2>
+<p>Use local focused tests and one integration branch/worktree owner. Do not open a PR for every worker or push every intermediate commit. Preserve the existing PR/main trigger policy and cancellation of superseded branch runs. Prepare native runner jobs early, run one deliberate early Windows probe batch when needed, then push coherent integrated checkpoints to one PR. Reuse one frontend build per job and artifact where compatible; matrix platform tests remain separate evidence.</p>
+<p>The plan adds no deployment of the team server for desktop-only changes. Use existing test doubles and self-messaging fixtures; use staging once for integrated pairing/message/file acceptance after local gates pass. Re-run affected tests after fixes rather than all platform suites for every documentation edit. The final release still requires tests of the exact merged bytes.</p>
+<h2>Acceptance gates and human steps</h2>
+<ul>
+<li>Safe import and first/second startup; unrelated sessions survive discovery; no secret file is readable by another ordinary user; junction and replacement attacks are refused.</li>
+<li>Both brains complete authenticated turns and tools, cancellation cleans owned trees, restart preserves the selected origin and reconnects once.</li>
+<li>Claude/Codex native discovery and message receipt identify the intended session even with duplicate project folders and reused PIDs. Unsupported capabilities stay explicit.</li>
+<li>Existing folder registration, discovery, bounded reads, reconnect and persistence work on native filesystem paths.</li>
+<li>Team sessions persist securely, logout/revocation works, and self-messages plus a two-device message/file transfer preserve manifests and receipts. Download marking and reveal must pass independently of byte transfer.</li>
+<li>Network CPU and memory reflect observed host data; unavailable readings stay unknown.</li>
+<li>Native capture, supported browser/terminal/editor actions, notifications and advertised prompt answers pass their tests.</li>
+<li>Real voice trials pass the agreed Windows operating envelope. Shared AEC failures remain release blockers for the corresponding claim.</li>
+<li>Installed artifacts work outside the source checkout, with supported model provisioning and documented upgrade/uninstall. Mac Intel and Apple Silicon regression evidence accompanies Windows results.</li>
+</ul>
+<p>Human involvement is limited to a native Windows host/account, ordinary provider/team sign-in or MFA when needed, physical microphone/speaker trials and decisions on any new interface/dependency or unsupported capability that the probes reveal. Credentials stay in provider/OS stores; no secrets in repository files, logs or fixtures. Do not promise that a new consent requirement can be bypassed.</p>
+<p>Rollback uses the previous release artifact and preserved configuration only after checking schema/data compatibility. A binary downgrade is not assumed to undo a migration. No production release is authorized by this research workflow.</p>
+<h2>Diagnostics handoff</h2>
+<p>Read this reconciled plan and its estimate page. Recheck HEAD and capture any changes after <code>61c9761</code> before implementation. Create an isolated implementation worktree. Use the existing <code>SessionProvider</code>, <code>SecretStore</code>, <code>Reader</code>, folder catalog and messaging contracts. Present concrete definitions for new platform interfaces/dependencies under repository rules, then execute approved work without repeated approval for its internal steps.</p>
+<p>Assign the four ownership lanes above. Fix import/process/private-storage prerequisites before full-app native startup. Run the first native probe gate early and reforecast from observed results. Keep shared UI, protocol, storage schema and voice engines. Return implementation PRs, source-linked remaining gaps, native/Mac acceptance evidence, versions, install/model instructions and rollback conditions. Do not claim native support from mocked tests.</p>
+<h2>Materials reviewed</h2>
+<ul>
+<li>Original Windows plan and estimate at <code>.agents/in-progress/windows-feasibility.html</code> and <code>windows-estimate-breakdown.html</code>; these paths now direct to the reconciled documents.</li>
+<li><code>.agents/in-progress/readback-echo-cancellation-diagnostics-handoff.md</code>: shared acoustic acceptance and conditional AEC work.</li>
+<li><code>.agents/in-progress/dotnet-browser-proposal.html</code>: separate future host architecture, not a dependency.</li>
+<li><code>.agents/in-progress/network-view-diagnostics-handoff.md</code>: network/presence intent, checked against current implementation.</li>
+<li><code>docs/planning/local-folders/implementation.md</code>: folder plan, checked against current catalog/readers.</li>
+<li>Current source and test files named above, <code>pyproject.toml</code>, <code>.github/workflows/ci.yml</code>, <code>.github/actions/setup/action.yml</code>, and commit changes from <code>73190ca</code>.</li>
+</ul>
+<p>These documents live under <code>docs/planning/windows/</code>, a Git-visible path, so a future commit can carry them into other worktrees. They are not committed by this workflow. The old ignored entry points remain convenient links; the AEC handoff is still Git-ignored and must be copied into an implementation worktree if needed.</p>
+</main></body></html>
