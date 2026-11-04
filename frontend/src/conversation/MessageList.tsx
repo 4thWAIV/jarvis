@@ -41,6 +41,11 @@ export function historyRows(turns: Turn[], items: ConversationItem[], _everythin
   return rows.sort((a, b) => a.at - b.at);
 }
 
+/** Whether the list is laid out: a list kept hidden behind another centre
+ *  view has no box, and scrolling it or deciding it follows would lose
+ *  where it was left. */
+const shown = (box: HTMLElement | null): box is HTMLElement => !!box && box.getClientRects().length > 0;
+
 function merge(a: ConversationItem[], b: ConversationItem[]) {
   return [...new Map([...a, ...b].map(i => [i.id, i])).values()].sort((a, b) => a.id - b.id);
 }
@@ -78,7 +83,7 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   useEffect(() => { if (jumpSignal) jump(); }, [jumpSignal]);
   useEffect(() => {
     const resize = new ResizeObserver(() => {
-      if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+      if (follow.current && shown(scroll.current)) scroll.current.scrollTop = scroll.current.scrollHeight;
     });
     if (scroll.current) resize.observe(scroll.current);
     if (content.current) resize.observe(content.current);
@@ -107,6 +112,9 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
       ref={el => { scroll.current = el; history(el); }}
       onScroll={() => {
         const box = scroll.current!;
+        // Hidden behind another centre view it measures nothing; whether it
+        // follows stays as it was, so it comes back exactly as it was left.
+        if (!shown(box)) return;
         follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 64;
         setFollowing(follow.current);
       }}>
