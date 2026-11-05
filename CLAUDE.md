@@ -128,14 +128,14 @@ transcript by the text after the signature (`session_steer.STEER_SIGNATURE`)
 and its staged time, and reports when it arrived, when the turn that took it
 began and ended, and that turn's final answer, which is stored as `reply`.
 Not seen within `session_watch.DELIVERY_TIMEOUT_SEC` (60s) it becomes
-`undelivered` and Tim hears "<agent> hasn't picked it up", but it is still
+`undelivered` (an attention item, see "Attention"), but it is still
 looked for: arriving late (behind a permission prompt he then approves) it is
 delivered and answered as usual. Anything unresolved
 `session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
 watcher only ever looks for a bounded set; settled messages are never read
-again. Seen, he hears "Delivered to
-<agent>"; answered, he hears "<agent> has answered your message about …" and
-the brain's note carries the message's id. The record is written before each
+again. Each step (queued, sent, delivered, undelivered, answered) moves the
+message's one attention item to its next revision; nothing is spoken of it.
+The record is written before each
 event, and the open messages are read from the store each poll, so a restart
 follows on from where it stopped. The brain reads the record with
 `list_messages` and a stored answer with `read_message_reply`;
@@ -150,8 +150,8 @@ first line `# <subject>`, the rest the message. `session_messages.collect`
 takes each file once it has not changed for `SETTLE_SEC`, never through a
 symlink. The server (`_watch_session_messages`) writes it to the
 `session_messages` table in `run_store.py`, THEN deletes the file (the
-session's sign it was picked up), then says "<agent> has sent you a message"
-and nothing of its text. The agent is every listed agent in that project
+session's sign it was picked up), then records an attention item naming the
+agent and nothing of its text. The agent is every listed agent in that project
 (`_project_owner`, shared with the needs board). The brain reads the record
 with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
@@ -173,8 +173,8 @@ stored. Sessions report with `workflow_report.py` and an access key in the
 `workflows` category (the talk-to-jarvis skill teaches them);
 `POST /api/workflows` and `/api/workflows/{id}/events` take the reports, the
 page reads `GET /api/workflows*`, and a `workflows` hint on `/ws/sessions`
-says when to read again. JARVIS says a new phase, a decision needed, a
-blocker, a finish and going quiet, once each. The brain answers anything
+says when to read again. A new phase, a decision needed, a blocker, a finish
+and going quiet are each an attention item on the workflow's one item. The brain answers anything
 about a workflow from `workflow_status`; open decisions are added to the
 needs board (`with_decisions`) without writing the sessions' board files,
 and he answers them on the Workflows view or by voice: the page's answer and
@@ -237,7 +237,8 @@ must be reviewed again. `messaging_runtime.py` builds the one store
 (`messaging_store.py`), file snapshots (`messaging_files.py`), guard,
 delivery loop (`messaging_client.py`), transfer presentation
 (`transfer_presentation.py`, the `human_transfer` frame) and arrival
-announcer (`arrival_announcer.py`, the ordinary notice path) at startup,
+announcer (`arrival_announcer.py`: each arrival an attention item, its
+presentation lease claimed only while he is engaged here) at startup,
 and mounts `/api/team/messages*` (`messaging_api.py`). The team server's
 side is `team_server/teamserver/messaging.py` and `attachments.py`; the
 page's is the Queue tab (`QueuePanel.tsx`, `QueueItemView.tsx`,
@@ -333,9 +334,9 @@ follows its `skill`), `agent` and `page`. An agent package's `brief` is
 carried out by one run through `RunExecutor` in its folder, started by the
 acting `run_package_agent` and recorded in `runs.package_id` (added by
 `run_store.init_db`'s column backfill; one active run per package, and a
-retry keeps it); `_on_run_event` hands its end to `_announce_package_run`,
-which says it through `_say_notice` and tells the brain to call
-`package_results` and `draft_message` once he agrees. A page package's
+retry keeps it); `_on_run_event` hands its end to `_attend_package_run`, an
+attention item; the brain calls `package_results` and `draft_message` once
+he agrees. A page package's
 `entry` opens in the centre area (`PackageView.tsx`) in an iframe
 `sandbox="allow-scripts"`, never `allow-same-origin`: its files
 (`packages_api.py`, `GET /api/packages/<id>/files/<path>`, read by
@@ -603,12 +604,11 @@ nothing. Signing in has one path, `teamSignIn.ts`, which Settings, Team
 there and opens Settings at Team, where the code is; part way through pairing, or with no address, it only opens Settings at
 Team (`settings.open {section: "team"}`). Later hides it until the page loads again or
 the voice socket reconnects (a JARVIS restart), never for good; it goes by
-itself once signed in. Spoken, once per process: `team_reminder.remind_once`,
-started by `team_api.start(say=...)` and cancelled by `team_api.stop`, looks
-once `SETTLE_SEC` (30 s) after startup and, not signed in, says
-"You're not signed in to the team server, sir; messages between people are
-off until you are." through `_say_notice` (the ordinary notice path and its
-turn-taking); signed in then, nothing is said in that process.
+itself once signed in. Once per process, `team_reminder.remind_once`,
+started by `team_api.start(attention=...)` and cancelled by `team_api.stop`,
+looks once `SETTLE_SEC` (30 s) after startup and, not signed in, records an
+attention item (`sign_in`), resolved once it is signed in; nothing is said
+by it.
 
 ## Subagents
 The subagents a Claude Code session dispatches are read from its own files by
@@ -675,8 +675,9 @@ or reading the needs board has stopped. A message held in the queue for its sess
 reads it all, and the brain's `diagnostics` reads the same `_subsystems()`
 (one row in full on request, voice input with `voice_diagnostics.summary`'s
 figures); `_watch_subsystems` looks every five seconds, sends a
-`subsystems` hint on `/ws/sessions` when any state moves, and says once
-"Communications with the agents are down, sir." and once that they are back.
+`subsystems` hint on `/ws/sessions` when any state moves, and records an
+attention item once communications with the agents are down, resolved once
+they are back.
 A down row is red, and so is the Diagnostics tab whichever tab is open;
 clicking a row opens it in the centre area (`SubsystemView.tsx`; voice input
 opens the voice view). Every name and line JARVIS writes itself is sent as a
@@ -810,12 +811,133 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 `self_update.repo_root` at temporary repositories
 (`conftest._never_update_or_restart_the_real_checkout`).
 
+## Attention
+Routine events are never spoken by the server. Each (an agent's message
+queued, sent, delivered, not picked up or answered; a session's message,
+needs board or needs-you; a session finishing; a run or package run ending;
+a person's message arriving; a workflow's news; communications down; not
+signed in; a person's message that did not go; the brain down, needing its
+sign-in or at its usage limit; a shell command's or keypress's outcome after
+its exact read-back) is first an item in
+`attention_store.py` (JARVIS's database, schema `attention_schema`): one
+item per source object (kind, source id), each change its next revision and
+a line of `attention_events`, JARVIS's own facts apart from other people's
+words (`untrusted`). `server._attend` is the one way in. `attention.py` is
+the one admission policy: engaged (his last trusted interaction within
+`engagement_sec`, not away; a connected page is not engagement), the
+conversation controller's floor `idle`, `settled_exchange_sec` since it was
+last busy and since his last interaction, `digest_cooldown_sec` since the
+last digest attempt, and the oldest candidate at least `oldest_event_sec`
+old (trial values 120, 10, 120 and 60 s, settings in `attention_settings`).
+What changed while he was away or unknown is counted, never played. When
+all pass, one digest: the candidates' facts to the brain with other
+people's words walled, under the `digest` origin, where `/internal/tool`
+refuses every tool; at most two sentences or SILENT; discarded if the floor,
+the activity revision or any item moved meanwhile. A failed brain or voice
+says nothing in its place. Played (or SILENT) finishes with the items'
+revisions; only he marks them seen. The digest's brain turn takes the brain's
+turn lock for the few seconds it runs, so a turn of his that starts then
+waits behind it. The floor is `server.conversation_floor`
+(`_ConversationFloor`, an `attention.TurnState`), read from every open
+page's turn controller (`server._voice_turns`), the recogniser's backlog
+(over `RECOGNITION_BEHIND_SEC`), a brain turn under way and the mouth
+(speech playing or queued, a read-back's cancel window). The speech
+scheduler reads the same floor (`SpeechScheduler.floor_held`): an
+announcement waits while it is his or the brain's, checked when it is
+picked and again before its first audio, and a held one goes back to the
+queue so the reply to his turn is never behind it. Nothing is batched:
+`Priority.LOW` has no batch, and nothing cut off by a barge-in or Stop is
+kept to be said later. The page shows a grouped count with Review updates, Mark
+all seen and Hold spoken updates (`UpdatesNotice.tsx`); the brain's
+`attention_updates`, `mark_updates_seen` and `set_attention_settings` call
+the same `attention_api` functions as `/api/attention*`.
+`tests/test_speech_call_sites.py` fails any call to the voice outside the
+approved entry points it lists, and drives every routine producer against a
+voice that must stay silent.
+
+## Quiet voice input
+The contract is `docs/planning/quiet-conversation/contract.md` (states,
+transitions, identities); the plan and its evidence are beside it. A page
+loads not listening: no `getUserMedia`, no recogniser socket. Listening
+needs his deliberate Start listening (`#btn-listen`), Unmute or Mic on in
+that page load (the grant is `voiceInput.ts`'s, in memory, never restored);
+a click elsewhere, the browser's permission or unlocking audio is not one.
+Mute and Mic off are this browser's quiet preference (`mic.ts`, localStorage
+`jarvis.voice.quiet`, read synchronously when the module loads, before any
+`getUserMedia`): a reload keeps Muted (shown as Muted with no microphone) or
+Off, and storage that cannot be read is no preference, which is not
+listening. Another tab's change arrives by the `storage` event and never
+arms a tab. Mute suspends PCM to every consumer (the recogniser and a page
+package's listeners), drops the server's gathered turn and keeps its words
+as an unsent draft; Unmute starts a new capture epoch and never sends the
+old draft. His two settings are per user (`voice_control.py`, the node's
+SQLite, keyed by the signed-in member's GitHub id or `local`): "When I stop
+the microphone" (`keep` finishes only audio from before the stop, its words
+under the ordinary turn rules, never a new automatic send; `discard` throws
+away unfinished input) and "When I switch away from JARVIS" (`continue` a
+session he started, or `stop`); with them his patience (seconds). Defaults
+are `keep` and `stop`, to be assessed. Until they are read Start listening
+is unavailable. `GET`/`POST /api/settings/voice-input` and the brain's
+`voice_input_settings` and acting `set_voice_input_settings` share
+`voice_control.read` and `change`; a change publishes `voice_input_settings`
+on `/ws/sessions` and starts, stops and sends nothing. One page owns the
+recogniser (`transcriber.TranscriptionService.admit`): a start carries its
+`clientId`, `captureEpoch` and whether it claims (his Start); without a
+claim another page's capture makes it `busy`, and a claim tells the page it
+displaces `taken` (`transcribeProtocol.json` version 2). Every word on
+`/ws/voice` carries `clientId` and `captureEpoch`; a stale epoch's words are
+dropped. A dropped voice socket sends nothing and keeps what the server had
+gathered as an unsent draft; that page, still open, resumes listening
+under a new epoch when the socket is back. The brain may only make input
+quieter: its acting `quiet_microphone` (muted or off) sends every page a
+`quiet` frame that it applies through `mic.chooseQuiet`, as his buttons do;
+there is no tool to unmute, turn on or start listening.
+
 ## Turn-taking
-JARVIS waits for Tim to finish. The server gathers what he says
-(`server._Utterance`) until he has been quiet for `speech.END_OF_TURN_SEC`, so
-a pause mid-sentence does not send the brain half a sentence; typed words go
-at once. Nothing JARVIS says starts while he has spoken more recently than
-that, replies included, and announcements never start at once.
+JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
+voice page gathers what he says into a turn with an id and a revision that
+every accepted word moves on; a final or an interim heard as speech starts
+the hold (`voice_control.patience`, default `speech.END_OF_TURN_SEC`) again,
+and an interim not yet followed by its final keeps older finals back. At
+the deadline the commit is checked against the turn, revision and deadline
+it was scheduled for (a timer is never trusted to have been cancelled) and
+against coverage: the recogniser must have decoded every frame the page had
+sent when the hold began (`transcriber` `coverage_of`, read on the server).
+Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
+on its own; the page's bar (`VoiceTurnBar.tsx`) offers Retry (wait again),
+Send now (as heard) and Keep as draft (into the composer, unsent), and the
+brain's acting `voice_turn` calls the same `server._turn_action`. Send now
+is offered while a turn is gathered too (coverage still checked). The
+server tells the page what it has gathered (`turn` frames: `gathering` with
+its text, `commit-pending`, `stalled`, `committed`, `draft`, `idle`), so only
+words it accepted as his, never echo, become a draft if the socket drops.
+Speech after a commit and before its reply sounds stops that reply's
+reading (its text stays, nothing is undone) and starts the next turn. Typed
+Send is its own message; voice words being gathered go on as their own
+turn. A stop under Discard is `turn_discard`. Nothing JARVIS says starts
+while he has spoken within his patience, replies included (the scheduler's
+`end_of_turn` is the same value, never clamped shorter), and announcements
+also wait for the floor (see "Attention").
+
+## Playback and its outcomes
+Each chunk ends as one fact (`speech.Outcome`): `queued` (sent),
+`started` and `played` (the page says so), `failed` (no audio, or the page
+could not decode it: reported on the `playback` frame, never as played),
+`skipped`, or `interrupted`. Transport advancing past a chunk is a separate
+fact, and a chunk that never sounded is not echo. Three actions stay apart:
+Skip the rest (the playback bar's Skip and Escape, `skip_to_end`, the
+brain's acting `skip_reading`: one reading, its text kept, its late audio
+dropped on `reading_skipped`; a read-back skipped is not heard, so it
+approves nothing), Stop speaking (the status control's Stop, `hush`, the
+brain's acting `stop_speaking`: all audio, through `server._stop_speaking`;
+it cancels no request and undoes nothing), and Cancel, which exists only
+where a job already has its own. A reply's last `reply` frame says how its
+text ended (`outcome`: `succeeded`, `failed`, `cancelled`) and, when failed,
+why (`reason`, `voice_control.ReplyFailure`: `not_ready`, `down`,
+`sign_in`, `rate_limited` with `resetsAt`, `error`, `lost`), which the page
+words in its language under the reply. No fault of the brain or of a turn
+is spoken. `voice_control.py` and `frontend/src/voiceControl.ts` hold the
+words both sides name.
 
 ## Speaking Spanish
 The language in force is `spoken_words.active_language()`, the one place it
@@ -904,10 +1026,25 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `tts.py` — Fish Audio synthesis, one request per sentence chunk; the one
   request body (`request_body`) with its language
 - `frontend/src/orb.ts` — Three.js particle orb visualization
-- `frontend/src/voice.ts` — Audio playback; re-exports voice input
+- `frontend/src/voice.ts` — Audio playback, each chunk played or failed;
+  re-exports voice input
 - `frontend/src/voiceInput.ts` — The microphone: one getUserMedia stream,
   an AudioWorklet (`pcm-worklet.ts`, `pcm.ts`) making 16 kHz PCM16, streamed
-  to `/ws/transcribe`; its finals go to `/ws/voice` as before
+  to `/ws/transcribe`; the listening grant, capture epochs, his two
+  settings' stops (see "Quiet voice input")
+- `frontend/src/mic.ts` — The quiet preference (read before anything
+  starts), the input status and the voice input settings in force
+- `turn_controller.py` — One page's turns: patient, identity-checked,
+  covered commits; stalled turns and their three ways on (see
+  "Turn-taking")
+- `voice_control.py` / `frontend/src/voiceControl.ts` — His voice input
+  settings and patience, per user, with their route and the brain's tools;
+  and the words the voice socket names (reply outcomes and failures, the
+  playback frame)
+- `frontend/src/voiceSettings.ts` / `VoiceInputSettingsControl.tsx` — The
+  settings read and changed on the page, and their Settings rows
+- `frontend/src/conversation/VoiceTurnBar.tsx` — What he said and has not
+  sent: Send now, and Retry, Send now and Keep as draft for a stalled turn
 - `transcriber.py` — Local speech recognition: the model list (`MODELS`,
   English and Spanish Kroko, each with its digest) and where each lives, the
   sherpa-onnx engine, and the worker that owns it (one model loaded at a
@@ -1096,8 +1233,12 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/PackageView.tsx` / `packageBridge.ts` / `packages.ts` — A
   page package in the centre area, its frame's postMessage bridge (save,
   listen), and the page's packages and the one open
-- `arrival_announcer.py` — Saying that a person's message has come in,
-  through the ordinary notice path
+- `arrival_announcer.py` — Recording that a person's message has come in,
+  as an attention item, under the presentation lease
+- `attention_store.py` / `attention.py` / `attention_api.py` — The attention
+  record, the one admission policy and digest, and their shared calls (see
+  "Attention"); `frontend/src/attention.ts` / `UpdatesNotice.tsx` /
+  `CentreNotices.tsx` are the page's side
 - `transfer_presentation.py` — The `human_transfer` frames the rays draw,
   and the announcement lease
 - `frontend/src/QueuePanel.tsx` / `queue.ts` — The Queue tab, and the Queue's
@@ -1245,7 +1386,9 @@ marker there.
 
 The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
-`test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`) are marked `page` and deselected too: they build
+`test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
+`test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
+`test_voice_page_playback.py`, `test_voice_page_updates.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

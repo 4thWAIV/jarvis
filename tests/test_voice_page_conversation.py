@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION, _silence_wav
 
@@ -51,6 +52,7 @@ async def _open(p, url, voice=None):
     await page.route_web_socket("**/ws/voice", voice or _Voice())
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
     await page.goto(url)
+    await start_listening(page)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
     return browser, page
 
@@ -360,6 +362,7 @@ async def test_the_history_reads_the_record_with_live_message_status_and_threads
         assert await page.text_content(".record-answer") == "Postgres it is."
 
         await page.reload()
+        await start_listening(page)
         await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
         await page.wait_for_selector(".record-status")
         assert (await history())[:2] == ["Earlier, I asked about the build.", "It was green, sir."]

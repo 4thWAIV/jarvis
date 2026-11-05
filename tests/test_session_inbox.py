@@ -8,9 +8,10 @@ because `crossSessionInbound` is absent from the user's settings.json.
 
 `post_to_session` returns SENT after a successful `sendall`. That proves the
 bytes left this process — nothing more. No acknowledgement is ever read back,
-so delivery is not observable from here and is therefore no longer asserted:
-the wording is "passed to", and when the setting says the message WILL need
-approving, that is said in the same breath.
+so delivery is not observable from here and is therefore no longer asserted.
+When the setting says the message WILL need approving, that is an attention
+item for him to see beside the send; nothing is spoken (the quiet
+conversation contract, section 9).
 
 Turning the setting on is offered and never done silently — and the write
 preserves the rest of a file holding the user's hooks, plugins, marketplaces
@@ -187,40 +188,50 @@ class _RecordingSpeech:
 
 
 async def _perform_one(server, monkeypatch):
+    """One steer performed; what was said, and the attention items it left
+    as (kind, source_id, event, untrusted)."""
+    from jarvis import attention_store
     from jarvis import session_steer
     speech = _RecordingSpeech()
+    record = attention_store.AttentionStore()
     monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "attention_record", record)
     monkeypatch.setattr(session_steer, "post_to_session",
                         lambda path, prompt, interrupt=False: session_steer.SENT)
     await server._perform_steer(server._StagedSteer(
         session_id="s1", voice_name="chitauri", project="chitauri",
         prompt="use Postgres", socket_path="/tmp/x.sock"))
-    return speech.said[-1] if speech.said else ""
+    items = [(i.kind, i.source_id, i.event, i.untrusted) for i in record.items(
+        (attention_store.PENDING, attention_store.SEEN, attention_store.RESOLVED))]
+    return speech.said, items
 
 
 @pytest.mark.asyncio
 async def test_delivery_is_never_asserted(wired, monkeypatch):
-    """Bytes leaving is not a message landing, so he no longer says it did."""
+    """Bytes leaving is not a message landing, so nothing claims it did:
+    the only item is the warning, never a delivery, and nothing is said."""
     server, _settings = wired
-    said = await _perform_one(server, monkeypatch)
-    assert said.startswith("Passed to chitauri, sir.")
-    assert "Sent" not in said
+    said, items = await _perform_one(server, monkeypatch)
+    assert said == []
+    assert [event for _k, _s, event, _u in items] == ["needs_approving"]
 
 
 @pytest.mark.asyncio
-async def test_the_spoken_outcome_warns_that_it_needs_approving(wired,
-                                                                monkeypatch):
+async def test_the_outcome_warns_that_it_needs_approving(wired, monkeypatch):
     server, _settings = wired
-    said = await _perform_one(server, monkeypatch)
-    assert "approve" in said
+    said, items = await _perform_one(server, monkeypatch)
+    assert said == [], "shown, not spoken"
+    (message,) = server.run_store.list_messages()
+    assert items == [("agent_message", str(message.id), "needs_approving",
+                      {"agent": "chitauri"})], "on the message's own item"
 
 
 @pytest.mark.asyncio
 async def test_with_the_setting_on_there_is_no_warning(wired, monkeypatch):
     server, settings = wired
     _write(settings, {"crossSessionInbound": "accept"})
-    said = await _perform_one(server, monkeypatch)
-    assert said == "", "nothing to warn of, and delivery is said once it is seen"
+    said, items = await _perform_one(server, monkeypatch)
+    assert said == [] and items == [], "nothing to warn of, and delivery is shown once it is seen"
 
 
 # --- the tool -------------------------------------------------------------

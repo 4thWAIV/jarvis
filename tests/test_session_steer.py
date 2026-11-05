@@ -763,7 +763,8 @@ async def test_a_staged_steer_still_happens_when_the_turn_ends_badly(
                        boom=True) as rig:
         await asyncio.wait_for(rig.start(), timeout=15)
 
-    assert "I lost my train of thought, sir." in rig.spoken()
+    assert not any("train of thought" in line for line in rig.spoken()), \
+        "the failed turn is shown on its reply, never spoken over"
     _wait_for_receipt(received)
     assert received, "a staged steer survives a failed turn"
     rows = _messages()

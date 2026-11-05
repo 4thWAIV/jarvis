@@ -123,6 +123,8 @@ def agent_run(monkeypatch, tmp_path, marks):
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
     server._notes_for_brain.clear()
+    from jarvis.attention_store import AttentionStore
+    monkeypatch.setattr(server, "attention_record", AttentionStore())
 
     def start(exit_code=0):
         ex = run_executor.RunExecutor(run_store, claude_path=_fake_claude(tmp_path, exit_code))
@@ -149,15 +151,15 @@ async def test_an_agent_package_runs_through_the_pipeline_in_its_folder(agent_ru
     assert prompt.startswith(server.UNATTENDED_PREAMBLE)
     assert "Count the words in texts/." in prompt and "results/*.md" in prompt
     assert run_store.get_run(run["id"])["status"] == run_store.RunStatus.SUCCEEDED
-    assert speech.said == ["The work package stats has finished, sir. Shall I draft the "
-                           "reply with its results?"]
-    (note,) = server._notes_for_brain
-    assert f"work package {package.id} finished" in note and "draft_message" in note
+    assert speech.said == [] and server._notes_for_brain == []
+    (item,) = server.attention_record.items()
+    assert (item.kind, item.source_id, item.event) == ("package_run", run["id"], "succeeded")
+    assert item.facts == {"package_id": package.id} and item.untrusted == {"package": "stats"}
     assert [p.name for p in package.results()] == ["summary.md"]
 
 
 @pytest.mark.asyncio
-async def test_a_failed_agent_package_says_so_and_retry_keeps_the_package(agent_run):
+async def test_a_failed_agent_package_is_an_update_and_retry_keeps_the_package(agent_run):
     server, run_store, start, package, speech = agent_run
     ex = start(exit_code=3)
     await server.tool_run_package_agent({"package": package.id})
@@ -165,8 +167,8 @@ async def test_a_failed_agent_package_says_so_and_retry_keeps_the_package(agent_
     await ex.wait_for(run["id"])
     await _drain(server)
     assert run_store.get_run(run["id"])["status"] == run_store.RunStatus.FAILED
-    assert speech.said == ["The work package stats failed, sir."]
-    assert "retry_run" in server._notes_for_brain[0]
+    assert speech.said == []
+    assert [i.event for i in server.attention_record.items()] == ["failed"]
     start()
     new_id, problem = await server._retry_run(run_store.get_run(run["id"]), "voice")
     assert problem is None and run_store.get_run(new_id)["package_id"] == package.id

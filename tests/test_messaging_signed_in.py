@@ -12,7 +12,6 @@ from fastapi import FastAPI
 
 from jarvis import messaging_ports as ports
 from jarvis import messaging_runtime, team_api
-from jarvis.arrival_announcer import Wording
 from jarvis.messaging_wire import CAPABILITY
 
 NODE = "00000000-0000-4000-8000-000000007222"
@@ -43,12 +42,9 @@ class Captures:
 def runtime(connection) -> tuple[messaging_runtime.MessagingRuntime, list[dict]]:
     frames: list[dict] = []
 
-    async def notify(*a, **k):
-        pass
-
     built = messaging_runtime.MessagingRuntime(
-        connection=connection, captures=Captures(), send_frame=frames.append, notify=notify,
-        wording=Wording(join=", ".join, number=str, gist=lambda s: s),
+        connection=connection, captures=Captures(), send_frame=frames.append,
+        attend=lambda arrival, audible: None, engaged=lambda: False,
         network_raw=lambda: None, node_id=lambda: NODE)
     return built, frames
 

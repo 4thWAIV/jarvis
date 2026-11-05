@@ -29,18 +29,21 @@ class _Speech:
 
 
 @pytest.mark.asyncio
-async def test_a_failing_check_is_spoken(monkeypatch):
-    """A dead brain is exactly when the user cannot ask what is wrong."""
+async def test_a_failing_check_is_logged_with_its_remedy_and_not_spoken(monkeypatch, caplog):
+    """Startup is never narrated: a failure is on the Diagnostics tab and in
+    the log with its remedy, and an expired login is the brain's own
+    attention item and a failed reply's reason, never a line spoken."""
     checks = [_check("claude_login", preflight.STATUS_FAIL,
                      "claude is not logged in")]
     monkeypatch.setattr(preflight, "run_checks", lambda **k: _async(checks))
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
 
-    await server._run_preflight()
+    with caplog.at_level("WARNING"):
+        await server._run_preflight()
 
-    assert sp.said, "a failed preflight check must be spoken, not only logged"
-    assert "logged in" in sp.said[0].lower()
+    assert sp.said == []
+    assert "claude is not logged in" in caplog.text and "do the thing" in caplog.text
 
 
 @pytest.mark.asyncio

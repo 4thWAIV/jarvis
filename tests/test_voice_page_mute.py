@@ -14,6 +14,8 @@ import pytest
 pytestmark = pytest.mark.page
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
+from tests.voice_page_input import start_listening
+from tests.test_voice_page_speech_input import Voice
 
 FAKE_MIC = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
 LIT = "document.querySelectorAll('#mic-meter .mic-segment.on').length"
@@ -45,7 +47,10 @@ async def test_mute_shows_muted_and_unmute_brings_the_meter_back_on_the_same_mic
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page()
         await page.add_init_script(COUNT_ASKS)
+        # A voice socket that stays up: listening stops while it is down.
+        await page.route_web_socket("**/ws/voice", Voice())
         await page.goto(page_url)
+        await start_listening(page)
 
         assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
         asks = await page.evaluate("window.__micAsks")
@@ -71,7 +76,10 @@ async def test_mic_off_releases_the_microphone_and_on_asks_for_it_again(page_pla
             pytest.skip(f"no headless Chromium: {e}")
         page = await browser.new_page()
         await page.add_init_script(COUNT_ASKS)
+        # A voice socket that stays up: listening stops while it is down.
+        await page.route_web_socket("**/ws/voice", Voice())
         await page.goto(page_url)
+        await start_listening(page)
 
         assert await _peak_lit(page, 4000) > 0, "the fake microphone never registered"
         asks = await page.evaluate("window.__micAsks")

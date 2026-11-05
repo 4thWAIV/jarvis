@@ -35,6 +35,7 @@ import { BrainsSection } from "./BrainsSection";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { closeMenu, reloadAfterRestart } from "./MenuControl";
 import { LanguageControl } from "./LanguageControl";
+import { VoiceInputSettingsControl } from "./VoiceInputSettingsControl";
 import { TeamSection } from "./TeamSection";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, placed, useT, type Translate } from "./locale";
@@ -379,6 +380,7 @@ function VoiceSection({ status, reload }: { status: Status | null; reload: () =>
   return (
     <>
       <LanguageControl />
+      <VoiceInputSettingsControl />
       <SettingsRow label={t("left.voice.outputProvider")} labelRef={providerUi.part("label")} htmlFor="voice-provider">
         <select data-ui-action="input" id="voice-provider" ref={providerUi.whole}
                 value={provider} disabled={!status || saving || busy}

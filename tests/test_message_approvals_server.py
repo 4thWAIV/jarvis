@@ -136,8 +136,7 @@ async def test_send_on_screen_during_a_turn_waits_then_approves_through_the_guar
     approved = tim.store.approved(*NS, draft.message_id, 1)
     assert approved.via == "gui" and _state(tim, draft) == "approved"
     assert tim.released == [approved] and n not in server._captures
-    assert tim.speech.said == ["Approved, sir. It goes to Matt as soon as the team server "
-                               "takes it."]
+    assert tim.speech.said == [], "approved is all it is, and nothing is said of it"
 
 
 @pytest.mark.asyncio
@@ -216,7 +215,7 @@ async def test_stop_in_the_cancel_window_leaves_it_awaiting_approval(server, tim
     monkeypatch.setattr(server, "_turn_utt", object())
     assert _press_send(server, n).status_code == 200
     await server._perform_staged_steers()
-    assert server.speech.said == ["Cancelled, sir."]
+    assert server.speech.said == []
     assert _state(tim, draft) == "awaiting_approval" and tim.store.unresolved_sends(*NS) == []
     assert n in server._captures and not server._captures[n].get("staged")
 

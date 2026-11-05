@@ -127,16 +127,18 @@ async def test_every_writer_point_records_its_item_once(server, monkeypatch):
             said.append(line)
 
     monkeypatch.setattr(srv, "speech", _Speech())
-    event = {"session": {"session_id": "h", "voice_name": "hammer"},
+    event = {"kind": "answered", "session": {"session_id": "h", "voice_name": "hammer"},
              "message": {"id": 9, "session_id": "h", "agent_name": "hammer",
                          "text": "use Postgres", "reply": "Done, sir."}}
-    await srv._announce_reply(event)
-    await srv._announce_reply(event)                 # reported twice, recorded once
-    await srv._announce_delivered(event)
+    await srv._attend_message(event)
+    await srv._attend_message(event)                 # reported twice, recorded once
+    await srv._attend_message({**event, "kind": "delivered"})
     await asyncio.sleep(0)
     kinds = [(i.kind, i.text) for i in cl.page()]
     assert kinds.count((ItemKind.ANSWER, "Done, sir.")) == 1
-    assert [k for k, _ in kinds if k == ItemKind.NOTICE] == [ItemKind.NOTICE] * 3
+    assert [k for k, _ in kinds if k == ItemKind.NOTICE] == [], \
+        "a lifecycle step is an attention item, not a notice in the conversation"
+    assert said == []
     assert all(i.agent_session_id == "h" for i in cl.page())
     assert {"type": "conversation"} in hints
 

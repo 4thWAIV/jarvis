@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
+
 from jarvis import session_steer
 from jarvis import session_watch as sw
 from tests.fixtures.captures import captured
@@ -655,31 +657,35 @@ async def _drain(server, monkeypatch, event):
 
 
 @pytest.mark.asyncio
-async def test_delivery_is_said_when_it_is_seen_and_the_brain_is_told(server, monkeypatch):
+@pytest.mark.parametrize("kind, message, event", [
+    ("delivered", {"id": 12, "body": "go on"}, "delivered"),
+    ("undelivered", {"id": 12, "body": "go on"}, "undelivered"),
+    ("answered", {"id": 5, "body": "go on", "reply": None}, "answered_empty"),
+    ("sent", {"id": 7, "body": "go on"}, "sent"),
+])
+async def test_each_step_of_a_message_is_an_update_and_nothing_is_said(
+        server, monkeypatch, attention, kind, message, event):
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
+    monkeypatch.setattr(server, "attention_record", attention)
+    await _drain(server, monkeypatch, _event(kind, message))
+    assert sp.said == [], "no lifecycle step is spoken"
+    assert server._with_notes_for_brain("") == "", "nothing was said, so nothing to note"
+    assert recorded(attention) == [("agent_message", str(message["id"]), event)]
+    assert attention.items()[0].untrusted == {"agent": "guard"}
+
+
+@pytest.mark.asyncio
+async def test_delivered_then_answered_is_one_update_with_its_history(server, monkeypatch,
+                                                                       attention):
+    monkeypatch.setattr(server, "speech", _Speech())
+    monkeypatch.setattr(server, "attention_record", attention)
     await _drain(server, monkeypatch, _event("delivered", {"id": 12, "body": "go on"}))
-    assert sp.said == ["Delivered to guard, sir."]
-    assert "message 12 was delivered to guard" in server._with_notes_for_brain("")
-
-
-@pytest.mark.asyncio
-async def test_a_message_not_picked_up_is_said_and_the_brain_is_told(server, monkeypatch):
-    sp = _Speech()
-    monkeypatch.setattr(server, "speech", sp)
-    await _drain(server, monkeypatch, _event("undelivered", {"id": 12, "body": "go on"}))
-    assert sp.said == ["guard hasn't picked it up, sir."]
-    note = server._with_notes_for_brain("")
-    assert "message 12" in note and "still looked for" in note
-
-
-@pytest.mark.asyncio
-async def test_an_answer_with_no_words_is_said_as_such(server, monkeypatch):
-    sp = _Speech()
-    monkeypatch.setattr(server, "speech", sp)
-    await _drain(server, monkeypatch, _event("answered", {"id": 5, "body": "go on", "reply": None}))
-    assert sp.said == ["guard finished its turn on your message about go on without a word, sir."]
-    assert "message 5" in server._with_notes_for_brain("")
+    await _drain(server, monkeypatch, _event("answered", {"id": 12, "body": "go on",
+                                                          "reply": "Done."}))
+    (item,) = attention.items()
+    assert item.event == "answered" and item.revision == 2
+    assert [h["event"] for h in attention.history(item.id)] == ["delivered", "answered"]
 
 
 # --- brain-access ---------------------------------------------------------------
@@ -867,8 +873,7 @@ async def test_a_message_to_a_session_with_one_open_is_queued_not_sent(server, m
 
     later = max(m.id for m in server.run_store.list_messages())
     assert server.run_store.get_message(later).status == "queued" and sends == []
-    assert speech.said == [f"guard has not answered message {earlier} yet, sir. Your message "
-                           f"waits its turn and goes as soon as it is free."]
+    assert speech.said == [], "the record shows it queued, and why"
     # list_messages says the same reason while it waits.
     assert f"because that session has not answered message {earlier} yet" in \
         server._message_state(server.run_store.get_message(later), time.time())

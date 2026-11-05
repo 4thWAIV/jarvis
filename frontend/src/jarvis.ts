@@ -10,15 +10,22 @@
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
-import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped, jarvisText, jarvisReply, jarvisReconnected, jarvisDisconnected } from "./captions";
+import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped, jarvisText, jarvisReply,
+         jarvisReading, jarvisReconnected, jarvisDisconnected } from "./captions";
 import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
 import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
-import { inputStatus, micLevel, micMuted, micOff } from "./mic";
-import { sendTyped, stopSpeaking, voiceState, voiceConnected, conversationJump } from "./voiceStatus";
+import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
+import { loadVoiceInputSettings } from "./voiceSettings";
+import { CLIENT_ID } from "./uiClient";
+import { offerDraft } from "./conversation/Composer";
+import { sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
+         conversationJump } from "./voiceStatus";
+import { PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type PlaybackReport,
+         type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
@@ -35,8 +42,6 @@ export function startJarvis(orb: Orb): void {
 
   type State = "idle" | "listening" | "thinking" | "speaking" | "compacting";
   let currentState: State = "idle";
-  let isMuted = false;
-  let isOff = false;
 
   // ---------------------------------------------------------------------------
   // Init components
@@ -67,7 +72,7 @@ export function startJarvis(orb: Orb): void {
   // Mute and mic off only stop the microphone; they have no say in the orb's
   // state.
   function micFollowsState() {
-    if (isMuted || isOff) return;
+    if (quiet.get() !== "none") return;
     if (currentState === "speaking" && muteMicDuringSpeech) {
       voiceInput.pause();
     } else {
@@ -79,16 +84,50 @@ export function startJarvis(orb: Orb): void {
   // Voice input
   // ---------------------------------------------------------------------------
 
+  // What the server has gathered from him and not yet committed as a turn
+  // (its `turn` frames: only words it accepted as his, never echo). If the
+  // voice socket drops it is not sent but kept as an unsent draft; a turn
+  // the recogniser could not finish waits for his Retry, Send now or Keep
+  // as draft (VoiceTurnBar.tsx), and kept as a draft it comes back here.
+  const unsentText = () => voiceTurn.get()?.text ?? "";
+  const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); voiceTurn.set(null); };
+  socket.onMessage((msg) => {
+    if (msg.type !== "turn") return;
+    const turnId = typeof msg.turnId === "number" ? msg.turnId : null;
+    const text = String(msg.text ?? "");
+    if (msg.state === "gathering" || msg.state === "commit-pending" || msg.state === "stalled") {
+      voiceTurn.set({ state: msg.state, turnId, text });
+    } else if (msg.state === "draft") {
+      keepUnsent(text);
+    } else {
+      voiceTurn.set(null);             // committed, or dropped (idle)
+    }
+  });
+  socket.onClose(() => keepUnsent(unsentText()));
+  const TURN_FRAMES = { send_now: "turn_send_now", retry: "turn_retry", keep_as_draft: "turn_keep_draft" } as const;
+  turnAction.current = (action) => {
+    if (!socket.isConnected()) return false;
+    socket.send({ type: TURN_FRAMES[action] });
+    return true;
+  };
+  // A listening page stops while the voice socket is down and resumes, in
+  // this open page, once it is back (voiceInput.ts `connection`).
+  socket.onClose(() => voiceInput.connection(false));
+  socket.onOpen(() => voiceInput.connection(true));
+
+  // Every word heard carries this page and the capture epoch it was heard
+  // in (voice control contract, section 4).
   const voiceInput = createVoiceInput(
-    (text: string) => {
+    (text: string, captureEpoch: number) => {
       // The server decides whether this is echo, a barge-in, or a new turn.
       // The turn's id goes with it, so a capture made from it can name it.
       const id = showHeard(text, true);
-      socket.send({ type: "transcript", text, isFinal: true, ...(id === null ? {} : { id }) });
+      socket.send({ type: "transcript", text, isFinal: true, clientId: CLIENT_ID, captureEpoch,
+                    ...(id === null ? {} : { id }) });
     },
-    (text: string) => {
+    (text: string, captureEpoch: number) => {
       showHeard(text, false);
-      socket.send({ type: "interim", text });
+      socket.send({ type: "interim", text, clientId: CLIENT_ID, captureEpoch });
     },
     (event: string) => {
       // Mirror the microphone's lifecycle to the server log: a browser-side
@@ -108,17 +147,40 @@ export function startJarvis(orb: Orb): void {
       // A final heard while the voice socket is down would be dropped by
       // socket.send; it is reported as not sent instead, and not replayed.
       canDeliver: () => socket.isConnected(),
+      // His two voice input settings (voiceSettings.ts): no listening until
+      // they are read.
+      settings: () => voiceInputSettings.get(),
+      // Discarded under his stop setting: the server drops what it was
+      // gathering from this page.
+      onDiscard: (captureEpoch: number) => {
+        voiceTurn.set(null);
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
+      // Kept words that could not be finished, or finished after Mute: never
+      // sent, an unsent draft.
+      onDraft: offerDraft,
+      // Muted: the server drops what it was gathering, and the words it had
+      // become an unsent draft too.
+      onMute: (captureEpoch: number) => {
+        keepUnsent(unsentText());
+        socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
+      },
     }
   );
 
   // ── stopping him ──────────────────────────────────────────────────────────
-  // Escape, or the button that appears while he is talking. Not a spoken word:
-  // his voice comes back through the microphone garbled, and a mis-hear that
-  // looked like "stop" would cut him off at random. A keystroke cannot be
-  // misheard.
+  // Two different things, each a button and neither a spoken word (his voice
+  // comes back through the microphone garbled, and a mis-hear that looked
+  // like "stop" would cut him off at random; a keystroke cannot be misheard):
+  //
+  //   Skip the rest — the playback bar's Skip, and Escape: only the reading
+  //   sounding now (a reply, a read-back, an announcement). Its text stays,
+  //   its generation goes on, the readings after it still play.
+  //   Stop speaking — the status control's Stop: all of his audio, now.
+  //
+  // Neither cancels a request or undoes anything a tool did.
 
   let readingUtt: number | null = null;
-  let readingReply = false;
   let skippedReading: number | null = null;
   const skipped = new Set<number>();
   const finishedReplies = new Set<number>();
@@ -127,40 +189,51 @@ export function startJarvis(orb: Orb): void {
     skipped.add(utt);
     if (skipped.size > 64) skipped.delete(skipped.values().next().value!);
     for (const key of chunkText.keys()) if (key.startsWith(`${utt}:`)) chunkText.delete(key);
+    for (const key of chunkCue.keys()) if (key.startsWith(`${utt}:`)) chunkCue.delete(key);
   }
-  function skipReading(utt: number) {
+  function skipLocally(utt: number) {
     rememberSkipped(utt);
-    skippedReading = utt;
-    jarvisQuiet(); captureQuiet();
-    transition(finishedReplies.has(utt) ? "listening" : "thinking");
+    jarvisReading(utt, "skipped");
+    if (readingUtt === utt) {
+      skippedReading = utt;
+      readingUtt = null;
+      jarvisQuiet(); captureQuiet(); storyCue.set(null);
+      // A reply still being written goes back to thinking; anything else
+      // has nothing more coming, so he is listening.
+      transition(knownReplies.has(utt) && !finishedReplies.has(utt) ? "thinking" : "listening");
+    }
     audioPlayer.cancelUtterance(utt);
+  }
+  function skip() {
+    if (readingUtt === null) return;
+    const target = readingUtt;
+    skipLocally(target);
+    socket.send({ type: "skip_to_end", utt: target });
+    conversationJump.set(conversationJump.get() + 1);
+  }
+  function stopAll() {
+    if (readingUtt !== null) jarvisReading(readingUtt, "stopped");
+    audioPlayer.stop();
+    jarvisQuiet();
+    readingUtt = null; chunkText.clear();
+    chunkCue.clear();
+    storyCue.set(null);
   }
   function hush() {
     if (currentState !== "speaking") return;
-    if (readingReply && readingUtt !== null) {
-      const target = readingUtt;
-      skipReading(target);
-      socket.send({ type: "skip_to_end", utt: target });
-      conversationJump.set(conversationJump.get() + 1);
-      return;
-    }
     // Locally first: the round trip is real and silence should be instant.
-    audioPlayer.stop();
-    jarvisQuiet();
-    readingUtt = null; readingReply = false; chunkText.clear();
-    chunkCue.clear();
+    stopAll();
     // The turn he stopped also stops pointing: its UI requests are
     // withdrawn and every white signal cleared.
     uiClient.interrupt();
-    storyCue.set(null);
     socket.send({ type: "hush" });
     transition("listening");
   }
 
-  // The Stop button in the status control (StatusControl.tsx).
   stopSpeaking.current = hush;
+  skipReading.current = skip;
   window.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); hush(); }
+    if (e.key === "Escape" && readingUtt !== null) { e.preventDefault(); skip(); }
   });
 
   // ── typing ─────────────────────────────────────────────────────────────
@@ -185,12 +258,16 @@ export function startJarvis(orb: Orb): void {
   // arrives, so the captions keep pace with the voice and the highlight is
   // on the sentence being heard. A sentence reading a capture back lights
   // the capture's box instead, and is not added to the captions.
-  const chunkText = new Map<string, { text: string; capture?: number; reply: boolean }>();
+  const chunkText = new Map<string, { text: string; capture?: number }>();
   // A story beat's cue, by chunk (packages.ts): shown in the package's frame
   // as the beat's words START playing, and ended as its last words end.
   const chunkCue = new Map<string, StoryCue>();
+  function report(utt: number, idx: number, outcome: PlaybackReport) {
+    socket.send({ type: PLAYBACK_FRAME, utt, idx, outcome });
+  }
   audioPlayer.onStarted((utt, idx, seconds) => {
     readingUtt = utt; skippedReading = null;
+    report(utt, idx, "started");
     transition("speaking");
     const key = `${utt}:${idx}`;
     // Kept until the chunk is played: onPlayed ends the beat at its last chunk.
@@ -200,7 +277,6 @@ export function startJarvis(orb: Orb): void {
     const chunk = chunkText.get(key);
     chunkText.delete(key);
     if (!chunk) return;
-    readingReply = chunk.reply;
     if (chunk.capture !== undefined) {
       jarvisQuiet();
       captureSpeaking(chunk.capture, chunk.text, seconds);
@@ -217,7 +293,7 @@ export function startJarvis(orb: Orb): void {
     // Scheduler ids belong to a connection epoch; a restarted backend reuses them.
     jarvisReconnected();
     skipped.clear(); finishedReplies.clear(); knownReplies.clear(); chunkText.clear(); chunkCue.clear();
-    readingUtt = null; readingReply = false; skippedReading = null;
+    readingUtt = null; skippedReading = null;
     voiceConnected.set(true);
   });
   socket.onClose(() => {
@@ -236,11 +312,24 @@ export function startJarvis(orb: Orb): void {
     socket.send({ type: "played", utt, idx });
   });
 
+  // A chunk whose audio would not decode: failed, never played. The words
+  // stay on screen; the turn says not all of it was read aloud.
+  audioPlayer.onFailed((utt, idx) => {
+    const key = `${utt}:${idx}`;
+    if (chunkCue.get(key)?.last) storyCue.set(null);
+    chunkCue.delete(key);
+    const chunk = chunkText.get(key);
+    chunkText.delete(key);
+    if (chunk && chunk.capture === undefined) jarvisText(utt, chunk.text, idx);
+    jarvisReading(utt, "failed");
+    report(utt, idx, "failed");
+  });
+
   // End of speech is the server's call (`status: idle` after every chunk is
   // acked); a transient empty queue mid-utterance must not flip the UI.
   // The highlight goes when nothing is playing.
   audioPlayer.onFinished(() => {
-    readingUtt = null; readingReply = false;
+    readingUtt = null;
     jarvisQuiet(); captureQuiet(); storyCue.set(null);
   });
 
@@ -266,26 +355,31 @@ export function startJarvis(orb: Orb): void {
         finishedReplies.add(utt);
         if (finishedReplies.size > 64) finishedReplies.delete(finishedReplies.values().next().value!);
       }
-      jarvisReply(utt, String(msg.text ?? ""), Boolean(msg.done), typeof msg.at === "number" ? msg.at : undefined);
+      const outcome = REPLY_OUTCOMES.find(o => o === msg.outcome) as ReplyOutcome | undefined;
+      const reason = REPLY_FAILURES.find(r => r === msg.reason);
+      jarvisReply(utt, String(msg.text ?? ""), Boolean(msg.done),
+                  typeof msg.at === "number" ? msg.at : undefined, outcome,
+                  reason ? { reason, ...(typeof msg.resetsAt === "number" ? { resetsAt: msg.resetsAt } : {}) }
+                         : undefined);
       if (msg.done && currentState === "thinking") transition("listening");
+    } else if (type === "quiet") {
+      // The brain's quiet_microphone: his Mute or Mic off, as if clicked.
+      // Only ever quieter: Muted never undoes Mic off.
+      if (msg.state === "off") chooseQuiet("off");
+      else if (msg.state === "muted" && quiet.get() === "none") chooseQuiet("muted");
     } else if (type === "reading_skipped") {
-      const utt = Number(msg.utt);
-      if (readingUtt === utt) skipReading(utt);
-      else { rememberSkipped(utt); audioPlayer.cancelUtterance(utt); }
+      // Skipped here, or by the brain's skip_reading: the same either way.
+      skipLocally(Number(msg.utt));
     } else if (type === "audio") {
       if (skipped.has(Number(msg.utt))) return;
       const data = msg.data as string;
       if (data) {
-        if (readingUtt === null) {
-          readingUtt = Number(msg.utt);
-          readingReply = knownReplies.has(readingUtt) && typeof msg.capture !== "number";
-        }
+        if (readingUtt === null) readingUtt = Number(msg.utt);
         skippedReading = null;
         if (currentState !== "speaking") transition("speaking");
         if (msg.text) {
           chunkText.set(`${msg.utt}:${msg.idx}`, {
             text: String(msg.text),
-            reply: knownReplies.has(Number(msg.utt)) && typeof msg.capture !== "number",
             ...(typeof msg.capture === "number" ? { capture: msg.capture } : {}),
           });
         }
@@ -327,11 +421,9 @@ export function startJarvis(orb: Orb): void {
       // (story_teller.py): the package's Tell the story and Stop follow it.
       storyState.set(msg as unknown as StoryState);
     } else if (type === "stop") {
-      readingUtt = null; readingReply = false; chunkText.clear();
-      audioPlayer.stop();
-      chunkCue.clear();
-      storyCue.set(null);
-      jarvisQuiet();
+      // Stop speaking from anywhere: this page's Stop came back, the brain's
+      // stop_speaking, or he talked over JARVIS.
+      stopAll();
       transition("listening");
     } else if (type === "drop_queued") {
       audioPlayer.dropQueued();
@@ -361,9 +453,12 @@ export function startJarvis(orb: Orb): void {
   // Kick off
   // ---------------------------------------------------------------------------
 
-  // At once: there is no recogniser to wait for, and the microphone is
-  // taken as soon as the browser allows.
-  voiceInput.start();
+  // Quiet: no microphone is asked for until he starts listening on this
+  // page (MicControl.tsx), or unmutes or turns the microphone on. A reload
+  // keeps Mute and Mic off (mic.ts) and never keeps listening.
+  voiceInput.setQuiet(quiet.get(), false);
+  startListening.current = () => { voiceInput.start(); };
+  void loadVoiceInputSettings();
   transition("listening");
 
   // Resume AudioContext on ANY user interaction (browser autoplay policy)
@@ -384,28 +479,13 @@ export function startJarvis(orb: Orb): void {
   // UI Controls
   // ---------------------------------------------------------------------------
 
-  // The mute button (MuteButton.tsx) sets this: nothing is sent while
-  // muted, and the microphone stays open.
-  micMuted.subscribe(() => {
-    isMuted = micMuted.get();
-    if (isMuted) {
-      voiceInput.mute();           // the meter reads zero and nothing is sent
-    } else {
-      voiceInput.unmute();
-      micFollowsState();
-    }
-  });
-
-  // The mic-off button (MicOffButton.tsx) sets this: the microphone itself
-  // is released.
-  micOff.subscribe(() => {
-    isOff = micOff.get();
-    if (isOff) {
-      voiceInput.micOff();
-    } else {
-      voiceInput.micOn();
-      micFollowsState();
-    }
+  // The mute and mic-off buttons (MuteButton.tsx, MicOffButton.tsx) and
+  // another tab of this browser set the quiet preference (mic.ts): muted
+  // sends nothing and keeps the microphone open, off releases it. Only this
+  // page's own Unmute or Mic on starts listening again.
+  quiet.subscribe(() => {
+    voiceInput.setQuiet(quiet.get(), quietBy === "here");
+    micFollowsState();
   });
 
 }

@@ -22,6 +22,7 @@ import wave
 
 import pytest
 
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_package_modes import EXAMPLES
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
@@ -169,6 +170,7 @@ async def _deck(p, page_url, jarvis_app, voice):
     await page.route_web_socket("**/ws/sessions", lambda ws: None)
     await page.route("**/api/packages/**", _through(server, client))
     await page.goto(page_url)
+    await start_listening(page)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)",
                                  timeout=10000)
     await voice.speech.start()
@@ -280,6 +282,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
         await page.route("**/api/packages/**", _through(*jarvis_app[:2]))
         try:
             await page.goto(page_url)
+            await start_listening(page)
             await page.wait_for_function(
                 "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
             await voice.speech.start()
@@ -291,6 +294,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
             await async_api.expect(title).to_have_text("Three things a good pot of tea needs")
 
             await page.reload()
+            await start_listening(page)
             await page.wait_for_function(
                 "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
             await async_api.expect(title).to_have_text("Three things a good pot of tea needs")

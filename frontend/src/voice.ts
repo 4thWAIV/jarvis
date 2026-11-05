@@ -4,8 +4,10 @@
  * Input is voiceInput.ts: the microphone streamed to JARVIS's own local
  * speech recognition. The microphone keeps listening while JARVIS speaks —
  * the server decides what is echo and what is a barge-in. Playback is a
- * strictly ordered queue of chunks; each one is acknowledged to the server
- * when it finishes.
+ * strictly ordered queue of chunks, and each one ends in exactly one way the
+ * page can see: played (it finished), or failed (its audio would not
+ * decode). A failed chunk is never reported as played; it is reported as
+ * failed, in its turn, so the server's ordering still moves on.
  */
 
 export { createVoiceInput } from "./voiceInput";
@@ -23,6 +25,8 @@ export interface AudioPlayer {
   dropQueued(): void;
   getAnalyser(): AnalyserNode;
   onPlayed(cb: (utt: number, idx: number) => void): void;
+  /** A chunk reached the head of the queue and could not be played. */
+  onFailed(cb: (utt: number, idx: number) => void): void;
   /** A chunk has just started playing, and how many seconds it lasts. */
   onStarted(cb: (utt: number, idx: number, seconds: number) => void): void;
   onFinished(cb: () => void): void;
@@ -47,6 +51,7 @@ export function createAudioPlayer(): AudioPlayer {
   let currentUtt: number | null = null;
   let currentSource: AudioBufferSourceNode | null = null;
   let playedCallback: ((utt: number, idx: number) => void) | null = null;
+  let failedCallback: ((utt: number, idx: number) => void) | null = null;
   let startedCallback: ((utt: number, idx: number, seconds: number) => void) | null = null;
   let finishedCallback: (() => void) | null = null;
   let needsGestureCallback: (() => void) | null = null;
@@ -71,11 +76,11 @@ export function createAudioPlayer(): AudioPlayer {
   }
 
   function playNext() {
-    // Skip chunks that failed to decode, but still acknowledge them so the
-    // server's ordering advances.
+    // Chunks that failed to decode are reported as failed, in order, so the
+    // server's ordering advances without counting them as heard.
     while (queue.length > 0 && queue[0].failed) {
       const dead = queue.shift()!;
-      playedCallback?.(dead.utt, dead.idx);
+      failedCallback?.(dead.utt, dead.idx);
     }
     if (queue.length === 0) {
       isPlaying = false;
@@ -123,7 +128,7 @@ export function createAudioPlayer(): AudioPlayer {
         item.buffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
       } catch (err) {
         console.error("[audio] chunk unplayable:", err);
-        item.failed = true; // still acked in order, so the server's sequence advances
+        item.failed = true; // reported as failed in order, so the server's sequence advances
       }
       if (!isPlaying) playNext();
     },
@@ -165,6 +170,10 @@ export function createAudioPlayer(): AudioPlayer {
 
     onPlayed(cb) {
       playedCallback = cb;
+    },
+
+    onFailed(cb) {
+      failedCallback = cb;
     },
 
     onStarted(cb) {

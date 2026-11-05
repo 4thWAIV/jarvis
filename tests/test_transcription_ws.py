@@ -21,8 +21,9 @@ from jarvis import web_auth
 from jarvis.transcriber import PROTOCOL, RecognitionEvent
 
 PAGE = {"Origin": "http://localhost:5173"}
-START = {"type": "start", "version": 1, "sampleRate": 16000, "channels": 1,
-         "format": "pcm_s16le"}
+START = {"type": "start", "version": 2, "sampleRate": 16000, "channels": 1,
+         "format": "pcm_s16le", "clientId": "page-a", "captureEpoch": 1}
+OTHER_PAGE = {**START, "clientId": "page-b"}
 SILENCE = b"\x00\x00" * 1600
 
 
@@ -193,12 +194,93 @@ def test_a_second_page_is_told_it_is_busy_and_the_first_keeps_listening(client):
     with _open(client) as first:
         _ready(first)
         with _open(client) as second:
-            second.send_text(json.dumps(START))
+            second.send_text(json.dumps(OTHER_PAGE))
             msg = second.receive_json()
             assert (msg["type"], msg["code"]) == ("error", "busy")
         first.send_bytes(word("still"))
         first.send_bytes(SILENCE)
         assert _until(first, "final")[-1]["text"] == "still"
+
+
+def test_a_claim_from_another_page_takes_the_recogniser_and_tells_the_owner(client, engine):
+    """His Start listening on a second page takes over; the first page is
+    told `taken`, never left listening silently, and its words stop."""
+    with _open(client) as first:
+        _ready(first)
+        with _open(client) as second:
+            second.send_text(json.dumps({**OTHER_PAGE, "claim": True}))
+            msg = second.receive_json()
+            while msg["type"] == "loading":
+                msg = second.receive_json()
+            assert msg["type"] == "ready"
+            told = _until(first, "error")[-1]
+            assert told["code"] == "taken"
+            second.send_bytes(word("mine"))
+            second.send_bytes(SILENCE)
+            assert _until(second, "final")[-1]["text"] == "mine"
+            active = transcription_api.service.active
+            assert (active.client_id, active.epoch) == ("page-b", 1)
+
+
+def test_the_same_page_starting_again_replaces_its_own_older_capture(client):
+    with _open(client) as first:
+        _ready(first)
+        with _open(client) as again:
+            assert _ready(again)
+            assert _until(first, "error")[-1]["code"] == "taken"
+
+
+@pytest.mark.parametrize("start", [
+    {**START, "version": 1},
+    {k: v for k, v in START.items() if k != "clientId"},
+    {**START, "clientId": ""},
+    {**START, "clientId": "x" * 65},
+    {**START, "captureEpoch": -1},
+    {**START, "captureEpoch": "1"},
+    {**START, "captureEpoch": True},
+    {**START, "claim": "yes"},
+])
+def test_a_start_without_its_page_and_epoch_or_from_version_1_is_refused(client, start):
+    with _open(client) as ws:
+        ws.send_text(json.dumps(start))
+        assert ws.receive_json()["code"] == "invalid-format"
+    assert transcription_api.service.active is None
+
+
+def test_the_capture_counts_the_frames_it_was_given_and_decoded(client, engine):
+    with _open(client) as ws:
+        _ready(ws)
+        engine.gate.clear()
+        for w in ("one", "two", "three"):
+            ws.send_bytes(word(w))
+        capture = transcription_api.service.active
+        deadline = time.monotonic() + 5
+        while capture.frames_received < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (capture.frames_received, capture.frames_decoded) == (3, 0)
+        engine.gate.set()
+        _until(ws, "interim")
+        deadline = time.monotonic() + 5
+        while capture.frames_decoded < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert capture.frames_decoded == 3
+        service = transcription_api.service
+        assert service.capture_of("page-a") is capture and service.capture_of("page-b") is None
+        assert service.coverage_of("page-a") == (3, 3) and service.coverage_of("page-b") is None
+        assert service.epoch_of("page-a") == 1 and service.epoch_of("page-b") is None
+
+
+def test_each_page_s_newest_epoch_is_kept_after_its_capture_ends(client):
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "captureEpoch": 4}))
+        _until(ws, "ready")
+        ws.send_text(json.dumps({"type": "abort"}))
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "captureEpoch": 2}))     # an older one, late
+        _until(ws, "ready")
+    service = transcription_api.service
+    assert service.epoch_of("page-a") == 4
+    assert service.coverage_of("page-a") is None or service.capture_of("page-a").epoch == 2
 
 
 def test_finish_drains_what_was_sent_then_says_finished(client, engine):

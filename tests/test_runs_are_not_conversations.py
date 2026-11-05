@@ -35,6 +35,8 @@ def wired(monkeypatch, tmp_path):
     from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
+    from jarvis.attention_store import AttentionStore
+    monkeypatch.setattr(server_module, "attention_record", AttentionStore())
     return server_module, run_store
 
 
@@ -99,7 +101,7 @@ def test_list_agents_counts_conversations_not_runs(wired, monkeypatch):
     assert "tony-starks-website" not in out
 
 
-def test_a_run_finishing_is_not_announced_twice(wired, monkeypatch):
+def test_a_run_finishing_is_not_recorded_twice(wired, monkeypatch):
     """The run pipeline narrates its own runs. The watcher must not narrate
     them again, in a different vocabulary."""
     server, store = wired
@@ -113,7 +115,7 @@ def test_a_run_finishing_is_not_announced_twice(wired, monkeypatch):
                               "session": {"session_id": run_id,
                                           "voice_name": "tony-starks-website"}})
 
-    assert server._pending_completions == []
+    assert server.attention_record.items() == []
 
 
 def test_a_real_conversation_finishing_is_still_announced(wired, monkeypatch):
@@ -126,7 +128,7 @@ def test_a_real_conversation_finishing_is_still_announced(wired, monkeypatch):
                               "session": {"session_id": "real",
                                           "voice_name": "chitauri"}})
 
-    assert server._pending_completions == ["chitauri"]
+    assert [i.untrusted for i in server.attention_record.items()] == [{"agent": "chitauri"}]
 
 
 def test_run_status_still_reports_on_runs(wired, monkeypatch):
