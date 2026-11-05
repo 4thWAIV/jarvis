@@ -101,7 +101,7 @@ async def test_scrollback_stays_put_until_jump_to_latest(page_url):
         await page.route('**/api/conversation',read)
         voice.send({'type':'conversation'})
         await page.wait_for_function("document.querySelectorAll('.chat-message').length === 34")
-        await page.locator('.conversation-history').evaluate('e => e.scrollTop = 120')
+        await _wheel(page, -600)
         await page.wait_for_selector('.conversation-jump')
         before = await page.locator('.conversation-history').evaluate('e => e.scrollTop')
         voice.send({'type':'reply','utt':90,'text':'A new reply at the bottom.','done':True})
@@ -345,4 +345,66 @@ async def test_the_reply_being_read_glows_word_by_word_as_a_read_back_does_and_s
         await asyncio.sleep(.3)
         assert await page.locator('.chat-message.jarvis .spoken-word.now').count() == 0
         assert 'reviewing the migration' in await page.locator('.chat-message.jarvis').last.inner_text()
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_back(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        text = 'A reply being written. ' * 4
+        # It follows a reply as it grows, the highlight as it moves, and the
+        # bottom box as it grows (a capture opening, his turn stalling): the
+        # page's own scrolling and the box shrinking are never taken for his.
+        for n in range(1, 4):
+            voice.send({'type': 'reply', 'utt': 50, 'text': text * n, 'done': False})
+            await asyncio.sleep(.15)
+            assert await page.evaluate(GAP) < 2
+        voice.send({'type': 'audio', 'utt': 50, 'idx': 0, 'text': text, 'kind': 'reply', 'data': _silence_wav(4)},
+                   {'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
+                    'text': 'Tell hammer to ship the folder catalog fix once the review passes, and post the notes.'},
+                   {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'})
+        await page.wait_for_selector('#voice-turn')
+        await page.wait_for_selector('.chat-playback')
+        await asyncio.sleep(.6)
+        assert await page.evaluate(GAP) < 2
+        await page.evaluate("document.querySelector('.conversation-history').scrollTop = 200")
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 4, 'done': False})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2, 'a scroll the page made is not his'
+        assert await page.locator('.conversation-jump').count() == 0
+
+        # He scrolls up: it stays where he left it while the reply grows and
+        # the bottom box changes.
+        await _wheel(page, -700)
+        await page.wait_for_selector('.conversation-jump')
+        left = await page.evaluate(TOP)
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 6, 'done': False},
+                   {'type': 'turn', 'state': 'idle', 'turnId': 5, 'text': ''})
+        await asyncio.sleep(.4)
+        assert abs(await page.evaluate(TOP) - left) < 2
+        assert await page.locator('.conversation-jump').count() == 1
+
+        # Back to the bottom by his own scrolling, it follows again.
+        await _wheel(page, 5000)
+        await page.wait_for_selector('.conversation-jump', state='detached')
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 8, 'done': False})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2
+
+        # The keys move it as his too, and Jump to latest brings it back.
+        await page.locator('.chat-message .chat-copy').last.focus()
+        await page.keyboard.press('PageUp')
+        await page.wait_for_selector('.conversation-jump')
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 9, 'done': True})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) > 50
+        await page.get_by_role('button', name='Jump to latest').click()
+        assert await page.evaluate(GAP) < 2
+        voice.send({'type': 'reply', 'utt': 51, 'text': 'And one more.', 'done': True})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2
         await browser.close()

@@ -496,9 +496,12 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
     async with page_playwright as p:
         browser, page = await _open(p, page_url, team, routes=[("**/api/conversation", conversation)])
         await page.wait_for_selector(".conversation-history .history-turn")
-        await page.evaluate("document.querySelector('.conversation-history').scrollTop = 120")
+        # Scrolled up by him (a wheel: a scroll the page makes is not his).
+        box = await page.locator(".conversation-history").bounding_box()
+        await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        await page.mouse.wheel(0, -400)
+        await page.wait_for_selector(".conversation-jump")
         scrolled = await page.evaluate("document.querySelector('.conversation-history').scrollTop")
-        assert scrolled == 120
 
         # The Team Server tile, by keyboard.
         await page.focus("#team-server-tile")
@@ -520,7 +523,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.keyboard.press("Enter")
         await page.wait_for_selector("#network-detail", state="detached")
         assert await page.text_content(".centre-tabs [aria-selected=true]") == "Conversation"
-        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == 120
+        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == scrolled
 
         # An instance's tile, by keyboard, and back by the Conversation tab.
         await _network_tab(page)
@@ -539,7 +542,7 @@ async def test_the_keyboard_opens_each_detail_and_conversation_comes_back_as_it_
         await page.keyboard.press("Enter")
         await page.wait_for_function(
             "!document.querySelector('.centre-kept').classList.contains('hidden')")
-        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == 120
+        assert await page.evaluate("document.querySelector('.conversation-history').scrollTop") == scrolled
         await browser.close()
 
 
