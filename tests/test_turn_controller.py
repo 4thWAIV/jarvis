@@ -49,8 +49,10 @@ class Clock:
 
 
 class Harness:
-    def __init__(self, hold=1.5, leaky=False, frames=None, floor=None):
+    def __init__(self, hold=1.5, leaky=False, frames=None, floor=None, cues=()):
         self.clock = Clock(leaky)
+        self.cues = list(cues)          # [(stage, seconds before the deadline)]
+        self.paused: list[tuple] = []   # (turn, stage, when)
         self.committed: list[tuple] = []
         self.stalled: list[tuple] = []
         self.resumed: list[int] = []
@@ -62,6 +64,8 @@ class Harness:
             epoch_floor=lambda client: self.floor.get(client),
             on_stalled=lambda turn, text: self.stalled.append((turn, text)),
             on_resumed=self.resumed.append,
+            pause_cues=lambda: self.cues,
+            on_pause=lambda turn, stage: self.paused.append((turn, stage, self.clock.now)),
             clock=lambda: self.clock.now, call_later=self.clock.call_later,
             spawn=self._spawn)
 
@@ -322,3 +326,116 @@ def test_a_closed_socket_commits_nothing_and_gives_the_words_back():
     h.clock.advance(5)
     assert h.committed == []
     assert h.c.close() is None
+
+
+# ── the pause cues ───────────────────────────────────────────────────────
+# Patience 4, tentative 2.5 s before the end of the turn and likely-end 1.0
+# s before: the cues at 1.5 and 3 s of quiet, the commit at 4.
+
+TRIAL = (("tentative", 2.5), ("likely", 1.0))
+
+
+def _stages(h):
+    return [stage for _, stage, _ in h.paused]
+
+
+def test_the_pause_cues_come_once_each_at_their_times_then_the_commit():
+    h = Harness(hold=4, cues=TRIAL)
+    h.c.final("book a table", 1)
+    h.clock.advance(1.49)
+    assert h.paused == []
+    h.clock.advance(0.01)
+    assert h.paused == [(h.c.turn_id, "tentative", 1.5)]
+    assert h.c.pause_stage == "tentative" and h.c.state == "gathering"
+    h.clock.advance(1.5)
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("likely", 3.0)]
+    assert h.committed == []
+    h.clock.advance(1.0)
+    assert h.texts() == ["book a table"]
+    h.clock.advance(10)
+    assert _stages(h) == ["tentative", "likely"], "at most once per stage per pause"
+
+
+@pytest.mark.parametrize("leaky", [False, True])
+@pytest.mark.parametrize("speak_at,given", [(1.5, []), (2.0, ["tentative"]),
+                                             (3.0, ["tentative"]), (3.5, ["tentative", "likely"])])
+def test_speech_at_or_after_either_cue_cancels_what_is_still_due_and_starts_again(
+        speak_at, given, leaky):
+    """At each boundary (his word landing the moment a cue falls due, before
+    its callback runs) and between them, accepted speech cancels the cues
+    still pending, the revision moves on, and a timer that fires anyway
+    (leaky) gives nothing."""
+    h = Harness(hold=4, leaky=leaky, cues=TRIAL)
+    h.c.final("book a table", 1)
+    h.clock.advance(speak_at - 0.001)
+    h.clock.now = speak_at                       # the cue due now has not run yet
+    h.c.interim("for")
+    before = list(h.paused)
+    assert _stages(h) == given
+    h.clock.advance(1.49)
+    assert h.paused == before, "a cue from before he spoke again"
+    h.c.final("for two", 2)
+    h.clock.advance(4.0)
+    assert _stages(h)[len(before):] == ["tentative", "likely"]
+    assert all(at > speak_at for _, _, at in h.paused[len(before):])
+    assert h.texts() == ["book a table for two"]
+
+
+def test_a_cue_whose_revision_moved_on_is_never_given_late():
+    h = Harness(hold=4, leaky=True, cues=TRIAL)
+    h.c.final("one", 1)
+    h.clock.advance(1.0)
+    h.c.final("two", 2)                          # the old cues' token is stale now
+    h.clock.advance(0.6)                         # past the first cue's old time
+    assert h.paused == []
+    h.clock.advance(0.9)
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 2.5)]
+
+
+@pytest.mark.parametrize("end", ["discard", "close", "send_now"])
+def test_no_cue_once_the_turn_is_dropped_closed_or_sent(end):
+    h = Harness(hold=4, leaky=True, cues=TRIAL)
+    h.c.final("hello", 1)
+    getattr(h.c, end)()
+    h.clock.advance(10)
+    assert h.paused == []
+
+
+def test_no_cue_while_idle_or_only_an_interim_is_heard():
+    h = Harness(hold=4, cues=TRIAL)
+    h.clock.advance(10)
+    h.c.interim("so")
+    h.clock.advance(10)
+    assert h.paused == []
+
+
+def test_a_cue_not_after_he_stopped_is_not_scheduled():
+    """At patience 1.5 the tentative cue (2.5 s before) would fall before
+    he stopped: only the likely-end cue plays, at 0.5 s."""
+    h = Harness(hold=1.5, cues=TRIAL)
+    h.c.final("hi", 1)
+    h.clock.advance(2)
+    assert [(stage, at) for _, stage, at in h.paused] == [("likely", 0.5)]
+
+
+def test_no_cue_while_the_commit_waits_for_the_recogniser_or_after_a_stall():
+    h = Harness(hold=4, frames={"page-a": (40, 10)}, cues=(("late", 0.25),))
+    h.c.final("transfer the", 1, client="page-a")
+    h.clock.advance(3.75)
+    assert _stages(h) == ["late"]
+    h.clock.advance(10)                          # commit-pending, then stalled
+    assert h.c.state == "stalled" and _stages(h) == ["late"]
+    h.c.retry()
+    h.clock.advance(10)
+    assert _stages(h) == ["late"]
+
+
+def test_the_cue_timings_are_read_again_each_time_the_hold_starts():
+    h = Harness(hold=4, cues=TRIAL)
+    h.c.final("one", 1)
+    h.cues = [("likely", 2.0)]
+    h.clock.advance(4.0)
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("likely", 3.0)]
+    h.c.final("two", 2)
+    h.clock.advance(4.0)
+    assert [(stage, at) for _, stage, at in h.paused[2:]] == [("likely", 6.0)]

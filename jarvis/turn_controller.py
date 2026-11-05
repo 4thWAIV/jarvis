@@ -34,6 +34,18 @@ being gathered, which go on as their own turn. A discard (his stop under
 Discard) drops the turn; a closed voice socket commits nothing and gives
 back what was gathered.
 
+While he pauses in a gathered turn, two pause cues may be due before the
+commit (`pause_cues`: each stage with its seconds before the deadline,
+read again each time the hold starts): `tentative`, when JARVIS thinks he
+may be done, and `likely`, at the threshold. Each is timed from the same
+deadline as the commit and checked, when due, against the turn, the
+revision and the deadline it was scheduled for, and that the turn is still
+being gathered; any accepted speech moves the revision on and starts the
+pause again, so a cue is given at most once per stage per pause and never
+late. A stage whose time falls at or before the moment he stopped
+(seconds before >= the hold) is not scheduled. `on_pause` is told the
+turn and the stage; whether a sound plays is the caller's to decide.
+
 Every time-dependent step takes its clock and timers from the caller, so
 tests drive it with a fake clock.
 """
@@ -43,7 +55,7 @@ import asyncio
 import itertools
 import logging
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Sequence
 
 log = logging.getLogger("jarvis.turns")
 
@@ -53,12 +65,17 @@ log = logging.getLogger("jarvis.turns")
 # three is enough for anything still on its way.
 COVERAGE_POLL_SEC = 0.1
 COVERAGE_BOUND_SEC = 3.0
+# A loop may run a timer up to its clock's resolution early: a pause cue
+# that early is still on time.
+CUE_SLACK_SEC = 0.01
 
 Commit = Callable[[str, Optional[int], int], Awaitable[None]]
 # (frames the page had sent, frames decoded) for the page's capture, or
 # None when it has none open.
 Coverage = Callable[[str], Optional[tuple[int, int]]]
 CallLater = Callable[[float, Callable[[], None]], object]
+# The pause cues to time: each stage with its seconds before the deadline.
+PauseCues = Callable[[], Sequence[tuple[str, float]]]
 
 
 @dataclass
@@ -82,6 +99,8 @@ class TurnController:
                  epoch_floor: Callable[[str], Optional[int]] = lambda _client: None,
                  on_stalled: Callable[[int, str], None] = lambda _turn, _text: None,
                  on_resumed: Callable[[int], None] = lambda _turn: None,
+                 pause_cues: PauseCues = lambda: (),
+                 on_pause: Callable[[int, str], None] = lambda _turn, _stage: None,
                  clock: Optional[Callable[[], float]] = None,
                  call_later: Optional[CallLater] = None,
                  spawn: Optional[Callable[[Awaitable[None]], object]] = None,
@@ -93,6 +112,8 @@ class TurnController:
         self._epoch_floor = epoch_floor
         self._on_stalled = on_stalled
         self._on_resumed = on_resumed
+        self._pause_cues = pause_cues
+        self._on_pause = on_pause
         self._clock = clock or (lambda: asyncio.get_running_loop().time())
         self._call_later = call_later or (lambda d, f: asyncio.get_running_loop().call_later(d, f))
         self._spawn = spawn or asyncio.ensure_future
@@ -105,6 +126,8 @@ class TurnController:
         self._need: Optional[int] = None       # frames sent when the hold began
         self._open_interim = False             # speech heard and not yet finalised
         self._timer: object = None
+        self._cue_timers: list[object] = []    # this pause's cues, not yet due
+        self.pause_stage: Optional[str] = None # the last pause cue given in this pause
         self._discarded: dict[str, int] = {}   # page -> the epoch a discard moved it to
         self.committed: Optional[int] = None   # the turn awaiting its reply
 
@@ -241,7 +264,38 @@ class TurnController:
         self._deadline = self._clock() + self.hold
         sent = self._frames()
         self._need = sent[0] if sent else None
-        self._arm(self.hold, (self._turn.id, self.revision, self._deadline))
+        token = (self._turn.id, self.revision, self._deadline)
+        self._arm(self.hold, token)
+        self._arm_cues(token)
+
+    def _arm_cues(self, token: tuple) -> None:
+        """This pause's cues, each once, timed back from the deadline."""
+        self._cancel_cues()
+        for stage, before in self._pause_cues():
+            delay = self.hold - before
+            if delay > 0:
+                self._cue_timers.append(self._call_later(
+                    delay, lambda stage=stage, at=token[2] - before: self._cue_due(token, stage, at)))
+
+    def _cancel_cues(self) -> None:
+        for timer in self._cue_timers:
+            cancel = getattr(timer, "cancel", None)
+            if cancel:
+                cancel()
+        self._cue_timers = []
+        self.pause_stage = None
+
+    def _cue_due(self, token: tuple, stage: str, at: float) -> None:
+        """A pause cue's time: given only if nothing has moved since it was
+        scheduled, the turn is still being gathered, and its time has come."""
+        turn_id, revision, deadline = token
+        if (self._turn is None or self._turn.id != turn_id or self.revision != revision
+                or self._deadline != deadline or self.state != "gathering"
+                or not self._turn.parts or self._clock() < at - CUE_SLACK_SEC):
+            return
+        self.pause_stage = stage
+        log.info("turn %d: %s pause cue (revision %d)", turn_id, stage, revision)
+        self._on_pause(turn_id, stage)
 
     def _arm(self, delay: float, token: tuple) -> None:
         cancel = getattr(self._timer, "cancel", None)
@@ -280,6 +334,7 @@ class TurnController:
     def _commit_turn(self) -> None:
         turn = self._turn
         assert turn is not None
+        self._cancel_cues()
         self._turn, self._deadline, self._need, self._timer = None, None, None, None
         self.state = "awaiting-reply"
         self.committed = turn.id
@@ -294,6 +349,7 @@ class TurnController:
         if cancel:
             cancel()
         self._timer = None
+        self._cancel_cues()
         self.state = "stalled"
         log.warning("turn %d stalled: the recogniser did not catch up; waiting for his choice",
                     turn.id)
@@ -303,6 +359,7 @@ class TurnController:
         cancel = getattr(self._timer, "cancel", None)
         if cancel:
             cancel()
+        self._cancel_cues()
         turn = self._turn
         self._turn, self._deadline, self._need, self._timer = None, None, None, None
         self._open_interim = False

@@ -16,8 +16,8 @@
 import { reconnected } from "./liveRead";
 import { voiceInputSettings } from "./mic";
 import {
-  parseVoiceInputSettings, VOICE_INPUT_SETTINGS_PATH, type StopMode, type SwitchMode,
-  type VoiceInputSettings,
+  parseVoiceInputSettings, VOICE_INPUT_SETTINGS_PATH, type CueName, type CueSetting, type StopMode,
+  type SwitchMode, type VoiceInputSettings,
 } from "./voiceControl";
 
 let reads = 0;
@@ -42,7 +42,12 @@ export class SettingsRefused extends Error {
 }
 
 /** A change to any of the settings. */
-export type VoiceInputChange = { stop?: StopMode; switch?: SwitchMode; patience?: number; sounds?: boolean };
+export type VoiceInputChange = {
+  stop?: StopMode; switch?: SwitchMode; patience?: number; sounds?: boolean;
+  /** Any cue, with only what changes. */
+  cues?: Partial<Record<CueName, Partial<CueSetting>>>;
+  volume?: number;
+};
 
 /** Change any of the settings: the same call as the brain's
  *  set_voice_input_settings. Answers the settings now saved. */

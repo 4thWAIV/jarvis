@@ -135,7 +135,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment", "set_voice_input_settings",
+            "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
             "mark_updates_seen",
             "set_attention_settings")
@@ -173,6 +173,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
     ("set_voice_input_settings", {"stop": "discard"}),
+    ("play_cue", {"cue": "start"}),
     ("update_jarvis", {}),
     ("skip_reading", {}),
     ("stop_speaking", {}),
@@ -623,7 +624,8 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     assert got["ok"] and got["text"].startswith("Saved.")
     page = wired.client.get(voice_control.PATH).json()
     assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
-                    "sounds": True, "scope": "member"}
+                    "sounds": True, "cues": voice_control.CUE_DEFAULTS,
+                    "volume": voice_control.VOLUME_DEFAULT, "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
     assert "A quiet sound plays when listening starts" in _call(wired, "voice_input_settings")["text"]
@@ -632,6 +634,16 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     assert wired.client.get(voice_control.PATH).json() == {**page, "sounds": False}
     page = wired.client.get(voice_control.PATH).json()
     assert "Nothing was changed" in _call(wired, "set_voice_input_settings", sounds="loud")["text"]
+    cued = _call(wired, "set_voice_input_settings", volume=30,
+                 cues={"likely": {"tone": "low", "on": False}})
+    assert cued["ok"] and "likely end (about to send): off, tone low" in cued["text"]
+    assert "Cue volume 30 percent" in cued["text"]
+    assert "longer than his patience, so it does not play" in cued["text"]   # tentative at 1.5
+    page = wired.client.get(voice_control.PATH).json()
+    assert (page["volume"], page["cues"]["likely"]) == (30, {"on": False, "tone": "low",
+                                                             "before": 1.0})
+    timing = _call(wired, "set_voice_input_settings", cues={"likely": {"before": 3}})
+    assert "Nothing was changed" in timing["text"] and "tentative cue comes first" in timing["text"]
     refused = _call(wired, "set_voice_input_settings", stop="forever")
     assert "Nothing was changed" in refused["text"]
     from jarvis import data_paths

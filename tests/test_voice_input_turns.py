@@ -172,3 +172,99 @@ def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
                                                    {"action": "retry"})
         assert "Nothing was done" in c.portal.call(server.tool_voice_turn, {"action": "explode"})
     assert server.brain_instance.turns == []
+
+
+# ── the pause cues ───────────────────────────────────────────────────────
+
+def _quick_cues(**likely):
+    """Cues inside the default patience (1.5 s): tentative after 0.3 s of
+    quiet, likely-end after 0.9 s."""
+    from jarvis import voice_control
+    voice_control.change(cues={"tentative": {"before": 1.2}, "likely": {"before": 0.6, **likely}})
+
+
+def _pauses(seen):
+    return [m for m in seen if m.get("type") == "turn" and m.get("state") == "pause"]
+
+
+def _typed_ping(ws, text="ping"):
+    ws.send_json({"type": "transcript", "text": text, "isFinal": True, "typed": True})
+    return _drain_until(ws, lambda m: m.get("text") == f"Echo: {text}.", limit=60)
+
+
+def test_the_pause_cues_go_to_the_page_gathering_the_turn_and_no_other(client):
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as a, c.websocket_connect("/ws/voice") as b:
+        for ws in (a, b):
+            ws.receive_json(); ws.receive_json()
+        a.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                     "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(a, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        pauses = _pauses(seen)
+        turn = seen[-1]["turnId"]
+        assert [(p["stage"], p["turnId"], p["text"], p["sound"]) for p in pauses] == [
+            ("tentative", turn, "book a table", True), ("likely", turn, "book a table", True)]
+        assert _pauses(_typed_ping(b)) == [], "a cue reached a page whose turn it was not"
+    assert server.brain_instance.turns[0] == ("book a table", "user")
+
+
+def test_a_cue_that_is_off_is_shown_without_its_sound(client):
+    c, server = client
+    _quick_cues(on=False)
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [("tentative", True),
+                                                                       ("likely", False)]
+
+
+def test_no_cue_sounds_while_he_is_away(client, monkeypatch):
+    c, server = client
+    _quick_cues()
+    monkeypatch.setattr(server, "_availability", lambda: server.attention.AWAY)
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        assert [p["sound"] for p in _pauses(seen)] == [False, False]
+
+
+def test_no_cue_once_mute_or_mic_off_drops_the_turn(client):
+    """Mute (and a stop under Discard) sends turn_discard: the turn and its
+    cues are gone."""
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        ws.send_json({"type": "turn_discard", "clientId": "page-a", "captureEpoch": 2})
+        import time
+        time.sleep(1.2)                              # past both cues' times
+        assert _pauses(_typed_ping(ws)) == []
+    assert server.brain_instance.turns == [("ping", "user")]
+
+
+def test_the_brain_s_play_cue_plays_on_his_page_only(client):
+    c, server = client
+    server.brain_instance.current_origin = "user"
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        from jarvis import ui_contract
+        ws.send_json({"type": "ui_hello", "protocol": ui_contract.load().version,
+                      "clientId": "page-a", "capabilities": [],
+                      "visible": True, "reducedMotion": False, "navigationRevision": 0,
+                      "layoutRevision": 0})
+        _drain_until(ws, lambda m: m.get("type") == "ui_welcome")
+        said = c.portal.call(server.tool_play_cue, {"cue": "tentative"})
+        assert said.startswith("Played the tentative")
+        seen = _drain_until(ws, lambda m: m.get("type") == "cue_test", limit=10)
+        assert seen[-1] == {"type": "cue_test", "cue": "tentative"}
+        assert "Nothing was played" in c.portal.call(server.tool_play_cue, {"cue": "siren"})

@@ -25,6 +25,10 @@ from jarvis.messaging_wire import ATTACHMENTS_MAX
 # The ui_* tools' schemas come from the UI contract, the page's own declarations.
 from jarvis import ui_contract
 
+# The capture cues' tones (voice_control.TONES; a test keeps them the same:
+# this child does not import the server's modules).
+_CUE_TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
+
 PROTOCOL_VERSION = "2024-11-05"
 
 # How long this child waits for the server's answer to one tool call.
@@ -1952,7 +1956,8 @@ TOOL_SPECS = [
             "His voice input settings (Settings, Voice and language): what happens to "
             "what he was saying when he stops the microphone (keep or discard), whether "
             "listening continues or stops when he switches away from JARVIS, his patience, "
-            "and whether a quiet sound plays when listening starts and stops."),
+            "whether capture sounds play at all, and each capture cue: on or off, its tone, "
+            "a pause cue's seconds before the end of his turn, and the cue volume."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -1975,10 +1980,45 @@ TOOL_SPECS = [
                                             "governs when JARVIS may start talking. From "
                                             "the next time the page connects."},
                 "sounds": {"type": "boolean",
-                           "description": "Capture sounds: true plays a quiet sound when "
-                                          "listening starts and when it stops, false "
-                                          "plays none."},
+                           "description": "Capture sounds, the master switch: false plays "
+                                          "no cue at all; true plays each cue that is on."},
+                "cues": {
+                    "type": "object",
+                    "description": (
+                        "Any of the four capture cues, each with only what changes. start: "
+                        "listening started; stop: listening stopped; tentative: he paused "
+                        "and may be done; likely: he is still quiet and the turn is about "
+                        "to be sent. A pause cue plays at his patience minus its `before` "
+                        "seconds of quiet, so tentative's before must be more than "
+                        "likely's, and one at or over his patience does not play."),
+                    "properties": {
+                        name: {"type": "object", "properties": {
+                            "on": {"type": "boolean"},
+                            "tone": {"type": "string", "enum": list(_CUE_TONES)},
+                            **({"before": {"type": "number", "minimum": 0.25, "maximum": 10,
+                                           "description": "Seconds before the end of his "
+                                                          "turn."}}
+                               if name in ("tentative", "likely") else {})}}
+                        for name in ("start", "stop", "tentative", "likely")},
+                },
+                "volume": {"type": "integer", "minimum": 5, "maximum": 100,
+                           "description": "One volume for every cue, in percent of a quiet "
+                                          "ceiling."},
             },
+        },
+    },
+    {
+        "name": "play_cue",
+        "description": (
+            "Settings' Test button for one capture cue: his page plays it once, with its "
+            "tone and the cue volume, whether or not it is on. Only when he asks to hear "
+            "one. It changes nothing."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cue": {"type": "string", "enum": ["start", "stop", "tentative", "likely"]},
+            },
+            "required": ["cue"],
         },
     },
     {

@@ -2,7 +2,9 @@
  * What he has said aloud and not yet sent, above the composer: Send now
  * while it is being gathered, and, for a turn the speech recogniser could
  * not finish, Retry (wait for it again), Send now (as it was heard) and
- * Keep as draft (into the message box, unsent). Each is a frame to the
+ * Keep as draft (into the message box, unsent). While he is quiet in a
+ * gathered turn its label says the pause cue's stage (tentative, then
+ * likely end), the visual twin of the cue's sound. Each is a frame to the
  * server, the same call as the brain's voice_turn; nothing is sent here
  * on its own.
  */
@@ -16,10 +18,13 @@ export function VoiceTurnBar({ partRef }: { partRef: (el: Element | null) => voi
   const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
   if (!turn || !turn.text.trim()) return null;
   const stalled = turn.state === "stalled";
+  // A pause cue's stage is shown whether or not its sound plays.
+  const label = stalled ? "main.conversation.turnStalled"
+    : turn.pause ? (`main.conversation.turnPause.${turn.pause}` as const) : "main.conversation.turnGathering";
   return <div id="voice-turn" className={`chat-playback chat-voice-turn${stalled ? " stalled" : ""}`} role="group"
-              ref={partRef} aria-label={t("main.conversation.turn")}>
+              ref={partRef} aria-label={t("main.conversation.turn")} data-pause={turn.pause ?? undefined}>
     <div className="playback-label" role="status">
-      <strong>{t(stalled ? "main.conversation.turnStalled" : "main.conversation.turnGathering")}</strong>
+      <strong>{t(label)}</strong>
       <span>{turn.text}</span>
     </div>
     {stalled && <button type="button" id="voice-turn-retry" data-ui-action="domain"

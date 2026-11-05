@@ -52,7 +52,7 @@ async def _browser(p):
 
 
 async def _page(context, url, *, stop="keep", switch="stop", settings_status=200, script=None,
-                storage=None, view="?view=main", sounds=True, init=()):
+                storage=None, view="?view=main", sounds=True, init=(), **settings):
     page = await context.new_page()
     # Routed before the fake transcription socket is installed: Playwright's
     # socket routing replaces window.WebSocket with its own relay, and routed
@@ -70,7 +70,7 @@ async def _page(context, url, *, stop="keep", switch="stop", settings_status=200
     for extra in init:
         await page.add_init_script(extra)
     posted = await route_settings(page, stop=stop, switch=switch, status=settings_status,
-                                  sounds=sounds)
+                                  sounds=sounds, **settings)
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
     await page.goto(url + view)
     page.posted, page.voice = posted, voice

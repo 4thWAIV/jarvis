@@ -52,6 +52,8 @@ export const mainEn = {
   "main.conversation.hearing": "You are saying",
   "main.conversation.turn": "What you said, not sent yet",
   "main.conversation.turnGathering": "Not sent yet",
+  "main.conversation.turnPause.tentative": "Finished? Not sent yet",
+  "main.conversation.turnPause.likely": "Sending soon",
   "main.conversation.turnStalled": "Speech recognition could not finish this",
   "main.conversation.turnSend": "Send now",
   "main.conversation.turnSendTitle": "Send what you have said now, without waiting for the pause",

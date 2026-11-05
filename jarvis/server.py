@@ -5011,6 +5011,18 @@ def _show_turn(ws, frame: dict) -> None:
         _enqueue(queue, {"type": "turn", **frame})
 
 
+def _pause_frame(turn_id: int, stage: str, text: str) -> dict:
+    """A pause cue in his turn, for the one page the turn is gathered from
+    (its own voice socket): the stage it has reached, shown either way, and
+    whether its sound plays, which needs his capture sounds and that cue on,
+    and him engaged here (never while away or unknown). The page plays it
+    only while it is listening, at once or not at all."""
+    settings = voice_control.read_or_defaults()
+    sound = (voice_control.cue_sounds(settings, stage)
+             and _availability() == attention.ENGAGED)
+    return {"state": "pause", "stage": stage, "turnId": turn_id, "text": text, "sound": sound}
+
+
 def _turn_action(ws, action: str) -> str:
     """Act on one page's turn. Answers what happened, as a code: `sent`
     (committed now), `retrying` (waiting for the recogniser again), `kept`
@@ -8431,8 +8443,31 @@ def _voice_input_settings_said(settings: dict) -> str:
               else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
     said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
-            f"from JARVIS, it will {switch}. {patience}{sounds}These are {whose}'s settings")
+            f"from JARVIS, it will {switch}. {patience}{sounds}{_cues_said(settings)}"
+            f"These are {whose}'s settings")
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
+
+
+_CUE_SAID = {"start": "listening started", "stop": "listening stopped",
+             "tentative": "tentative (he may be done)", "likely": "likely end (about to send)"}
+
+
+def _cues_said(settings: dict) -> str:
+    """Each capture cue: on or off, its tone, and a pause cue's time at his
+    patience (voice_control: patience minus its seconds before the end)."""
+    parts = []
+    for name in voice_control.CUES:
+        cue = settings["cues"][name]
+        part = f"{_CUE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}"
+        if name in voice_control.PAUSE_CUES:
+            at = settings["patience"] - cue["before"]
+            part += (f", {cue['before']:g} s before the end of his turn ("
+                     + (f"after {at:g} s of quiet)" if at > 0 else
+                        "longer than his patience, so it does not play)"))
+        parts.append(part)
+    master = "" if settings["sounds"] else " (all silent while capture sounds are off)"
+    return (f"Cues{master}: " + "; ".join(parts)
+            + f". Cue volume {settings['volume']} percent. ")
 
 
 async def tool_voice_input_settings(args: dict) -> str:
@@ -8449,7 +8484,8 @@ async def tool_set_voice_input_settings(args: dict) -> str:
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
         settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        patience=args.get("patience"), sounds=args.get("sounds"))
+                                        patience=args.get("patience"), sounds=args.get("sounds"),
+                                        cues=args.get("cues"), volume=args.get("volume"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
@@ -8458,14 +8494,39 @@ async def tool_set_voice_input_settings(args: dict) -> str:
             + " It applies from the next time he stops the microphone or leaves the page.")
 
 
+# A cue played once on his page, as Settings' Test button plays it.
+CUE_TEST_FRAME = "cue_test"
+
+
+async def tool_play_cue(args: dict) -> str:
+    """Settings' Test button for one capture cue, by voice or typing: the
+    page of this turn plays it once, with its tone and the cue volume, on
+    or off. An ACTING tool: it makes a sound; it changes nothing."""
+    cue = args.get("cue")
+    if cue not in voice_control.CUES:
+        return f"Say which cue: {', '.join(voice_control.CUES)}. Nothing was played."
+    # The page his words came from, else the only page open.
+    page, why = ui_clients.target_page(None, _ui_origin(), _turn_heard)
+    if page is None and len(ui_clients.pages()) == 1:
+        page = ui_clients.pages()[0]
+    queue = _voice_queues.get(page.ws) if page is not None else None
+    if queue is None:
+        return f"Nothing was played, sir: {why or 'no JARVIS page is open'}."
+    _enqueue(queue, {"type": CUE_TEST_FRAME, "cue": cue})
+    return (f"Played the {_CUE_SAID[cue]} cue once on his page, sir, unless the page has not "
+            "been allowed to play sound yet.")
+
+
 TOOL_HANDLERS.update({
     "voice_input_settings": tool_voice_input_settings,
     "set_voice_input_settings": tool_set_voice_input_settings,
+    "play_cue": tool_play_cue,
 })
-ACTING_TOOLS.update({"set_voice_input_settings"})
+ACTING_TOOLS.update({"set_voice_input_settings", "play_cue"})
 TAINT_EXEMPT_TOOLS.update({
     "voice_input_settings": "it reads his own voice input settings: fixed values",
     "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
+    "play_cue": "it plays one fixed cue on his page; it reads nothing",
 })
 
 
@@ -12081,7 +12142,10 @@ async def voice_handler(ws: WebSocket):
         commit_turn, hold=patience, coverage=_capture_coverage, epoch_floor=_capture_epoch,
         on_stalled=lambda turn_id, text: show_turn(
             {"state": "stalled", "turnId": turn_id, "text": text}),
-        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)))
+        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)),
+        pause_cues=lambda: voice_control.pause_cue_leads(voice_control.read_or_defaults()),
+        on_pause=lambda turn_id, stage: show_turn(
+            _pause_frame(turn_id, stage, turns.gathered_text)))
     _voice_turns[ws] = turns
 
     try:

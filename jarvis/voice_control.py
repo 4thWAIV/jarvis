@@ -22,9 +22,29 @@ controller's hold and how long the speech scheduler waits before JARVIS
 starts talking after he has spoken. Read when a voice client connects;
 nothing saved, or anything unreadable, is the current constant
 (speech.END_OF_TURN_SEC); and his capture sounds (`sounds`, on or off,
-default on): the quiet tones the page plays when listening starts and when
-it stops, for any reason. Off plays none; what the page shows is the same
-either way.
+default on): the master switch for every capture cue. Off plays none;
+what the page shows is the same either way.
+
+The capture cues (`cues`, `volume`) are four quiet sounds, each on or off
+and each one tone of the fixed presets (TONES; the page holds their
+notes, voice.ts):
+
+  start      listening really started
+  stop       listening really stopped, for any reason
+  tentative  he has paused in a gathered turn: JARVIS thinks he may be done
+  likely     he is still quiet: the turn is about to be sent
+
+The two pause cues are timed in seconds before the end of his turn
+(`before`), never on a clock of their own: the end of his turn is his
+patience after the last word accepted as his, and a pause cue plays at
+patience - before seconds of quiet. So `tentative.before` must be more
+than `likely.before` (the tentative cue comes first), each within
+BEFORE_MIN to BEFORE_MAX, and a cue whose time falls at or before the
+moment he stopped (before >= patience) does not play at that patience.
+Changing his patience never invalidates them. The defaults (2.5 and 1.0)
+give the trial timings in turn-taking.md at a patience of 4: tentative
+after 1.5 s, likely-end after 3 s, the commit at 4. `volume` is one cue
+volume, VOLUME_MIN to VOLUME_MAX percent of a quiet ceiling the page sets.
 
 They are per user, on this JARVIS (the node's SQLite, its own schema
 version through run_store.migrate): the team member signed in, by GitHub
@@ -43,6 +63,7 @@ and nothing is inferred from the failure.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -64,6 +85,23 @@ SWITCH_MODES = ("continue", "stop")
 DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
 # His patience may be set within these bounds, in seconds.
 PATIENCE_MIN, PATIENCE_MAX = 0.5, 10.0
+# The capture cues: the two that mark listening, the two that mark a pause
+# in his turn, and the quiet presets each may play.
+LISTEN_CUES = ("start", "stop")
+PAUSE_CUES = ("tentative", "likely")
+CUES = LISTEN_CUES + PAUSE_CUES
+TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
+# A pause cue's seconds before the end of his turn.
+BEFORE_MIN, BEFORE_MAX = 0.25, PATIENCE_MAX
+# The cue volume, in percent of the page's quiet ceiling.
+VOLUME_MIN, VOLUME_MAX = 5, 100
+CUE_DEFAULTS = {
+    "start": {"on": True, "tone": "rise"},
+    "stop": {"on": True, "tone": "fall"},
+    "tentative": {"on": True, "tone": "pulse", "before": 2.5},
+    "likely": {"on": True, "tone": "resolve", "before": 1.0},
+}
+VOLUME_DEFAULT = 50
 LOCAL_OWNER = "local"
 PATH = "/api/settings/voice-input"
 # The hint every open page gets when the settings change (/ws/sessions).
@@ -85,6 +123,12 @@ _MIGRATIONS = {
     3: """
         ALTER TABLE voice_input_settings ADD COLUMN capture_sounds INTEGER
             CHECK (capture_sounds IN (0, 1));
+    """,
+    # The cues' choices as JSON, only what he chose (NULL: none); the volume
+    # NULL until chosen.
+    4: """
+        ALTER TABLE voice_input_settings ADD COLUMN cue_settings TEXT;
+        ALTER TABLE voice_input_settings ADD COLUMN cue_volume INTEGER;
     """,
 }
 
@@ -126,55 +170,141 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def read(user: Optional[str] = None) -> dict:
-    """The settings in force for `user` (the user now, by default):
-    {stop, switch, patience, sounds, saved, scope}. Raises Unreadable if the store cannot be
-    read, and treats a saved row it does not understand as unreadable too."""
-    user = user or user_key()
+def _row(user: str) -> Optional[sqlite3.Row]:
     try:
         with closing(_connect()) as conn:
-            row = conn.execute("SELECT stop_mode, switch_mode, patience_sec, capture_sounds "
-                               "FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
+            return conn.execute(
+                "SELECT stop_mode, switch_mode, patience_sec, capture_sounds, cue_settings, "
+                "cue_volume FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
     except (sqlite3.Error, RuntimeError) as e:
         log.warning("voice input settings could not be read (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be read.") from e
-    patience, sounds = END_OF_TURN_SEC, DEFAULTS["sounds"]
-    if row is None:
-        stop, switch, saved = DEFAULTS["stop"], DEFAULTS["switch"], False
-    else:
-        stop, switch, saved = row["stop_mode"], row["switch_mode"], True
-        if stop not in STOP_MODES or switch not in SWITCH_MODES:
-            raise Unreadable("Your saved voice input settings are not ones JARVIS knows.")
-        if _patience_ok(row["patience_sec"]):
-            patience = float(row["patience_sec"])
-        if row["capture_sounds"] is not None:
-            sounds = bool(row["capture_sounds"])
-    return {"stop": stop, "switch": switch, "saved": saved, "patience": patience, "sounds": sounds,
+
+
+def _answer(user: str, stop: str, switch: str, saved: bool, patience: float, sounds: bool,
+            cues: dict, volume: int) -> dict:
+    return {"stop": stop, "switch": switch, "saved": saved, "patience": patience,
+            "sounds": sounds, "cues": cues, "volume": volume,
             "scope": "local" if user == LOCAL_OWNER else "member"}
 
 
-def _patience_ok(value: object) -> bool:
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and PATIENCE_MIN <= value <= PATIENCE_MAX)
+def defaults(user: str = LOCAL_OWNER) -> dict:
+    """What `read` answers for a user who has chosen nothing."""
+    return _answer(user, DEFAULTS["stop"], DEFAULTS["switch"], False, END_OF_TURN_SEC,
+                   DEFAULTS["sounds"], _cues_in_force(None), VOLUME_DEFAULT)
 
 
-def patience(user: Optional[str] = None) -> float:
-    """His patience in seconds: the saved value, or the current constant
-    when there is none or the store cannot be read."""
+def read(user: Optional[str] = None) -> dict:
+    """The settings in force for `user` (the user now, by default):
+    {stop, switch, patience, sounds, cues, volume, saved, scope}. Raises
+    Unreadable if the store cannot be read, and treats a saved row it does
+    not understand as unreadable too. A saved patience, cue or volume that
+    is not one JARVIS knows is the default instead."""
+    user = user or user_key()
+    row = _row(user)
+    if row is None:
+        return defaults(user)
+    stop, switch = row["stop_mode"], row["switch_mode"]
+    if stop not in STOP_MODES or switch not in SWITCH_MODES:
+        raise Unreadable("Your saved voice input settings are not ones JARVIS knows.")
+    patience = float(row["patience_sec"]) if _patience_ok(row["patience_sec"]) else END_OF_TURN_SEC
+    sounds = DEFAULTS["sounds"] if row["capture_sounds"] is None else bool(row["capture_sounds"])
+    volume = int(row["cue_volume"]) if _volume_ok(row["cue_volume"]) else VOLUME_DEFAULT
+    return _answer(user, stop, switch, True, patience, sounds,
+                   _cues_in_force(_saved_cues(row["cue_settings"])), volume)
+
+
+def read_or_defaults(user: Optional[str] = None) -> dict:
+    """The settings in force, or the defaults when the store cannot be
+    read: for the voice path, which never stops for them."""
     try:
-        return read(user)["patience"]
+        return read(user)
     except Unreadable:
-        return END_OF_TURN_SEC
+        return defaults()
+
+
+def _number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _patience_ok(value: object) -> bool:
+    return _number(value) and PATIENCE_MIN <= value <= PATIENCE_MAX  # type: ignore[operator]
+
+
+def _volume_ok(value: object) -> bool:
+    return _number(value) and VOLUME_MIN <= value <= VOLUME_MAX  # type: ignore[operator]
+
+
+def _cue_problem(name: object, choice: object) -> Optional[str]:
+    """Why one cue's choice is not one JARVIS takes, or None."""
+    if name not in CUES:
+        return f"The cues are {', '.join(CUES)}."
+    if not isinstance(choice, dict) or not choice:
+        return f"Say what to change about the {name} cue: on, tone" + (
+            " or before." if name in PAUSE_CUES else ".")
+    keys = {"on", "tone", "before"} if name in PAUSE_CUES else {"on", "tone"}
+    for key, value in choice.items():
+        if key not in keys:
+            return f"The {name} cue has {', '.join(sorted(keys))}."
+        if key == "on" and not isinstance(value, bool):
+            return f"The {name} cue is on (true) or off (false)."
+        if key == "tone" and value not in TONES:
+            return f"A cue's tone is one of {', '.join(TONES)}."
+        if key == "before" and not (_number(value) and BEFORE_MIN <= value <= BEFORE_MAX):
+            return (f"A pause cue plays {BEFORE_MIN:g} to {BEFORE_MAX:g} seconds before the "
+                    "end of his turn.")
+    return None
+
+
+def _saved_cues(raw: object) -> dict:
+    """The cue choices saved, only those JARVIS still takes."""
+    try:
+        saved = json.loads(raw) if isinstance(raw, str) else {}
+    except ValueError:
+        saved = {}
+    if not isinstance(saved, dict):
+        return {}
+    return {name: choice for name, choice in saved.items()
+            if _cue_problem(name, choice) is None}
+
+
+def _cues_in_force(saved: Optional[dict]) -> dict:
+    """Each cue's defaults with his choices over them. A saved pair of pause
+    timings out of order is the defaults' pair."""
+    cues = {name: {**CUE_DEFAULTS[name], **((saved or {}).get(name) or {})} for name in CUES}
+    if not _in_order(cues):
+        for name in PAUSE_CUES:
+            cues[name]["before"] = CUE_DEFAULTS[name]["before"]
+    return cues
+
+
+def _in_order(cues: dict) -> bool:
+    return cues["tentative"]["before"] > cues["likely"]["before"]
+
+
+def pause_cue_leads(settings: dict) -> list[tuple[str, float]]:
+    """The pause cues to time in a gathered turn, each with its seconds
+    before the end of his turn: every pause cue, on or off (whether one
+    sounds is decided when it is due, so turning it on or off applies at
+    once)."""
+    return [(name, float(settings["cues"][name]["before"])) for name in PAUSE_CUES]
+
+
+def cue_sounds(settings: dict, name: str) -> bool:
+    """Whether this cue makes a sound: capture sounds on, and the cue on."""
+    return bool(settings["sounds"] and settings["cues"][name]["on"])
 
 
 def validate(stop: object = None, switch: object = None, patience: object = None,
-             sounds: object = None
-             ) -> tuple[Optional[str], Optional[str], Optional[float], Optional[bool]]:
+             sounds: object = None, cues: object = None, volume: object = None
+             ) -> tuple[Optional[str], Optional[str], Optional[float], Optional[bool],
+                        Optional[dict], Optional[int]]:
     """The change asked for, checked: each given value must be one of its
     setting's, and at least one must be given."""
-    if stop is None and switch is None and patience is None and sounds is None:
+    if all(v is None for v in (stop, switch, patience, sounds, cues, volume)):
         raise Invalid("nothing-to-change",
-                      "Say which setting to change: stop, switch, patience or sounds.")
+                      "Say which setting to change: stop, switch, patience, sounds, cues or "
+                      "volume.")
     if sounds is not None and not isinstance(sounds, bool):
         raise Invalid("invalid-sounds", "Capture sounds are on (true) or off (false).")
     if patience is not None and not _patience_ok(patience):
@@ -184,41 +314,82 @@ def validate(stop: object = None, switch: object = None, patience: object = None
         raise Invalid("invalid-stop", "When I stop the microphone is keep or discard.")
     if switch is not None and switch not in SWITCH_MODES:
         raise Invalid("invalid-switch", "When I switch away from JARVIS is continue or stop.")
+    if volume is not None and not _volume_ok(volume):
+        raise Invalid("invalid-volume",
+                      f"The cue volume is {VOLUME_MIN} to {VOLUME_MAX} percent.")
+    if cues is not None:
+        if not isinstance(cues, dict) or not cues:
+            raise Invalid("invalid-cue", f"Say which cue to change: {', '.join(CUES)}.")
+        for name, choice in cues.items():
+            problem = _cue_problem(name, choice)
+            if problem:
+                raise Invalid("invalid-cue", problem)
     return (stop, switch, None if patience is None else float(patience),  # type: ignore[return-value]
-            sounds)
+            sounds, cues,  # type: ignore[return-value]
+            None if volume is None else int(round(volume)))  # type: ignore[arg-type]
 
 
 def change(stop: object = None, switch: object = None, patience: object = None,
-           sounds: object = None, user: Optional[str] = None) -> dict:
+           sounds: object = None, cues: object = None, volume: object = None,
+           user: Optional[str] = None) -> dict:
     """Save any of the settings for `user` and answer the settings now in
     force, as `read` gives them. Starts, stops, submits and discards
-    nothing: they apply from the next stop or page switch (capture sounds
-    from the next start or stop)."""
-    stop, switch, patience, sounds = validate(stop, switch, patience, sounds)
+    nothing: they apply from the next stop or page switch (the cues from
+    the next one due). A change to the cues is merged into what he chose
+    before, and refused when it would put the tentative cue at or after
+    the likely-end cue."""
+    stop, switch, patience, sounds, cues, volume = validate(stop, switch, patience, sounds,
+                                                            cues, volume)
     user = user or user_key()
     now = read(user)
+    row = _row(user)
+    chosen = _saved_cues(row["cue_settings"]) if row is not None else {}
+    for name, choice in (cues or {}).items():
+        chosen[name] = {**chosen.get(name, {}), **choice}
+    if cues and not _in_order({name: {**CUE_DEFAULTS[name], **chosen.get(name, {})}
+                               for name in PAUSE_CUES}):
+        raise Invalid("invalid-cue-timing",
+                      "The tentative cue comes first: its seconds before the end of his turn "
+                      "must be more than the likely-end cue's.")
     new = {"stop": stop or now["stop"], "switch": switch or now["switch"],
            "patience": patience,        # None: keep what is saved
-           "sounds": None if sounds is None else int(sounds)}
+           "sounds": None if sounds is None else int(sounds),
+           "cues": json.dumps(chosen, sort_keys=True) if cues else None,
+           "volume": volume}
     try:
         with closing(_connect()) as conn, conn:
             conn.execute(
                 "INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
-                "capture_sounds, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
+                "capture_sounds, cue_settings, cue_volume, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
                 "UPDATE SET stop_mode = excluded.stop_mode, switch_mode = excluded.switch_mode, "
                 "patience_sec = COALESCE(excluded.patience_sec, voice_input_settings.patience_sec), "
                 "capture_sounds = COALESCE(excluded.capture_sounds, "
-                "voice_input_settings.capture_sounds), updated_at = excluded.updated_at",
-                (user, new["stop"], new["switch"], new["patience"], new["sounds"], time.time()))
+                "voice_input_settings.capture_sounds), "
+                "cue_settings = COALESCE(excluded.cue_settings, voice_input_settings.cue_settings), "
+                "cue_volume = COALESCE(excluded.cue_volume, voice_input_settings.cue_volume), "
+                "updated_at = excluded.updated_at",
+                (user, new["stop"], new["switch"], new["patience"], new["sounds"], new["cues"],
+                 new["volume"], time.time()))
     except sqlite3.Error as e:
         log.warning("voice input settings could not be saved (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be saved.") from e
-    log.info("voice input settings for %s: stop=%s switch=%s patience=%s sounds=%s", user,
-             new["stop"], new["switch"], new["patience"], new["sounds"])
+    log.info("voice input settings for %s: stop=%s switch=%s patience=%s sounds=%s cues=%s "
+             "volume=%s", user, new["stop"], new["switch"], new["patience"], new["sounds"],
+             new["cues"], new["volume"])
     saved = read(user)
     if _publish is not None:
         _publish({"type": FRAME})
     return saved
+
+
+def patience(user: Optional[str] = None) -> float:
+    """His patience in seconds: the saved value, or the current constant
+    when there is none or the store cannot be read."""
+    try:
+        return read(user)["patience"]
+    except Unreadable:
+        return END_OF_TURN_SEC
 
 
 # ── the page's routes ────────────────────────────────────────────────────
@@ -237,7 +408,8 @@ async def api_read():
 async def api_change(body: dict = Body(default_factory=dict)):
     try:
         return change(stop=body.get("stop"), switch=body.get("switch"),
-                      patience=body.get("patience"), sounds=body.get("sounds"))
+                      patience=body.get("patience"), sounds=body.get("sounds"),
+                      cues=body.get("cues"), volume=body.get("volume"))
     except Invalid as e:
         return JSONResponse(status_code=400, content=e.to_json())
     except Unreadable as e:
