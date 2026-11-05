@@ -130,6 +130,44 @@ Read from Claude Code 2.1.302's own bundle, then proved:
 - Memory from `GlobalMemoryStatusEx` agrees with CIM. CPU from
   `GetSystemTimes` is not yet validated against an independent reading.
 
+## Second session (same day, after a VM restart): what was fixed and measured
+
+Commits `6404dc4`..`0db0e18`, each with its native evidence in its message.
+Tests run with `--basetemp` under `%TEMP%\jb` unless noted (see MAX_PATH below),
+and without UTF-8 mode unless noted.
+
+| Area | Result |
+|---|---|
+| Import gate | All 115 importable modules import; `jarvis.server` has 141 routes (144 once `jarvis/web` is built); nothing written to data. Folder reads refuse as `unsupported` on Windows (16 reader tests skip there, a new test checks the refusal). |
+| Process identity | Roster `procStart` re-confirmed equal to the native token after the restart. Each entry inspected once a poll; a reused pid (real child, wrong token) is `exited`; uninspectable `unknown` no longer announced as finished. Roster read as UTF-8 (cp1252 misread shown natively). |
+| Installed root | `%LOCALAPPDATA%\JARVIS` from the known-folder API (equals `LOCALAPPDATA`); checkout and `JARVIS_DATA_DIR`/`JARVIS_ENV_FILE` overrides unchanged; spaces and accents fine; two starts persist. |
+| Host metrics | CPU 3.3 vs 3.4 % idle and 53.9 vs 53.6 % with two of four CPUs busy against `\Processor(_Total)\% Processor Time`; memory total equals CIM, used within 25 MB. |
+| Team secrets | Credential Manager store exercised with generated values under a unique namespace: per-server credential, persist local machine, isolation, read from a second process, replace, delete; nothing left. |
+| Templates | Persona and connections templates LF via `.gitattributes` and synced as bytes: fresh Windows clone, its own frontend build, wheel and sdist, clean install, isolated two-start sync `seeded` then `current`. A persona written by the old code is kept unchanged. |
+| Claude launch | `shlex.split` stripped the real path's backslashes; now Windows rules. Through `ClaudeSession`: 23 arguments byte-exact from a spaced, accented launcher; the real `claude.exe` from a spaced hard link answered a nonce on `claude-opus-5-5` and exited on close. |
+| Frontend | `npm ci` + `npm run build` pass (tsc clean, 187 modules; the existing >500 kB chunk warning). |
+| Wheel | Built from an export outside the checkout with the frontend; installed in a clean venv outside any checkout: `jarvis --help` exits 0, CI's import assertions hold, `CHECKOUT` false. |
+
+Still failing natively, none caused by these commits (failing sets diffed against
+the prior HEAD):
+
+- **MAX_PATH:** four tests fail at pytest's default `%TEMP%\pytest-of-<user>\pytest-N`
+  base (two encoded project folders exceed 260 characters) and pass under a short
+  base. Product risk for long project paths remains while `LongPathsEnabled=0`.
+- **Process termination:** 13 brain/run-executor tests (killpg, SIGTERM, children
+  left running, `WinError 87`); waits on the termination interface.
+- **Private files:** `ensure_tool_token` (`O_NOFOLLOW`) fails 61 tests that need the
+  tool token (brain/page parity and others); waits on the private-file boundary
+  proposed in `boundary-proposals-2026-11-05.md`.
+- **Test defects:** text-mode writes giving CRLF (`test_usage_scan`), locale-encoded
+  reads at collection (`test_messaging_client.py:485`, `test_messaging_api.py`) and
+  of the page catalog (`test_team_client`), all passing or collecting in UTF-8 mode.
+
+Held for owner review: reading Claude Code's published peer key for the named-pipe
+inbox. Claude Code 2.1.302's own sender finds a target's key file by the hash of its
+canonical pipe path and checks the owner is alive with a matching `procStart`, so it
+is Claude Code's same-user peer channel; no code reads it yet.
+
 ## Not yet probed
 
 Codex discovery and delivery (Codex not installed); an exact-target prompt
