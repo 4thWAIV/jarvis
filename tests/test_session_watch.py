@@ -82,8 +82,8 @@ def test_repeated_liveness_checks_leave_a_disposable_process_running():
 
 def test_an_uninspectable_process_is_neither_alive_nor_gone(monkeypatch):
     from jarvis import process_inspect as pi
-    monkeypatch.setattr(pi, "_inspect_posix",
-                        lambda pid: pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
+    monkeypatch.setattr(pi, "inspect_process", lambda pid, expected_identity=None:
+                        pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
     assert sw.pid_state(4242) is pi.State.UNKNOWN
     assert sw.pid_alive(4242) is False
 
@@ -93,8 +93,8 @@ def test_a_session_whose_processes_cannot_be_inspected_is_unknown_not_gone(
     """Access denied must not read as finished: it is not announced as gone,
     is not between turns (nothing is sent to it), and is not steerable."""
     from jarvis import process_inspect as pi
-    monkeypatch.setattr(pi, "_inspect_posix",
-                        lambda pid: pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
+    monkeypatch.setattr(pi, "inspect_process", lambda pid, expected_identity=None:
+                        pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
     root = tmp_path / ".claude"
     write_roster(root, pid=4242, session_id="u", cwd="/p", name="u", socket=True,
                  status_updated_at=1000)
@@ -102,6 +102,111 @@ def test_a_session_whose_processes_cannot_be_inspected_is_unknown_not_gone(
     s, = sw.build_snapshot(roots=[root]).sessions
     assert s.state == sw.UNKNOWN
     assert s.steerable is False
+
+
+def _windows_roster(root, monkeypatch, pid, proc_start, **kw):
+    """A roster entry as Claude Code writes it on Windows (measured, 2.1.302)."""
+    monkeypatch.setattr(sw.sys, "platform", "win32")
+    return write_roster(root, pid=pid, session_id=kw.pop("session_id", "w"), cwd=r"C:\p",
+                        name="w", extra={"procStart": proc_start,
+                                         "pidDomain": "win32:host-1"}, **kw)
+
+
+def test_the_roster_s_process_start_and_domain_are_kept_as_written(tmp_path):
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n",
+                 extra={"procStart": "134383792987670943", "pidDomain": "win32:host-1"})
+    entry, = sw.read_roster([root])
+    assert entry.proc_start == "134383792987670943"
+    assert entry.pid_domain == "win32:host-1"
+
+
+def test_a_windows_roster_entry_is_checked_against_its_creation_token(tmp_path, monkeypatch):
+    root = tmp_path / ".claude"
+    _windows_roster(root, monkeypatch, 4242, "134383792987670943")
+    entry, = sw.read_roster([root])
+    assert sw.roster_identity(entry) == sw.process_inspect.Identity(
+        4242, "win-filetime:134383792987670943")
+
+
+@pytest.mark.parametrize("domain,start", [
+    ("darwin", "Thu Nov  5 10:00:00 2026"),       # macOS: a ctime string
+    ("win32:host-1", "Thu Nov  5 10:00:00 2026"),  # not a FILETIME
+    ("win32:host-1", ""),
+    (None, "134383792987670943"),                  # no domain: not proven Windows'
+])
+def test_no_identity_is_expected_without_a_windows_creation_token(
+        tmp_path, monkeypatch, domain, start):
+    monkeypatch.setattr(sw.sys, "platform", "win32")
+    extra = {"procStart": start}
+    if domain:
+        extra["pidDomain"] = domain
+    root = tmp_path / ".claude"
+    write_roster(root, pid=4242, session_id="s", cwd="/p", name="n", extra=extra)
+    entry, = sw.read_roster([root])
+    assert sw.roster_identity(entry) is None
+
+
+def test_off_windows_no_identity_is_expected_even_from_a_windows_roster(tmp_path, monkeypatch):
+    """process_inspect reports no identity off Windows, so expecting one
+    would make every session unknown."""
+    root = tmp_path / ".claude"
+    _windows_roster(root, monkeypatch, 4242, "134383792987670943")
+    monkeypatch.setattr(sw.sys, "platform", "darwin")
+    entry, = sw.read_roster([root])
+    assert sw.roster_identity(entry) is None
+
+
+def test_a_roster_written_in_utf8_is_read_as_utf8(tmp_path):
+    """Claude Code writes UTF-8; Windows' default encoding would misread a
+    folder name with an accent, and the transcript would not be found."""
+    root = tmp_path / ".claude"
+    p = write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n")
+    data = json.loads(p.read_text())
+    data["cwd"] = "C:\\Users\\Jos\u00e9\\p"
+    p.write_bytes(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    entry, = sw.read_roster([root])
+    assert entry.cwd == "C:\\Users\\Jos\u00e9\\p"
+
+
+def test_each_process_is_inspected_once_a_poll(tmp_path, monkeypatch):
+    from jarvis import process_inspect as pi
+    asked = []
+    monkeypatch.setattr(pi, "inspect_process", lambda pid, expected_identity=None: (
+        asked.append(pid) or pi.Inspection(pi.State.ALIVE, None, "test")))
+    root = tmp_path / ".claude"
+    write_roster(root, pid=4242, session_id="s", cwd="/p", name="n")
+    write_roster(tmp_path / ".claude-orcha", pid=4343, session_id="s", cwd="/p", name="n")
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    sw.build_snapshot(roots=[root, tmp_path / ".claude-orcha"])
+    assert sorted(asked) == [4242, 4343]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the creation token is Windows'")
+def test_natively_a_reused_pid_is_exited_and_its_own_process_alive(tmp_path, monkeypatch):
+    """Against the real kernel: a roster entry whose procStart is the
+    process's own creation token is alive; the same pid with another token
+    (the pid reused) is not, and so the session is gone."""
+    from jarvis import process_inspect as pi
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             stdin=subprocess.DEVNULL)
+    try:
+        token = pi.inspect_process(child.pid).identity.start_token
+        ticks = token.removeprefix("win-filetime:")
+        own, reused = tmp_path / "own", tmp_path / "reused"
+        _windows_roster(own, monkeypatch, child.pid, ticks, session_id="own")
+        _windows_roster(reused, monkeypatch, child.pid, str(int(ticks) - 10_000_000),
+                        session_id="reused")
+        write_transcript(own, cwd=r"C:\p", session_id="own", title="T", last_prompt="P")
+        write_transcript(reused, cwd=r"C:\p", session_id="reused", title="T", last_prompt="P")
+        (e_own,), (e_reused,) = sw.read_roster([own]), sw.read_roster([reused])
+        assert sw.entry_state(e_own) is pi.State.ALIVE
+        assert sw.entry_state(e_reused) is pi.State.EXITED
+        s, = sw.build_snapshot(roots=[reused]).sessions
+        assert s.state == sw.GONE
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
 
 
 def test_a_confirmed_exit_is_still_gone(tmp_path):
@@ -136,7 +241,7 @@ def test_project_name_is_unaffected_for_a_normal_non_worktree_path():
 
 
 def test_config_roots_includes_both_defaults_and_the_env_extras(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", f"{tmp_path}/x:{tmp_path}/y")
+    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", f"{tmp_path}/x{os.pathsep}{tmp_path}/y")
     roots = sw.config_roots()
     names = [r.name for r in roots]
     assert ".claude" in names and ".claude-orcha" in names
@@ -575,7 +680,7 @@ def test_an_asked_question_tool_use_makes_a_session_need_you(tmp_path):
 
 @pytest.fixture
 def all_alive(monkeypatch):
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
 
 
 def test_a_lone_project_is_named_by_its_folder(tmp_path, all_alive):

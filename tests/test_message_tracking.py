@@ -454,7 +454,7 @@ def test_keystrokes_and_commands_still_write_steers(server):
 
 @pytest.fixture
 def watched(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
     root = tmp_path / ".claude"
     write_roster(root, pid=os.getpid(), session_id=SID, cwd=CWD, name="guard", status="idle")
     _transcript(root, [say("hello", time.time() - 3600)])

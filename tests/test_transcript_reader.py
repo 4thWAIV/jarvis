@@ -91,7 +91,7 @@ def test_a_codex_rollout_reads_the_same_way(tmp_path):
 
 def test_the_route_serves_a_session_s_page_and_its_cursor(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
     from jarvis import server
     importlib.reload(server)
     root = tmp_path / ".claude"

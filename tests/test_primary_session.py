@@ -36,14 +36,15 @@ NOW = NOW_MS / 1000.0
 # A roster file is named for its pid, so several conversations need several
 # pids — and every one of them has to look alive. `pid_alive` is exercised
 # for real against this process and a dead pid in test_session_watch.py; here
-# it is stubbed so the rule under test can be given the roster it needs.
+# `entry_state`, which a poll asks once per roster entry, is stubbed so the rule under test can be given the roster it needs.
 LIVE_PID = 100_000
 DEAD_PID = 999_999
 
 
 @pytest.fixture(autouse=True)
 def _pids_are_alive_below_the_dead_one(monkeypatch):
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: 0 < int(pid) < DEAD_PID)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE
+                        if 0 < int(e.pid) < DEAD_PID else sw.process_inspect.State.EXITED)
 
 
 _next_pid = iter(range(LIVE_PID, LIVE_PID + 500))

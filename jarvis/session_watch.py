@@ -19,6 +19,7 @@ import json
 import os
 import re
 import stat
+import sys
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -53,19 +54,43 @@ def config_roots() -> list[Path]:
     return roots
 
 
-def pid_state(pid) -> process_inspect.State:
-    """What can be confirmed about a roster entry's process, without
-    signalling it (`process_inspect`). The roster carries no OS creation
-    token (its `startedAt` is the CLI's own stamp, not proven equal to one),
-    so no identity is expected here: a reused PID is not detected by this
-    call, and `unknown` (access denied, say) is kept apart from `exited`."""
-    return process_inspect.inspect_process(pid).state
+def pid_state(pid, identity: process_inspect.Identity | None = None) -> process_inspect.State:
+    """What can be confirmed about a process, without signalling it
+    (`process_inspect`). With an `identity`, a process at that pid that
+    started at another moment (the pid reused) is `exited`, and one whose
+    start cannot be read is `unknown`. `unknown` (access denied, say) is
+    kept apart from `exited`."""
+    return process_inspect.inspect_process(pid, identity).state
 
 
 def pid_alive(pid) -> bool:
     """True only when the process was confirmed running. `unknown` is not
     alive: callers that must tell it from `exited` ask `pid_state`."""
     return pid_state(pid) is process_inspect.State.ALIVE
+
+
+def roster_identity(entry: "RosterEntry") -> process_inspect.Identity | None:
+    """The process a roster entry was written by, where its `procStart` is
+    proven to be the operating system's own creation token.
+
+    On Windows Claude Code writes `pidDomain` "win32:<host>" and `procStart`
+    as the decimal creation FILETIME, measured equal to what
+    GetProcessTimes gives for the live process (Claude Code 2.1.302, Windows
+    11). On macOS `procStart` is a ctime string and process_inspect reports
+    no identity there, so expecting one would make every session unknown:
+    None, and a reused pid is not detected."""
+    if sys.platform != "win32" or not (entry.pid_domain or "").startswith("win32:"):
+        return None
+    token = entry.proc_start or ""
+    if not (token.isascii() and token.isdigit()):
+        return None
+    return process_inspect.Identity(entry.pid, f"win-filetime:{int(token)}")
+
+
+def entry_state(entry: "RosterEntry") -> process_inspect.State:
+    """Whether a roster entry's own process is running: its pid, and on
+    Windows its creation token too. A poll asks this once per entry."""
+    return pid_state(entry.pid, roster_identity(entry))
 
 
 def encode_cwd(cwd: str) -> str:
@@ -104,6 +129,10 @@ class RosterEntry:
     # The user named the session in Claude Code (`nameSource: "user"`);
     # Claude Code keeps that name when the session is resumed.
     user_named: bool = False
+    # The writer's own `procStart` and `pidDomain`, as written: what
+    # `roster_identity` checks the process against.
+    proc_start: str | None = None
+    pid_domain: str | None = None
 
     @property
     def steerable(self) -> bool:
@@ -117,7 +146,8 @@ class RosterEntry:
 
 def _parse_entry(path: Path, root: Path) -> RosterEntry | None:
     try:
-        data = json.loads(path.read_text())
+        # UTF-8 as Claude Code writes it; Windows' default would be cp1252.
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None            # unreadable, empty, or caught mid-write
     if not isinstance(data, dict):
@@ -146,6 +176,10 @@ def _parse_entry(path: Path, root: Path) -> RosterEntry | None:
         socket_path=(str(data["messagingSocketPath"])
                      if isinstance(data.get("messagingSocketPath"), str) else None),
         version=str(data.get("version") or ""),
+        proc_start=(str(data["procStart"])
+                    if isinstance(data.get("procStart"), (str, int))
+                    and not isinstance(data.get("procStart"), bool) else None),
+        pid_domain=data.get("pidDomain") if isinstance(data.get("pidDomain"), str) else None,
     )
 
 
@@ -867,6 +901,14 @@ class Status:
     since: float | None               # when this state began, as near as is known
 
 
+def process_uninspected(s) -> bool:
+    """`unknown` because no process was confirmed and one could not be
+    inspected (access denied, an OS error), as against `unknown` for a live
+    session that neither transcript nor roster places. `session_status`
+    gives only the first as not between turns."""
+    return s.state == UNKNOWN and not s.between_turns
+
+
 def session_status(a: Activity) -> Status:
     """The one way a session's state is worked out, for every provider and
     every reader: the agents list and table, the message queue, the
@@ -1461,12 +1503,14 @@ def _same_dir(a: str, b: str) -> bool:
     return os.path.realpath(a) == os.path.realpath(b)
 
 
-def _pick_primary(entries: list[RosterEntry]) -> RosterEntry:
+def _pick_primary(entries: list[RosterEntry],
+                  states: dict[int, process_inspect.State]) -> RosterEntry:
     """Which process do we steer? Alive first, then one with a live socket,
     then the most recently active."""
     return sorted(
         entries,
-        key=lambda e: (pid_alive(e.pid), e.steerable, e.status_updated_at or 0.0),
+        key=lambda e: (states[e.pid] is process_inspect.State.ALIVE, e.steerable,
+                       e.status_updated_at or 0.0),
         reverse=True,
     )[0]
 
@@ -1475,11 +1519,13 @@ def _pick_primary(entries: list[RosterEntry]) -> RosterEntry:
 _ROSTER_ORDER = ("waiting", "busy", "shell", "idle")
 
 
-def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int) -> Activity:
-    """Claude Code's raw facts about one conversation: its roster entries,
-    its transcript's tail and its subagents."""
-    live = [e for e in entries if pid_alive(e.pid)]
-    unconfirmed = not live and any(pid_state(e.pid) is process_inspect.State.UNKNOWN
+def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int,
+                    states: dict[int, process_inspect.State]) -> Activity:
+    """Claude Code's raw facts about one conversation: its roster entries
+    (with each one's process state, `states` by pid, inspected once this
+    poll), its transcript's tail and its subagents."""
+    live = [e for e in entries if states[e.pid] is process_inspect.State.ALIVE]
+    unconfirmed = not live and any(states[e.pid] is process_inspect.State.UNKNOWN
                                    for e in entries)
     statuses = {e.status for e in live}
     waiting = next((e for e in live if e.waiting_for), None)
@@ -1739,7 +1785,9 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
 
     sessions: list[SessionState] = []
     for session_id, group in grouped.items():
-        primary = _pick_primary(group)
+        # Each process inspected once a poll; every use below reads this.
+        states = {e.pid: entry_state(e) for e in group}
+        primary = _pick_primary(group, states)
         # EVERY root the conversation registered in, not just the primary's.
         # `_pick_primary` chooses by liveness and recency and knows nothing
         # about which root holds the transcript, so a session registered in
@@ -1749,8 +1797,8 @@ def _claude_sessions(entries: list[RosterEntry] | None, roots: list[Path] | None
         recap = _first_recap(roots_here, primary.cwd, session_id)
         subagents, agents_capped = read_subagents(roots_here, primary.cwd, session_id, at)
         agents_active = working_agents(subagents)
-        status = session_status(claude_activity(group, recap, agents_active))
-        live = [e for e in group if pid_alive(e.pid)]
+        status = session_status(claude_activity(group, recap, agents_active, states))
+        live = [e for e in group if states[e.pid] is process_inspect.State.ALIVE]
         steerable_entry = next((e for e in live if e.steerable), None)
         sessions.append(SessionState(
             session_id=session_id,
@@ -2027,6 +2075,7 @@ class SessionWatcher:
 
         for s in snap.sessions:
             was = self._previous.get(s.session_id)
+            uninspected = process_uninspected(s)
             if s.state == WORKING and was != WORKING:
                 self._working_since[s.session_id] = now
 
@@ -2040,6 +2089,8 @@ class SessionWatcher:
                     self._publish("needs_you", s, now)
                 elif answering:
                     pass
+                elif uninspected:
+                    pass
                 elif was == WORKING and s.state in (IDLE, BACKGROUND, GONE, UNKNOWN):
                     # A session that exits while its roster entry is still
                     # being torn down can land on `unknown` (no status field
@@ -2049,7 +2100,12 @@ class SessionWatcher:
                     started = self._working_since.get(s.session_id)
                     if started is not None and now - started >= MIN_WORK_SEC:
                         self._publish("finished", s, now)
-            self._previous[s.session_id] = s.state
+            # A poll that could not inspect its process learned nothing
+            # about its turn: it keeps the state it was last known in, so a
+            # return to working is quiet and a later idle or gone still
+            # announces the finish it really is.
+            if not uninspected:
+                self._previous[s.session_id] = s.state
 
         return snap
 

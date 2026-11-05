@@ -332,7 +332,7 @@ def test_a_workflow_agents_transcript_is_found_by_its_id(tmp_path):
 # ── on the snapshot ─────────────────────────────────────────────────────────
 
 def _live_session(root, monkeypatch):
-    monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(sw, "entry_state", lambda e: sw.process_inspect.State.ALIVE)
     write_roster(root, pid=os.getpid(), session_id="s", cwd="/p/one", name="one", status="busy")
     write_transcript(root, cwd="/p/one", session_id="s", last_prompt="carry on")
 
