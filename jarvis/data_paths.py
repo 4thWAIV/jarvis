@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -19,12 +20,54 @@ log = logging.getLogger("jarvis.data_paths")
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 
+def _windows_local_app_data() -> Path:
+    """The user's local (not roaming) application data folder, from the
+    shell's known-folder record rather than an environment variable; the
+    usual place only if the shell cannot say."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+    # FOLDERID_LocalAppData, {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
+    folder = _GUID(0xF1B32785, 0x6FBA, 0x4FCF,
+                   (ctypes.c_ubyte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91))
+    found = ctypes.c_wchar_p()
+    try:
+        shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32
+        shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD,
+                                                 wintypes.HANDLE,
+                                                 ctypes.POINTER(ctypes.c_wchar_p)]
+        shell32.SHGetKnownFolderPath.restype = ctypes.HRESULT
+        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        try:
+            shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(found))
+            if found.value:
+                return Path(found.value)
+        finally:
+            ole32.CoTaskMemFree(ctypes.cast(found, ctypes.c_void_p))
+    except OSError:
+        pass                                  # a failed HRESULT raises OSError
+    return Path.home() / "AppData" / "Local"
+
+
+def installed_root() -> Path:
+    """Where an installed copy keeps its .env, certificates and data: the
+    user's Application Support on macOS (and, as before, anywhere else
+    that is not Windows), the user's local application data on Windows,
+    which stays on this machine as the database and speech models must."""
+    if sys.platform == "win32":
+        return _windows_local_app_data() / "JARVIS"
+    return Path.home() / "Library" / "Application Support" / "JARVIS"
+
+
 # A checkout (pyproject.toml beside the package) keeps its .env, certificates
 # and data at the repository root, as it always has. An installed copy cannot
-# write into site-packages, so it keeps them in Application Support.
+# write into site-packages, so it keeps them in `installed_root()`.
 CHECKOUT = (PACKAGE_DIR.parent / "pyproject.toml").is_file()
-CONFIG_DIR = (PACKAGE_DIR.parent if CHECKOUT
-              else Path.home() / "Library" / "Application Support" / "JARVIS")
+CONFIG_DIR = PACKAGE_DIR.parent if CHECKOUT else installed_root()
 
 # What JARVIS's own source is, for reading himself: the repository in a
 # checkout, the package when installed.

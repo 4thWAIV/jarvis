@@ -2,6 +2,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -10,6 +12,61 @@ def test_data_dir_defaults_to_repo_data(monkeypatch):
     from jarvis import data_paths
     importlib.reload(data_paths)
     assert data_paths.data_dir().name == "data"
+
+
+def test_a_checkout_keeps_everything_at_the_repository_root():
+    from jarvis import data_paths
+    root = Path(__file__).resolve().parent.parent
+    assert data_paths.CHECKOUT is True
+    assert data_paths.CONFIG_DIR == root
+    assert data_paths.DEFAULT_DATA_DIR == root / "data"
+
+
+def test_an_installed_copy_on_macos_keeps_application_support(monkeypatch):
+    from jarvis import data_paths
+    monkeypatch.setattr(data_paths.sys, "platform", "darwin")
+    assert data_paths.installed_root() == (
+        Path.home() / "Library" / "Application Support" / "JARVIS")
+
+
+def test_an_installed_copy_on_windows_keeps_local_application_data(monkeypatch, tmp_path):
+    from jarvis import data_paths
+    local = tmp_path / "Local App Dåta é"
+    monkeypatch.setattr(data_paths.sys, "platform", "win32")
+    monkeypatch.setattr(data_paths, "_windows_local_app_data", lambda: local)
+    assert data_paths.installed_root() == local / "JARVIS"
+
+
+def test_a_copy_outside_a_checkout_uses_the_installed_root(tmp_path):
+    """No pyproject.toml beside the package: an installed copy, here in a
+    folder with spaces and accents. JARVIS_DATA_DIR still decides the data."""
+    import os
+    import subprocess
+    site = tmp_path / "Prog Fïles é" / "site"
+    (site / "jarvis").mkdir(parents=True)
+    (site / "jarvis" / "__init__.py").write_text("")
+    src = Path(__file__).resolve().parent.parent / "jarvis" / "data_paths.py"
+    (site / "jarvis" / "data_paths.py").write_bytes(src.read_bytes())
+    data = tmp_path / "dåta é"
+    code = ("import sys, json; sys.path.insert(0, sys.argv[1]); "
+            "from jarvis import data_paths as d; "
+            "print(json.dumps([d.CHECKOUT, str(d.CONFIG_DIR), str(d.installed_root()), "
+            "str(d.data_dir())]))")
+    env = {**os.environ, "JARVIS_DATA_DIR": str(data), "PYTHONIOENCODING": "utf-8"}
+    out = subprocess.run([sys.executable, "-c", code, str(site)], env=env,
+                         capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    checkout, config, installed, data_dir = __import__("json").loads(out)
+    assert checkout is False and config == installed
+    assert Path(data_dir) == data and data.is_dir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' known folders")
+def test_natively_the_local_application_data_folder_is_the_shell_s():
+    import os
+    from jarvis import data_paths
+    found = data_paths._windows_local_app_data()
+    assert found.is_absolute() and found.is_dir()
+    assert os.path.normcase(str(found)) == os.path.normcase(os.environ["LOCALAPPDATA"])
 
 
 def test_data_dir_honors_env(monkeypatch, tmp_path):
