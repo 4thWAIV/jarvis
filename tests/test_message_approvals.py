@@ -34,6 +34,7 @@ from jarvis import messaging_wire as wire
 from jarvis import transmission
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, HumanRecipient,
                                       Identity, MessageApprovals, MessagingTools, Reviews)
+from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
 from tests.fixtures import messaging_fakes as fakes
 
 SERVER = "f0000000-0000-4000-8000-00000000000a"
@@ -551,7 +552,7 @@ def test_a_session_the_team_server_ended_stops_the_sender_and_keeps_the_approval
 
 # -- the capture adapters through the shared orchestration -----------------------------
 
-def test_accepted_on_screen_it_is_approved_at_the_hand_over_and_drawn_going(tim):
+def test_accepted_on_screen_it_is_approved_at_the_hand_over_and_drawn_going(tim, attention):
     draft, reviewed = _reviewed(tim)
     record, problem, (destination,), speech = tim.stage_and_perform(reviewed.capture_id)
     assert (record, problem) == (str(draft.message_id), None)
@@ -564,8 +565,8 @@ def test_accepted_on_screen_it_is_approved_at_the_hand_over_and_drawn_going(tim)
     assert (event.direction, event.message_id, event.replay) == ("outgoing", draft.message_id,
                                                                  False)
     assert event.event_id == ports.transfer_event_id(draft.message_id, "outgoing")
-    assert speech.said == ["Approved, sir. It goes to Matt as soon as the team server takes it."]
-    assert not any(w in speech.said[0].lower() for w in ("delivered", "received", "accepted"))
+    assert speech.said == [], "approved is all it is, and nothing is said of it"
+    assert recorded(attention) == [], "the Queue shows it; it is not an update"
     assert reviewed.capture_id in tim.captures.closed, "sending closes its capture"
 
 
@@ -586,7 +587,7 @@ def test_a_capture_whose_words_changed_is_refused_at_staging(tim):
     assert tim.store.approved(*NS, draft.message_id, 1) is None
 
 
-def test_a_draft_edited_after_staging_is_not_approved_at_the_hand_over(tim):
+def test_a_draft_edited_after_staging_is_not_approved_at_the_hand_over(tim, attention):
     draft, reviewed = _reviewed(tim)
     capture = tim.captures.open[reviewed.capture_id]
     transmission.accept(capture)
@@ -598,10 +599,12 @@ def test_a_draft_edited_after_staging_is_not_approved_at_the_hand_over(tim):
     asyncio.run(transmission.perform(staged[0], speech=speech, cancel_window=2.0,
                                      captures=Box(tim.captures)))
     assert staged[0].status == "failed" and tim.store.unresolved_sends(*NS) == []
-    assert "haven't sent it" in speech.said[0] and tim.presentation.presented == []
+    assert speech.said == [] and tim.presentation.presented == []
+    assert recorded(attention) == [("human_send", str(draft.message_id), "not_approved")]
+    assert attention.items()[0].untrusted == {"to": "Matt"}
 
 
-def test_what_is_read_back_but_never_sent_is_checked_again_at_the_hand_over(tim):
+def test_what_is_read_back_but_never_sent_is_checked_again_at_the_hand_over(tim, attention):
     """The files a reply cites are read back and never sent, so the digest
     cannot see them: changed under the reviewed revision in the window, the
     read-back no longer matches and nothing is approved."""
@@ -620,14 +623,15 @@ def test_what_is_read_back_but_never_sent_is_checked_again_at_the_hand_over(tim)
     asyncio.run(transmission.perform(staged[0], speech=speech, cancel_window=2.0,
                                      captures=Box(tim.captures)))
     assert staged[0].status == "failed" and tim.store.approved(*NS, draft.message_id, 1) is None
-    assert "haven't sent it" in speech.said[0]
+    assert speech.said == []
+    assert recorded(attention) == [("human_send", str(draft.message_id), "not_approved")]
 
 
 def test_cancelled_in_the_window_it_stays_awaiting_approval_with_nothing_in_the_outbox(tim):
     draft, reviewed = _reviewed(tim)
     _, _, (destination,), speech = tim.stage_and_perform(reviewed.capture_id,
                                                          speech=Speech(cancelled=True))
-    assert destination.status == "cancelled" and speech.said == ["Cancelled, sir."]
+    assert destination.status == "cancelled" and speech.said == []
     assert tim.current(draft).send.state == "awaiting_approval"
     assert tim.store.unresolved_sends(*NS) == [] and tim.released == []
     assert reviewed.capture_id in tim.captures.open, "his to deal with again"
@@ -659,7 +663,8 @@ def test_a_human_destination_never_waits_a_turn_of_its_own(tim):
     assert destination.why_wait() is None and destination.priority is False
 
 
-def test_a_missing_file_copy_at_the_hand_over_is_said_and_nothing_is_approved(tim):
+def test_a_missing_file_copy_at_the_hand_over_is_an_update_and_nothing_is_approved(
+        tim, attention):
     draft, reviewed = _reviewed(tim, files=[("a.bin", b"abc")])
     capture = tim.captures.open[reviewed.capture_id]
     transmission.accept(capture)
@@ -670,7 +675,8 @@ def test_a_missing_file_copy_at_the_hand_over_is_said_and_nothing_is_approved(ti
     speech = Speech()
     asyncio.run(transmission.perform(staged[0], speech=speech, cancel_window=2.0,
                                      captures=Box(tim.captures)))
-    assert staged[0].status == "failed" and "Attach it again" in speech.said[0]
+    assert staged[0].status == "failed" and speech.said == []
+    assert recorded(attention) == [("human_send", str(draft.message_id), "snapshot_missing")]
     assert tim.store.approved(*NS, draft.message_id, 1) is None
 
 

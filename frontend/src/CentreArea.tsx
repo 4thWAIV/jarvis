@@ -46,7 +46,8 @@
  * so going back finds it as it was left, scrolled where it was.
  *
  * Above whichever view is shown, under the tabs, the sign-in reminder
- * (TeamSignInReminder.tsx) while this JARVIS is not signed in to a team
+ * (TeamSignInReminder.tsx, in the notice stack CentreNotices.tsx, with
+ * updates waiting, UpdatesNotice.tsx) while this JARVIS is not signed in to a team
  * server; the views move down to make room for it, so it covers nothing.
  */
 
@@ -72,7 +73,7 @@ import { VoiceDiagnosticsView } from "./VoiceDiagnosticsView";
 import { directory, openQueue, queue } from "./queue";
 import { FoldersView } from "./FoldersView";
 import { QueueItemView, queueViewTitle } from "./QueueItemView";
-import { TeamSignInReminder } from "./TeamSignInReminder";
+import { CentreNotices } from "./CentreNotices";
 import { openPackage } from "./packages";
 import { PackageView } from "./PackageView";
 import { openBundleMember } from "./bundles";
@@ -237,7 +238,7 @@ export function CentreArea() {
     <>
       <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
               className="centre-tabs" words box="main.tabs" />
-      <TeamSignInReminder />
+      <CentreNotices />
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}
              inert={view.id !== conversation.id}>

@@ -201,18 +201,18 @@ _reminder: Optional[asyncio.Task] = None
 
 
 def start(on_network: Optional[Callable[[], None]] = None,
-          say: Optional[team_reminder.Say] = None) -> None:
+          attention: Optional[team_reminder.Attention] = None) -> None:
     """The status poll, the network exchange and the host sampler, each its
     own task. `on_network` is told each time the network cache changes.
-    Given `say` (the notice path), the spoken sign-in reminder too
-    (team_reminder.py)."""
+    Given `attention` (the attention record), the sign-in reminder's item
+    too (team_reminder.py)."""
     global _sampler, _reminder
     if _sampler is None or _sampler.done():
         _sampler = asyncio.create_task(host_resources.sampler.run())
     team_client.connection.start(node_update=node_update, on_network=on_network)
-    if say is not None and (_reminder is None or _reminder.done()):
+    if attention is not None and (_reminder is None or _reminder.done()):
         _reminder = asyncio.create_task(
-            team_reminder.remind_once(say, team_client.connection.signed_in))
+            team_reminder.remind_once(attention, team_client.connection.signed_in))
 
 
 async def stop() -> None:

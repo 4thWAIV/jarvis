@@ -50,12 +50,11 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from jarvis import agent_directory
+from jarvis import agent_directory, attention_store
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 from jarvis import transmission
 from jarvis.draft_files import NotAttached
-from jarvis.speech import Priority
 from jarvis.transfer_presentation import transfer_event
 
 log = logging.getLogger(__name__)
@@ -473,21 +472,26 @@ class HumanDestination:
         except Exception:
             log.warning("could not draw message %s going", self.message_id, exc_info=True)
 
-    async def say_queued(self, speech, why: str) -> None:
-        await speech.say(f"Your message to {self.label} waits, sir: {why}.",
-                         Priority.NORMAL, label="readback-outcome")
+    async def report_queued(self, speech, why: str) -> None:
+        """Nothing is said: the Queue shows it waiting, and why."""
 
-    async def say_outcome(self, speech, outcome: str) -> None:
-        # Approved is all it is: the team server has not taken it yet, let
-        # alone their JARVIS, and nothing here claims either.
+    async def report_outcome(self, speech, outcome: str) -> None:
+        """Nothing is said. Approved is all it is (the team server has not
+        taken it yet, let alone their JARVIS, and nothing here claims
+        either), and the Queue shows it. A message that did not go is an
+        attention item, by its message id: the outcome as a code, and who it
+        was for as other people's words."""
         if outcome == APPROVED:
-            line = f"Approved, sir. It goes to {self.label} as soon as the team server takes it."
-        elif outcome == SNAPSHOT_MISSING:
-            line = (f"A file's private copy is missing, sir, so nothing has gone to "
-                    f"{self.label}. Attach it again.")
-        else:
-            line = _changed(self.label)
-        await speech.say(line, Priority.NORMAL, label="readback-outcome")
+            return
+        attention = attention_store.current()
+        if attention is None:
+            return
+        try:
+            attention.record("human_send", str(self.message_id), outcome,
+                             untrusted={"to": self.label})
+        except Exception:
+            log.warning("could not record message %s not going", self.message_id,
+                        exc_info=True)
 
 
 def staged_note(record: Optional[str], problem: Optional[str], capture_id: int,

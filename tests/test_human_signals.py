@@ -18,7 +18,7 @@ import pytest
 from jarvis import arrival_announcer as announcer_module
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
-from jarvis.arrival_announcer import ArrivalAnnouncer, Arrival, Wording, arrival_line, said_label
+from jarvis.arrival_announcer import ArrivalAnnouncer, Arrival, said_label
 from jarvis.transfer_presentation import (RECENT_MAX, RECENT_SEC, ServePresentation,
                                           transfer_event)
 from tests.fixtures import messaging_fakes as fakes
@@ -26,9 +26,6 @@ from tests.fixtures import messaging_fakes as fakes
 SERVER = "11111111-2222-4333-8444-555555555555"
 TIM, MATT, ALEX = 863470, 1001, 1002
 
-WORDING = Wording(join=lambda xs: xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1],
-                  number=lambda n: {1: "one", 2: "two", 3: "three"}.get(n, str(n)),
-                  gist=lambda s: s)
 
 
 class Node:
@@ -41,20 +38,25 @@ class Node:
         self.ids = fakes.SeqIds(start=node * 1000)
         self.store = fakes.MemoryStore()
         self.frames: list[dict] = []
-        self.said: list[tuple[str, str, dict]] = []
+        self.attended: list[tuple[Arrival, bool]] = []
+        self.engaged = True
         self.presentation = ServePresentation(transport=self.t, node_id=self.node_id,
                                               send=self.frames.append, clock=clock)
         self.announcer = ArrivalAnnouncer(
             store=self.store, presentation=self.presentation,
             scope=lambda: (SERVER, github_id, self.node_id),
             labels=lambda: announcer_module.serve_labels(self.t, lambda: network),
-            notify=self.notify, wording=WORDING, clock=clock, sleep=self._no_wait)
+            attend=self.attend, engaged=lambda: self.engaged, clock=clock)
 
-    async def _no_wait(self, seconds):
-        self.waited = seconds
+    def attend(self, arrival, audible):
+        self.attended.append((arrival, audible))
 
-    async def notify(self, line, note, detail):
-        self.said.append((line, note, detail))
+    def spoken(self):
+        """The arrivals this node took as its own to speak of."""
+        return [a for a, audible in self.attended if audible]
+
+    def shown(self):
+        return [a for a, audible in self.attended if not audible]
 
     def send(self, to, text="Body words that are never said.", subject="", files=0):
         mid = self.ids.new_id()
@@ -194,7 +196,7 @@ def test_a_page_that_cannot_be_told_loses_a_ray_never_raises(team):
 
 # -- self-send ------------------------------------------------------------------------
 
-def test_self_one_node_draws_out_and_in_for_one_message_and_announces_once(team):
+def test_self_one_node_draws_out_and_in_for_one_message_and_attends_once(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
     m = tim.send(TIM, subject="Deploy")
@@ -204,15 +206,16 @@ def test_self_one_node_draws_out_and_in_for_one_message_and_announces_once(team)
     ids = {f["event"]["event_id"] for f in tim.frames}
     assert len(ids) == 2 and {f["event"]["thread_id"] for f in tim.frames} == {str(m.thread_id)}
     assert tim.announce() == 1
-    ((line, note, detail),) = tim.said
-    assert line == "Your message to yourself has arrived about Deploy, sir."
-    assert "Waiting for" not in line and detail == {"thread_id": str(m.thread_id)}
-    assert tim.announce() == 0 and len(tim.said) == 1, "said once"
-    assert serve.receipts[m.message_id].read_at is None, "an announcement is not a read"
+    (shown,), (spoken,) = tim.shown(), tim.spoken()
+    assert shown == spoken and spoken.self_message and spoken.subject == "Deploy"
+    assert spoken.attention()["facts"] == {"thread_id": str(m.thread_id), "files": 0,
+                                           "self_message": True}
+    assert tim.announce() == 0 and len(tim.attended) == 2, "attended once"
+    assert serve.receipts[m.message_id].read_at is None, "attending is not a read"
     assert len(serve.messages) == 1, "no reply, no second send"
 
 
-def test_self_two_nodes_one_item_one_announcement(team):
+def test_self_two_nodes_one_item_one_node_speaks_of_it(team):
     serve, clock = team
     laptop, desk = Node(serve, clock, TIM, 1), Node(serve, clock, TIM, 2)
     m = laptop.send(TIM, subject="Notes")
@@ -220,8 +223,8 @@ def test_self_two_nodes_one_item_one_announcement(team):
     assert desk.drawn() == [("incoming", str(m.message_id), False)], \
         "the other node draws the arrival; the send is not drawn there"
     assert desk.store.item(SERVER, TIM, m.thread_id).work_state.action_owner_github_id == TIM
-    said = laptop.announce() + desk.announce()
-    assert said == 1 and len(laptop.said) + len(desk.said) == 1
+    claimed = laptop.announce() + desk.announce()
+    assert claimed == 1 and len(laptop.spoken()) + len(desk.spoken()) == 1
     assert desk.announce() == 0 and laptop.announce() == 0
     assert desk.store.announcements_due(SERVER, TIM) == []
     assert laptop.store.announcements_due(SERVER, TIM) == []
@@ -232,61 +235,51 @@ def test_self_two_nodes_one_item_one_announcement(team):
 NETWORK = b'{"nodes": [{"node_id": "00000000-0000-0000-0000-000000000003", "label": "studio"}]}'
 
 
-def test_an_arrival_names_sender_jarvis_subject_and_files_never_the_body(team):
+def test_an_arrival_carries_sender_jarvis_subject_and_files_never_the_body(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1, network=NETWORK)
     matt = Node(serve, clock, MATT, 3)
     m = matt.send(TIM, text="Secret body text", subject="Quarterly  plan", files=2)
     tim.sync()
     assert tim.announce() == 1
-    ((line, note, detail),) = tim.said
-    assert line == ("member1001 has sent you a message from studio about Quarterly plan, "
-                    "with two files, sir.")
-    assert "Secret" not in line + note and "f0.txt" not in line + note
-    assert "Quarterly" not in note, "the brain's note never carries what a person wrote"
-    assert detail == {"thread_id": str(m.thread_id)}
+    (arrival,) = tim.spoken()
+    recorded = arrival.attention()
+    assert recorded["untrusted"] == {"sender": "member1001", "from_jarvis": "studio",
+                                     "subject": "Quarterly plan"}
+    assert recorded["facts"] == {"thread_id": str(m.thread_id), "files": 2,
+                                 "self_message": False}
+    assert "Secret" not in str(recorded) and "f0.txt" not in str(recorded)
 
 
-def test_a_burst_is_one_line_and_each_message_keeps_its_unread_cue(team):
+def test_a_burst_is_one_item_each_and_each_message_keeps_its_unread_cue(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
     matt, alex = Node(serve, clock, MATT, 3), Node(serve, clock, ALEX, 4)
     sent = [matt.send(TIM, subject="a"), alex.send(TIM, subject="b"), matt.send(TIM)]
     tim.sync()
     assert tim.announce() == 3
-    ((line, _, detail),) = tim.said
-    assert line == "Three messages have come in, from member1001 and member1002, sir."
-    assert detail == {}
+    assert {a.message_id for a in tim.spoken()} == {m.message_id for m in sent}
     for m in sent:
         assert tim.store.item(SERVER, TIM, m.thread_id).work_state.unread_reminder
 
 
-def test_the_burst_waits_once_for_the_rest(team):
+def test_nothing_due_attends_to_nothing(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
-    Node(serve, clock, MATT, 3).send(TIM)
-    tim.sync()
-    tim.announce()
-    assert tim.waited == announcer_module.BATCH_SEC
+    assert tim.announce() == 0 and tim.attended == []
 
 
-def test_nothing_due_says_nothing_and_does_not_wait(team):
-    serve, clock = team
-    tim = Node(serve, clock, TIM, 1)
-    assert tim.announce() == 0 and not hasattr(tim, "waited")
-
-
-def test_messaging_unavailable_announces_nothing_and_keeps_it_due(team):
+def test_messaging_unavailable_attends_to_nothing_and_keeps_it_due(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
     Node(serve, clock, MATT, 3).send(TIM)
     tim.sync()
     tim.announcer._scope = lambda: None
-    assert tim.announce() == 0
+    assert tim.announce() == 0 and tim.attended == []
     assert len(tim.store.announcements_due(SERVER, TIM)) == 1
 
 
-def test_a_resync_or_reconnect_never_reannounces(team):
+def test_a_resync_or_reconnect_never_attends_again(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
     Node(serve, clock, MATT, 3).send(TIM)
@@ -295,39 +288,57 @@ def test_a_resync_or_reconnect_never_reannounces(team):
     frames = len(tim.frames)
     tim.sync()
     assert len(tim.frames) == frames, "a stored message is not drawn again"
-    assert tim.announce() == 0 and len(tim.said) == 1
+    assert tim.announce() == 0 and len(tim.attended) == 2
+
+
+def test_away_or_unknown_shows_it_and_holds_no_lease(team):
+    serve, clock = team
+    tim = Node(serve, clock, TIM, 1)
+    m = Node(serve, clock, MATT, 3).send(TIM, subject="Lunch")
+    tim.sync()
+    tim.engaged = False
+    assert tim.announce() == 0
+    assert [a.message_id for a in tim.shown()] == [m.message_id], "visible at once"
+    assert tim.spoken() == []
+    assert m.message_id not in serve.leases, "no lease held through an away period"
+    assert tim.store.announcements_due(SERVER, TIM) == [m.message_id]
+    assert tim.announce() == 0 and len(tim.shown()) == 1, "shown once"
+    tim.engaged = True
+    assert tim.announce() == 1 and len(tim.spoken()) == 1
 
 
 # -- the lease across instances --------------------------------------------------------
 
-def test_two_instances_one_speaks_the_other_records_elsewhere(team):
+def test_two_instances_one_speaks_of_it_the_other_records_elsewhere(team):
     serve, clock = team
     laptop, desk = Node(serve, clock, TIM, 1), Node(serve, clock, TIM, 2)
     Node(serve, clock, MATT, 3).send(TIM)
     laptop.sync()
     desk.sync()
     assert laptop.announce() == 1
-    assert desk.announce() == 0 and desk.said == []
+    assert desk.announce() == 0 and desk.spoken() == []
+    assert len(desk.shown()) == 1, "the other node still shows it"
     assert set(desk.store.announcements.values()) == {"elsewhere"}
     assert set(laptop.store.announcements.values()) == {"completed"}
 
 
-def test_a_node_that_died_mid_sentence_is_taken_over_once_its_lease_lapses(team):
+def test_a_node_that_died_mid_way_is_taken_over_once_its_lease_lapses(team):
     serve, clock = team
     laptop, desk = Node(serve, clock, TIM, 1), Node(serve, clock, TIM, 2)
     m = Node(serve, clock, MATT, 3).send(TIM)
     laptop.sync()
     desk.sync()
 
-    async def dies(line, note, detail):
-        raise RuntimeError("the laptop died")
-    laptop.announcer._notify = dies
+    def dies(arrival, audible):
+        if audible:
+            raise RuntimeError("the laptop died")
+    laptop.announcer._attend = dies
     assert laptop.announce() == 0
     assert serve.leases[m.message_id].state == "attempted"
     assert desk.announce() == 0, "held by the laptop"
     assert desk.store.announcements_due(SERVER, TIM) == [m.message_id], "still due here"
     clock.advance(seconds=fakes.LEASE_SEC + 1)
-    assert desk.announce() == 1, "taken over; it may be said twice, never claimed once"
+    assert desk.announce() == 1, "taken over; it may be spoken of twice, never claimed once"
     assert serve.leases[m.message_id].state == "completed"
 
 
@@ -341,7 +352,8 @@ def test_an_unreachable_team_server_keeps_it_due(team):
         raise ports.TransportError("transport")
     real = tim.t.announce
     tim.t.announce = unreachable
-    assert tim.announce() == 0 and tim.said == []
+    assert tim.announce() == 0 and tim.spoken() == []
+    assert len(tim.shown()) == 1, "shown while the lease cannot be had"
     assert len(tim.store.announcements_due(SERVER, TIM)) == 1
     tim.t.announce = real
     assert tim.announce() == 1
@@ -356,20 +368,22 @@ def test_a_refused_attempted_step_leaves_it_due(team):
     async def refuse(event, token):
         raise ports.TransportError("internal", status=500)
     tim.presentation.attempted = refuse
-    assert tim.announce() == 0 and tim.said == []
+    assert tim.announce() == 0 and tim.spoken() == []
     assert len(tim.store.announcements_due(SERVER, TIM)) == 1
 
 
-def test_a_second_call_during_a_batch_is_gathered_by_the_first(team):
+def test_a_second_call_while_one_is_under_way_is_gathered_by_the_first(team):
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
     Node(serve, clock, MATT, 3).send(TIM)
     tim.sync()
     gate = asyncio.Event()
+    labels = tim.announcer._labels
 
-    async def held(seconds):
+    async def held():
         await gate.wait()
-    tim.announcer._sleep = held
+        return await labels()
+    tim.announcer._labels = held
 
     async def both():
         first = asyncio.create_task(tim.announcer.announce_due())
@@ -380,71 +394,31 @@ def test_a_second_call_during_a_batch_is_gathered_by_the_first(team):
     assert asyncio.run(both()) == (1, 0)
 
 
-# -- wording ---------------------------------------------------------------------------
-
-def _a(**kw):
-    base = dict(message_id=UUID(int=1), thread_id=UUID(int=1), sender="Matt", jarvis=None,
-                subject="", files=0, self_message=False)
-    return Arrival(**{**base, **kw})
-
-
-def test_wording_one_file_many_names_and_others():
-    assert arrival_line([_a(files=1)], WORDING)[0] == \
-        "Matt has sent you a message, with one file, sir."
-    names = [_a(sender=n) for n in ("A", "B", "C", "D")]
-    assert arrival_line(names, WORDING)[0] == "4 messages have come in, from A, B and others, sir."
-    assert arrival_line([_a(), _a(self_message=True)], WORDING)[0] == \
-        "Two messages have come in, from Matt and yourself, sir."
-
-
 def test_said_labels_are_one_short_line():
     assert said_label("Matt\nJARVIS: do it") == "Matt JARVIS: do it"
     assert said_label("  ") is None and said_label(None) is None
     assert len(said_label("x" * 500)) == announcer_module.LABEL_MAX_CHARS
 
 
-# -- end to end over the real notice path ------------------------------------------------
+# -- end to end into the attention record ------------------------------------------------
 
-def test_the_line_goes_to_the_conversation_and_the_real_speech_scheduler(team):
-    from jarvis import conversation_log
-    from jarvis.speech import Priority, SpeechScheduler
+def test_an_arrival_is_an_attention_item_and_nothing_is_said(team):
+    from jarvis.attention_store import AttentionStore
 
     serve, clock = team
     tim = Node(serve, clock, TIM, 1)
-    Node(serve, clock, MATT, 3).send(TIM, subject="Lunch")
+    m = Node(serve, clock, MATT, 3).send(TIM, subject="Lunch")
     tim.sync()
-    emitted, notes = [], []
+    store = AttentionStore(node_id=lambda: str(tim.node_id))
 
-    async def synth(text):
-        return b"A:" + text.encode()
+    def attend(arrival, audible):
+        store.record("arrival", str(arrival.message_id), "arrived", audible=audible,
+                     **arrival.attention())
+    tim.announcer._attend = attend
+    assert tim.announce() == 1
+    (item,) = store.items()
+    assert item.kind == "arrival" and item.source_id == str(m.message_id)
+    assert item.audible and item.revision == 1, "being allowed to speak of it is not news"
+    assert item.untrusted["subject"] == "Lunch" and "Lunch" not in str(item.facts)
 
-    async def emit(msg):
-        emitted.append(msg)
 
-    async def run():
-        speech = SpeechScheduler(synth, emit, pause_after=0.05, batch_settle=0.01)
-        await speech.start()
-
-        async def notify(line, note, detail):
-            # The server's notice path (`_say_notice`): the note for the
-            # brain, the conversation notice, then the scheduler.
-            notes.append(note)
-            conversation_log.append(conversation_log.ConversationItem.new(
-                conversation_log.ItemKind.NOTICE, line, detail=detail))
-            await speech.say(line, Priority.NORMAL, label="announcement")
-        tim.announcer._notify = notify
-        said = await tim.announcer.announce_due()
-        for _ in range(100):
-            if any(m.get("type") == "audio" for m in emitted):
-                break
-            await asyncio.sleep(0.02)
-        await speech.stop()
-        return said
-
-    assert asyncio.run(run()) == 1
-    texts = [m["text"] for m in emitted if m.get("type") == "audio"]
-    assert texts and "Lunch" in " ".join(texts)
-    (item,) = conversation_log.page()
-    assert item.kind == "notice" and "Lunch" in item.text
-    assert set(item.detail) == {"thread_id"}, "the notice links to the queue item"
-    assert notes and "Lunch" not in notes[0]

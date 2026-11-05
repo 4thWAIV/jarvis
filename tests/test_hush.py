@@ -18,13 +18,16 @@ def test_hush_stops_him_and_drops_what_was_left():
     dropped rather than queued up to arrive later.
 
     Asserted against the server's own branch, not a stand-in: the handler
-    lives inline in the websocket loop and there is nothing else to call.
+    calls `_stop_speaking`, the one Stop the brain's stop_speaking shares.
     """
     src = (Path(__file__).parent.parent / "jarvis" / "server.py").read_text()
     branch = src[src.index('if kind == "hush":'):]
     branch = branch[:branch.index("if kind == \"interim\":")]
-    assert "barge_in(keep_unread=False" in branch, branch
+    assert "await _stop_speaking(" in branch, branch
     assert "continue" in branch, "must not fall through to the other handlers"
+    stop = src[src.index("async def _stop_speaking("):]
+    stop = stop[:stop.index("\nasync def ")]
+    assert "barge_in(reason=" in stop, stop
 
 
 def test_hush_is_not_reachable_as_a_spoken_word():
@@ -54,4 +57,6 @@ def test_the_client_silences_itself_without_waiting_for_the_server():
     feels broken."""
     main = (Path(__file__).parent.parent / "frontend/src/jarvis.ts").read_text()
     hush = main[main.index("function hush()"):]
-    assert hush.index("audioPlayer.stop()") < hush.index('socket.send({ type: "hush" })')
+    assert hush.index("stopAll()") < hush.index('socket.send({ type: "hush" })')
+    stop_all = main[main.index("function stopAll()"):main.index("function hush()")]
+    assert "audioPlayer.stop()" in stop_all

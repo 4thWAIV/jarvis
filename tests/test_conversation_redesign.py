@@ -4,6 +4,7 @@ import json
 import time
 
 import pytest
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api
 from tests.test_voice_page_conversation import _Voice, _open, _record_item
 from tests.test_voice_page_captions import _silence_wav
@@ -51,6 +52,7 @@ async def test_draft_survives_reload_and_is_removed_after_send(page_url):
         editor = page.get_by_role('textbox', name='Message JARVIS')
         await editor.fill('A draft\nwith a second line')
         await page.reload()
+        await start_listening(page)
         await page.wait_for_function("window.__transcribers.some(t => t.readyState === 1)")
         assert await editor.input_value() == 'A draft\nwith a second line'
         await page.get_by_role('button', name='Send message').click()
@@ -189,7 +191,7 @@ async def test_backend_restart_can_reuse_utterance_after_skip_without_overwritin
 
 
 @pytest.mark.asyncio
-async def test_disconnected_partial_reply_is_marked_and_capture_stop_uses_hush(page_url):
+async def test_disconnected_partial_reply_is_marked_and_escape_skips_only_the_readback(page_url):
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p,page_url,voice)
@@ -206,8 +208,10 @@ async def test_disconnected_partial_reply_is_marked_and_capture_stop_uses_hush(p
         await page.wait_for_selector('.chat-playback')
         await page.keyboard.press('Escape')
         await page.wait_for_selector('.chat-playback', state='detached')
-        assert [m for m in voice.got if m.get('type') == 'hush']
-        assert not [m for m in voice.got if m.get('type') == 'skip_to_end']
+        # Escape is Skip the rest, for a read-back as for a reply: that one
+        # reading only, never Stop speaking.
+        assert [m for m in voice.got if m.get('type') == 'skip_to_end'] == [{'type':'skip_to_end','utt':2}]
+        assert not [m for m in voice.got if m.get('type') == 'hush']
         assert 'partial reply is retained' in await page.locator('.history-turn.jarvis').inner_text()
         await browser.close()
 

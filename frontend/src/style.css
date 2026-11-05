@@ -1111,6 +1111,30 @@ html, body {
 .mic-segment.mid.on { background: #f5c518; }
 .mic-segment.high.on { background: #ff4d4f; }
 
+/* In the meter's place while this page is not listening: listening starts
+   only on this click. No taller than the meter, so the pointer's paths to
+   mute and off pass under it as they pass under the meter. */
+#btn-listen {
+  width: auto;
+  min-width: 94px;
+  height: 12px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+#btn-listen:hover { background: none; }
+#btn-listen:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+/* Finishing the words from before a stop: on its way out, not an alarm. */
+#mic-silenced[data-state="finishing"] { color: var(--ui-muted); }
+
 /* In the meter's place while muted or off: nothing is being sent. */
 #mic-silenced {
   min-width: 94px;
@@ -2743,12 +2767,21 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* The sign-in reminder: one line under the centre tabs, in the amber the
    Team Server tile says Sign in with, with its two buttons on the right. */
-#team-reminder {
+/* The centre's notice stack (CentreNotices.tsx): the sign-in reminder and
+   updates waiting, one above the other; its height is --centre-notice-height. */
+#centre-notices {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-notice-top);
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#centre-notices:empty { display: none; }
+
+#team-reminder, #updates-notice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2767,6 +2800,26 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 #team-reminder p { flex: 1 1 240px; margin: 0; }
 #team-reminder .team-reminder-problem { flex-basis: 100%; color: #fca5a5; font-size: 12px; }
+
+/* Updates waiting (UpdatesNotice.tsx): calm, not a warning. */
+#updates-notice {
+  border-color: rgba(94, 234, 212, 0.3);
+  background: rgba(94, 234, 212, 0.06);
+}
+#updates-notice p { flex: 1 1 200px; margin: 0; }
+#updates-notice .updates-list {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#updates-notice .updates-list li { display: flex; align-items: center; gap: 8px; }
+#updates-notice .updates-words { flex: 1; overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }
@@ -3509,3 +3562,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
+
+/* What he said and has not sent (VoiceTurnBar.tsx): the playback bar's
+   look, marked when speech recognition could not finish it. */
+.chat-voice-turn .playback-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-voice-turn.stalled { border-color: var(--ui-warning, var(--ui-accent)); }

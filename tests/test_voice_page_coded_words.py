@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 from tests.test_voice_page_language import _Sessions
@@ -57,6 +58,7 @@ async def _open(p, url, team):
     await page.route_web_socket("**/ws/sessions", _Sessions(language="es"))
     await page.goto(url)
     await page.wait_for_function("document.documentElement.lang === 'es-419'")
+    await start_listening(page)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
     return browser, page, voice
 

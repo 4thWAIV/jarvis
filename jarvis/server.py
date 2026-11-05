@@ -89,6 +89,8 @@ from jarvis import repo_read
 from jarvis import session_messages
 from jarvis import server_address
 from jarvis import spoken_words
+from jarvis import voice_control
+from jarvis.voice_control import ReplyFailure, ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
 from jarvis import session_needs
@@ -109,7 +111,7 @@ from jarvis.bundle_contract import (BRAIN_TOOLS, MEMBER_PAGE_DEFAULT, REASONS_SH
                                     TEXT_PAGE_DEFAULT_CHARS)
 from jarvis.bundle_inspection import AttachmentKey
 from jarvis import self_update
-from jarvis.arrival_announcer import Wording
+from jarvis import attention, attention_api, attention_store
 from jarvis import session_watch
 from jarvis import specs
 from jarvis import stream_parser
@@ -126,6 +128,8 @@ from jarvis import notifier
 from jarvis import transcription_api
 from jarvis import speech_models
 from jarvis import language_setting
+from jarvis import voice_control
+from jarvis.turn_controller import TurnController
 from jarvis import brain_accounts
 from jarvis import human_activity
 from jarvis import team_api, team_client
@@ -136,7 +140,7 @@ from jarvis.folder_contract import FolderError
 from jarvis import tts
 from jarvis import spoken_words
 from jarvis.brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
-from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
+from jarvis.speech import Priority, SpeechScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 log = logging.getLogger("jarvis")
@@ -537,10 +541,6 @@ def format_runs_for_prompt() -> str:
             + _wrap_untrusted(_RUN_WRAP_NAME, "\n\n".join(parts)))
 
 
-# Smart greeting — track last greeting to avoid re-greeting on reconnect
-_last_greeting_time: float = 0
-
-
 # ---------------------------------------------------------------------------
 # TTS (Fish Audio)
 # ---------------------------------------------------------------------------
@@ -566,7 +566,6 @@ speech: Optional[SpeechScheduler] = None
 session_watcher: "session_watch.SessionWatcher | None" = None
 session_clients: set = set()
 _tts_client: Optional[httpx.AsyncClient] = None
-_brain_notice_at = {"restarting": 0.0}
 _bg_tasks: set[asyncio.Task] = set()
 _CONTENT_FRAMES = ("audio", "text")
 
@@ -613,6 +612,224 @@ def _agent_links(event: dict) -> dict:
 
 
 conversation_log.connect(_hint_conversation)
+
+
+# --- Attention (attention_store.py, attention.py, attention_api.py) ---------
+#
+# Every routine event is an attention item first (`_attend`), and nothing is
+# said by recording it. The one admission policy (`attention.Admission`)
+# decides when one bounded digest may be made; the brain writes it, under
+# the `digest` origin, where `/internal/tool` refuses every tool. The page's
+# Review updates and the brain's attention tools read the same record
+# through `attention_api`.
+attention_record: Optional[attention_store.AttentionStore] = None
+attention_admission: Optional[attention.Admission] = None
+_attention_task: Optional[asyncio.Task] = None
+# How often the admission policy looks: a look is cheap (a few small reads),
+# and the floor's activity is seen between the gates' own seconds.
+ATTENTION_POLL_SEC = 2.0
+# The longest a digest's audio is waited on before it counts as interrupted.
+DIGEST_PLAY_WAIT_SEC = 120.0
+
+
+def _hint_attention() -> None:
+    """Tell every open page the attention record changed. From any thread."""
+    message = {"type": "attention"}
+    try:
+        asyncio.get_running_loop()
+        _send_to_session_clients(message)
+    except RuntimeError:
+        if _main_loop is not None:
+            _main_loop.call_soon_threadsafe(lambda: _send_to_session_clients(message))
+
+
+def _attend(kind: str, source_id, event: str, *, facts: Optional[dict] = None,
+            untrusted: Optional[dict] = None, audible: bool = True) -> None:
+    """Record a routine event as an attention item. Nothing is said. Never
+    raises: an item that cannot be written is logged."""
+    if attention_record is None:
+        return
+    try:
+        attention_record.record(kind, str(source_id), event, facts=facts,
+                                untrusted=untrusted, audible=audible)
+    except Exception:
+        log.warning("attention: %s %s was not recorded", kind, event, exc_info=True)
+
+
+# How an action he approved after its read-back ended, by kind: these say it
+# went as asked, so they are only shown; the rest may be put to the digest.
+_ACTION_DONE = {"cancelled", "ran", "pressed"}
+
+
+def _action_outcome(kind: str, event: str, untrusted: dict) -> None:
+    """A shell command's or a keypress's outcome, as its own attention item
+    (each action is its own source). Nothing is said."""
+    _attend(kind, uuid.uuid4().hex, event, untrusted=untrusted,
+            audible=event not in _ACTION_DONE)
+
+
+def _attention_resolved(kind: str, source_id) -> None:
+    """The source no longer wants him. Never raises."""
+    if attention_record is None:
+        return
+    try:
+        attention_record.resolve(kind, str(source_id))
+    except Exception:
+        log.warning("attention: %s was not resolved", kind, exc_info=True)
+
+
+def _agent_words(session: dict) -> dict:
+    """An agent's name, as the other people's words an item carries."""
+    name = session.get("voice_name")
+    return {"agent": str(name)} if name else {}
+
+
+def _availability() -> str:
+    """Engaged, away or unknown (attention.availability): his recent
+    interaction with this JARVIS, never a connected page."""
+    try:
+        return attention.availability(attention_store.settings(),
+                                      human_activity.recorder.current())
+    except Exception:
+        return attention.UNKNOWN
+
+
+# Every open voice page's turn controller (turn_controller.py), by its
+# socket: the conversation floor is read from them.
+_voice_turns: dict = {}
+# Audio waiting to be decoded beyond this many seconds means the recogniser
+# is behind him: what he is saying has not been heard yet.
+RECOGNITION_BEHIND_SEC = 0.5
+
+
+def _recognition_behind() -> bool:
+    service = transcription_api.service
+    capture = service.active if service is not None else None
+    if capture is None:
+        return False
+    waiting, _oldest = capture.backlog()
+    return waiting > RECOGNITION_BEHIND_SEC
+
+
+class _ConversationFloor:
+    """`attention.TurnState` and the scheduler's `floor_held`, from the turn
+    controllers (contract section 7) and the facts beside them:
+
+      gathering        a page's turn is being gathered, or the recogniser is
+                       behind what he said
+      commit-pending   a page's turn is due and being checked
+      awaiting-reply   a turn was committed, or a brain turn is under way
+      reply-playing    JARVIS is speaking or has speech queued (replies and
+                       read-backs alike), or a read-back's cancel window is
+                       open, so an approval is still being decided
+
+    The activity revision moves whenever any controller's revision moves,
+    a page comes or goes, or a trusted interaction is recorded."""
+
+    def __init__(self) -> None:
+        self._revision = 0
+        self._seen: tuple = ()
+
+    def _held_by_him_or_the_brain(self) -> Optional[str]:
+        states = {t.state for t in _voice_turns.values()}
+        for state in ("commit-pending", "gathering"):
+            if state in states:
+                return state
+        if _recognition_behind():
+            return "gathering"
+        if "awaiting-reply" in states or (
+                brain_instance is not None and brain_instance.current_origin is not None):
+            return "awaiting-reply"
+        return None
+
+    def state(self) -> str:
+        held = self._held_by_him_or_the_brain()
+        if held is not None:
+            return held
+        if speech is not None and (speech.is_speaking or speech.has_speech_in_flight()):
+            return "reply-playing"
+        return attention.FLOOR_IDLE
+
+    def held(self) -> bool:
+        """For the scheduler: his or the brain's, not the mouth's own (the
+        scheduler orders its own speech)."""
+        return self._held_by_him_or_the_brain() is not None
+
+    def activity_revision(self) -> int:
+        activity = human_activity.recorder.current() or {}
+        seen = (tuple(sorted((id(t), t.revision) for t in _voice_turns.values())),
+                activity.get("activity_seq"))
+        if seen != self._seen:
+            self._seen = seen
+            self._revision += 1
+        return self._revision
+
+
+conversation_floor = _ConversationFloor()
+
+
+async def _digest_ask(prompt: str) -> Optional[str]:
+    """The brain, for one digest: its answer, or None when it cannot give
+    one (not running, rate-limited, an error)."""
+    if brain_instance is None or not brain_instance.ready:
+        return None
+    result = await brain_instance.turn(prompt, origin=attention.DIGEST_ORIGIN)
+    return result.text if result.stop_reason == "result" else None
+
+
+async def _digest_speak(text: str):
+    """The digest to the voice, as the routine speech it is: it waits for a
+    pause and his speech cancels it. None when nothing can speak."""
+    if speech is None or not voice_clients:
+        return None
+    return await speech.say(text, Priority.NORMAL, label="announcement")
+
+
+async def _digest_played(utterance) -> bool:
+    return speech is not None and await speech.wait_for(utterance, DIGEST_PLAY_WAIT_SEC)
+
+
+def _start_attention() -> None:
+    """The attention record, its admission policy and the digest loop. A
+    failure leaves routine events unrecorded and everything else running."""
+    global attention_record, attention_admission, _attention_task
+    try:
+        attention_record = attention_store.AttentionStore(on_change=_hint_attention)
+    except Exception:
+        log.warning("attention: the record could not be opened", exc_info=True)
+        return
+    attention_store.use(attention_record)
+    attention_admission = attention.Admission(
+        attention_record, conversation_floor, human_activity.recorder.current)
+    digest = attention.Digest(
+        attention_admission, _digest_ask, _digest_speak, _digest_played,
+        _wrap_untrusted,
+        on_spoken=lambda text: _record(conversation_log.ItemKind.NOTICE, text))
+
+    async def look() -> None:
+        while True:
+            try:
+                await digest.consider()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("attention: a look failed", exc_info=True)
+            await asyncio.sleep(ATTENTION_POLL_SEC)
+
+    _attention_task = asyncio.create_task(look())
+
+
+async def _stop_attention() -> None:
+    global attention_record, attention_admission, _attention_task
+    task, _attention_task = _attention_task, None
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    attention_store.use(None)
+    attention_record, attention_admission = None, None
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -777,14 +994,10 @@ def _fmt_reset(ts) -> str:
     return f"{when.strftime('%A %-d %B')} at {clock}"
 
 
-# True but useless: "down" names neither cause nor remedy. When the brain's
-# failure is classified "auth" (the provider's `failure_kind`), speak
-# something the user can actually act on instead. Shared by _on_brain_state
-# (the "failed" event) and _handle_utterance (a turn attempted while already
-# failed) so the two auth lines never drift apart -- each keeps its own
-# pre-existing generic line otherwise.
-_AUTH_BRAIN_DOWN_LINE = ("Claude Code's login has expired, sir — run `claude` in a "
-                        "terminal and log in, then restart me.")
+# "Down" names neither cause nor remedy: a failure classified "auth" (the
+# provider's `failure_kind`) is shown as the sign-in it needs, on the brain's
+# attention item and on a reply it could not give, and logged with its
+# remedy. Nothing about it is spoken: a brain that is down cannot word it.
 _AUTH_REMEDY_LOG_LINE = ("brain: giving up — Claude Code's OAuth login has expired. "
                          "Remedy: run `claude` in a terminal and log in, then restart JARVIS.")
 
@@ -871,7 +1084,7 @@ def _action_words(text: str) -> list[str]:
 # The brain states the page shows (which brain runs, on the orb and in
 # Diagnostics): told as they happen, so the page reads the brains again
 # instead of keeping what it saw at load.
-BRAIN_STATES_TOLD_TO_THE_PAGE = ("ready", "failed", "rotated")
+BRAIN_STATES_TOLD_TO_THE_PAGE = ("ready", "failed", "rotated", "restarting", "rate_limited")
 
 
 async def _on_brain_state(state: str, info: dict) -> None:
@@ -881,29 +1094,19 @@ async def _on_brain_state(state: str, info: dict) -> None:
         # At ERROR level, visible in the terminal the user is already
         # looking at, regardless of whether speech itself is available.
         log.error(_AUTH_REMEDY_LOG_LINE)
-    if speech is None:
-        return
-    if state == "restarting":
-        now = time.time()
-        if now - _brain_notice_at["restarting"] > 60:
-            _brain_notice_at["restarting"] = now
-            await speech.say("Rebooting my language systems, one moment.", Priority.NORMAL, label="system")
+    # Nothing is spoken: the page shows the brain's state (the orb, Settings
+    # and Diagnostics read it again) and one evolving attention item says
+    # what is wrong until it is ready again. A brain that is down cannot
+    # word a summary, so the item is never put to the digest.
+    if state == "ready":
+        _attention_resolved("brain", "brain")
     elif state == "failed":
-        line = (_AUTH_BRAIN_DOWN_LINE if info.get("failure_reason") == "auth"
-               else "My language systems are down, sir. Check the server log.")
-        await speech.say(line, Priority.URGENT, immediate=True, label="system")
+        _attend("brain", "brain", "sign_in" if info.get("failure_reason") == "auth" else "down",
+                audible=False)
     elif state == "rate_limited":
-        await speech.say(f"I've hit the usage limit until {_fmt_reset(info.get('resets_at'))}, sir.",
-                         Priority.NORMAL, label="system")
-
-
-def _greeting() -> str:
-    hour = datetime.now().hour
-    if hour < 12:
-        return "Good morning, sir."
-    if hour < 17:
-        return "Good afternoon, sir."
-    return "Good evening, sir."
+        resets = info.get("resets_at")
+        _attend("brain", "brain", "rate_limited", audible=False,
+                facts={"resets_at": resets} if isinstance(resets, (int, float)) else None)
 
 
 # --- the doorway: MCP servers the user declared themselves ----------------
@@ -1145,6 +1348,8 @@ async def start_brain_and_speech() -> None:
     _tts_client = httpx.AsyncClient(timeout=15.0)
     speech = SpeechScheduler(lambda t: _synth_for_speech(t), _voice_emit, prepare=strip_markdown_for_tts,
                              transport_ready=lambda: bool(voice_clients))
+    # Routine announcements wait while the floor is his or the brain's.
+    speech.floor_held = conversation_floor.held
     await speech.start()
     # ensure_layout() rather than ensure_brain_home(): the persona's
     # `@MEMORY.md` import needs the index to exist, and the memory tools
@@ -1551,16 +1756,6 @@ async def stop_brain_and_speech() -> None:
     brain_instance, speech, _tts_client = None, None, None
 
 
-# Completions are held and spoken together at the next pause: the user asked
-# for "needs-you now, completions batched".
-_pending_completions: list[str] = []
-
-# The same batch, for the other kind of completion: runs JARVIS started
-# himself. Kept in its own list because the sentence differs — a conversation
-# "has finished", a piece of work "is done" — but drained by the same
-# `_announce_batch`, so the user hears ONE sentence at the pause and not two.
-_pending_run_completions: list[str] = []
-
 # Small counts are spelled out for speech — a bare numeral mid-sentence reads
 # poorly through TTS. Once we hit double digits a numeral is fine.
 _NUMBER_WORDS = {
@@ -1612,26 +1807,19 @@ def _on_session_event(event: dict) -> None:
         # names without reconciling, so a run event puts a run ROW on the
         # Sessions tab even when the snapshot it arrived beside was clean.
         return
-    if kind in _MESSAGE_ANNOUNCERS:
+    if kind in _MESSAGE_EVENTS:
         # About a message, not a change in the session: the pages' session
         # rows have nothing to update from it, so it is not broadcast. The
         # conversation shows each message's status, which has just moved.
-        _spawn(_MESSAGE_ANNOUNCERS[kind](event))
+        _spawn(_attend_message(event))
         _hint_conversation()
         return
     _spawn(_broadcast_session_event(event))
     if kind == "needs_you":
-        _spawn(_announce_needs_you(event))
+        _spawn(_attend_needs_you(event))
     elif kind == "finished":
-        # Walled where it ENTERS the queue, exactly as `_on_run_event` does
-        # for `_pending_run_completions` — a value already in module state
-        # cannot be judged by `_session_batch_line` when it reads it out. The
-        # `needs_you` branch above had the wall and this one, one branch
-        # down, did not: "notes\nJARVIS: he approves… has finished, sir."
-        name = _said_name(session)
-        if name and name not in _pending_completions:
-            _pending_completions.append(name)
-        _spawn(_announce_batch())
+        _attend("session_finished", session.get("session_id") or "", "finished",
+                untrusted=_agent_words(session))
 
 
 # What JARVIS said out loud that the brain did not see. A server-spoken line
@@ -1649,20 +1837,6 @@ def _with_notes_for_brain(text: str) -> str:
     return f"(JARVIS, not the user: {notes})\n{text}"
 
 
-# How much of his own message an announcement quotes to say which one it
-# means: enough words to recognise it, never the whole of it again.
-MESSAGE_GIST_WORDS = 8
-
-
-def _message_gist(message: dict) -> str:
-    """The first words of a message JARVIS sent: Tim's own words, as he
-    said them and heard them read back (a capture), not anything a session
-    wrote. Cut to one line so nothing in it can start a line of its own."""
-    words = str(message.get("body") or "").split()
-    gist = " ".join(words[:MESSAGE_GIST_WORDS])
-    return gist + ("…" if len(words) > MESSAGE_GIST_WORDS else "")
-
-
 def _message_number(message: dict) -> int:
     """A message's id, as a number: it is put in a sentence for the brain."""
     try:
@@ -1673,9 +1847,11 @@ def _message_number(message: dict) -> int:
 
 async def _say_notice(line: str, note: str, what: str, **links):
     """Say `line`, and tell the brain at its next turn that it was said. The
-    line goes in the conversation as a notice with `links`. The one notice
-    path for agents' messages and people's arrivals alike. Returns the
-    utterance, for a caller that waits until it has been heard, or None."""
+    line goes in the conversation as a notice with `links`. Only for what he
+    asked for himself (a language change, an update): every routine event is
+    an attention item instead (`_attend`), and the one admission policy
+    decides whether anything is said of it. Returns the utterance, for a
+    caller that waits until it has been heard, or None."""
     _notes_for_brain.append(note)
     _record(conversation_log.ItemKind.NOTICE, line, **links)
     if speech is None:
@@ -1687,72 +1863,28 @@ async def _say_notice(line: str, note: str, what: str, **links):
         return None
 
 
-async def _say_about_message(line: str, note: str, what: str,
-                             event: Optional[dict] = None) -> None:
-    """`_say_notice`, under the agent `event` is about, if any (a notice
-    never claims a message's place: no message id)."""
-    links = _agent_links(event) if event else {}
-    links.pop("message_id", None)
-    await _say_notice(line, note, what, **links)
-
-
-async def _announce_delivered(event: dict) -> None:
-    """A message JARVIS sent is in the session's transcript."""
-    name = _said_name(event.get("session") or {}, "The session")
-    number = _message_number(event.get("message") or {})
-    await _say_about_message(
-        f"Delivered to {name}, sir.",
-        f"Since your last turn you told him message {number} was delivered "
-        f"to {name}.", "delivery", event)
-
-
-async def _announce_undelivered(event: dict) -> None:
-    """A message JARVIS sent never reached the session's conversation."""
-    name = _said_name(event.get("session") or {}, "The session")
-    number = _message_number(event.get("message") or {})
-    await _say_about_message(
-        f"{name} hasn't picked it up, sir.",
-        f"Since your last turn you told him {name} hasn't picked up message "
-        f"{number}: it was sent but has not reached that session's "
-        f"conversation. It is still looked for, for a day; if it arrives he "
-        f"is told it was delivered. Nothing has been resent.",
-        "undelivered", event)
-
-
-async def _announce_reply(event: dict) -> None:
-    """A session JARVIS sent a message to has answered it."""
-    s = event.get("session") or {}
+async def _attend_message(event: dict) -> None:
+    """A message JARVIS sent has moved on (gone from the queue, failed,
+    delivered, not picked up, answered): one attention item per message,
+    each step a revision of it. An answer itself goes on record in his
+    conversation, under the agent and the message it answers, first."""
+    kind = event.get("kind")
+    session = event.get("session") or {}
     message = event.get("message") or {}
-    name = _said_name(s, "A session")
-    number = _message_number(message)
-    gist = _message_gist(message)
-    about = f" about {gist}" if gist else ""
-    if message.get("reply", event):
-        # The answer itself is on record in his conversation, under the
-        # agent and the message it answers, before anything is said.
+    if kind == "sent":
+        await _message_went(session.get("session_id", ""))
+    if kind == "answered" and message.get("reply"):
         _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
-    if not message.get("reply", event):
-        await _say_about_message(
-            f"{name} finished its turn on your message{about} without a "
-            f"word, sir.",
-            f"Since your last turn you told him {name} ended its turn on "
-            f"message {number} without saying anything.", "reply", event)
-        return
-    await _say_about_message(
-        f"{name} has answered your message{about}, sir — shall I read it?",
-        f"Since your last turn you told him {name} has answered message "
-        f"{number} and asked whether to read it. If he says yes, call "
-        f"read_message_reply with message {number} and read him every page.",
-        "reply", event)
+    happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
+    words = _agent_words(session)
+    if kind == "send_failed" and message.get("failure"):
+        words["why"] = str(message["failure"])
+    _attend("agent_message", _message_number(message), happened,
+            facts={"message_id": _message_number(message)}, untrusted=words)
 
 
-_MESSAGE_ANNOUNCERS = {
-    "sent": lambda event: _announce_queued_sent(event),
-    "send_failed": lambda event: _announce_queued_failed(event),
-    "delivered": _announce_delivered,
-    "undelivered": _announce_undelivered,
-    "answered": _announce_reply,
-}
+# The message events the session watcher reports (`SessionWatcher.track`).
+_MESSAGE_EVENTS = ("sent", "send_failed", "delivered", "undelivered", "answered")
 
 
 # How often the needs board is looked at. A file is rewritten by hand-paced
@@ -1785,22 +1917,12 @@ def _board_under_owner(board: session_needs.Board) -> str:
     return f"# {_board_owner(board)}\n{board.text}"
 
 
-async def _announce_board(board: session_needs.Board) -> None:
-    """A session has written down something it needs from the user."""
-    name = _said_name({"voice_name": _board_owner(board)}, "A session")
-    n = board.items
-    things = f"{_say_number(n)} thing{'s' if n != 1 else ''}"
-    line = f"{name} has {things} for you, sir."
-    _notes_for_brain.append(
-        f"Since your last turn you told him {name} has {things} for him. If he "
-        f"wants them, call session_needs and read him each one with its "
-        f"recommendation.")
-    if speech is None:
-        return
-    try:
-        await speech.say(line, Priority.NORMAL, label="announcement")
-    except Exception as e:
-        log.warning(f"needs-board announcement failed: {e}")
+def _attend_board(board: session_needs.Board) -> None:
+    """A session has written down something it needs from the user: one
+    item per board, its count as a fact, its owner as other people's
+    words."""
+    _attend("needs_board", board.project.lower(), "changed", facts={"items": board.items},
+            untrusted={"agent": _board_owner(board)})
 
 
 async def _every(seconds: float, what: str, look) -> None:
@@ -1835,9 +1957,12 @@ async def _watch_needs_board() -> None:
         now = {b.project.lower(): b.items for b in boards}
         if counts is not None and now != counts:
             _hint_agents_changed()
+            for project, items in counts.items():
+                if items and not now.get(project):
+                    _attention_resolved("needs_board", project)
         counts = now
         for board in tracker.changed(boards):
-            await _announce_board(board)
+            _attend_board(board)
 
     await _every(NEEDS_POLL_SEC, subsystem_diagnostics.NEEDS_LOOP, look)
 
@@ -1882,91 +2007,59 @@ def _take_session_messages() -> list[run_store.SessionMessage]:
     return [m for m in taken if m is not None]
 
 
-async def _announce_session_messages(messages: list) -> None:
-    """Sessions have sent him messages. Only names and counts are said: the
-    subject is the session's own text, and he hears it when it is read."""
-    if not messages:
-        return
-    numbers = _join_natural([str(m.id) for m in messages])
-    if len(messages) == 1:
-        name = _said_name({"voice_name": messages[0].agent_name}, "A session")
-        await _say_about_message(
-            f"{name} has sent you a message, sir — shall I read it?",
-            f"Since your last turn you told him {name} has sent him message "
-            f"{numbers} and asked whether to read it. If he says yes, call "
-            f"read_session_message with message {numbers} and read him every page.",
-            "session message")
-        return
-    names = sorted({_said_name({"voice_name": m.agent_name}, "a session")
-                    for m in messages})
-    count = _say_number(len(messages))
-    await _say_about_message(
-        f"{count.capitalize()} messages have come in, from {_join_natural(names)}, sir.",
-        f"Since your last turn you told him {count} messages came in from "
-        f"sessions: numbers {numbers}. If he wants them, call "
-        f"read_session_message for each and read him every page.",
-        "session messages")
+def _attend_session_messages(messages: list) -> None:
+    """Sessions have sent him messages: one item each. Its subject and body
+    are the session's own words and stay in the record they were taken
+    into; the item carries only who sent it."""
+    for m in messages:
+        _attend("session_message", m.id, "arrived", facts={"message_id": m.id},
+                untrusted={"agent": m.agent_name or ""})
 
 
 async def _watch_session_messages() -> None:
     """Take each message a session drops and tell him. Never raises out."""
     async def look() -> None:
         messages = await asyncio.to_thread(_take_session_messages)
-        await _announce_session_messages(messages)
+        _attend_session_messages(messages)
 
     await _every(SESSION_MESSAGES_POLL_SEC, subsystem_diagnostics.SESSION_MESSAGES_LOOP, look)
 
 
-async def _announce_needs_you(event: dict) -> None:
-    """Interrupt for a session that has stopped and wants the user.
-
-    Both variables here are a roster file's own strings, and what JARVIS
-    says out loud is also what he has said, in his own voice, in his own
-    context. Same rule as every other header line.
-    """
-    if speech is None:
-        return
+async def _attend_needs_you(event: dict) -> None:
+    """A session has stopped and wants the user: an action item, never an
+    interruption by itself. When he is not engaged here, Notification
+    Centre is told too (best effort; it does not prove he read it)."""
     s = event.get("session") or {}
     raw_name = s.get("voice_name") or "a session"
-    # `_said_name` and NOT `_plain_name`. A voice name is not an identifier —
-    # `_assign_voice_names` composes a phrase ("hammer in Desktop", "the
-    # newer hammer", "note taker") the moment two conversations share a
-    # project, and `_plain_name` forbids a space, so it erased nine real
-    # names out of ten in the one interrupt whose whole job is to say WHICH
-    # session wants him. See `_said_name` for the wall that fits this field.
+    _attend("needs_you", s.get("session_id") or raw_name, "needs",
+            facts={"needs": str(s.get("needs") or ""),
+                   "needs_a_human_hand": bool(s.get("needs_a_human_hand"))},
+            untrusted=_agent_words(s))
+    # `_said_name` and NOT `_plain_name` for the notice's own line: a voice
+    # name is a phrase ("hammer in Desktop"), and `_plain_name` forbids a
+    # space. The RAW name goes to the notifier as its subtitle, as argv,
+    # never as AppleScript source.
     name = _said_name(s, "A session")
     needs = s.get("needs")
     if needs:
         reason = _phrase_needs(needs)
         if s.get("needs_a_human_hand"):
-            line = f"{name} is {reason}, sir — that one needs your own keystroke."
+            line = f"{name} is {reason} — that one needs your own keystroke."
         else:
-            line = f"{name} is {reason}, sir."
+            line = f"{name} is {reason}."
     else:
-        line = f"{name} has stopped and wants you, sir."
-    try:
-        await speech.say(line, Priority.URGENT, label="announcement")
-    except Exception as e:
-        log.warning(f"needs-you announcement failed: {e}")
-    # The RAW name to the notifier, deliberately. That path renders to a
-    # human in Notification Center and passes the name as argv, never as
-    # AppleScript source — `test_the_session_text_reaches_the_notifier_
-    # verbatim` is the guarantee — so pre-scrubbing it there would hide the
-    # real name from the user without protecting anything. The scrubbing
-    # above is for the line JARVIS SAYS, which lands in his own context.
+        line = f"{name} has stopped and wants you."
     await _notify_needs_you(raw_name, line)
 
 
 async def _notify_needs_you(name: str, line: str) -> None:
-    """The macOS fallback for a needs-you nobody was listening to.
+    """The macOS notice for a needs-you while he is not engaged here.
 
-    An URGENT utterance with no transport is kept as unread and re-raised when
-    a client connects — which is no use at all to a user who is not in the
-    browser tab. So when there is genuinely no voice client, Notification
-    Centre gets it instead. This fires ONLY when no client is connected: the
-    user must never be notified about something he just heard spoken. Batched
-    completions and `fresh` sessions never come through here — a notification
-    is an interruption and has to earn it.
+    A connected page is not a person: whether he is here is his recent
+    interaction (attention.availability), not the voice socket. Engaged, the
+    item is on the page and nothing more is raised; away or unknown,
+    Notification Centre gets it. Completions and `fresh` sessions never come
+    through here — a notification is an interruption and has to earn it.
 
     `name` and `line` carry text from another Claude Code session's transcript,
     so they are handed to notifier.notify() as arguments and never formatted
@@ -1975,7 +2068,7 @@ async def _notify_needs_you(name: str, line: str) -> None:
     Never raises: a notification failure must not break the announcement path
     or reach the watcher.
     """
-    if voice_clients or not notifier.available():
+    if _availability() == attention.ENGAGED or not notifier.available():
         return
     try:
         await notifier.notify("JARVIS", line, subtitle=name)
@@ -1991,55 +2084,6 @@ def _cap_listing(items: list[str]) -> str:
     remaining = len(items) - 3
     other_word = "other" if remaining == 1 else "others"
     return _list_join(items[:3]) + f", and {_say_number(remaining)} {other_word}"
-
-
-def _session_batch_line(names: list[str]) -> str:
-    if len(names) == 1:
-        return f"{names[0]} has finished, sir."
-    return (f"{_say_number(len(names)).capitalize()} conversations have "
-            f"finished, sir: {_cap_listing(names)}.")
-
-
-def _run_batch_line(projects: list[str]) -> str:
-    """What JARVIS started himself, and that it worked.
-
-    Failures never reach here — they interrupt (see `_announce_run_failure`) —
-    so "is done" is an honest report of success, not a euphemism for "ended".
-    """
-    if len(projects) == 1:
-        return f"The work in {projects[0]} is done, sir."
-    return f"Work in {_cap_listing(projects)} is done, sir."
-
-
-async def _announce_batch() -> None:
-    """Say what finished, in one sentence, at the next pause.
-
-    Drains both queues: conversations the watcher saw finish, and runs JARVIS
-    started himself. One call, one utterance — two parallel batchers would
-    mean the user hears two LOW announcements back to back at every pause.
-    """
-    if speech is None:
-        return
-    if not _pending_completions and not _pending_run_completions:
-        return
-    names = list(_pending_completions)
-    _pending_completions.clear()
-    projects = list(_pending_run_completions)
-    _pending_run_completions.clear()
-
-    parts = []
-    if names:
-        parts.append(_session_batch_line(names))
-    if projects:
-        parts.append(_run_batch_line(projects))
-    line = " ".join(parts)
-    try:
-        await speech.say(line, Priority.LOW, label="announcement")
-    except Exception as e:
-        log.warning(f"completion announcement failed: {e}")
-        # Do not lose them — either queue.
-        _pending_completions.extend(names)
-        _pending_run_completions.extend(projects)
 
 
 def _on_run_event(message: dict) -> None:
@@ -2068,75 +2112,29 @@ def _on_run_event(message: dict) -> None:
             return
         run = message.get("run") or {}
         if run.get("package_id"):
-            # An agent package's run: its own words, and what comes next
-            # (the reply with its results). Cancelled is silent, as below.
+            # An agent package's run: what comes next is the reply with its
+            # results. Cancelled is not news, as below.
             if run.get("status") != run_store.RunStatus.CANCELLED:
-                _spawn(_announce_package_run(run))
+                _attend_package_run(run)
             return
         if run.get("origin") != "voice":
             return
         status = run.get("status")
-        # Walled where it ENTERS the queue, not where `_run_batch_line`
-        # reads it out: the queue is module state, and a value already in it
-        # cannot be judged by the sentence that speaks it.
-        project = _run_project(run)
         if status == run_store.RunStatus.SUCCEEDED:
             outcome = _run_outcome(run)
-            if outcome != stream_parser.OK:
-                # Exit zero, but nothing was built. Batching this behind "the
-                # work in X is done" is exactly the lie this guards against,
-                # so it interrupts like a failure — because it is one.
-                _spawn(_announce_run_stalled(run, outcome))
-                return
-            if project not in _pending_run_completions:
-                _pending_run_completions.append(project)
-            _spawn(_announce_batch())
+            # Exit zero, but nothing was built, is not "done": it is recorded
+            # as what it is (stalled: it stopped to ask; no_changes).
+            event = "succeeded" if outcome == stream_parser.OK else (
+                "stalled" if outcome == stream_parser.STALLED else "no_changes")
+            _attend("run", run.get("id") or "", event,
+                    untrusted={"project": str(run.get("project_name") or "")})
         elif status in (run_store.RunStatus.FAILED,
                         run_store.RunStatus.TIMED_OUT):
-            # Worth interrupting for. A batched failure is a failure the user
-            # hears about ten minutes after it could have been fixed.
-            _spawn(_announce_run_failure(run))
-        # CANCELLED is deliberately silent: the user asked for it and was
-        # told at the time.
+            _attend("run", run.get("id") or "", status,
+                    untrusted={"project": str(run.get("project_name") or "")})
+        # CANCELLED is deliberately not recorded: the user asked for it.
     except Exception:
         log.warning("run completion announcement failed", exc_info=True)
-
-
-async def _announce_run_stalled(run: dict, outcome: str) -> None:
-    """A run that exited zero having built nothing.
-
-    The user trusted "done and successful" over an empty directory once. The
-    announcement now says what actually happened, and — for the stall — what
-    to do about it, because the run is waiting on an answer nobody can give.
-    """
-    if speech is None:
-        return
-    project = _run_project(run)
-    if outcome == stream_parser.STALLED:
-        line = (f"The work in {project} stopped to ask a question, sir, so "
-                f"nothing was built.")
-    else:
-        line = (f"The work in {project} finished, sir, but I can't see that "
-                f"it changed anything.")
-    try:
-        await speech.say(line, Priority.URGENT, label="announcement")
-    except Exception as e:
-        log.warning(f"run stall announcement failed: {e}")
-
-
-async def _announce_run_failure(run: dict) -> None:
-    """Interrupt for work of JARVIS's own that did not survive."""
-    if speech is None:
-        return
-    project = _run_project(run)
-    if run.get("status") == run_store.RunStatus.TIMED_OUT:
-        line = f"The work in {project} ran out of time, sir."
-    else:
-        line = f"The work in {project} failed, sir."
-    try:
-        await speech.say(line, Priority.URGENT, label="announcement")
-    except Exception as e:
-        log.warning(f"run failure announcement failed: {e}")
 
 
 SESSION_QUEUE_MAX = 1000
@@ -2311,18 +2309,14 @@ _background: set[asyncio.Task] = set()
 
 
 async def _run_preflight() -> None:
-    """Run the first-run environment checks and say what is wrong.
+    """Run the first-run environment checks and log what is wrong, each
+    failure with its remedy.
 
-    preflight.py has existed, been tested, and written a concrete remedy for
-    every failure since milestone 1 -- and was never called. Its own docstring
-    said it ran at startup. It did not, which is why an expired login reached
-    the user as "my language systems are down" and nothing else, four restarts
-    running, while the one line naming the cause sat unwritten.
-
-    Speaking it matters more than logging it: a dead brain is exactly the case
-    where the user cannot ask what is wrong, and TTS is a separate path that
-    still works. Failures are spoken; warnings are logged only, so a nagging
-    optional setting never delays the greeting.
+    preflight.py was once never called, which is why an expired login reached
+    the user as "my language systems are down" and nothing else. It runs at
+    startup now, and nothing of it is spoken: startup is never narrated. What
+    failed is on the Diagnostics tab and in the log, and an expired login is
+    also the brain's attention item and a failed reply's reason.
 
     `run_checks` never raises and time-boxes every check, but this is startup:
     a bug here must not cost the user their server.
@@ -2339,11 +2333,7 @@ async def _run_preflight() -> None:
         else:
             log.warning("preflight %s: %s — %s", c.name, c.message, c.remedy)
 
-    if speech is not None and any(c.status == preflight.STATUS_FAIL for c in checks):
-        summary = preflight.spoken_summary(checks)
-        if summary:
-            # His own news, not an answer: it waits for a pause like any other.
-            await speech.say(summary, label="announcement")
+    # Nothing is said: what failed is on the Diagnostics tab and in the log.
 
 
 def _session_providers() -> list:
@@ -2739,8 +2729,10 @@ class _ReplyText:
     """Full assistant text, independent of narration filters and audio acks.
 
     One pending snapshot coalesces fast deltas; finishing cancels that timer
-    and publishes the provider's canonical result last. No background task
-    or provider generation is cancelled when the user skips its reading.
+    and publishes the provider's canonical result last, with how it ended
+    (`ReplyOutcome`), so a reply cut short by a failure is never shown as
+    complete. No background task or provider generation is cancelled when
+    the user skips its reading.
     """
 
     def __init__(self, utt: int):
@@ -2763,7 +2755,13 @@ class _ReplyText:
         _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
                       "text": self.text, "done": False})
 
-    def finish(self, text: Optional[str] = None) -> None:
+    def finish(self, text: Optional[str] = None,
+               outcome: str = ReplyOutcome.FAILED, reason: Optional[str] = None,
+               resets_at: Optional[float] = None) -> None:
+        """The last frame. Only a turn the provider finished is `succeeded`;
+        a finish with nothing to say about it was cut short. A failed one
+        may say why (`reason`, a ReplyFailure code, and for a usage limit
+        when it lifts), which the page words in its own language."""
         if self._done:
             return
         self._done = True
@@ -2772,8 +2770,13 @@ class _ReplyText:
             self._timer = None
         if text is not None:
             self.text = text
-        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
-                      "text": self.text, "done": True})
+        frame = {"type": "reply", "utt": self.utt, "at": self.at,
+                 "text": self.text, "done": True, "outcome": outcome}
+        if reason and outcome == ReplyOutcome.FAILED:
+            frame["reason"] = reason
+            if resets_at is not None:
+                frame["resetsAt"] = resets_at
+        _queue_voice(frame)
 
 
 async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
@@ -2787,13 +2790,23 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     t0 = time.monotonic()
     await _voice_emit({"type": "status", "state": "thinking"})
     if not brain_instance.ready:
+        # Shown, not spoken: a failed reply that says why, with his words
+        # above it on the record.
         if brain_instance.failed:
-            line = (_AUTH_BRAIN_DOWN_LINE
-                    if getattr(brain_instance, "failure_reason", None) == "auth"
-                    else "My language systems are down, sir.")
+            reason = (ReplyFailure.SIGN_IN
+                      if getattr(brain_instance, "failure_reason", None) == "auth"
+                      else ReplyFailure.DOWN)
         else:
-            line = "One moment, sir — my language systems are still starting."
-        await speech.say(line, Priority.NORMAL, label="system")
+            reason = ReplyFailure.NOT_READY
+        await _turn_lock.acquire()
+        utt = speech.begin_turn()
+        try:
+            _ReplyText(utt.id).finish(outcome=ReplyOutcome.FAILED, reason=reason)
+        finally:
+            try:
+                await speech.end_turn(utt)
+            finally:
+                _turn_lock.release()
         return
     await _turn_lock.acquire()
     utt = speech.begin_turn()
@@ -2811,11 +2824,21 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                                                    origin="user",
                                                    on_delta=delta,
                                                    on_tool=hold.tool_started)
-                reply.finish(result.text)
+                if result.stop_reason == "result":
+                    reply.finish(result.text, ReplyOutcome.SUCCEEDED)
+                else:
+                    reply.finish(result.text, ReplyOutcome.FAILED,
+                                 **ReplyFailure.of_stop(result.stop_reason, result.rate_limit))
                 hold.finish()    # the one line this turn is allowed
                 screen.finish()  # a "Sources:" block it held goes on the screen
+            except asyncio.CancelledError:
+                reply.finish(outcome=ReplyOutcome.CANCELLED)
+                raise
+            except Exception:
+                reply.finish(outcome=ReplyOutcome.FAILED, reason=ReplyFailure.LOST)
+                raise
             finally:
-                reply.finish()  # errors/cancellation also close the live text stream
+                reply.finish()  # an error also closes the live text stream, as failed
                 _turn_utt, _turn_heard = None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
@@ -2823,17 +2846,11 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                     _turn_lock.release()
         except Exception as e:
             log.error(f"brain turn failed: {e}", exc_info=True)
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
             return
-        if result.stop_reason == "rate_limited":
-            resets = (result.rate_limit or {}).get("resetsAt")
-            await speech.say(f"I've hit the usage limit until {_fmt_reset(resets)}, sir.", Priority.NORMAL, label="system")
-        elif result.stop_reason == "error":
+        # A turn that did not finish is shown on its reply (its reason),
+        # never spoken over.
+        if result.stop_reason == "error":
             log.error(f"brain error: {result.error}")
-            await speech.say("My language systems returned an error, sir. Check the server log.",
-                             Priority.NORMAL, label="system")
-        elif result.stop_reason in ("timeout", "died", "not_running"):
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
         elif not result.text.strip():
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
@@ -2997,9 +3014,10 @@ async def lifespan(application: FastAPI):
     # audio path; a team server that is down changes only its status. The
     # network exchange runs while paired whether or not a page is open, and
     # each stored snapshot is a `network` hint (network.ts reads it again).
-    # Not signed in once startup settles, JARVIS says so once (team_reminder.py).
+    # Not signed in once startup settles, an attention item (team_reminder.py).
+    _start_attention()
     team_api.start(on_network=lambda: _send_to_session_clients({"type": "network"}),
-                   say=_say_notice)
+                   attention=attention_record)
     _start_messaging()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
@@ -3023,6 +3041,7 @@ async def lifespan(application: FastAPI):
 
     await _stop_messaging()
     await team_api.stop()
+    await _stop_attention()
     await transcription_api.stop()
     await stop_folders()
     await stop_session_watcher()
@@ -3057,9 +3076,11 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
+voice_control.mount(app, publish=_send_to_session_clients)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
+attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
 
 
@@ -4075,6 +4096,11 @@ async def internal_tool(request: Request):
     if handler is None:
         return _tool_reply(False, f"Unknown tool: {tool}")
 
+    if brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
+        # The attention digest is read-only: its facts are in its prompt,
+        # and no tool, reading or acting, runs in that turn.
+        return _tool_reply(False, "not_allowed_in_digest — no tools in a digest turn.")
+
     if tool in ACTING_TOOLS:
         origin = brain_instance.current_origin if brain_instance else None
         if origin != "user":
@@ -4334,7 +4360,7 @@ _VOICE_NAME_RE = _action_re.compile(r"\w([\w ,.\-/+']{0,62}\w)?")
 def _said_name(item, fallback: str = "that session") -> str:
     """The voice name of a session, a staged item — or an event PAYLOAD.
 
-    The mapping shape is not a convenience. `_announce_needs_you` receives
+    The mapping shape is not a convenience. `_attend_needs_you` receives
     the session as a plain dict off the watcher's event and read it with
     `s.get("voice_name")`, so it was invisible to a check that matched
     attributes, and it used `_plain_name` — which forbids a space — on a
@@ -4941,52 +4967,99 @@ _turn_heard: Optional[int] = None
 _turn_lock = asyncio.Lock()
 
 
-class _Utterance:
-    """What he says, gathered until he has finished. Each final the
-    recogniser gives is held for END_OF_TURN_SEC, and anything more he says
-    in that time (an interim or another final) joins it and starts the wait
-    again, so a pause mid-sentence does not send the brain half a sentence.
-    `send` gets the whole of it once he has been quiet that long, with the
-    id of the last final in it. What he types is not gathered: `now` sends
-    whatever was heard first, then the caller handles the typed words."""
+def _page_identity(msg: dict) -> tuple[Optional[str], Optional[int]]:
+    """The page and capture epoch a voice frame names (voice control
+    contract, section 4), or None for what it does not carry."""
+    client, epoch = msg.get("clientId"), msg.get("captureEpoch")
+    client = client if isinstance(client, str) and 0 < len(client) <= 64 else None
+    epoch = epoch if type(epoch) is int and epoch >= 0 else None
+    return client, epoch
 
-    def __init__(self, send: Callable[[str, Optional[int]], Awaitable[None]],
-                 hold: float = END_OF_TURN_SEC) -> None:
-        self._send = send
-        self._hold = hold
-        self._parts: list[str] = []
-        self._heard: Optional[int] = None
-        self._timer: Optional[asyncio.TimerHandle] = None
 
-    def heard(self, text: str, heard: Optional[int]) -> None:
-        self._parts.append(text)
-        self._heard = heard if heard is not None else self._heard
-        self._wait()
+def _capture_coverage(client: str) -> Optional[tuple[int, int]]:
+    service = transcription_api.service
+    return service.coverage_of(client) if service is not None else None
 
-    def still_talking(self) -> None:
-        if self._parts:
-            self._wait()
 
-    async def now(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        if not self._parts:
-            return
-        text, heard = " ".join(self._parts), self._heard
-        self._parts, self._heard = [], None
-        await self._send(text, heard)
+def _capture_epoch(client: str) -> Optional[int]:
+    service = transcription_api.service
+    return service.epoch_of(client) if service is not None else None
 
-    def drop(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-        self._parts, self._heard, self._timer = [], None, None
 
-    def _wait(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-        self._timer = asyncio.get_running_loop().call_later(
-            self._hold, lambda: _spawn(self.now()))
+async def _take_back_the_floor(turn_id: int) -> None:
+    """He spoke again after his turn was committed and before its reply was
+    heard: the reply's reading stops before it starts (its text stays, and
+    what the turn did is not undone), and what he says is the next turn."""
+    if speech is None:
+        return
+    for utt in list(speech.utterances.values()):
+        if (utt.kind == "turn" and utt.label == "reply" and not utt.done
+                and utt.first_sent_at is None):
+            log.info("turn %d: he went on before its reply was heard; reply %d not read",
+                     turn_id, utt.id)
+            await speech.skip_reading(utt.id)
+
+
+# His three ways on with a turn (contract section 7): the page's Send now,
+# Retry and Keep as draft, and the brain's acting `voice_turn`, call this.
+TURN_ACTIONS = ("send_now", "retry", "keep_as_draft")
+
+
+def _show_turn(ws, frame: dict) -> None:
+    queue = _voice_queues.get(ws)
+    if queue is not None:
+        _enqueue(queue, {"type": "turn", **frame})
+
+
+def _turn_action(ws, action: str) -> str:
+    """Act on one page's turn. Answers what happened, as a code: `sent`
+    (committed now), `retrying` (waiting for the recogniser again), `kept`
+    (an unsent draft on that page), or `nothing` (no turn it applies to)."""
+    turns = _voice_turns.get(ws)
+    if turns is None or action not in TURN_ACTIONS:
+        return "nothing"
+    turn_id = turns.turn_id
+    if action == "send_now":
+        return "sent" if turns.send_now() else "nothing"
+    if action == "retry":
+        if not turns.retry():
+            return "nothing"
+        _show_turn(ws, {"state": "commit-pending", "turnId": turn_id,
+                        "text": turns.gathered_text})
+        return "retrying"
+    text = turns.keep_as_draft()
+    if text is None:
+        return "nothing"
+    _show_turn(ws, {"state": "draft", "turnId": turn_id, "text": text})
+    return "kept"
+
+
+_TURN_SAID = {
+    "sent": "Sent what he had said, sir.",
+    "retrying": "Waiting for the speech recogniser to catch up again, sir.",
+    "kept": "Put what he had said in the message box as an unsent draft, sir; nothing was sent.",
+}
+
+
+async def tool_voice_turn(args: dict) -> str:
+    """The page's Send now, Retry and Keep as draft, by voice or typing: on
+    the turn the recogniser could not finish first, else the one being
+    gathered."""
+    action = args.get("action")
+    if action not in TURN_ACTIONS:
+        return "Say which: send_now, retry or keep_as_draft. Nothing was done."
+    pages = sorted(_voice_turns.items(),
+                   key=lambda kv: kv[1].state != "stalled")
+    for ws, turns in pages:
+        if turns.turn_id is None:
+            continue
+        done = _turn_action(ws, action)
+        if done != "nothing":
+            return _TURN_SAID[done]
+    if action == "send_now":
+        return ("There is nothing of his to send yet, sir, or the recogniser has not caught "
+                "up with it.")
+    return "No turn is waiting for the recogniser, sir. Nothing was done."
 
 
 def _transcript_id(msg: dict) -> Optional[int]:
@@ -5597,30 +5670,6 @@ async def _message_went(session_id: str) -> None:
     _send_to_session_clients({"type": "agent_message", "session_id": session_id})
 
 
-async def _announce_queued_sent(event: dict) -> None:
-    """A queued message has gone, now that its session is free."""
-    session = event.get("session") or {}
-    await _message_went(session.get("session_id", ""))
-    name = _said_name(session, "The session")
-    number = _message_number(event.get("message") or {})
-    await _say_about_message(
-        f"Your message has gone to {name}, sir.",
-        f"Since your last turn you told him queued message {number} went to {name}.",
-        "queued send", event)
-
-
-async def _announce_queued_failed(event: dict) -> None:
-    """A queued message could not go: its session ended, or never came free."""
-    m = event.get("message") or {}
-    name = _said_name(event.get("session") or {}, "The session")
-    number = _message_number(m)
-    why = _plain_phrase(str(m.get("failure") or ""), "it could not be sent")
-    await _say_about_message(
-        f"Your queued message to {name} could not go, sir: {why}.",
-        f"Since your last turn you told him queued message {number} to {name} "
-        f"failed: {why}.", "queued send", event)
-
-
 def _deliver(item: _StagedSteer, text: str) -> str:
     """Send through the session's own provider: Claude Code's inbox socket,
     or Codex's queue. A priority message interrupts the turn under way where
@@ -5656,10 +5705,9 @@ class _AgentDestination:
     record is its `messages` row, whose hand-over is its provider's inbox,
     and which takes one message per turn.
 
-    Sent is all it says, and only the session's transcript can say more:
+    Sent is all it reports, and only the session's transcript can say more:
     the session watcher follows the message from there (its provider's
-    `track`) and he is told "Delivered to X" once it is seen there, or that
-    X hasn't picked it up."""
+    `track`), and each step is an attention item (`_attend_message`)."""
 
     def __init__(self, item: _StagedSteer):
         self.item = item
@@ -5690,32 +5738,28 @@ class _AgentDestination:
     async def went(self) -> None:
         await _message_went(self.item.session_id)
 
-    async def say_queued(self, speech, why: str) -> None:
-        await speech.say(f"{_said_name(self.item)} {why}, sir. Your message waits its "
-                         f"turn and goes as soon as it is free.",
-                         Priority.NORMAL, label="readback-outcome")
+    def _attend(self, happened: str) -> None:
+        _attend("agent_message", self.item.message_id or 0, happened,
+                facts={"message_id": self.item.message_id or 0},
+                untrusted={"agent": self.item.voice_name or ""})
 
-    async def say_outcome(self, speech, outcome: str) -> None:
+    async def report_queued(self, speech, why: str) -> None:
+        """Nothing is said: the message shows it queued, behind its
+        session's turn, and it goes as soon as the session is free."""
+        self._attend("queued")
+
+    async def report_outcome(self, speech, outcome: str) -> None:
+        """Nothing is said. SENT means the bytes left over the socket, or
+        `codex queue` exited 0, nothing more: whether it arrived follows
+        from the watcher. Sent to a session that will ask its own approval
+        first, or not sent at all, is an item for him to see."""
         if outcome == session_steer.SENT:
-            # SENT means the bytes left over the socket, or `codex queue`
-            # exited 0, nothing more. Whether it arrived is said when the
-            # watcher sees it in the transcript ("Delivered to X") or gives
-            # up on it ("X hasn't picked it up"), so nothing is claimed here.
-            #
-            # Except that it will need approving: when the setting says so,
-            # that is said now, in the same breath as the send, rather than
-            # left for him to discover in the other window.
-            caveat = _inbound_caveat()
-            if caveat:
-                await speech.say(f"Passed to {_said_name(self.item)}, sir." + caveat,
-                                 Priority.NORMAL, label="readback-outcome")
+            if _inbound_caveat():
+                self._attend("needs_approving")
         elif outcome == session_steer.NOT_LIVE:
-            await speech.say(
-                f"{_said_name(self.item)} didn't answer its socket, sir — it may "
-                f"have just exited.", Priority.NORMAL, label="readback-outcome")
+            self._attend("not_live")
         else:
-            await speech.say(f"I couldn't deliver that to {_said_name(self.item)}, "
-                             f"sir.", Priority.NORMAL, label="readback-outcome")
+            self._attend("send_failed")
 
 
 class _CaptureBox:
@@ -5779,6 +5823,10 @@ async def _perform_command(item: _StagedCommand) -> None:
         run_store.record_steer("", COMMAND_AUDIT_NAME, item.project,
                                item.command, outcome)
 
+    def outcome(event: str) -> None:
+        # Shown, not spoken: the read-back was the words that mattered.
+        _action_outcome("command", event, {"project": item.project})
+
     try:
         if speech is None:
             record("no_voice")
@@ -5797,14 +5845,14 @@ async def _perform_command(item: _StagedCommand) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("cancelled")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("cancelled")
             return
 
         # `cd` into the project first: a start command means nothing in the
@@ -5815,11 +5863,10 @@ async def _perform_command(item: _StagedCommand) -> None:
             f"cd {shlex.quote(item.path)} && {item.command}")
         if result.get("success"):
             record("ran")
-            await speech.say(
-                f"Running in a Terminal window, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("ran")
         else:
             record("failed")
-            await speech.say("Terminal wouldn't open, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("terminal_failed")
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -5891,6 +5938,9 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         run_store.record_steer(item.session_id, item.voice_name, item.project,
                                item.key, f"dialog:{outcome}")
 
+    def shown(event: str) -> None:
+        _action_outcome("keypress", event, {"agent": _said_name(item)})
+
     try:
         if speech is None:
             record("no_voice")             # the mouth went away between turns
@@ -5906,37 +5956,22 @@ async def _perform_dialog(item: _StagedDialog) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            shown("cancelled")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            shown("cancelled")
             return
 
         outcome = await dialog.answer(item.pid, item.key)
         record(outcome)
-        if outcome == dialog.SENT:
-            await speech.say(f"Pressed {said} on {_said_name(item)}.",
-                             Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NOT_FOUND:
-            await speech.say(
-                f"{_said_name(item)} isn't in a Terminal window I can reach, "
-                f"sir — another application is hosting it, so that one needs "
-                f"your own hand.", Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NOT_PERMITTED:
-            await speech.say(
-                "macOS won't let me send keystrokes, sir — I'd need accessibility "
-                "permission in System Settings.", Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NO_TTY:
-            await speech.say(
-                f"{_said_name(item)} has no terminal of its own any more, "
-                f"sir — I pressed nothing.", Priority.NORMAL, label="readback-outcome")
-        else:
-            await speech.say(f"I couldn't press that for {_said_name(item)}, "
-                             f"sir.", Priority.NORMAL, label="readback-outcome")
+        # Shown, not spoken: the read-back was the words that mattered.
+        shown({dialog.SENT: "pressed", dialog.NOT_FOUND: "not_found",
+               dialog.NOT_PERMITTED: "not_permitted", dialog.NO_TTY: "no_tty"}
+              .get(outcome, "failed"))
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -6220,8 +6255,10 @@ class _AgentRecipient:
 messaging: Optional[messaging_runtime.MessagingRuntime] = None
 
 
-async def _say_arrival(line: str, note: str, detail: dict) -> None:
-    await _say_notice(line, note, "arrival", detail=detail)
+def _attend_arrival(arrival, audible: bool) -> None:
+    """A person's message has come in (arrival_announcer.py): one item per
+    message, this node's to speak of once it holds the presentation lease."""
+    _attend("arrival", arrival.message_id, "arrived", audible=audible, **arrival.attention())
 
 
 def _start_messaging() -> None:
@@ -6232,9 +6269,8 @@ def _start_messaging() -> None:
     try:
         messaging = messaging_runtime.MessagingRuntime(
             connection=team_client.connection, captures=review_captures,
-            send_frame=_send_to_session_clients, notify=_say_arrival,
-            wording=Wording(join=_join_natural, number=_say_number,
-                            gist=lambda subject: _message_gist({"body": subject})),
+            send_frame=_send_to_session_clients, attend=_attend_arrival,
+            engaged=lambda: _availability() == attention.ENGAGED,
             network_raw=lambda: team_client.connection.network.raw)
     except Exception:
         log.warning("human messaging could not start", exc_info=True)
@@ -7253,7 +7289,7 @@ def tool_package_results(args: dict) -> str:
 async def tool_run_package_agent(args: dict) -> str:
     """Start an agent package: one Claude Code run, through the run
     pipeline like every other, on its brief in its folder. Its finish is
-    announced by `_announce_package_run`."""
+    an attention item (`_attend_package_run`)."""
     package, problem = _package_or_problem(args, work_packages.AGENT)
     if package is None:
         return f"{problem} Nothing was started."
@@ -7386,35 +7422,17 @@ async def tool_tell_package_story(args: dict) -> str:
             + _wrap_untrusted(_PACKAGE_WRAP_NAME, titles))
 
 
-async def _announce_package_run(run: dict) -> None:
-    """An agent package's run has ended: say so, and tell the brain what
-    comes next. The package is named only as it is found here: its id is
-    JARVIS's own folder name (letters, digits, '.', '_' and '-'), never the
-    run row's text as written, and its own name is walled; a package no
-    longer here is "a work package"."""
+def _attend_package_run(run: dict) -> None:
+    """An agent package's run has ended: one item per run. The package is
+    named as it is found here: its id is JARVIS's own folder name, and its
+    own name is the sender's words."""
+    package_id = str(run.get("package_id") or "")
     try:
-        package = work_packages.find(str(run.get("package_id") or ""))
-        said, which = (_plain_name(package.manifest.name, "a work package"),
-                       f"work package {package.id}")
+        name = work_packages.find(package_id).manifest.name
     except work_packages.PackageError:
-        said, which = "a work package", "a work package that is no longer here"
-    if run.get("status") == run_store.RunStatus.SUCCEEDED:
-        await _say_notice(
-            f"The work package {said} has finished, sir. Shall I draft the reply with its "
-            f"results?",
-            f"Since your last turn you told him the agent run of {which} finished, and "
-            f"asked whether to draft the reply with its results. If he says yes: "
-            f"package_results with that package, then draft_message with reply_to the "
-            f"message the package came in on and those paths in files, then "
-            f"request_message_review.", "package run")
-        return
-    ended = ("ran out of time" if run.get("status") == run_store.RunStatus.TIMED_OUT
-             else "failed")
-    await _say_notice(
-        f"The work package {said} {ended}, sir.",
-        f"Since your last turn you told him the agent run of {which} {ended}. Nothing was "
-        f"drafted; retry_run runs it again on his word.",
-        "package run")
+        name = ""
+    _attend("package_run", run.get("id") or "", str(run.get("status") or ""),
+            facts={"package_id": package_id}, untrusted={"package": str(name or "")})
 
 
 TOOL_HANDLERS.update({
@@ -8217,26 +8235,13 @@ def _workflow_or_explain(name: str):
 TOOL_HANDLERS["workflow_status"] = tool_workflow_status
 
 
-def _workflow_spoken(w, event) -> tuple[str, str] | None:
-    """What JARVIS says for this event, and the note the brain gets, or
-    None for the events he does not speak about."""
-    name = _workflow_said(w)
-    look = f"workflow_status with workflow {w.id} has the detail."
-    if event.kind == "phase_started":
-        phase = _said_name({"voice_name": (event.item or "").replace("-", " ")}, "its next phase")
-        return (f"{name} has started {phase}, sir.",
-                f"You told him {name} started phase {event.item}. {look}")
-    if event.kind == "decision_needed":
-        return (f"{name} needs your decision, sir.",
-                f"You told him {name} needs his decision. Read it to him from "
-                f"workflow_status with workflow {w.id}; it can be answered on the "
-                f"Workflows view.")
-    if event.kind == "blocker_raised":
-        return (f"{name} is blocked, sir.", f"You told him {name} is blocked. {look}")
+def _workflow_attended(w, event) -> Optional[str]:
+    """The attention event for a workflow's event, or None for the events
+    that are not news to him."""
+    if event.kind in ("phase_started", "decision_needed", "blocker_raised"):
+        return event.kind
     if event.kind == "workflow_finished":
-        word = {"succeeded": "has finished", "failed": "has failed",
-                "cancelled": "has been cancelled"}.get(w.state, "has finished")
-        return (f"{name} {word}, sir.", f"You told him {name} {word}. {look}")
+        return f"finished_{w.state}"
     return None
 
 
@@ -8245,9 +8250,11 @@ def _workflow_recorded(w, event) -> None:
     the ones worth saying."""
     _workflows_said_silent.discard(w.id)
     _send_to_session_clients({"type": "workflows"})
-    spoken = _workflow_spoken(w, event)
-    if spoken:
-        _spawn(_say_about_message(spoken[0], "Since your last turn " + spoken[1], "workflow"))
+    happened = _workflow_attended(w, event)
+    if happened:
+        _attend("workflow", w.id, happened, facts={"phase": str(event.item or "")}
+                if happened == "phase_started" else None,
+                untrusted={"workflow": str(w.name or "")})
 
 
 async def _watch_workflow_silence() -> None:
@@ -8257,13 +8264,8 @@ async def _watch_workflow_silence() -> None:
             if w.state == workflow_store.SILENT and w.id not in _workflows_said_silent:
                 _workflows_said_silent.add(w.id)
                 _send_to_session_clients({"type": "workflows"})
-                name = _workflow_said(w)
-                await _say_about_message(
-                    f"{name} has gone quiet, sir.",
-                    f"Since your last turn you told him {name} has gone quiet: its "
-                    f"last report was {_say_age(time.time() - w.last_event_at)}. "
-                    f"workflow_status with workflow {w.id} has that report.",
-                    "workflow silence")
+                _attend("workflow", w.id, "gone_quiet",
+                        untrusted={"workflow": str(w.name or "")})
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
@@ -8420,6 +8422,51 @@ async def tool_set_language(args: dict) -> str:
             f"it. Tell him so in {name}. {language_setting.brain_rule(language)}")
 
 
+def _voice_input_settings_said(settings: dict) -> str:
+    stop = {"keep": "keep the words already captured",
+            "discard": "discard unfinished input"}[settings["stop"]]
+    switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
+    patience = f"His turn ends after {settings['patience']:g} seconds of quiet. "
+    whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
+    said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
+            f"from JARVIS, it will {switch}. {patience}These are {whose}'s settings")
+    return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
+
+
+async def tool_voice_input_settings(args: dict) -> str:
+    """His two voice input settings: what the Settings route reads."""
+    try:
+        return _voice_input_settings_said(voice_control.read())
+    except voice_control.Unreadable as e:
+        return f"{e} Listening cannot be started until they can."
+
+
+async def tool_set_voice_input_settings(args: dict) -> str:
+    """Change one or both voice input settings: the Settings route's
+    `voice_control.change`, with its validation. An ACTING tool. It starts,
+    stops and sends nothing; it applies from the next stop or page switch."""
+    try:
+        settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
+                                        patience=args.get("patience"))
+    except voice_control.Invalid as e:
+        return f"Nothing was changed, sir: {e.message}"
+    except voice_control.Unreadable as e:
+        return f"Nothing was changed, sir: {e}"
+    return ("Saved. " + _voice_input_settings_said(settings)
+            + " It applies from the next time he stops the microphone or leaves the page.")
+
+
+TOOL_HANDLERS.update({
+    "voice_input_settings": tool_voice_input_settings,
+    "set_voice_input_settings": tool_set_voice_input_settings,
+})
+ACTING_TOOLS.update({"set_voice_input_settings"})
+TAINT_EXEMPT_TOOLS.update({
+    "voice_input_settings": "it reads his own two voice input settings: fixed values",
+    "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
+})
+
+
 TOOL_HANDLERS.update({
     "speech_models": tool_speech_models,
     "install_speech_model": tool_install_speech_model,
@@ -8430,6 +8477,151 @@ TAINT_EXEMPT_TOOLS.update({
     "speech_models": "it reads JARVIS's own speech models: fixed names, sizes and states",
     "install_speech_model": "it starts a download of a fixed model, it does not read",
     "set_language": "it changes JARVIS's language to a fixed one, it does not read",
+})
+
+
+# --- Skip the rest and Stop speaking ------------------------------------------
+#
+# The page's Skip (`skip_to_end`) and Stop (`hush`) frames and the brain's
+# acting `skip_reading` and `stop_speaking` share these two. Neither cancels
+# a request or undoes anything a tool has done: they are about audio only.
+
+async def _skip_reading(utt: Optional[int] = None) -> bool:
+    """Skip the rest of one reading (`utt`, or the one sounding now): its
+    text stays, its generation goes on, nothing else stops. A read-back that
+    is skipped is not heard in full, so it approves nothing."""
+    if speech is None:
+        return False
+    return await speech.skip_reading(utt)
+
+
+async def _stop_speaking(by: str) -> bool:
+    """Stop speaking: every chunk playing or queued, now. Whether anything
+    was sounding."""
+    if speech is None:
+        return False
+    was = speech.is_speaking
+    log.info("hush: stopped by %s", by)
+    await speech.barge_in(reason=f"hush ({by})")
+    return was
+
+
+async def tool_skip_reading(args: dict) -> str:
+    """The page's Skip, by voice: the rest of what is being read aloud now."""
+    if not await _skip_reading():
+        return "Nothing is being read aloud, sir."
+    return ("Skipped the rest of that reading, sir; its text is still on screen, and "
+            "nothing it asked for has been approved or undone.")
+
+
+async def tool_stop_speaking(args: dict) -> str:
+    """The page's Stop, by voice: all audio, now. Nothing sounding, nothing
+    is touched: his own reply still to come is not silenced in advance."""
+    if speech is None or not speech.is_speaking:
+        return "Nothing was being said, sir."
+    await _stop_speaking("the brain")
+    return "Stopped speaking, sir. No request was cancelled and nothing was undone."
+
+
+# The brain may make input quieter, never louder (contract section 10): Mute
+# and Mic off, as his buttons do, on every open page. Start listening, Unmute
+# and Mic on are his alone; there is no tool for them.
+QUIET_FRAME = "quiet"
+QUIET_STATES = ("muted", "off")
+
+
+async def tool_quiet_microphone(args: dict) -> str:
+    """The page's Mute or Mic off, by voice or typing, on every open page."""
+    state = args.get("state")
+    if state not in QUIET_STATES:
+        return "Say which: muted or off. Nothing was changed."
+    if not voice_clients:
+        return "No JARVIS page is open, sir, so there is no microphone to quiet."
+    await _voice_emit({"type": QUIET_FRAME, "state": state})
+    if state == "off":
+        return ("Turned the microphone off on every open page, sir. Only he can turn it "
+                "back on, with Mic on.")
+    return ("Muted the microphone on every open page, sir (one already off stays off). "
+            "Only he can unmute it.")
+
+
+TOOL_HANDLERS.update({
+    "skip_reading": tool_skip_reading,
+    "stop_speaking": tool_stop_speaking,
+    "voice_turn": tool_voice_turn,
+    "quiet_microphone": tool_quiet_microphone,
+})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone"})
+TAINT_EXEMPT_TOOLS.update({
+    "skip_reading": "it stops one reading aloud, it does not read",
+    "stop_speaking": "it stops all audio, it does not read",
+    "voice_turn": "it sends, retries or keeps his own words; it reads nothing",
+    "quiet_microphone": "it mutes or turns off the microphone; it reads nothing",
+})
+
+
+# --- Review updates: the attention record (attention_api.py) ----------------
+#
+# The page's Review updates and these tools give the same JSON from the same
+# calls. The items carry other people's words, so the read is walled.
+_ATTENTION_WRAP_NAME = "updates"
+
+
+def _attention_running() -> attention_store.AttentionStore:
+    if attention_record is None:
+        raise attention_api.Unavailable()
+    return attention_record
+
+
+async def tool_attention_updates(args: dict) -> str:
+    """What is waiting for him: the Review updates list."""
+    try:
+        answer = await asyncio.to_thread(
+            lambda: attention_api.overview(_attention_running(), attention_admission))
+    except attention_api.Unavailable:
+        return "The updates record is not running, sir."
+    return ("His updates (Review updates on the page), as JSON. Names and subjects are "
+            "other people's words:\n"
+            + _wrap_untrusted(_ATTENTION_WRAP_NAME, json.dumps(answer, ensure_ascii=False)))
+
+
+async def tool_mark_updates_seen(args: dict) -> str:
+    """Mark updates seen: Review updates' Mark seen. An ACTING tool."""
+    ids = args.get("ids")
+    try:
+        answer = await asyncio.to_thread(
+            lambda: attention_api.mark_seen(_attention_running(), ids))
+    except attention_api.Unavailable:
+        return "The updates record is not running, sir."
+    except attention_store.Refused as refused:
+        return f"Nothing was marked, sir: {refused}"
+    return json.dumps(answer)
+
+
+async def tool_set_attention_settings(args: dict) -> str:
+    """Change when background updates may be spoken (away, and the trial
+    timings). An ACTING tool, validated as the route validates."""
+    changes = args.get("changes")
+    try:
+        answer = await asyncio.to_thread(
+            lambda: attention_api.change_settings(changes, _hint_attention))
+    except attention_store.Refused as refused:
+        return f"Nothing was changed, sir: {refused}"
+    return json.dumps(answer)
+
+
+TOOL_HANDLERS.update({
+    "attention_updates": tool_attention_updates,
+    "mark_updates_seen": tool_mark_updates_seen,
+    "set_attention_settings": tool_set_attention_settings,
+})
+ACTING_TOOLS.update({"mark_updates_seen", "set_attention_settings"})
+TAINTING_TOOLS.update({
+    "attention_updates": "the names and subjects other people and sessions wrote",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "mark_updates_seen": "it marks JARVIS's own records by id, it does not read",
+    "set_attention_settings": "it saves fixed settings, it does not read",
 })
 
 
@@ -8482,8 +8674,6 @@ def _workflow_subagents(w) -> list[dict]:
 _server_started_at = time.time()
 SUBSYSTEMS_POLL_SEC = 5.0
 _subsystems_task: Optional[asyncio.Task] = None
-COMMS_DOWN_LINE = "Communications with the agents are down, sir."
-COMMS_BACK_LINE = "Communications with the agents are back, sir."
 
 
 def _subsystems() -> list:
@@ -8583,21 +8773,13 @@ async def _watch_subsystems() -> None:
             said_down = True
             # The parts by their own fixed names only: a detail can quote an
             # error, and an error can quote a file a session wrote.
-            parts = _join_natural([c.name.lower() for c in comms.checks
-                                   if c.state == subsystem_diagnostics.DOWN])
-            await _say_about_message(
-                COMMS_DOWN_LINE,
-                f"Since your last turn you told him communications with the agents "
-                f"are down (what is down: {parts}). Messages to and from sessions may "
-                f"not arrive until they are back; the Diagnostics tab has the detail.",
-                "communications down")
+            _attend("communications", "agents", "down",
+                    facts={"down": sorted(c.id for c in comms.checks
+                                          if c.state == subsystem_diagnostics.DOWN)})
         elif said_down and comms.state in (subsystem_diagnostics.OK, subsystem_diagnostics.IDLE,
                                            subsystem_diagnostics.DEGRADED):
             said_down = False
-            await _say_about_message(
-                COMMS_BACK_LINE,
-                "Since your last turn you told him communications with the agents are "
-                "back.", "communications back")
+            _attention_resolved("communications", "agents")
 
     await _every(SUBSYSTEMS_POLL_SEC, "subsystems", look_at_subsystems)
 
@@ -9312,10 +9494,6 @@ async def tool_cancel_run(args: dict) -> str:
         return f"I couldn't stop the work in {_run_project(run)}, sir."
 
     if stopped:
-        # It must not then be announced as a completion the user never asked
-        # about — they were just told, in this sentence.
-        _pending_run_completions[:] = [
-            p for p in _pending_run_completions if p != run["project_name"]]
         return f"Stopped the work in {_run_project(run)}, sir."
 
     latest = run_store.get_run(run["id"]) or run
@@ -11837,7 +12015,13 @@ async def voice_handler(ws: WebSocket):
                                                      typed into the white box
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
-        {"type": "skip_to_end", "utt": 3}           stop this reply's reading, not generation
+        {"type": "skip_to_end", "utt": 3}           Skip the rest: stop this one reading
+                                                     (reply, read-back, announcement), not
+                                                     its generation
+        {"type": "hush"}                             Stop speaking: all audio, now
+        {"type": "playback", "utt": 3, "idx": 1, "outcome": "started"|"failed"}
+                                                     a chunk began to sound, or could not
+                                                     be decoded (failed is never played)
 
     Server -> Client:
         {"type": "config", "muteMicDuringSpeech": false}
@@ -11847,8 +12031,10 @@ async def voice_handler(ws: WebSocket):
         {"type": "status", "state": "thinking"|"speaking"|"idle"}
         {"type": "text", "text": "..."}              a chunk TTS could not voice
         {"type": "reply", "utt": 3, "at": 1234.5, "text": "...", "done": false}
-                                                     cumulative text; `at` is stable per turn
-        {"type": "reading_skipped", "utt": 3}       drop only this reply's audio, no fake ack
+                                                     cumulative text; `at` is stable per turn;
+                                                     the last (done) carries `outcome`:
+                                                     succeeded | failed | cancelled
+        {"type": "reading_skipped", "utt": 3}       drop only this reading's audio, no fake ack
 
     Run lifecycle events are published on /ws/runs, not here.
     """
@@ -11877,7 +12063,24 @@ async def voice_handler(ws: WebSocket):
             return
         _spawn(_handle_utterance(text, heard))
 
-    utterance = _Utterance(take_utterance)
+    def show_turn(frame: dict) -> None:
+        _show_turn(ws, frame)
+
+    async def commit_turn(text: str, heard: Optional[int], turn_id: int) -> None:
+        show_turn({"state": "committed", "turnId": turn_id})
+        await take_utterance(text, heard)
+
+    # His patience: one value for the hold here and for when JARVIS may
+    # start talking (voice_control.py).
+    patience = voice_control.patience()
+    if speech is not None:
+        speech.end_of_turn = patience
+    turns = TurnController(
+        commit_turn, hold=patience, coverage=_capture_coverage, epoch_floor=_capture_epoch,
+        on_stalled=lambda turn_id, text: show_turn(
+            {"state": "stalled", "turnId": turn_id, "text": text}),
+        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)))
+    _voice_turns[ws] = turns
 
     try:
         # Through this client's own queue, not straight down the socket, so
@@ -11886,10 +12089,8 @@ async def voice_handler(ws: WebSocket):
         for frame in _opening_frames():
             _enqueue(queue, frame)
 
-        global _last_greeting_time
-        if speech is not None and time.time() - _last_greeting_time > 60:
-            _last_greeting_time = time.time()
-            await speech.say(_greeting(), Priority.NORMAL, label="system")
+        # No greeting: a page connecting is not a person arriving, and a
+        # connection is never a reason to speak.
 
         while True:
             raw = await ws.receive_text()
@@ -11916,7 +12117,15 @@ async def voice_handler(ws: WebSocket):
             if kind == "skip_to_end":
                 target = msg.get("utt")
                 if type(target) is int and target > 0:
-                    await speech.skip_reply(target)
+                    await _skip_reading(target)
+                continue
+            if kind == voice_control.PLAYBACK_FRAME:
+                utt_id, idx, outcome = msg.get("utt"), msg.get("idx"), msg.get("outcome")
+                if type(utt_id) is int and type(idx) is int:
+                    if outcome == voice_control.PLAYBACK_STARTED:
+                        speech.playback_started(utt_id, idx)
+                    elif outcome == voice_control.PLAYBACK_FAILED:
+                        speech.playback_failed(utt_id, idx)
                 continue
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
@@ -11928,6 +12137,22 @@ async def voice_handler(ws: WebSocket):
                 # it drives nothing.
                 log.info("mic: %s", str(msg.get("text", ""))[:120])
                 continue
+            if kind == "turn_discard":
+                # His stop under Discard (voice control contract, rows 11
+                # and 14): what was being gathered from this page is thrown
+                # away, never sent, and its late words are refused.
+                turns.discard(*_page_identity(msg))
+                show_turn({"state": "idle"})
+                continue
+            if kind in ("turn_send_now", "turn_retry", "turn_keep_draft"):
+                # Send now (at once, once the recogniser has caught up, or as
+                # heard for a turn it could not finish), Retry and Keep as
+                # draft: the same calls as the brain's voice_turn.
+                action = {"turn_send_now": "send_now", "turn_retry": "retry",
+                          "turn_keep_draft": "keep_as_draft"}[kind]
+                if _turn_action(ws, action) == "nothing":
+                    log.info("turn %s: nothing to act on", action)
+                continue
             if kind == "hush":
                 # The user pressed the key, or the button. Deliberately NOT a
                 # spoken word: over a speaker his own voice comes back through
@@ -11935,10 +12160,9 @@ async def voice_handler(ws: WebSocket):
                 # like "stop" would cut him off constantly. A keystroke cannot
                 # be misheard.
                 #
-                # keep_unread=False: this is "be quiet", not "hold that
-                # thought" — nothing is saved to say later.
-                log.info("hush: stopped by the user")
-                await speech.barge_in(keep_unread=False, reason="hush (key)")
+                # This is "be quiet", not "hold that thought": nothing is
+                # saved to say later.
+                await _stop_speaking("the page")
                 continue
             if kind == "interim":
                 # Logged because its ABSENCE is the diagnosis. A session that
@@ -11949,8 +12173,11 @@ async def voice_handler(ws: WebSocket):
                 # wrong happened after this point.
                 text = str(msg.get("text", ""))
                 log.info("mic-hears: %s", text[-70:])
+                client, epoch = _page_identity(msg)
+                if not turns.current(client, epoch):
+                    continue
                 if await speech.user_interim(text) == "speech":
-                    utterance.still_talking()
+                    turns.interim(text, client, epoch)
             elif kind == "played":
                 try:
                     # OverflowError is in there because `int(float('inf'))`
@@ -11969,6 +12196,9 @@ async def voice_handler(ws: WebSocket):
                     text = apply_speech_corrections(text)
                 if not text:
                     continue
+                client, epoch = _page_identity(msg)
+                if not typed and not turns.current(client, epoch):
+                    continue                 # a stopped capture's late words
                 verdict = await speech.user_final(text, typed=typed)
                 if not typed and verdict != "echo":
                     # Accepted as his words (stop, cancel and "say that
@@ -11997,17 +12227,27 @@ async def voice_handler(ws: WebSocket):
                 # the turn they start go to it and no other.
                 ui_clients.note_turn(ws, _transcript_id(msg))
                 if typed:
-                    await utterance.now()
+                    # Typed Send is his whole message: voice words still
+                    # being gathered are not merged into it, and go on as
+                    # their own turn.
                     await take_utterance(text, _transcript_id(msg), typed=True)
-                else:
-                    utterance.heard(text, _transcript_id(msg))
+                elif turns.final(text, _transcript_id(msg), client, epoch):
+                    # What the server has gathered, so the page keeps only
+                    # accepted words (never echo) if the socket drops.
+                    show_turn({"state": "gathering", "turnId": turns.turn_id,
+                               "text": turns.gathered_text})
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:
         log.error(f"WebSocket error: {e}", exc_info=True)
     finally:
-        # Words still being gathered when the page went are sent, not lost.
-        _spawn(utterance.now())
+        # Words still being gathered when the page went are not sent: an
+        # abandoned partial is never turned into a request. The page keeps
+        # what it heard as an unsent draft.
+        _voice_turns.pop(ws, None)
+        unsent = turns.close()
+        if unsent:
+            log.info("voice socket closed with words not sent: %r", unsent[:120])
         ui_clients.gone(ws)
         _drop_voice_client(ws)
 

@@ -77,8 +77,9 @@ class Harness:
         self.msgs = []
         self.fail_texts = set()
         self.synth_calls = []          # every text actually sent to TTS
+        kw.setdefault("end_of_turn", 0.2)
         self.sched = SpeechScheduler(self.synth, self.emit, pause_after=0.2, stale_after=0.6,
-                                     echo_window=0.5, batch_interval=0.3, batch_settle=0.05, **kw)
+                                     echo_window=0.5, **kw)
 
     async def synth(self, text):
         self.synth_calls.append(text)
@@ -162,7 +163,7 @@ async def test_normal_say_queues_behind_turn_without_preempting(h):
 
 
 @pytest.mark.asyncio
-async def test_urgent_preempts_at_boundary_then_resumes_with_bridge(h):
+async def test_urgent_preempts_at_boundary_then_resumes_with_nothing_in_front(h):
     from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
@@ -179,8 +180,7 @@ async def test_urgent_preempts_at_boundary_then_resumes_with_bridge(h):
     assert texts[:2] == ["Alpha one.", "Beta two."]
     assert "Hammer needs you." in texts
     i = texts.index("Hammer needs you.")
-    assert texts[i + 1] == "As I was saying —"
-    assert texts[i + 2:] == ["Gamma three.", "Delta four."]
+    assert texts[i + 1:] == ["Gamma three.", "Delta four."], "no bridge phrase"
     assert u.done and not u.cancelled and urgent.done
 
 
@@ -221,7 +221,7 @@ async def test_resume_is_dropped_when_stale(h):
 
 
 @pytest.mark.asyncio
-async def test_barge_in_marks_unheard_urgent_unread_and_reraises_at_pause(h):
+async def test_barge_in_on_urgent_speech_keeps_nothing_to_say_later(h):
     from jarvis.speech import Priority
     s = h.sched
     urgent = await s.say("Chitauri is waiting on you.", priority=Priority.URGENT, immediate=True)
@@ -233,7 +233,7 @@ async def test_barge_in_marks_unheard_urgent_unread_and_reraises_at_pause(h):
     await asyncio.sleep(0.35)                    # pause_after elapses
     await h.ack_all()
     texts = [t for _, _, t in h.audio()]
-    assert texts[-1].startswith("Before I forget — Chitauri is waiting on you.")
+    assert texts == ["Chitauri is waiting on you."], "no unread pile re-raised"
 
 
 @pytest.mark.asyncio
@@ -263,19 +263,6 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
     assert h.audio() == []
     await asyncio.sleep(0.2)
     assert h.audio() == [(u.id, 0, "Half past nine, sir.")]
-
-
-@pytest.mark.asyncio
-async def test_low_items_are_batched_into_one_utterance(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    await s.say("Chitauri finished.", priority=Priority.LOW)
-    await s.say("Hammer finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.1)
-    await h.ack_all(rounds=4)
-    texts = [t for _, _, t in h.audio()]
-    assert texts == ["Chitauri finished.", "Hammer finished."]
-    assert len({u for u, _, _ in h.audio()}) == 1     # one utterance
 
 
 @pytest.mark.asyncio
@@ -555,7 +542,7 @@ def _audio_matches_text(h):
 @pytest.mark.asyncio
 async def test_resume_with_slow_synthesis_speaks_the_right_audio_and_reaches_idle(slow):
     """A streaming turn: later chunks are still being synthesised when the
-    preemption and the bridge insertion happen. Every audio chunk must carry the
+    preemption and the resume happen. Every audio chunk must carry the
     audio for its own text, and the turn must finish."""
     from jarvis.speech import Priority
     s = slow.sched
@@ -575,11 +562,10 @@ async def test_resume_with_slow_synthesis_speaks_the_right_audio_and_reaches_idl
     # Depending on whether the preemption lands before or after chunk 1's ack,
     # "Cee three." is either dropped-and-resent after the bridge or played
     # before the urgent item. Either way: spoken exactly once, order preserved,
-    # bridge first after the interruption, and the turn finishes.
+    # nothing put in front of the resumption, and the turn finishes.
     after = texts[texts.index("Hammer needs you.") + 1:]
-    assert after[0] == "As I was saying —"
     tail = ["Cee three.", "Dee four.", "Eee five."]
-    assert after[1:] == [t for t in tail if t in after]
+    assert after == [t for t in tail if t in after]
     assert all(texts.count(t) == 1 for t in tail)
     assert u.done and urgent.done
     assert slow.msgs[-1] == {"type": "status", "state": "idle"}
@@ -650,18 +636,6 @@ async def test_no_audio_is_emitted_after_stop():
 
 
 @pytest.mark.asyncio
-async def test_batched_low_say_becomes_done_when_spoken(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    low = await s.say("Chitauri finished.", priority=Priority.LOW)
-    assert not low.done
-    await asyncio.sleep(0.1)
-    await h.ack_all(rounds=4)
-    assert await s.wait_for(low, 1.0) is True
-    assert low.done and not low.was_cancelled
-
-
-@pytest.mark.asyncio
 async def test_three_synth_failures_report_once(h):
     s = h.sched
     h.fail_texts.update({"One.", "Two.", "Three.", "Four."})
@@ -700,7 +674,7 @@ async def test_cancel_word_does_not_reraise_the_cancelled_announcement(h):
 
 
 @pytest.mark.asyncio
-async def test_two_urgent_items_produce_one_bridge(h):
+async def test_two_urgent_items_then_the_turn_resumes_once(h):
     from jarvis.speech import Priority
     s = h.sched
     u = s.begin_turn()
@@ -713,25 +687,11 @@ async def test_two_urgent_items_produce_one_bridge(h):
     b = await s.say("Second urgent.", priority=Priority.URGENT, immediate=True)
     await h.ack_all(rounds=15)
     texts = [t for _, _, t in h.audio()]
-    bridges = [t for t in texts if t in ("As I was saying —", "Back to it —", "Where was I —")]
-    assert bridges == ["As I was saying —"]
     i = texts.index("Second urgent.")
-    assert texts[i + 1] == "As I was saying —"
+    assert texts[i + 1:] == ["Gamma three.", "Delta four."]
     assert texts.index("First urgent.") < i
+    assert u.resumes == 1
     assert u.done and a.done and b.done and h.msgs[-1] == {"type": "status", "state": "idle"}
-
-
-@pytest.mark.asyncio
-async def test_the_first_low_items_of_a_session_are_batched_together(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    await s.say("Chitauri finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.02)
-    await s.say("Hammer finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.15)
-    await h.ack_all(rounds=4)
-    assert len({u for u, _, _ in h.audio()}) == 1
-    assert [t for _, _, t in h.audio()] == ["Chitauri finished.", "Hammer finished."]
 
 
 @pytest.mark.asyncio
@@ -778,7 +738,7 @@ async def test_voice_failing_notice_arrives_in_order(h):
 
 @pytest.mark.asyncio
 async def test_an_utterance_interrupted_too_often_is_dropped(h):
-    from jarvis.speech import Priority, MAX_RESUMES, BRIDGES
+    from jarvis.speech import Priority, MAX_RESUMES
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "Alpha one. Beta two. Gamma three. Delta four. Epsilon five. Zeta six.")
@@ -789,13 +749,13 @@ async def test_an_utterance_interrupted_too_often_is_dropped(h):
     await h.ack(u.id, 1)
     for i in range(MAX_RESUMES + 1):
         urgent = await s.say(f"Urgent {i}.", priority=Priority.URGENT, immediate=True)
-        # ack only the urgent item and any bridge — never the turn's own sentences,
-        # so the turn keeps being interrupted mid-way
+        # ack only the urgent item — never the turn's own sentences, so the
+        # turn keeps being interrupted mid-way
         for _ in range(8):
             await asyncio.sleep(0.03)
             for m in list(h.msgs):
                 if (m["type"] == "audio" and not m.get("_acked") and not m.get("_dropped")
-                        and (m["utt"] == urgent.id or m["text"] in BRIDGES)):
+                        and m["utt"] == urgent.id):
                     await h.ack(m["utt"], m["idx"])
     await h.ack_all(rounds=6)
     assert u.cancelled and u.resumes <= MAX_RESUMES
@@ -852,9 +812,9 @@ async def test_a_lost_ack_does_not_mute_jarvis_forever():
 
 
 @pytest.mark.asyncio
-async def test_urgent_speech_with_nobody_listening_is_kept_and_said_later():
-    """Spec §4 'No one listening': an URGENT item is never lost because the tab
-    was closed — it is re-raised once someone is connected."""
+async def test_urgent_speech_with_nobody_listening_is_not_said_later():
+    """Speech nobody could hear is not re-raised as a pile once someone
+    connects: what was routine is in the attention record, shown there."""
     from jarvis.speech import SpeechScheduler, Priority
     msgs = []
     listening = {"on": False}
@@ -878,7 +838,7 @@ async def test_urgent_speech_with_nobody_listening_is_kept_and_said_later():
         listening["on"] = True                       # a client connects
         await asyncio.sleep(0.5)
         spoken = [m["text"] for m in msgs if m["type"] == "audio"]
-        assert spoken and spoken[0].startswith("Before I forget — Hammer needs you.")
+        assert spoken == []
     finally:
         await s.stop()
 
@@ -890,8 +850,9 @@ def test_spec_defaults_are_the_spec_defaults():
         return None
 
     s = SpeechScheduler(nop, nop)
-    assert (s.prefetch, s.batch_interval, s.pause_after, s.stale_after, s.echo_window) == (2, 20.0, 3.0, 60.0, 6.0)
-    assert s.batch_settle == 2.0 and s.ack_timeout == 45.0
+    assert (s.prefetch, s.pause_after, s.stale_after, s.echo_window) == (2, 3.0, 60.0, 6.0)
+    assert s.ack_timeout == 45.0
+    assert not hasattr(s, "batch_interval"), "nothing is batched: routine events are attention items"
     sp = SentenceSplitter()
     assert (sp._first_chunk_max, sp._first_chunk_min) == (160, 40)
 
@@ -1167,8 +1128,7 @@ def test_with_nothing_sent_at_all_a_word_is_the_user():
 # what `_perform_steer`, `_perform_dialog` and the command path use as "the
 # user has heard the read-back" before opening the cancel window. It also
 # defeats the prefetch gate (`sent - played < prefetch`), so every remaining
-# chunk goes out in one burst, and silently drops an URGENT utterance's
-# remaining text from `_unread`.
+# chunk goes out in one burst.
 #
 # Reachable only from the page itself (the Origin gate holds), so this is a
 # buggy or racing tab rather than an attacker. It is still not an ack.
@@ -1275,12 +1235,10 @@ async def test_a_failed_synthesis_does_not_break_the_chain(h):
 
 
 @pytest.mark.asyncio
-async def test_a_hold_taken_while_paused_is_not_discharged_against_the_bridge():
-    """The seventh audit: `held_ack` is an INDEX, and the resume bridge is
-    inserted under it. A preemption clears the hold, but an early ack that
-    arrives WHILE PAUSED sets it again, and the bridge then lands on that
-    index with `earliest_ack` 0.0 — so the hold discharged at once, against
-    audio that had not been sent."""
+async def test_a_hold_taken_while_paused_is_applied_before_the_resume():
+    """The seventh audit: `held_ack` is an INDEX. A preemption clears the
+    hold, but an early ack that arrives WHILE PAUSED sets it again; the
+    resume waits for it to land on the chunk it was for."""
     from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
@@ -1307,20 +1265,18 @@ async def test_a_hold_taken_while_paused_is_not_discharged_against_the_bridge():
         await asyncio.sleep(0.4)                # the hold lands on chunk 0's floor
         assert u.played == 0 and u.held_ack == -1
         assert u.resumes == 1
-        assert u.chunks[0].text == "Alpha bravo." and u.chunks[1].text != "Charlie delta.", \
-            "the bridge went in AFTER the chunk that was heard, never under the hold"
+        assert [c.text for c in u.chunks] == ["Alpha bravo.", "Charlie delta.", "Foxtrot golf."], \
+            "nothing was put in front of the resumption"
     finally:
         await s.stop()
 
 
 @pytest.mark.asyncio
-async def test_a_resume_waits_for_the_kept_chunk_before_shifting_its_index():
-    """The eighth audit: `held_ack` was only one way for a stale index to
-    arrive. An URGENT whose synthesis FAILS is done at once, so the resume
-    happened while the browser was still playing the kept chunk — and its
-    honest ack, for the index it was sent under, landed on the bridge that
-    had just been inserted under that index. The resume now waits for that
-    ack (bounded by the chunk's own floor plus a grace)."""
+async def test_a_resume_waits_for_the_kept_chunk():
+    """The eighth audit: an URGENT whose synthesis FAILS is done at once, so
+    the resume happened while the browser was still playing the kept chunk,
+    and re-sent it. The resume waits for that chunk's ack (bounded by its own
+    floor plus a grace)."""
     from jarvis.speech import SpeechScheduler, Priority
     msgs = []
 
@@ -1338,20 +1294,19 @@ async def test_a_resume_waits_for_the_kept_chunk_before_shifting_its_index():
         assert u.sent == 1 and u.played == -1
         await s.say("Urgent line.", priority=Priority.URGENT, immediate=True)
         await asyncio.sleep(0.15)          # the urgent failed to synthesise: done at once
-        assert s._paused is u and u.resumes == 0, "no bridge while chunk 0 can still be playing"
+        assert s._paused is u and u.resumes == 0, "no resume while chunk 0 can still be playing"
         assert u.chunks[0].text == "Alpha bravo."
         await s.played(u.id, 0)            # the kept chunk finishes, honestly, under ITS index
         await asyncio.sleep(0.4)
         assert u.played == 0 and u.resumes == 1
-        assert u.chunks[0].text == "Alpha bravo." and u.chunks[1].text != "Charlie delta.", \
-            "the bridge went in AFTER the chunk that was heard"
-        assert u.chunks[2].text == "Charlie delta."
+        assert [c.text for c in u.chunks] == ["Alpha bravo.", "Charlie delta.", "Foxtrot golf."]
+        assert u.sent >= 1 and u.sent > u.played, "the resume goes on from chunk 1"
     finally:
         await s.stop()
 
 
 @pytest.mark.asyncio
-async def test_a_bridge_shifts_the_sent_bound_with_the_frames_it_displaces():
+async def test_a_resume_keeps_the_sent_bound_of_frames_already_out():
     from jarvis.speech import SpeechScheduler, Priority
 
     async def synth(text):
@@ -1373,7 +1328,7 @@ async def test_a_bridge_shifts_the_sent_bound_with_the_frames_it_displaces():
         await s.played(v.id, 0)
         await asyncio.sleep(0.1)
         assert u.resumes == 1
-        assert u.high_sent == 3, "frames 1 and 2 went out; they are now 2 and 3"
+        assert u.high_sent >= 2, "frames 1 and 2 went out; an ack in the air for them still counts"
     finally:
         await s.stop()
 
@@ -1652,7 +1607,9 @@ async def test_text_only_turn_emits_identified_text_and_returns_to_idle(h):
     u = h.sched.begin_turn()
     h.sched.feed(u, "Text response.")
     await h.sched.end_turn(u)
-    assert await h.sched.wait_for(u, timeout=1)
+    # Shown as text, so done; never heard, so not heard in full.
+    assert not await h.sched.wait_for(u, timeout=1)
+    assert u.done and u.outcomes() == ["failed"]
     await asyncio.sleep(0.05)
     text = next(m for m in h.msgs if m["type"] == "text")
     assert text["text"] == "Text response."
@@ -1662,14 +1619,14 @@ async def test_text_only_turn_emits_identified_text_and_returns_to_idle(h):
 
 
 @pytest.mark.asyncio
-async def test_skip_reply_cancels_reading_without_faking_played_or_resuming(h):
+async def test_skip_reading_cancels_reading_without_faking_played_or_resuming(h):
     s = h.sched
     u = s.begin_turn()
     s.feed(u, "First sentence. Second sentence. ")
     await asyncio.sleep(0.15)
     assert h.audio()
     assert u.played == -1
-    assert await s.skip_reply(u.id)
+    assert await s.skip_reading(u.id)
     assert u.cancelled and u.played == -1
     assert {"type": "reading_skipped", "utt": u.id} in h.msgs
     count = len(h.audio())
@@ -1685,7 +1642,7 @@ async def test_skip_reply_cancels_reading_without_faking_played_or_resuming(h):
 
 
 @pytest.mark.asyncio
-async def test_skip_reply_retires_its_pending_synthesis_only(h):
+async def test_skip_reading_retires_its_pending_synthesis_only(h):
     s = h.sched
     started, cancelled = asyncio.Event(), asyncio.Event()
 
@@ -1701,23 +1658,31 @@ async def test_skip_reply_retires_its_pending_synthesis_only(h):
     u = s.begin_turn()
     s.feed(u, "Still generating audio. ")
     await asyncio.wait_for(started.wait(), 1)
-    assert await s.skip_reply(u.id)
+    assert await s.skip_reading(u.id)
     await asyncio.wait_for(cancelled.wait(), 1)
     assert u.played == -1
     assert not h.audio()
 
 
 @pytest.mark.asyncio
-async def test_skip_reply_does_not_cancel_readback_or_urgent_speech(h):
+async def test_skip_reading_skips_a_readback_or_urgent_notice_and_nothing_else(h):
+    """Skip the rest is targeted: a read-back or an announcement can be
+    skipped, only the one named, and a skipped read-back is never heard in
+    full, so no approval can follow it."""
     from jarvis.speech import Priority
     s = h.sched
     notice = await s.say("Urgent notice.", Priority.URGENT)
     reading = s.read_aloud("Read this capture.", capture=81)
-    assert not await s.skip_reply(notice.id)
-    assert not await s.skip_reply(reading.id)
-    assert not await s.skip_reply(999999)
-    assert not notice.cancelled and not reading.cancelled
-    assert not any(m["type"] == "reading_skipped" for m in h.msgs)
+    assert not await s.skip_reading(999999)
+    assert await s.skip_reading(reading.id)
+    assert reading.cancelled and reading.was_skipped
+    assert not notice.cancelled
+    assert {"type": "reading_skipped", "utt": reading.id} in h.msgs
+    assert not await s.wait_for(reading, timeout=0.2)
+    assert set(reading.outcomes()) == {"skipped"}
+    assert await s.skip_reading(notice.id)
+    assert notice.was_skipped
+    assert not await s.skip_reading(notice.id), "already skipped"
 
 
 @pytest.mark.asyncio
@@ -1729,7 +1694,7 @@ async def test_skipping_a_pending_reply_leaves_another_utterance_playing(h):
     assert s._current is urgent and s.is_speaking
     u = s.begin_turn()
     s.feed(u, "Pending reply. ")
-    assert await s.skip_reply(u.id)
+    assert await s.skip_reading(u.id)
     assert s._current is urgent and s.is_speaking
     assert not urgent.cancelled
     assert not any(m["type"] == "stop" for m in h.msgs)
@@ -1840,3 +1805,70 @@ async def test_his_own_accented_words_come_back_as_echo(h, spanish):
 ])
 def test_spanish_replay_classification(h, spanish, text, expected):
     assert h.sched.classify(text) == expected
+
+
+# ── the conversation floor (contract section 7) ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_an_announcement_waits_while_the_floor_is_held_and_a_reply_does_not(h):
+    """Routine speech waits while his turn or the brain's holds the floor;
+    the reply to his turn is never stuck behind it."""
+    s = h.sched
+    held = [True]
+    s.floor_held = lambda: held[0]
+    note = await s.say("Routine update.", label="announcement")
+    await asyncio.sleep(0.4)
+    assert h.audio() == [], "nothing routine while the floor is his"
+    reply = s.begin_turn()
+    s.feed(reply, "Your answer.")
+    await s.end_turn(reply)
+    await asyncio.sleep(0.3)
+    assert [t for _, _, t in h.audio()] == ["Your answer."]
+    await h.ack_all()
+    held[0] = False
+    await asyncio.sleep(0.6)
+    await h.ack_all()
+    assert [t for _, _, t in h.audio()] == ["Your answer.", "Routine update."]
+    assert not note.cancelled
+
+
+@pytest.mark.asyncio
+async def test_an_announcement_is_checked_again_before_its_first_audio():
+    """Picked while the floor was free, its synthesis finishing after he has
+    started again: it goes back to the queue unheard."""
+    gate = asyncio.Event()
+    harness = Harness()
+
+    async def slow(text):
+        await gate.wait()
+        return b"A:" + text.encode()
+
+    harness.sched._synth = slow
+    held = [False]
+    harness.sched.floor_held = lambda: held[0]
+    await harness.sched.start()
+    try:
+        note = await harness.sched.say("Routine update.", label="announcement")
+        await asyncio.sleep(0.4)
+        held[0] = True                     # he starts again while it synthesises
+        gate.set()
+        await asyncio.sleep(0.4)
+        assert harness.audio() == [] and not note.cancelled
+        held[0] = False
+        await asyncio.sleep(0.6)
+        assert [t for _, _, t in harness.audio()] == ["Routine update."]
+    finally:
+        await harness.sched.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_floor_that_cannot_be_read_holds_routine_speech(h):
+    s = h.sched
+
+    def broken():
+        raise RuntimeError("no floor")
+
+    s.floor_held = broken
+    await s.say("Routine update.", label="announcement")
+    await asyncio.sleep(0.4)
+    assert h.audio() == []

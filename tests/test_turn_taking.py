@@ -1,5 +1,6 @@
 """Turn-taking: JARVIS waits for him to finish. The server gathers what he
-says until he has been quiet for END_OF_TURN_SEC, so a pause mid-sentence
+says until he has been quiet for his patience (END_OF_TURN_SEC unless he
+set it), so a pause mid-sentence
 does not send the brain half a sentence; nothing JARVIS says starts while he
 is talking, his replies included; and an announcement never starts at once."""
 
@@ -8,28 +9,30 @@ import asyncio
 import pytest
 import pytest_asyncio
 
-from jarvis import server
 from jarvis.speech import END_OF_TURN_SEC, Priority, SpeechScheduler
+from jarvis.turn_controller import TurnController
 from tests.test_speech import Harness
 
 
 # ── the server gathers his words ─────────────────────────────────────────
+# The turn controller on the real event loop's clock and timers (its fake
+# clock tests are test_turn_controller.py).
 
 class Sent:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, text, heard):
+    async def __call__(self, text, heard, turn_id):
         self.calls.append((text, heard))
 
 
 @pytest.mark.asyncio
 async def test_finals_heard_with_a_short_pause_between_are_one_utterance():
     sent = Sent()
-    u = server._Utterance(sent, hold=0.2)
-    u.heard("send a message to agent guard", 1)
+    u = TurnController(sent, hold=0.2)
+    u.final("send a message to agent guard", 1)
     await asyncio.sleep(0.1)
-    u.heard("asking for its status", 2)
+    u.final("asking for its status", 2)
     await asyncio.sleep(0.1)
     assert sent.calls == [], "nothing goes while he may still be talking"
     await asyncio.sleep(0.2)
@@ -39,11 +42,11 @@ async def test_finals_heard_with_a_short_pause_between_are_one_utterance():
 @pytest.mark.asyncio
 async def test_more_words_on_the_way_hold_it_longer():
     sent = Sent()
-    u = server._Utterance(sent, hold=0.2)
-    u.heard("don't restart", 1)
+    u = TurnController(sent, hold=0.2)
+    u.final("don't restart", 1)
     for _ in range(4):
         await asyncio.sleep(0.1)
-        u.still_talking()                  # an interim: he is still going
+        u.interim()                        # an interim: he is still going
     assert sent.calls == []
     await asyncio.sleep(0.3)
     assert sent.calls == [("don't restart", 1)]
@@ -52,31 +55,32 @@ async def test_more_words_on_the_way_hold_it_longer():
 @pytest.mark.asyncio
 async def test_an_interim_with_nothing_gathered_starts_nothing():
     sent = Sent()
-    u = server._Utterance(sent, hold=0.05)
-    u.still_talking()
+    u = TurnController(sent, hold=0.05)
+    u.interim("hmm")
     await asyncio.sleep(0.15)
     assert sent.calls == []
 
 
 @pytest.mark.asyncio
-async def test_now_sends_what_was_heard_at_once_and_only_once():
+async def test_send_now_sends_what_was_heard_at_once_and_only_once():
     sent = Sent()
-    u = server._Utterance(sent, hold=0.2)
-    u.heard("first part", 7)
-    await u.now()
+    u = TurnController(sent, hold=0.2)
+    u.final("first part", 7)
+    assert u.send_now()
     await asyncio.sleep(0.3)
     assert sent.calls == [("first part", 7)]
 
 
-def test_the_server_waits_as_long_as_the_scheduler():
-    assert server._Utterance(Sent())._hold == END_OF_TURN_SEC == 1.5
+def test_the_server_and_the_scheduler_share_one_patience():
+    from jarvis import voice_control
+    assert voice_control.patience() == END_OF_TURN_SEC == 1.5
 
 
 # ── JARVIS does not talk over him ────────────────────────────────────────
 
 @pytest_asyncio.fixture
 async def h():
-    harness = Harness()          # pause_after 0.2, so end_of_turn is 0.2 too
+    harness = Harness()          # pause_after 0.2, end_of_turn 0.2
     await harness.sched.start()
     yield harness
     await harness.sched.stop()
@@ -114,8 +118,11 @@ async def test_what_he_typed_is_answered_at_once(h):
     assert [t for _, _, t in h.audio()] == ["Five o'clock, sir."]
 
 
-def test_the_end_of_turn_wait_is_never_longer_than_the_announcement_pause():
+def test_the_end_of_turn_wait_is_his_patience_never_clamped_to_the_announcement_pause():
+    """One patience value: JARVIS never starts talking before his turn
+    could have ended, however short the announcement pause."""
     async def nop(*a):
         return None
     assert SpeechScheduler(nop, nop).end_of_turn == END_OF_TURN_SEC
-    assert SpeechScheduler(nop, nop, pause_after=0.2).end_of_turn == 0.2
+    assert SpeechScheduler(nop, nop, pause_after=0.2).end_of_turn == END_OF_TURN_SEC
+    assert SpeechScheduler(nop, nop, pause_after=3.0, end_of_turn=4.0).end_of_turn == 4.0
