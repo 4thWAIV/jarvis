@@ -24,9 +24,18 @@ export function CentreNotices() {
       else root.removeProperty("--centre-notice-height");
     };
     fit();
+    // A resize is only reported at the next frame; a notice added or removed
+    // is reported before any other script runs, so the room is given back at
+    // once, as it was when the reminder sized itself.
     const watch = new ResizeObserver(fit);
     watch.observe(el);
-    return () => { watch.disconnect(); root.removeProperty("--centre-notice-height"); };
+    const children = new MutationObserver(fit);
+    children.observe(el, { childList: true, subtree: true });
+    return () => {
+      watch.disconnect();
+      children.disconnect();
+      root.removeProperty("--centre-notice-height");
+    };
   }, []);
   return (
     <div id="centre-notices" ref={box}>
