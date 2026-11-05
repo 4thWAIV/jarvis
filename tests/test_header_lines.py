@@ -354,6 +354,13 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server.tool_voice_turn": (
+        "it checks `action` against TURN_ACTIONS before acting and answers only "
+        "with the fixed sentences of _TURN_SAID or a fixed refusal; neither the "
+        "argument nor the words of the turn are put in what it says"),
+    "server.tool_quiet_microphone": (
+        "it checks `state` against QUIET_STATES before acting and answers only "
+        "with fixed sentences; the argument is never put in what it says"),
     "turn_controller._drop": (
         "it joins the turn's parts, which are only what the recogniser heard him "
         "say on this page (or nothing): his own words, given back to the page as "

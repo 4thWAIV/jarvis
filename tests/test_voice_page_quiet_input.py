@@ -530,3 +530,26 @@ async def test_muted_or_not_listening_no_frame_reaches_a_package_listener(page_p
         await page.click("#btn-mute")
         await inner.wait_for_function(f"window.__audio > {muted + 5}", timeout=10000)
         await context.close()
+
+
+# ── the brain's quiet_microphone: only ever quieter (contract section 10) ─
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_brain_s_quiet_frame_mutes_or_turns_off_and_never_undoes_off(page_playwright, page_url):
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await _page(context, page_url)
+        await _listening(page)
+        page.voice.socket.send(json.dumps({"type": "quiet", "state": "muted"}))
+        await page.wait_for_function("document.querySelector('#btn-mute')?.getAttribute('aria-pressed') === 'true'",
+                                     timeout=5000)
+        assert await page.evaluate(f"localStorage.getItem({json.dumps(QUIET_KEY)})") == "muted"
+        page.voice.socket.send(json.dumps({"type": "quiet", "state": "off"}))
+        await page.wait_for_function("document.querySelector('#btn-mic-off')?.getAttribute('aria-pressed') === 'true'",
+                                     timeout=5000)
+        page.voice.socket.send(json.dumps({"type": "quiet", "state": "muted"}))
+        page.voice.socket.send(json.dumps({"type": "quiet", "state": "none"}))
+        await page.wait_for_timeout(500)
+        assert await page.evaluate(f"localStorage.getItem({json.dumps(QUIET_KEY)})") == "off", \
+            "a frame never makes input louder"
+        await context.close()

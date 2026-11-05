@@ -1986,6 +1986,18 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "quiet_microphone",
+        "description": (
+            "Mute the microphone or turn it off on every open JARVIS page (the page's Mute and "
+            "Mic off), only when he asks. It can only make input quieter: unmuting, turning "
+            "it on and starting to listen are his own clicks, and there is no tool for them."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"state": {"type": "string", "enum": ["muted", "off"]}},
+            "required": ["state"],
+        },
+    },
+    {
         "name": "voice_turn",
         "description": (
             "What he has said aloud and not yet sent (the page's Send now, Retry and Keep as "

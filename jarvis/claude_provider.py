@@ -162,6 +162,8 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__stop_speaking",
     # Send now, Retry and Keep as draft on what he has said: the page's own.
     "mcp__jarvis__voice_turn",
+    # Mute and Mic off, never their opposites: the brain only makes input quieter.
+    "mcp__jarvis__quiet_microphone",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",

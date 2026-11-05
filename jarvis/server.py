@@ -8523,16 +8523,40 @@ async def tool_stop_speaking(args: dict) -> str:
     return "Stopped speaking, sir. No request was cancelled and nothing was undone."
 
 
+# The brain may make input quieter, never louder (contract section 10): Mute
+# and Mic off, as his buttons do, on every open page. Start listening, Unmute
+# and Mic on are his alone; there is no tool for them.
+QUIET_FRAME = "quiet"
+QUIET_STATES = ("muted", "off")
+
+
+async def tool_quiet_microphone(args: dict) -> str:
+    """The page's Mute or Mic off, by voice or typing, on every open page."""
+    state = args.get("state")
+    if state not in QUIET_STATES:
+        return "Say which: muted or off. Nothing was changed."
+    if not voice_clients:
+        return "No JARVIS page is open, sir, so there is no microphone to quiet."
+    await _voice_emit({"type": QUIET_FRAME, "state": state})
+    if state == "off":
+        return ("Turned the microphone off on every open page, sir. Only he can turn it "
+                "back on, with Mic on.")
+    return ("Muted the microphone on every open page, sir (one already off stays off). "
+            "Only he can unmute it.")
+
+
 TOOL_HANDLERS.update({
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
     "voice_turn": tool_voice_turn,
+    "quiet_microphone": tool_quiet_microphone,
 })
-ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn"})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone"})
 TAINT_EXEMPT_TOOLS.update({
     "skip_reading": "it stops one reading aloud, it does not read",
     "stop_speaking": "it stops all audio, it does not read",
     "voice_turn": "it sends, retries or keeps his own words; it reads nothing",
+    "quiet_microphone": "it mutes or turns off the microphone; it reads nothing",
 })
 
 

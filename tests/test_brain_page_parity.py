@@ -136,7 +136,8 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings",
-            "skip_reading", "stop_speaking", "voice_turn", "mark_updates_seen",
+            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
+            "mark_updates_seen",
             "set_attention_settings")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
@@ -176,6 +177,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("skip_reading", {}),
     ("stop_speaking", {}),
     ("voice_turn", {"action": "send_now"}),
+    ("quiet_microphone", {"state": "muted"}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
@@ -724,3 +726,27 @@ def test_set_attention_settings_is_hold_spoken_updates(wired, updates):
     assert "Nothing was changed" in refused["text"]
     assert wired.client.put("/api/attention/settings", json={"oldest_event_sec": -5},
                             headers=BROWSER).status_code == 400
+
+
+# ── Mute and Mic off ──────────────────────────────────────────────────────
+
+def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wired, monkeypatch):
+    """The page applies the frame through the same chooseQuiet as his
+    buttons; the brain has no tool to unmute, turn on or start listening."""
+    sent = []
+
+    async def emit(frame):
+        sent.append(frame)
+
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", set())
+    assert "No JARVIS page is open" in _call(wired, "quiet_microphone", state="off")["text"]
+    wired.server.voice_clients.add(object())
+    assert _call(wired, "quiet_microphone", state="muted")["ok"]
+    assert _call(wired, "quiet_microphone", state="off")["ok"]
+    assert "Nothing was changed" in _call(wired, "quiet_microphone", state="on")["text"]
+    assert sent == [{"type": "quiet", "state": "muted"}, {"type": "quiet", "state": "off"}]
+    from jarvis import jarvis_mcp
+    names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
+    assert "quiet_microphone" in names
+    assert not names & {"unmute", "start_listening", "microphone_on", "listen"}
