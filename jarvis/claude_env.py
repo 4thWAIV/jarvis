@@ -21,6 +21,8 @@ updated is the one nobody notices.
 from __future__ import annotations
 
 import os
+import shlex
+import sys
 
 # Every ANTHROPIC_* variable, not just the key: the base URL and the model
 # override redirect a child just as effectively as credentials do.
@@ -46,6 +48,53 @@ SCRUBBED_ENV_KEYS = {"CLAUDECODE"}
 # unboundedly — pass this to every `create_subprocess_exec(..., limit=...)`
 # that reads a Claude Code child's stdout/stderr.
 STREAM_LINE_LIMIT = 64 * 1024 * 1024  # 64 MiB per line
+
+
+def command_prefix(configured: str) -> list[str]:
+    """The argv a configured `claude` (JARVIS_CLAUDE_PATH, or the one on
+    PATH) begins with, for the brain and the run pipeline alike.
+
+    macOS and Linux: a shell-quoted string, as always, so the setting may
+    carry arguments. Windows: a path is a path. shlex's POSIX rules take a
+    backslash for an escape and made the real
+    C:\\Users\\...\\WinGet\\Links\\claude.EXE into C:Users...claude.EXE
+    (measured), so an existing file named whole, spaces and all, is the one
+    element, and anything else is split by Windows' own rules
+    (CommandLineToArgvW). A .cmd or .bat launcher is refused: Windows runs
+    it through cmd.exe, which parses the arguments again, and the brain's
+    carry its whole system prompt."""
+    if sys.platform != "win32":
+        return shlex.split(configured)
+    text = configured.strip()
+    whole = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == '"' else text
+    argv = [whole] if os.path.isfile(whole) else _windows_split(text)
+    if not argv:
+        raise FileNotFoundError("no claude executable is configured")
+    if os.path.splitext(argv[0])[1].lower() in (".cmd", ".bat"):
+        raise PermissionError(f"{argv[0]} is a batch file; JARVIS starts claude only from "
+                              f"an executable, so its arguments reach it unparsed")
+    return argv
+
+
+def _windows_split(text: str) -> list[str]:
+    """`text` split as Windows splits a command line (shell32's
+    CommandLineToArgvW)."""
+    import ctypes
+    from ctypes import wintypes
+    shell32, kernel32 = ctypes.windll.shell32, ctypes.windll.kernel32
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    if not text:
+        return []
+    count = ctypes.c_int(0)
+    found = shell32.CommandLineToArgvW(text, ctypes.byref(count))
+    if not found:
+        raise ctypes.WinError()
+    try:
+        return [found[i] for i in range(count.value)]
+    finally:
+        kernel32.LocalFree(ctypes.cast(found, ctypes.c_void_p))
 
 
 def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
