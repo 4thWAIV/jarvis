@@ -1,7 +1,10 @@
 import json
 import os
+import subprocess
+import sys
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
@@ -63,6 +66,66 @@ def test_pid_alive_distinguishes_this_process_from_a_dead_one(tmp_path):
     assert sw.pid_alive(999999) is False
     assert sw.pid_alive(None) is False
     assert sw.pid_alive(0) is False
+
+
+def test_repeated_liveness_checks_leave_a_disposable_process_running():
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             stdin=subprocess.DEVNULL)
+    try:
+        for _ in range(20):
+            assert sw.pid_alive(child.pid) is True
+            assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+    assert sw.pid_alive(child.pid) is False
+
+
+@pytest.mark.parametrize("pid", [None, 0, -1, "invalid", float("inf"), 2**64])
+def test_invalid_windows_pid_never_reaches_a_process_api(monkeypatch, pid):
+    monkeypatch.setattr(sw, "sys", SimpleNamespace(platform="win32"))
+
+    def unexpected(_pid):
+        pytest.fail("invalid PID reached the Windows process API")
+
+    monkeypatch.setattr(sw, "_windows_pid_alive", unexpected)
+    assert sw.pid_alive(pid) is False
+
+
+@pytest.mark.parametrize("handle,result,alive", [
+    (0, None, False),             # absent or access denied: unconfirmed
+    (0x123456789, 0x102, True),    # live, including a 64-bit handle
+    (0x123456789, 0, False),       # signalled process, regardless of exit code
+    (0x123456789, 0xFFFFFFFF, False),  # failed inspection
+])
+def test_windows_liveness_uses_a_non_signalling_handle_and_closes_it(
+        monkeypatch, handle, result, alive):
+    import ctypes
+
+    calls = []
+
+    class Function:
+        def __init__(self, name, value):
+            self.name, self.value = name, value
+
+        def __call__(self, *args):
+            calls.append((self.name, args))
+            return self.value
+
+    api = SimpleNamespace(OpenProcess=Function("open", handle),
+                          WaitForSingleObject=Function("wait", result),
+                          CloseHandle=Function("close", 1))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: api, raising=False)
+    monkeypatch.setattr(sw, "sys", SimpleNamespace(platform="win32"))
+
+    def signal_forbidden(*args):
+        pytest.fail("Windows liveness must not send a signal")
+
+    monkeypatch.setattr(sw.os, "kill", signal_forbidden)
+    assert sw.pid_alive(123) is alive
+    assert calls == [("open", (0x00100000, False, 123))] + (
+        [("wait", (handle, 0)), ("close", (handle,))] if handle else [])
+    assert api.OpenProcess.restype is ctypes.wintypes.HANDLE
 
 
 def test_encode_cwd_replaces_every_non_alphanumeric_including_dots(tmp_path):
@@ -287,8 +350,24 @@ def test_recent_tools_are_capped_and_most_recent(tmp_path):
 # exercised for real rather than stubbed. The roster file is named after the
 # pid, so distinct pids are also what makes distinct files possible.
 LIVE_A = os.getpid()
-LIVE_B = os.getppid()
+LIVE_B = None  # assigned by the owned-process fixture before any test runs
 DEAD = 999999
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _second_live_roster_process():
+    # A launcher/parent may be inaccessible, including under a sandbox or
+    # another Windows account. Own the second process so its liveness is
+    # still exercised for real without depending on the launch environment.
+    global LIVE_B
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"],
+                             stdin=subprocess.DEVNULL)
+    LIVE_B = child.pid
+    try:
+        yield
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
 
 
 def test_several_processes_on_one_session_id_collapse_to_one_conversation(tmp_path):
