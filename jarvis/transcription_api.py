@@ -18,6 +18,10 @@ listening on that page means to take the recogniser from another page
 told `busy`; the owner a claim displaces is told `taken`. A version 1 start
 is refused with `invalid-format`.
 
+An `abort` may report a drop (`dropped`: the page threw away the audio it
+held, its reason one of the protocol's `dropReasons` and the seconds it
+lost), which is recorded as a "dropped" failure.
+
 A page that asks for diagnostics (`"diagnostics": true` in its start) sends
 `telemetry` once a second and is sent `health` once a second: a
 voice_diagnostics.CaptureMonitor samples the capture, records the sample and
@@ -124,16 +128,21 @@ async def transcribe(ws: WebSocket):
 
     monitor: Optional[voice_diagnostics.CaptureMonitor] = None
 
-    async def fail(error: TranscriptionError) -> None:
+    async def incident(kind: str, text: str, lost_sec: Optional[float] = None) -> None:
+        """A failure recorded, with the cause in force where the page asked
+        for diagnostics; the next capture soon after it is a reconnect."""
         global _last_failure_at
+        _last_failure_at = time.monotonic()
+        if monitor is not None:
+            await monitor.incident(kind, text, lost_sec)
+        else:
+            voice_diagnostics.record_soon(Event(
+                at=time.time(), kind=kind, capture=session, text=text, lost_sec=lost_sec))
+
+    async def fail(error: TranscriptionError) -> None:
         log.info("transcription %s refused: %s", session, error.code)
         if error.incident and error.code in voice_diagnostics.INCIDENT_KINDS:
-            _last_failure_at = time.monotonic()
-            if monitor is not None:
-                await monitor.incident(error.code, error.message)
-            else:
-                voice_diagnostics.record_soon(Event(
-                    at=time.time(), kind=error.code, capture=session, text=error.message))
+            await incident(error.code, error.message)
         try:
             await send("error", code=error.code, message=error.message)
             await ws.close()
@@ -217,6 +226,17 @@ async def transcribe(ws: WebSocket):
                 continue
             if kind == "abort":
                 capture.abort()
+                # The page threw away audio it held: a drop, with its reason
+                # and the seconds lost.
+                try:
+                    drop = voice_diagnostics.parse_drop(message_json)
+                except ValueError as bad:
+                    log.info("transcription %s: drop report refused (%s)", session, bad)
+                    drop = None
+                if drop is not None:
+                    log.info("transcription %s dropped by the page: %s, %.1f s lost",
+                             session, *drop)
+                    await incident("dropped", drop[0], drop[1])
                 await ws.close()
                 return
             if kind == "finish":

@@ -2359,7 +2359,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   border-left: 3px solid #fbbf24;
   border-radius: 6px;
 }
-.voice-card.kind-overload, .voice-card.kind-decoder-failed { border-left-color: #ef4444; }
+.voice-card.kind-overload, .voice-card.kind-dropped, .voice-card.kind-decoder-failed { border-left-color: #ef4444; }
 .voice-card p { margin: 0; overflow-wrap: anywhere; }
 .voice-card-when { font-size: 11px; color: var(--ui-secondary); font-variant-numeric: tabular-nums; }
 .voice-card-busy { font-size: 11px; color: var(--ui-secondary); }

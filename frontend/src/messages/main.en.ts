@@ -450,6 +450,15 @@ export const mainEn = {
   "main.voice.incident.interrupted": "Last words not finished",
   "main.voice.incident.busy": "Another page listening",
   "main.voice.incident.model-unavailable": "No speech model",
+  "main.voice.incident.dropped": "Held speech thrown away",
+  // Why the page threw away the speech it held (transcribeProtocol.json
+  // `dropReasons`), and how much.
+  "main.voice.dropReason.fellBehind": "Recognition fell behind",
+  "main.voice.dropReason.tooSlow": "Recognition took too long to start",
+  "main.voice.dropReason.backedUp": "Connection backed up",
+  "main.voice.dropReason.disconnected": "Microphone disconnected",
+  "main.voice.dropReason.lostJarvis": "Connection to JARVIS lost",
+  "main.voice.lostSec": "{seconds} s of speech lost",
   "main.voice.source.status": "Status",
   "main.voice.source.input": "Input",
   "main.voice.source.playback": "Playback",

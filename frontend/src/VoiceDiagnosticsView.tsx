@@ -41,7 +41,7 @@ import { Chip, HeadroomBar, HeardRing, PipelineTrack, Sparkline, SpeedRing, type
 import { ago } from "./workflows";
 import { audioStatus, BACKLOG_DROP_SEC, BACKLOG_WARN_SEC, causeSaid, getHistory, health, heardShare, isQuiet, notices,
          quietUntil, setQuiet, summary, voiceChanged, type Sample, type VoiceEvent } from "./voiceHealth";
-import { beforeDrops, clock, DROP_KINDS, groupMessages, INCIDENT_KINDS, incidentWords,
+import { beforeDrops, clock, DROP_KINDS, dropReasonWords, groupMessages, INCIDENT_KINDS, incidentWords,
          noticesBySource, quietComparison, sourceWords } from "./voiceAnalysis";
 
 /** How far back the view looks; each is worded `main.voice.range.<id>`. */
@@ -253,15 +253,22 @@ function Incidents({ events, partRef }: { events: VoiceEvent[]; partRef: Section
 
 function IncidentCard({ e }: { e: VoiceEvent }) {
   const t = useT();
+  const dropped = e.kind === "dropped"
+    ? [dropReasonWords(e.text) ?? e.text,
+       e.lostSec != null ? t("main.voice.lostSec", { seconds: decimals(e.lostSec, 1) }) : null]
+      .filter(Boolean).join(" · ")
+    : null;
   const ui = useUiTarget({ ref: { region: "main", view: "main.diagnostics", kind: "voiceIncident", key: String(e.id) },
                            label: incidentWords(e.kind), socket: CENTRE_SOCKET });
   return (
     <article className={`voice-card kind-${e.kind}`} data-event={e.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
       <span className="voice-card-when">{clock(e.at)} · {incidentWords(e.kind)}</span>
       {/* The cause by its code (an older record's as written); the line is
-          the recogniser's own detail, shown as it came. */}
+          the recogniser's own detail, shown as it came, or a page drop's
+          reason and the speech it lost. */}
       <p>{e.cause ? <b><SaidText said={causeSaid(e)} className="voice-card-cause" /></b> : <b>{t("main.voice.noCause")}</b>}
-        {e.text ? <span data-original-detail="">{` ${e.text}`}</span> : null}</p>
+        {dropped ? <span className="voice-card-drop">{` ${dropped}`}</span>
+          : e.text ? <span data-original-detail="">{` ${e.text}`}</span> : null}</p>
       {e.topProcesses.length > 0 && (
         <p className="voice-card-busy">{t("main.voice.busiest", {
           processes: e.topProcesses.map((p) => `${p.name} ${formatNumber(Math.round(p.cpu))}%`).join(", ") })}</p>

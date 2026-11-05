@@ -67,6 +67,8 @@ export interface Sample extends Cause {
 export interface VoiceEvent extends Cause {
   id: number; at: number; kind: string; capture: string | null; source: string | null;
   text: string | null; cause: string | null; topProcesses: { name: string; cpu: number }[];
+  /** The seconds of audio a drop lost, where the page said. */
+  lostSec?: number | null;
 }
 
 export interface Summary extends Cause {

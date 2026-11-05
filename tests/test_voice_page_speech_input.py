@@ -71,18 +71,24 @@ class Voice:
         return [m["text"] for m in self.sent if m.get("type") == "transcript"]
 
 
-async def _open(p, url, script=None, listen=True):
+async def _open(p, url, script=None, listen=True, before=None):
+    """`before`: a script run before the fakes are installed."""
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
         pytest.skip(f"no headless Chromium: {e}")
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
+    # Routed before the fake transcription socket is installed, so the page
+    # holds the fake itself, not Playwright's relay around it (see
+    # test_voice_page_quiet_input._page).
+    voice = Voice()
+    await page.route_web_socket("**/ws/voice", voice)
+    if before:
+        await page.add_init_script(before)
     if script:
         await page.add_init_script(f"window.__transcribe = {json.dumps(script)};")
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.add_init_script(COUNT_MICROPHONES)
-    voice = Voice()
-    await page.route_web_socket("**/ws/voice", voice)
     await page.goto(url + "?view=main")
     if listen:
         await start_listening(page)
@@ -242,6 +248,61 @@ async def test_a_recogniser_that_never_gets_ready_drops_the_attempt_and_says_so(
             timeout=20000)
         assert await page.evaluate("window.__framesSent") == 0
         assert voice.finals() == []
+        # The drop is reported on the abort, with the ten seconds it held.
+        drop = (await page.evaluate("window.__aborts"))[0]["dropped"]
+        assert drop["reason"] == "tooSlow" and 9.5 <= drop["lostSec"] <= 10.5, drop
+        await browser.close()
+
+
+# Chrome runs a hidden tab's timers about once a second; the worklet's
+# frames still arrive every 100 ms. Every timer here runs at most once a
+# second, as in a hidden tab.
+ONCE_A_SECOND_TIMERS = """
+(() => {
+  const every = window.setInterval.bind(window), after = window.setTimeout.bind(window);
+  window.setInterval = (fn, ms, ...a) => every(fn, Math.max(ms || 0, 1000), ...a);
+  window.setTimeout = (fn, ms, ...a) => after(fn, Math.max(ms || 0, 1000), ...a);
+})();
+"""
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_with_timers_running_once_a_second_every_frame_is_sent_and_nothing_dropped(
+        page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, voice = await _open(p, page_url, before=ONCE_A_SECOND_TIMERS)
+        await page.wait_for_function(
+            "window.__transcribers.some((t) => t.readyState === 1) && window.__framesSent > 0",
+            timeout=20000)
+        # Fifteen seconds: past the ten seconds the page holds, where the old
+        # pacing (three frames a timer tick, 0.7 s more held every second)
+        # dropped everything it held and started again.
+        behind = []
+        for _ in range(15):
+            await page.wait_for_timeout(1000)
+            sent, captured = await page.evaluate("[window.__framesSent, window.__framesCaptured]")
+            behind.append(captured - sent)
+        # What was held while the slowed connection opened drains at one and
+        # a half times real time; after that, under a second (ten frames)
+        # waits at any time.
+        assert max(behind[-5:]) < 10, behind
+        held = [t["heldSec"] for t in await page.evaluate("window.__telemetry")]
+        assert held and max(held[-5:]) < 1.0, held
+        assert await page.evaluate("window.__aborts") == []
+        assert await page.evaluate("window.__transcribers.length") == 1
+        assert await page.evaluate(STATUS) == ""
+        await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_backed_up_connection_drop_is_reported_with_what_it_held(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page, voice = await _open(p, page_url)
+        await _ready(page)
+        await page.evaluate("window.__transcribers.find((t) => t.readyState === 1).bufferedAmount = 1e9")
+        await page.wait_for_function("window.__aborts.length > 0", timeout=5000)
+        drop = (await page.evaluate("window.__aborts"))[0]["dropped"]
+        assert drop["reason"] == "backedUp" and 0 < drop["lostSec"] < 1, drop
         await browser.close()
 
 

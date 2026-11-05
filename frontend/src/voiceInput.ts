@@ -32,10 +32,12 @@
  * the grant and epoch it was scheduled in.
  *
  * Audio captured while the recogniser is still loading is held (up to
- * `startupBufferSec`) and sent in order, paced, once it is ready. Past any
- * limit the whole attempt is dropped and the page says so; no frame is ever
- * quietly skipped, because losing the start of a sentence is the failure
- * this replaced.
+ * `startupBufferSec`) and sent in order, paced by the time that has passed
+ * (never by timer ticks, which a hidden tab runs once a second), once it is
+ * ready. Past any limit the whole attempt is dropped, the page says so and
+ * its abort tells the voice record why and how many seconds were lost; no
+ * frame is ever quietly skipped, because losing the start of a sentence is
+ * the failure this replaced.
  *
  * Each session asks for diagnostics: once a second it sends the server what
  * the page measured (voiceHealth.takeTelemetry, with the frames captured and
@@ -195,7 +197,14 @@ const SOCKET_LIMIT_BYTES = protocol.queueLimitSec * protocol.sampleRate * 2;
 // Held audio is sent at one and a half times real time (frames per frame's
 // worth of time), so a backlog drains without arriving faster than the
 // recogniser can take it.
-const PACE_PER_TICK = 1.5;
+const PACE = 1.5;
+// Credit is earned by the time that has passed whenever the outbox is
+// pumped (on every frame the worklet hands over, and on a timer), never by
+// timer ticks: Chrome runs a hidden tab's timers about once a second. At
+// most this much time's credit is kept, so a page pumped only once a second
+// still sends at real time and more.
+const CREDIT_MAX_MS = 1000;
+const CREDIT_MAX = PACE * CREDIT_MAX_MS / FRAME_MS;
 const RETRY_MAX_MS = 30000;
 // A finishing session may wait for the recogniser to load before its held
 // audio can be sent, then has the server's own finish limit to finalise it.
@@ -208,6 +217,13 @@ const METER_EVERY_MS = 100;
 const TELEMETRY_EVERY_MS = 1000 * protocol.telemetryEverySec;
 
 interface Frame { pcm: ArrayBuffer; at: number }
+
+/** Why the live session's held audio was thrown away (the protocol's
+ *  `dropReasons`), each said by `left.input.<reason>`. */
+type DropReason = "fellBehind" | "tooSlow" | "backedUp" | "disconnected" | "lostJarvis";
+
+/** Seconds of audio a session holds, not yet sent. */
+const heldSec = (s: { outbox: Frame[] }) => s.outbox.length * FRAME_MS / 1000;
 
 /** Every captured frame, as 16 kHz mono PCM16, while this page holds the
  *  listening grant, whether or not it is sent to the recogniser: muted,
@@ -243,6 +259,7 @@ interface Session {
   closed: boolean;         // nothing it says is acted on any more
   outbox: Frame[];
   credit: number;
+  creditAt: number;        // when credit was last earned (performance.now())
   finals: Set<number>;
   /** Stopped under Keep: its words are held here until it has finished,
    *  then go together, or become a draft if it cannot finish. Null: each
@@ -398,7 +415,7 @@ export function createVoiceInput(
         mark("microphone track ended");
         closeMicrophone();
         epoch++;
-        dropSession(inputWords("left.input.disconnected"));
+        dropSession("disconnected");
         if (armed && !off()) scheduleRetry(openMicrophone);
       };
     }
@@ -447,25 +464,19 @@ export function createVoiceInput(
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     const s: Session = { ws, id: null, epoch, ready: false, closing: false, lastFrame: false,
-                         finishSent: false, closed: false, outbox: [], credit: PACE_PER_TICK,
+                         finishSent: false, closed: false, outbox: [], credit: PACE,
+                         creditAt: performance.now(),
                          finals: new Set(), held: null, toDraft: false };
     const claiming = claim;
     session = s;
-    // Credit by the time that has passed, not by ticks: a busy page's timers
-    // fire late, and counting ticks would then send slower than the
-    // microphone captures, so held audio would never drain.
-    let ticked = performance.now();
-    const timer = setInterval(() => {
-      const now = performance.now();
-      s.credit = Math.min(s.credit + PACE_PER_TICK * (now - ticked) / FRAME_MS, PACE_PER_TICK * 2);
-      ticked = now;
-      pump(s);
-    }, FRAME_MS);
+    // Frames pump as they arrive; this drains what is held once they stop
+    // (a stopped session finishing after the microphone is released).
+    const timer = setInterval(() => pump(s), FRAME_MS);
     const telemetry = setInterval(() => {
       if (session !== s || !s.ready || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify(takeTelemetry({
         framesCaptured, framesSent,
-        heldSec: s.outbox.length * FRAME_MS / 1000,
+        heldSec: heldSec(s),
         socketSec: ws.bufferedAmount / (protocol.sampleRate * 2),
       })));
       framesCaptured = framesSent = 0;
@@ -557,7 +568,7 @@ export function createVoiceInput(
 
   function deliver(s: Session, text: string) {
     if (hooks.canDeliver && !hooks.canDeliver()) {
-      interruptWith(inputWords("left.input.lostJarvis"));
+      interruptWith("lostJarvis");
       return;
     }
     onTranscript(text, s.epoch);
@@ -633,7 +644,7 @@ export function createVoiceInput(
     s.outbox.push({ pcm, at: performance.now() });
     if (s === session && s.outbox.length > HOLD_FRAMES) {
       epoch++;
-      dropSession(inputWords(s.ready ? "left.input.fellBehind" : "left.input.tooSlow"));
+      dropSession(s.ready ? "fellBehind" : "tooSlow");
       scheduleRetry(beginSession);
       return;
     }
@@ -650,12 +661,21 @@ export function createVoiceInput(
     if (off() || !armed) closeMicrophone();
   }
 
+  /** Credit for the time since it was last earned, once the recogniser is
+   *  ready: the one place credit is earned. */
+  function earn(s: Session) {
+    const now = performance.now();
+    if (s.ready) s.credit = Math.min(s.credit + PACE * (now - s.creditAt) / FRAME_MS, CREDIT_MAX);
+    s.creditAt = now;
+  }
+
   function pump(s: Session) {
+    earn(s);
     if (!s.ready || s.ws.readyState !== WebSocket.OPEN) return;
     while (s.outbox.length && s.credit >= 1) {
       if (s.ws.bufferedAmount > SOCKET_LIMIT_BYTES) {
         epoch++;
-        dropSession(inputWords("left.input.backedUp"));
+        dropSession("backedUp");
         scheduleRetry(beginSession);
         return;
       }
@@ -669,22 +689,27 @@ export function createVoiceInput(
     }
   }
 
-  /** Discard a session's audio without sending it. */
-  function abortSession(s: Session) {
+  /** Discard a session's audio without sending it. A drop is reported on
+   *  the abort, with the seconds of audio thrown away, for the voice record. */
+  function abortSession(s: Session, reason?: DropReason) {
     s.closed = true;
     s.held = null;
+    const dropped = reason ? { reason, lostSec: heldSec(s) } : undefined;
     try {
-      if (s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ type: "abort" }));
+      if (s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ type: "abort", dropped }));
       s.ws.close();
     } catch { /* closing anyway */ }
   }
 
-  /** Discard the live session's audio without sending it. */
-  function dropSession(words?: InputWords) {
+  /** Discard the live session's audio without sending it. With a reason it
+   *  is a drop: recorded, and said unless `say` is false (the caller says
+   *  something else). Without one it was his choice or echo. */
+  function dropSession(reason?: DropReason, say = true) {
     const s = session;
     session = null;
-    if (s) abortSession(s);
-    if (words) {
+    if (s) abortSession(s, reason);
+    if (reason && say) {
+      const words = inputWords(`left.input.${reason}`);
       mark(`input interrupted: ${logged(words)}`);
       setStatus("interrupted", words);
     }
@@ -739,20 +764,21 @@ export function createVoiceInput(
     if (closing) { abortSession(closing); closing = null; }
   }
 
-  function interruptWith(words: InputWords) {
+  function interruptWith(reason: DropReason) {
     epoch++;
-    dropSession(words);
+    dropSession(reason);
     if (armed && !paused && !quiet()) scheduleRetry(beginSession);
   }
 
   /** The grant ends: nothing is taken or sent from here until his next
-   *  Start, and the microphone is released. */
-  function revoke() {
+   *  Start, and the microphone is released. With a reason, what was held
+   *  is recorded as dropped (the caller says why). */
+  function revoke(reason?: DropReason) {
     armed = false;
     claim = false;
     epoch++;
     cancelRetry();
-    dropSession();
+    dropSession(reason, false);
     closeMicrophone();
   }
 
@@ -895,7 +921,7 @@ export function createVoiceInput(
         if (!armed) return;
         resumeOnReconnect = !quiet();
         mark("voice socket lost: listening stops under its epoch");
-        revoke();
+        revoke("lostJarvis");
         rest(inputWords("left.input.lostJarvis"));
         return;
       }
