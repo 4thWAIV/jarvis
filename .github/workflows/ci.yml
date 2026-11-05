@@ -17,7 +17,8 @@
 # network: the `browser` tests (a headful browser on live sites) are the one
 # selection left out.
 #
-# One job, so a run waits for one macOS runner and sets up once:
+# One test job, so a run waits for one macOS runner and sets up once (the
+# small runner job before it only chooses which macOS runner, see below):
 #   Test suite   the default selection (`pytest`)
 #   Page tests   the voice page and dashboard in headless Chromium (`pytest -m page`)
 #   Timing       both pytest steps write --durations and a junit XML; the runner's
@@ -37,14 +38,44 @@ on:
   pull_request:
     paths-ignore: ["team_server/**", "docs/**", ".github/workflows/team-server*.yml"]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "macOS runner: auto (by time of day), intel or apple"
+        default: auto
+        type: choice
+        options: [auto, intel, apple]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Which macOS runner the tests wait for. GitHub's Apple Silicon runners go
+  # short of capacity during the US day (runs cancelled without starting), so
+  # the day (06:00-22:00 Pacific) uses Intel, about 1.6x slower but available,
+  # and the night uses Apple Silicon. A run started by hand can choose.
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - id: pick
+        env:
+          CHOICE: ${{ inputs.runner || 'auto' }}
+        run: |
+          hour=$(TZ=America/Los_Angeles date +%-H)
+          case "$CHOICE" in
+            intel) label=macos-15-intel ;;
+            apple) label=macos-latest ;;
+            *) if [ "$hour" -ge 6 ] && [ "$hour" -lt 22 ]; then label=macos-15-intel; else label=macos-latest; fi ;;
+          esac
+          echo "Pacific hour $hour, choice $CHOICE: $label"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
   test:
-    runs-on: macos-latest
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.label }}
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
