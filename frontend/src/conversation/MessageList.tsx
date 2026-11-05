@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { conversation, turnKey, type Turn } from "../captions";
+import { conversation, reading, turnKey, type Turn } from "../captions";
 import { type ConversationItem, type ConversationPage } from "../conversation";
 import { useT } from "../locale";
 import { bind, bindingProps } from "../uiNavigation";
@@ -68,11 +68,13 @@ const READ_LINE = 0.75;
  *  before. Otherwise it moves only as the word needs: down once the word
  *  passes the reading line, up only as far as the word when it is above
  *  the box, and not at all while it is in view, so words arriving or the
- *  box changing size never carry the list past it. */
-function followTo(box: HTMLElement, content: HTMLElement, pinned: boolean): number {
+ *  box changing size never carry the list past it. Between sentences no
+ *  word is marked, but the reading has not ended (`stillReading`,
+ *  captions.ts `reading`): it stays where it is. */
+function followTo(box: HTMLElement, content: HTMLElement, pinned: boolean, stillReading: boolean): number {
   const end = box.scrollHeight - box.clientHeight;
   const word = content.querySelector(".spoken-word.now");
-  if (!word) return end;
+  if (!word) return stillReading && !pinned ? box.scrollTop : end;
   const at = word.getBoundingClientRect();
   const top = at.top - box.getBoundingClientRect().top;
   const bottom = top + at.height;
@@ -97,7 +99,7 @@ function followTo(box: HTMLElement, content: HTMLElement, pinned: boolean): numb
  * to the bottom, or on Jump to latest (`jump`); `pause` is his asking for
  * earlier pages.
  */
-function useFollow(changed: unknown[]) {
+function useFollow(changed: unknown[], stillReading: boolean) {
   const [following, setFollowing] = useState(true);
   const follow = useRef(true);
   const his = useRef({ until: 0, holding: false });
@@ -108,13 +110,16 @@ function useFollow(changed: unknown[]) {
     follow.current = on;
     setFollowing(on);
   };
+  // Read by `stick`, which the observers call too.
+  const live = useRef(stillReading);
+  live.current = stillReading;
   // Whether the list was left at the bottom when it last followed.
   const pinned = useRef(true);
   // Not while he holds the scrollbar or the list: it is his to move.
   const stick = () => {
     const box = scroll.current;
     if (!box || !content.current || !follow.current || his.current.holding) return;
-    box.scrollTop = followTo(box, content.current, pinned.current);
+    box.scrollTop = followTo(box, content.current, pinned.current, live.current);
     pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < AT_BOTTOM;
   };
   useLayoutEffect(stick, changed);         // eslint-disable-line react-hooks/exhaustive-deps
@@ -183,9 +188,11 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   const [earlierError, setEarlierError] = useState(false);
   const items = merge(merge(older, retained), live.value?.items ?? []);
   const rows = historyRows(turns, items);
-  // The word being read moves with it: the list keeps it in view.
+  // The word being read moves with it: the list keeps it in view, and
+  // settles at the bottom once the reading has ended.
   const speaking = useSyncExternalStore(conversation.subscribe, () => conversation.get().speaking);
-  const { following, scroll, content, jump, pause } = useFollow([items.length, turns, speaking]);
+  const stillReading = useSyncExternalStore(reading.subscribe, reading.get) !== null;
+  const { following, scroll, content, jump, pause } = useFollow([items.length, turns, speaking, stillReading], stillReading);
   useEffect(() => {
     if (live.value) setRetained(old => merge(old, live.value!.items));
   }, [live.value]);

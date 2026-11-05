@@ -32,8 +32,10 @@ approval flow and both appearance themes remain available in their existing plac
   than the timeline is scrolled along with the reading, the word kept above the
   lower quarter of the box, never carried past by words arriving or the box
   changing size, and the timeline moves up only as far as the word itself when
-  the word is above it. When the reading ends, is skipped or stopped, the
-  timeline settles at the bottom. Only the user's own scrolling up (wheel, touch,
+  the word is above it. A pause between sentences, while the next one is still
+  on its way, is not the end: the timeline stays where it is. When the reading
+  has truly ended (its last chunk played and the server's speech idle), or is
+  skipped or stopped, the timeline settles at the bottom. Only the user's own scrolling up (wheel, touch,
   keys, the scrollbar) pauses following, and then the reading never moves the
   timeline; a scroll the page makes, or the content or the box changing size,
   never does. Scrolling back to the bottom, or **Jump to latest**, follows

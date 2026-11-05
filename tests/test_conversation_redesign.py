@@ -460,17 +460,40 @@ WORD_IN_VIEW = """() => { const w = document.querySelector('.chat-message.jarvis
   const r = w.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; }"""
 
 
-async def _read_a_long_reply(page, voice, sentences=40, seconds=.3):
-    """A reply far taller than the box, read aloud a sentence at a time."""
-    said = [f'Sentence {n} of the long reply goes on with several more words to fill the line.'
+def _long_reply(sentences):
+    return [f'Sentence {n} of the long reply goes on with several more words to fill the line.'
             for n in range(1, sentences + 1)]
+
+
+def _chunks(said, start=0, seconds=.3):
+    return [{'type': 'audio', 'utt': 70, 'idx': i, 'text': said[i], 'kind': 'reply', 'data': _silence_wav(seconds)}
+            for i in range(start, len(said))]
+
+
+async def _played(page, voice, idx, timeout=20):
+    """Until the page says chunk `idx` of the reply has played."""
+    for _ in range(int(timeout / .1)):
+        if any(m.get('type') == 'played' and m.get('utt') == 70 and m.get('idx') == idx for m in voice.got):
+            return
+        await asyncio.sleep(.1)
+    raise AssertionError(f'chunk {idx} never played')
+
+
+async def _read_a_long_reply(page, voice, said, upto=None):
+    """A reply far taller than the box, read aloud a sentence at a time
+    (only its first `upto` sentences, when given)."""
     voice.send({'type': 'reply', 'utt': 70, 'at': time.time(), 'text': ' '.join(said), 'done': True},
-               *({'type': 'audio', 'utt': 70, 'idx': i, 'text': s, 'kind': 'reply', 'data': _silence_wav(seconds)}
-                 for i, s in enumerate(said)))
+               *_chunks(said[:upto] if upto else said))
     await page.wait_for_selector(NOW, timeout=10000)
     tall = await page.evaluate("""() => document.querySelector('.chat-message.jarvis:last-of-type').offsetHeight
       > 1.5 * document.querySelector('.conversation-history').clientHeight""")
     assert tall, 'the reply must be taller than the box'
+
+
+async def _the_reading_ends(page, voice, last):
+    """Its last chunk played, the server's mouth goes idle, as it does."""
+    await _played(page, voice, last)
+    voice.send({'type': 'status', 'state': 'idle'})
 
 
 @pytest.mark.asyncio
@@ -480,7 +503,8 @@ async def test_a_long_reply_being_read_keeps_the_word_in_view_and_settles_at_the
         browser, page = await _open(p, page_url, voice)
         await page.set_viewport_size({'width': 1280, 'height': 760})
         await _with_history(page, voice)
-        await _read_a_long_reply(page, voice)
+        said = _long_reply(40)
+        await _read_a_long_reply(page, voice, said)
         tops, gaps = [], []
         while await page.locator(NOW).count():
             seen = await page.evaluate(WORD_IN_VIEW)
@@ -494,8 +518,35 @@ async def test_a_long_reply_being_read_keeps_the_word_in_view_and_settles_at_the
         assert max(gaps[:5]) > 200, 'not carried to the bottom past the word'
         assert tops[-1] > tops[0] + 100, 'the list moves along with the reading'
         assert all(b >= a - 1 for a, b in zip(tops[1:], tops[2:])), 'never back up behind the reading'
+        await _the_reading_ends(page, voice, len(said) - 1)
         await page.wait_for_function(f'{GAP} < 2', timeout=5000)
         assert await page.locator('.conversation-jump').count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_between_sentences_is_not_the_end_of_the_reading_and_the_list_stays_on_the_word(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        said = _long_reply(30)
+        # The next sentences are still being made: the page's audio runs dry.
+        await _read_a_long_reply(page, voice, said, upto=12)
+        await _played(page, voice, 11)
+        await page.wait_for_selector(NOW, state='detached', timeout=5000)
+        held = await page.evaluate(TOP)
+        await asyncio.sleep(1)
+        assert abs(await page.evaluate(TOP) - held) < 2, 'the list stays where the reading is'
+        assert await page.evaluate(GAP) > 200, 'not settled at the bottom'
+        # The rest arrives: the reading carries on from there, the word in view.
+        voice.send(*_chunks(said, start=12))
+        await page.wait_for_selector(NOW, timeout=10000)
+        assert await page.evaluate(WORD_IN_VIEW)
+        assert await page.evaluate(TOP) >= held - 1
+        await _the_reading_ends(page, voice, len(said) - 1)
+        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
         await browser.close()
 
 
@@ -506,7 +557,8 @@ async def test_scrolling_up_while_a_reply_is_read_stops_following_and_the_readin
         browser, page = await _open(p, page_url, voice)
         await page.set_viewport_size({'width': 1280, 'height': 760})
         await _with_history(page, voice)
-        await _read_a_long_reply(page, voice, sentences=30)
+        said = _long_reply(30)
+        await _read_a_long_reply(page, voice, said)
         await _wheel(page, -400)
         await page.wait_for_selector('.conversation-jump')
         left = await page.evaluate(TOP)
@@ -514,7 +566,7 @@ async def test_scrolling_up_while_a_reply_is_read_stops_following_and_the_readin
         await page.wait_for_function(f"[...document.querySelectorAll('.spoken-word')].indexOf("
                                      f"document.querySelector('{NOW}')) > {word} + 40", timeout=10000)
         assert abs(await page.evaluate(TOP) - left) < 2, 'the reading does not move the list'
-        await page.wait_for_selector(NOW, state='detached', timeout=15000)
+        await _the_reading_ends(page, voice, len(said) - 1)
         await asyncio.sleep(.3)
         assert abs(await page.evaluate(TOP) - left) < 2, 'nor does its end'
         assert await page.locator('.conversation-jump').count() == 1
