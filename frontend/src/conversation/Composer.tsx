@@ -1,6 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../locale";
-import { createStore } from "../store";
 import { sendTyped, voiceConnected } from "../voiceStatus";
 
 const DRAFT_KEY = "jarvis.conversation.draft";
@@ -9,31 +8,12 @@ function keepDraft(text: string) {
   try { text ? sessionStorage.setItem(DRAFT_KEY, text) : sessionStorage.removeItem(DRAFT_KEY); } catch { /* storage is optional */ }
 }
 
-// Words offered as an unsent draft from outside the composer (voice input's
-// kept words that could not be finished): added to what is there, never sent.
-const offered = createStore<{ text: string } | null>(null);
-export function offerDraft(text: string): void {
-  const words = text.trim();
-  if (words) offered.set({ text: words });
-}
-
 export function Composer({ partRef }: { partRef: (el: Element | null) => void }) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(readDraft);
   const [error, setError] = useState(false);
   const connected = useSyncExternalStore(voiceConnected.subscribe, voiceConnected.get);
-  useEffect(() => {
-    // Offered while the composer was not on show, or now.
-    const take = () => {
-      const words = offered.get();
-      if (!words) return;
-      offered.set(null);
-      setDraft(now => { const next = now.trim() ? `${now.trimEnd()} ${words.text}` : words.text; keepDraft(next); return next; });
-    };
-    take();
-    return offered.subscribe(take);
-  }, []);
   useLayoutEffect(() => {
     const field = input.current;
     if (!field) return;

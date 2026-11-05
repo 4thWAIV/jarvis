@@ -1,5 +1,6 @@
 import importlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,7 @@ def client(monkeypatch, tmp_path):
         return b"MP3:" + text.encode()
 
     monkeypatch.setattr(server, "_synth_for_speech", fake_synth)
+    server._last_greeting_time = time.time()          # suppress the greeting by default
     # The voice page's own Origin. /ws/voice refuses any other, because a
     # socket that reaches _handle_utterance speaks with origin="user".
     with TestClient(server.app,
@@ -75,9 +77,8 @@ def test_connect_sends_config_and_idle(client):
 def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(client):
     c, server = client
     with c.websocket_connect("/ws/transcribe") as ws:
-        ws.send_json({"type": "start", "version": 2, "sampleRate": 16000,
-                      "channels": 1, "format": "pcm_s16le", "clientId": "page-a",
-                      "captureEpoch": 1})
+        ws.send_json({"type": "start", "version": 1, "sampleRate": 16000,
+                      "channels": 1, "format": "pcm_s16le"})
         msg = ws.receive_json()
         assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
         assert "setup_speech_input.py" in msg["message"]
@@ -90,25 +91,14 @@ def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(cl
         assert server.brain_instance.turns == [("typed words", "user")]
 
 
-def test_a_page_connecting_is_not_greeted(client):
-    """A connection is not a person arriving: nothing is said, only the
-    opening frames go out."""
+def test_greeting_is_spoken_through_the_scheduler(client):
     c, server = client
-    spoken = []
-    real = server.speech.say
-
-    async def say(text, *a, **k):
-        spoken.append(text)
-        return await real(text, *a, **k)
-
-    server.speech.say = say
-    try:
-        with c.websocket_connect("/ws/voice") as ws:
-            ws.receive_json(); ws.receive_json()
-            ws.send_json({"type": "ping"})
-    finally:
-        server.speech.say = real
-    assert spoken == []
+    server._last_greeting_time = 0
+    with c.websocket_connect("/ws/voice") as ws:
+        seen = _drain_until(ws, lambda m: m["type"] == "audio")
+        audio = seen[-1]
+        assert audio["idx"] == 0 and audio["text"].startswith("Good ")
+        assert audio["text"].endswith("sir.")
 
 
 def test_transcript_streams_chunks_and_acks_return_to_idle(client):
@@ -136,7 +126,7 @@ def test_echo_of_jarvis_own_words_is_ignored(client):
         ws.send_json({"type": "transcript", "text": "echo hello there", "isFinal": True})
         ws.send_json({"type": "interim", "text": "echo hello"})
         ws.send_json({"type": "transcript", "text": "what is the weather like", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.", limit=20)
+        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.")
         assert seen[-1]["text"] == "Echo: what is the weather like."
         assert [t for t, _ in server.brain_instance.turns] == ["hello there", "what is the weather like"]
 
@@ -168,7 +158,7 @@ def test_a_real_question_is_not_treated_as_a_replay(client):
         ws.send_json({"type": "transcript", "text": "hello there", "isFinal": True})
         _drain_until(ws, lambda m: m["type"] == "audio")
         ws.send_json({"type": "transcript", "text": "what did you mean by that", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.", limit=20)
+        seen = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.")
         assert seen[-1]["text"] == "Echo: what did you mean by that."
         assert [t for t, _ in server.brain_instance.turns] == \
             ["hello there", "what did you mean by that"]
@@ -209,15 +199,14 @@ def test_typed_words_reach_the_brain_as_written(client):
         assert [t for t, _ in server.brain_instance.turns] == [
             "open cloud code", "Echo: open cloud code"]
 
-def test_brain_not_ready_shows_why_on_the_reply_and_says_nothing(client):
+def test_brain_not_ready_says_so_instead_of_hanging(client):
     c, server = client
     server.brain_instance.ready = False
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "hello", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m.get("done"), limit=20)
-        assert (seen[-1]["outcome"], seen[-1]["reason"]) == ("failed", "not_ready")
-        assert not [m for m in seen if m["type"] == "audio"], "nothing is spoken in its place"
+        seen = _drain_until(ws, lambda m: m["type"] == "audio")
+        assert "still starting" in seen[-1]["text"]
         assert server.brain_instance.turns == []
 
 
@@ -236,19 +225,19 @@ class ExplodingBrain(FakeBrain):
         raise RuntimeError("boom")
 
 
-def test_a_raising_turn_still_ends_the_utterance_and_shows_it_was_lost(client):
+def test_a_raising_turn_still_ends_the_utterance_and_speaks_a_recovery_line(client):
     c, server = client
     server.brain_instance = ExplodingBrain()
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "hello", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m.get("done"), limit=20)
-        assert (seen[-1]["outcome"], seen[-1]["reason"]) == ("failed", "lost")
+        seen = _drain_until(ws, lambda m: m["type"] == "audio")
+        assert "lost my train of thought" in seen[-1]["text"]
         # the failed turn's utterance was closed, not left open: a new turn plays normally
         server.brain_instance = FakeBrain()
+        ws.send_json({"type": "played", "utt": seen[-1]["utt"], "idx": seen[-1]["idx"]})
         ws.send_json({"type": "transcript", "text": "still there", "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] == "Echo: still there.",
-                     limit=20)
+        _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] == "Echo: still there.")
 
 
 def test_voice_emit_raises_for_content_with_no_client_but_not_for_status(client):
@@ -335,7 +324,6 @@ def test_complete_reply_reaches_screen_without_any_audio_ack(client):
         seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
         final = seen[-1]
         assert final["text"] == "Echo: full reply."
-        assert final["outcome"] == "succeeded"
         assert final["at"] > 0
         records = c.get("/api/conversation").json()["items"]
         user = next(i for i in records if i["kind"] == "typed" and i["text"] == "full reply")
@@ -393,80 +381,3 @@ def test_reply_stream_closes_with_partial_text_when_provider_raises(client):
         ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
         seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
         assert seen[-1]["text"] == "Partial answer before failure."
-        assert seen[-1]["outcome"] == "failed", "unfinished text is never shown as complete"
-
-
-@pytest.mark.parametrize("stop_reason", ["error", "timeout", "died", "rate_limited"])
-def test_a_reply_the_provider_did_not_finish_ends_failed(client, stop_reason):
-    c, server = client
-    class StoppingBrain(FakeBrain):
-        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
-            from jarvis.brain import TurnResult
-            on_delta("Half an ans")
-            return TurnResult(origin, "Half an ans", stop_reason)
-
-    server.brain_instance = StoppingBrain()
-    with c.websocket_connect("/ws/voice") as ws:
-        ws.receive_json(); ws.receive_json()
-        ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
-        assert (seen[-1]["text"], seen[-1]["outcome"]) == ("Half an ans", "failed")
-
-
-def test_a_cancelled_turn_ends_its_reply_cancelled(client):
-    import asyncio
-    c, server = client
-    class CancelledBrain(FakeBrain):
-        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
-            on_delta("Begun")
-            raise asyncio.CancelledError
-
-    server.brain_instance = CancelledBrain()
-    with c.websocket_connect("/ws/voice") as ws:
-        ws.receive_json(); ws.receive_json()
-        ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
-        assert seen[-1]["outcome"] == "cancelled"
-
-
-def test_the_page_s_playback_reports_reach_the_chunk_s_outcome(client):
-    """`started` and `failed` from the page; a decode failure moves the
-    transport on and is never counted as played."""
-    c, server = client
-    with c.websocket_connect("/ws/voice") as ws:
-        ws.receive_json(); ws.receive_json()
-        ws.send_json({"type": "transcript", "text": "speak", "isFinal": True, "typed": True})
-        audio = _drain_until(ws, lambda m: m["type"] == "audio", limit=30)[-1]
-        utt = server.speech.utterances[audio["utt"]]
-        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "started"})
-        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "bogus"})
-        ws.send_json({"type": "playback", "utt": "x", "idx": 0, "outcome": "failed"})
-        ws.send_json({"type": "playback", "utt": audio["utt"], "idx": 0, "outcome": "failed"})
-        _drain_until(ws, lambda m: m["type"] == "status" and m["state"] == "idle", limit=30)
-        assert utt.outcomes() == ["failed"] and utt.played == 0
-        assert not utt.heard_in_full
-
-
-def test_hush_is_stop_speaking_and_skip_is_one_reading(client, monkeypatch):
-    c, server = client
-    calls = []
-
-    async def stop(by):
-        calls.append(("stop", by))
-
-    async def skip(utt=None):
-        calls.append(("skip", utt))
-
-    monkeypatch.setattr(server, "_stop_speaking", stop)
-    monkeypatch.setattr(server, "_skip_reading", skip)
-    with c.websocket_connect("/ws/voice") as ws:
-        ws.receive_json(); ws.receive_json()
-        ws.send_json({"type": "skip_to_end", "utt": 7})
-        ws.send_json({"type": "skip_to_end", "utt": "7"})
-        ws.send_json({"type": "hush"})
-        ws.send_json({"type": "mic", "text": "sync"})
-        for _ in range(50):
-            if len(calls) == 2:
-                break
-            time.sleep(0.02)
-    assert calls == [("skip", 7), ("stop", "the page")]

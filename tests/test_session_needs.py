@@ -149,21 +149,18 @@ class _Speech:
 
 
 @pytest.mark.asyncio
-async def test_a_board_is_an_update_with_its_count(wired, monkeypatch, tmp_path):
+async def test_a_board_is_announced_and_the_brain_is_told(wired, monkeypatch, tmp_path):
     server, _folder = wired
-    from jarvis.attention_store import AttentionStore
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
+    monkeypatch.setattr(server, "_notes_for_brain", [])
     _write(tmp_path / "b", "agent-guard", BOARD)
     [board] = sn.read_boards(tmp_path / "b")
 
-    server._attend_board(board)
+    await server._announce_board(board)
 
-    assert sp.said == []
-    (item,) = server.attention_record.items()
-    assert (item.kind, item.source_id, item.event) == ("needs_board", "agent-guard", "changed")
-    assert item.facts == {"items": 3} and item.untrusted == {"agent": "agent-guard"}
+    assert sp.said == ["agent-guard has three things for you, sir."]
+    assert "call session_needs" in server._with_notes_for_brain("go on")
 
 
 def _agents(server, monkeypatch, *pairs):
@@ -189,12 +186,12 @@ async def test_a_board_goes_by_the_listed_names_of_its_project_s_agents(
     assert "# Diagnostics\n" in out and "# jarvis" not in out
     assert "# Agent Guard and Approval Authority\n" in out and "# agent-guard" not in out
 
-    from jarvis.attention_store import AttentionStore
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
+    sp = _Speech()
+    monkeypatch.setattr(server, "speech", sp)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
     [board] = [b for b in sn.read_boards(folder) if b.project == "jarvis"]
-    server._attend_board(board)
-    (item,) = server.attention_record.items()
-    assert item.untrusted == {"agent": "Diagnostics"} and item.facts == {"items": 1}
+    await server._announce_board(board)
+    assert sp.said == ["Diagnostics has one thing for you, sir."]
 
 
 def test_a_board_with_no_agent_running_keeps_its_project_name(wired, monkeypatch):

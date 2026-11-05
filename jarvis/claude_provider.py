@@ -153,20 +153,6 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__speech_models",
     "mcp__jarvis__install_speech_model",
     "mcp__jarvis__set_language",
-    # His two voice input settings (voice_control.py): reading them, and the
-    # acting change the Settings route also calls.
-    "mcp__jarvis__voice_input_settings",
-    "mcp__jarvis__set_voice_input_settings",
-    # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
-    "mcp__jarvis__skip_reading",
-    "mcp__jarvis__stop_speaking",
-    # Send now, Retry and Keep as draft on what he has said: the page's own.
-    "mcp__jarvis__voice_turn",
-    # Mute and Mic off, never their opposites: the brain only makes input quieter.
-    "mcp__jarvis__quiet_microphone",
-    "mcp__jarvis__attention_updates",
-    "mcp__jarvis__mark_updates_seen",
-    "mcp__jarvis__set_attention_settings",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
     "mcp__jarvis__retry_run",

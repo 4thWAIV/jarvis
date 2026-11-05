@@ -247,31 +247,29 @@ class _Speech:
 
 
 @pytest.mark.asyncio
-async def test_a_stalled_run_is_recorded_honestly_not_as_done(wired, monkeypatch):
+async def test_a_stalled_run_is_announced_honestly_not_batched(wired,
+                                                              monkeypatch):
     server, store = wired
-    from jarvis.attention_store import AttentionStore
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
     run = _finished_run(store, [_assistant("Which theme?")],
                         result_text="Which theme?")
 
     server._on_run_event({"type": "run_finished", "run": run})
+    for _ in range(3):
+        await __import__("asyncio").sleep(0)
 
-    assert speech.said == []
-    (item,) = server.attention_record.items()
-    assert item.event == "stalled", "never 'the work is done'"
+    assert server._pending_run_completions == [], "never 'the work is done'"
+    assert speech.said, "the user must be told"
+    assert "stopped to ask a question" in speech.said[0][0]
 
 
 @pytest.mark.asyncio
-async def test_a_real_success_is_still_recorded_as_done(wired, monkeypatch):
+async def test_a_real_success_is_still_batched_as_done(wired, monkeypatch):
     server, store = wired
-    from jarvis.attention_store import AttentionStore
     monkeypatch.setattr(server, "speech", _Speech())
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
     run = _finished_run(store, [_assistant(tools=["Write"])])
 
     server._on_run_event({"type": "run_finished", "run": run})
 
-    (item,) = server.attention_record.items()
-    assert item.event == "succeeded" and item.untrusted == {"project": "tony-starks-website"}
+    assert server._pending_run_completions == ["tony-starks-website"]

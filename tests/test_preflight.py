@@ -532,6 +532,77 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     }
 
 
+# --- spoken_summary -------------------------------------------------------------
+
+def test_spoken_summary_empty_when_all_ok():
+    checks = [
+        Check(name="claude_cli", status=STATUS_OK, message="ok"),
+        Check(name="fish_api_key", status=STATUS_OK, message="ok"),
+    ]
+    assert preflight.spoken_summary(checks) == ""
+
+
+def test_spoken_summary_never_says_all_checks_passed():
+    checks = [Check(name="claude_cli", status=STATUS_OK, message="ok")]
+    summary = preflight.spoken_summary(checks)
+    assert summary == ""
+    assert "all checks passed" not in summary.lower()
+
+
+def test_spoken_summary_names_a_single_failure():
+    checks = [
+        Check(name="claude_cli", status=STATUS_OK, message="ok"),
+        Check(name="claude_login", status=STATUS_FAIL, message="Claude Code is not logged in."),
+    ]
+    summary = preflight.spoken_summary(checks)
+    assert "One thing needs attention" in summary
+    assert "isn't logged in" in summary
+    assert "claude_cli" not in summary  # only the failing check is named
+
+
+def test_spoken_summary_says_screen_recording_in_words_a_person_would_use():
+    checks = [Check(name="screen_recording", status=STATUS_FAIL,
+                    message="JARVIS has not been granted Screen Recording.")]
+    summary = preflight.spoken_summary(checks)
+    assert "Screen Recording permission" in summary
+    assert "screen_recording" not in summary
+
+
+def test_spoken_summary_names_two_failures_and_matches_the_example():
+    checks = [
+        Check(name="claude_login", status=STATUS_FAIL, message="Claude Code is not logged in."),
+        Check(name="fish_api_key", status=STATUS_FAIL, message="FISH_API_KEY is not set."),
+    ]
+    summary = preflight.spoken_summary(checks)
+    assert summary == (
+        "Two things need attention, sir: Claude Code isn't logged in, "
+        "and I have no Fish Audio key."
+    )
+
+
+def test_spoken_summary_names_only_the_failures_among_a_mix():
+    checks = [
+        Check(name="claude_cli", status=STATUS_OK, message="ok"),
+        Check(name="claude_login", status=STATUS_OK, message="ok"),
+        Check(name="accessibility", status=STATUS_FAIL,
+              message="osascript is not granted Accessibility (assistive access); answer_dialog's keystroke will fail."),
+        Check(name="cross_session_inbound", status=STATUS_WARN, message="crossSessionInbound is not set"),
+        Check(name="anthropic_key_leftover", status=STATUS_WARN, message="ANTHROPIC_API_KEY set"),
+    ]
+    summary = preflight.spoken_summary(checks)
+    assert summary.startswith("3 things need attention, sir:")
+    assert "Accessibility permission" in summary
+    assert "cross-session steering" in summary
+    assert "leftover Anthropic API key" in summary
+
+
+def test_spoken_summary_warn_counts_as_something_wrong():
+    checks = [Check(name="cross_session_inbound", status=STATUS_WARN, message="crossSessionInbound is not set")]
+    summary = preflight.spoken_summary(checks)
+    assert summary != ""
+    assert "One thing needs attention" in summary
+
+
 # --- speech input ------------------------------------------------------------
 
 def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypatch, tmp_path):
@@ -540,6 +611,7 @@ def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypa
     assert check.status == STATUS_WARN
     assert "setup_speech_input.py" in check.remedy
     assert "Typing still works" in check.message
+    assert "speech model" in preflight._phrase_for(check)
 
 
 def test_speech_input_is_ok_with_every_model_file_and_loads_nothing(monkeypatch, tmp_path):

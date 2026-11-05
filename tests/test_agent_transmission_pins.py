@@ -16,10 +16,8 @@ and the staged-send drain), with the provider faked at `_deliver`:
     cancellation         the cancel window, and Delete while staged
     turn deferral        a send staged mid-turn waits for the turn to end
     queue                a busy session queues it; priority skips the queue
-    outcome              sent / not live / failed / raised, each recorded
-                         once, and only "sent" draws the ray; nothing is said
-                         of any of them: what he must see is an attention
-                         item
+    outcome              sent / not live / failed / raised, each said and
+                         recorded once, and only "sent" draws the ray
 """
 
 import asyncio
@@ -29,7 +27,6 @@ from starlette.requests import Request
 
 from jarvis import session_steer
 from jarvis import session_watch as sw
-from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
 
 SID = "11111111-2222-3333-4444-555555555555"
 # A click on the page: admitted by its Origin, not an access key.
@@ -258,7 +255,7 @@ async def test_stop_in_the_cancel_window_cancels_and_reopens_the_capture(server,
 
     (m,) = _messages(server)
     assert m.status == "cancelled" and wire.sent == []
-    assert wire.speech.said == [], "the record is the acknowledgement"
+    assert wire.speech.said == ["Cancelled, sir."]
     assert n in server._captures and server._captures[n]["staged"] is False, \
         "not sent: the capture is his to deal with again"
     assert _drew(wire) == []
@@ -307,8 +304,7 @@ async def test_the_tool_only_stages_and_says_nothing(server, wire):
 # --- queue -------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeypatch,
-                                                           attention):
+async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeypatch):
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: sw.Snapshot(sessions=[_guard(state="working")]))
     n = _capture(server, "Add a health check.")
@@ -318,8 +314,8 @@ async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeyp
 
     (m,) = _messages(server)
     assert m.status == "queued" and wire.sent == []
-    assert wire.speech.said == []
-    assert recorded(attention) == [("agent_message", str(m.id), "queued")]
+    assert wire.speech.said == ["guard is in the middle of a turn, sir. Your message waits "
+                                "its turn and goes as soon as it is free."]
     assert n not in server._captures, "queued counts as gone: the capture closes"
     assert _drew(wire) == []
 
@@ -350,23 +346,20 @@ async def _send_one(server, text="Add a health check."):
 
 
 @pytest.mark.asyncio
-async def test_not_live_is_failed_recorded_and_draws_nothing(server, wire, attention):
+async def test_not_live_is_failed_said_and_draws_nothing(server, wire):
     wire.outcome = session_steer.NOT_LIVE
     n, m = await _send_one(server)
     assert (m.status, m.failure) == ("failed", "not_live")
-    assert wire.speech.said == []
-    assert recorded(attention) == [("agent_message", str(m.id), "not_live")]
-    assert attention.items()[0].untrusted == {"agent": "guard"}
+    assert wire.speech.said == ["guard didn't answer its socket, sir — it may have just exited."]
     assert _drew(wire) == [] and n not in server._captures
 
 
 @pytest.mark.asyncio
-async def test_a_refused_send_is_failed_with_its_reason(server, wire, attention):
+async def test_a_refused_send_is_failed_with_its_reason(server, wire):
     wire.outcome = session_steer.failed("connection reset")
     n, m = await _send_one(server)
     assert m.status == "failed" and m.failure == session_steer.failed("connection reset")
-    assert wire.speech.said == []
-    assert recorded(attention) == [("agent_message", str(m.id), "send_failed")]
+    assert wire.speech.said == ["I couldn't deliver that to guard, sir."]
 
 
 @pytest.mark.asyncio
@@ -378,12 +371,12 @@ async def test_a_provider_that_raises_never_leaves_the_record_staged(server, wir
 
 
 @pytest.mark.asyncio
-async def test_sent_to_a_session_that_will_ask_first_is_an_update(server, wire, monkeypatch,
-                                                                  attention):
+async def test_sent_to_a_session_that_will_ask_first_says_so(server, wire, monkeypatch):
     monkeypatch.setattr(server, "_inbound_accepted", lambda: False)
     _n, m = await _send_one(server)
-    assert m.status == "sent" and wire.speech.said == []
-    assert recorded(attention) == [("agent_message", str(m.id), "needs_approving")]
+    assert m.status == "sent"
+    assert len(wire.speech.said) == 1
+    assert wire.speech.said[0].startswith("Passed to guard, sir. It'll ask you to approve it first")
 
 
 @pytest.mark.asyncio

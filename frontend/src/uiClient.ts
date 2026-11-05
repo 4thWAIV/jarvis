@@ -35,7 +35,7 @@ import {
   UI_CONTRACT, type CommandId, type Lifecycle, type Operation, type UIRequest, type UIResult,
 } from "./uiContract";
 
-export const CLIENT_ID = `page-${crypto.randomUUID().slice(0, 18)}`;
+const CLIENT_ID = `page-${crypto.randomUUID().slice(0, 18)}`;
 const SEEN_MAX = 200;
 /** Operations that need the page painting: refused while it is hidden. */
 const VISIBLE_ONLY: ReadonlySet<Operation["kind"]> = new Set(["navigate", "indicate", "journey"]);

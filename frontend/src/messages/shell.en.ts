@@ -61,7 +61,6 @@ export const shellEn = {
   "targets.status": "Status",
   "targets.teamServer": "Team server",
   "targets.signInReminder": "Sign-in reminder",
-  "targets.updatesNotice": "Updates waiting",
   "targets.voiceHealth": "Voice health",
   "targets.account": "{provider} account",
   "targets.settingsSection": "Settings, {section}",

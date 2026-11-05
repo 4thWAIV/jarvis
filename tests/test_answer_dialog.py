@@ -631,7 +631,6 @@ async def test_every_terminal_path_writes_exactly_one_audit_row(
         outcome, expected, wired, monkeypatch):
     server = wired
     speech = FakeSpeech()
-    shown = _outcomes_shown(monkeypatch, server)
 
     async def fake_answer(pid, key):
         return outcome
@@ -650,8 +649,7 @@ async def test_every_terminal_path_writes_exactly_one_audit_row(
     assert len(rows) == 1, "exactly one row per attempt, never zero and never two"
     assert rows[0]["outcome"] == expected
     assert rows[0]["prompt"] == "return", "the key is what was audited"
-    assert len(speech.said) == 1, "only the read-back is spoken"
-    assert [kind for kind, _event in shown] == ["keypress"], "the outcome is shown"
+    assert speech.said[-1] != speech.said[0], "the outcome is spoken too"
 
 
 @pytest.mark.asyncio
@@ -676,26 +674,12 @@ async def test_a_raised_exception_still_leaves_an_audit_row(wired, monkeypatch):
     assert server._staged_dialogs == []
 
 
-def _outcomes_shown(monkeypatch, server):
-    """A keypress's outcome is an attention item, never a spoken line: the
-    (kind, event) of each recorded."""
-    shown = []
-
-    class Record:
-        def record(self, kind, source_id, event, facts=None, untrusted=None, audible=True):
-            shown.append((kind, event))
-
-    monkeypatch.setattr(server, "attention_record", Record())
-    return shown
-
-
 @pytest.mark.asyncio
 async def test_an_unreachable_host_is_reported_honestly(wired, monkeypatch):
-    """The Orcha.app case: no Terminal tab owns that tty. JARVIS shows so
+    """The Orcha.app case: no Terminal tab owns that tty. JARVIS says so
     rather than claiming success or silently doing nothing."""
     server = wired
     speech = FakeSpeech()
-    shown = _outcomes_shown(monkeypatch, server)
 
     async def fake_answer(pid, key):
         return dialog.NOT_FOUND
@@ -709,7 +693,9 @@ async def test_an_unreachable_host_is_reported_honestly(wired, monkeypatch):
     await server.tool_answer_dialog({"name": "hammer", "key": "yes"})
     await server._perform_staged_dialogs()
 
-    assert shown == [("keypress", "not_found")], "never a claim of a keystroke it did not send"
+    last = speech.said[-1].lower()
+    assert "terminal" in last and "hammer" in last
+    assert "pressed" not in last, "it must not claim a keystroke it did not send"
 
 
 # --- the registries ---------------------------------------------------------

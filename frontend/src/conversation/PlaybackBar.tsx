@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { useT } from "../locale";
-import { voiceState, skipReading } from "../voiceStatus";
+import { voiceState, stopSpeaking } from "../voiceStatus";
 
 export function PlaybackBar({ partRef }: { partRef: (el: Element | null) => void }) {
   const t = useT();
@@ -13,7 +13,7 @@ export function PlaybackBar({ partRef }: { partRef: (el: Element | null) => void
       <strong>{t(speaking ? "main.conversation.isSpeaking" : "main.conversation.isThinking")}</strong>
       <span>{t(speaking ? "main.conversation.followReply" : "main.conversation.replyAbove")}</span>
     </div>
-    {speaking && <button type="button" data-ui-action="speech" onClick={() => skipReading.current()} title={t("main.conversation.skipTitle")}>
+    {speaking && <button type="button" data-ui-action="speech" onClick={() => stopSpeaking.current()} title={t("main.conversation.skipTitle")}>
       {t("main.conversation.skip")} <span aria-hidden="true">»</span>
     </button>}
   </div>;

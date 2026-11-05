@@ -62,6 +62,7 @@ def wired(monkeypatch, tmp_path):
         turns.append((text, heard))
 
     monkeypatch.setattr(server, "_handle_utterance", no_turn)
+    server._last_greeting_time = time.time()
     with TestClient(server.app, headers={"Origin": "http://localhost:5173"}) as c:
         server.brain_instance = TurnOnly()
         yield c, server

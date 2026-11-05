@@ -17,7 +17,6 @@ import pytest
 # A browser page test: run with `pytest -m page` (see pytest.ini).
 pytestmark = pytest.mark.page
 
-from tests.voice_page_input import start_listening
 from tests.test_agents_list_fits import async_api, show_diagnostics  # noqa: F401
 from tests.test_voice_page_captions import BROWSER_ARGS, FAKE_TRANSCRIPTION
 
@@ -70,7 +69,6 @@ async def _open(p, url, ui=None, reduced=False):
                                                                 ws.on_message(lambda m: voice.append(m)))))
     await page.goto(url + "?view=main")
     await show_diagnostics(page)
-    await start_listening(page)
     await page.wait_for_function(
         "window.__transcribers.some((t) => t.readyState === 1) && window.__framesSent > 0",
         timeout=10000)

@@ -19,9 +19,8 @@ exactly one instance and one source for who this JARVIS is:
     presentation   transfer_presentation.ServePresentation: the
                    `human_transfer` frames and the announcement lease. An
                    incoming transfer also wakes the announcer.
-    announcer      arrival_announcer.ArrivalAnnouncer: each arrival an
-                   attention item through server.py (`attend`), its
-                   presentation lease claimed only while `engaged`
+    announcer      arrival_announcer.ArrivalAnnouncer, through server.py's
+                   notice path
     local          messaging_api.LocalMessaging, behind /api/team/messages
     bundle records bundle_status.OpenabilityStatus (the recipient's
                    openability, its receipts sent by delivery),
@@ -51,7 +50,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -62,7 +61,7 @@ from jarvis import draft_files
 from jarvis import messaging_api
 from jarvis import messaging_files
 from jarvis import messaging_ports as ports
-from jarvis.arrival_announcer import ArrivalAnnouncer, Attend, serve_labels
+from jarvis.arrival_announcer import ArrivalAnnouncer, Wording, serve_labels
 from jarvis.bundle_cache import DerivedCache
 from jarvis.bundle_inspection import BundleInspection, Owner
 from jarvis.message_approvals import (GuardedTransport, HumanMessaging, Identity,
@@ -83,6 +82,7 @@ HOUSEKEEPING_SEC = 60.0
 # How often the team connection is looked at to start or stop the loops.
 FOLLOW_EVERY_SEC = 5.0
 
+Notify = Callable[[str, str, dict], Awaitable[None]]
 
 
 class _CurrentTransport:
@@ -111,8 +111,7 @@ class _Presenting:
 
 class MessagingRuntime:
     def __init__(self, *, connection: TeamCalls, captures: ports.ReviewCaptures,
-                 send_frame: Callable[[dict], None], attend: Attend,
-                 engaged: Callable[[], bool],
+                 send_frame: Callable[[dict], None], notify: Notify, wording: Wording,
                  network_raw: Callable[[], Optional[bytes]],
                  node_id: Callable[[], str] = data_paths.node_id,
                  clock: ports.Clock = ports.utcnow):
@@ -177,8 +176,8 @@ class MessagingRuntime:
                 lambda message_id, save: self.local.write_draft(message_id, save, True)))
         self.announcer = ArrivalAnnouncer(
             store=self.store, presentation=self.presentation, scope=self._scope,
-            labels=lambda: serve_labels(current, network_raw), attend=attend,
-            engaged=engaged, clock=clock)
+            labels=lambda: serve_labels(current, network_raw), notify=notify,
+            wording=wording, clock=clock)
         self._tasks: list[asyncio.Task] = []
         self._follower: Optional[asyncio.Task] = None
 

@@ -137,36 +137,34 @@ def test_session_detail_keeps_every_foreign_field_out_of_its_header(server,
     assert_header_is_jarviss_own(server.tool_session_detail({"name": "hammer"}))
 
 
-def test_the_needs_you_notice_line_says_nothing_a_session_wrote(server, monkeypatch):
-    """A needs-you is an attention item; nothing is spoken. The one line JARVIS
-    still writes itself, the Notification Centre text, is built from
-    `_said_name` and `_phrase_needs`, so a hostile name or reason cannot
-    become a line of its own there."""
+def test_the_spoken_announcement_says_nothing_a_session_wrote(server,
+                                                              monkeypatch):
+    """`_announce_needs_you` speaks `_phrase_needs(needs)` straight into an
+    URGENT utterance. What JARVIS says out loud is also what he has said, in
+    his own voice, in his own context."""
     import asyncio
 
     said: list[str] = []
-    lines: list[str] = []
 
     class _Speech:
-        async def say(self, line, *a, **k):
+        async def say(self, line, priority, immediate=True, label=None):
             said.append(line)
 
     monkeypatch.setattr(server, "speech", _Speech())
 
     async def _no_notify(name, line):
-        lines.append(line)
+        return None
 
     monkeypatch.setattr(server, "_notify_needs_you", _no_notify)
     for hostile_field in ("voice_name", "needs"):
-        lines.clear()
+        said.clear()
         payload = {"voice_name": "hammer", "needs": "input needed",
                    "needs_a_human_hand": False}
         payload[hostile_field] = HOSTILE
-        asyncio.run(server._attend_needs_you({"session": payload}))
-        assert said == [], hostile_field
-        assert lines, hostile_field
-        assert MARKER not in lines[0], (hostile_field, lines)
-        assert "</session-output>" not in lines[0], (hostile_field, lines)
+        asyncio.run(server._announce_needs_you({"session": payload}))
+        assert said, hostile_field
+        assert MARKER not in said[0], (hostile_field, said)
+        assert "</session-output>" not in said[0], (hostile_field, said)
 
 
 def test_an_unknown_reason_is_still_reported(server):
@@ -199,7 +197,7 @@ def test_an_ordinary_session_still_reads_as_a_sentence(server, monkeypatch):
 #     is in `brain.py`, where a roster project name was spliced raw into
 #     `--append-system-prompt`, trusted text in every generation;
 #   * its read predicate was `ast.Attribute` — `s.voice_name` — and
-#     `_attend_needs_you` (once `_announce_needs_you`) reads `s.get("voice_name")` out of a dict, so the
+#     `_announce_needs_you` reads `s.get("voice_name")` out of a dict, so the
 #     one URGENT interrupt in the file was invisible to it;
 #   * its field set was `SessionState` — and a run row's `project_name`,
 #     which reaches the same headers and the same spoken lines, was not in it.
@@ -263,7 +261,7 @@ def _reads_a_foreign_field(node, fields: set) -> set:
 
     The shapes are the point. `s.voice_name` is one way to read a roster
     file's string; `s["voice_name"]` and `s.get("voice_name")` are the other
-    two, and the second of those is what `_attend_needs_you` uses — which
+    two, and the second of those is what `_announce_needs_you` uses — which
     is why an attribute-only predicate declared the file clean while the one
     URGENT interrupt in it erased nine real names out of ten.
 
@@ -354,22 +352,6 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
-    "server.tool_voice_turn": (
-        "it checks `action` against TURN_ACTIONS before acting and answers only "
-        "with the fixed sentences of _TURN_SAID or a fixed refusal; neither the "
-        "argument nor the words of the turn are put in what it says"),
-    "server.tool_quiet_microphone": (
-        "it checks `state` against QUIET_STATES before acting and answers only "
-        "with fixed sentences; the argument is never put in what it says"),
-    "turn_controller._drop": (
-        "it joins the turn's parts, which are only what the recogniser heard him "
-        "say on this page (or nothing): his own words, given back to the page as "
-        "his unsent draft or logged; no session's or other person's words are "
-        "ever gathered into a turn"),
-    "attention_store.current_revisions": (
-        "the `state` it reads is the attention record's own column (pending, seen "
-        "or resolved), and the only text it builds is a list of SQL placeholders "
-        "for the items' ids; no session's words reach any string here"),
     "ui_control.map_lines": (
         "it reads a command's `id` only after checking it is a command declared "
         "in the UI contract, so the id it prints is the contract's own; the "
@@ -466,6 +448,15 @@ EXEMPT = {
         "subagent's file id, and the row is JSON for the page's Workflows "
         "area only: never spoken, never in a note to the brain, and the page "
         "draws every field of it as text"),
+    "server._watch_subsystems": (
+        "it compares subsystem states, a fixed vocabulary of five words worked "
+        "out by subsystem_diagnostics, and says one of two fixed lines; its note "
+        "to the brain names the parts that are down by their own fixed check "
+        "names, never a check's detail, which can quote an error"),
+    "server.look_at_subsystems": (
+        "the look inside _watch_subsystems: it reads each subsystem's `state`, "
+        "one of five fixed words, and speaks only COMMS_DOWN_LINE or "
+        "COMMS_BACK_LINE, with the down checks named by their fixed names"),
     "subsystem_diagnostics.from_checks": (
         "it reads each check's `state` (one of five fixed words) and joins a "
         "fixed check name with its detail for the Diagnostics tab, which the "
@@ -946,21 +937,6 @@ EXEMPT = {
 }
 
 
-def _attended(server, monkeypatch):
-    """A fresh attention record on the server, and what the brain would be
-    handed of it: the digest's prompt over every item (its instruction is
-    JARVIS's own, everything recorded sits in one walled block)."""
-    from jarvis import attention, attention_store
-    store = attention_store.AttentionStore()
-    monkeypatch.setattr(server, "attention_record", store)
-
-    def view() -> list:
-        items = store.items((attention_store.PENDING, attention_store.SEEN,
-                             attention_store.RESOLVED))
-        return [attention.digest_prompt(items, server._wrap_untrusted, 0.0)] if items else []
-    return view
-
-
 def _hostile_snapshot(server, session):
     from jarvis import session_watch
     return session_watch.Snapshot(sessions=[session], taken_at=0.0)
@@ -1173,13 +1149,10 @@ def _drive_answer_dialog(server, session, monkeypatch):
 
 
 def _drive_perform_steer(server, session, monkeypatch):
-    """What the user hears (nothing, now) and what the brain would be
-    handed of each outcome's attention item. Every outcome branch."""
+    """What the user actually HEARS. Every outcome branch."""
     import asyncio
 
     monkeypatch.setattr(server.run_store, "record_steer", lambda *a, **k: None)
-    view = _attended(server, monkeypatch)
-    monkeypatch.setattr(server, "_inbound_accepted", lambda: False)
     said = []
     for outcome in (server.session_steer.SENT, server.session_steer.NOT_LIVE,
                     "some_other_failure"):
@@ -1194,15 +1167,14 @@ def _drive_perform_steer(server, session, monkeypatch):
                                    socket_path=session.socket_path)
         asyncio.run(server._perform_steer(item))
         said += speech.said
-    return said + view()
+    return said
 
 
 def _drive_perform_steer_queued(server, session, monkeypatch):
-    """When the message waits its turn (`_AgentDestination.report_queued`,
-    through `transmission.perform`): nothing said, an attention item."""
+    """The sentence said when the message waits its turn
+    (`_AgentDestination.say_queued`, through `transmission.perform`)."""
     import asyncio
 
-    view = _attended(server, monkeypatch)
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "_why_message_waits",
@@ -1213,7 +1185,7 @@ def _drive_perform_steer_queued(server, session, monkeypatch):
                                prompt="carry on",
                                socket_path=session.socket_path)
     asyncio.run(server._perform_steer(item))
-    return speech.said + view()
+    return speech.said
 
 
 def _drive_perform_dialog(server, session, monkeypatch):
@@ -1275,40 +1247,40 @@ DRIVERS = {
     # and `_AgentDestination` (sending), reached through the same paths.
     "server.refusal": _drive_steer_session,
     "server.unheard": _drive_steer_session,
-    "server.report_outcome": _drive_perform_steer,
-    "server.report_queued": _drive_perform_steer_queued,
+    "server.say_outcome": _drive_perform_steer,
+    "server.say_queued": _drive_perform_steer_queued,
     "server._perform_dialog": _drive_perform_dialog,
 }
 
 
-def _drive_attend_needs_you(server, session, monkeypatch):
-    """A needs-you, driven through the shape it is ACTUALLY called with: the
-    watcher publishes the session as a plain dict (a `.get("voice_name")`
-    read). Nothing is spoken; the Notification Centre line JARVIS writes
-    itself, and what the brain would be handed of the item."""
+def _drive_announce_needs_you(server, session, monkeypatch):
+    """The URGENT interrupt, driven through the shape it is ACTUALLY called
+    with: the watcher publishes the session as a plain dict, and this
+    function read it with `s.get("voice_name")` — which is why an
+    attribute-only walk declared it clean while it was the one site in the
+    file still using `_plain_name` on a voice name.
+    """
     import asyncio
 
-    view = _attended(server, monkeypatch)
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
-    lines = []
 
-    async def _notify(name, line):
-        lines.append(line)
+    async def _no_notify(name, line):
+        return None
 
-    monkeypatch.setattr(server, "_notify_needs_you", _notify)
+    monkeypatch.setattr(server, "_notify_needs_you", _no_notify)
     payload = {"voice_name": session.voice_name, "needs": session.needs,
                "project": session.project, "state": session.state,
                "needs_a_human_hand": False}
-    asyncio.run(server._attend_needs_you({"session": payload}))
+    asyncio.run(server._announce_needs_you({"session": payload}))
     payload_hand = dict(payload, needs_a_human_hand=True)
-    asyncio.run(server._attend_needs_you({"session": payload_hand}))
-    asyncio.run(server._attend_needs_you(
+    asyncio.run(server._announce_needs_you({"session": payload_hand}))
+    asyncio.run(server._announce_needs_you(
         {"session": dict(payload, needs="")}))
-    return list(speech.said) + lines + view()
+    return list(speech.said)
 
 
-DRIVERS["server._attend_needs_you"] = _drive_attend_needs_you
+DRIVERS["server._announce_needs_you"] = _drive_announce_needs_you
 
 
 def _drive_read_session_reply(server, session, monkeypatch):
@@ -1326,6 +1298,22 @@ def _drive_read_session_reply(server, session, monkeypatch):
     return out
 
 
+def _drive_announce_reply(server, session, monkeypatch):
+    """The spoken line AND the note the brain reads with the next turn: the
+    note is a header line too, in the user's own turn."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "_notes_for_brain", [])
+    payload = {"voice_name": session.voice_name, "project": session.project,
+               "state": session.state}
+    asyncio.run(server._announce_reply(
+        {"session": payload, "message": {"id": 7, "body": "carry on",
+                                         "reply": str(session.last_text or "x")}}))
+    return list(speech.said) + [server._with_notes_for_brain("")]
+
+
 def _message_payload(session, reply=None):
     """A message as the watcher's event carries it: its agent name and
     project are the session's, its reply the session's own words. Its body
@@ -1334,13 +1322,11 @@ def _message_payload(session, reply=None):
             "body": "carry on", "reply": reply}
 
 
-def _drive_attend_message(server, session, monkeypatch):
-    """Queued, sent, failed, delivered, not picked up, answered with words
-    and without: nothing spoken, no note for the brain, and what the brain
-    would be handed of the message's one attention item."""
+def _drive_announce_message(server, session, monkeypatch):
+    """Delivered, not picked up, answered with words and without: every
+    spoken line and the note the brain reads with the next turn."""
     import asyncio
 
-    view = _attended(server, monkeypatch)
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "_notes_for_brain", [])
@@ -1349,14 +1335,18 @@ def _drive_attend_message(server, session, monkeypatch):
     out = []
     monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
     monkeypatch.setattr(server.run_store, "mark_agent_messaged", lambda sid: None)
-    for kind in ("sent", "send_failed", "delivered", "undelivered"):
-        asyncio.run(server._attend_message({"kind": kind, "session": payload, "message": {
+    for announce in (server._announce_delivered, server._announce_undelivered,
+                     server._announce_queued_sent, server._announce_queued_failed):
+        asyncio.run(announce({"session": payload, "message": {
             **_message_payload(session), "failure": session.needs or "it ended"}}))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
     for reply in (str(session.last_text or "x"), None):
-        asyncio.run(server._attend_message({"kind": "answered", "session": payload,
-                                            "message": _message_payload(session, reply)}))
-    out += speech.said + [server._with_notes_for_brain("")]
-    return out + view()
+        asyncio.run(server._announce_reply(
+            {"session": payload, "message": _message_payload(session, reply)}))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
+    return out
 
 
 def _stored_message(server, session, status, reply=None):
@@ -1406,25 +1396,30 @@ def _drive_read_message_reply(server, session, monkeypatch):
     return out
 
 
-DRIVERS["server._attend_message"] = _drive_attend_message
+DRIVERS["server._announce_delivered"] = _drive_announce_message
+DRIVERS["server._announce_undelivered"] = _drive_announce_message
+DRIVERS["server._announce_queued_sent"] = _drive_announce_message
+DRIVERS["server._announce_queued_failed"] = _drive_announce_message
 DRIVERS["server.tool_list_messages"] = _drive_list_messages
 DRIVERS["server.tool_read_message_reply"] = _drive_read_message_reply
 
 
-def _drive_attend_board(server, session, monkeypatch):
-    """A board's project is a FILE NAME a session chose: what the brain
-    would be handed of its attention item."""
+def _drive_announce_board(server, session, monkeypatch):
+    """A board's project is a FILE NAME a session chose, and it reaches both
+    the spoken line and the note the brain reads with the next turn."""
+    import asyncio
     from jarvis import session_needs
 
-    view = _attended(server, monkeypatch)
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "_notes_for_brain", [])
     board = session_needs.Board(project=str(session.voice_name or ""),
                                 text="- " + str(session.title or ""), mtime=1.0)
-    server._attend_board(board)
-    return view() + [server._with_notes_for_brain("")]
+    asyncio.run(server._announce_board(board))
+    return list(speech.said) + [server._with_notes_for_brain("")]
 
 
-DRIVERS["server._attend_board"] = _drive_attend_board
+DRIVERS["server._announce_board"] = _drive_announce_board
 
 
 def _stored_session_message(server, session):
@@ -1435,15 +1430,21 @@ def _stored_session_message(server, session):
         str(session.title or ""), " ".join([str(session.last_text or "")] * 40))
 
 
-def _drive_attend_session_messages(server, session, monkeypatch):
-    """One message and several: what the brain would be handed of them."""
-    view = _attended(server, monkeypatch)
+def _drive_announce_session_messages(server, session, monkeypatch):
+    """One message and several: the spoken line and the brain's note."""
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "_notes_for_brain", [])
+    out = []
     for n in (1, 3):
         messages = [server.run_store.get_session_message(
             _stored_session_message(server, session)) for _ in range(n)]
-        server._attend_session_messages(messages)
-    return view() + [server._with_notes_for_brain("")]
+        asyncio.run(server._announce_session_messages(messages))
+        out += speech.said + [server._with_notes_for_brain("")]
+        speech.said.clear()
+    return out
 
 
 def _drive_session_messages(server, session, monkeypatch):
@@ -1486,16 +1487,13 @@ def _hostile_workflow(session):
 
 def _drive_workflow_status(server, session, monkeypatch):
     ws, w = _hostile_workflow(session)
-    view = _attended(server, monkeypatch)
-    monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
     out = [server.tool_workflow_status({}), server.tool_workflow_status({"workflow": w.id}),
            server.tool_workflow_status({"workflow": "nothing like it"})]
     for kind, item in (("phase_started", "plan-x"), ("decision_needed", None),
                        ("blocker_raised", None), ("workflow_finished", None)):
-        event = ws.WorkflowEvent(w.id, kind, item, HOSTILE, {})
-        out.append(str(server._workflow_attended(w, event)))
-        server._workflow_recorded(w, event)
-    return out + view()
+        spoken = server._workflow_spoken(w, ws.WorkflowEvent(w.id, kind, item, HOSTILE, {}))
+        out += list(spoken)
+    return out
 
 
 def _drive_workflow_silence(server, session, monkeypatch):
@@ -1506,7 +1504,12 @@ def _drive_workflow_silence(server, session, monkeypatch):
     ws.record(ws.WorkflowEvent(wid, "note", None, HOSTILE, {}))
     real = ws.time.time
     monkeypatch.setattr(ws.time, "time", lambda: real() + ws.SILENT_AFTER_SEC + 1)
-    view = _attended(server, monkeypatch)
+    said = []
+
+    async def say(line, note, what):
+        said.extend([line, note])
+
+    monkeypatch.setattr(server, "_say_about_message", say)
     monkeypatch.setattr(server, "_send_to_session_clients", lambda msg: None)
     monkeypatch.setattr(server, "WORKFLOW_SILENCE_POLL_SEC", 0.01)
 
@@ -1516,7 +1519,7 @@ def _drive_workflow_silence(server, session, monkeypatch):
         task.cancel()
 
     asyncio.run(once())
-    return view()
+    return said
 
 
 def _drive_conversation_history(server, session, monkeypatch):
@@ -1536,12 +1539,12 @@ DRIVERS["server.tool_conversation_history"] = _drive_conversation_history
 
 
 for _name in ("server.tool_workflow_status", "server._workflow_line", "server._workflow_said",
-              "server._workflow_detail", "server._workflow_attended"):
+              "server._workflow_detail", "server._workflow_spoken"):
     DRIVERS[_name] = _drive_workflow_status
 DRIVERS["server._watch_workflow_silence"] = _drive_workflow_silence
 DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
 
-DRIVERS["server._attend_session_messages"] = _drive_attend_session_messages
+DRIVERS["server._announce_session_messages"] = _drive_announce_session_messages
 DRIVERS["server.tool_session_messages"] = _drive_session_messages
 DRIVERS["server.tool_read_session_message"] = _drive_read_session_message
 
@@ -1652,7 +1655,7 @@ DRIVERS["server.tool_rename_agent"] = _drive_rename_agent
 DRIVERS["server.tool_list_agents"] = _drive_list_agents_by_row
 DRIVERS["server.tool_set_agent_active"] = _drive_set_agent_active
 DRIVERS["server.tool_read_session_reply"] = _drive_read_session_reply
-
+DRIVERS["server._announce_reply"] = _drive_announce_reply
 
 
 # --- THE OTHER FOREIGN RECORD: a run row ---------------------------------
@@ -1826,41 +1829,45 @@ def _drive_cancel_run(server, run, monkeypatch):
                         lambda ref: ([active], None))
     for answer in (True, False, "raise"):
         monkeypatch.setattr(server, "run_executor_instance", _Executor(answer))
+        server._pending_run_completions[:] = []
         out.append(asyncio.run(server.tool_cancel_run({"run": "hammer"})))
     return out
 
 
-def _drive_attend_run(server, run, monkeypatch):
-    """A run JARVIS started ending every way it can: nothing spoken, and
-    what the brain would be handed of its attention item."""
-    view = _attended(server, monkeypatch)
+def _drive_announce_run_stalled(server, run, monkeypatch):
+    import asyncio
+
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
-    out = []
-    for status, outcome in ((server.run_store.RunStatus.SUCCEEDED, server.stream_parser.OK),
-                            (server.run_store.RunStatus.SUCCEEDED, server.stream_parser.STALLED),
-                            (server.run_store.RunStatus.SUCCEEDED,
-                             server.stream_parser.NO_CHANGES),
-                            (server.run_store.RunStatus.FAILED, None),
-                            (server.run_store.RunStatus.TIMED_OUT, None)):
-        monkeypatch.setattr(server, "_run_outcome", lambda r, _o=outcome: _o)
-        server._on_run_event({"type": "run_finished",
-                              "run": dict(run, status=status, origin="voice")})
-        out += view()
-    return list(speech.said) + out
+    for outcome in (server.stream_parser.STALLED,
+                    server.stream_parser.NO_CHANGES):
+        asyncio.run(server._announce_run_stalled(run, outcome))
+    return list(speech.said)
 
 
-def _drive_attend_package_run(server, run, monkeypatch):
-    """An agent package's run ending: nothing spoken, no note, and what the
-    brain would be handed of its attention item."""
-    view = _attended(server, monkeypatch)
+def _drive_announce_run_failure(server, run, monkeypatch):
+    import asyncio
+
+    speech = _Speech()
+    monkeypatch.setattr(server, "speech", speech)
+    for status in (server.run_store.RunStatus.FAILED,
+                   server.run_store.RunStatus.TIMED_OUT):
+        asyncio.run(server._announce_run_failure(dict(run, status=status)))
+    return list(speech.said)
+
+
+def _drive_announce_package_run(server, run, monkeypatch):
+    """What JARVIS says, and tells the brain, when an agent package's run
+    ends: each line spoken and each note."""
+    import asyncio
+
     speech = _Speech()
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "_notes_for_brain", [])
     for status in (server.run_store.RunStatus.SUCCEEDED, server.run_store.RunStatus.FAILED,
                    server.run_store.RunStatus.TIMED_OUT):
-        server._attend_package_run(dict(run, status=status))
-    return list(speech.said) + list(server._notes_for_brain) + view()
+        asyncio.run(server._announce_package_run(dict(run, status=status)))
+    return list(speech.said) + list(server._notes_for_brain)
 
 
 def _drive_format_runs_for_prompt(server, run, monkeypatch):
@@ -1882,8 +1889,9 @@ RUN_DRIVERS = {
     "server._resolve_runs_or_explain": _drive_resolve_runs_or_explain,
     "server.tool_run_status": _drive_run_status,
     "server.tool_cancel_run": _drive_cancel_run,
-    "server._on_run_event": _drive_attend_run,
-    "server._attend_package_run": _drive_attend_package_run,
+    "server._announce_run_stalled": _drive_announce_run_stalled,
+    "server._announce_run_failure": _drive_announce_run_failure,
+    "server._announce_package_run": _drive_announce_package_run,
     "server.format_runs_for_prompt": _drive_format_runs_for_prompt,
 }
 
@@ -1923,41 +1931,64 @@ def test_an_ordinary_run_is_never_erased_by_the_wall(server, monkeypatch,
             f"sentence — a wall is eating it:\n{base}")
 
 
-def test_a_run_s_project_reaches_the_brain_only_walled(server, monkeypatch):
-    """`_on_run_event` builds no text: the project name goes into the
-    attention item as other people's words, and the brain is handed it only
-    inside the digest's one walled block."""
+def test_a_run_completion_queued_for_speech_is_walled_before_it_is_queued(
+        server, monkeypatch):
+    """`_on_run_event` appends the project name to `_pending_run_completions`
+    and `_run_batch_line` speaks it at the next pause. The queue is module
+    state, so the sentence that reads it out cannot judge what is in it —
+    the wall has to be at the door.
+
+    This is the site the printing walk could not see: `_on_run_event` builds
+    no text at all, it appends.
+    """
     _no_events(server, monkeypatch)
-    view = _attended(server, monkeypatch)
-    run = _blank_run(project_name=HOSTILE, status=server.run_store.RunStatus.SUCCEEDED,
-                     origin="voice")
+    spawned = []
+    monkeypatch.setattr(server, "_spawn", lambda coro: spawned.append(coro))
+    server._pending_run_completions[:] = []
+    run = _blank_run(project_name=HOSTILE,
+                     status=server.run_store.RunStatus.SUCCEEDED)
     server._on_run_event({"type": "run_finished", "run": run})
-    (out,) = view()
-    assert_header_is_jarviss_own(out)
+    for coro in spawned:
+        coro.close()
+    assert server._pending_run_completions, "nothing was queued at all"
+    line = server._run_batch_line(list(server._pending_run_completions))
+    assert_header_is_jarviss_own(line)
+    server._pending_run_completions[:] = []
 
 
-def test_a_session_s_name_reaches_the_brain_only_walled(server, monkeypatch):
-    """The twin, for a session finishing: its roster `voice_name` is other
-    people's words in the item, walled when the brain is handed it."""
-    view = _attended(server, monkeypatch)
-    monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
+def test_a_session_completion_queued_for_speech_is_walled_before_it_is_queued(
+        server, monkeypatch):
+    """The twin of the run test above, for `_pending_completions`. Same
+    shape — `_on_session_event` builds no text, it appends — and the same
+    blind spot: `_session_batch_line(names)` takes the value as a positional
+    parameter, so the printing walk cannot see where it came from. The run
+    queue had this test; this queue, one branch below the walled `needs_you`
+    branch, did not, and spoke the roster's `voice_name` raw."""
+    spawned = []
+    monkeypatch.setattr(server, "_spawn", lambda coro: spawned.append(coro))
+    server._pending_completions[:] = []
     server._on_session_event({"kind": "finished",
                               "session": {"session_id": "s-hostile",
                                           "voice_name": HOSTILE,
                                           "project": "notes"}})
-    (out,) = view()
-    assert_header_is_jarviss_own(out)
+    for coro in spawned:
+        coro.close()
+    assert server._pending_completions, "nothing was queued at all"
+    line = server._session_batch_line(list(server._pending_completions))
+    assert_header_is_jarviss_own(line)
+    server._pending_completions[:] = []
 
 
 def test_an_ordinary_session_completion_still_says_which_one(server, monkeypatch):
-    view = _attended(server, monkeypatch)
     monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
+    server._pending_completions[:] = []
     server._on_session_event({"kind": "finished",
                               "session": {"session_id": "s1",
                                           "voice_name": "hammer in Desktop",
                                           "project": "hammer"}})
-    (out,) = view()
-    assert "hammer in Desktop" in out
+    line = server._session_batch_line(list(server._pending_completions))
+    assert line == "hammer in Desktop has finished, sir."
+    server._pending_completions[:] = []
 
 
 # --- the resolver's door ---------------------------------------------------
@@ -2057,21 +2088,25 @@ def test_open_in_terminal_never_speaks_a_hostile_directory_name(server, monkeypa
 
 def test_an_ordinary_completion_still_names_its_project(server, monkeypatch):
     _no_events(server, monkeypatch)
-    view = _attended(server, monkeypatch)
+    monkeypatch.setattr(server, "_spawn", lambda coro: coro.close())
+    server._pending_run_completions[:] = []
     server._on_run_event({"type": "run_finished",
-                          "run": _blank_run(project_name="hammer", origin="voice")})
-    (out,) = view()
-    assert "hammer" in out
+                          "run": _blank_run(project_name="hammer")})
+    assert "hammer" in server._run_batch_line(
+        list(server._pending_run_completions)), server._pending_run_completions
+    server._pending_run_completions[:] = []
 
 
-def test_every_real_voice_name_survives_the_needs_you_notice(server, monkeypatch):
+def test_every_real_voice_name_survives_the_urgent_interrupt(server,
+                                                             monkeypatch):
     """Finding 4, stated as the property that makes it a finding.
 
-    A needs-you is the one event whose job is to say which session wants the
-    user. `_plain_name` forbids a space, and a voice name is a composed
-    phrase in nine real names out of ten, so "hammer in Desktop", "the newer
-    hammer" and "note taker" were all erased. The Notification Centre line
-    and the item's name must both keep every real one.
+    `_announce_needs_you` is the ONE interrupt whose job is to say which
+    session wants the user. It used `_plain_name`, which forbids a space,
+    on a value that is a composed phrase in nine real names out of ten — so
+    "hammer in Desktop", "the newer hammer" and "note taker" all became "A
+    session is waiting on a permission prompt, sir", and the user had no way
+    to answer "which one?".
     """
     import asyncio
 
@@ -2079,22 +2114,22 @@ def test_every_real_voice_name_survives_the_needs_you_notice(server, monkeypatch
     assert len(names) >= 12, names
     erased = []
     for name in names:
-        lines = []
+        speech = _Speech()
+        monkeypatch.setattr(server, "speech", speech)
 
-        async def _notify(_name, line, _lines=lines):
-            _lines.append(line)
+        async def _no_notify(_name, _line):
+            return None
 
-        monkeypatch.setattr(server, "_notify_needs_you", _notify)
-        view = _attended(server, monkeypatch)
-        asyncio.run(server._attend_needs_you({"session": {
-            "session_id": "s", "voice_name": name, "needs": "permission prompt",
+        monkeypatch.setattr(server, "_notify_needs_you", _no_notify)
+        asyncio.run(server._announce_needs_you({"session": {
+            "voice_name": name, "needs": "permission prompt",
             "needs_a_human_hand": True}}))
-        assert lines, name
-        if name not in lines[0] or name not in view()[0]:
-            erased.append((name, lines[0]))
+        assert speech.said, name
+        if name not in speech.said[0]:
+            erased.append((name, speech.said[0]))
     assert not erased, (
         f"{len(erased)} of {len(names)} real voice names were erased from the "
-        f"one notice that says which session wants him: {erased}")
+        f"one interrupt that says which session wants him: {erased}")
 
 
 def _clone(session):
@@ -2114,7 +2149,7 @@ def test_the_class_is_big_enough_to_be_the_class():
                    # The three the FOURTH audit found, each invisible to the
                    # walk as it stood: a `.get("voice_name")` read, and two
                    # `run["project_name"]` subscripts.
-                   "server._attend_needs_you", "server.tool_run_status",
+                   "server._announce_needs_you", "server.tool_run_status",
                    "server._running_now_summary"):
         assert missed in PRINTERS, (missed, sorted(PRINTERS))
 

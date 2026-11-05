@@ -6,7 +6,7 @@ import { captureKind } from "./capture";
 import { conversationChanged, getConversation, restoreCapture,
          statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { formatDateTime, SaidText, useT, type Said, type Translate } from "./locale";
+import { SaidText, useT, type Said, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
 import { createStore } from "./store";
 import type { AvailabilityReason, TargetRef } from "./uiContract";
@@ -17,7 +17,6 @@ import { MessageList, historyRows, type ConversationRow } from "./conversation/M
 import { ChatMessage } from "./conversation/ChatMessage";
 import { Composer } from "./conversation/Composer";
 import { PlaybackBar } from "./conversation/PlaybackBar";
-import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
 import "./conversation/conversation.css";
 
 export { historyRows };
@@ -145,7 +144,6 @@ export function ConversationView() {
       {hearing && <div className="conversation-interim" role="status">
         <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
       </div>}
-      <VoiceTurnBar partRef={ui.part("turn")} />
       <Composer partRef={ui.part("input")} />
     </div>
   </section>;
@@ -280,31 +278,6 @@ function kindClass(turn: Turn): string {
 }
 
 
-const OUTCOME_NOTE = { failed: "main.conversation.replyFailed",
-                       cancelled: "main.conversation.replyCancelled" } as const;
-const READING_NOTE = { skipped: "main.conversation.readingSkipped",
-                       stopped: "main.conversation.readingStopped",
-                       failed: "main.conversation.readingFailed" } as const;
-
-/** Why a reply failed, in the interface's language. */
-function failureNote(failure: NonNullable<Turn["failure"]>, t: Translate): string {
-  if (failure.reason === "rate_limited" && failure.resetsAt) {
-    return t("main.conversation.replyReason.rate_limited_until",
-             { time: formatDateTime(failure.resetsAt * 1000, { hour: "numeric", minute: "2-digit" }) });
-  }
-  return t(`main.conversation.replyReason.${failure.reason}`);
-}
-
-/** How a live JARVIS turn ended, when not complete and heard: a reply the
- *  provider did not finish, and a reading not heard in full. */
-function turnNotes(turn: Turn, t: Translate): string[] {
-  const notes: string[] = [];
-  if (turn.complete && turn.outcome && turn.outcome !== "succeeded") notes.push(t(OUTCOME_NOTE[turn.outcome]));
-  if (turn.complete && turn.failure) notes.push(failureNote(turn.failure, t));
-  if (turn.reading) notes.push(t(READING_NOTE[turn.reading]));
-  return notes;
-}
-
 function HistoryTurn({ turn }: { turn: Turn }) {
   const t = useT();
   const key = turnKey(turn);
@@ -313,7 +286,6 @@ function HistoryTurn({ turn }: { turn: Turn }) {
   return <ChatMessage speaker={turn.speaker} at={turn.at}
     text={turn.text ?? turn.sentences.join(" ")} kind={kindClass(turn)}
     pending={turn.complete === false && !turn.interrupted} interrupted={turn.interrupted}
-    notes={turnNotes(turn, t)}
     wholeRef={ui.whole} textRef={ui.part("text")}>
     {turn.capture ? <TurnWords turn={turn} speaking={null} partRef={ui.part} /> : undefined}
   </ChatMessage>;

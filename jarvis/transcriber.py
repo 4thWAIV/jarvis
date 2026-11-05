@@ -295,9 +295,6 @@ class TranscriptionError(Exception):
 
 Status = Literal["idle", "loading", "ready", "failed", "closed"]
 
-# Pages whose newest capture epoch is remembered (one per page load).
-EPOCHS_KEPT = 256
-
 
 @dataclass
 class Window:
@@ -315,18 +312,9 @@ class Capture:
     Interims are coalesced to at most one per `INTERIM_EVERY_SEC`; finals
     are never delayed or coalesced."""
 
-    def __init__(self, service: "TranscriptionService", generation: int,
-                 client_id: Optional[str] = None, epoch: Optional[int] = None) -> None:
+    def __init__(self, service: "TranscriptionService", generation: int) -> None:
         self._service = service
         self.generation = generation
-        # Whose capture this is: the page (its client id) and the capture
-        # epoch it was started in (voice control contract, section 4).
-        self.client_id = client_id
-        self.epoch = epoch
-        # Frames fed, and frames the recogniser has decoded (decodedSeq):
-        # the turn controller's coverage check compares them.
-        self.frames_received = 0
-        self.frames_decoded = 0
         self._loop = asyncio.get_running_loop()
         self._out: asyncio.Queue = asyncio.Queue()
         self.pending_bytes = 0
@@ -350,7 +338,6 @@ class Capture:
             raise TranscriptionError(
                 "overload", "Speech recognition fell behind, so this was not heard.")
         self.pending_bytes += len(pcm)
-        self.frames_received += 1
         self._window.received_bytes += len(pcm)
         self._oldest.append(now)
         self._service._submit(("audio", self.generation, pcm))
@@ -404,7 +391,6 @@ class Capture:
         self._window.decode_sec += decode_sec
         if consumed:
             self.pending_bytes -= consumed
-            self.frames_decoded += 1
             self._window.decoded_bytes += consumed
             if self._oldest:
                 delay = time.monotonic() - self._oldest.pop(0)
@@ -474,9 +460,6 @@ class TranscriptionService:
         self._settled: Optional[asyncio.Event] = None
         self._active: Optional[Capture] = None
         self._generation = 0
-        # Each page's newest capture epoch admitted: words from an older one
-        # are stale (the turn controller's epoch check).
-        self._epochs: dict[str, int] = {}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -530,47 +513,16 @@ class TranscriptionService:
         """The capture now admitted, if any."""
         return self._active
 
-    def capture_of(self, client_id: str) -> Optional[Capture]:
-        """The capture now admitted, if it is this page's."""
-        active = self._active
-        return active if active is not None and active.client_id == client_id else None
-
-    def epoch_of(self, client_id: str) -> Optional[int]:
-        """The newest capture epoch admitted for this page, if any."""
-        return self._epochs.get(client_id)
-
-    def coverage_of(self, client_id: str) -> Optional[tuple[int, int]]:
-        """(frames received, frames decoded) of this page's open capture,
-        or None when it has none open."""
-        capture = self.capture_of(client_id)
-        return None if capture is None else (capture.frames_received, capture.frames_decoded)
-
-    def admit(self, client_id: Optional[str] = None, epoch: Optional[int] = None,
-              claim: bool = False) -> Capture:
-        """The one capture. One page owns the recogniser at a time: another
-        page's capture is taken from it only on a claim (his Start
-        listening there), and that page is told (`taken`), never silently;
-        without a claim it is busy. The same page starting again replaces
-        its own older capture, which it has already let go."""
+    def admit(self) -> Capture:
+        """The one capture, or busy if another page already has it."""
         if self.status in ("failed", "closed", "idle"):
             raise TranscriptionError(
                 "model-unavailable", self.failure or "Speech input is not running.")
-        active = self._active
-        if active is not None:
-            mine = client_id is not None and active.client_id == client_id
-            if not (mine or claim):
-                raise TranscriptionError(
-                    "busy", "Another JARVIS page is listening. Typing still works here.")
-            log.info("speech capture of %s taken by %s", active.client_id or "a page",
-                     client_id or "a page")
-            active.interrupt(TranscriptionError(
-                "taken", "Listening moved to another JARVIS page.", incident=False))
+        if self._active is not None:
+            raise TranscriptionError(
+                "busy", "Another JARVIS page is listening. Typing still works here.")
         self._generation += 1
-        if client_id is not None and epoch is not None:
-            self._epochs[client_id] = max(epoch, self._epochs.pop(client_id, epoch))
-            while len(self._epochs) > EPOCHS_KEPT:      # the oldest pages first
-                self._epochs.pop(next(iter(self._epochs)))
-        capture = Capture(self, self._generation, client_id, epoch)
+        capture = Capture(self, self._generation)
         self._active = capture
         self._submit(("open", capture.generation, None))
         return capture

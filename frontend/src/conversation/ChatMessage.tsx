@@ -2,13 +2,10 @@ import { useState, type ReactNode } from "react";
 import { useT } from "../locale";
 import { ReplyText } from "./ReplyText";
 
-/** Full text stays selectable and in normal document flow, at every length.
- *  `notes` are how it ended, when that is not simply complete and heard
- *  (already in the interface's language). */
-export function ChatMessage({ speaker, at, text, children, pending = false, interrupted = false, notes = [], kind = "", wholeRef, textRef }: {
+/** Full text stays selectable and in normal document flow, at every length. */
+export function ChatMessage({ speaker, at, text, children, pending = false, interrupted = false, kind = "", wholeRef, textRef }: {
   wholeRef?: (el: Element | null) => void; textRef?: (el: Element | null) => void;
-  speaker: "user" | "jarvis"; at?: number; text?: string; children?: ReactNode; pending?: boolean; interrupted?: boolean;
-  notes?: string[]; kind?: string;
+  speaker: "user" | "jarvis"; at?: number; text?: string; children?: ReactNode; pending?: boolean; interrupted?: boolean; kind?: string;
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -23,7 +20,6 @@ export function ChatMessage({ speaker, at, text, children, pending = false, inte
         {date && <time dateTime={date.toISOString()}>{date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>}
         {interrupted && <span className="chat-streaming">{t("main.conversation.interrupted")}</span>}
         {pending && <span className="chat-streaming">{t("main.conversation.responding")}</span>}
-        {notes.map(note => <span key={note} className="chat-streaming chat-outcome">{note}</span>)}
         {text && <button className="chat-copy" type="button" data-ui-action="domain" aria-label={t("main.conversation.copyMessage")} onClick={async () => {
           try { await navigator.clipboard.writeText(text); setCopied(true); setCopyError(false); }
           catch { setCopyError(true); }

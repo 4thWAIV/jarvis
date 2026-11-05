@@ -12,8 +12,8 @@
  * again or its connection to JARVIS starts again (a JARVIS restart); never
  * for good.
  *
- * It sits in the centre's notice stack (CentreNotices.tsx), which keeps
- * every centre view below it, so it covers nothing, the conversation's
+ * While shown it sets --centre-notice-height to its own height, so every
+ * centre view starts below it and it covers nothing, the conversation's
  * input included.
  *
  * Later is the registered command `reminder.later`, the same for his click
@@ -22,7 +22,7 @@
  * its text and both buttons as parts.
  */
 
-import { useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { reconnected } from "./liveRead";
 import { SaidText, useT, type Said } from "./locale";
 import { needsSignIn, network } from "./network";
@@ -31,6 +31,9 @@ import { ServerIcon } from "./TeamServerTile";
 import { refusalSaid, signInAgain } from "./teamSignIn";
 import { bind, bindingProps } from "./uiNavigation";
 import { byHand, registerCommand, useUiTarget } from "./uiRegistry";
+
+// The space kept between the reminder and the view below it.
+const GAP_PX = 8;
 
 /** @routeState Later, until the page or its connection to JARVIS starts again. */
 const later = createStore(false);
@@ -51,10 +54,22 @@ export function TeamSignInReminder() {
   const hidden = useSyncExternalStore(later.subscribe, later.get);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Said | null>(null);
+  const box = useRef<HTMLDivElement>(null);
   const shown = needsSignIn(live.value) && !hidden;
   const ui = useUiTarget(shown ? { ref: { region: "main", view: "main.notice", kind: "teamReminder" },
                                    label: t("targets.signInReminder"), socket: { rail: "rail.main", side: "right" } }
                                : null);
+
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!shown || !el) return;
+    const root = document.documentElement.style;
+    const fit = () => root.setProperty("--centre-notice-height", `${el.offsetHeight + GAP_PX}px`);
+    fit();
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    return () => { watch.disconnect(); root.removeProperty("--centre-notice-height"); };
+  }, [shown]);
 
   if (!shown) return null;
   const start = async () => {
@@ -67,7 +82,7 @@ export function TeamSignInReminder() {
     setBusy(false);
   };
   return (
-    <div id="team-reminder" role="status" ref={ui.whole}>
+    <div id="team-reminder" role="status" ref={(el) => { box.current = el; ui.whole(el); }}>
       <ServerIcon />
       <p ref={ui.part("text")}>{t("left.reminder.text")}</p>
       <button type="button" className="settings-btn primary" disabled={busy} data-ui-action="sign-in"

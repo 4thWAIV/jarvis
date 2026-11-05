@@ -8,7 +8,7 @@
      "presentations": [{"view": "left.fixed"}]},
     {"kind": "status", "entity": null, "label": "Status", "parts": ["text", "stop"],
      "presentations": [{"view": "left.fixed"}]},
-    {"kind": "mic", "entity": null, "label": "Microphone", "parts": ["meter", "health", "mute", "off", "listen"],
+    {"kind": "mic", "entity": null, "label": "Microphone", "parts": ["meter", "health", "mute", "off"],
      "presentations": [{"view": "left.fixed"}]},
     {"kind": "brainAccount", "entity": "provider", "label": "Brain account",
      "parts": ["name", "remaining", "pace", "reset"],

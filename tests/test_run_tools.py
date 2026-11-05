@@ -348,17 +348,18 @@ async def test_cancel_survives_the_executor_throwing(wired, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cancelling_records_nothing_to_announce(wired, monkeypatch):
-    """The user was just told it stopped; a cancelled run is not an update."""
+async def test_cancelling_removes_it_from_the_pending_announcement(
+        wired, monkeypatch):
+    """The user was just told it stopped; they must not then be told, at the
+    next pause, that it finished."""
     server, store = wired
-    from jarvis.attention_store import AttentionStore
-    monkeypatch.setattr(server, "attention_record", AttentionStore())
     monkeypatch.setattr(server, "run_executor_instance", _Executor(store))
     _run(store, status=store.RunStatus.RUNNING)
+    server._pending_run_completions[:] = ["chitauri", "hammer"]
 
     await server.tool_cancel_run({"run": "chitauri"})
 
-    assert server.attention_record.items() == []
+    assert server._pending_run_completions == ["hammer"]
 
 
 # --- the registries ------------------------------------------------------

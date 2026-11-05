@@ -1078,25 +1078,6 @@ export const UI_CONTRACT = {
       "family": "settings"
     },
     {
-      "id": "updates.review",
-      "label": "Open or close the list of updates waiting (Review updates), at the top of the centre",
-      "view": "main.notice",
-      "args": {
-        "open": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "open"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [],
-      "family": "settings"
-    },
-    {
       "id": "agents.filter",
       "label": "Show only the active agents, or all of them, in the Agents list (remembered)",
       "view": "right.agents",
@@ -2298,8 +2279,7 @@ export const UI_CONTRACT = {
         "meter",
         "health",
         "mute",
-        "off",
-        "listen"
+        "off"
       ],
       "presentations": [
         {
@@ -2419,9 +2399,6 @@ export const UI_CONTRACT = {
         "saveYou",
         "language",
         "spanishModel",
-        "voiceInputStop",
-        "voiceInputSwitch",
-        "voicePatience",
         "voiceId",
         "saveVoiceId",
         "fishKey",
@@ -2554,24 +2531,6 @@ export const UI_CONTRACT = {
         "text",
         "signIn",
         "later"
-      ],
-      "presentations": [
-        {
-          "view": "main.notice"
-        }
-      ],
-      "family": "settings"
-    },
-    {
-      "kind": "updatesNotice",
-      "entity": null,
-      "label": "Updates waiting: their count, Review updates, Mark all seen, Hold spoken updates and the list",
-      "parts": [
-        "text",
-        "review",
-        "markSeen",
-        "away",
-        "list"
       ],
       "presentations": [
         {
@@ -3342,7 +3301,6 @@ export const UI_CONTRACT = {
         "history",
         "earlier",
         "speaking",
-        "turn",
         "input"
       ],
       "presentations": [
@@ -3736,7 +3694,6 @@ export interface CommandArgs {
   "thread.close": { };
   "thread.earlier": { };
   "thread.open": { sessionId: string; };
-  "updates.review": { open: boolean; };
   "voice.diagnostics.close": { };
   "voice.diagnostics.open": { };
   "voice.quiet": { quiet: boolean; };
