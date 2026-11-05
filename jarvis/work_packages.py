@@ -541,7 +541,7 @@ def page_file(package: Package, relative: str) -> bytes:
         with folder_readers.opened_file(package.folder, Path(*pure.parts)) as (fd, info):
             if info.st_size > PAGE_FILE_MAX_BYTES:
                 raise PackageError(f"{relative!r} is too large to serve.")
-            return os.pread(fd, info.st_size, 0) if info.st_size else b""
+            return folder_readers.pread(fd, info.st_size, 0) if info.st_size else b""
     except FolderError:
         raise refused from None
 

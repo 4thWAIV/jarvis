@@ -10,6 +10,7 @@ real history, path or session is read.
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,9 +24,10 @@ from jarvis.folder_store import FolderStore
 NODE = "node-a"
 
 
-# The readers' own behaviour needs their descriptor walk. Where Python lacks it
-# (Windows) every read is refused instead, which
-# test_a_platform_without_the_safe_walk_refuses_every_read checks.
+# The readers' own behaviour needs their safe walk: descriptors on POSIX,
+# handles on Windows (_win_handles). Anywhere with neither every read is
+# refused instead, which test_a_platform_without_the_safe_walk_refuses_every_read
+# checks.
 needs_the_safe_walk = pytest.mark.skipif(
     not folder_readers.SUPPORTED, reason="folder reads are refused on this platform")
 
@@ -278,7 +280,7 @@ def test_a_file_swapped_for_a_symlink_mid_read_is_not_followed(svc, boxed, monke
         return ok
 
     monkeypatch.setattr(folder_policy, "entry_visible", swap_after_the_check)
-    monkeypatch.setattr(folder_readers, "kind_of", lambda root, rel: "file")
+    monkeypatch.setattr(folder_readers, "kind_of", lambda root, rel, identity=None: "file")
     assert _err(svc.preview, f["id"], path="ok.txt") == "forbidden"
 
 
@@ -349,10 +351,11 @@ def test_a_platform_without_the_safe_walk_refuses_every_read(tmp_path, monkeypat
 
 
 def test_the_safe_walk_is_supported_wherever_its_calls_exist():
-    """The switch is the platform's calls, not its name: POSIX keeps the
-    walk, and Windows' Python 3.12 (no O_NOFOLLOW) is refused."""
+    """POSIX keeps the descriptor walk wherever its calls exist; Windows'
+    Python 3.12 has none of them (no O_NOFOLLOW) and walks by handle."""
     has_calls = hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd
-    assert folder_readers.SUPPORTED == has_calls
+    assert folder_readers._POSIX_WALK == has_calls
+    assert folder_readers.SUPPORTED == (has_calls or sys.platform == "win32")
 
 
 @needs_the_safe_walk
