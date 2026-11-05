@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Optional
 
 from jarvis import data_paths
 from jarvis import preflight
+from jarvis import private_files
 from jarvis import usage_store
 from jarvis.brain_provider import (Account, EventSink, ExitSink, SessionInfo, SignIn, TextDelta,
                             ToolFailed, ToolStarted, TurnEnded, UsageReading, UsageSeen, UsageUnavailable,
@@ -206,11 +207,7 @@ def write_config(mcp_config: Optional[Path]) -> Path:
         except (OSError, ValueError) as e:
             log.warning(f"codex: could not read {mcp_config}: {e}")
     path = data_paths.codex_home() / "config.toml"
-    path.write_text(config_toml(servers))
-    try:
-        path.chmod(0o600)
-    except OSError as e:                             # pragma: no cover
-        log.warning("could not tighten config.toml's permissions: %s", e)
+    private_files.replace(path, config_toml(servers).encode("utf-8"))
     return path
 
 

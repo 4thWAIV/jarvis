@@ -645,40 +645,27 @@ def ensure_tool_token() -> str:
     A path that is not a regular file this user owns raises, rather than
     being quietly replaced: it is somebody else's file, and deleting it is
     not ours to do.
+
+    Both steps are private_files', which does the same on Windows with the
+    file's own security descriptor in place of the modes.
     """
     import secrets
-    import stat as _stat
+    from jarvis import private_files
     path = tool_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     token = secrets.token_urlsafe(32)
     try:
-        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        private_files.create_new(path, token.encode("utf-8"))
+        return token
     except FileExistsError:
         pass
-    else:
-        try:
-            os.write(fd, token.encode("utf-8"))
-        finally:
-            os.close(fd)
-        return token
 
-    fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW)
-    try:
-        info = os.fstat(fd)
-        if not _stat.S_ISREG(info.st_mode):
-            raise OSError(f"{path} is not a regular file")
-        if info.st_uid != os.getuid():
-            raise OSError(f"{path} is owned by uid {info.st_uid}, not by us")
-        os.fchmod(fd, 0o600)
-        existing = os.read(fd, 4096).decode("utf-8", "ignore").strip()
-        if existing:
-            return existing
-        # An empty file: ours to fill, and only ours — the fd is already
-        # proven to be a regular file we own.
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, token.encode("utf-8"))
-        return token
-    finally:
-        os.close(fd)
+    data, write = private_files.adopt(path, 4096)
+    existing = data.decode("utf-8", "ignore").strip()
+    if existing:
+        return existing
+    # An empty file: ours to fill, and only ours — the handle is already
+    # proven to be a regular file we own.
+    write(token.encode("utf-8"))
+    return token

@@ -82,6 +82,7 @@ from jarvis import actions
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
+from jarvis import private_files
 from jarvis import project_maker
 from jarvis import projects_view
 from jarvis import history_read
@@ -1257,12 +1258,9 @@ def _write_mcp_config(home: Path) -> Path:
     # it has been 0600 since it was created and there was never a reason for
     # this to be looser. Chmod after the write as well as before, so a file
     # another local process pre-created with looser permissions does not keep
-    # read access to what we just put in it.
-    path.write_text(json.dumps(config, indent=2))
-    try:
-        path.chmod(0o600)
-    except OSError as e:                             # pragma: no cover
-        log.warning("could not tighten mcp.json's permissions: %s", e)
+    # read access to what we just put in it. Written beside and renamed over
+    # (private_files.replace), which is owner-only on Windows too.
+    private_files.replace(path, json.dumps(config, indent=2).encode("utf-8"))
     return path
 
 
