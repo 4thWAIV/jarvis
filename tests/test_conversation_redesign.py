@@ -408,3 +408,45 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         await asyncio.sleep(.2)
         assert await page.evaluate(GAP) < 2
         await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('theme', ['classic', 'graphite'])
+async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_never_scrolls(page_url, theme):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1000, 'height': 720})
+        await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
+        await _with_history(page, voice)
+        voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
+                    'text': 'Tell hammer to ship the folder catalog fix once the review passes. ' * 2},
+                   {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'},
+                   {'type': 'reply', 'utt': 60, 'text': 'A long reply being read. ' * 120, 'done': True},
+                   {'type': 'audio', 'utt': 60, 'idx': 0, 'text': 'A long reply being read.', 'kind': 'reply',
+                    'data': _silence_wav(5)})
+        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_selector('#voice-turn')
+        await page.get_by_role('textbox', name='Message JARVIS').fill('\n'.join(['A long draft line'] * 30))
+        await asyncio.sleep(.5)
+        got = await page.evaluate("""() => {
+          const r = s => document.querySelector(s).getBoundingClientRect();
+          const dock = document.querySelector('.conversation-dock');
+          const field = document.querySelector('.hearing-input');
+          return {view: r('#conversation'), history: r('.conversation-history'), capture: r('#conversation .capture-box'),
+                  list: document.querySelector('#conversation .capture-list').scrollHeight
+                        - document.querySelector('#conversation .capture-list').clientHeight,
+                  playback: r('.chat-playback'), turn: r('#voice-turn'), composer: r('.chat-composer'),
+                  send: r('.composer-send'), dockScroll: dock.scrollHeight - dock.clientHeight,
+                  dockOverflow: getComputedStyle(dock).overflowY, dockTop: dock.scrollTop,
+                  fieldScroll: field.scrollHeight > field.clientHeight}; }""")
+        for part in ('capture', 'playback', 'turn', 'composer', 'send'):
+            assert got[part]['top'] >= got['view']['top'] and got[part]['bottom'] <= got['view']['bottom'] + 1, (part, got)
+        assert got['history']['bottom'] <= got['capture']['top'] + 1, got
+        assert got['capture']['bottom'] <= got['playback']['top'] <= got['turn']['top'] <= got['composer']['top'], got
+        assert got['composer']['bottom'] <= 720 and abs(got['composer']['bottom'] - got['view']['bottom']) < 2, got
+        assert got['list'] <= 1, 'the one capture is shown whole'
+        assert got['dockScroll'] <= 1 and got['dockOverflow'] == 'visible' and got['dockTop'] == 0, got
+        assert got['fieldScroll'], 'only the long draft scrolls, inside the editor'
+        assert got['history']['height'] >= 70, got
+        await browser.close()
