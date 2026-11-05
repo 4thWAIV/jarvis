@@ -1,6 +1,7 @@
 import * as THREE from '../../../../frontend/node_modules/three/build/three.module.js';
 import data from './filaments.json';
 import {gentlePulse} from './pulse-policy';
+import {colourAtLuminance} from './state-lighting';
 export {data as filamentData};
 /** Continuous anatomical strands, connected back to the existing living core. */
 export function createAnatomicalFilaments(parent:any,transform:(x:number,y:number,z:number)=>number[],normalTransform:(x:number,y:number,z:number)=>number[]){
@@ -30,7 +31,7 @@ export function createAnatomicalFilaments(parent:any,transform:(x:number,y:numbe
  const tint=new THREE.Color(),white=new THREE.Color(1,1,1),view=new THREE.Vector3();
  return {pathCount:data.paths.length,sampleCount:samples.length,update(t:number,camera:any,colour:any,density:number,peak:number,edge:number,steady:boolean){
   view.copy(camera.position);parent.worldToLocal(view);view.normalize();
-  tint.copy(colour).lerp(white,Math.max(0,Math.min(.88,(peak-.16)/.54*.88)));
+  tint.copy(colourAtLuminance(colour,peak));
   const luma=.2126*tint.r+.7152*tint.g+.0722*tint.b,breath=gentlePulse(t,steady);
   samples.forEach((s,i)=>{
    const u=Math.max(0,Math.min(1,(density-s.rank+.01)/.02)),active=u*u*(3-2*u),facing=s.normal.dot(view),contour=Math.pow(1-Math.abs(facing),10);

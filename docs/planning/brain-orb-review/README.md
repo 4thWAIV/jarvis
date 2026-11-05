@@ -18,4 +18,10 @@ Anatomy: human-brain by Yash_Dandavate, CC BY 4.0. https://sketchfab.com/3d-mode
 
 ## Review controls and sign size
 
-The plus/minus glyph size is 5.4, increased from 1.8, while the digits stay at 3.6. The scene camera distance is 210 instead of 245. The canvas and all controls share a viewport-height layout, with controls beside the animation and explanatory notes collapsed below. Layout checks at 1440×900, 1280×720 and 1024×768 show the full canvas and all controls without scrolling either the page or control panel. Positive and negative displays were visually inspected.
+The plus glyph size is 4.6; the minus remains 5.4. The digits stay at 3.6. The scene camera distance is 210 instead of 245. The canvas and all controls share a viewport-height layout, with controls beside the animation and explanatory notes collapsed below. Layout checks at 1440×900, 1280×720 and 1024×768 show the full canvas and all controls without scrolling either the page or control panel. Positive and negative displays were visually inspected.
+
+## Brightness as a state cue
+
+The shared relative brightness steps are green 50%, yellow-white 65%, yellow 72%, red 100%. They drive both number illumination and active filament illumination through one luminance-normalizing function. It adds a pale hot center where saturated colour alone would clip before reaching the requested brightness. Red lights 2.5% of ranked paths, down from 5.5%, while retaining contour illumination and dim state-coloured anatomy. All state thresholds remain unchanged.
+
+The grayscale preview removes colour from the live canvas. A controlled 1280×720 capture measured the same number-region 95th-percentile grayscale values as 113, 153, 165 and 234 for the four states. This checks the intended ordering and the larger jump to red; it is not a universal colour-vision or display-calibration test. Controls still fit beside the animation at all three tested desktop sizes.

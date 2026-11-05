@@ -5,18 +5,19 @@ import * as THREE from '../../../../frontend/node_modules/three/build/three.modu
 import {createOrb} from './orb-renderer';
 import {createLivingCore} from './core';
 import {pulsePolicy, gentlePulse, setPulseTime} from './pulse-policy';
+import {brightnessSteps,lightTarget,colourAtLuminance} from './state-lighting';
 
 const $=(id:string)=>document.getElementById(id)!;
 let power=86,tokens=74;
 let mode=0,time=0,last=performance.now(),paused=false,scene:any=null,cameraRef:any=null,targets:any[]=[];
 let level=5.2,inspectionYaw=0;
 let reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-let visualColour=new THREE.Color('#278451'),visualDensity=.92,visualPeak=.035,visualEdge=.03;
+let visualColour=new THREE.Color('#278451'),visualDensity=.92,visualPeak=lightTarget(.5),visualEdge=lightTarget(.5)*.75;
 const brainCenter=filamentData.center;
-const positive=new THREE.Color('#278451'),neutral=new THREE.Color('#f5f8ff'),negativeOne=new THREE.Color('#ffda20'),negativeTwo=new THREE.Color('#ff343f'),coreBlue=new THREE.Color('#cdeeff');
+const positive=new THREE.Color('#278451'),neutral=new THREE.Color('#fff5cf'),negativeOne=new THREE.Color('#ffda20'),negativeTwo=new THREE.Color('#ff343f'),coreBlue=new THREE.Color('#cdeeff');
 function stateFor(value:number){return value>.5?'green':value>=-.5?'white':value>=-2?'yellow':'red';}
 function levelColour(value:number){return ({green:positive,white:neutral,yellow:negativeOne,red:negativeTwo}[stateFor(value)]).clone();}
-function lightingFor(value:number){return ({green:{density:.92,peak:.035,edge:.03},white:{density:.48,peak:.16,edge:.12},yellow:{density:.20,peak:.35,edge:.28},red:{density:.055,peak:.70,edge:.65}})[stateFor(value)];}
+function lightingFor(value:number){const state=stateFor(value),peak=lightTarget(brightnessSteps[state]);return {density:{green:.92,white:.48,yellow:.20,red:.025}[state],peak,edge:peak*.9};}
 function radialLight(value:number,r:number){return lightingFor(value).peak;}
 function updateLighting(dt:number){const q=lightingFor(level),a=reduced?1:1-Math.exp(-dt/.65);visualColour.lerp(levelColour(level),a);visualDensity+=(q.density-visualDensity)*a;visualPeak+=(q.peak-visualPeak)*a;visualEdge+=(q.edge-visualEdge)*a;}
 const brainYaw=2.25,brainRoll=Math.PI/30;
@@ -27,7 +28,7 @@ const font=new FontLoader().parse(typeface);
 function percentage(parent:any,source:any){
  const original=source.parent.children.find((o:any)=>o.isLineSegments);
  const root=new THREE.Group();root.position.set(0,-11,8);parent.add(root);
- const textGeo=new THREE.BufferGeometry(),textMat=original.material.clone();textMat.color.setHex(0xffffff);textMat.opacity=.95;textMat.vertexColors=true;textMat.blending=THREE.NormalBlending;
+ const textGeo=new THREE.BufferGeometry(),textMat=original.material.clone();textMat.color.setHex(0xffffff);textMat.opacity=1;textMat.vertexColors=true;textMat.blending=THREE.NormalBlending;
  const screenGeo=new THREE.BufferGeometry();const screenMat=new THREE.MeshBasicMaterial({color:0x060d16,colorWrite:true,depthWrite:true,depthTest:true,side:THREE.DoubleSide});const screen=new THREE.Mesh(screenGeo,screenMat);screen.position.z=-2.5;screen.renderOrder=-20;root.add(screen);
  const textLines=new THREE.LineSegments(textGeo,textMat);textLines.rotation.set(0,0,0);root.add(textLines);
  const windowGeo=new THREE.BufferGeometry(),windowMat=original.material.clone();windowMat.opacity=.5;windowMat.blending=THREE.AdditiveBlending;root.add(new THREE.LineSegments(windowGeo,windowMat));
@@ -42,7 +43,7 @@ function percentage(parent:any,source:any){
  }
  function segment(a:any,b:any,z=0){strokes.push(a.x,a.y,z,b.x,b.y,z);}
  function rebuild(text:string){strokes=[];let cursor=0;
-  for(const [word,size,lift] of [[sign(level),5.4,-.3],[magnitude(level),3.6,0],['%',1.8,1.8]] as [string,number,number][]){
+  for(const [word,size,lift] of [[sign(level),level<0?5.4:4.6,level<0?-.3:0],[magnitude(level),3.6,0],['%',1.8,1.8]] as [string,number,number][]){
    const shapes=font.generateShapes(word,size),contours=shapes.map(shape=>shape.extractPoints(10));let xmin=Infinity,xmax=-Infinity;
    contours.forEach(c=>c.shape.forEach(v=>{xmin=Math.min(xmin,v.x);xmax=Math.max(xmax,v.x);}));
    for(const c of contours){const loops=[c.shape,...c.holes].map(loop=>loop.map(v=>new THREE.Vector2(v.x-xmin+cursor,v.y+lift)));
@@ -67,7 +68,7 @@ function percentage(parent:any,source:any){
   for(let i=0;i<outline.length;i+=3){const v=portalPoint(outline[i],outline[i+1],outline[i+2]);outline[i]=v.x;outline[i+1]=v.y;outline[i+2]=v.z;}windowGeo.setAttribute('position',new THREE.Float32BufferAttribute(outline,3));
  }
  return {update(t:number){if(cameraRef){parent.updateWorldMatrix(true,false);root.lookAt(cameraRef.position);root.updateWorldMatrix(true,false);}const text=sign(level)+magnitude(level)+'%',colour=visualColour.clone();if(text!==previous){previous=text;changedAt=t;rebuild(text);}
-  textMat.color.copy(colour);signalMat.color.copy(colour);windowMat.color.copy(colour);
+  textMat.color.copy(colourAtLuminance(colour,visualPeak));signalMat.color.copy(colour);windowMat.color.copy(colour);
   const reveal=1;textGeo.setDrawRange(0,Math.floor((strokes.length/3)*reveal/2)*2);
   let offset=0;for(let branch=0;branch<6;branch++){const side=branch%2?-1:1,end=parent.worldToLocal(root.localToWorld(portalPoint(side*(width/2+1.25),branch<2?4.2:branch<4?1.8:-.6,0))),bend=new THREE.Vector3(end.x*.48,-1,5+Math.sin(t*.4+branch)*.3),curve=new THREE.CubicBezierCurve3(new THREE.Vector3(),new THREE.Vector3(side*(width/2+4),1,4),end.clone().add(new THREE.Vector3(0,1,0)),end);
    for(let j=0;j<24;j++){const a=curve.getPoint(j/24),b=curve.getPoint((j+1)/24);feedPos.set([...a.toArray(),...b.toArray()],offset);for(let endIndex=0;endIndex<2;endIndex++){const u=(j+endIndex)/24,glow=gentlePulse(t,reduced||stateFor(level)==='red')*.45,tint=colour.clone().multiplyScalar(glow);feedColours.set(tint.toArray(),offset+endIndex*3);}offset+=6;}
@@ -109,8 +110,10 @@ function redrawStatic(){if(reduced){updateLighting(1);orb.setPaused(false);reque
 $('reduce-motion').onchange=(e:any)=>{reduced=e.target.checked;applyMotion();redrawStatic();};($('reduce-motion') as HTMLInputElement).checked=reduced;matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',e=>{reduced=e.matches;($('reduce-motion') as HTMLInputElement).checked=reduced;applyMotion();redrawStatic();});
 function tick(now:number){if(!paused)setPulseTime(now/1000);const wave=gentlePulse(now/1000,reduced);const indicator=$('pulse-level');if(indicator)indicator.style.filter=`brightness(${wave})`;const elapsed=Math.max(0,(now-last)/1000);if(!paused&&!reduced)time+=Math.min(.06,elapsed);updateLighting(elapsed);last=now;requestAnimationFrame(tick);}requestAnimationFrame(tick);change(1);
 $('level').oninput=(e:any)=>setLevel(Number(e.target.value));document.querySelectorAll<HTMLButtonElement>('[data-level]').forEach(b=>b.onclick=()=>setLevel(Number(b.dataset.level)));setLevel(level);redrawStatic();
-(window as any).brainStudy={change,snapshot:()=>({mode,targets:targets.length,level,state:stateFor(level),number:sign(level)+magnitude(level)+'%',anchor:brainPosition(...brainCenter),scale:.64,density:visualDensity,peak:visualPeak,reduced,pulsePolicy,rollDegrees:6,pathCount:filamentData.paths.length,sourceVertexCount:filamentData.sourceVertices,colour:levelColour(level).getHexString()}),levelColour:(v:number)=>levelColour(v).getHexString(),setLevel,radialLight,stateFor,seek:(v:number)=>time=v,portalFacing:()=>{const result:any[]=[];scene?.root.traverse((o:any)=>{if(o.geometry?.type==='ShapeGeometry'){const root=o.parent,normal=new THREE.Vector3(0,0,1).applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion())),direction=cameraRef.position.clone().sub(root.getWorldPosition(new THREE.Vector3())).normalize();result.push(normal.dot(direction));}});return result;}};
+(window as any).brainStudy={change,snapshot:()=>({mode,targets:targets.length,level,state:stateFor(level),number:sign(level)+magnitude(level)+'%',anchor:brainPosition(...brainCenter),scale:.64,density:visualDensity,peak:visualPeak,brightness:brightnessSteps[stateFor(level)],reduced,pulsePolicy,rollDegrees:6,pathCount:filamentData.paths.length,sourceVertexCount:filamentData.sourceVertices,colour:levelColour(level).getHexString()}),levelColour:(v:number)=>levelColour(v).getHexString(),setLevel,radialLight,stateFor,seek:(v:number)=>time=v,portalFacing:()=>{const result:any[]=[];scene?.root.traverse((o:any)=>{if(o.geometry?.type==='ShapeGeometry'){const root=o.parent,normal=new THREE.Vector3(0,0,1).applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion())),direction=cameraRef.position.clone().sub(root.getWorldPosition(new THREE.Vector3())).normalize();result.push(normal.dot(direction));}});return result;}};
 
 document.querySelectorAll<HTMLButtonElement>('[data-period]').forEach(b=>b.onclick=()=>{pulsePolicy.periodSeconds=Number(b.dataset.period);document.querySelectorAll('[data-period]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));$('pulse-description').textContent=pulsePolicy.periodSeconds?`One gentle cycle every ${pulsePolicy.periodSeconds} seconds. Red remains steady.`:'Steady illumination. No brightness pulse.';});
 
 document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(b=>b.onclick=()=>{inspectionYaw=Number(b.dataset.view);document.querySelectorAll('[data-view]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));redrawStatic();});
+
+$('grayscale').onchange=(e:any)=>{($('cosmos') as HTMLCanvasElement).style.filter=e.target.checked?'grayscale(1)':'none';};
