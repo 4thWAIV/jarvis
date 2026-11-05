@@ -291,3 +291,58 @@ async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(p
         assert got['sent'] == got['text'], got
         assert got['heard'] == got['secondary'] and got['heard'] != got['text'], got
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_reply_being_read_glows_word_by_word_as_a_read_back_does_and_skip_ends_it(page_url):
+    voice = _Voice()
+    started = time.time()
+    record = {'items': [], 'earlier': None}
+    reply = ('Here is where things stand, sir. The build finished on the second attempt after the cache '
+             'was cleared, and three agents are idle while one is still reviewing the migration.')
+    now = "[...document.querySelectorAll('.chat-message.jarvis .spoken-word')].findIndex(w => w.classList.contains('now'))"
+    glow = """(s) => { const w = document.querySelector(s); const c = getComputedStyle(w);
+      return [c.color, c.textShadow]; }"""
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.add_style_tag(content="* { transition: none !important; }")
+        await _with_history(page, voice, record)
+        # A capture read back glows: the look the reply's word must have.
+        voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'text': 'Ship the fix today.', 'to': 'hammer'},
+                   {'type': 'capture', 'id': 3, 'state': 'reading'},
+                   {'type': 'audio', 'utt': 1, 'idx': 0, 'data': _silence_wav(1.5), 'text': 'Ship the fix today.',
+                    'kind': 'reply', 'capture': 3})
+        await page.wait_for_selector('#conversation .capture-box .spoken-word.now', timeout=10000)
+        read_back = await page.evaluate(glow, '#conversation .capture-box .spoken-word.now')
+        await page.wait_for_selector('#conversation .capture-box .spoken-word.now', state='detached', timeout=10000)
+
+        # A reply not read aloud has no highlight.
+        voice.send({'type': 'reply', 'utt': 2, 'at': started - 5, 'text': 'A reply never read.', 'done': True})
+        await page.wait_for_function("document.querySelector('.chat-message.jarvis')?.textContent.includes('never read')")
+        assert await page.locator('.chat-message.jarvis .spoken-word').count() == 0
+
+        # The whole reply is shown at once; the glow follows the voice through it.
+        sentences = ['Here is where things stand, sir.', reply.split('sir. ')[1]]
+        voice.send({'type': 'reply', 'utt': 4, 'at': started, 'text': reply, 'done': True},
+                   {'type': 'audio', 'utt': 4, 'idx': 0, 'text': sentences[0], 'kind': 'reply', 'data': _silence_wav(1.2)},
+                   {'type': 'audio', 'utt': 4, 'idx': 1, 'text': sentences[1], 'kind': 'reply', 'data': _silence_wav(6)})
+        await page.wait_for_selector('.chat-message.jarvis .spoken-word.now', timeout=10000)
+        assert 'reviewing the migration' in await page.locator('.chat-message.jarvis').last.inner_text()
+        assert await page.evaluate(glow, '.chat-message.jarvis .spoken-word.now') == read_back
+        first = await page.evaluate(now)
+        await page.wait_for_function(f"{now} > 8", timeout=10000)      # into the second sentence
+        # The reply's record arrives while it is read: the glow carries on there.
+        record['items'] = [_record_item(9, 'jarvis', reply, at=started + .5,
+                                        detail={'utt': 4, 'reply_started_at': started})]
+        voice.send({'type': 'conversation'})
+        await page.wait_for_function("document.querySelectorAll('.chat-message.jarvis').length === 2 && "
+                                     "!document.querySelector('.chat-message.jarvis .chat-streaming')")
+        later = await page.evaluate(now)
+        await page.wait_for_function(f"{now} > {later}", timeout=10000)
+        assert first < later
+        await page.get_by_role('button', name='Skip to end').click()
+        await page.wait_for_selector('.spoken-word.now', state='detached')
+        await asyncio.sleep(.3)
+        assert await page.locator('.chat-message.jarvis .spoken-word.now').count() == 0
+        assert 'reviewing the migration' in await page.locator('.chat-message.jarvis').last.inner_text()
+        await browser.close()

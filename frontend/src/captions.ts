@@ -17,7 +17,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { Display } from "./sources";
 import { createStore } from "./store";
 import { registerCommand } from "./uiRegistry";
-import { speakWords, stopWords } from "./wordClock";
+import { speakWords, stopWords, words } from "./wordClock";
 import type { ReplyFailure, ReplyOutcome } from "./voiceControl";
 
 export type Speaker = "user" | "jarvis";
@@ -295,6 +295,21 @@ export function jarvisReading(utt: number, outcome: ReadingOutcome): void {
   const existing = turns[at];
   if (!existing || (existing.reading && outcome === "failed")) return;
   commit(turns.map((t, i) => i === at ? { ...existing, reading: outcome } : t), speaking);
+}
+
+/** A turn's words as they are being read aloud: every word said or to be
+ *  said in the sentences played so far, and which of them is being said
+ *  now. */
+export interface Spoken { words: string[]; word: number }
+
+/** While `turn` is being read aloud, its spoken words and the one being said
+ *  now, moving with the voice (wordClock.ts); null at any other time, so a
+ *  reply skipped, stopped or not read has none. */
+export function useSpoken(turn: Turn | undefined): Spoken | null {
+  const speaking = useSyncExternalStore(conversation.subscribe, () => conversation.get().speaking);
+  if (!turn || !speaking || speaking[0] !== turn.id) return null;
+  const said = turn.sentences.map(words);
+  return { words: said.flat(), word: said.slice(0, speaking[1]).reduce((n, w) => n + w.length, 0) + speaking[2] };
 }
 
 /** Nothing is being spoken any more. */

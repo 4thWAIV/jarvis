@@ -1,14 +1,16 @@
 import { useState, type ReactNode } from "react";
 import { useT } from "../locale";
+import type { Spoken } from "../captions";
 import { ReplyText } from "./ReplyText";
 
 /** Full text stays selectable and in normal document flow, at every length.
  *  `notes` are how it ended, when that is not simply complete and heard
- *  (already in the interface's language). */
-export function ChatMessage({ speaker, at, text, children, pending = false, interrupted = false, notes = [], kind = "", wholeRef, textRef }: {
+ *  (already in the interface's language). `spoken`: a reply being read
+ *  aloud, its word being said now marked. */
+export function ChatMessage({ speaker, at, text, children, pending = false, interrupted = false, notes = [], kind = "", spoken = null, wholeRef, textRef }: {
   wholeRef?: (el: Element | null) => void; textRef?: (el: Element | null) => void;
   speaker: "user" | "jarvis"; at?: number; text?: string; children?: ReactNode; pending?: boolean; interrupted?: boolean;
-  notes?: string[]; kind?: string;
+  notes?: string[]; kind?: string; spoken?: Spoken | null;
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -29,7 +31,7 @@ export function ChatMessage({ speaker, at, text, children, pending = false, inte
           catch { setCopyError(true); }
         }} onBlur={() => setCopied(false)}>{t(copied ? "main.conversation.copied" : "main.conversation.copy")}</button>}
       </header>
-      <div className={`history-turn chat-message-body ${speaker} ${kind}`} ref={textRef}>{children ?? (speaker === "jarvis" && text ? <ReplyText text={text} /> : text)}</div>
+      <div className={`history-turn chat-message-body ${speaker} ${kind}`} ref={textRef}>{children ?? (speaker === "jarvis" && text ? <ReplyText text={text} spoken={spoken} /> : text)}</div>
       {copyError && <p className="chat-copy-error" role="status">{t("main.conversation.copyFailed")}</p>}
     </div>
   </article>;

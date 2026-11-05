@@ -6,14 +6,16 @@ import { bind, bindingProps } from "../uiNavigation";
 import { dispatch } from "../uiRegistry";
 import { conversationJump } from "../voiceStatus";
 
+/** `spoken`: for a record of JARVIS's, the live turn it was, which may
+ *  still be being read aloud. */
 export type ConversationRow = { at: number; key: string; turn?: Turn; item?: ConversationItem;
-  answer?: ConversationItem; restorable?: boolean };
+  answer?: ConversationItem; restorable?: boolean; spoken?: Turn };
 const words = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /** Durable records are authoritative. Live turns bridge only the interval
  * before their record arrives; never discard new records by page-open time. */
 export function historyRows(turns: Turn[], items: ConversationItem[], _everything = false): ConversationRow[] {
-  const matched = new Set<number>();
+  const matched = new Map<number, Turn>();
   const pending = turns.filter(t => {
     if (t.display) return true;
     const record = items.find(i => !matched.has(i.id) && (
@@ -25,7 +27,7 @@ export function historyRows(turns: Turn[], items: ConversationItem[], _everythin
       || ((t.speaker === "jarvis" ? i.kind === "jarvis" : i.kind === (t.typed ? "typed" : "heard"))
         && Math.abs(i.at - (t.at ?? 0)) < 30 && words(i.text) === words(t.text ?? t.sentences.join(" ")))
     ));
-    if (record) matched.add(record.id);
+    if (record) matched.set(record.id, t);
     return !record;
   });
   const asked = new Set(items.filter(i => i.kind === "to_agent").map(i => i.message_id));
@@ -34,6 +36,7 @@ export function historyRows(turns: Turn[], items: ConversationItem[], _everythin
     ...pending.map(turn => ({ at: turn.at ?? 0, key: turnKey(turn), turn })),
     ...items.filter(i => !(i.kind === "answer" && asked.has(i.message_id)))
       .map(item => ({ at: item.at, key: `r${item.id}`, item,
+        spoken: item.kind === "jarvis" ? matched.get(item.id) : undefined,
         answer: item.kind === "to_agent" ? answers.get(item.message_id) : undefined,
         restorable: item.detail?.capture_event === "cleared" && !items.some(j => j.id > item.id
           && j.capture_id === item.capture_id && j.detail?.capture_event === "restored") })),
