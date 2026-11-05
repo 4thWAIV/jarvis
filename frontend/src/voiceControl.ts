@@ -52,6 +52,11 @@ export function parseVoiceInputSettings(value: unknown): VoiceInputSettings | nu
 export type ReplyOutcome = "succeeded" | "failed" | "cancelled";
 export const REPLY_OUTCOMES: readonly ReplyOutcome[] = ["succeeded", "failed", "cancelled"];
 
+/** Why a reply failed (`reason` beside `outcome: failed`; `resetsAt` for a
+ *  usage limit): voice_control.ReplyFailure. */
+export type ReplyFailure = "not_ready" | "down" | "sign_in" | "rate_limited" | "error" | "lost";
+export const REPLY_FAILURES: readonly ReplyFailure[] = ["not_ready", "down", "sign_in", "rate_limited", "error", "lost"];
+
 /** The `playback` frame: what only the page can know about one chunk. */
 export const PLAYBACK_FRAME = "playback";
 export type PlaybackReport = "started" | "failed";

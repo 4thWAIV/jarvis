@@ -90,7 +90,7 @@ from jarvis import session_messages
 from jarvis import server_address
 from jarvis import spoken_words
 from jarvis import voice_control
-from jarvis.voice_control import ReplyOutcome
+from jarvis.voice_control import ReplyFailure, ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
 from jarvis import session_needs
@@ -566,7 +566,6 @@ speech: Optional[SpeechScheduler] = None
 session_watcher: "session_watch.SessionWatcher | None" = None
 session_clients: set = set()
 _tts_client: Optional[httpx.AsyncClient] = None
-_brain_notice_at = {"restarting": 0.0}
 _bg_tasks: set[asyncio.Task] = set()
 _CONTENT_FRAMES = ("audio", "text")
 
@@ -655,6 +654,18 @@ def _attend(kind: str, source_id, event: str, *, facts: Optional[dict] = None,
                                 untrusted=untrusted, audible=audible)
     except Exception:
         log.warning("attention: %s %s was not recorded", kind, event, exc_info=True)
+
+
+# How an action he approved after its read-back ended, by kind: these say it
+# went as asked, so they are only shown; the rest may be put to the digest.
+_ACTION_DONE = {"cancelled", "ran", "pressed"}
+
+
+def _action_outcome(kind: str, event: str, untrusted: dict) -> None:
+    """A shell command's or a keypress's outcome, as its own attention item
+    (each action is its own source). Nothing is said."""
+    _attend(kind, uuid.uuid4().hex, event, untrusted=untrusted,
+            audible=event not in _ACTION_DONE)
 
 
 def _attention_resolved(kind: str, source_id) -> None:
@@ -983,14 +994,10 @@ def _fmt_reset(ts) -> str:
     return f"{when.strftime('%A %-d %B')} at {clock}"
 
 
-# True but useless: "down" names neither cause nor remedy. When the brain's
-# failure is classified "auth" (the provider's `failure_kind`), speak
-# something the user can actually act on instead. Shared by _on_brain_state
-# (the "failed" event) and _handle_utterance (a turn attempted while already
-# failed) so the two auth lines never drift apart -- each keeps its own
-# pre-existing generic line otherwise.
-_AUTH_BRAIN_DOWN_LINE = ("Claude Code's login has expired, sir — run `claude` in a "
-                        "terminal and log in, then restart me.")
+# "Down" names neither cause nor remedy: a failure classified "auth" (the
+# provider's `failure_kind`) is shown as the sign-in it needs, on the brain's
+# attention item and on a reply it could not give, and logged with its
+# remedy. Nothing about it is spoken: a brain that is down cannot word it.
 _AUTH_REMEDY_LOG_LINE = ("brain: giving up — Claude Code's OAuth login has expired. "
                          "Remedy: run `claude` in a terminal and log in, then restart JARVIS.")
 
@@ -1077,7 +1084,7 @@ def _action_words(text: str) -> list[str]:
 # The brain states the page shows (which brain runs, on the orb and in
 # Diagnostics): told as they happen, so the page reads the brains again
 # instead of keeping what it saw at load.
-BRAIN_STATES_TOLD_TO_THE_PAGE = ("ready", "failed", "rotated")
+BRAIN_STATES_TOLD_TO_THE_PAGE = ("ready", "failed", "rotated", "restarting", "rate_limited")
 
 
 async def _on_brain_state(state: str, info: dict) -> None:
@@ -1087,20 +1094,19 @@ async def _on_brain_state(state: str, info: dict) -> None:
         # At ERROR level, visible in the terminal the user is already
         # looking at, regardless of whether speech itself is available.
         log.error(_AUTH_REMEDY_LOG_LINE)
-    if speech is None:
-        return
-    if state == "restarting":
-        now = time.time()
-        if now - _brain_notice_at["restarting"] > 60:
-            _brain_notice_at["restarting"] = now
-            await speech.say("Rebooting my language systems, one moment.", Priority.NORMAL, label="system")
+    # Nothing is spoken: the page shows the brain's state (the orb, Settings
+    # and Diagnostics read it again) and one evolving attention item says
+    # what is wrong until it is ready again. A brain that is down cannot
+    # word a summary, so the item is never put to the digest.
+    if state == "ready":
+        _attention_resolved("brain", "brain")
     elif state == "failed":
-        line = (_AUTH_BRAIN_DOWN_LINE if info.get("failure_reason") == "auth"
-               else "My language systems are down, sir. Check the server log.")
-        await speech.say(line, Priority.URGENT, immediate=True, label="system")
+        _attend("brain", "brain", "sign_in" if info.get("failure_reason") == "auth" else "down",
+                audible=False)
     elif state == "rate_limited":
-        await speech.say(f"I've hit the usage limit until {_fmt_reset(info.get('resets_at'))}, sir.",
-                         Priority.NORMAL, label="system")
+        resets = info.get("resets_at")
+        _attend("brain", "brain", "rate_limited", audible=False,
+                facts={"resets_at": resets} if isinstance(resets, (int, float)) else None)
 
 
 # --- the doorway: MCP servers the user declared themselves ----------------
@@ -2303,18 +2309,14 @@ _background: set[asyncio.Task] = set()
 
 
 async def _run_preflight() -> None:
-    """Run the first-run environment checks and say what is wrong.
+    """Run the first-run environment checks and log what is wrong, each
+    failure with its remedy.
 
-    preflight.py has existed, been tested, and written a concrete remedy for
-    every failure since milestone 1 -- and was never called. Its own docstring
-    said it ran at startup. It did not, which is why an expired login reached
-    the user as "my language systems are down" and nothing else, four restarts
-    running, while the one line naming the cause sat unwritten.
-
-    Speaking it matters more than logging it: a dead brain is exactly the case
-    where the user cannot ask what is wrong, and TTS is a separate path that
-    still works. Failures are spoken; warnings are logged only, so a nagging
-    optional setting never delays the greeting.
+    preflight.py was once never called, which is why an expired login reached
+    the user as "my language systems are down" and nothing else. It runs at
+    startup now, and nothing of it is spoken: startup is never narrated. What
+    failed is on the Diagnostics tab and in the log, and an expired login is
+    also the brain's attention item and a failed reply's reason.
 
     `run_checks` never raises and time-boxes every check, but this is startup:
     a bug here must not cost the user their server.
@@ -2754,9 +2756,12 @@ class _ReplyText:
                       "text": self.text, "done": False})
 
     def finish(self, text: Optional[str] = None,
-               outcome: str = ReplyOutcome.FAILED) -> None:
+               outcome: str = ReplyOutcome.FAILED, reason: Optional[str] = None,
+               resets_at: Optional[float] = None) -> None:
         """The last frame. Only a turn the provider finished is `succeeded`;
-        a finish with nothing to say about it was cut short."""
+        a finish with nothing to say about it was cut short. A failed one
+        may say why (`reason`, a ReplyFailure code, and for a usage limit
+        when it lifts), which the page words in its own language."""
         if self._done:
             return
         self._done = True
@@ -2765,8 +2770,13 @@ class _ReplyText:
             self._timer = None
         if text is not None:
             self.text = text
-        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
-                      "text": self.text, "done": True, "outcome": outcome})
+        frame = {"type": "reply", "utt": self.utt, "at": self.at,
+                 "text": self.text, "done": True, "outcome": outcome}
+        if reason and outcome == ReplyOutcome.FAILED:
+            frame["reason"] = reason
+            if resets_at is not None:
+                frame["resetsAt"] = resets_at
+        _queue_voice(frame)
 
 
 async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
@@ -2780,13 +2790,23 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     t0 = time.monotonic()
     await _voice_emit({"type": "status", "state": "thinking"})
     if not brain_instance.ready:
+        # Shown, not spoken: a failed reply that says why, with his words
+        # above it on the record.
         if brain_instance.failed:
-            line = (_AUTH_BRAIN_DOWN_LINE
-                    if getattr(brain_instance, "failure_reason", None) == "auth"
-                    else "My language systems are down, sir.")
+            reason = (ReplyFailure.SIGN_IN
+                      if getattr(brain_instance, "failure_reason", None) == "auth"
+                      else ReplyFailure.DOWN)
         else:
-            line = "One moment, sir — my language systems are still starting."
-        await speech.say(line, Priority.NORMAL, label="system")
+            reason = ReplyFailure.NOT_READY
+        await _turn_lock.acquire()
+        utt = speech.begin_turn()
+        try:
+            _ReplyText(utt.id).finish(outcome=ReplyOutcome.FAILED, reason=reason)
+        finally:
+            try:
+                await speech.end_turn(utt)
+            finally:
+                _turn_lock.release()
         return
     await _turn_lock.acquire()
     utt = speech.begin_turn()
@@ -2804,12 +2824,18 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                                                    origin="user",
                                                    on_delta=delta,
                                                    on_tool=hold.tool_started)
-                reply.finish(result.text, ReplyOutcome.SUCCEEDED
-                             if result.stop_reason == "result" else ReplyOutcome.FAILED)
+                if result.stop_reason == "result":
+                    reply.finish(result.text, ReplyOutcome.SUCCEEDED)
+                else:
+                    reply.finish(result.text, ReplyOutcome.FAILED,
+                                 **ReplyFailure.of_stop(result.stop_reason, result.rate_limit))
                 hold.finish()    # the one line this turn is allowed
                 screen.finish()  # a "Sources:" block it held goes on the screen
             except asyncio.CancelledError:
                 reply.finish(outcome=ReplyOutcome.CANCELLED)
+                raise
+            except Exception:
+                reply.finish(outcome=ReplyOutcome.FAILED, reason=ReplyFailure.LOST)
                 raise
             finally:
                 reply.finish()  # an error also closes the live text stream, as failed
@@ -2820,17 +2846,11 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
                     _turn_lock.release()
         except Exception as e:
             log.error(f"brain turn failed: {e}", exc_info=True)
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
             return
-        if result.stop_reason == "rate_limited":
-            resets = (result.rate_limit or {}).get("resetsAt")
-            await speech.say(f"I've hit the usage limit until {_fmt_reset(resets)}, sir.", Priority.NORMAL, label="system")
-        elif result.stop_reason == "error":
+        # A turn that did not finish is shown on its reply (its reason),
+        # never spoken over.
+        if result.stop_reason == "error":
             log.error(f"brain error: {result.error}")
-            await speech.say("My language systems returned an error, sir. Check the server log.",
-                             Priority.NORMAL, label="system")
-        elif result.stop_reason in ("timeout", "died", "not_running"):
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL, label="system")
         elif not result.text.strip():
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
@@ -5803,6 +5823,10 @@ async def _perform_command(item: _StagedCommand) -> None:
         run_store.record_steer("", COMMAND_AUDIT_NAME, item.project,
                                item.command, outcome)
 
+    def outcome(event: str) -> None:
+        # Shown, not spoken: the read-back was the words that mattered.
+        _action_outcome("command", event, {"project": item.project})
+
     try:
         if speech is None:
             record("no_voice")
@@ -5821,14 +5845,14 @@ async def _perform_command(item: _StagedCommand) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("cancelled")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("cancelled")
             return
 
         # `cd` into the project first: a start command means nothing in the
@@ -5839,11 +5863,10 @@ async def _perform_command(item: _StagedCommand) -> None:
             f"cd {shlex.quote(item.path)} && {item.command}")
         if result.get("success"):
             record("ran")
-            await speech.say(
-                f"Running in a Terminal window, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("ran")
         else:
             record("failed")
-            await speech.say("Terminal wouldn't open, sir.", Priority.NORMAL, label="readback-outcome")
+            outcome("terminal_failed")
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -5915,6 +5938,9 @@ async def _perform_dialog(item: _StagedDialog) -> None:
         run_store.record_steer(item.session_id, item.voice_name, item.project,
                                item.key, f"dialog:{outcome}")
 
+    def shown(event: str) -> None:
+        _action_outcome("keypress", event, {"agent": _said_name(item)})
+
     try:
         if speech is None:
             record("no_voice")             # the mouth went away between turns
@@ -5930,37 +5956,22 @@ async def _perform_dialog(item: _StagedDialog) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            shown("cancelled")
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
+            shown("cancelled")
             return
 
         outcome = await dialog.answer(item.pid, item.key)
         record(outcome)
-        if outcome == dialog.SENT:
-            await speech.say(f"Pressed {said} on {_said_name(item)}.",
-                             Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NOT_FOUND:
-            await speech.say(
-                f"{_said_name(item)} isn't in a Terminal window I can reach, "
-                f"sir — another application is hosting it, so that one needs "
-                f"your own hand.", Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NOT_PERMITTED:
-            await speech.say(
-                "macOS won't let me send keystrokes, sir — I'd need accessibility "
-                "permission in System Settings.", Priority.NORMAL, label="readback-outcome")
-        elif outcome == dialog.NO_TTY:
-            await speech.say(
-                f"{_said_name(item)} has no terminal of its own any more, "
-                f"sir — I pressed nothing.", Priority.NORMAL, label="readback-outcome")
-        else:
-            await speech.say(f"I couldn't press that for {_said_name(item)}, "
-                             f"sir.", Priority.NORMAL, label="readback-outcome")
+        # Shown, not spoken: the read-back was the words that mattered.
+        shown({dialog.SENT: "pressed", dialog.NOT_FOUND: "not_found",
+               dialog.NOT_PERMITTED: "not_permitted", dialog.NO_TTY: "no_tty"}
+              .get(outcome, "failed"))
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise

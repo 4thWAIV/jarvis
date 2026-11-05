@@ -209,14 +209,15 @@ def test_typed_words_reach_the_brain_as_written(client):
         assert [t for t, _ in server.brain_instance.turns] == [
             "open cloud code", "Echo: open cloud code"]
 
-def test_brain_not_ready_says_so_instead_of_hanging(client):
+def test_brain_not_ready_shows_why_on_the_reply_and_says_nothing(client):
     c, server = client
     server.brain_instance.ready = False
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "hello", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio")
-        assert "still starting" in seen[-1]["text"]
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m.get("done"), limit=20)
+        assert (seen[-1]["outcome"], seen[-1]["reason"]) == ("failed", "not_ready")
+        assert not [m for m in seen if m["type"] == "audio"], "nothing is spoken in its place"
         assert server.brain_instance.turns == []
 
 
@@ -235,17 +236,16 @@ class ExplodingBrain(FakeBrain):
         raise RuntimeError("boom")
 
 
-def test_a_raising_turn_still_ends_the_utterance_and_speaks_a_recovery_line(client):
+def test_a_raising_turn_still_ends_the_utterance_and_shows_it_was_lost(client):
     c, server = client
     server.brain_instance = ExplodingBrain()
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "hello", "isFinal": True})
-        seen = _drain_until(ws, lambda m: m["type"] == "audio")
-        assert "lost my train of thought" in seen[-1]["text"]
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m.get("done"), limit=20)
+        assert (seen[-1]["outcome"], seen[-1]["reason"]) == ("failed", "lost")
         # the failed turn's utterance was closed, not left open: a new turn plays normally
         server.brain_instance = FakeBrain()
-        ws.send_json({"type": "played", "utt": seen[-1]["utt"], "idx": seen[-1]["idx"]})
         ws.send_json({"type": "transcript", "text": "still there", "isFinal": True})
         _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] == "Echo: still there.",
                      limit=20)

@@ -18,13 +18,14 @@ import { captureChanged, captureQuiet, captureSpeaking, loadCapture,
          type CaptureMessage } from "./capture";
 import { brainsMayHaveChanged } from "./brains";
 import { conversationChanged } from "./conversation";
-import { inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
+import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voiceInputSettings } from "./mic";
 import { loadVoiceInputSettings } from "./voiceSettings";
 import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
 import { sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
          conversationJump } from "./voiceStatus";
-import { PLAYBACK_FRAME, REPLY_OUTCOMES, type PlaybackReport, type ReplyOutcome } from "./voiceControl";
+import { PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type PlaybackReport,
+         type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
@@ -355,9 +356,17 @@ export function startJarvis(orb: Orb): void {
         if (finishedReplies.size > 64) finishedReplies.delete(finishedReplies.values().next().value!);
       }
       const outcome = REPLY_OUTCOMES.find(o => o === msg.outcome) as ReplyOutcome | undefined;
+      const reason = REPLY_FAILURES.find(r => r === msg.reason);
       jarvisReply(utt, String(msg.text ?? ""), Boolean(msg.done),
-                  typeof msg.at === "number" ? msg.at : undefined, outcome);
+                  typeof msg.at === "number" ? msg.at : undefined, outcome,
+                  reason ? { reason, ...(typeof msg.resetsAt === "number" ? { resetsAt: msg.resetsAt } : {}) }
+                         : undefined);
       if (msg.done && currentState === "thinking") transition("listening");
+    } else if (type === "quiet") {
+      // The brain's quiet_microphone: his Mute or Mic off, as if clicked.
+      // Only ever quieter: Muted never undoes Mic off.
+      if (msg.state === "off") chooseQuiet("off");
+      else if (msg.state === "muted" && quiet.get() === "none") chooseQuiet("muted");
     } else if (type === "reading_skipped") {
       // Skipped here, or by the brain's skip_reading: the same either way.
       skipLocally(Number(msg.utt));

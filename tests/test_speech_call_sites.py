@@ -11,10 +11,9 @@ Two checks, so a helper cannot quietly bring direct speech back:
   runtime   every routine producer is driven with a voice that records any
             call at all; none may reach it, and each leaves its item.
 
-The entry points marked PENDING are not this lane's to change (brain health
-and turn faults, and the canned outcomes of a shell command or a keypress
-after their exact read-back); they are listed so that none can be added
-beside them unnoticed.
+Brain health and turn faults are shown (the brain's attention item, a
+failed reply's reason) and a shell command's or keypress's outcome after
+its exact read-back is an attention item: none of them is spoken.
 """
 from __future__ import annotations
 
@@ -37,7 +36,6 @@ REPLY = "the brain's own reply to his turn"
 READBACK = "an exact read-back he asked for, or must hear before it acts"
 NARRATION = "a story he asked to be told"
 REPLAY = "what was already said, said again at his request"
-PENDING = "PENDING: canned speech outside this lane, not a routine event"
 
 # (file, enclosing function, method) -> why it may speak.
 APPROVED = {
@@ -59,10 +57,8 @@ APPROVED = {
     ("server.py", "tool_read_capture", "read_aloud"): READBACK,
     ("server.py", "api_capture_read", "read_aloud"): READBACK,
     ("story_teller.py", "StoryTeller._tell", "narrate"): NARRATION,
-    ("server.py", "_perform_command", "say"): PENDING,
-    ("server.py", "_perform_dialog", "say"): PENDING,
-    ("server.py", "_on_brain_state", "say"): PENDING,
-    ("server.py", "_handle_utterance", "say"): PENDING,
+    ("server.py", "_perform_command", "say"): READBACK,
+    ("server.py", "_perform_dialog", "say"): READBACK,
 }
 
 

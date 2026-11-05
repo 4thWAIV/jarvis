@@ -244,6 +244,30 @@ class ReplyOutcome:
     ALL = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
 
+class ReplyFailure:
+    """Why a reply failed, sent beside `outcome: failed` as `reason` (and
+    `resetsAt` for a usage limit), so the page says it in its own language
+    and nothing is spoken in its place."""
+    NOT_READY = "not_ready"        # the brain is still starting
+    DOWN = "down"                  # the brain has failed
+    SIGN_IN = "sign_in"            # the brain's login has expired
+    RATE_LIMITED = "rate_limited"  # the usage limit; `resetsAt` says until when
+    ERROR = "error"                # the provider returned an error
+    LOST = "lost"                  # it timed out, died, stopped or broke
+    ALL = frozenset({NOT_READY, DOWN, SIGN_IN, RATE_LIMITED, ERROR, LOST})
+
+    @classmethod
+    def of_stop(cls, stop_reason: str, rate_limit: object = None) -> dict:
+        """The finish arguments for a turn that stopped for `stop_reason`."""
+        if stop_reason == "rate_limited":
+            resets = rate_limit.get("resetsAt") if isinstance(rate_limit, dict) else None
+            return {"reason": cls.RATE_LIMITED,
+                    "resets_at": resets if isinstance(resets, (int, float)) else None}
+        if stop_reason == "error":
+            return {"reason": cls.ERROR}
+        return {"reason": cls.LOST}
+
+
 # The `playback` frame the page sends about one audio chunk: what it alone
 # can know. `played` keeps its own frame; skipped and interrupted are the
 # server's own doing (skip_to_end, hush, stop), so the page never reports them.

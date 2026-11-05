@@ -18,7 +18,7 @@ import type { Display } from "./sources";
 import { createStore } from "./store";
 import { registerCommand } from "./uiRegistry";
 import { speakWords, stopWords } from "./wordClock";
-import type { ReplyOutcome } from "./voiceControl";
+import type { ReplyFailure, ReplyOutcome } from "./voiceControl";
 
 export type Speaker = "user" | "jarvis";
 
@@ -37,6 +37,9 @@ export interface Turn {
   /** How the reply's text ended (its last `reply` frame); absent while it
    *  streams, and from a server that does not say. */
   outcome?: ReplyOutcome;
+  /** Why it failed, when the server says, and for a usage limit until when
+   *  (epoch seconds). */
+  failure?: { reason: ReplyFailure; resetsAt?: number };
   /** How reading it aloud ended, when not by being heard. */
   reading?: ReadingOutcome;
   interrupted?: boolean;
@@ -251,13 +254,13 @@ export function jarvisSpeaking(utt: number, text: string, seconds: number, idx?:
 /** Readable provider text is independent of the audio playback clock.
  *  The last frame (`done`) says how it ended (`outcome`). */
 export function jarvisReply(utt: number, text: string, done: boolean, at?: number,
-                            outcome?: ReplyOutcome): void {
+                            outcome?: ReplyOutcome, failure?: Turn["failure"]): void {
   const { turns, speaking } = conversation.get();
   const index = turns.findIndex(t => t.speaker === "jarvis" && t.utt === utt && (
     (at != null && t.replyAt === at)
     || (t.epoch === captionEpoch && (t.replyAt == null || at == null || t.replyAt === at))));
   const existing = turns[index];
-  const ended = done && outcome ? { outcome } : {};
+  const ended = done && outcome ? { outcome, ...(outcome === "failed" && failure ? { failure } : {}) } : {};
   const turn: Turn = existing ? { ...existing, text, complete: done, interrupted: false, epoch: captionEpoch, ...ended, ...(at != null ? { at, replyAt: at } : {}) } : {
     id: nextId++, at: at ?? Date.now() / 1000, speaker: "jarvis", sentences: [], text,
     complete: done, open: false, utt, epoch: captionEpoch, replyAt: at, ...ended,

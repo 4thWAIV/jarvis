@@ -6,7 +6,7 @@ import { captureKind } from "./capture";
 import { conversationChanged, getConversation, restoreCapture,
          statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { SaidText, useT, type Said, type Translate } from "./locale";
+import { formatDateTime, SaidText, useT, type Said, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
 import { createStore } from "./store";
 import type { AvailabilityReason, TargetRef } from "./uiContract";
@@ -286,11 +286,21 @@ const READING_NOTE = { skipped: "main.conversation.readingSkipped",
                        stopped: "main.conversation.readingStopped",
                        failed: "main.conversation.readingFailed" } as const;
 
+/** Why a reply failed, in the interface's language. */
+function failureNote(failure: NonNullable<Turn["failure"]>, t: Translate): string {
+  if (failure.reason === "rate_limited" && failure.resetsAt) {
+    return t("main.conversation.replyReason.rate_limited_until",
+             { time: formatDateTime(failure.resetsAt * 1000, { hour: "numeric", minute: "2-digit" }) });
+  }
+  return t(`main.conversation.replyReason.${failure.reason}`);
+}
+
 /** How a live JARVIS turn ended, when not complete and heard: a reply the
  *  provider did not finish, and a reading not heard in full. */
 function turnNotes(turn: Turn, t: Translate): string[] {
   const notes: string[] = [];
   if (turn.complete && turn.outcome && turn.outcome !== "succeeded") notes.push(t(OUTCOME_NOTE[turn.outcome]));
+  if (turn.complete && turn.failure) notes.push(failureNote(turn.failure, t));
   if (turn.reading) notes.push(t(READING_NOTE[turn.reading]));
   return notes;
 }
