@@ -163,8 +163,7 @@ def test_the_brief_list_says_which_are_added_and_which_runs_without_asking_anyon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state, told", [("ready", True), ("failed", True), ("rotated", True),
-                                         ("restarting", True), ("rate_limited", True),
-                                         ("rotation_needed", False)])
+                                         ("restarting", False), ("rate_limited", False)])
 async def test_the_page_is_told_when_a_brain_is_ready_fails_or_is_replaced(server, monkeypatch, state, told):
     sent = []
 

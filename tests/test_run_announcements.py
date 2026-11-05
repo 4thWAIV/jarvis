@@ -1,13 +1,11 @@
-"""JARVIS recording when work he started has ended.
+"""JARVIS saying when work he started has ended.
 
-Before the run pipeline had a voice subscriber, JARVIS would start a run and
-never mention it again. Now each ending of a run he started is an attention
-item (nothing is spoken by the server: the one admission policy and the
-brain's digest decide that).
+Before this, the only subscriber to the run executor was the dashboard's
+WebSocket: JARVIS would start a run and then never mention it again.
 
 Two things are load-bearing.
 
-**Origin.** Only runs JARVIS himself started (origin "voice") are recorded.
+**Origin.** Only runs JARVIS himself started (origin "voice") are narrated.
 The user runs plenty of other things — from the dashboard, from work mode,
 from a terminal — and those are not his to talk about.
 
@@ -29,8 +27,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.attention_fixtures import attention, recorded  # noqa: F401  (a fixture)
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 FIXTURE = Path(__file__).parent / "fixtures" / "stream_success.jsonl"
@@ -47,6 +43,8 @@ def wired(monkeypatch, tmp_path):
     from jarvis import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
+    server_module._pending_completions.clear()
+    server_module._pending_run_completions.clear()
     return server_module
 
 
@@ -77,110 +75,206 @@ async def _drain(server):
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-# --- the origin gate --------------------------------------------------------
-
-@pytest.fixture
-def heard(wired, monkeypatch, attention):
-    """The server with a fake voice and a fresh attention record."""
-    speech = FakeSpeech()
-    monkeypatch.setattr(wired, "speech", speech)
-    monkeypatch.setattr(wired, "attention_record", attention)
-    return wired, speech, attention
-
+# --- the origin gate on narration ----------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_run_jarvis_started_is_recorded_and_nothing_is_said(heard):
-    server, speech, attention = heard
+async def test_a_run_jarvis_started_is_announced(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
     server._on_run_event(_finished())
     await _drain(server)
-    assert speech.calls == [], "the server speaks of no routine event itself"
-    assert recorded(attention) == [("run", "r-1", "succeeded")]
-    assert attention.items()[0].untrusted == {"project": "chitauri"}
+
+    assert speech.calls, "he started it; he says when it is done"
+    text, priority = speech.calls[0]
+    assert "chitauri" in text
+    assert priority == server.Priority.LOW, "a success can wait for the pause"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("origin", ["api", "self", "dashboard", "", None])
-async def test_a_run_jarvis_did_not_start_is_not_recorded(heard, origin):
-    """The user runs things of their own. Those are not his to report."""
-    server, speech, attention = heard
+async def test_a_run_jarvis_did_not_start_is_not_announced(wired, monkeypatch,
+                                                           origin):
+    """The user runs things of their own. Those are not his to narrate."""
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
     server._on_run_event(_finished(origin=origin))
     await _drain(server)
-    assert speech.calls == [] and recorded(attention) == []
+
+    assert speech.calls == []
+    assert server._pending_run_completions == []
 
 
 @pytest.mark.asyncio
-async def test_only_finished_messages_are_recorded(heard):
-    server, speech, attention = heard
+async def test_only_finished_messages_are_narrated(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
     server._on_run_event({"type": "run_started", "run": _finished()["run"]})
     server._on_run_event({"type": "run_event", "run_id": "r-1"})
     server._on_run_event({"type": "run_updated", "run": _finished()["run"]})
     await _drain(server)
-    assert recorded(attention) == []
+
+    assert speech.calls == []
 
 
-# --- what is recorded -----------------------------------------------------
+# --- what he actually says ------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["failed", "timed_out"])
-async def test_a_failure_is_recorded_as_what_it_was(heard, status):
-    server, speech, attention = heard
-    server._on_run_event(_finished(status=status))
+async def test_a_success_says_the_project_and_that_it_worked(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._on_run_event(_finished(project="chitauri"))
     await _drain(server)
-    assert recorded(attention) == [("run", "r-1", status)] and speech.calls == []
+
+    assert speech.calls[0][0] == "The work in chitauri is done, sir."
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_run_is_not_recorded(heard):
-    """The user asked for it."""
-    server, speech, attention = heard
+async def test_a_failure_interrupts_and_says_it_failed(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._on_run_event(_finished(status="failed"))
+    await _drain(server)
+
+    text, priority = speech.calls[0]
+    assert "chitauri" in text and "failed" in text
+    assert priority == server.Priority.URGENT, (
+        "a failure the user could be fixing must not wait for a pause")
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_is_announced_as_running_out_of_time(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._on_run_event(_finished(status="timed_out"))
+    await _drain(server)
+
+    assert "ran out of time" in speech.calls[0][0]
+    assert speech.calls[0][1] == server.Priority.URGENT
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_is_not_announced(wired, monkeypatch):
+    """The user asked for it and was told at the time. Saying so again at the
+    next pause is noise."""
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
     server._on_run_event(_finished(status="cancelled"))
     await _drain(server)
-    assert recorded(attention) == []
 
-
-@pytest.mark.asyncio
-async def test_a_run_s_lifecycle_is_one_item_with_its_history(heard):
-    server, speech, attention = heard
-    server._on_run_event(_finished(status="failed"))
-    server._on_run_event(_finished(status="failed"))
-    server._on_run_event(_finished(id="r-1", status="succeeded"))
-    await _drain(server)
-    (item,) = attention.items()
-    assert item.event == "succeeded" and item.revision == 2
-    assert [h["event"] for h in attention.history(item.id)] == ["failed", "succeeded"]
-
-
-@pytest.mark.asyncio
-async def test_a_burst_of_runs_is_one_item_each(heard):
-    server, speech, attention = heard
-    for n, project in enumerate(["chitauri", "hammer", "kestrel"]):
-        server._on_run_event(_finished(id=f"r-{n}", project=project))
-    await _drain(server)
-    assert [k for k, _, _ in recorded(attention)] == ["run", "run", "run"]
     assert speech.calls == []
+
+
+# --- batching -------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_several_completions_become_one_sentence(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._pending_run_completions.extend(["chitauri", "hammer", "kestrel"])
+    await server._announce_batch()
+
+    assert len(speech.calls) == 1, "three finishes, one sentence"
+    text = speech.calls[0][0]
+    assert "chitauri" in text and "hammer" in text and "kestrel" in text
+    assert server._pending_run_completions == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_and_a_conversation_share_one_utterance(wired, monkeypatch):
+    """Two parallel batchers would mean two LOW announcements back to back at
+    every pause."""
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._pending_completions.append("hammer")
+    server._pending_run_completions.append("chitauri")
+    await server._announce_batch()
+
+    assert len(speech.calls) == 1
+    text = speech.calls[0][0]
+    assert "hammer has finished" in text
+    assert "The work in chitauri is done" in text
+
+
+@pytest.mark.asyncio
+async def test_many_completions_cap_at_three_names(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._pending_run_completions.extend(
+        ["a", "b", "c", "d", "e"])
+    await server._announce_batch()
+
+    text = speech.calls[0][0]
+    assert "two others" in text
+
+
+@pytest.mark.asyncio
+async def test_the_same_project_twice_is_mentioned_once(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._on_run_event(_finished(project="chitauri"))
+    server._on_run_event(_finished(project="chitauri"))
+    await _drain(server)
+
+    assert speech.calls[0][0].count("chitauri") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lost_announcement_is_not_thrown_away(wired, monkeypatch):
+    server = wired
+    speech = FakeSpeech(boom=True)
+    monkeypatch.setattr(server, "speech", speech)
+
+    server._pending_run_completions.append("chitauri")
+    await server._announce_batch()
+
+    assert server._pending_run_completions == ["chitauri"], (
+        "it will be said at the next pause instead")
 
 
 # --- nothing here may reach the executor ---------------------------------
 
 @pytest.mark.asyncio
-async def test_a_broken_record_never_escapes_the_callback(wired, monkeypatch):
+async def test_a_broken_announcement_never_escapes_the_callback(wired,
+                                                                monkeypatch):
     server = wired
 
-    class Broken:
-        def record(self, *a, **k):
-            raise RuntimeError("the disk is full")
+    def explode(coro):
+        coro.close()                      # never leave it un-awaited
+        raise RuntimeError("boom")
 
-    monkeypatch.setattr(server, "attention_record", Broken())
+    monkeypatch.setattr(server, "_spawn", explode)
     server._on_run_event(_finished())          # must not raise
-    server._on_run_event(_finished(status="failed"))
 
 
 @pytest.mark.asyncio
-async def test_no_record_running_is_quiet_not_fatal(wired, monkeypatch):
+async def test_no_speech_configured_is_silent_not_fatal(wired, monkeypatch):
     server = wired
-    monkeypatch.setattr(server, "attention_record", None)
     monkeypatch.setattr(server, "speech", None)
     server._on_run_event(_finished())
+    await _drain(server)
+    server._on_run_event(_finished(status="failed"))
     await _drain(server)
 
 
@@ -255,17 +349,16 @@ async def test_the_executor_publishes_on_the_event_loop_thread(real_executor,
 
 
 @pytest.mark.asyncio
-async def test_a_real_run_finishing_reaches_the_record(real_executor, tmp_path,
-                                                       monkeypatch, attention):
+async def test_a_real_run_finishing_reaches_the_voice(real_executor, tmp_path,
+                                                      monkeypatch):
     """End to end, with a real executor: `_on_run_event` is called by the real
-    publish path, and the run's ending is an attention item; nothing is
-    spoken."""
+    publish path, `_spawn` succeeds there, and the sentence is spoken."""
     store, mod = real_executor
     from jarvis import server as server_module
     importlib.reload(server_module)
     speech = FakeSpeech()
     monkeypatch.setattr(server_module, "speech", speech)
-    monkeypatch.setattr(server_module, "attention_record", attention)
+    server_module._pending_run_completions.clear()
 
     ex = mod.RunExecutor(store, claude_path=_fake_claude(tmp_path))
     ex.subscribe(server_module._on_run_event)
@@ -273,7 +366,5 @@ async def test_a_real_run_finishing_reaches_the_record(real_executor, tmp_path,
     await ex.wait_for(run_id)
     await _drain(server_module)
 
-    assert speech.calls == []
-    (item,) = attention.items()
-    assert item.kind == "run" and item.source_id == run_id
-    assert item.untrusted == {"project": "chitauri"}
+    assert speech.calls, "a real completion never reached the voice"
+    assert "chitauri" in speech.calls[0][0]

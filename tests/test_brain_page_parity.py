@@ -130,19 +130,16 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status", "attachment_location", "attention_updates")
+             "update_status", "attachment_location")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment", "set_voice_input_settings",
-            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-            "mark_updates_seen",
-            "set_attention_settings")
+            "update_jarvis", "reveal_attachment")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
-NEW_OWN_READS = ("speech_models", "voice_input_settings")
+NEW_OWN_READS = ("speech_models",)
 
 
 def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
@@ -172,18 +169,11 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("retry_run", {"run": "x"}),
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
-    ("set_voice_input_settings", {"stop": "discard"}),
     ("update_jarvis", {}),
-    ("skip_reading", {}),
-    ("stop_speaking", {}),
-    ("voice_turn", {"action": "send_now"}),
-    ("quiet_microphone", {"state": "muted"}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
     ("open_local_package", {"path": "/tmp/x.zip"}),
-    ("mark_updates_seen", {}),
-    ("set_attention_settings", {"changes": {"away": True}}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -609,144 +599,3 @@ def test_update_jarvis_says_what_stops_it_and_starts_nothing(wired, monkeypatch)
     assert "The update is refused: Tracked files have been changed here." in got["text"]
     _walled(got["text"])
     assert started == []
-
-
-# ── his voice input settings ─────────────────────────────────────────────
-
-def test_voice_input_settings_read_and_change_through_the_route_s_service(wired):
-    """The tool reads what the route reads and saves what the route saves,
-    with the same refusals; changing them starts and sends nothing."""
-    from jarvis import voice_control
-    read = _call(wired, "voice_input_settings")
-    assert read["ok"] and "the defaults: he has not chosen yet" in read["text"]
-    got = _call(wired, "set_voice_input_settings", stop="discard", switch="continue")
-    assert got["ok"] and got["text"].startswith("Saved.")
-    page = wired.client.get(voice_control.PATH).json()
-    assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
-                    "scope": "member"}
-    assert voice_control.user_key() == f"github:{TIM}"
-    assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
-    refused = _call(wired, "set_voice_input_settings", stop="forever")
-    assert "Nothing was changed" in refused["text"]
-    from jarvis import data_paths
-    page_post = wired.client.post(voice_control.PATH, json={"stop": "forever"}, headers={
-        "Authorization": f"Bearer {data_paths.ensure_tool_token()}"})
-    assert (page_post.status_code, page_post.json()["code"]) == (400, "invalid-stop")
-    assert wired.client.get(voice_control.PATH).json() == page
-
-
-# ── Skip the rest and Stop speaking ──────────────────────────────────────
-
-class _Mouth:
-    """speech.SpeechScheduler as the two calls use it."""
-
-    def __init__(self, speaking=True, reading=True):
-        self.is_speaking, self._reading, self.calls = speaking, reading, []
-
-    async def skip_reading(self, utt=None):
-        self.calls.append(("skip", utt))
-        return self._reading
-
-    async def barge_in(self, reason=""):
-        self.calls.append(("stop", reason))
-
-
-def test_skip_reading_is_the_page_s_skip_on_the_reading_sounding_now(wired, monkeypatch):
-    mouth = _Mouth()
-    monkeypatch.setattr(wired.server, "speech", mouth)
-    got = _call(wired, "skip_reading")
-    assert got["ok"] and "nothing it asked for has been approved" in got["text"]
-    assert mouth.calls == [("skip", None)]
-    mouth._reading = False
-    assert "Nothing is being read aloud" in _call(wired, "skip_reading")["text"]
-
-
-def test_stop_speaking_is_the_page_s_stop_and_touches_nothing_when_silent(wired, monkeypatch):
-    mouth = _Mouth()
-    monkeypatch.setattr(wired.server, "speech", mouth)
-    got = _call(wired, "stop_speaking")
-    assert got["ok"] and "nothing was undone" in got["text"]
-    assert mouth.calls == [("stop", "hush (the brain)")]
-    quiet = _Mouth(speaking=False)
-    monkeypatch.setattr(wired.server, "speech", quiet)
-    assert "Nothing was being said" in _call(wired, "stop_speaking")["text"]
-    assert quiet.calls == []
-
-
-# ── updates waiting: the attention record ─────────────────────────────────
-
-BROWSER = {"Origin": "http://localhost:5173"}
-
-@pytest.fixture
-def updates(wired, monkeypatch):
-    from jarvis import attention_store
-    store = attention_store.AttentionStore()
-    monkeypatch.setattr(wired.server, "attention_record", store)
-    store.record("agent_message", "7", "answered", facts={"message_id": 7},
-                 untrusted={"agent": HOSTILE})
-    store.record("run", "r1", "failed", untrusted={"project": "jarvis"})
-    return store
-
-
-def test_attention_updates_is_review_updates_walled(wired, updates):
-    page = wired.client.get("/api/attention").json()
-    got = _call(wired, "attention_updates")
-    assert got["ok"]
-    _walled(got["text"])
-    block = got["text"].split("\n", 1)[1]
-    told = json.loads(block[block.index("\n") + 1:block.rindex("\n</session-output>")])
-    assert page["pending"] == told["pending"] == 2
-    assert [(i["id"], i["kind"], i["event"]) for i in told["items"]] == \
-        [(i["id"], i["kind"], i["event"]) for i in page["items"]]
-    assert told["settings"] == page["settings"]
-    assert page["items"][1]["untrusted"]["agent"] == HOSTILE, "the page shows it as written"
-
-
-def test_mark_updates_seen_is_the_seen_button(wired, updates):
-    first = updates.items()[-1].id
-    page = wired.client.post("/api/attention/seen", json={"ids": [first]},
-                             headers=BROWSER).json()
-    assert page == {"marked": 1, "pending": 1}
-    got = _call(wired, "mark_updates_seen")
-    assert got["ok"] and json.loads(got["text"]) == {"marked": 1, "pending": 0}
-    refused = _call(wired, "mark_updates_seen", ids="all")
-    assert "Nothing was marked" in refused["text"]
-    assert wired.client.post("/api/attention/seen", json={"ids": "all"},
-                             headers=BROWSER).status_code == 400
-
-
-def test_set_attention_settings_is_hold_spoken_updates(wired, updates):
-    page = wired.client.put("/api/attention/settings", json={"away": True},
-                            headers=BROWSER).json()
-    assert page["away"] is True
-    got = _call(wired, "set_attention_settings", changes={"away": False, "oldest_event_sec": 90})
-    assert got["ok"] and json.loads(got["text"])["away"] is False
-    assert wired.client.get("/api/attention/settings").json()["oldest_event_sec"] == 90
-    refused = _call(wired, "set_attention_settings", changes={"oldest_event_sec": -5})
-    assert "Nothing was changed" in refused["text"]
-    assert wired.client.put("/api/attention/settings", json={"oldest_event_sec": -5},
-                            headers=BROWSER).status_code == 400
-
-
-# ── Mute and Mic off ──────────────────────────────────────────────────────
-
-def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wired, monkeypatch):
-    """The page applies the frame through the same chooseQuiet as his
-    buttons; the brain has no tool to unmute, turn on or start listening."""
-    sent = []
-
-    async def emit(frame):
-        sent.append(frame)
-
-    monkeypatch.setattr(wired.server, "_voice_emit", emit)
-    monkeypatch.setattr(wired.server, "voice_clients", set())
-    assert "No JARVIS page is open" in _call(wired, "quiet_microphone", state="off")["text"]
-    wired.server.voice_clients.add(object())
-    assert _call(wired, "quiet_microphone", state="muted")["ok"]
-    assert _call(wired, "quiet_microphone", state="off")["ok"]
-    assert "Nothing was changed" in _call(wired, "quiet_microphone", state="on")["text"]
-    assert sent == [{"type": "quiet", "state": "muted"}, {"type": "quiet", "state": "off"}]
-    from jarvis import jarvis_mcp
-    names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
-    assert "quiet_microphone" in names
-    assert not names & {"unmute", "start_listening", "microphone_on", "listen"}

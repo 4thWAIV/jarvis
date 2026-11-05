@@ -15,7 +15,7 @@
      "effects": [{"effect": "list.paged"}]}
   ],
   "kinds": [
-    {"kind": "conversation", "entity": null, "label": "Conversation", "parts": ["history", "earlier", "speaking", "turn", "input"],
+    {"kind": "conversation", "entity": null, "label": "Conversation", "parts": ["history", "earlier", "speaking", "input"],
      "presentations": [{"view": "main.conversation", "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
     {"kind": "conversationRecord", "entity": "record", "label": "Conversation record",
      "parts": ["record", "text", "answer", "agent", "expand", "restore"],

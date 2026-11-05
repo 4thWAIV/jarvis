@@ -1,6 +1,6 @@
 {
   "path": "/ws/transcribe",
-  "version": 2,
+  "version": 1,
   "sampleRate": 16000,
   "channels": 1,
   "format": "pcm_s16le",
@@ -13,5 +13,5 @@
   "telemetryEverySec": 1.0,
   "fromBrowser": ["start", "finish", "abort", "telemetry"],
   "fromServer": ["loading", "ready", "interim", "final", "finished", "error", "health"],
-  "errors": ["busy", "taken", "model-unavailable", "invalid-format", "overload", "decoder-failed", "interrupted"]
+  "errors": ["busy", "model-unavailable", "invalid-format", "overload", "decoder-failed", "interrupted"]
 }

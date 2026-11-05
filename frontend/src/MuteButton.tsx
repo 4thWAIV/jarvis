@@ -1,18 +1,16 @@
 /**
  * Mutes and unmutes: nothing is sent while muted, but the microphone stays
- * open so unmuting is quick. The choice is kept across a reload (mic.ts),
- * where it is restored without opening a microphone; unmuting is a
- * deliberate start of listening. See `setQuiet` in voiceInput.ts;
- * MicOffButton releases the microphone itself.
+ * open so unmuting is quick. See `mute()` in voiceInput.ts; MicOffButton
+ * releases the microphone itself.
  */
 
 import { useSyncExternalStore } from "react";
 import { useT } from "./locale";
-import { chooseQuiet, quiet } from "./mic";
+import { micMuted } from "./mic";
 
 export function MuteButton({ partRef }: { partRef?: (el: Element | null) => void } = {}) {
   const t = useT();
-  const muted = useSyncExternalStore(quiet.subscribe, quiet.get) === "muted";
+  const muted = useSyncExternalStore(micMuted.subscribe, micMuted.get);
   return (
     <button
       id="btn-mute"
@@ -20,11 +18,9 @@ export function MuteButton({ partRef }: { partRef?: (el: Element | null) => void
       data-ui-action="microphone"
       className={`control-button small${muted ? " muted" : ""}`}
       title={t("left.mic.mute")}
-      aria-label={t("left.mic.mute")}
-      aria-pressed={muted}
       onClick={(e) => {
         e.stopPropagation();
-        chooseQuiet(muted ? "none" : "muted");
+        micMuted.set(!micMuted.get());
       }}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"

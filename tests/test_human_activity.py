@@ -2,6 +2,7 @@
 import importlib
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,7 @@ def server(monkeypatch, data_dir):
         return b"MP3:" + text.encode()
 
     monkeypatch.setattr(server, "_synth_for_speech", fake_synth)
+    server._last_greeting_time = time.time()
     with TestClient(server.app) as c:
         server.brain_instance = FakeBrain()
         yield c, server, human_activity
@@ -147,9 +149,8 @@ def test_loading_the_page_and_reading_status_is_not_activity(server):
 
 def test_jarvis_speaking_is_not_activity(server):
     c, srv, activity = server
+    srv._last_greeting_time = 0                      # he greets on connect
     with c.websocket_connect("/ws/voice", headers=PAGE) as ws:
-        ws.receive_json(); ws.receive_json()
-        c.portal.call(srv.speech.say, "Good evening.")
         _drain_until(ws, lambda m: m["type"] == "audio")
     assert activity.recorder.current() is None
 
@@ -166,7 +167,7 @@ def test_accepted_speech_is_activity_and_its_echo_is_not(server, data_dir):
         ws.send_json({"type": "transcript", "text": "echo hello there", "isFinal": True})
         ws.send_json({"type": "transcript", "text": "what is the weather like",
                       "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and "weather" in m["text"], limit=20)
+        _drain_until(ws, lambda m: m["type"] == "audio" and "weather" in m["text"])
     assert activity.recorder.current()["activity_seq"] == 1, "the echo was not counted"
     assert [t for t, _ in srv.brain_instance.turns] == ["hello there",
                                                         "what is the weather like"]
@@ -183,7 +184,7 @@ def test_stop_and_say_that_again_are_activity(server):
         assert activity.recorder.current()["activity_seq"] == 0
         ws.send_json({"type": "transcript", "text": "stop", "isFinal": True})
         ws.send_json({"type": "transcript", "text": "hello there", "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and "hello" in m["text"], limit=20)
+        _drain_until(ws, lambda m: m["type"] == "audio" and "hello" in m["text"])
     assert activity.recorder.current()["activity_seq"] == 2
 
 

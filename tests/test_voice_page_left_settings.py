@@ -169,8 +169,7 @@ async def _marks(page, selector):
 LEFT_TARGETS = [
     ({"kind": "orb"}, [None, "canvas", "logo"]),
     ({"kind": "status"}, [None]),
-    # A page loads not listening: Start listening stands where the meter goes.
-    ({"kind": "mic"}, [None, "listen", "mute", "off"]),
+    ({"kind": "mic"}, [None, "meter", "mute", "off"]),
     ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
@@ -215,7 +214,7 @@ LEFT_WORDS = """() => ({
   rows: [...document.querySelectorAll('#team-server-tile .health-row')].map(r =>
           [r.dataset.row, r.querySelector(':scope > span').textContent]),
   role: document.querySelector('.weekly-usage')?.title ?? null,
-  listen: document.getElementById('btn-listen')?.getAttribute('aria-label') ?? null,
+  meter: document.getElementById('mic-meter')?.title ?? null,
   mute: document.getElementById('btn-mute').title,
   off: document.getElementById('btn-mic-off').title,
   reminder: document.querySelector('#team-reminder p')?.textContent ?? null,
@@ -247,8 +246,8 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
             assert words["rows"] == [["Server", "Servidor"], ["Database", "Base de datos"],
                                      ["Last write", "Escritura"]], words
             assert "de la semana transcurrido" in words["role"], words
-            assert (words["listen"], words["mute"], words["off"]) == (
-                "Empezar a escuchar", "Silenciar/Activar sonido", "Apagar el micrófono"), words
+            assert (words["meter"], words["mute"], words["off"]) == (
+                "entrada del micrófono", "Silenciar/Activar sonido", "Apagar el micrófono"), words
             assert words["reminder"].startswith("Inicie sesión en el servidor de su equipo"), words
             assert words["reminderButtons"] == ["Iniciar sesión", "Más tarde"], words
             assert await page.locator(".weekly-days").text_content() in ("4,0 días", "4.0 días")

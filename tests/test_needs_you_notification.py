@@ -1,10 +1,11 @@
-"""The macOS notice for a needs-you while he is not engaged here.
+"""The macOS fallback for a needs-you nobody was listening to.
 
-A needs-you is an attention item, never spoken by the server. Whether he is
-here is his recent interaction with this JARVIS (attention.availability),
-never a connected page: engaged, the item is on the page and nothing more is
-raised; away or unknown, Notification Centre gets it. Neither a finished
-session nor a `fresh` one earns an interruption.
+An URGENT utterance with no transport is kept as unread and re-raised when a
+client connects — which is no use at all to a user who is not in the browser
+tab. So when there is genuinely no voice client, Notification Centre gets it
+instead. Only then: the user must never be notified about something he just
+heard spoken, and neither a batched completion nor a `fresh` session earns an
+interruption.
 
 No test here posts a real notification — `notifier.notify` is replaced in
 every one, and tests/conftest.py blocks the real implementation besides.
@@ -13,8 +14,6 @@ every one, and tests/conftest.py blocks the real implementation besides.
 import asyncio
 
 import pytest
-
-from tests.attention_fixtures import attention  # noqa: F401  (a fixture)
 
 
 @pytest.fixture
@@ -25,13 +24,6 @@ def wired(monkeypatch, tmp_path):
     importlib.reload(server_module)
     server_module.voice_clients.clear()
     return server_module
-
-
-def _engaged(monkeypatch, server):
-    """He used this JARVIS just now."""
-    from jarvis import human_activity
-    monkeypatch.setattr(human_activity, "recorder", human_activity.HumanActivity())
-    human_activity.recorder.observe("gui")
 
 
 class FakeSpeech:
@@ -71,40 +63,39 @@ def _fake_notifier(monkeypatch, ok=True):
 
 
 @pytest.mark.asyncio
-async def test_a_needs_you_while_he_is_not_engaged_posts_a_notification(wired, monkeypatch):
+async def test_a_needs_you_with_no_voice_client_posts_a_notification(wired, monkeypatch):
     server = wired
-    speech = FakeSpeech()
-    monkeypatch.setattr(server, "speech", speech)
+    monkeypatch.setattr(server, "speech", FakeSpeech())
     fake = _fake_notifier(monkeypatch)
-    server.voice_clients.add(object())         # a page is open: not a person
-    try:
-        await server._attend_needs_you(_event())
-    finally:
-        server.voice_clients.clear()
 
-    assert len(fake.calls) == 1, "nobody is known to be here, so notify"
-    assert speech.calls == [], "and nothing is spoken"
+    await server._announce_needs_you(_event())
+
+    assert len(fake.calls) == 1, "nobody heard it spoken, so notify"
     _title, message, subtitle = fake.calls[0]
     assert "chitauri" in message or "chitauri" in subtitle, "it names the session"
     assert "permission" in message, "and says why it is waiting"
 
 
 @pytest.mark.asyncio
-async def test_a_needs_you_while_he_is_engaged_does_not_notify(wired, monkeypatch):
-    """He is here: the item is on the page. Do not raise it twice."""
+async def test_a_needs_you_with_a_client_connected_does_not_notify(wired, monkeypatch):
+    """He just heard it spoken. Do not say it to him twice."""
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
     fake = _fake_notifier(monkeypatch)
-    _engaged(monkeypatch, server)
-    await server._attend_needs_you(_event())
+    server.voice_clients.add(object())
+    try:
+        await server._announce_needs_you(_event())
+    finally:
+        server.voice_clients.clear()
 
     assert fake.calls == []
 
 
 @pytest.mark.asyncio
-async def test_a_failing_notifier_does_not_lose_the_item(wired, monkeypatch, attention):
+async def test_a_failing_notifier_does_not_break_the_announcement(wired, monkeypatch):
     server = wired
-    monkeypatch.setattr(server, "attention_record", attention)
+    speech = FakeSpeech()
+    monkeypatch.setattr(server, "speech", speech)
 
     from jarvis import notifier
 
@@ -114,9 +105,9 @@ async def test_a_failing_notifier_does_not_lose_the_item(wired, monkeypatch, att
     monkeypatch.setattr(notifier, "available", lambda: True)
     monkeypatch.setattr(notifier, "notify", explode)
 
-    await server._attend_needs_you(_event())      # must not raise
+    await server._announce_needs_you(_event())      # must not raise
 
-    assert [i.kind for i in attention.items()] == ["needs_you"], "the item is still recorded"
+    assert speech.calls, "the spoken announcement still happened"
 
 
 @pytest.mark.asyncio
@@ -150,20 +141,21 @@ async def test_an_unavailable_notifier_is_not_called(wired, monkeypatch):
     from jarvis import notifier
     monkeypatch.setattr(notifier, "available", lambda: False)
 
-    await server._attend_needs_you(_event())
+    await server._announce_needs_you(_event())
 
     assert fake.calls == []
 
 
 @pytest.mark.asyncio
-async def test_finished_sessions_never_notify(wired, monkeypatch):
+async def test_batched_completions_never_notify(wired, monkeypatch):
     """A notification is an interruption. A finished session has not earned one."""
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
     fake = _fake_notifier(monkeypatch)
+    server._pending_completions.clear()
+    server._pending_completions.extend(["chitauri", "hammer"])
 
-    server._on_session_event(_event(kind="finished"))
-    await asyncio.sleep(0.05)
+    await server._announce_batch()
 
     assert fake.calls == []
 
@@ -191,7 +183,7 @@ async def test_the_session_text_reaches_the_notifier_verbatim(wired, monkeypatch
     fake = _fake_notifier(monkeypatch)
     payload = '" & (do shell ' + 'script "id") & "'
 
-    await server._attend_needs_you(_event(session={"voice_name": payload}))
+    await server._announce_needs_you(_event(session={"voice_name": payload}))
 
     assert len(fake.calls) == 1
     _title, message, subtitle = fake.calls[0]

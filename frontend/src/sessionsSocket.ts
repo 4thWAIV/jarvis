@@ -24,14 +24,9 @@
  *     language in force changed; the interface follows it (locale.ts).
  *   - "packages" (and every (re)connect): a work package was unpacked; the
  *     list Open page is offered from reads again (packages.ts).
- *   - "voice_input_settings" (and every (re)connect): his two voice input
- *     settings changed; voice input reads them again (voiceSettings.ts).
- *   - "attention" (and every (re)connect): the attention record changed;
- *     updates waiting read again (attention.ts).
  */
 
 import { agentMessage, agentsChanged } from "./agents";
-import { attentionChanged } from "./attention";
 import { foldersChanged } from "./folders";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { reported as languageReported } from "./locale";
@@ -45,8 +40,6 @@ import { presentHumanTransfer } from "./transfers";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
-import { VOICE_INPUT_SETTINGS_FRAME } from "./voiceControl";
-import { voiceInputSettingsChanged } from "./voiceSettings";
 
 const bump = (store: { get(): number; set(v: number): void }) => store.set(store.get() + 1);
 
@@ -61,7 +54,6 @@ export function startSessionsSocket(): void {
     if (msg.type === "language" || (snapshot && msg.language !== undefined)) languageReported(msg.language);
     if (msg.type === "agents" || snapshot) bump(agentsChanged);
     if (msg.type === "voice" || snapshot) bump(voiceChanged);
-    if (msg.type === VOICE_INPUT_SETTINGS_FRAME || snapshot) voiceInputSettingsChanged();
     if (msg.type === "subsystems" || snapshot) bump(subsystemsChanged);
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
@@ -69,7 +61,6 @@ export function startSessionsSocket(): void {
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "packages" || snapshot) bump(packagesChanged);
-    if (msg.type === "attention" || snapshot) bump(attentionChanged);
     if (msg.type === BUNDLES_HINT || snapshot) bump(bundlesChanged);
     if (msg.type === "agent_message" && typeof msg.session_id === "string") {
       agentMessage.set({ sessionId: msg.session_id, n: (agentMessage.get()?.n ?? 0) + 1 });

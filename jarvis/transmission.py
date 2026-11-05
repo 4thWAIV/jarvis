@@ -20,7 +20,7 @@ in who they are, so each is an adapter and the sequence is here once.
     perform       `perform`: the cancel window, then the destination's own
                   reason to wait (an agent's one-message-per-turn queue),
                   then delivery and its outcome, each written to the
-                  destination's record before it is reported. Every path ends
+                  destination's record before it is said. Every path ends
                   the record as exactly one of cancelled, queued, sent or
                   failed, and a capture not sent is his to deal with again.
 
@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import time
 from typing import Callable, Optional, Protocol, runtime_checkable
+
+from jarvis.speech import Priority
 
 # How a send's record ends, whatever the destination keeps it in.
 CANCELLED = "cancelled"
@@ -96,11 +98,9 @@ class Destination(Protocol):
     async def went(self) -> None:
         """After a successful hand-over: move it up, draw it going."""
 
-    async def report_queued(self, speech, why: str) -> None:
-        """It waits its turn: tell him so, the destination's way."""
+    async def say_queued(self, speech, why: str) -> None: ...
 
-    async def report_outcome(self, speech, outcome: str) -> None:
-        """How the hand-over went, the destination's way."""
+    async def say_outcome(self, speech, outcome: str) -> None: ...
 
 
 class CaptureBox(Protocol):
@@ -144,9 +144,7 @@ async def perform(destination: Destination, *, speech, cancel_window: float,
     Nothing is sent unheard, and that was decided before this runs (only an
     `accepted` capture is staged, and what is sent is exactly it), so this
     says nothing first: it opens the cancel window (the turn's speech is
-    done by now), then sends. A cancel is acknowledged by the record alone
-    (cancelled, shown on the capture and the message), never by a spoken
-    "cancelled": the cancel word already stopped the speech."""
+    done by now), then sends."""
     destination.record()
     settled = False
 
@@ -164,13 +162,14 @@ async def perform(destination: Destination, *, speech, cancel_window: float,
             return
         if await speech.open_cancel_window(cancel_window):
             settle(CANCELLED)
+            await speech.say("Cancelled, sir.", Priority.NORMAL, label="readback-outcome")
             return
 
         why = None if destination.priority else destination.why_wait()
         if why:
             settle(QUEUED)
             captures.sent(destination.capture_id)
-            await destination.report_queued(speech, why)
+            await destination.say_queued(speech, why)
             return
 
         captures.transmitting(destination.capture_id)
@@ -183,7 +182,7 @@ async def perform(destination: Destination, *, speech, cancel_window: float,
             await destination.went()
         else:
             settle(FAILED, failure=outcome)
-        await destination.report_outcome(speech, outcome)
+        await destination.say_outcome(speech, outcome)
     except Exception:
         # The record must never be left staged.
         settle(FAILED, failure=FAILED)

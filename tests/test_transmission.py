@@ -65,10 +65,10 @@ class _Outbox:
     async def went(self):
         self.went_count += 1
 
-    async def report_queued(self, speech, why):
-        self.outcomes.append(f"waits: {why}")
+    async def say_queued(self, speech, why):
+        await speech.say(f"waits: {why}")
 
-    async def report_outcome(self, speech, outcome):
+    async def say_outcome(self, speech, outcome):
         self.outcomes.append(outcome)
 
 
@@ -97,8 +97,7 @@ async def test_handed_over_it_is_sent_once_drawn_and_its_capture_closed():
 async def test_cancelled_in_the_window_nothing_is_handed_over():
     dest = _Outbox()
     speech, box = await _perform(dest, _Speech(cancelled=True))
-    assert dest.settled == [("cancelled", {})]
-    assert speech.said == [], "the cancel is acknowledged by its record, never a spoken line"
+    assert dest.settled == [("cancelled", {})] and speech.said == ["Cancelled, sir."]
     assert dest.went_count == 0 and box.events == [("reopen", 4)]
 
 
@@ -113,8 +112,7 @@ async def test_no_voice_fails_it_unsent():
 async def test_a_destination_without_a_queue_never_waits_and_one_with_a_reason_queues():
     dest = _Outbox(why="is mid-turn")
     speech, box = await _perform(dest)
-    assert dest.settled == [("queued", {})] and dest.outcomes == ["waits: is mid-turn"]
-    assert speech.said == []
+    assert dest.settled == [("queued", {})] and speech.said == ["waits: is mid-turn"]
     assert box.events == [("sent", 4), ("reopen", 4)]
     urgent = _Outbox(why="is mid-turn", priority=True)
     await _perform(urgent)
