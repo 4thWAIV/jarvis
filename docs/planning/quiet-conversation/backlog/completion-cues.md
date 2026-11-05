@@ -15,7 +15,7 @@ One coherent set of quiet sounds, with visual equivalents, that tells Tim what v
 - **Listening started.** A very subtle beep each time capture actually starts: Start listening, Unmute, and a tab resuming after a voice connection drop. It plays when the microphone is really streaming, not when the button is pressed.
 - **Listening stopped.** A very subtle beep, different from the start beep, each time capture stops for any reason: Mic off, Mute, switching tabs under Stop listening, another tab taking the microphone, the connection or the recogniser failing. This is the cue that tells him JARVIS is no longer listening, so it must play even when the stop was not his own doing.
 - **Turn-completion cues.** The optional tentative and likely-end nonverbal cues described in turn-taking.md, bound to the current input revision and output owner.
-- **One setting.** A persisted per-user on/off setting for capture sounds, in Settings, Voice and language, with a brain tool calling the same service. Default On. It turns every sound in this item on or off together; the visual states stay either way.
+- **One setting.** A persisted per-user on/off setting for capture sounds, in Settings, Voice and language, with a brain tool calling the same service. Default On (Tim's decision, 2026-11-05). It turns every sound in this item on or off together; the visual states stay either way.
 - **Choosing the sounds** (which beeps, and a volume control) is left for later. Ship simple, very quiet placeholder tones under roughly 150 ms, distinguished by pattern rather than loudness.
 
 ## Acceptance
