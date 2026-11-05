@@ -8427,14 +8427,16 @@ def _voice_input_settings_said(settings: dict) -> str:
             "discard": "discard unfinished input"}[settings["stop"]]
     switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
     patience = f"His turn ends after {settings['patience']:g} seconds of quiet. "
+    sounds = ("A quiet sound plays when listening starts and when it stops. " if settings["sounds"]
+              else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
     said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
-            f"from JARVIS, it will {switch}. {patience}These are {whose}'s settings")
+            f"from JARVIS, it will {switch}. {patience}{sounds}These are {whose}'s settings")
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
 
 
 async def tool_voice_input_settings(args: dict) -> str:
-    """His two voice input settings: what the Settings route reads."""
+    """His voice input settings: what the Settings route reads."""
     try:
         return _voice_input_settings_said(voice_control.read())
     except voice_control.Unreadable as e:
@@ -8442,12 +8444,12 @@ async def tool_voice_input_settings(args: dict) -> str:
 
 
 async def tool_set_voice_input_settings(args: dict) -> str:
-    """Change one or both voice input settings: the Settings route's
+    """Change any of his voice input settings: the Settings route's
     `voice_control.change`, with its validation. An ACTING tool. It starts,
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
         settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        patience=args.get("patience"))
+                                        patience=args.get("patience"), sounds=args.get("sounds"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
@@ -8462,7 +8464,7 @@ TOOL_HANDLERS.update({
 })
 ACTING_TOOLS.update({"set_voice_input_settings"})
 TAINT_EXEMPT_TOOLS.update({
-    "voice_input_settings": "it reads his own two voice input settings: fixed values",
+    "voice_input_settings": "it reads his own voice input settings: fixed values",
     "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
 })
 

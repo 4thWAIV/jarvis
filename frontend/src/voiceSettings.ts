@@ -1,5 +1,5 @@
 /**
- * His two voice input settings on the page (voiceControl.ts has their
+ * His voice input settings on the page (voiceControl.ts has their
  * types; jarvis/voice_control.py keeps them, per user, on this JARVIS):
  * read when the page starts, again whenever the voice socket reconnects or
  * the server says they changed (`voice_input_settings` on /ws/sessions),
@@ -41,10 +41,12 @@ export class SettingsRefused extends Error {
   constructor(readonly code: string, message: string) { super(message); }
 }
 
-/** Change one or both settings: the same call as the brain's
+/** A change to any of the settings. */
+export type VoiceInputChange = { stop?: StopMode; switch?: SwitchMode; patience?: number; sounds?: boolean };
+
+/** Change any of the settings: the same call as the brain's
  *  set_voice_input_settings. Answers the settings now saved. */
-export async function changeVoiceInputSettings(
-    change: { stop?: StopMode; switch?: SwitchMode; patience?: number }): Promise<VoiceInputSettings> {
+export async function changeVoiceInputSettings(change: VoiceInputChange): Promise<VoiceInputSettings> {
   ++reads;
   const res = await fetch(VOICE_INPUT_SETTINGS_PATH, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),

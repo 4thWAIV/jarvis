@@ -623,9 +623,15 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     assert got["ok"] and got["text"].startswith("Saved.")
     page = wired.client.get(voice_control.PATH).json()
     assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
-                    "scope": "member"}
+                    "sounds": True, "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
+    assert "A quiet sound plays when listening starts" in _call(wired, "voice_input_settings")["text"]
+    off = _call(wired, "set_voice_input_settings", sounds=False)
+    assert off["ok"] and "No sound plays when listening starts or stops" in off["text"]
+    assert wired.client.get(voice_control.PATH).json() == {**page, "sounds": False}
+    page = wired.client.get(voice_control.PATH).json()
+    assert "Nothing was changed" in _call(wired, "set_voice_input_settings", sounds="loud")["text"]
     refused = _call(wired, "set_voice_input_settings", stop="forever")
     assert "Nothing was changed" in refused["text"]
     from jarvis import data_paths

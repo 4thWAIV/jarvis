@@ -1949,15 +1949,16 @@ TOOL_SPECS = [
     {
         "name": "voice_input_settings",
         "description": (
-            "His two voice input settings (Settings, Voice and language): what happens to "
-            "what he was saying when he stops the microphone (keep or discard), and whether "
-            "listening continues or stops when he switches away from JARVIS."),
+            "His voice input settings (Settings, Voice and language): what happens to "
+            "what he was saying when he stops the microphone (keep or discard), whether "
+            "listening continues or stops when he switches away from JARVIS, his patience, "
+            "and whether a quiet sound plays when listening starts and stops."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "set_voice_input_settings",
         "description": (
-            "Change one or both voice input settings, only when he asks. It applies from the "
+            "Change any of his voice input settings, only when he asks. It applies from the "
             "next time he stops the microphone or leaves the page; it starts, stops and "
             "sends nothing now, and can never start listening."),
         "inputSchema": {
@@ -1973,6 +1974,10 @@ TOOL_SPECS = [
                              "description": "Seconds of quiet that end his turn; it also "
                                             "governs when JARVIS may start talking. From "
                                             "the next time the page connects."},
+                "sounds": {"type": "boolean",
+                           "description": "Capture sounds: true plays a quiet sound when "
+                                          "listening starts and when it stops, false "
+                                          "plays none."},
             },
         },
     },

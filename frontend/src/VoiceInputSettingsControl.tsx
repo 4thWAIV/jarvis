@@ -1,10 +1,11 @@
 /**
- * Settings → Voice and language: his two voice input settings
+ * Settings → Voice and language: his voice input settings
  * (voiceControl.ts; kept per user by jarvis/voice_control.py).
  *
  *   When I stop the microphone      Keep captured words | Discard unfinished input
  *   When I switch away from JARVIS  Continue listening  | Stop listening
  *   Patience                        seconds of quiet that end his turn
+ *   Capture sounds                  On | Off
  *
  * Each shows the value in force, read with the page (voiceSettings.ts) and
  * again whenever another page or the brain changes it. Changing one saves
@@ -20,7 +21,7 @@ import { voiceInputSettings } from "./mic";
 import { SettingsRow, useSettingsItem } from "./SettingsRow";
 import { PATIENCE_MAX, PATIENCE_MIN, STOP_MODES, SWITCH_MODES, type StopMode,
          type SwitchMode } from "./voiceControl";
-import { changeVoiceInputSettings } from "./voiceSettings";
+import { changeVoiceInputSettings, type VoiceInputChange } from "./voiceSettings";
 
 export function VoiceInputSettingsControl() {
   const t = useT();
@@ -30,10 +31,11 @@ export function VoiceInputSettingsControl() {
   const stopUi = useSettingsItem("voiceInputStop", t("left.voiceInput.stop"));
   const switchUi = useSettingsItem("voiceInputSwitch", t("left.voiceInput.switch"));
   const patienceUi = useSettingsItem("voicePatience", t("left.voiceInput.patience"));
+  const soundsUi = useSettingsItem("captureSounds", t("left.voiceInput.sounds"));
   // Typed, and saved when he leaves the field or presses Enter.
   const [patience, setPatience] = useState<string | null>(null);
 
-  const save = async (change: { stop?: StopMode; switch?: SwitchMode; patience?: number }) => {
+  const save = async (change: VoiceInputChange) => {
     setSaving(true);
     setFailed(null);
     try {
@@ -82,6 +84,16 @@ export function VoiceInputSettingsControl() {
                }} />
       </SettingsRow>
       <p className="settings-hint">{t("left.voiceInput.patienceHelp", { min: PATIENCE_MIN, max: PATIENCE_MAX })}</p>
+      <SettingsRow label={t("left.voiceInput.sounds")} labelRef={soundsUi.part("label")} htmlFor="settings-voice-sounds">
+        <select id="settings-voice-sounds" data-ui-action="domain" ref={soundsUi.whole}
+                value={settings ? (settings.sounds ? "on" : "off") : ""} disabled={disabled}
+                onChange={(e) => void save({ sounds: e.target.value === "on" })}>
+          {!settings && <option value="" />}
+          <option value="on">{t("left.voiceInput.sounds.on")}</option>
+          <option value="off">{t("left.voiceInput.sounds.off")}</option>
+        </select>
+      </SettingsRow>
+      <p className="settings-hint">{t("left.voiceInput.soundsHelp")}</p>
       {settings && !settings.saved && <p className="settings-hint">{t("left.voiceInput.defaults")}</p>}
       {!settings && <p className="settings-hint read-failure">{t("left.voiceInput.unread")}</p>}
       {failed && <p className="settings-hint read-failure">{t("left.voiceInput.notSaved", { error: failed })}</p>}

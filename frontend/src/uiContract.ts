@@ -2422,6 +2422,7 @@ export const UI_CONTRACT = {
         "voiceInputStop",
         "voiceInputSwitch",
         "voicePatience",
+        "captureSounds",
         "voiceId",
         "saveVoiceId",
         "fishKey",

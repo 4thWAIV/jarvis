@@ -1,4 +1,4 @@
-"""His two voice input settings (voice_control.py): the defaults until he
+"""His voice input settings (voice_control.py): the defaults until he
 chooses, each choice kept per user in this JARVIS's database (the team
 member signed in, else the local owner), every value checked the same way
 for the route and the brain, a change published once and never otherwise,
@@ -30,14 +30,14 @@ def _signed_in(monkeypatch, github_id=7, signed_out=False):
 
 
 def test_nothing_chosen_reads_the_defaults_and_says_so():
-    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "patience": END_OF_TURN_SEC, "scope": "local"}
+    assert voice_control.read() == {**voice_control.DEFAULTS, "saved": False, "patience": END_OF_TURN_SEC, "sounds": True, "scope": "local"}
 
 
 @pytest.mark.parametrize("stop,switch", [("keep", "continue"), ("keep", "stop"),
                                          ("discard", "continue"), ("discard", "stop")])
 def test_each_of_the_four_combinations_is_saved_and_read_back(published, stop, switch):
     got = voice_control.change(stop=stop, switch=switch)
-    assert got == {"stop": stop, "switch": switch, "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
+    assert got == {"stop": stop, "switch": switch, "saved": True, "patience": END_OF_TURN_SEC, "sounds": True, "scope": "local"}
     assert voice_control.read() == got
     assert published == [{"type": voice_control.FRAME}]
 
@@ -45,12 +45,12 @@ def test_each_of_the_four_combinations_is_saved_and_read_back(published, stop, s
 def test_changing_one_setting_keeps_the_other():
     voice_control.change(stop="discard", switch="continue")
     assert voice_control.change(switch="stop") == {
-        "stop": "discard", "switch": "stop", "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
+        "stop": "discard", "switch": "stop", "saved": True, "patience": END_OF_TURN_SEC, "sounds": True, "scope": "local"}
 
 
 def test_a_default_never_overwrites_a_saved_choice(monkeypatch):
     voice_control.change(stop="discard", switch="continue")
-    monkeypatch.setattr(voice_control, "DEFAULTS", {"stop": "keep", "switch": "stop"})
+    monkeypatch.setattr(voice_control, "DEFAULTS", {"stop": "keep", "switch": "stop", "sounds": True})
     assert voice_control.read()["stop"] == "discard"
 
 
@@ -64,6 +64,8 @@ def test_a_default_never_overwrites_a_saved_choice(monkeypatch):
     ({"patience": 11}, "invalid-patience"),
     ({"patience": "4"}, "invalid-patience"),
     ({"patience": True}, "invalid-patience"),
+    ({"sounds": "off"}, "invalid-sounds"),
+    ({"sounds": 0}, "invalid-sounds"),
 ])
 def test_a_bad_change_is_refused_and_nothing_is_saved_or_published(published, change, code):
     with pytest.raises(voice_control.Invalid) as refused:
@@ -119,7 +121,7 @@ def test_the_routes_read_and_change_with_the_same_answers(client, published):
     r = client.post(voice_control.PATH, json={"stop": "discard"})
     assert r.status_code == 200
     assert r.json() == voice_control.read() == {
-        "stop": "discard", "switch": voice_control.DEFAULTS["switch"], "saved": True, "patience": END_OF_TURN_SEC, "scope": "local"}
+        "stop": "discard", "switch": voice_control.DEFAULTS["switch"], "saved": True, "patience": END_OF_TURN_SEC, "sounds": True, "scope": "local"}
     assert published == [{"type": voice_control.FRAME}]
 
 
@@ -153,3 +155,45 @@ def test_patience_falls_back_to_the_constant_when_the_store_cannot_be_read(monke
     monkeypatch.setattr(run_store, "_connect", lambda *_a, **_k: (_ for _ in ()).throw(
         sqlite3.OperationalError("locked")))
     assert voice_control.patience() == END_OF_TURN_SEC
+
+
+# ── capture sounds ───────────────────────────────────────────────────────
+
+def test_capture_sounds_are_on_until_he_turns_them_off_and_keep_the_other_settings():
+    assert voice_control.read()["sounds"] is True
+    voice_control.change(stop="discard", patience=4)
+    assert voice_control.read()["sounds"] is True                # not saved by another change
+    got = voice_control.change(sounds=False)
+    assert (got["sounds"], got["stop"], got["patience"], got["saved"]) == (False, "discard", 4.0, True)
+    voice_control.change(switch="continue")
+    assert voice_control.read()["sounds"] is False
+    assert voice_control.change(sounds=True)["sounds"] is True
+
+
+def test_capture_sounds_are_per_user(monkeypatch):
+    voice_control.change(sounds=False)                           # the local owner
+    _signed_in(monkeypatch, github_id=7)
+    assert voice_control.read()["sounds"] is True
+    _signed_in(monkeypatch, github_id=7, signed_out=True)
+    assert voice_control.read()["sounds"] is False
+
+
+def test_the_route_changes_capture_sounds_and_publishes_once(client, published):
+    r = client.post(voice_control.PATH, json={"sounds": False})
+    assert r.status_code == 200 and r.json()["sounds"] is False
+    assert client.get(voice_control.PATH).json()["sounds"] is False
+    assert published == [{"type": voice_control.FRAME}]
+    r = client.post(voice_control.PATH, json={"sounds": "no"})
+    assert (r.status_code, r.json()["code"]) == (400, "invalid-sounds")
+
+
+def test_a_row_saved_before_capture_sounds_existed_reads_them_on():
+    """A JARVIS updated from schema 2: his saved choices stay, and capture
+    sounds read as the default."""
+    with run_store._connect() as conn:
+        run_store.migrate(conn, "voice_control_schema",
+                          {k: v for k, v in voice_control._MIGRATIONS.items() if k < 3}, "voice control")
+        conn.execute("INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
+                     "updated_at) VALUES ('local', 'discard', 'continue', 3, 0)")
+    got = voice_control.read()
+    assert (got["stop"], got["switch"], got["patience"], got["sounds"]) == ("discard", "continue", 3.0, True)

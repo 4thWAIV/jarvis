@@ -1,12 +1,14 @@
 /**
  * The page's copy of the voice control contract's shared types
- * (jarvis/voice_control.py): the two voice input settings, as the route
- * and the brain's tools give them.
+ * (jarvis/voice_control.py): the voice input settings, as the route and
+ * the brain's tools give them.
  *
  *   stop    When I stop the microphone: keep the words already captured,
  *           or discard unfinished input.
  *   switch  When I switch away from JARVIS: continue a listening session
  *           already started, or stop listening.
+ *   sounds  Capture sounds: a quiet tone when listening starts and when it
+ *           stops (voice.ts `cue`), or none.
  */
 
 export type StopMode = "keep" | "discard";
@@ -30,6 +32,8 @@ export interface VoiceInputSettings {
   /** His patience: seconds of quiet that end his turn, and before JARVIS
    *  may start talking (applies from the next time the page connects). */
   patience: number | null;
+  /** Capture sounds: on (the default) or off. */
+  sounds: boolean;
   /** Whether he chose them (false: the defaults, nothing saved yet). */
   saved: boolean;
   /** Whose they are: the team member signed in, or this JARVIS's owner. */
@@ -42,7 +46,8 @@ export function parseVoiceInputSettings(value: unknown): VoiceInputSettings | nu
   const v = value as Record<string, unknown>;
   if (!STOP_MODES.includes(v.stop as StopMode) || !SWITCH_MODES.includes(v.switch as SwitchMode)) return null;
   const patience = typeof v.patience === "number" && Number.isFinite(v.patience) ? v.patience : null;
-  return { stop: v.stop as StopMode, switch: v.switch as SwitchMode, patience, saved: v.saved === true,
+  return { stop: v.stop as StopMode, switch: v.switch as SwitchMode, patience,
+           sounds: v.sounds !== false, saved: v.saved === true,
            scope: v.scope === "member" ? "member" : "local" };
 }
 

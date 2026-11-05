@@ -16,12 +16,15 @@ and the words the page and the server both name on the voice socket
           starts listening, and neither setting can turn on a microphone
           that is muted or off.
 
-With them is his patience (`patience`): how many seconds of quiet end his
-turn. One value governs both sides of the conversation: the turn
+With them are his patience (`patience`): how many seconds of quiet end his
+turn, One value governs both sides of the conversation: the turn
 controller's hold and how long the speech scheduler waits before JARVIS
 starts talking after he has spoken. Read when a voice client connects;
 nothing saved, or anything unreadable, is the current constant
-(speech.END_OF_TURN_SEC).
+(speech.END_OF_TURN_SEC); and his capture sounds (`sounds`, on or off,
+default on): the quiet tones the page plays when listening starts and when
+it stops, for any reason. Off plays none; what the page shows is the same
+either way.
 
 They are per user, on this JARVIS (the node's SQLite, its own schema
 version through run_store.migrate): the team member signed in, by GitHub
@@ -58,7 +61,7 @@ STOP_MODES = ("keep", "discard")
 SWITCH_MODES = ("continue", "stop")
 # What a user who has chosen nothing gets. Provisional: the defaults are
 # assessed separately, during validation.
-DEFAULTS = {"stop": "keep", "switch": "stop"}
+DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
 # His patience may be set within these bounds, in seconds.
 PATIENCE_MIN, PATIENCE_MAX = 0.5, 10.0
 LOCAL_OWNER = "local"
@@ -77,6 +80,11 @@ _MIGRATIONS = {
     """,
     2: """
         ALTER TABLE voice_input_settings ADD COLUMN patience_sec REAL;
+    """,
+    # NULL: never chosen, the default (on).
+    3: """
+        ALTER TABLE voice_input_settings ADD COLUMN capture_sounds INTEGER
+            CHECK (capture_sounds IN (0, 1));
     """,
 }
 
@@ -120,17 +128,17 @@ def _connect() -> sqlite3.Connection:
 
 def read(user: Optional[str] = None) -> dict:
     """The settings in force for `user` (the user now, by default):
-    {stop, switch, saved, scope}. Raises Unreadable if the store cannot be
+    {stop, switch, patience, sounds, saved, scope}. Raises Unreadable if the store cannot be
     read, and treats a saved row it does not understand as unreadable too."""
     user = user or user_key()
     try:
         with closing(_connect()) as conn:
-            row = conn.execute("SELECT stop_mode, switch_mode, patience_sec "
+            row = conn.execute("SELECT stop_mode, switch_mode, patience_sec, capture_sounds "
                                "FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
     except (sqlite3.Error, RuntimeError) as e:
         log.warning("voice input settings could not be read (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be read.") from e
-    patience = END_OF_TURN_SEC
+    patience, sounds = END_OF_TURN_SEC, DEFAULTS["sounds"]
     if row is None:
         stop, switch, saved = DEFAULTS["stop"], DEFAULTS["switch"], False
     else:
@@ -139,7 +147,9 @@ def read(user: Optional[str] = None) -> dict:
             raise Unreadable("Your saved voice input settings are not ones JARVIS knows.")
         if _patience_ok(row["patience_sec"]):
             patience = float(row["patience_sec"])
-    return {"stop": stop, "switch": switch, "saved": saved, "patience": patience,
+        if row["capture_sounds"] is not None:
+            sounds = bool(row["capture_sounds"])
+    return {"stop": stop, "switch": switch, "saved": saved, "patience": patience, "sounds": sounds,
             "scope": "local" if user == LOCAL_OWNER else "member"}
 
 
@@ -157,12 +167,16 @@ def patience(user: Optional[str] = None) -> float:
         return END_OF_TURN_SEC
 
 
-def validate(stop: object = None, switch: object = None,
-             patience: object = None) -> tuple[Optional[str], Optional[str], Optional[float]]:
+def validate(stop: object = None, switch: object = None, patience: object = None,
+             sounds: object = None
+             ) -> tuple[Optional[str], Optional[str], Optional[float], Optional[bool]]:
     """The change asked for, checked: each given value must be one of its
     setting's, and at least one must be given."""
-    if stop is None and switch is None and patience is None:
-        raise Invalid("nothing-to-change", "Say which setting to change: stop, switch or patience.")
+    if stop is None and switch is None and patience is None and sounds is None:
+        raise Invalid("nothing-to-change",
+                      "Say which setting to change: stop, switch, patience or sounds.")
+    if sounds is not None and not isinstance(sounds, bool):
+        raise Invalid("invalid-sounds", "Capture sounds are on (true) or off (false).")
     if patience is not None and not _patience_ok(patience):
         raise Invalid("invalid-patience",
                       f"Patience is a number of seconds from {PATIENCE_MIN:g} to {PATIENCE_MAX:g}.")
@@ -170,33 +184,37 @@ def validate(stop: object = None, switch: object = None,
         raise Invalid("invalid-stop", "When I stop the microphone is keep or discard.")
     if switch is not None and switch not in SWITCH_MODES:
         raise Invalid("invalid-switch", "When I switch away from JARVIS is continue or stop.")
-    return stop, switch, None if patience is None else float(patience)  # type: ignore[return-value]
+    return (stop, switch, None if patience is None else float(patience),  # type: ignore[return-value]
+            sounds)
 
 
 def change(stop: object = None, switch: object = None, patience: object = None,
-           user: Optional[str] = None) -> dict:
-    """Save one or both settings for `user` and answer the settings now in
+           sounds: object = None, user: Optional[str] = None) -> dict:
+    """Save any of the settings for `user` and answer the settings now in
     force, as `read` gives them. Starts, stops, submits and discards
-    nothing: they apply from the next stop or page switch."""
-    stop, switch, patience = validate(stop, switch, patience)
+    nothing: they apply from the next stop or page switch (capture sounds
+    from the next start or stop)."""
+    stop, switch, patience, sounds = validate(stop, switch, patience, sounds)
     user = user or user_key()
     now = read(user)
     new = {"stop": stop or now["stop"], "switch": switch or now["switch"],
-           "patience": patience}        # None: keep what is saved
+           "patience": patience,        # None: keep what is saved
+           "sounds": None if sounds is None else int(sounds)}
     try:
         with closing(_connect()) as conn, conn:
             conn.execute(
                 "INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
-                "updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_key) DO UPDATE SET "
-                "stop_mode = excluded.stop_mode, switch_mode = excluded.switch_mode, "
+                "capture_sounds, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
+                "UPDATE SET stop_mode = excluded.stop_mode, switch_mode = excluded.switch_mode, "
                 "patience_sec = COALESCE(excluded.patience_sec, voice_input_settings.patience_sec), "
-                "updated_at = excluded.updated_at",
-                (user, new["stop"], new["switch"], new["patience"], time.time()))
+                "capture_sounds = COALESCE(excluded.capture_sounds, "
+                "voice_input_settings.capture_sounds), updated_at = excluded.updated_at",
+                (user, new["stop"], new["switch"], new["patience"], new["sounds"], time.time()))
     except sqlite3.Error as e:
         log.warning("voice input settings could not be saved (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be saved.") from e
-    log.info("voice input settings for %s: stop=%s switch=%s patience=%s", user, new["stop"],
-             new["switch"], new["patience"])
+    log.info("voice input settings for %s: stop=%s switch=%s patience=%s sounds=%s", user,
+             new["stop"], new["switch"], new["patience"], new["sounds"])
     saved = read(user)
     if _publish is not None:
         _publish({"type": FRAME})
@@ -219,7 +237,7 @@ async def api_read():
 async def api_change(body: dict = Body(default_factory=dict)):
     try:
         return change(stop=body.get("stop"), switch=body.get("switch"),
-                      patience=body.get("patience"))
+                      patience=body.get("patience"), sounds=body.get("sounds"))
     except Invalid as e:
         return JSONResponse(status_code=400, content=e.to_json())
     except Unreadable as e:
