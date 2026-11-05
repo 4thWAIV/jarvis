@@ -27,7 +27,7 @@ def test_hush_stops_him_and_drops_what_was_left():
     assert "continue" in branch, "must not fall through to the other handlers"
     stop = src[src.index("async def _stop_speaking("):]
     stop = stop[:stop.index("\nasync def ")]
-    assert "barge_in(keep_unread=False" in stop, stop
+    assert "barge_in(reason=" in stop, stop
 
 
 def test_hush_is_not_reachable_as_a_spoken_word():

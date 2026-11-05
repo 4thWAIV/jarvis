@@ -79,7 +79,7 @@ class Harness:
         self.synth_calls = []          # every text actually sent to TTS
         kw.setdefault("end_of_turn", 0.2)
         self.sched = SpeechScheduler(self.synth, self.emit, pause_after=0.2, stale_after=0.6,
-                                     echo_window=0.5, batch_interval=0.3, batch_settle=0.05, **kw)
+                                     echo_window=0.5, **kw)
 
     async def synth(self, text):
         self.synth_calls.append(text)
@@ -263,19 +263,6 @@ async def test_turn_reply_starts_once_he_has_finished_not_while_he_talks(h):
     assert h.audio() == []
     await asyncio.sleep(0.2)
     assert h.audio() == [(u.id, 0, "Half past nine, sir.")]
-
-
-@pytest.mark.asyncio
-async def test_low_items_are_batched_into_one_utterance(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    await s.say("Chitauri finished.", priority=Priority.LOW)
-    await s.say("Hammer finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.1)
-    await h.ack_all(rounds=4)
-    texts = [t for _, _, t in h.audio()]
-    assert texts == ["Chitauri finished.", "Hammer finished."]
-    assert len({u for u, _, _ in h.audio()}) == 1     # one utterance
 
 
 @pytest.mark.asyncio
@@ -649,18 +636,6 @@ async def test_no_audio_is_emitted_after_stop():
 
 
 @pytest.mark.asyncio
-async def test_batched_low_say_becomes_done_when_spoken(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    low = await s.say("Chitauri finished.", priority=Priority.LOW)
-    assert not low.done
-    await asyncio.sleep(0.1)
-    await h.ack_all(rounds=4)
-    assert await s.wait_for(low, 1.0) is True
-    assert low.done and not low.was_cancelled
-
-
-@pytest.mark.asyncio
 async def test_three_synth_failures_report_once(h):
     s = h.sched
     h.fail_texts.update({"One.", "Two.", "Three.", "Four."})
@@ -717,19 +692,6 @@ async def test_two_urgent_items_then_the_turn_resumes_once(h):
     assert texts.index("First urgent.") < i
     assert u.resumes == 1
     assert u.done and a.done and b.done and h.msgs[-1] == {"type": "status", "state": "idle"}
-
-
-@pytest.mark.asyncio
-async def test_the_first_low_items_of_a_session_are_batched_together(h):
-    from jarvis.speech import Priority
-    s = h.sched
-    await s.say("Chitauri finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.02)
-    await s.say("Hammer finished.", priority=Priority.LOW)
-    await asyncio.sleep(0.15)
-    await h.ack_all(rounds=4)
-    assert len({u for u, _, _ in h.audio()}) == 1
-    assert [t for _, _, t in h.audio()] == ["Chitauri finished.", "Hammer finished."]
 
 
 @pytest.mark.asyncio
@@ -888,8 +850,9 @@ def test_spec_defaults_are_the_spec_defaults():
         return None
 
     s = SpeechScheduler(nop, nop)
-    assert (s.prefetch, s.batch_interval, s.pause_after, s.stale_after, s.echo_window) == (2, 20.0, 3.0, 60.0, 6.0)
-    assert s.batch_settle == 2.0 and s.ack_timeout == 45.0
+    assert (s.prefetch, s.pause_after, s.stale_after, s.echo_window) == (2, 3.0, 60.0, 6.0)
+    assert s.ack_timeout == 45.0
+    assert not hasattr(s, "batch_interval"), "nothing is batched: routine events are attention items"
     sp = SentenceSplitter()
     assert (sp._first_chunk_max, sp._first_chunk_min) == (160, 40)
 

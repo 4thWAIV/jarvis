@@ -134,7 +134,7 @@ async def test_stop_speaking_interrupts_and_a_kept_ack_is_still_the_truth(h):
     u = await s.say("Alpha one. Beta two. Gamma three.")
     await asyncio.sleep(0.1)
     s.playback_started(u.id, 0)
-    await s.barge_in(keep_unread=False, reason="hush (key)")
+    await s.barge_in(reason="hush (key)")
     assert u.outcomes() == ["interrupted"] * 3
     await s.played(u.id, 0)                       # it had ended just before the stop
     assert u.outcomes() == ["played", "interrupted", "interrupted"]

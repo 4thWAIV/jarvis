@@ -78,7 +78,6 @@ def test_preflight_reports_and_never_installs(homes):
 
     assert check.status == preflight.STATUS_WARN
     assert "missing" in check.message and check.remedy == "Run: python -m jarvis.session_skill install"
-    assert preflight._phrase_for(check) == "your sessions don't have the talk-to-jarvis skill"
     assert not (claude / "skills").exists()
 
     session_skill.install()

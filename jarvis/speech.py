@@ -328,7 +328,7 @@ class Chunk:
 class Utterance:
     id: int
     priority: Priority
-    kind: str                                   # "turn" | "say" | "batched"
+    kind: str                                   # "turn" | "say"
     created: float
     # What it is, for the voice page, which routes by it: "reply" (the
     # brain's answer), "readback" / "readback-outcome", "announcement",
@@ -358,7 +358,6 @@ class Utterance:
     resumes: int = 0
     first_sent_at: Optional[float] = None
     last_progress_at: Optional[float] = None    # last send or ack; the ack watchdog reads it
-    alias: Optional["Utterance"] = None         # a batched LOW item points at the merged utterance
     splitter: SentenceSplitter = field(default_factory=SentenceSplitter)
 
     def cancel(self) -> None:
@@ -369,14 +368,12 @@ class Utterance:
 
     @property
     def done(self) -> bool:
-        if self.alias is not None:
-            return self.alias.done
         return self.cancelled or (self.closed and self.played >= len(self.chunks) - 1
                                   and self.sent >= len(self.chunks) - 1)
 
     @property
     def was_cancelled(self) -> bool:
-        return (self.alias or self).cancelled
+        return self.cancelled
 
     @property
     def was_abandoned(self) -> bool:
@@ -384,27 +381,26 @@ class Utterance:
         cancel word or barge-in — those set `cancelled` directly without
         this flag. Distinguishes the two so a caller checking `was_cancelled`
         can tell a dead client from the user's own decision."""
-        return (self.alias or self).abandoned
+        return self.abandoned
 
     @property
     def was_skipped(self) -> bool:
-        return (self.alias or self).skipped
+        return self.skipped
 
     @property
     def heard_in_full(self) -> bool:
         """Done, not cancelled, and every chunk PLAYED: a chunk that failed
         (no audio, or the page could not decode it) was not heard, however
         far the transport moved past it."""
-        u = self.alias or self
-        return (self.done and not u.cancelled
-                and all(c.outcome == Outcome.PLAYED for c in u.chunks))
+        return (self.done and not self.cancelled
+                and all(c.outcome == Outcome.PLAYED for c in self.chunks))
 
     def outcomes(self) -> list[str]:
-        return [c.outcome for c in (self.alias or self).chunks]
+        return [c.outcome for c in self.chunks]
 
     def close_outcomes(self, outcome: str) -> None:
         """Every chunk still on its way ends as `outcome`."""
-        for c in (self.alias or self).chunks:
+        for c in self.chunks:
             if c.outcome in Outcome.OPEN:
                 c.outcome = outcome
 
@@ -443,15 +439,15 @@ class SpeechScheduler:
 
     def __init__(self, synthesize: Synthesize, emit: Emit, *,
                  prepare: Optional[Callable[[str], str]] = None, prefetch: int = 2,
-                 batch_interval: float = 20.0, pause_after: float = 3.0,
+                 pause_after: float = 3.0,
                  end_of_turn: Optional[float] = None,
                  stale_after: float = 60.0, echo_window: float = 6.0,
-                 batch_settle: float = 2.0, ack_timeout: float = 45.0,
+                 ack_timeout: float = 45.0,
                  transport_ready: Optional[Callable[[], bool]] = None,
                  clock: Callable[[], float] = time.monotonic):
         """`clock` drives scheduling decisions only; `wait_for` and
         `open_cancel_window` sleep in real time. `transport_ready` says whether
-        anyone can hear us — proactive (batched) speech waits for it."""
+        anyone can hear us."""
         self._clock = clock
         self.ack_timeout = ack_timeout             # a chunk unacked this long = the client is gone
         self._transport_ready = transport_ready or (lambda: True)
@@ -461,10 +457,8 @@ class SpeechScheduler:
         # passed as `emit` must never call back into barge_in()/say() from
         # inside a send.
         self._emit_lock = asyncio.Lock()
-        self.batch_settle = batch_settle       # LOW items collect this long before flushing
         self._prepare = prepare or (lambda s: s)
         self.prefetch = prefetch
-        self.batch_interval = batch_interval
         self.pause_after = pause_after
         # The same patience the turn controller holds his turn for: never
         # clamped shorter, so JARVIS cannot start talking before his turn
@@ -476,12 +470,9 @@ class SpeechScheduler:
         self._current: Optional[Utterance] = None
         self._paused: Optional[Utterance] = None
         self._pending: list[Utterance] = []
-        self._batch: list[Utterance] = []
         self._recent: list[_Spoken] = []
         self._last_spoken: Optional[Utterance] = None   # for "say that again"
         self._last_user_speech: Optional[float] = None
-        self._last_batch_flush = self._clock() - batch_interval   # the first flush needs no wait
-        self._batch_since: Optional[float] = None
         self._cancel_window_open = False
         self._cancel_event = asyncio.Event()
         self._speaking = False
@@ -538,7 +529,7 @@ class SpeechScheduler:
         self._wake.set()
 
     def _kick_later(self, delay: float) -> None:
-        """Wake the pump when a timed gate (batch settle, user pause) elapses."""
+        """Wake the pump when a timed gate (a user pause, the floor) elapses."""
         try:
             asyncio.get_running_loop().call_later(max(0.0, delay) + 0.01, self._kick)
         except RuntimeError:
@@ -562,7 +553,7 @@ class SpeechScheduler:
         """Anything said, queued or waiting to be said, or a read-back's
         cancel window open: the mouth is in use."""
         return bool(self._current is not None or self._paused is not None or self._pending
-                    or self._batch or self._cancel_window_open)
+                    or self._cancel_window_open)
 
     # ── inputs ─────────────────────────────────────────────────────────
     def _new(self, priority: Priority, kind: str, immediate: bool,
@@ -715,16 +706,8 @@ class SpeechScheduler:
         """A complete utterance. NORMAL starts at once; LOW/URGENT wait for a pause
         unless `immediate` says otherwise, and so does an announcement at any
         priority: what JARVIS raises on his own never starts while he is
-        talking. LOW is batched: the returned utterance becomes done when the
-        merged announcement it joined has been spoken."""
-        if priority == Priority.LOW and immediate is not True:
-            u = self._new(priority, "batched", immediate=False, label=label)
-            u.chunks.append(Chunk(text.strip()))
-            u.closed = True
-            self._batch.append(u)
-            self._batch_since = self._batch_since or self._clock()
-            self._kick_later(self.batch_settle)
-            return u
+        talking. Nothing is batched: routine events are attention items, and
+        the one digest is a single utterance."""
         if immediate is None:
             immediate = priority == Priority.NORMAL and label != "announcement"
         u = self._new(priority, "say", immediate=immediate, label=label)
@@ -962,12 +945,11 @@ class SpeechScheduler:
         if self._speaking and (typed or is_cancel_word or verdict == "replay"
                                or self._nonmatching(text) >= 2):
             # A cancel — or a replay request — is an answer to what was being
-            # said: it was heard, so it must not come back as "Before I
-            # forget —". A single-word replay trigger ("repeat", "pardon")
+            # said: it was heard, so it stops there and nothing of it comes
+            # back later. A single-word replay trigger ("repeat", "pardon")
             # would not otherwise clear the >=2 non-matching bar, so it is
             # named explicitly rather than relying on word count.
-            await self.barge_in(keep_unread=(verdict != "cancel"),
-                                reason=f"{verdict}: {text[:40]!r}")
+            await self.barge_in(reason=f"{verdict}: {text[:40]!r}")
         return verdict
 
     async def replay_last(self) -> bool:
@@ -1119,12 +1101,10 @@ class SpeechScheduler:
         self._kick()
 
     def reading(self, utt_id: Optional[int] = None) -> Optional[Utterance]:
-        """The reading `utt_id` names (a batched item: the announcement it
-        joined), or with none, the one sounding now."""
+        """The reading `utt_id` names, or with none, the one sounding now."""
         if utt_id is None:
             return self._current
-        u = self.utterances.get(utt_id)
-        return u.alias or u if u is not None else None
+        return self.utterances.get(utt_id)
 
     async def skip_reading(self, utt_id: Optional[int] = None) -> bool:
         """Skip the rest: stop ONE reading (a reply, a read-back, an
@@ -1152,7 +1132,6 @@ class SpeechScheduler:
         if self._paused is u:
             self._paused = None
         self._pending = [p for p in self._pending if p is not u]
-        self._batch = [b for b in self._batch if b.alias is not u and b is not u]
         self._settle(u.id)  # retire echo bookkeeping, not played acknowledgements
         await self._emit({"type": "reading_skipped", "utt": u.id})
         if active:
@@ -1160,12 +1139,11 @@ class SpeechScheduler:
         self._kick()
         return True
 
-    async def barge_in(self, keep_unread: bool = True, reason: str = "") -> None:
-        """The user is talking: stop everything now. Nothing cut off is kept to
-        be said later: what was routine is in the attention record, and an
-        unread pile replayed on its own is the burst it replaced.
-        `keep_unread` is accepted from the callers that still pass it
-        (contract section 8's hush) and changes nothing."""
+    async def barge_in(self, reason: str = "") -> None:
+        """The user is talking, or he said Stop: stop everything now. Nothing
+        cut off is kept to be said later: what was routine is in the
+        attention record, and an unread pile replayed on its own is the
+        burst it replaced."""
         cur = self._current
         # Barging in and resuming are the only things that make him say the
         # same sentence twice, and neither left any trace at all — which is
@@ -1341,22 +1319,6 @@ class SpeechScheduler:
             self._text_status_pending = False
             await self._emit({"type": "status", "state": "speaking" if on else "idle"})
 
-    def _release_gated(self, now: float) -> None:
-        if not self._user_silent(now) or not self._transport_ready():
-            return
-        if (self._batch and self._current is None
-                and now - self._last_batch_flush >= self.batch_interval
-                and now - (self._batch_since or now) >= self.batch_settle):
-            members = self._batch
-            self._batch = []
-            self._batch_since = None
-            self._last_batch_flush = now
-            u = self._new(Priority.LOW, "say", immediate=True, label="announcement")
-            self._fill(u, " ".join(c.text for m in members for c in m.chunks))
-            for m in members:
-                m.alias = u
-            self._pending.append(u)
-
     def _next_pending(self, now: float, min_priority: Priority = Priority.LOW) -> Optional[Utterance]:
         candidates = [u for u in self._pending if u.priority >= min_priority and self._startable(u, now)]
         if not candidates:
@@ -1372,7 +1334,6 @@ class SpeechScheduler:
     async def _step(self) -> bool:
         now = self._clock()
         self._apply_held_acks(now)
-        self._release_gated(now)
         self._pending = [u for u in self._pending if not u.cancelled]
 
         # URGENT preempts a lower-priority speaker at a chunk boundary.

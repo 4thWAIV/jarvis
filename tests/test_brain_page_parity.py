@@ -645,8 +645,8 @@ class _Mouth:
         self.calls.append(("skip", utt))
         return self._reading
 
-    async def barge_in(self, keep_unread=True, reason=""):
-        self.calls.append(("stop", keep_unread))
+    async def barge_in(self, reason=""):
+        self.calls.append(("stop", reason))
 
 
 def test_skip_reading_is_the_page_s_skip_on_the_reading_sounding_now(wired, monkeypatch):
@@ -664,7 +664,7 @@ def test_stop_speaking_is_the_page_s_stop_and_touches_nothing_when_silent(wired,
     monkeypatch.setattr(wired.server, "speech", mouth)
     got = _call(wired, "stop_speaking")
     assert got["ok"] and "nothing was undone" in got["text"]
-    assert mouth.calls == [("stop", False)], "be quiet, not hold that thought"
+    assert mouth.calls == [("stop", "hush (the brain)")]
     quiet = _Mouth(speaking=False)
     monkeypatch.setattr(wired.server, "speech", quiet)
     assert "Nothing was being said" in _call(wired, "stop_speaking")["text"]

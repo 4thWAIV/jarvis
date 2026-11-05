@@ -8491,7 +8491,7 @@ async def _stop_speaking(by: str) -> bool:
         return False
     was = speech.is_speaking
     log.info("hush: stopped by %s", by)
-    await speech.barge_in(keep_unread=False, reason=f"hush ({by})")
+    await speech.barge_in(reason=f"hush ({by})")
     return was
 
 
@@ -12125,8 +12125,8 @@ async def voice_handler(ws: WebSocket):
                 # like "stop" would cut him off constantly. A keystroke cannot
                 # be misheard.
                 #
-                # keep_unread=False: this is "be quiet", not "hold that
-                # thought" — nothing is saved to say later.
+                # This is "be quiet", not "hold that thought": nothing is
+                # saved to say later.
                 await _stop_speaking("the page")
                 continue
             if kind == "interim":

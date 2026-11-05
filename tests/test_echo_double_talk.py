@@ -154,7 +154,7 @@ async def test_an_older_page_that_never_reports_starts_keeps_every_sent_chunk_as
 @pytest.mark.asyncio
 async def test_a_new_page_has_to_report_starts_for_itself(h):
     await _sounding(h, "The build is green. Deploy staging tonight.")
-    await h.sched.barge_in(keep_unread=False)      # the tab closes mid-sentence
+    await h.sched.barge_in()      # the tab closes mid-sentence
     h.sched.transport_gone()
     await h.sched.say("Release notes are ready. Publish them later.")
     await asyncio.sleep(0.1)
@@ -173,7 +173,7 @@ async def test_words_of_a_skipped_reading_that_never_sounded_are_the_user_s(h):
 @pytest.mark.asyncio
 async def test_after_stop_speaking_the_tail_in_the_room_is_still_echo_for_a_moment(h):
     await _sounding(h, "The staging deploy finished in four minutes.")
-    await h.sched.barge_in(keep_unread=False, reason="hush (the page)")
+    await h.sched.barge_in(reason="hush (the page)")
     assert h.sched.classify("staging deploy finished") == "echo"
     await asyncio.sleep(0.6)                     # past the harness's echo_window
     assert h.sched.classify("staging deploy finished") == "speech"
