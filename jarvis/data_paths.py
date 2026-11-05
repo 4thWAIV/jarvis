@@ -277,8 +277,9 @@ def _recorded_seed_hash(seed: Path) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def _write_atomically(path: Path, text: str) -> bool:
-    """Replace `path` in one step, or leave it exactly as it was.
+def _write_atomically(path: Path, text: str | bytes) -> bool:
+    """Replace `path` in one step, or leave it exactly as it was. Bytes are
+    written exactly as given, which a file known by its hash needs.
 
     A half-written CLAUDE.md is a broken persona on the next launch, which is
     a worse outcome than a stale one.
@@ -286,7 +287,7 @@ def _write_atomically(path: Path, text: str) -> bool:
     try:
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-")
         try:
-            with os.fdopen(fd, "w") as fh:
+            with os.fdopen(fd, "wb" if isinstance(text, bytes) else "w") as fh:
                 fh.write(text)
             os.replace(tmp, path)
         except BaseException:
@@ -346,12 +347,17 @@ def _sync_template(template: Path, target: Path, seed: Path,
     home.mkdir(parents=True, exist_ok=True)
     key = str(target)
 
+    # Bytes, never text: the file is known by the hash of its bytes, so what
+    # is hashed must be what is written. Read as text on Windows, the
+    # template was decoded as cp1252 and written back with CRLF line ends,
+    # so the second start took the persona JARVIS had just written for an
+    # edit of the user's and never updated it again (measured, Windows 11).
     try:
-        shipped = template.read_text()
+        shipped = template.read_bytes()
     except OSError as e:                                # pragma: no cover
         log.warning(f"data_paths: cannot read the {what} template ({e})")
         return "kept"
-    shipped_hash = _sha256(shipped.encode("utf-8"))
+    shipped_hash = _sha256(shipped)
 
     try:
         live = target.read_bytes()

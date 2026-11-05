@@ -1,0 +1,6 @@
+# Bundled templates JARVIS recognises by the sha256 of their bytes
+# (data_paths.KNOWN_TEMPLATE_HASHES, KNOWN_CONNECTIONS_HASHES): checked out
+# and packaged with LF everywhere, or a Windows checkout's CRLF copy is a
+# template no release ever shipped.
+jarvis/jarvis_home/CLAUDE.md text eol=lf
+jarvis/jarvis_home/connections.json text eol=lf
