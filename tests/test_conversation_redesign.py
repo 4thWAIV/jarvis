@@ -450,3 +450,72 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         assert got['fieldScroll'], 'only the long draft scrolls, inside the editor'
         assert got['history']['height'] >= 70, got
         await browser.close()
+
+
+# ── following the word being read through a reply taller than the box ─────
+
+NOW = '.chat-message.jarvis .spoken-word.now'
+WORD_IN_VIEW = """() => { const w = document.querySelector('.chat-message.jarvis .spoken-word.now');
+  if (!w) return null; const b = document.querySelector('.conversation-history').getBoundingClientRect();
+  const r = w.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; }"""
+
+
+async def _read_a_long_reply(page, voice, sentences=40, seconds=.3):
+    """A reply far taller than the box, read aloud a sentence at a time."""
+    said = [f'Sentence {n} of the long reply goes on with several more words to fill the line.'
+            for n in range(1, sentences + 1)]
+    voice.send({'type': 'reply', 'utt': 70, 'at': time.time(), 'text': ' '.join(said), 'done': True},
+               *({'type': 'audio', 'utt': 70, 'idx': i, 'text': s, 'kind': 'reply', 'data': _silence_wav(seconds)}
+                 for i, s in enumerate(said)))
+    await page.wait_for_selector(NOW, timeout=10000)
+    tall = await page.evaluate("""() => document.querySelector('.chat-message.jarvis:last-of-type').offsetHeight
+      > 1.5 * document.querySelector('.conversation-history').clientHeight""")
+    assert tall, 'the reply must be taller than the box'
+
+
+@pytest.mark.asyncio
+async def test_a_long_reply_being_read_keeps_the_word_in_view_and_settles_at_the_bottom_once_read(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        await _read_a_long_reply(page, voice)
+        tops, gaps = [], []
+        while await page.locator(NOW).count():
+            seen = await page.evaluate(WORD_IN_VIEW)
+            if seen is None:
+                break
+            assert seen, 'the word being read is in view'
+            tops.append(await page.evaluate(TOP))
+            gaps.append(await page.evaluate(GAP))
+            await asyncio.sleep(.25)
+        assert len(tops) > 10
+        assert max(gaps[:5]) > 200, 'not carried to the bottom past the word'
+        assert tops[-1] > tops[0] + 100, 'the list moves along with the reading'
+        assert all(b >= a - 1 for a, b in zip(tops[1:], tops[2:])), 'never back up behind the reading'
+        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
+        assert await page.locator('.conversation-jump').count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_scrolling_up_while_a_reply_is_read_stops_following_and_the_reading_never_moves_the_list(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        await _read_a_long_reply(page, voice, sentences=30)
+        await _wheel(page, -400)
+        await page.wait_for_selector('.conversation-jump')
+        left = await page.evaluate(TOP)
+        word = await page.evaluate(f"[...document.querySelectorAll('.spoken-word')].indexOf(document.querySelector('{NOW}'))")
+        await page.wait_for_function(f"[...document.querySelectorAll('.spoken-word')].indexOf("
+                                     f"document.querySelector('{NOW}')) > {word} + 40", timeout=10000)
+        assert abs(await page.evaluate(TOP) - left) < 2, 'the reading does not move the list'
+        await page.wait_for_selector(NOW, state='detached', timeout=15000)
+        await asyncio.sleep(.3)
+        assert abs(await page.evaluate(TOP) - left) < 2, 'nor does its end'
+        assert await page.locator('.conversation-jump').count() == 1
+        await browser.close()

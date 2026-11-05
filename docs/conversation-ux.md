@@ -27,9 +27,16 @@ approval flow and both appearance themes remain available in their existing plac
   it was not sent. Sending uses the existing WebSocket submission contract; this
   change does not add a durable server acknowledgment or an offline outbox.
 - The timeline follows the newest words, as a reply grows and as the bottom box
-  changes. Only the user's own scrolling up (wheel, touch, keys, the scrollbar)
-  pauses following; a scroll the page makes, or the content or the box changing
-  size, never does. Scrolling back to the bottom, or **Jump to latest**, follows
+  changes. While a reply is read aloud, following keeps the word being read in
+  view instead: a reply that fits stays at the bottom as before, but one taller
+  than the timeline is scrolled along with the reading, the word kept above the
+  lower quarter of the box, never carried past by words arriving or the box
+  changing size, and the timeline moves up only as far as the word itself when
+  the word is above it. When the reading ends, is skipped or stopped, the
+  timeline settles at the bottom. Only the user's own scrolling up (wheel, touch,
+  keys, the scrollbar) pauses following, and then the reading never moves the
+  timeline; a scroll the page makes, or the content or the box changing size,
+  never does. Scrolling back to the bottom, or **Jump to latest**, follows
   again. One hook in `MessageList.tsx` owns that decision.
 - The bottom box (captures, playback bar, the turn being heard, the composer) is
   as tall as what it holds and never scrolls as a whole; the timeline gives up

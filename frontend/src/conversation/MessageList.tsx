@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { turnKey, type Turn } from "../captions";
+import { conversation, turnKey, type Turn } from "../captions";
 import { type ConversationItem, type ConversationPage } from "../conversation";
 import { useT } from "../locale";
 import { bind, bindingProps } from "../uiNavigation";
@@ -56,12 +56,40 @@ const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const HIS_MS = 400;
 // Back this near the bottom by his own scrolling, the list follows again.
 const AT_BOTTOM = 4;
+// While a reply is read aloud, the word being said is kept between this
+// far from the box's top (px) and this far down it (of its height).
+const READ_TOP = 8;
+const READ_LINE = 0.75;
+
+/** Where the list follows to: the bottom, or, while a reply is read aloud
+ *  (a word marked `.spoken-word.now` by SpokenWords.tsx), wherever keeps
+ *  that word in view. Still at the bottom (`pinned`) it stays there while
+ *  the word would be in view there, so a reply that fits is followed as
+ *  before. Otherwise it moves only as the word needs: down once the word
+ *  passes the reading line, up only as far as the word when it is above
+ *  the box, and not at all while it is in view, so words arriving or the
+ *  box changing size never carry the list past it. */
+function followTo(box: HTMLElement, content: HTMLElement, pinned: boolean): number {
+  const end = box.scrollHeight - box.clientHeight;
+  const word = content.querySelector(".spoken-word.now");
+  if (!word) return end;
+  const at = word.getBoundingClientRect();
+  const top = at.top - box.getBoundingClientRect().top;
+  const bottom = top + at.height;
+  if (pinned && top - (end - box.scrollTop) >= READ_TOP) return end;
+  if (top < READ_TOP) return box.scrollTop + top - READ_TOP;
+  const line = box.clientHeight * READ_LINE;
+  return bottom > line ? box.scrollTop + bottom - line : box.scrollTop;
+}
 
 /**
  * The one owner of where the history is scrolled. It follows the newest
  * words, whatever makes the list grow or the box shrink (a reply being
  * written, the bottom box growing, a capture opening); nothing else scrolls
- * it. Only he stops it: a wheel, touch, key or scrollbar drag that takes the
+ * it. While a reply is read aloud, following means keeping the word being
+ * read in view (`followTo`), so a reply taller than the box is not passed
+ * by; once the reading ends, is skipped or stopped, it settles at the
+ * bottom. Only he stops it: a wheel, touch, key or scrollbar drag that takes the
  * list up from the bottom. A scroll the page made, or one the browser made
  * when the content or the box changed size, never counts, since a scroll
  * event says nothing of who moved it. A record brought into view on
@@ -80,10 +108,14 @@ function useFollow(changed: unknown[]) {
     follow.current = on;
     setFollowing(on);
   };
+  // Whether the list was left at the bottom when it last followed.
+  const pinned = useRef(true);
   // Not while he holds the scrollbar or the list: it is his to move.
   const stick = () => {
     const box = scroll.current;
-    if (box && follow.current && !his.current.holding) box.scrollTop = box.scrollHeight;
+    if (!box || !content.current || !follow.current || his.current.holding) return;
+    box.scrollTop = followTo(box, content.current, pinned.current);
+    pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < AT_BOTTOM;
   };
   useLayoutEffect(stick, changed);         // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -151,7 +183,9 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   const [earlierError, setEarlierError] = useState(false);
   const items = merge(merge(older, retained), live.value?.items ?? []);
   const rows = historyRows(turns, items);
-  const { following, scroll, content, jump, pause } = useFollow([items.length, turns]);
+  // The word being read moves with it: the list keeps it in view.
+  const speaking = useSyncExternalStore(conversation.subscribe, () => conversation.get().speaking);
+  const { following, scroll, content, jump, pause } = useFollow([items.length, turns, speaking]);
   useEffect(() => {
     if (live.value) setRetained(old => merge(old, live.value!.items));
   }, [live.value]);
