@@ -168,6 +168,60 @@ inbox. Claude Code 2.1.302's own sender finds a target's key file by the hash of
 canonical pipe path and checks the owner is alive with a matching `procStart`, so it
 is Claude Code's same-user peer channel; no code reads it yet.
 
+## Third session: boundaries A and B approved, implemented and launched
+
+Matt approved both boundaries and answered:
+- **Q1:** foreign owners are refused, Administrators included.
+- **Q2:** unsafe writable data folders are refused.
+- **Q3:** traversal uses `NtCreateFile` relative opens.
+- **Q4:** placeholders are refused.
+
+His review then added four rules:
+- hard links are refused for adopted private files and reader opens;
+- the held root must match the registered `fs_identity`;
+- draft sources hold the original path from its drive letter through the read;
+- macOS stays unchanged.
+
+The commits are `0a068a9` (A) and `2a17142` (B); each message carries its evidence. Elevated
+built-in Administrator (RID 500): even plain writes are owned by the user SID here.
+
+| Check | Result |
+|---|---|
+| A, native | `test_private_files.py` 25 passed. Owner is the user and the DACL is `D:P` with exactly the user and SYSTEM. Refused: junction, symlink, Administrators-owned, hard-linked, offline, unsafe folder, junction above, UNC. While a replace holds the folder, NTFS refuses to rename the folder (WinError 32) and its grandparent (WinError 5). |
+| A vs previous HEAD | 35 token-using files, one at a time with a 300 s cap: 873 passed against 694, 195 fixed, none new. |
+| B, native | `test_folder_readers_windows.py` 19 passed, none skipped. `test_folders.py` 41 passed, 1 skipped; its 16 reader tests had been skipped on Windows. |
+| B vs A | 13 reader-using files: none new; 3 fixed. |
+| Loopback launches | Two on the same isolated data, Opus, no Fish key. The token was created, then adopted with the same digest, owner-only. Typed replies were exact. Ctrl-Break stop left no children. |
+| Matt's Edge check | `127.0.0.1:8340`: both persisted replies were visible, and a new typed message got the full reply `edge-windows-4817`. The server log shows the same. |
+| Worker, checkout | From a long-form path, one typed turn ran the brain's `spawn_run` in a registered disposable folder. Result: `succeeded`, `claude-opus-5-5` (requested `opus`), `result_text` exactly the nonce, no tools, folder hashes unchanged. |
+| Installed wheel | `2a17142` exported, frontend built (tsc clean), wheel built (157 files) and installed in its own venv outside any source tree; `CHECKOUT` False, 144 routes. Opus typed reply exact in 1.8 s. Ctrl-Break: shutdown complete, port free, no `claude.exe` of its own, `server-address.json` removed, nothing created in `%LOCALAPPDATA%\JARVIS`. |
+| Worker, installed | One typed turn ran `spawn_run` in a new registered disposable folder: `succeeded`, `claude-opus-5-5`, exit 0. The worker used two Bash calls (list and read `input.txt`, write `receipt.txt`). `receipt.txt` and the result were exactly the receipt nonce plus the input. The main worktree's git status was unchanged. |
+| Packages | Draft_files' held walk read Tim's repacked handoff and `mic-check-page` in full. Unpacking fails at `bundle_archive.extract` (`O_NOFOLLOW`), leaving nothing behind. Held for Matt: `extraction-proposal-2026-11-05.md`. |
+
+**Did not finish (300 s cap; not rerun):**
+- `test_draft_files` and `test_transcription_ws` at both HEAD and A.
+- `test_draft_files` on B as well. Its cancellation test waits forever once `messaging_files.private_dir` raises on `os.getuid`, which is a held later caller. With that one test deselected: 2 passed, 22 failed. Of the 22, 20 reach `os.getuid`, one is `mkfifo`, and one expects macOS's hard-link pairing, which Windows now refuses.
+
+**Remaining native failures in the compared files:**
+- the held later private-file callers (`messaging_files`, `access_keys`, bundle extraction);
+- POSIX mode assertions (`0o600` and `0o644` from `stat`);
+- the termination interface;
+- project lookup on Windows (`test_untrusted_turn`, newly reached).
+
+**Differences from the proposals doc:**
+- A root identity mismatch is `identity_mismatch` (409), not `missing`.
+- POSIX `replace` keeps the old write-then-chmod rather than temp-and-rename, because macOS stays exactly as it was.
+- `ensure_dir` has no caller yet.
+
+**Open:**
+- ordinary-user and second-user runs;
+- a Users-owned file (setting that owner needs SeRestorePrivilege);
+- the rename fallback on FAT and shares;
+- the identity check on exFAT and SMB;
+- a file-symlink swap mid-walk;
+- caching the token rather than adopting it on every request;
+- the macOS words "macOS does not let JARVIS read" elsewhere in the page.
+
 ## Not yet probed
 
 Codex discovery and delivery (Codex not installed); an exact-target prompt
