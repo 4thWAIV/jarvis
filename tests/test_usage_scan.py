@@ -662,7 +662,8 @@ def _unreadable(path: Path) -> None:
     os.chmod(path, 0o000)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+@pytest.mark.skipif(os.geteuid() == 0 if hasattr(os, "geteuid") else True,
+                    reason="root can read anything; chmod cannot deny reads on Windows")
 def test_a_transcript_that_could_not_be_read_is_not_measured(tmp_path):
     a, _ = roots(tmp_path)
     p = write_transcript(a, cwd="/p/one", session_id="s1",
@@ -679,7 +680,8 @@ def test_a_transcript_that_could_not_be_read_is_not_measured(tmp_path):
     assert report.files == 0
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+@pytest.mark.skipif(os.geteuid() == 0 if hasattr(os, "geteuid") else True,
+                    reason="root can read anything; chmod cannot deny reads on Windows")
 def test_one_unreadable_file_does_not_unmeasure_the_readable_ones(tmp_path):
     a, _ = roots(tmp_path)
     good = write_transcript(a, cwd="/p/one", session_id="good",
@@ -734,6 +736,15 @@ def test_the_year_zero_timestamp_is_survivable_at_all(tmp_path):
     report = us.report(roots=[a], now=NOW)
 
     assert one(report, "s1").tokens.output == 17
+
+
+def test_every_moment_epoch_admits_can_be_named_as_a_day_here():
+    """The bounds are this platform's: Windows' C runtime refuses negative
+    stamps and anything past the year 3000, so the year-2 and year-9997
+    bounds raised at import there."""
+    assert us.day_key(us._DAY_MIN) and us.day_key(us._DAY_MAX)
+    assert us._epoch(ABSURD_STAMP) is None
+    assert us._epoch("2026-11-05T10:00:00Z") is not None
 
 
 def test_a_bad_line_does_not_eat_the_turns_after_it(tmp_path):

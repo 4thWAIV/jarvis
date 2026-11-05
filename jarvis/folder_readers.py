@@ -35,8 +35,20 @@ from jarvis.folder_contract import (FolderError, LINE_MAX_CHARS, LIST_SECONDS, P
                                     SCAN_MAX_ENTRIES, SNIFF_BYTES, TEXT_MAX_BYTES,
                                     TEXT_MAX_LINES, TRANSCRIPT_WINDOW_BYTES)
 
-_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+# The walk above needs descriptor-relative opens that refuse a link
+# (O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, dir_fd), scandir of a descriptor and
+# pread. Windows' Python has none of them, and its path-based open follows
+# junctions, so there every read is refused as `unsupported` until a
+# backend with the same guarantees exists; this module never falls back to
+# a weaker open. Measured on Windows 11 with Python 3.12: the flags alone
+# raised AttributeError here at import, which took jarvis.server with them.
+SUPPORTED = (all(hasattr(os, n) for n in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK", "pread"))
+             and os.open in os.supports_dir_fd and os.stat in os.supports_dir_fd
+             and os.scandir in os.supports_fd)
+
+if SUPPORTED:
+    _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 def _refusal(e: OSError, name: Optional[str] = None, dir_fd: Optional[int] = None) -> FolderError:
@@ -62,7 +74,11 @@ def _refusal(e: OSError, name: Optional[str] = None, dir_fd: Optional[int] = Non
 @contextmanager
 def opened_dir(root: Path, relative: Path) -> Iterator[int]:
     """A descriptor for `relative` inside `root`, reached component by
-    component without following any link."""
+    component without following any link. Every read and every open of a
+    file comes through here, so this is where an unsupported platform is
+    refused."""
+    if not SUPPORTED:
+        raise FolderError("unsupported")
     parts = [p for p in relative.parts if p not in ("", ".")]
     if any(p == ".." or "/" in p for p in parts):
         raise FolderError("forbidden")

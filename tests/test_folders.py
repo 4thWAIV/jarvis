@@ -23,6 +23,13 @@ from jarvis.folder_store import FolderStore
 NODE = "node-a"
 
 
+# The readers' own behaviour needs their descriptor walk. Where Python lacks it
+# (Windows) every read is refused instead, which
+# test_a_platform_without_the_safe_walk_refuses_every_read checks.
+needs_the_safe_walk = pytest.mark.skipif(
+    not folder_readers.SUPPORTED, reason="folder reads are refused on this platform")
+
+
 @pytest.fixture
 def claude_root(tmp_path, monkeypatch):
     """A synthetic Claude Code config root, the only one JARVIS reads."""
@@ -91,6 +98,7 @@ def test_a_newer_schema_is_left_alone(store):
         FolderStore()
 
 
+@needs_the_safe_walk
 def test_a_folder_and_its_scope_survive_a_restart(svc, store, tmp_path):
     folder = _tree(tmp_path / "plans", {"a.md": "one"})
     made = _register(svc, folder)["folder"]
@@ -158,6 +166,7 @@ def test_a_stale_edit_is_refused_and_a_current_one_moves_the_revision(svc, tmp_p
 
 # ── the reader policy ────────────────────────────────────────────────────
 
+@needs_the_safe_walk
 def test_a_named_hidden_subtree_opens_without_its_parent(svc, tmp_path):
     repo = _tree(tmp_path / "repo", {
         "README.md": "readme", ".env": "SECRET=1", "src/app.py": "print()",
@@ -194,6 +203,7 @@ def test_credential_locations_and_jarvis_data_cannot_be_registered(svc, tmp_path
     assert _err(svc.register, request_key="d", path=str(data_paths.brain_home())) == "forbidden"
 
 
+@needs_the_safe_walk
 def test_the_brain_s_journal_is_read_as_notes_only(svc):
     journal = data_paths.brain_home() / "journal"
     _tree(journal, {"2026-10-30.md": "today", "stray.json": "{}"})
@@ -203,6 +213,7 @@ def test_the_brain_s_journal_is_read_as_notes_only(svc):
     assert _err(svc.preview, f["id"], path="stray.json") == "forbidden"
 
 
+@needs_the_safe_walk
 def test_a_provider_home_is_read_only_through_its_history_reader(svc, claude_root, tmp_path):
     _tree(claude_root, {".credentials.json": "{}", "settings.json": "{}"})
     hist = claude_root / "projects" / "-tmp-example"
@@ -244,6 +255,7 @@ def test_traversal_and_absolute_paths_are_refused(svc, boxed):
         assert _err(svc.preview, f["id"], path=path) == "forbidden", path
 
 
+@needs_the_safe_walk
 def test_a_symlink_is_listed_and_never_followed(svc, boxed):
     f, _folder, _outside = boxed
     kinds = {e["name"]: e["kind"] for e in svc.entries(f["id"])["entries"]}
@@ -253,6 +265,7 @@ def test_a_symlink_is_listed_and_never_followed(svc, boxed):
     assert _err(svc.preview, f["id"], path="linkdir/secret.txt") == "forbidden"
 
 
+@needs_the_safe_walk
 def test_a_file_swapped_for_a_symlink_mid_read_is_not_followed(svc, boxed, monkeypatch):
     f, folder, outside = boxed
     real = folder_policy.entry_visible
@@ -269,6 +282,7 @@ def test_a_file_swapped_for_a_symlink_mid_read_is_not_followed(svc, boxed, monke
     assert _err(svc.preview, f["id"], path="ok.txt") == "forbidden"
 
 
+@needs_the_safe_walk
 def test_a_directory_swapped_for_a_symlink_mid_walk_is_not_followed(boxed, tmp_path):
     _f, folder, outside = boxed
     (folder / "sub").rename(tmp_path / "moved-sub")
@@ -280,6 +294,7 @@ def test_a_directory_swapped_for_a_symlink_mid_walk_is_not_followed(boxed, tmp_p
 
 # ── large and changing folders ───────────────────────────────────────────
 
+@needs_the_safe_walk
 def test_a_big_directory_pages_by_key_without_repeats(svc, tmp_path):
     folder = tmp_path / "many"
     folder.mkdir()
@@ -300,6 +315,7 @@ def test_a_big_directory_pages_by_key_without_repeats(svc, tmp_path):
     assert seen[0] == "zdir", "folders first"
 
 
+@needs_the_safe_walk
 def test_a_scan_past_its_budget_is_marked_partial(tmp_path):
     folder = tmp_path / "many"
     folder.mkdir()
@@ -309,6 +325,37 @@ def test_a_scan_past_its_budget_is_marked_partial(tmp_path):
     assert listing.partial and listing.scanned == 10 and len(listing.entries) == 10
 
 
+def test_a_platform_without_the_safe_walk_refuses_every_read(tmp_path, monkeypatch):
+    """Windows' Python has no O_NOFOLLOW, dir_fd or pread, and its open
+    follows junctions: there every read is refused, never done another way."""
+    folder = tmp_path / "plain"
+    (folder / "sub").mkdir(parents=True)
+    (folder / "sub" / "a.txt").write_text("hello")
+    monkeypatch.setattr(folder_readers, "SUPPORTED", False)
+    reads = [
+        lambda: folder_readers.list_dir(folder, Path(), lambda r, d: True),
+        lambda: folder_readers.kind_of(folder, Path("sub/a.txt")),
+        lambda: folder_readers.open_file(folder, Path("sub/a.txt")),
+        lambda: folder_readers.read_text(folder, Path("sub/a.txt")),
+        lambda: folder_readers.read_transcript(folder, Path("sub/a.txt"), lambda m: None),
+    ]
+    for read in reads:
+        with pytest.raises(FolderError) as refused:
+            read()
+        assert refused.value.code == "unsupported"
+    with pytest.raises(FolderError):
+        with folder_readers.opened_dir(folder, Path("sub")):
+            pass
+
+
+def test_the_safe_walk_is_supported_wherever_its_calls_exist():
+    """The switch is the platform's calls, not its name: POSIX keeps the
+    walk, and Windows' Python 3.12 (no O_NOFOLLOW) is refused."""
+    has_calls = hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd
+    assert folder_readers.SUPPORTED == has_calls
+
+
+@needs_the_safe_walk
 def test_a_long_file_is_read_in_bounded_windows(svc, tmp_path):
     folder = _tree(tmp_path / "logs", {})
     (folder / "big.log").write_text("".join(f"line {i}\n" for i in range(1, 501)))
@@ -320,6 +367,7 @@ def test_a_long_file_is_read_in_bounded_windows(svc, tmp_path):
     assert second["first_line"] == 201 and second["lines"][0] == "line 201"
 
 
+@needs_the_safe_walk
 def test_a_file_over_four_mebibytes_is_still_read_a_window_at_a_time(svc, tmp_path):
     folder = _tree(tmp_path / "huge", {})
     with open(folder / "huge.txt", "w") as out:
@@ -331,6 +379,7 @@ def test_a_file_over_four_mebibytes_is_still_read_a_window_at_a_time(svc, tmp_pa
     assert len(window["lines"]) == TEXT_MAX_LINES and window["next_cursor"]
 
 
+@needs_the_safe_walk
 def test_binary_and_html_files(svc, tmp_path):
     folder = _tree(tmp_path / "media", {"page.html": "<script>alert(1)</script>"})
     (folder / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
@@ -341,6 +390,7 @@ def test_binary_and_html_files(svc, tmp_path):
     assert page["kind"] == "text" and page["lines"] == ["<script>alert(1)</script>"]
 
 
+@needs_the_safe_walk
 def test_a_cursor_from_before_a_reconnect_is_refused(svc, tmp_path):
     a = tmp_path / "a"
     a.mkdir()
@@ -398,6 +448,7 @@ def test_another_node_s_folder_is_never_read_from_here(store, tmp_path, claude_r
         == "unavailable_node"
 
 
+@needs_the_safe_walk
 def test_unregister_leaves_files_and_needs_an_explicit_reactivation(svc, tmp_path):
     folder = _tree(tmp_path / "keep", {"a.txt": "still here"})
     f = _register(svc, folder)["folder"]
@@ -632,6 +683,7 @@ def test_discovery_never_offers_the_brain_s_own_home(svc, store, claude_root):
 
 # ── transcripts through their reader ─────────────────────────────────────
 
+@needs_the_safe_walk
 def test_a_transcript_is_shown_as_what_was_said_with_its_session(svc, claude_root, tmp_path):
     hist = claude_root / "projects" / "said"
     sid = "0b7c6a8e-1111-4222-8333-944455556666"
@@ -650,6 +702,7 @@ def test_a_transcript_is_shown_as_what_was_said_with_its_session(svc, claude_roo
                                    "transcript": f"{sid}.jsonl"}]
 
 
+@needs_the_safe_walk
 def test_a_large_transcript_is_read_a_window_at_a_time(svc, claude_root, tmp_path):
     hist = claude_root / "projects" / "long"
     hist.mkdir(parents=True)
