@@ -18,18 +18,19 @@ async def start_listening(page, timeout: float = 10000) -> None:
     await page.click(LISTEN)
 
 
-async def route_settings(page, stop="keep", switch="stop", status=200):
+async def route_settings(page, stop="keep", switch="stop", status=200, sounds=True):
     """Answer the voice input settings with these (or fail with `status`),
     and accept a change, answering what was saved. Returns the list of
     changes the page posted."""
-    state = {"stop": stop, "switch": switch, "patience": 1.5, "saved": True, "scope": "local"}
+    state = {"stop": stop, "switch": switch, "patience": 1.5, "sounds": sounds, "saved": True,
+             "scope": "local"}
     posted: list[dict] = []
 
     async def handle(route):
         if route.request.method == "POST":
             change = json.loads(route.request.post_data or "{}")
             posted.append(change)
-            state.update({k: v for k, v in change.items() if k in ("stop", "switch", "patience")})
+            state.update({k: v for k, v in change.items() if k in ("stop", "switch", "patience", "sounds")})
         if status != 200:
             await route.fulfill(status=status, content_type="application/json",
                                 body=json.dumps({"code": "unreadable", "error": "no"}))

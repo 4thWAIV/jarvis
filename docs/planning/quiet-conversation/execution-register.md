@@ -11,7 +11,7 @@ The core workflow contains seven phases/tasks, not seven separately launched wor
 | Workstream | State | Owner | Record |
 |---|---|---|---|
 | Voice and audio core improvements | Accepted by Diagnostics; awaiting PR 62 repair base | Diagnostics | `wf-fc70d73b6799`; [execution handoff](diagnostics-execution.md), [step-by-step plan](delivery-plan.html) |
-| Voice capture cues: start, stop and turn-completion sounds, with an on/off setting | Backlog; not started; first in line (Tim, 2026-11-05) | Diagnostics | [completion-cues](backlog/completion-cues.md) |
+| Voice capture cues: start, stop and turn-completion sounds, with an on/off setting | First part built: start and stop sounds and the setting; turn-completion cues remain | Diagnostics | [completion-cues](backlog/completion-cues.md) |
 | Camera presence and hand gestures | Backlog; not started | Diagnostics planning | [camera-and-gestures](backlog/camera-and-gestures.md) |
 | Explicitly armed wake-word mode | Backlog; not started | Diagnostics planning | [wake-word](backlog/wake-word.md) |
 | Full interaction-mode experience | Backlog; not started | Diagnostics planning | [interaction-modes](backlog/interaction-modes.md) |

@@ -893,6 +893,16 @@ under a new epoch when the socket is back. The brain may only make input
 quieter: its acting `quiet_microphone` (muted or off) sends every page a
 `quiet` frame that it applies through `mic.chooseQuiet`, as his buttons do;
 there is no tool to unmute, turn on or start listening.
+A quiet tone marks listening really starting (the recogniser ready for a
+streaming microphone: Start, Unmute, Mic on, a resume or a retry that got
+through) and a falling one its stopping for any reason (his Mic off or
+Mute, leaving under Stop, `taken`, the voice socket or recogniser lost, a
+capture dropped): `voiceInput.ts`'s `onCapture`, once per change, played by
+the output's `AudioPlayer.cue` (`voice.ts`), never through the microphone's
+audio context, and dropped, never delayed, while audio is locked. His third
+setting, capture sounds (`sounds`, default on, in the same
+`voice_control.py` service, route and tools), turns them off; the page
+shows the same either way. The turn-completion cues are not built yet.
 
 ## Turn-taking
 JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
@@ -1389,7 +1399,8 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
-`test_voice_page_playback.py`, `test_voice_page_updates.py`) are marked `page` and deselected too: they build
+`test_voice_page_playback.py`, `test_voice_page_updates.py`,
+`test_voice_page_capture_cues.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

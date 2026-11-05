@@ -8,10 +8,40 @@
  * page can see: played (it finished), or failed (its audio would not
  * decode). A failed chunk is never reported as played; it is reported as
  * failed, in its turn, so the server's ordering still moves on.
+ *
+ * The same output also plays the capture cues: a quiet tone when listening
+ * starts and a different one when it stops (`cue`). They are not speech:
+ * no chunk, no caption and no playback report, and they never touch the
+ * microphone. A cue plays now or not at all: while the browser has not let
+ * audio run it is dropped, never kept to sound once audio is unlocked.
  */
 
 export { createVoiceInput } from "./voiceInput";
 export type { InputState, InputStatus, VoiceInput, VoiceInputHooks } from "./voiceInput";
+
+// ---------------------------------------------------------------------------
+// Capture cues
+// ---------------------------------------------------------------------------
+
+/** Listening started, or stopped. */
+export type CaptureCue = "start" | "stop";
+
+/** Each cue's notes, in hertz, played one after the other: told apart by
+ *  pattern (rising, falling), never by loudness. Placeholders until the
+ *  sounds are chosen. */
+export const CUE_NOTES: Readonly<Record<CaptureCue, readonly number[]>> = {
+  start: [660, 880],
+  stop: [880, 660],
+};
+/** Each note's length, and the gap between notes, in seconds: a whole cue
+ *  stays under 150 ms. */
+const CUE_NOTE_SEC = 0.055;
+const CUE_GAP_SEC = 0.012;
+/** Very quiet: the peak gain of each note. */
+const CUE_GAIN = 0.05;
+/** The rounded envelope's attack and release time constant, in seconds:
+ *  no click at either end. */
+const CUE_EDGE_SEC = 0.008;
 
 // ---------------------------------------------------------------------------
 // Audio Player — ordered chunks with acknowledgements
@@ -30,6 +60,9 @@ export interface AudioPlayer {
   /** A chunk has just started playing, and how many seconds it lasts. */
   onStarted(cb: (utt: number, idx: number, seconds: number) => void): void;
   onFinished(cb: () => void): void;
+  /** Play a capture cue now, beside any speech: dropped, not delayed, when
+   *  the browser has not let audio run. */
+  cue(kind: CaptureCue): void;
 }
 
 interface QueuedChunk {
@@ -186,6 +219,29 @@ export function createAudioPlayer(): AudioPlayer {
 
     onNeedsGesture(cb) {
       needsGestureCallback = cb;
+    },
+
+    cue(kind) {
+      // Now or never: a source scheduled on a suspended context would
+      // sound later, once audio is unlocked.
+      if (audioCtx.state !== "running") return;
+      // Straight to the output, not through the analyser: the orb draws
+      // his speech, not the cue.
+      let at = audioCtx.currentTime;
+      for (const hz of CUE_NOTES[kind]) {
+        const osc = audioCtx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = hz;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0, at);
+        gain.gain.setTargetAtTime(CUE_GAIN, at, CUE_EDGE_SEC / 3);
+        gain.gain.setTargetAtTime(0, at + CUE_NOTE_SEC - CUE_EDGE_SEC, CUE_EDGE_SEC / 3);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+        osc.start(at);
+        osc.stop(at + CUE_NOTE_SEC + CUE_EDGE_SEC);
+        at += CUE_NOTE_SEC + CUE_GAP_SEC;
+      }
     },
   };
 }

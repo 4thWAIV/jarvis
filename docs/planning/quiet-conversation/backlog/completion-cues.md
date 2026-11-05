@@ -1,6 +1,6 @@
 # Voice capture cues
 
-Status: Backlog — not started. Priority: first in line among the voice backlog items (Tim, 2026-11-05).
+Status: First part built (branch `feature/voice-capture-cues`, 2026-11-05): the listening-started and listening-stopped sounds and the one on/off setting. The turn-completion cues remain. Priority: first in line among the voice backlog items (Tim, 2026-11-05).
 Owner: Diagnostics.
 Tracking slug: `completion-cues`.
 Parent: [Voice and audio execution register](../execution-register.md).

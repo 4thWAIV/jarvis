@@ -31,6 +31,16 @@
  * id, on its start and on every word it gives; a retry runs only within
  * the grant and epoch it was scheduled in.
  *
+ * Capturing (`onCapture`) is the one fact the capture cues follow: true
+ * while the microphone is streaming to a recogniser that is ready for it,
+ * under the grant, neither muted nor off. It changes exactly when listening
+ * really starts (Start, Unmute, Mic on, a resume after the voice socket
+ * came back, a retry that got through) and when it really stops, for any
+ * reason: his Mic off or Mute, leaving the page under Stop listening,
+ * another page taking the recogniser, the voice socket or the recogniser
+ * going away, a capture dropped. A pause while JARVIS speaks (the
+ * mute-during-speech fallback) is not a change.
+ *
  * Audio captured while the recogniser is still loading is held (up to
  * `startupBufferSec`) and sent in order, paced by the time that has passed
  * (never by timer ticks, which a hidden tab runs once a second), once it is
@@ -189,6 +199,9 @@ export interface VoiceInputHooks {
    *  drops the turn it was gathering (refusing words from before `epoch`),
    *  and what it had becomes an unsent draft. */
   onMute?: (epoch: number) => void;
+  /** Capturing started (true) or stopped (false): called once per real
+   *  change, never twice in a row with the same value. */
+  onCapture?: (capturing: boolean) => void;
 }
 
 const FRAME_MS = 1000 * (protocol.frameBytes / 2) / protocol.sampleRate;
@@ -292,6 +305,11 @@ export function createVoiceInput(
   let status: InputStatus = { state: "disarmed", message: "", words: null };
   let framesCaptured = 0;    // since the last telemetry
   let framesSent = 0;
+  let capturing = false;     // what onCapture last said
+  // Paused while capturing (JARVIS speaking, the mute-during-speech
+  // fallback): still capturing until the session after it is ready, or
+  // until something else ends it.
+  let pausedCapturing = false;
 
   const muted = () => quietNow === "muted";
   const off = () => quietNow === "off";
@@ -308,6 +326,18 @@ export function createVoiceInput(
     if (state === status.state && message === status.message) return;
     status = { state, message, words };
     hooks.onStatus?.(status);
+  }
+
+  /** Say whether capturing changed: called wherever the grant, the quiet
+   *  preference, the microphone or the live session may have changed.
+   *  Saying nothing when nothing changed is what keeps each cue to one. */
+  function settle() {
+    const live = session !== null && (session.ready || pausedCapturing);
+    const now = armed && !quiet() && mic !== null && (live || (paused && pausedCapturing));
+    if (now === capturing) return;
+    capturing = now;
+    if (!now) pausedCapturing = false;
+    hooks.onCapture?.(now);
   }
 
   /** The state with nothing being heard: off, muted (with the microphone
@@ -454,6 +484,7 @@ export function createVoiceInput(
     mic.node.port.onmessage = null;
     mic.ctx.close().catch(() => {});
     mic = null;
+    settle();
   }
 
   // ── the recognition session ───────────────────────────────────────────
@@ -511,7 +542,8 @@ export function createVoiceInput(
         s.ready = true;
         // Admitted: this page owns the recogniser now, and a retry later in
         // this grant does not take it from anyone.
-        if (session === s) claim = false;
+        if (session === s) { claim = false; pausedCapturing = false; }
+        settle();
         retryDelay = 1000;
         mark("speech recognition ready");
         // An interruption stays on screen until something is heard again.
@@ -556,6 +588,8 @@ export function createVoiceInput(
       }
       if (session !== s) return;
       session = null;
+      pausedCapturing = false;
+      settle();
       if (!armed || paused || quiet()) return;
       // The server went away mid-session (a restart): what was in flight is lost.
       epoch++;
@@ -590,7 +624,7 @@ export function createVoiceInput(
     mark(`speech recognition error: ${code}${message ? ` (${message})` : ""}`);
     s.closed = true;
     const live = session === s;
-    if (live) session = null;
+    if (live) { session = null; pausedCapturing = false; settle(); }
     if (closing === s) {
       closing = null;
       if (armed) beginSession(); else if (status.state === "finishing") rest();
@@ -707,6 +741,8 @@ export function createVoiceInput(
   function dropSession(reason?: DropReason, say = true) {
     const s = session;
     session = null;
+    if (reason) pausedCapturing = false;
+    settle();
     if (s) abortSession(s, reason);
     if (reason && say) {
       const words = inputWords(`left.input.${reason}`);
@@ -723,6 +759,7 @@ export function createVoiceInput(
   function finishSession(hold: boolean, toDraft = false) {
     const s = session;
     session = null;
+    settle();
     if (s) {
       s.closing = true;
       if (hold) s.held = [];
@@ -913,6 +950,7 @@ export function createVoiceInput(
     pause() {
       if (paused) return;
       paused = true;
+      pausedCapturing = capturing;
       dropSession();
       if (armed && !quiet()) setStatus("paused");
     },

@@ -165,6 +165,11 @@ export function startJarvis(orb: Orb): void {
         keepUnsent(unsentText());
         socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
       },
+      // Listening really started or stopped: its quiet cue, through the
+      // same output as his speech, unless his capture sounds are off.
+      onCapture: (capturing: boolean) => {
+        if (voiceInputSettings.get()?.sounds) audioPlayer.cue(capturing ? "start" : "stop");
+      },
     }
   );
 
