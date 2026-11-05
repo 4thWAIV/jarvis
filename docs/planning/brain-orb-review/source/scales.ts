@@ -1,6 +1,6 @@
 import {FontLoader} from '../../../../frontend/node_modules/three/examples/jsm/loaders/FontLoader.js';
 import typeface from '../../../../frontend/node_modules/three/examples/fonts/helvetiker_regular.typeface.json';
-import anatomy from './anatomy.json';
+import {createAnatomicalFilaments,filamentData} from './anatomical-filaments';
 import * as THREE from '../../../../frontend/node_modules/three/build/three.module.js';
 import {createOrb} from './orb-renderer';
 import {createLivingCore} from './core';
@@ -9,10 +9,10 @@ import {pulsePolicy, gentlePulse, setPulseTime} from './pulse-policy';
 const $=(id:string)=>document.getElementById(id)!;
 let power=86,tokens=74;
 let mode=0,time=0,last=performance.now(),paused=false,scene:any=null,cameraRef:any=null,targets:any[]=[];
-let level=5.2;
+let level=5.2,inspectionYaw=0;
 let reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 let visualColour=new THREE.Color('#278451'),visualDensity=.92,visualPeak=.035,visualEdge=.03;
-const brainCenter=[0,0,0];for(let axis=0;axis<3;axis++){let lo=Infinity,hi=-Infinity;for(let i=axis;i<anatomy.positions.length;i+=3){lo=Math.min(lo,anatomy.positions[i]);hi=Math.max(hi,anatomy.positions[i]);}brainCenter[axis]=(lo+hi)/2;}
+const brainCenter=filamentData.center;
 const positive=new THREE.Color('#278451'),neutral=new THREE.Color('#f5f8ff'),negativeOne=new THREE.Color('#ffda20'),negativeTwo=new THREE.Color('#ff343f'),coreBlue=new THREE.Color('#cdeeff');
 function stateFor(value:number){return value>.5?'green':value>=-.5?'white':value>=-2?'yellow':'red';}
 function levelColour(value:number){return ({green:positive,white:neutral,yellow:negativeOne,red:negativeTwo}[stateFor(value)]).clone();}
@@ -83,38 +83,14 @@ function brainOrb(parent:any,source:any,phase:number){
  const core=createLivingCore(parent),sourceLines=source.parent.children.find((o:any)=>o.isLineSegments);
  const shellGeo=source.geometry.clone();shellGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(source.geometry.attributes.position.array.length),3));const shell=new THREE.Points(shellGeo,source.material.clone());shell.material.size*=.44;shell.material.opacity=.3;parent.add(shell);
  const envelopeGeo=sourceLines.geometry.clone();envelopeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(sourceLines.geometry.attributes.position.array.length),3));const envelope=new THREE.LineSegments(envelopeGeo,sourceLines.material.clone());envelope.material.opacity=.065;envelope.material.vertexColors=true;envelopeGeo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(envelopeGeo.attributes.position.array.length),3));parent.add(envelope);
- const n=anatomy.positions.length/3,rest=new Float32Array(anatomy.positions.length),normals=new Float32Array(anatomy.normals.length),positions=new Float32Array(n*3),colours=new Float32Array(n*3),geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(positions,3));geo.setAttribute('color',new THREE.BufferAttribute(colours,3));
- for(let i=0;i<n;i++){const k=i*3;rest.set(brainPosition(anatomy.positions[k],anatomy.positions[k+1],anatomy.positions[k+2]),k);const x=anatomy.normals[k],y=anatomy.normals[k+1],z=anatomy.normals[k+2],rx=x*Math.cos(brainYaw)+z*Math.sin(brainYaw);normals.set([rx*Math.cos(brainRoll)-y*Math.sin(brainRoll),rx*Math.sin(brainRoll)+y*Math.cos(brainRoll),-x*Math.sin(brainYaw)+z*Math.cos(brainYaw)],k);}
- const material=source.material.clone();material.size*=.17;material.opacity=.85;material.blending=THREE.NormalBlending;parent.add(new THREE.Points(geo,material));
- const linePositions=new Float32Array(anatomy.edges.length*3),lineColours=new Float32Array(anatomy.edges.length*3),lineGeo=new THREE.BufferGeometry();lineGeo.setAttribute('position',new THREE.BufferAttribute(linePositions,3));lineGeo.setAttribute('color',new THREE.BufferAttribute(lineColours,3));
- const lineMat=sourceLines.material.clone();lineMat.vertexColors=true;lineMat.opacity=.82;lineMat.color.setHex(0xffffff);lineMat.depthWrite=true;lineMat.blending=THREE.NormalBlending;parent.add(new THREE.LineSegments(lineGeo,lineMat));
- const paths=new Float32Array(24*12*6),pathColours=new Float32Array(paths.length),pathGeo=new THREE.BufferGeometry();pathGeo.setAttribute('position',new THREE.BufferAttribute(paths,3));pathGeo.setAttribute('color',new THREE.BufferAttribute(pathColours,3));const pathMat=sourceLines.material.clone();pathMat.vertexColors=true;pathMat.color.setHex(0xffffff);pathMat.opacity=.08;parent.add(new THREE.LineSegments(pathGeo,pathMat));
+ const normalTransform=(x:number,y:number,z:number)=>{const rx=x*Math.cos(brainYaw)+z*Math.sin(brainYaw);return [rx*Math.cos(brainRoll)-y*Math.sin(brainRoll),rx*Math.sin(brainRoll)+y*Math.cos(brainRoll),-x*Math.sin(brainYaw)+z*Math.cos(brainYaw)];};
+ const anatomy=createAnatomicalFilaments(parent,brainPosition,normalTransform);
  return {update(t:number){
   core.update(t,reduced||stateFor(level)==='red');const stateColour=visualColour.clone();core.root.traverse((o:any)=>{if(o.isPoints){const a=o.geometry.attributes.color;for(let i=0;i<a.count;i++){const intensity=a.getZ(i);a.setXYZ(i,intensity*stateColour.r*.1,intensity*stateColour.g*.1,intensity*stateColour.b*.1);}a.needsUpdate=true;}else if(o.isLineSegments)o.material.color.copy(stateColour).multiplyScalar(.1);});reading.update(t);envelope.material.color.setHex(0xffffff);
   const routeAroundWindow=(x:number,y:number,z:number)=>{if(z>4&&Math.abs(x)<10&&y>-15&&y<-5){const dx=10-Math.abs(x),dy=Math.min(y+15,-5-y);if(dx<dy)x=(x<0?-1:1)*10;else y=y<-10?-15:-5;}return [x,y,z];};
   for(const [original,target,scale] of [[source.geometry,shellGeo,.75],[sourceLines.geometry,envelopeGeo,.92]] as any[]){const a=original.attributes.position.array,b=target.attributes.position.array;for(let i=0;i<a.length;i+=3){const v=routeAroundWindow(a[i]*scale,a[i+1]*scale,a[i+2]*scale);b[i]=v[0];b[i+1]=v[1];b[i+2]=v[2];}if(target===envelopeGeo){for(let i=0;i<b.length;i+=6){if(Math.max(b[i+2],b[i+5])<=4)continue;const dx=b[i+3]-b[i],dy=b[i+4]-b[i+1];let low=0,high=1,hit=true;const ps=[-dx,dx,-dy,dy],qs=[b[i]+9.7,9.7-b[i],b[i+1]+14.7,-5.3-b[i+1]];for(let j=0;j<4;j++){if(Math.abs(ps[j])<1e-8){if(qs[j]<0)hit=false;}else{const u=qs[j]/ps[j];if(ps[j]<0)low=Math.max(low,u);else high=Math.min(high,u);}}if(hit&&low<high){b[i+3]=b[i];b[i+4]=b[i+1];b[i+5]=b[i+2];}}}if(target===shellGeo){const sourceColours=source.geometry.attributes.color,localColours=shellGeo.attributes.color;for(let i=0;i<localColours.count;i++){const k=i*3,r=Math.hypot(b[k],b[k+1]),u=Math.max(0,Math.min(1,(r-7)/10)),blend=u*u*(3-2*u),strength=Math.max(sourceColours.getX(i),sourceColours.getY(i),sourceColours.getZ(i));localColours.setXYZ(i,strength*stateColour.r*.1*(1-blend)+sourceColours.getX(i)*blend,strength*stateColour.g*.1*(1-blend)+sourceColours.getY(i)*blend,strength*stateColour.b*.1*(1-blend)+sourceColours.getZ(i)*blend);}localColours.needsUpdate=true;}if(target===envelopeGeo){const c=target.attributes.color;for(let i=0;i<c.count;i++){const k=i*3,u=Math.max(0,Math.min(1,(Math.hypot(b[k],b[k+1])-7)/10)),blend=u*u*(3-2*u),tint=stateColour.clone().multiplyScalar(.1).lerp(sourceLines.material.color,blend);c.setXYZ(i,tint.r,tint.g,tint.b);}c.needsUpdate=true;}target.attributes.position.needsUpdate=true;target.setDrawRange(original.drawRange.start,original.drawRange.count);} 
 
-  const brainColour=visualColour.clone();const view=parent.worldToLocal(cameraRef.position.clone()).normalize();
-  for(let i=0;i<n;i++){const k=i*3,x=rest[k],y=rest[k+1],z=rest[k+2],distance=Math.hypot(x,y,z),pulse=.012*Math.sin(t*.8+i*.31)*Math.min(1,distance/3);
-   positions[k]=x+normals[k]*pulse;positions[k+1]=y+normals[k+1]*pulse;positions[k+2]=z+normals[k+2]*pulse;
-   const incidence=Math.max(0,normals[k]*-.25+normals[k+1]*.6+normals[k+2]*.75);
-   // Stable spatial ranking: the same anatomy remains highlighted while density changes.
-   const rank=.5+.5*Math.sin(x*1.7+y*2.9+z*2.3),u=Math.max(0,Math.min(1,(visualDensity-rank+.015)/.03)),selected=u*u*(3-2*u);
-   const edge=Math.pow(1-Math.abs(normals[k]*view.x+normals[k+1]*view.y+normals[k+2]*view.z),8);
-   // Control linear-light luminance, not an RGB multiplier: saturated red otherwise
-   // remains perceptually darker than green even when its multiplier is larger.
-   const hot=Math.max(0,Math.min(.88,(visualPeak-.16)/.54*.88));
-   const tint=brainColour.clone().lerp(new THREE.Color(1,1,1),hot);
-   const tintLuma=.2126*tint.r+.7152*tint.g+.0722*tint.b;
-   const brightness=Math.max(selected*visualPeak*(.75+.25*incidence),edge*visualEdge)*gentlePulse(t,reduced||stateFor(level)==='red');
-   const base=.12;
-   colours[k]=brainColour.r*base+tint.r*brightness/tintLuma;
-   colours[k+1]=brainColour.g*base+tint.g*brightness/tintLuma;
-   colours[k+2]=brainColour.b*base+tint.b*brightness/tintLuma;
-  }
-  for(let e=0;e<anatomy.edges.length;e++){const j=anatomy.edges[e]*3;for(let c=0;c<3;c++){linePositions[e*3+c]=positions[j+c];lineColours[e*3+c]=colours[j+c];}}
-  let offset=0;for(let ray=0;ray<24;ray++){const j=(ray*379%n)*3;let previous=[0,0,0];for(let seg=1;seg<=12;seg++){const u=seg/12,bend=Math.sin(u*Math.PI)*.18*Math.sin(t+ray),next=[positions[j]*u+bend,positions[j+1]*u,positions[j+2]*u+bend];paths.set([...previous,...next],offset);for(let end=0;end<2;end++){const d=(seg-1+end)/12,tint=brainColour.clone();const luminosity=.26+visualPeak*.18;pathColours.set([tint.r*luminosity,tint.g*luminosity,tint.b*luminosity],offset+end*3);}offset+=6;previous=next;}}
-  for(const g of [geo,lineGeo,pathGeo]){g.attributes.position.needsUpdate=true;g.attributes.color.needsUpdate=true;}
+  anatomy.update(t,cameraRef,visualColour,visualDensity,visualPeak,visualEdge,reduced||stateFor(level)==='red');
  }};
 }
 function change(n:number){mode=n;document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.mode)===n)));$('caption').textContent=n===0?'JARVIS alone. The same central orb remains the anchor at every scale.':n===1?'One nearby brain orb represents the brains running JARVIS. Its own particles and filaments form the brain.':'Two nearby brain orbs expose Claude and Codex separately. Both use the same orb material.';if(typeof orb!=='undefined')redrawStatic();}
@@ -124,7 +100,7 @@ function change(n:number){mode=n;document.querySelectorAll<HTMLButtonElement>('[
  if(!scene){const root=new THREE.Group(),nucleus=new THREE.Group();points.parent.add(root,nucleus);scene={root,nucleus,core:createLivingCore(nucleus),brains:[]};for(let i=0;i<2;i++){const holder=new THREE.Group();root.add(holder);const orb=brainOrb(holder,points,i*2);scene.brains.push({holder,orb});}}
  core.visible=false;halo.visible=false;scene.nucleus.position.copy(points.position);scene.core.update(time,reduced);
  const w=$('stage').clientWidth,h=$('stage').clientHeight;camera.clearViewOffset();camera.aspect=w/h;camera.position.set(0,0,245);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld();targets=[];
- scene.brains.forEach((b:any,i:number)=>{const visible=mode>0&&(i===0||mode===2);b.holder.visible=visible;if(!visible)return;const a=.35+time*.065+i*Math.PI*.9,r=i===0?62:74;b.holder.position.set(Math.cos(a)*r,Math.sin(a)*r*.46,Math.sin(a)*r*.42);b.orb.update(time);b.holder.updateMatrixWorld(true);const world=b.holder.getWorldPosition(new THREE.Vector3()),v=world.clone().project(camera),units=2*(245-world.z)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/h;const x=(v.x+1)*w/2,y=(1-v.y)*h/2;targets.push({i,x,y,r:Math.max(22,9/units)});});
+ scene.brains.forEach((b:any,i:number)=>{const visible=mode>0&&(i===0||mode===2);b.holder.visible=visible;if(!visible)return;const a=.35+time*.065+i*Math.PI*.9,r=i===0?62:74;b.holder.position.set(Math.cos(a)*r,Math.sin(a)*r*.46,Math.sin(a)*r*.42);b.holder.rotation.y=inspectionYaw;b.orb.update(time);b.holder.updateMatrixWorld(true);const world=b.holder.getWorldPosition(new THREE.Vector3()),v=world.clone().project(camera),units=2*(245-world.z)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/h;const x=(v.x+1)*w/2,y=(1-v.y)*h/2;targets.push({i,x,y,r:Math.max(22,9/units)});});
 };
 const orb=createOrb($('cosmos') as HTMLCanvasElement,{particles:2400,core:true,transparent:true,ownRenderer:true});orb.setState('thinking');
 document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.onclick=()=>change(Number(b.dataset.mode)));
@@ -133,6 +109,8 @@ function redrawStatic(){if(reduced){updateLighting(1);orb.setPaused(false);reque
 $('reduce-motion').onchange=(e:any)=>{reduced=e.target.checked;applyMotion();redrawStatic();};($('reduce-motion') as HTMLInputElement).checked=reduced;matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',e=>{reduced=e.matches;($('reduce-motion') as HTMLInputElement).checked=reduced;applyMotion();redrawStatic();});
 function tick(now:number){if(!paused)setPulseTime(now/1000);const wave=gentlePulse(now/1000,reduced);const indicator=$('pulse-level');if(indicator)indicator.style.filter=`brightness(${wave})`;const elapsed=Math.max(0,(now-last)/1000);if(!paused&&!reduced)time+=Math.min(.06,elapsed);updateLighting(elapsed);last=now;requestAnimationFrame(tick);}requestAnimationFrame(tick);change(1);
 $('level').oninput=(e:any)=>setLevel(Number(e.target.value));document.querySelectorAll<HTMLButtonElement>('[data-level]').forEach(b=>b.onclick=()=>setLevel(Number(b.dataset.level)));setLevel(level);redrawStatic();
-(window as any).brainStudy={change,snapshot:()=>({mode,targets:targets.length,level,state:stateFor(level),number:sign(level)+magnitude(level)+'%',anchor:brainPosition(...brainCenter),scale:.64,density:visualDensity,peak:visualPeak,reduced,pulsePolicy,rollDegrees:6,vertexCount:anatomy.positions.length/3,colour:levelColour(level).getHexString()}),levelColour:(v:number)=>levelColour(v).getHexString(),setLevel,radialLight,stateFor,seek:(v:number)=>time=v,portalFacing:()=>{const result:any[]=[];scene?.root.traverse((o:any)=>{if(o.geometry?.type==='ShapeGeometry'){const root=o.parent,normal=new THREE.Vector3(0,0,1).applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion())),direction=cameraRef.position.clone().sub(root.getWorldPosition(new THREE.Vector3())).normalize();result.push(normal.dot(direction));}});return result;}};
+(window as any).brainStudy={change,snapshot:()=>({mode,targets:targets.length,level,state:stateFor(level),number:sign(level)+magnitude(level)+'%',anchor:brainPosition(...brainCenter),scale:.64,density:visualDensity,peak:visualPeak,reduced,pulsePolicy,rollDegrees:6,pathCount:filamentData.paths.length,sourceVertexCount:filamentData.sourceVertices,colour:levelColour(level).getHexString()}),levelColour:(v:number)=>levelColour(v).getHexString(),setLevel,radialLight,stateFor,seek:(v:number)=>time=v,portalFacing:()=>{const result:any[]=[];scene?.root.traverse((o:any)=>{if(o.geometry?.type==='ShapeGeometry'){const root=o.parent,normal=new THREE.Vector3(0,0,1).applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion())),direction=cameraRef.position.clone().sub(root.getWorldPosition(new THREE.Vector3())).normalize();result.push(normal.dot(direction));}});return result;}};
 
 document.querySelectorAll<HTMLButtonElement>('[data-period]').forEach(b=>b.onclick=()=>{pulsePolicy.periodSeconds=Number(b.dataset.period);document.querySelectorAll('[data-period]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));$('pulse-description').textContent=pulsePolicy.periodSeconds?`One gentle cycle every ${pulsePolicy.periodSeconds} seconds. Red remains steady.`:'Steady illumination. No brightness pulse.';});
+
+document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(b=>b.onclick=()=>{inspectionYaw=Number(b.dataset.view);document.querySelectorAll('[data-view]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));redrawStatic();});
