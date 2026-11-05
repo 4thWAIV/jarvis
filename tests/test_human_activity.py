@@ -166,7 +166,7 @@ def test_accepted_speech_is_activity_and_its_echo_is_not(server, data_dir):
         ws.send_json({"type": "transcript", "text": "echo hello there", "isFinal": True})
         ws.send_json({"type": "transcript", "text": "what is the weather like",
                       "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and "weather" in m["text"])
+        _drain_until(ws, lambda m: m["type"] == "audio" and "weather" in m["text"], limit=20)
     assert activity.recorder.current()["activity_seq"] == 1, "the echo was not counted"
     assert [t for t, _ in srv.brain_instance.turns] == ["hello there",
                                                         "what is the weather like"]
@@ -183,7 +183,7 @@ def test_stop_and_say_that_again_are_activity(server):
         assert activity.recorder.current()["activity_seq"] == 0
         ws.send_json({"type": "transcript", "text": "stop", "isFinal": True})
         ws.send_json({"type": "transcript", "text": "hello there", "isFinal": True})
-        _drain_until(ws, lambda m: m["type"] == "audio" and "hello" in m["text"])
+        _drain_until(ws, lambda m: m["type"] == "audio" and "hello" in m["text"], limit=20)
     assert activity.recorder.current()["activity_seq"] == 2
 
 
