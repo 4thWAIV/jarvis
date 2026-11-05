@@ -15,3 +15,7 @@ Regenerate surface paths with `python3 docs/planning/brain-orb-review/source/tra
 Validation covers all four states, core alignment, reduced motion, smooth state transitions, three fixed anatomical views, portal facing and pulse controls. The previous source and rendering are recoverable through Git history.
 
 Anatomy: human-brain by Yash_Dandavate, CC BY 4.0. https://sketchfab.com/3d-models/human-brain-e073c2590bc24daaa7323f4daa5b7784 . Source provenance is stored alongside the anatomy data.
+
+## Review controls and sign size
+
+The plus/minus glyph size is 5.4, increased from 1.8, while the digits stay at 3.6. The scene camera distance is 210 instead of 245. The canvas and all controls share a viewport-height layout, with controls beside the animation and explanatory notes collapsed below. Layout checks at 1440×900, 1280×720 and 1024×768 show the full canvas and all controls without scrolling either the page or control panel. Positive and negative displays were visually inspected.

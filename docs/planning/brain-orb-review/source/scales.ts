@@ -42,7 +42,7 @@ function percentage(parent:any,source:any){
  }
  function segment(a:any,b:any,z=0){strokes.push(a.x,a.y,z,b.x,b.y,z);}
  function rebuild(text:string){strokes=[];let cursor=0;
-  for(const [word,size,lift] of [[sign(level),1.8,1.8],[magnitude(level),3.6,0],['%',1.8,1.8]] as [string,number,number][]){
+  for(const [word,size,lift] of [[sign(level),5.4,-.3],[magnitude(level),3.6,0],['%',1.8,1.8]] as [string,number,number][]){
    const shapes=font.generateShapes(word,size),contours=shapes.map(shape=>shape.extractPoints(10));let xmin=Infinity,xmax=-Infinity;
    contours.forEach(c=>c.shape.forEach(v=>{xmin=Math.min(xmin,v.x);xmax=Math.max(xmax,v.x);}));
    for(const c of contours){const loops=[c.shape,...c.holes].map(loop=>loop.map(v=>new THREE.Vector2(v.x-xmin+cursor,v.y+lift)));
@@ -99,8 +99,8 @@ function change(n:number){mode=n;document.querySelectorAll<HTMLButtonElement>('[
  cameraRef=camera;
  if(!scene){const root=new THREE.Group(),nucleus=new THREE.Group();points.parent.add(root,nucleus);scene={root,nucleus,core:createLivingCore(nucleus),brains:[]};for(let i=0;i<2;i++){const holder=new THREE.Group();root.add(holder);const orb=brainOrb(holder,points,i*2);scene.brains.push({holder,orb});}}
  core.visible=false;halo.visible=false;scene.nucleus.position.copy(points.position);scene.core.update(time,reduced);
- const w=$('stage').clientWidth,h=$('stage').clientHeight;camera.clearViewOffset();camera.aspect=w/h;camera.position.set(0,0,245);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld();targets=[];
- scene.brains.forEach((b:any,i:number)=>{const visible=mode>0&&(i===0||mode===2);b.holder.visible=visible;if(!visible)return;const a=.35+time*.065+i*Math.PI*.9,r=i===0?62:74;b.holder.position.set(Math.cos(a)*r,Math.sin(a)*r*.46,Math.sin(a)*r*.42);b.holder.rotation.y=inspectionYaw;b.orb.update(time);b.holder.updateMatrixWorld(true);const world=b.holder.getWorldPosition(new THREE.Vector3()),v=world.clone().project(camera),units=2*(245-world.z)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/h;const x=(v.x+1)*w/2,y=(1-v.y)*h/2;targets.push({i,x,y,r:Math.max(22,9/units)});});
+ const w=$('stage').clientWidth,h=$('stage').clientHeight;camera.clearViewOffset();camera.aspect=w/h;camera.position.set(0,0,210);camera.lookAt(0,0,0);camera.updateProjectionMatrix();camera.updateMatrixWorld();targets=[];
+ scene.brains.forEach((b:any,i:number)=>{const visible=mode>0&&(i===0||mode===2);b.holder.visible=visible;if(!visible)return;const a=.35+time*.065+i*Math.PI*.9,r=i===0?62:74;b.holder.position.set(Math.cos(a)*r,Math.sin(a)*r*.46,Math.sin(a)*r*.42);b.holder.rotation.y=inspectionYaw;b.orb.update(time);b.holder.updateMatrixWorld(true);const world=b.holder.getWorldPosition(new THREE.Vector3()),v=world.clone().project(camera),units=2*(210-world.z)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/h;const x=(v.x+1)*w/2,y=(1-v.y)*h/2;targets.push({i,x,y,r:Math.max(22,9/units)});});
 };
 const orb=createOrb($('cosmos') as HTMLCanvasElement,{particles:2400,core:true,transparent:true,ownRenderer:true});orb.setState('thinking');
 document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.onclick=()=>change(Number(b.dataset.mode)));
