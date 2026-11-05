@@ -901,8 +901,16 @@ capture dropped): `voiceInput.ts`'s `onCapture`, once per change, played by
 the output's `AudioPlayer.cue` (`voice.ts`), never through the microphone's
 audio context, and dropped, never delayed, while audio is locked. His third
 setting, capture sounds (`sounds`, default on, in the same
-`voice_control.py` service, route and tools), turns them off; the page
-shows the same either way. The turn-completion cues are not built yet.
+`voice_control.py` service, route and tools), is the master switch for
+every cue; the page shows the same either way. Beside it, per user in the
+same service: each of the four cues (`start`, `stop`, `tentative`,
+`likely`) on or off with a tone from `voice_control.TONES` (notes in
+`voice.ts` `TONE_NOTES`, placeholders), the two pause cues' `before`
+(seconds before the end of his turn), and one `volume`. Settings, Voice
+and language shows each with a Test (`voiceStatus.cueTest`; the brain's
+acting `play_cue` sends the page of the turn a `cue_test` frame to the same
+call) and when it plays. The pause cues are the turn controller's (see
+"Turn-taking").
 
 ## Turn-taking
 JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
@@ -925,7 +933,17 @@ words it accepted as his, never echo, become a draft if the socket drops.
 Speech after a commit and before its reply sounds stops that reply's
 reading (its text stays, nothing is undone) and starts the next turn. Typed
 Send is its own message; voice words being gathered go on as their own
-turn. A stop under Discard is `turn_discard`. Nothing JARVIS says starts
+turn. A stop under Discard is `turn_discard`. While he is quiet in a gathered turn the
+controller gives two pause cues from the same deadline (`pause_cues`,
+`on_pause`): `tentative` at patience minus its `before`, then `likely`
+(`tentative.before` must be the larger; a cue not after he stopped is not
+scheduled), each checked when due against the turn, revision and deadline
+and that it is still gathering, so any accepted speech cancels them and
+each plays at most once per pause. The server sends them only to that
+page, as a `turn` frame with state `pause`, its `stage` (shown on the turn
+bar either way) and `sound` (his capture sounds and that cue on, and him
+engaged, never away); the page plays it only while listening, at once or
+never. Nothing JARVIS says starts
 while he has spoken within his patience, replies included (the scheduler's
 `end_of_turn` is the same value, never clamped shorter), and announcements
 also wait for the floor (see "Attention").
