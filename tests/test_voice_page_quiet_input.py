@@ -54,6 +54,12 @@ async def _browser(p):
 async def _page(context, url, *, stop="keep", switch="stop", settings_status=200, script=None,
                 storage=None, view="?view=main"):
     page = await context.new_page()
+    # Routed before the fake transcription socket is installed: Playwright's
+    # socket routing replaces window.WebSocket with its own relay, and routed
+    # after the fake it would wrap it, so a message a test gives a fake
+    # transcriber would reach Playwright's relay, never the page's handler.
+    voice = Voice()
+    await page.route_web_socket("**/ws/voice", voice)
     if script:
         await page.add_init_script(f"window.__transcribe = {json.dumps(script)};")
     if storage is not None:
@@ -62,8 +68,6 @@ async def _page(context, url, *, stop="keep", switch="stop", settings_status=200
     await page.add_init_script(COUNT_MICROPHONES)
     await page.add_init_script(VISIBILITY)
     posted = await route_settings(page, stop=stop, switch=switch, status=settings_status)
-    voice = Voice()
-    await page.route_web_socket("**/ws/voice", voice)
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
     await page.goto(url + view)
     page.posted, page.voice = posted, voice

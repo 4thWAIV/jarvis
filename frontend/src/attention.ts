@@ -61,8 +61,18 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   return res.json();
 }
 
-export const attention = liveRead(() => call<AttentionOverview>("GET", "/api/attention"),
-                                  [attentionChanged]);
+/** The record as read, or an error: an answer without its items and
+ *  settings (a server without the attention record) is a failed read, never
+ *  a value the notice would break on. */
+async function readOverview(): Promise<AttentionOverview> {
+  const value = await call<Partial<AttentionOverview> | null>("GET", "/api/attention");
+  if (!value || !Array.isArray(value.items) || !value.settings || typeof value.settings !== "object") {
+    throw new Error("GET /api/attention: not an attention record");
+  }
+  return value as AttentionOverview;
+}
+
+export const attention = liveRead(readOverview, [attentionChanged]);
 
 /** Mark these seen (every pending one when `ids` is absent). */
 export async function markSeen(ids?: number[]): Promise<void> {
