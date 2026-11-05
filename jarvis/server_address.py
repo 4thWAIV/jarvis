@@ -8,9 +8,10 @@ channel is pointed at it (`server._write_mcp_config`), and at startup the
 server writes it with its pid to `data_paths.server_address_path()`, and
 removes it on a clean shutdown (`record`, `forget`).
 
-`running()` is the one reader: the recorded address while the process that
-wrote it is alive, else None. A record whose process has gone (a crash, a
-kill) is stale and is ignored. `python -m jarvis.update` reads it first, so a
+`running()` is the one reader: the recorded address unless the process that
+wrote it is confirmed gone, else None. A record whose process has gone (a
+crash, a kill) is stale and is ignored; one whose process cannot be
+inspected is kept (see `running`). `python -m jarvis.update` reads it first, so a
 server on another port or on ::1 is found without any variable in the shell,
 and `workflow_report.py` reads it when JARVIS_URL is not set.
 
@@ -25,7 +26,7 @@ import logging
 import os
 from typing import NamedTuple, Optional
 
-from jarvis import data_paths
+from jarvis import data_paths, process_inspect
 
 log = logging.getLogger("jarvis.server_address")
 
@@ -101,16 +102,12 @@ def forget() -> None:
         log.warning("could not remove the server address record (%s)", e)
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # there, under another user
-    except OSError:
-        return False
-    return True
+def _alive(pid: int) -> process_inspect.State:
+    """What can be confirmed about the recording process, without signalling
+    it (`process_inspect`; `os.kill(pid, 0)` terminates a process on
+    Windows). The record holds a PID only, so a reused PID is not detected
+    here."""
+    return process_inspect.inspect_process(pid).state
 
 
 def _read() -> Optional[Running]:
@@ -127,8 +124,20 @@ def _read() -> Optional[Running]:
 
 
 def running() -> Optional[Running]:
-    """The recorded server while its process is alive, else None."""
+    """The recorded server unless its process is confirmed gone, else None.
+
+    A process that could not be inspected (`unknown`, e.g. access denied)
+    is NOT treated as gone: the record is returned, so `python -m
+    jarvis.update` still asks that address and refuses to update under a
+    server that does not answer, as it does for a live one. Only a confirmed
+    exit makes the record stale. Nothing here removes the record."""
     found = _read()
-    if found is None or found.pid <= 0 or not _alive(found.pid):
+    if found is None or found.pid <= 0:
         return None
+    state = _alive(found.pid)
+    if state is process_inspect.State.EXITED:
+        return None
+    if state is process_inspect.State.UNKNOWN:
+        log.warning("could not confirm that process %s is running; keeping its "
+                    "recorded server address", found.pid)
     return found

@@ -4,7 +4,6 @@ import subprocess
 import sys
 import pytest
 from pathlib import Path
-from types import SimpleNamespace
 
 from jarvis import session_watch as sw
 from tests.fixtures.roster import write_roster, write_transcript
@@ -81,51 +80,36 @@ def test_repeated_liveness_checks_leave_a_disposable_process_running():
     assert sw.pid_alive(child.pid) is False
 
 
-@pytest.mark.parametrize("pid", [None, 0, -1, "invalid", float("inf"), 2**64])
-def test_invalid_windows_pid_never_reaches_a_process_api(monkeypatch, pid):
-    monkeypatch.setattr(sw, "sys", SimpleNamespace(platform="win32"))
-
-    def unexpected(_pid):
-        pytest.fail("invalid PID reached the Windows process API")
-
-    monkeypatch.setattr(sw, "_windows_pid_alive", unexpected)
-    assert sw.pid_alive(pid) is False
+def test_an_uninspectable_process_is_neither_alive_nor_gone(monkeypatch):
+    from jarvis import process_inspect as pi
+    monkeypatch.setattr(pi, "_inspect_posix",
+                        lambda pid: pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
+    assert sw.pid_state(4242) is pi.State.UNKNOWN
+    assert sw.pid_alive(4242) is False
 
 
-@pytest.mark.parametrize("handle,result,alive", [
-    (0, None, False),             # absent or access denied: unconfirmed
-    (0x123456789, 0x102, True),    # live, including a 64-bit handle
-    (0x123456789, 0, False),       # signalled process, regardless of exit code
-    (0x123456789, 0xFFFFFFFF, False),  # failed inspection
-])
-def test_windows_liveness_uses_a_non_signalling_handle_and_closes_it(
-        monkeypatch, handle, result, alive):
-    import ctypes
+def test_a_session_whose_processes_cannot_be_inspected_is_unknown_not_gone(
+        tmp_path, monkeypatch):
+    """Access denied must not read as finished: it is not announced as gone,
+    is not between turns (nothing is sent to it), and is not steerable."""
+    from jarvis import process_inspect as pi
+    monkeypatch.setattr(pi, "_inspect_posix",
+                        lambda pid: pi.Inspection(pi.State.UNKNOWN, None, "access_denied"))
+    root = tmp_path / ".claude"
+    write_roster(root, pid=4242, session_id="u", cwd="/p", name="u", socket=True,
+                 status_updated_at=1000)
+    write_transcript(root, cwd="/p", session_id="u", title="T", last_prompt="P")
+    s, = sw.build_snapshot(roots=[root]).sessions
+    assert s.state == sw.UNKNOWN
+    assert s.steerable is False
 
-    calls = []
 
-    class Function:
-        def __init__(self, name, value):
-            self.name, self.value = name, value
-
-        def __call__(self, *args):
-            calls.append((self.name, args))
-            return self.value
-
-    api = SimpleNamespace(OpenProcess=Function("open", handle),
-                          WaitForSingleObject=Function("wait", result),
-                          CloseHandle=Function("close", 1))
-    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: api, raising=False)
-    monkeypatch.setattr(sw, "sys", SimpleNamespace(platform="win32"))
-
-    def signal_forbidden(*args):
-        pytest.fail("Windows liveness must not send a signal")
-
-    monkeypatch.setattr(sw.os, "kill", signal_forbidden)
-    assert sw.pid_alive(123) is alive
-    assert calls == [("open", (0x00100000, False, 123))] + (
-        [("wait", (handle, 0)), ("close", (handle,))] if handle else [])
-    assert api.OpenProcess.restype is ctypes.wintypes.HANDLE
+def test_a_confirmed_exit_is_still_gone(tmp_path):
+    root = tmp_path / ".claude"
+    write_roster(root, pid=DEAD, session_id="g", cwd="/p", name="g", status_updated_at=1000)
+    write_transcript(root, cwd="/p", session_id="g", title="T", last_prompt="P")
+    s, = sw.build_snapshot(roots=[root]).sessions
+    assert s.state == sw.GONE
 
 
 def test_encode_cwd_replaces_every_non_alphanumeric_including_dots(tmp_path):

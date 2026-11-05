@@ -19,14 +19,13 @@ import json
 import os
 import re
 import stat
-import sys
 import threading
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from jarvis import data_paths
+from jarvis import data_paths, process_inspect
 from jarvis.session_provider import Tracking
 
 # Both roots must be read: the CLI's default and the one Orcha sets via
@@ -54,60 +53,19 @@ def config_roots() -> list[Path]:
     return roots
 
 
+def pid_state(pid) -> process_inspect.State:
+    """What can be confirmed about a roster entry's process, without
+    signalling it (`process_inspect`). The roster carries no OS creation
+    token (its `startedAt` is the CLI's own stamp, not proven equal to one),
+    so no identity is expected here: a reused PID is not detected by this
+    call, and `unknown` (access denied, say) is kept apart from `exited`."""
+    return process_inspect.inspect_process(pid).state
+
+
 def pid_alive(pid) -> bool:
-    """True if the process can be confirmed running, without signalling it.
-
-    `pid` must be a positive integer: 0 means "this process's group" and a
-    negative pid means "that group" to `os.kill`, neither of which is a real
-    process, so both are rejected before the syscall. Failure to inspect a
-    process is not confirmation that it exited; this boolean reader simply
-    cannot include it among confirmed-live sessions.
-
-    Signal 0 is only a harmless probe on POSIX. On Windows it calls
-    TerminateProcess, so use a read-only process handle there.
-    """
-    try:
-        pid = int(pid)
-        if pid <= 0:
-            return False
-        if sys.platform == "win32":
-            if pid > 0xFFFFFFFF:
-                return False
-            return _windows_pid_alive(pid)
-        os.kill(pid, 0)
-    except (OSError, OverflowError, TypeError, ValueError):
-        return False
-    return True
-
-
-def _windows_pid_alive(pid: int) -> bool:
-    """Inspect one process object with SYNCHRONIZE access only.
-
-    Waiting with a zero timeout distinguishes a running process from a
-    terminated one even when its exit code happens to be STILL_ACTIVE (259).
-    The handle pins the same process object throughout this check; it does
-    not establish that a reused PID still belongs to an older roster entry.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    synchronize = 0x00100000
-    wait_timeout = 0x00000102
-    handle = kernel32.OpenProcess(synchronize, False, pid)
-    if not handle:
-        return False
-    try:
-        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
-    finally:
-        kernel32.CloseHandle(handle)
+    """True only when the process was confirmed running. `unknown` is not
+    alive: callers that must tell it from `exited` ask `pid_state`."""
+    return pid_state(pid) is process_inspect.State.ALIVE
 
 
 def encode_cwd(cwd: str) -> str:
@@ -861,7 +819,7 @@ WORKING = "working"      # its main conversation is in a turn
 BACKGROUND = "background"  # between turns, with background agents or commands still running
 IDLE = "idle"            # between turns, nothing running
 GONE = "gone"            # no process left
-UNKNOWN = "unknown"      # alive, but neither its transcript nor the roster says
+UNKNOWN = "unknown"      # alive but neither transcript nor roster says, or its process could not be inspected
 
 # Keywords matched against a lowercased `waitingFor` reason to flag one that
 # a peer message cannot clear. The reason set itself is OPEN — "input needed"
@@ -895,6 +853,9 @@ class Activity:
     background_commands: bool         # a background command still running
     roster_status: str | None         # the roster's own word: used only when `turn` is None
     roster_since: float | None = None  # when the roster's word last changed
+    # No process was confirmed running, but at least one could not be
+    # inspected (access denied, an OS error): not alive, and not gone either.
+    process_unconfirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -915,6 +876,10 @@ def session_status(a: Activity) -> Status:
     word decides only where the transcript shows no marker."""
     marked = a.turn_marked_at or a.roster_since
     if not a.alive:
+        if a.process_unconfirmed:
+            # Neither running nor gone is established: say so, and send it
+            # nothing (not between turns).
+            return Status(UNKNOWN, None, False, marked)
         return Status(GONE, None, False, marked)
     if not a.prompted:
         return Status(FRESH, None, True, a.roster_since)
@@ -1514,6 +1479,8 @@ def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int
     """Claude Code's raw facts about one conversation: its roster entries,
     its transcript's tail and its subagents."""
     live = [e for e in entries if pid_alive(e.pid)]
+    unconfirmed = not live and any(pid_state(e.pid) is process_inspect.State.UNKNOWN
+                                   for e in entries)
     statuses = {e.status for e in live}
     waiting = next((e for e in live if e.waiting_for), None)
     newest = max(live, key=lambda e: e.status_updated_at or 0, default=None)
@@ -1529,6 +1496,7 @@ def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int
         background_commands="shell" in statuses,
         roster_status=next((w for w in _ROSTER_ORDER if w in statuses), None),
         roster_since=(newest.status_updated_at or newest.started_at) if newest else None,
+        process_unconfirmed=unconfirmed,
     )
 
 
