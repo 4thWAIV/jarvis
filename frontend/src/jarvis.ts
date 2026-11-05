@@ -10,7 +10,7 @@
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
-import { jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped, jarvisText, jarvisReply,
+import { jarvisPaused, jarvisQuiet, jarvisSpeaking, shown, userHeard, userTyped, jarvisText, jarvisReply,
          jarvisReading, jarvisReconnected, jarvisDisconnected } from "./captions";
 import type { Display } from "./sources";
 import { reconnected } from "./liveRead";
@@ -327,10 +327,12 @@ export function startJarvis(orb: Orb): void {
 
   // End of speech is the server's call (`status: idle` after every chunk is
   // acked); a transient empty queue mid-utterance must not flip the UI.
-  // The highlight goes when nothing is playing.
+  // The highlight goes when nothing is playing, but the reading has not
+  // ended: the timeline stays on it (MessageList.tsx) until `status: idle`,
+  // a skip, a stop or another reading ends it.
   audioPlayer.onFinished(() => {
     readingUtt = null;
-    jarvisQuiet(); captureQuiet(); storyCue.set(null);
+    jarvisPaused(); captureQuiet(); storyCue.set(null);
   });
 
   audioPlayer.onNeedsGesture(() => {
@@ -432,7 +434,7 @@ export function startJarvis(orb: Orb): void {
       if (state === "thinking") transition("thinking");
       else if (state === "speaking" && skippedReading === null) transition("speaking");
       else if (state === "compacting") transition("compacting");
-      else if (state === "idle") transition("listening");
+      else if (state === "idle") { jarvisQuiet(); transition("listening"); }
     } else if (type === "text") {
       // Text replies must remain visible even when voice output is unavailable.
       if (msg.text && typeof msg.capture !== "number") {

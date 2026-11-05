@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { conversation, turnKey, useRecordOpen, type Turn } from "./captions";
+import { conversation, turnKey, useRecordOpen, useSpoken, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
@@ -160,7 +160,7 @@ function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
 
 function renderHistoryRow(row: ConversationRow) {
   if (row.item) return <RecordItem key={row.key} item={row.item} answer={row.answer}
-    restorable={row.restorable} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: row.key }} />;
+    restorable={row.restorable} spoken={row.spoken} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: row.key }} />;
   if (!row.turn) return null;
   return row.turn.display ? <SourcesRow key={row.key} turn={row.turn} />
     : <HistoryTurn key={row.key} turn={row.turn} />;
@@ -217,10 +217,12 @@ function useOpener(recordId: string, opens: boolean) {
 /** One item from the record: what was said before the page opened, a
  *  message to an agent with its live status (opening to the answer), a
  *  message from an agent, or a notice. Drawn as text, and registered where
- *  it is shown (`place`) with its parts. */
-export function RecordItem({ item, answer, restorable, place }: {
-  item: ConversationItem; answer?: ConversationItem; restorable?: boolean; place: RecordPlace }) {
+ *  it is shown (`place`) with its parts. `spoken`: the live turn a reply's
+ *  record was, for its reading aloud. */
+export function RecordItem({ item, answer, restorable, spoken, place }: {
+  item: ConversationItem; answer?: ConversationItem; restorable?: boolean; spoken?: Turn; place: RecordPlace }) {
   const recordId = `r${item.id}`;
+  const reading = useSpoken(spoken);
   const { open, toggle } = useOpener(recordId, item.kind === "to_agent" && !!answer);
   const [refused, setRefused] = useState<Said | null>(null);
   const t = useT();
@@ -270,7 +272,7 @@ export function RecordItem({ item, answer, restorable, place }: {
   if (item.kind === "notice") return <p className="history-turn record-notice" ref={whole}>{item.text}</p>;
   const speaker = item.kind === "jarvis" ? "jarvis" : "user";
   return <ChatMessage speaker={speaker} at={item.at} text={item.text}
-    kind={`record-said kind-${item.kind}`} wholeRef={ui.whole} textRef={text} />;
+    kind={`record-said kind-${item.kind}`} spoken={reading} wholeRef={ui.whole} textRef={text} />;
 }
 
 /** A captured turn takes its capture kind's look in the history. */
@@ -307,13 +309,14 @@ function turnNotes(turn: Turn, t: Translate): string[] {
 
 function HistoryTurn({ turn }: { turn: Turn }) {
   const t = useT();
+  const spoken = useSpoken(turn);
   const key = turnKey(turn);
   const ui = useUiTarget({ ref: conversationRef("conversationRecord", key),
     label: turn.speaker === "jarvis" ? t("main.record.jarvis") : t("main.record.yours"), socket: CENTRE_SOCKET });
   return <ChatMessage speaker={turn.speaker} at={turn.at}
     text={turn.text ?? turn.sentences.join(" ")} kind={kindClass(turn)}
     pending={turn.complete === false && !turn.interrupted} interrupted={turn.interrupted}
-    notes={turnNotes(turn, t)}
+    notes={turnNotes(turn, t)} spoken={spoken}
     wholeRef={ui.whole} textRef={ui.part("text")}>
     {turn.capture ? <TurnWords turn={turn} speaking={null} partRef={ui.part} /> : undefined}
   </ChatMessage>;

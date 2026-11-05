@@ -64,6 +64,11 @@ const revealers = new Map<string, Revealer>();
 const revealerId = (view: ViewId, kind: string) => `${view}|${kind}`;
 
 /** Register the revealer of `kind` in `view`: one each. */
+/** Sent up from a target just before it is scrolled into view: a list
+ *  that follows its newest item (conversation/MessageList.tsx) takes it as
+ *  being moved on purpose, as it does his own scrolling. */
+export const REVEALING = "ui-revealing";
+
 export function registerRevealer(view: ViewId, kind: string, revealer: Revealer): () => void {
   if (!kindDecl(kind)?.presentations.some((p) => p.view === view)) {
     throw new Error(`ui: ${kind} is not presented in ${view}`);
@@ -165,7 +170,9 @@ export async function reveal(ref: TargetRef, context: RevealContext): Promise<Re
   }
 
   if (now.visibility === "offscreen") {
-    elementOf(now.target!, ref.part)!.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    const shown = elementOf(now.target!, ref.part)!;
+    shown.dispatchEvent(new Event(REVEALING, { bubbles: true }));
+    shown.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     await until(() => seen(ref).visibility !== "offscreen", overtaken, deadline);
     if (overtaken()) return refuse("cancelled", "superseded");
     now = seen(ref);

@@ -1,7 +1,7 @@
 /* Scoped to Conversation: the orb, navigation and surrounding workspace keep
    their existing geometry. Both palettes use the shared appearance tokens. */
 #conversation { gap: 0; font-size: 14px; line-height: 1.65; letter-spacing: 0; }
-#conversation > .conversation-thread { flex: 1 1 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
+#conversation > .conversation-thread { flex: 1 1 0; min-height: 72px; position: relative; display: flex; flex-direction: column; }
 #conversation .conversation-history { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--ui-divider) transparent; padding: 0 12px; }
 .conversation-messages { max-width: 820px; margin: 0 auto; padding: 18px 6px 28px; }
 .chat-message { display: flex; gap: 12px; padding: 20px 0; min-width: 0; }
@@ -13,6 +13,10 @@
 .chat-author { font-size: 12px; font-weight: 650; color: var(--ui-secondary); }
 .jarvis .chat-author { color: var(--ui-accent); }
 #conversation .chat-message-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ui-text); font-size: 14px; line-height: 1.75; letter-spacing: 0; margin: 0; }
+/* JARVIS's words in his blue, Tim's sent words white (his words still being
+   heard stay grey, below); the word being read aloud glows (SpokenWords.tsx). */
+#conversation .chat-message.jarvis .chat-message-body { color: var(--ui-accent); }
+#conversation .chat-message.user .chat-message-body { color: var(--ui-text); }
 .chat-message.user .chat-message-body { background: rgba(var(--ui-text-rgb), .035); border: 1px solid rgba(var(--ui-text-rgb), .07); border-radius: 2px 12px 12px; padding: 10px 14px; }
 .chat-copy { margin-left: auto; border: 0; background: transparent; color: var(--ui-muted); font: inherit; cursor: pointer; padding: 4px 8px; border-radius: 5px; }
 .chat-copy:hover { color: var(--ui-text); background: var(--ui-raised); }
@@ -28,8 +32,15 @@
 .conversation-empty h2 { color: var(--ui-text); font-size: 23px; font-weight: 500; letter-spacing: -.5px; margin: 18px 0 6px; }
 .empty-mark { display: grid; place-items: center; width: 44px; height: 44px; margin: auto; border: 1px solid var(--ui-divider); border-radius: 14px; background: var(--ui-surface); color: var(--ui-accent); font-size: 18px; }
 .conversation-jump { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); white-space: nowrap; border: 1px solid var(--ui-edge); border-radius: 20px; padding: 7px 14px; background: var(--ui-raised); color: var(--ui-text); font: inherit; font-size: 12px; box-shadow: 0 4px 18px #0005; cursor: pointer; }
-#conversation > .conversation-dock { flex: 0 0 auto; min-height: 0; max-height: 55%; overflow-y: auto; padding: 0 12px; scrollbar-width: thin; }
-.conversation-dock > * { max-width: 820px; margin-left: auto; margin-right: auto; }
+/* The bottom box never scrolls as a whole: it is as tall as what it holds,
+   pinned under the history, which gives up its height first. Only a long
+   draft scrolls, inside the editor; the captures above it keep their room
+   (their list scrolls among themselves past its share, style.css) and give
+   way only when even a three-line history would not leave them enough. */
+#conversation > .conversation-dock { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: visible; padding: 0 12px; }
+.conversation-dock > * { flex: none; box-sizing: border-box; width: 100%; max-width: 820px; margin-left: auto; margin-right: auto; }
+#conversation > .conversation-dock > .conversation-captures { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.conversation-captures > .capture-list { flex: 0 1 auto; min-height: 0; }
 .conversation-captures:empty { display: none; }
 .chat-composer { box-sizing: border-box; position: relative; border: 1px solid var(--ui-edge); border-radius: 14px; background: var(--ui-surface); padding: 14px 16px 10px; box-shadow: 0 -8px 30px rgba(var(--ui-ground-rgb), .55); }
 .chat-composer:focus-within { border-color: var(--ui-accent); box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), .13); }
@@ -73,7 +84,7 @@
 #conversation .reply-prose { white-space: normal; }
 .reply-prose p { margin: 0 0 12px; white-space: pre-wrap; }
 .reply-prose > :last-child { margin-bottom: 0; }
-.reply-prose .md-h { color: var(--ui-text); font-size: 15px; line-height: 1.5; font-weight: 600; margin: 18px 0 8px; }
+.reply-prose .md-h { color: inherit; font-size: 15px; line-height: 1.5; font-weight: 600; margin: 18px 0 8px; }
 .reply-prose > .md-h:first-child { margin-top: 0; }
 .reply-prose ul, .reply-prose ol { margin: 8px 0 14px; padding-left: 24px; }
 .reply-prose li { margin: 5px 0; }

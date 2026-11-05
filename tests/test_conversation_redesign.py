@@ -101,7 +101,7 @@ async def test_scrollback_stays_put_until_jump_to_latest(page_url):
         await page.route('**/api/conversation',read)
         voice.send({'type':'conversation'})
         await page.wait_for_function("document.querySelectorAll('.chat-message').length === 34")
-        await page.locator('.conversation-history').evaluate('e => e.scrollTop = 120')
+        await _wheel(page, -600)
         await page.wait_for_selector('.conversation-jump')
         before = await page.locator('.conversation-history').evaluate('e => e.scrollTop')
         voice.send({'type':'reply','utt':90,'text':'A new reply at the bottom.','done':True})
@@ -233,4 +233,341 @@ async def test_remote_skip_removes_queued_reply_without_stopping_other_audio(pag
         assert [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 7]
         assert not [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 8]
         assert await page.locator('.history-turn.jarvis').inner_text() == 'A queued reply.'
+        await browser.close()
+
+
+# ── the polish after the voice update: colours, the reading highlight,
+#    one owner of the timeline's scrolling, and the bottom box ─────────────
+
+def _long_history(n=34):
+    return {'items': [_record_item(k, 'jarvis' if k % 2 else 'typed',
+                                   (f'Reply {k}. ' + 'A readable response about the work. ' * 8) if k % 2
+                                   else f'Question {k}: how is it going?', at=1_000_000.0 + k)
+                      for k in range(1, n + 1)], 'earlier': None}
+
+
+async def _with_history(page, voice, record=None):
+    record = record or _long_history()
+    async def read(route):
+        await route.fulfill(json=record)
+    await page.route('**/api/conversation', read)
+    voice.send({'type': 'conversation'})
+    await page.wait_for_function(f"document.querySelectorAll('.chat-message').length >= {len(record['items'])}")
+
+
+GAP = "(() => { const b = document.querySelector('.conversation-history'); return b.scrollHeight - b.scrollTop - b.clientHeight; })()"
+TOP = "document.querySelector('.conversation-history').scrollTop"
+
+
+async def _wheel(page, dy):
+    box = await page.locator('.conversation-history').bounding_box()
+    await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    await page.mouse.wheel(0, dy)
+    await asyncio.sleep(.35)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('theme', ['classic', 'graphite'])
+async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(page_url, theme):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
+        await _with_history(page, voice, {'items': [_record_item(1, 'typed', 'Typed and sent.'),
+                                                    _record_item(2, 'jarvis', '## Done\n\nAll is well, sir.')],
+                                          'earlier': None})
+        await page.evaluate("window.__hear('still being', false)")
+        await page.wait_for_selector('.conversation-interim p')
+        got = await page.evaluate("""() => {
+          const colour = v => { const e = document.createElement('i'); e.style.color = `var(${v})`;
+            document.body.append(e); const c = getComputedStyle(e).color; e.remove(); return c; };
+          const of = s => getComputedStyle(document.querySelector(s)).color;
+          return {accent: colour('--ui-accent'), text: colour('--ui-text'), secondary: colour('--ui-secondary'),
+                  jarvis: of('.chat-message.jarvis .chat-message-body .reply-prose p'),
+                  heading: of('.chat-message.jarvis .reply-prose .md-h'),
+                  sent: of('.chat-message.user .chat-message-body'),
+                  heard: of('.conversation-interim p')}; }""")
+        assert got['jarvis'] == got['heading'] == got['accent'], got
+        assert got['sent'] == got['text'], got
+        assert got['heard'] == got['secondary'] and got['heard'] != got['text'], got
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_reply_being_read_glows_word_by_word_as_a_read_back_does_and_skip_ends_it(page_url):
+    voice = _Voice()
+    started = time.time()
+    record = {'items': [], 'earlier': None}
+    reply = ('Here is where things stand, sir. The build finished on the second attempt after the cache '
+             'was cleared, and three agents are idle while one is still reviewing the migration.')
+    now = "[...document.querySelectorAll('.chat-message.jarvis .spoken-word')].findIndex(w => w.classList.contains('now'))"
+    glow = """(s) => { const w = document.querySelector(s); const c = getComputedStyle(w);
+      return [c.color, c.textShadow]; }"""
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.add_style_tag(content="* { transition: none !important; }")
+        await _with_history(page, voice, record)
+        # A capture read back glows: the look the reply's word must have.
+        voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'text': 'Ship the fix today.', 'to': 'hammer'},
+                   {'type': 'capture', 'id': 3, 'state': 'reading'},
+                   {'type': 'audio', 'utt': 1, 'idx': 0, 'data': _silence_wav(1.5), 'text': 'Ship the fix today.',
+                    'kind': 'reply', 'capture': 3})
+        await page.wait_for_selector('#conversation .capture-box .spoken-word.now', timeout=10000)
+        read_back = await page.evaluate(glow, '#conversation .capture-box .spoken-word.now')
+        await page.wait_for_selector('#conversation .capture-box .spoken-word.now', state='detached', timeout=10000)
+
+        # A reply not read aloud has no highlight.
+        voice.send({'type': 'reply', 'utt': 2, 'at': started - 5, 'text': 'A reply never read.', 'done': True})
+        await page.wait_for_function("document.querySelector('.chat-message.jarvis')?.textContent.includes('never read')")
+        assert await page.locator('.chat-message.jarvis .spoken-word').count() == 0
+
+        # The whole reply is shown at once; the glow follows the voice through it.
+        sentences = ['Here is where things stand, sir.', reply.split('sir. ')[1]]
+        voice.send({'type': 'reply', 'utt': 4, 'at': started, 'text': reply, 'done': True},
+                   {'type': 'audio', 'utt': 4, 'idx': 0, 'text': sentences[0], 'kind': 'reply', 'data': _silence_wav(1.2)},
+                   {'type': 'audio', 'utt': 4, 'idx': 1, 'text': sentences[1], 'kind': 'reply', 'data': _silence_wav(6)})
+        await page.wait_for_selector('.chat-message.jarvis .spoken-word.now', timeout=10000)
+        assert 'reviewing the migration' in await page.locator('.chat-message.jarvis').last.inner_text()
+        assert await page.evaluate(glow, '.chat-message.jarvis .spoken-word.now') == read_back
+        first = await page.evaluate(now)
+        await page.wait_for_function(f"{now} > 8", timeout=10000)      # into the second sentence
+        # The reply's record arrives while it is read: the glow carries on there.
+        record['items'] = [_record_item(9, 'jarvis', reply, at=started + .5,
+                                        detail={'utt': 4, 'reply_started_at': started})]
+        voice.send({'type': 'conversation'})
+        await page.wait_for_function("document.querySelectorAll('.chat-message.jarvis').length === 2 && "
+                                     "!document.querySelector('.chat-message.jarvis .chat-streaming')")
+        later = await page.evaluate(now)
+        await page.wait_for_function(f"{now} > {later}", timeout=10000)
+        assert first < later
+        await page.get_by_role('button', name='Skip to end').click()
+        await page.wait_for_selector('.spoken-word.now', state='detached')
+        await asyncio.sleep(.3)
+        assert await page.locator('.chat-message.jarvis .spoken-word.now').count() == 0
+        assert 'reviewing the migration' in await page.locator('.chat-message.jarvis').last.inner_text()
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_back(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        text = 'A reply being written. ' * 4
+        # It follows a reply as it grows, the highlight as it moves, and the
+        # bottom box as it grows (a capture opening, his turn stalling): the
+        # page's own scrolling and the box shrinking are never taken for his.
+        for n in range(1, 4):
+            voice.send({'type': 'reply', 'utt': 50, 'text': text * n, 'done': False})
+            await asyncio.sleep(.15)
+            assert await page.evaluate(GAP) < 2
+        voice.send({'type': 'audio', 'utt': 50, 'idx': 0, 'text': text, 'kind': 'reply', 'data': _silence_wav(4)},
+                   {'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
+                    'text': 'Tell hammer to ship the folder catalog fix once the review passes, and post the notes.'},
+                   {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'})
+        await page.wait_for_selector('#voice-turn')
+        await page.wait_for_selector('.chat-playback')
+        await asyncio.sleep(.6)
+        assert await page.evaluate(GAP) < 2
+        await page.evaluate("document.querySelector('.conversation-history').scrollTop = 200")
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 4, 'done': False})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2, 'a scroll the page made is not his'
+        assert await page.locator('.conversation-jump').count() == 0
+
+        # He scrolls up: it stays where he left it while the reply grows and
+        # the bottom box changes.
+        await _wheel(page, -700)
+        await page.wait_for_selector('.conversation-jump')
+        left = await page.evaluate(TOP)
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 6, 'done': False},
+                   {'type': 'turn', 'state': 'idle', 'turnId': 5, 'text': ''})
+        await asyncio.sleep(.4)
+        assert abs(await page.evaluate(TOP) - left) < 2
+        assert await page.locator('.conversation-jump').count() == 1
+
+        # Back to the bottom by his own scrolling, it follows again.
+        await _wheel(page, 5000)
+        await page.wait_for_selector('.conversation-jump', state='detached')
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 8, 'done': False})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2
+
+        # The keys move it as his too, and Jump to latest brings it back.
+        await page.locator('.chat-message .chat-copy').last.focus()
+        await page.keyboard.press('PageUp')
+        await page.wait_for_selector('.conversation-jump')
+        voice.send({'type': 'reply', 'utt': 50, 'text': text * 9, 'done': True})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) > 50
+        await page.get_by_role('button', name='Jump to latest').click()
+        assert await page.evaluate(GAP) < 2
+        voice.send({'type': 'reply', 'utt': 51, 'text': 'And one more.', 'done': True})
+        await asyncio.sleep(.2)
+        assert await page.evaluate(GAP) < 2
+        await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('theme', ['classic', 'graphite'])
+async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_never_scrolls(page_url, theme):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1000, 'height': 720})
+        await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
+        await _with_history(page, voice)
+        voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
+                    'text': 'Tell hammer to ship the folder catalog fix once the review passes. ' * 2},
+                   {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'},
+                   {'type': 'reply', 'utt': 60, 'text': 'A long reply being read. ' * 120, 'done': True},
+                   {'type': 'audio', 'utt': 60, 'idx': 0, 'text': 'A long reply being read.', 'kind': 'reply',
+                    'data': _silence_wav(5)})
+        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_selector('#voice-turn')
+        await page.get_by_role('textbox', name='Message JARVIS').fill('\n'.join(['A long draft line'] * 30))
+        await asyncio.sleep(.5)
+        got = await page.evaluate("""() => {
+          const r = s => document.querySelector(s).getBoundingClientRect();
+          const dock = document.querySelector('.conversation-dock');
+          const field = document.querySelector('.hearing-input');
+          return {view: r('#conversation'), history: r('.conversation-history'), capture: r('#conversation .capture-box'),
+                  list: document.querySelector('#conversation .capture-list').scrollHeight
+                        - document.querySelector('#conversation .capture-list').clientHeight,
+                  playback: r('.chat-playback'), turn: r('#voice-turn'), composer: r('.chat-composer'),
+                  send: r('.composer-send'), dockScroll: dock.scrollHeight - dock.clientHeight,
+                  dockOverflow: getComputedStyle(dock).overflowY, dockTop: dock.scrollTop,
+                  fieldScroll: field.scrollHeight > field.clientHeight}; }""")
+        for part in ('capture', 'playback', 'turn', 'composer', 'send'):
+            assert got[part]['top'] >= got['view']['top'] and got[part]['bottom'] <= got['view']['bottom'] + 1, (part, got)
+        assert got['history']['bottom'] <= got['capture']['top'] + 1, got
+        assert got['capture']['bottom'] <= got['playback']['top'] <= got['turn']['top'] <= got['composer']['top'], got
+        assert got['composer']['bottom'] <= 720 and abs(got['composer']['bottom'] - got['view']['bottom']) < 2, got
+        assert got['list'] <= 1, 'the one capture is shown whole'
+        assert got['dockScroll'] <= 1 and got['dockOverflow'] == 'visible' and got['dockTop'] == 0, got
+        assert got['fieldScroll'], 'only the long draft scrolls, inside the editor'
+        assert got['history']['height'] >= 70, got
+        await browser.close()
+
+
+# ── following the word being read through a reply taller than the box ─────
+
+NOW = '.chat-message.jarvis .spoken-word.now'
+WORD_IN_VIEW = """() => { const w = document.querySelector('.chat-message.jarvis .spoken-word.now');
+  if (!w) return null; const b = document.querySelector('.conversation-history').getBoundingClientRect();
+  const r = w.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; }"""
+
+
+def _long_reply(sentences):
+    return [f'Sentence {n} of the long reply goes on with several more words to fill the line.'
+            for n in range(1, sentences + 1)]
+
+
+def _chunks(said, start=0, seconds=.3):
+    return [{'type': 'audio', 'utt': 70, 'idx': i, 'text': said[i], 'kind': 'reply', 'data': _silence_wav(seconds)}
+            for i in range(start, len(said))]
+
+
+async def _played(page, voice, idx, timeout=20):
+    """Until the page says chunk `idx` of the reply has played."""
+    for _ in range(int(timeout / .1)):
+        if any(m.get('type') == 'played' and m.get('utt') == 70 and m.get('idx') == idx for m in voice.got):
+            return
+        await asyncio.sleep(.1)
+    raise AssertionError(f'chunk {idx} never played')
+
+
+async def _read_a_long_reply(page, voice, said, upto=None):
+    """A reply far taller than the box, read aloud a sentence at a time
+    (only its first `upto` sentences, when given)."""
+    voice.send({'type': 'reply', 'utt': 70, 'at': time.time(), 'text': ' '.join(said), 'done': True},
+               *_chunks(said[:upto] if upto else said))
+    await page.wait_for_selector(NOW, timeout=10000)
+    tall = await page.evaluate("""() => document.querySelector('.chat-message.jarvis:last-of-type').offsetHeight
+      > 1.5 * document.querySelector('.conversation-history').clientHeight""")
+    assert tall, 'the reply must be taller than the box'
+
+
+async def _the_reading_ends(page, voice, last):
+    """Its last chunk played, the server's mouth goes idle, as it does."""
+    await _played(page, voice, last)
+    voice.send({'type': 'status', 'state': 'idle'})
+
+
+@pytest.mark.asyncio
+async def test_a_long_reply_being_read_keeps_the_word_in_view_and_settles_at_the_bottom_once_read(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        said = _long_reply(40)
+        await _read_a_long_reply(page, voice, said)
+        tops, gaps = [], []
+        while await page.locator(NOW).count():
+            seen = await page.evaluate(WORD_IN_VIEW)
+            if seen is None:
+                break
+            assert seen, 'the word being read is in view'
+            tops.append(await page.evaluate(TOP))
+            gaps.append(await page.evaluate(GAP))
+            await asyncio.sleep(.25)
+        assert len(tops) > 10
+        assert max(gaps[:5]) > 200, 'not carried to the bottom past the word'
+        assert tops[-1] > tops[0] + 100, 'the list moves along with the reading'
+        assert all(b >= a - 1 for a, b in zip(tops[1:], tops[2:])), 'never back up behind the reading'
+        await _the_reading_ends(page, voice, len(said) - 1)
+        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
+        assert await page.locator('.conversation-jump').count() == 0
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_between_sentences_is_not_the_end_of_the_reading_and_the_list_stays_on_the_word(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        said = _long_reply(30)
+        # The next sentences are still being made: the page's audio runs dry.
+        await _read_a_long_reply(page, voice, said, upto=12)
+        await _played(page, voice, 11)
+        await page.wait_for_selector(NOW, state='detached', timeout=5000)
+        held = await page.evaluate(TOP)
+        await asyncio.sleep(1)
+        assert abs(await page.evaluate(TOP) - held) < 2, 'the list stays where the reading is'
+        assert await page.evaluate(GAP) > 200, 'not settled at the bottom'
+        # The rest arrives: the reading carries on from there, the word in view.
+        voice.send(*_chunks(said, start=12))
+        await page.wait_for_selector(NOW, timeout=10000)
+        assert await page.evaluate(WORD_IN_VIEW)
+        assert await page.evaluate(TOP) >= held - 1
+        await _the_reading_ends(page, voice, len(said) - 1)
+        await page.wait_for_function(f'{GAP} < 2', timeout=5000)
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_scrolling_up_while_a_reply_is_read_stops_following_and_the_reading_never_moves_the_list(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.set_viewport_size({'width': 1280, 'height': 760})
+        await _with_history(page, voice)
+        said = _long_reply(30)
+        await _read_a_long_reply(page, voice, said)
+        await _wheel(page, -400)
+        await page.wait_for_selector('.conversation-jump')
+        left = await page.evaluate(TOP)
+        word = await page.evaluate(f"[...document.querySelectorAll('.spoken-word')].indexOf(document.querySelector('{NOW}'))")
+        await page.wait_for_function(f"[...document.querySelectorAll('.spoken-word')].indexOf("
+                                     f"document.querySelector('{NOW}')) > {word} + 40", timeout=10000)
+        assert abs(await page.evaluate(TOP) - left) < 2, 'the reading does not move the list'
+        await _the_reading_ends(page, voice, len(said) - 1)
+        await asyncio.sleep(.3)
+        assert abs(await page.evaluate(TOP) - left) < 2, 'nor does its end'
+        assert await page.locator('.conversation-jump').count() == 1
         await browser.close()

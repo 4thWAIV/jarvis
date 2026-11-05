@@ -17,7 +17,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { Display } from "./sources";
 import { createStore } from "./store";
 import { registerCommand } from "./uiRegistry";
-import { speakWords, stopWords } from "./wordClock";
+import { speakWords, stopWords, words } from "./wordClock";
 import type { ReplyFailure, ReplyOutcome } from "./voiceControl";
 
 export type Speaker = "user" | "jarvis";
@@ -72,6 +72,14 @@ export interface Conversation {
 const KEEP_TURNS = 40;
 
 export const conversation = createStore<Conversation>({ turns: [], speaking: null });
+
+/** The turn whose reading aloud is under way: from its first sentence
+ *  starting until the reading has truly ended (`jarvisQuiet`: the server's
+ *  mouth idle once its last chunk is played, Skip, Stop, another reading
+ *  starting, or the connection lost). Between sentences, while the next
+ *  one is still on its way, no word is being said (`speaking` is null,
+ *  `jarvisPaused`) but the reading has not ended. */
+export const reading = createStore<number | null>(null);
 
 let nextId = 1;
 let captionEpoch = 0;
@@ -241,6 +249,7 @@ export function jarvisSpeaking(utt: number, text: string, seconds: number, idx?:
   const turn: Turn = existing ? { ...existing, sentences } : {
     id: nextId++, at: Date.now() / 1000, speaker: "jarvis", sentences, open: false, utt, epoch: captionEpoch,
   };
+  reading.set(turn.id);
   commit(existing ? turns.map((t, i) => i === at ? turn : t) : [...turns, turn], [turn.id, sentence, 0]);
   flush(utt);
   speakWords(text, seconds, word => {
@@ -297,9 +306,31 @@ export function jarvisReading(utt: number, outcome: ReadingOutcome): void {
   commit(turns.map((t, i) => i === at ? { ...existing, reading: outcome } : t), speaking);
 }
 
-/** Nothing is being spoken any more. */
-export function jarvisQuiet(): void {
+/** A turn's words as they are being read aloud: every word said or to be
+ *  said in the sentences played so far, and which of them is being said
+ *  now. */
+export interface Spoken { words: string[]; word: number }
+
+/** While `turn` is being read aloud, its spoken words and the one being said
+ *  now, moving with the voice (wordClock.ts); null at any other time, so a
+ *  reply skipped, stopped or not read has none. */
+export function useSpoken(turn: Turn | undefined): Spoken | null {
+  const speaking = useSyncExternalStore(conversation.subscribe, () => conversation.get().speaking);
+  if (!turn || !speaking || speaking[0] !== turn.id) return null;
+  const said = turn.sentences.map(words);
+  return { words: said.flat(), word: said.slice(0, speaking[1]).reduce((n, w) => n + w.length, 0) + speaking[2] };
+}
+
+/** Nothing is playing for now, and more of the same reading may follow:
+ *  no word is being said, and the reading goes on (`reading`). */
+export function jarvisPaused(): void {
   stopWords();
   const { turns, speaking } = conversation.get();
   if (speaking) commit(turns, null);
+}
+
+/** Nothing is being spoken any more: the reading has ended. */
+export function jarvisQuiet(): void {
+  reading.set(null);
+  jarvisPaused();
 }

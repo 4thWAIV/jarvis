@@ -329,6 +329,8 @@ function element(shown: () => boolean, offscreen = false) {
   const el = {
     isConnected: true,
     scrolled: 0,
+    announced: [] as string[],
+    dispatchEvent: (event: Event) => { el.announced.push(event.type); return true; },
     closest: () => (shown() ? null : {}),
     contains: (other: unknown) => other === el,
     getBoundingClientRect: () => {
@@ -385,6 +387,8 @@ function registerFolderRow(el: unknown) {
   const o = await reveal.reveal(folderRef as never, ctx());
   assert.equal(o.status, "completed");
   assert.equal(el.scrolled, 1);
+  // The scroll is announced first, so a list that follows its bottom takes it as deliberate.
+  assert.deepEqual(el.announced, [reveal.REVEALING]);
   off();
   passed.push("reveal: scrolls an offscreen target");
 }
