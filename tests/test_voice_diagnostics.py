@@ -216,6 +216,36 @@ def test_the_summary_has_the_latest_state_the_pipeline_and_the_hour_s_incidents(
     assert got["lastDropAt"] == pytest.approx(now - 30)
 
 
+def test_a_page_drop_counts_as_a_drop_with_the_seconds_it_lost():
+    """The page throwing away audio it held ("dropped") is speech lost, as
+    an overload is: counted as a drop everywhere, never as an error."""
+    now = time.time()
+    vd.record_event(Event(at=now - 20, kind="dropped", text="fellBehind", lost_sec=9.8,
+                          cause="The JARVIS tab is hidden, so Chrome slows it", cause_code="tabHidden"))
+    vd.record_event(Event(at=now - 10, kind="decoder-failed"))
+    got = vd.summary(now)
+    assert got["incidentsLastHour"] == {"drops": 1, "reconnects": 0, "errors": 1}
+    assert got["lastHour"]["drops"] == 1 and got["today"]["drops"] == 1
+    assert got["lastDropAt"] == pytest.approx(now - 20)
+    _, events = vd.history(now - 60, now)
+    drop = vd.event_json(events[0])
+    assert (drop["kind"], drop["text"], drop["lostSec"], drop["causeCode"]) == \
+        ("dropped", "fellBehind", 9.8, "tabHidden")
+
+
+@pytest.mark.parametrize("dropped", [
+    {"reason": "bored", "lostSec": 1.0}, {"reason": "fellBehind"},
+    {"reason": "fellBehind", "lostSec": -1}, "fellBehind"])
+def test_a_wrong_drop_report_is_refused(dropped):
+    with pytest.raises(ValueError):
+        vd.parse_drop({"type": "abort", "dropped": dropped})
+
+
+def test_an_abort_without_a_drop_reports_none():
+    assert vd.parse_drop({"type": "abort"}) is None
+    assert vd.parse_drop({"type": "abort", "dropped": {"reason": "tooSlow", "lostSec": 10}}) == ("tooSlow", 10.0)
+
+
 def test_with_nothing_recent_the_summary_says_idle():
     vd.record_sample(healthy(at=time.time() - 60))
     assert vd.summary()["state"] == "idle"

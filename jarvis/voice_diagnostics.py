@@ -64,8 +64,13 @@ RTF_WARN = 0.9
 STATES = ("healthy", "no-frames", "browser-behind", "connection-behind",
           "server-starved", "decoder-slow")
 # The events that are a failure, which get the cause and the busiest processes.
+# "dropped" is the page throwing away audio it held for the recogniser
+# (its reason one of PROTOCOL["dropReasons"], with the seconds it lost).
 INCIDENT_KINDS = frozenset({"overload", "decoder-failed", "interrupted", "busy",
-                            "model-unavailable"})
+                            "model-unavailable", "dropped"})
+# The failures that lost speech: the recogniser refusing audio, and the
+# page dropping what it held. Every count of drops counts these.
+DROP_KINDS = frozenset({"overload", "dropped"})
 # "model-load" is speech input loading another language's model in place of
 # the one it had (speech_models.switch), with how long it took.
 EVENT_KINDS = INCIDENT_KINDS | {"ready", "finish", "reconnect", "message", "model-load"}
@@ -126,6 +131,8 @@ _MIGRATIONS = {
         ALTER TABLE voice_events ADD COLUMN cause_code TEXT;
         ALTER TABLE voice_events ADD COLUMN cause_values TEXT;
     """,
+    # 3: the seconds of audio a drop lost, where the page said.
+    3: "ALTER TABLE voice_events ADD COLUMN lost_sec REAL;",
 }
 
 # The databases brought forward in this process, by path: a sample is
@@ -198,6 +205,8 @@ class Event:
     # The cause by code (CAUSES) and its values; an older record has none.
     cause_code: Optional[str] = None
     cause_values: dict = field(default_factory=dict)
+    # The seconds of audio a drop lost (a "dropped" event); none otherwise.
+    lost_sec: Optional[float] = None
 
 
 # ── the page's telemetry ─────────────────────────────────────────────────
@@ -269,6 +278,18 @@ def parse_telemetry(msg: dict) -> Telemetry:
         quiet=msg["quiet"],
         messages=messages,
     )
+
+
+def parse_drop(msg: dict) -> Optional[tuple[str, float]]:
+    """The drop an abort message reports (`dropped`: its reason and the
+    seconds of audio the page held and threw away), or None for an abort
+    that reports none; ValueError when what it reports is wrong."""
+    dropped = msg.get("dropped")
+    if dropped is None:
+        return None
+    if not isinstance(dropped, dict) or dropped.get("reason") not in PROTOCOL["dropReasons"]:
+        raise ValueError("dropped")
+    return dropped["reason"], _number(dropped, "lostSec", cap=3600)
 
 
 # ── the diagnosis ────────────────────────────────────────────────────────
@@ -435,10 +456,11 @@ def record_event(event: Event) -> int:
     with closing(_connect()) as conn:
         cur = conn.execute(
             "INSERT INTO voice_events (at, capture, kind, source, text, cause, top_processes, "
-            "cause_code, cause_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cause_code, cause_values, lost_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (event.at, event.capture, event.kind, event.source, event.text, event.cause,
              json.dumps(event.top_processes) if event.top_processes else None,
-             event.cause_code, json.dumps(event.cause_values) if event.cause_code else None))
+             event.cause_code, json.dumps(event.cause_values) if event.cause_code else None,
+             event.lost_sec))
         conn.commit()
         return cur.lastrowid
 
@@ -465,7 +487,8 @@ def _event(row) -> Event:
     return Event(at=row["at"], kind=row["kind"], capture=row["capture"], source=row["source"],
                  text=row["text"], cause=row["cause"],
                  top_processes=json.loads(row["top_processes"] or "[]"), id=row["id"],
-                 cause_code=row["cause_code"], cause_values=json.loads(row["cause_values"] or "{}"))
+                 cause_code=row["cause_code"], cause_values=json.loads(row["cause_values"] or "{}"),
+                 lost_sec=row["lost_sec"])
 
 
 def history(start: float, end: float) -> tuple[list[Sample], list[Event]]:
@@ -491,7 +514,7 @@ def summary(now: Optional[float] = None) -> dict:
     samples, events = history(now - 120, now)
     hour_samples, hour_events = history(now - 3600, now)
     latest = samples[-1] if samples and now - samples[-1].at < 5 else None
-    drops = [e.at for e in hour_events if e.kind == "overload"]
+    drops = [e.at for e in hour_events if e.kind in DROP_KINDS]
     return {
         "state": latest.state if latest else "idle",
         "cause": latest.cause if latest else "",
@@ -521,20 +544,22 @@ def today(now: float) -> dict:
             "SELECT kind, COUNT(*) FROM voice_events WHERE at >= ? GROUP BY kind",
             (midnight,)).fetchall())
     return {"listenedSec": listened * SAMPLE_EVERY_SEC, "finals": finals, "typed": typed,
-            "drops": kinds.get("overload", 0), "reconnects": kinds.get("reconnect", 0)}
+            "drops": sum(kinds.get(k, 0) for k in DROP_KINDS), "reconnects": kinds.get("reconnect", 0)}
 
 
 def last_drop_at() -> Optional[float]:
     """When speech was last dropped, ever (within the record), or None."""
     with closing(_connect()) as conn:
-        return conn.execute("SELECT MAX(at) FROM voice_events WHERE kind = 'overload'").fetchone()[0]
+        return conn.execute(
+            f"SELECT MAX(at) FROM voice_events WHERE kind IN ({','.join('?' * len(DROP_KINDS))})",
+            tuple(DROP_KINDS)).fetchone()[0]
 
 
 def incident_counts(events: list[Event]) -> dict:
     return {
-        "drops": sum(e.kind == "overload" for e in events),
+        "drops": sum(e.kind in DROP_KINDS for e in events),
         "reconnects": sum(e.kind == "reconnect" for e in events),
-        "errors": sum(e.kind in INCIDENT_KINDS - {"overload"} for e in events),
+        "errors": sum(e.kind in INCIDENT_KINDS - DROP_KINDS for e in events),
     }
 
 
@@ -647,13 +672,14 @@ class CaptureMonitor:
                 "processCpu": s.process_cpu, "loadAvg": s.load_avg,
                 "pipeline": pipeline(s)})
 
-    async def incident(self, kind: str, text: str = "") -> None:
+    async def incident(self, kind: str, text: str = "", lost_sec: Optional[float] = None) -> None:
         """A failure, with the cause in force and the busiest processes."""
         top = await asyncio.to_thread(top_processes)
         said = self.cause_said
         event = Event(at=time.time(), kind=kind, capture=self._session, text=text or None,
                       cause=self.cause or None, top_processes=top,
-                      cause_code=said.code if said else None, cause_values=said.values if said else {})
+                      cause_code=said.code if said else None, cause_values=said.values if said else {},
+                      lost_sec=lost_sec)
         await asyncio.to_thread(record_event, event)
         _tell(event)
 

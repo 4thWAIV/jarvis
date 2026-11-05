@@ -43,6 +43,9 @@ def record(now: float):
                "today": {"listenedSec": 600, "finals": 40, "typed": 2, "drops": 2, "reconnects": 1},
                "now": now}
     events = [
+        {"id": 3, "at": now - 25, "kind": "dropped", "capture": "b", "source": None,
+         "text": "fellBehind", "cause": "The JARVIS tab is hidden, so Chrome slows it",
+         "causeCode": "tabHidden", "causeValues": {}, "topProcesses": [], "lostSec": 9.8},
         {"id": 1, "at": now - 20, "kind": "overload", "capture": "c", "source": None,
          "text": "Speech recognition fell behind, so this was not heard.",
          "cause": "Machine busy (load 16.9)", "topProcesses": [{"name": "rider", "cpu": 99.1}]},
@@ -252,3 +255,16 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             assert (await point())["status"] != "completed"
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_drop_by_the_page_is_an_incident_with_its_reason_and_the_speech_lost(page_playwright, page_url):
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url)
+        await page.click(".voice-summary-open")
+        await page.wait_for_selector("#voice-diagnostics .voice-card.kind-dropped")
+        card = await page.text_content("#voice-diagnostics .voice-card.kind-dropped")
+        assert "Held speech thrown away" in card and "Recognition fell behind" in card
+        assert "9.8 s of speech lost" in card and "The JARVIS tab is hidden" in card
+        assert "fellBehind" not in card
+        await browser.close()

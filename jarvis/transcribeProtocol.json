@@ -13,5 +13,6 @@
   "telemetryEverySec": 1.0,
   "fromBrowser": ["start", "finish", "abort", "telemetry"],
   "fromServer": ["loading", "ready", "interim", "final", "finished", "error", "health"],
+  "dropReasons": ["fellBehind", "tooSlow", "backedUp", "disconnected", "lostJarvis"],
   "errors": ["busy", "taken", "model-unavailable", "invalid-format", "overload", "decoder-failed", "interrupted"]
 }

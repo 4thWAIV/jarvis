@@ -46,6 +46,7 @@ FAKE_TRANSCRIPTION = """
   window.__framesSent = 0;
   window.__telemetry = [];          // every telemetry message the page sent
   window.__starts = [];             // every start message
+  window.__aborts = [];             // every abort message (a drop says why and what it lost)
   window.__transcribe = window.__transcribe || {};
   class FakeTranscriber {
     constructor(url) {
@@ -73,7 +74,7 @@ FAKE_TRANSCRIPTION = """
         if (script.finalOnFinish) this._emit({ type: "final", segment: this.segment++, text: script.finalOnFinish });
         this._emit({ type: "finished" }); this.close();
       }, 0);
-      if (msg.type === "abort") this.close();
+      if (msg.type === "abort") { window.__aborts.push(msg); this.close(); }
     }
     close() {
       if (this.readyState === 3) return;

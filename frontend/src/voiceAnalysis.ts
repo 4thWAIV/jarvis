@@ -5,17 +5,27 @@
  * per hour with the page quiet and not. Pure: no fetching and no drawing.
  */
 
+import protocol from "../../jarvis/transcribeProtocol.json";
 import { formatDateTime, t } from "./locale";
 import type { Notice, Sample, VoiceEvent } from "./voiceHealth";
 
-export const DROP_KINDS = new Set(["overload"]);
+// voice_diagnostics.DROP_KINDS and INCIDENT_KINDS: "dropped" is the page
+// throwing away audio it held, its reason in the event's text.
+export const DROP_KINDS = new Set(["overload", "dropped"]);
 export const INCIDENT_KINDS = new Set(["overload", "decoder-failed", "interrupted", "busy",
-                                       "model-unavailable"]);
+                                       "model-unavailable", "dropped"]);
 /** An incident's kind in words, or the kind itself for one this page does
  *  not know. */
 export const incidentWords = (kind: string): string =>
   INCIDENT_KINDS.has(kind) ? t(`main.voice.incident.${kind as IncidentKind}`) : kind;
-type IncidentKind = "overload" | "decoder-failed" | "interrupted" | "busy" | "model-unavailable";
+type IncidentKind = "overload" | "decoder-failed" | "interrupted" | "busy" | "model-unavailable" | "dropped";
+
+type DropReason = "fellBehind" | "tooSlow" | "backedUp" | "disconnected" | "lostJarvis";
+const DROP_REASONS = new Set<string>(protocol.dropReasons);
+/** Why the page dropped what it held (the protocol's `dropReasons`), in
+ *  words, or null for a reason this page does not know. */
+export const dropReasonWords = (reason: string | null): string | null =>
+  reason && DROP_REASONS.has(reason) ? t(`main.voice.dropReason.${reason as DropReason}`) : null;
 
 // The page's notice sources (the callers of voiceHealth.notice) and their
 // words; a source not here is shown as it was recorded.

@@ -575,3 +575,43 @@ def test_a_drop_is_recorded_with_its_cause_and_the_busiest_processes_then_the_re
     assert drop.top_processes == [{"name": "rider", "cpu": 99.0}]
     assert drop.text == "Speech recognition fell behind, so this was not heard."
     assert [e.kind for e in events if e.kind in ("ready", "reconnect")] == ["ready", "reconnect"]
+
+
+def test_a_drop_the_page_reports_on_its_abort_is_recorded_with_its_reason_cause_and_lost_seconds(
+        client, monkeypatch):
+    """A page that threw away the audio it held (here: recognition fell
+    behind, with the tab hidden) says so on its abort; the record keeps it
+    as a drop with the cause in force and the seconds lost, the summary
+    counts it, and the next capture is a reconnect."""
+    monkeypatch.setattr(voice_diagnostics, "SAMPLE_EVERY_SEC", 0.1)
+    monkeypatch.setattr(voice_diagnostics, "top_processes", lambda limit=5: [])
+    with _open(client) as ws:
+        ws.send_text(json.dumps({**START, "diagnostics": True}))
+        while ws.receive_json()["type"] != "ready":
+            pass
+        ws.send_text(json.dumps({**TELEMETRY, "tabHidden": True, "heldSec": 9.9, "messages": []}))
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            health = next(m for m in iter(ws.receive_json, None) if m["type"] == "health")
+            if health["causeCode"] == "tabHidden":
+                break
+        assert health["causeCode"] == "tabHidden"
+        ws.send_text(json.dumps({"type": "abort",
+                                 "dropped": {"reason": "fellBehind", "lostSec": 10.0}}))
+    with _open(client) as ws:
+        _ready(ws)
+    _, events = _recorded("dropped", "reconnect")
+    drop = next(e for e in events if e.kind == "dropped")
+    assert (drop.text, drop.lost_sec, drop.cause_code) == ("fellBehind", 10.0, "tabHidden")
+    summary = voice_diagnostics.summary()
+    assert summary["incidentsLastHour"]["drops"] == 1 and summary["today"]["drops"] == 1
+
+
+def test_an_abort_with_a_wrong_drop_report_still_aborts_and_records_no_drop(client):
+    with _open(client) as ws:
+        _ready(ws)
+        ws.send_text(json.dumps({"type": "abort", "dropped": {"reason": "bored", "lostSec": 1}}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+    _, events = _recorded("ready")
+    assert not any(e.kind == "dropped" for e in events)

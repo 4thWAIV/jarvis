@@ -638,7 +638,8 @@ How voice input is doing is one durable record, `voice_diagnostics.py`:
 `voice_samples` (one a second while a page listens, taken as the page's
 `telemetry` arrives on `/ws/transcribe`) and `voice_events` (each capture's
 start and end, reconnects, every failure with the cause in force and the
-busiest processes, every line of text the page showed, and each switch of
+busiest processes, each drop of audio the page held (`dropped`, its reason
+and the seconds lost, reported on the abort and counted as a drop), every line of text the page showed, and each switch of
 speech model as `model-load`). `classify` gives
 each second one state and one cause, in the order the audio travels: the
 microphone, the browser, the connection, the server, the decoder. Counts and
