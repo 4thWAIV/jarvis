@@ -51,6 +51,9 @@ async def synthesize_chunk(text: str, *, api_key: str, voice_id: str,
     text = (text or "").strip()
     if not text or not api_key:
         return None
+    if voice_id == api_key:
+        log.error("Fish Audio voice ID contains the API key")
+        return None
     own = client is None
     client = client or httpx.AsyncClient(timeout=timeout)
     t0 = time.monotonic()

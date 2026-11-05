@@ -61,7 +61,7 @@
 import { rayStart, rightChannelX, TOP_LANE_PX } from "./rayGeometry";
 import { lanes } from "./transferEndpoints";
 import {
-  elementOf, mountedTargets, presentationId, registeredBoxes, undrawn, visibilityOf, type VisualTarget,
+  elementOf, mountedTargets, presentationId, registeredBoxes, seenPart, undrawn, visibilityOf, type VisualTarget,
 } from "./uiRegistry";
 import { BEVEL_PX, bevelled, joined, length, type Point } from "./uiSignal";
 import {
@@ -231,6 +231,15 @@ function boxOf(el: Element | null): DOMRect | null {
   return (r.width === 0 && r.height === 0) || undrawn(el) ? null : r;
 }
 
+/** The part of a control `el`'s box, or of a line of text `inside` it,
+ *  that can be seen (seenPart()), or null when none can: what a scrolling
+ *  view has scrolled out of sight is under what clips it, never in a
+ *  route's way. */
+function seenOf(el: Element, inside?: DOMRect): DOMRect | null {
+  const seen = seenPart(el, inside);
+  return seen && new DOMRect(seen.left, seen.top, seen.right - seen.left, seen.bottom - seen.top);
+}
+
 /** The controls inside `el` a route keeps clear of, on show; never the
  *  addressed part `except` itself, a control inside it, or one holding it
  *  (a box the route passes into). */
@@ -238,8 +247,8 @@ function reservedIn(el: Element, except?: Element): DOMRect[] {
   const out: DOMRect[] = [];
   el.querySelectorAll(RESERVED).forEach((c) => {
     if (except && (except.contains(c) || c.contains(except))) return;
-    const r = boxOf(c);
-    if (r) out.push(r);
+    const seen = boxOf(c) && seenOf(c);
+    if (seen) out.push(seen);
   });
   return out;
 }
@@ -353,9 +362,13 @@ function labelsIn(el: Element, except: Element): DOMRect[] {
   const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   const range = document.createRange();
   for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-    if (!n.textContent?.trim() || except.contains(n)) continue;
+    const holder = n.parentElement;
+    if (!holder || !n.textContent?.trim() || except.contains(n)) continue;
     range.selectNodeContents(n);
-    for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0) out.push(r);
+    for (const r of range.getClientRects()) {
+      const seen = r.width > 0 && r.height > 0 ? seenOf(holder, r) : null;
+      if (seen) out.push(seen);
+    }
   }
   return out;
 }
@@ -563,7 +576,10 @@ function obstaclesIn(area: DOMRect, except: Element): DOMRect[] {
     if (!around.width || !around.height || !meets(around, area) || holder.closest("#ui-pipeline-status")
         || undrawn(holder)) continue;
     range.selectNodeContents(n);
-    for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0 && meets(r, area)) out.push(r);
+    for (const r of range.getClientRects()) {
+      const seen = r.width > 0 && r.height > 0 && meets(r, area) ? seenOf(holder, r) : null;
+      if (seen && meets(seen, area)) out.push(seen);
+    }
   }
   return out;
 }

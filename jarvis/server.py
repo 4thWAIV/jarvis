@@ -145,6 +145,8 @@ log = logging.getLogger("jarvis")
 # Config
 # ---------------------------------------------------------------------------
 
+from jarvis import local_tts
+
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 USER_NAME = os.getenv("USER_NAME", "sir")
@@ -692,16 +694,8 @@ def _drop_voice_client(ws) -> None:
         speech.transport_gone()
 
 
-async def _voice_emit(msg: dict) -> None:
-    """Hand one protocol message to every connected voice client.
-
-    Hand, not send: the frame goes on each client's own queue and returns
-    immediately, so no socket can hold up the mouth. A content frame — audio
-    or its text fallback — that reaches NO queue still raises, so the
-    scheduler abandons that utterance instead of waiting out its ack timeout
-    for an ack that can never come. Status frames with nobody listening are
-    simply lost.
-    """
+def _queue_voice(msg: dict) -> int:
+    """Queue a frame synchronously, including from a provider delta callback."""
     delivered = 0
     for ws in list(voice_clients):
         queue = _voice_queues.get(ws)
@@ -710,11 +704,45 @@ async def _voice_emit(msg: dict) -> None:
             continue
         if _enqueue(queue, msg):
             delivered += 1
+    return delivered
+
+
+async def _voice_emit(msg: dict) -> None:
+    """Queue a frame without waiting for sockets; undelivered audio is refused."""
+    delivered = _queue_voice(msg)
     if delivered == 0 and msg.get("type") in _CONTENT_FRAMES:
         raise NoVoiceClient("no voice client connected")
 
 
+def _voice_output_status() -> dict:
+    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
+    voice = os.environ.get("JARVIS_LOCAL_VOICE", "george")
+    problem = local_tts.model_problem() if provider == "local" else None
+    if provider not in ("fish", "local"):
+        problem = "Unknown speech output provider. Choose Local or Fish in Settings."
+    return {"provider": provider, "voice": voice, "voices": list(local_tts.VOICES),
+            "model": local_tts.MODEL_NAME, "download_bytes": local_tts.MODEL_BYTES,
+            "installed": local_tts.model_problem() is None,
+            "state": local_tts.client.state, "error": problem or local_tts.client.error,
+            "metrics": local_tts.client.last_metrics}
+
+
 async def _synth_for_speech(text: str) -> Optional[bytes]:
+    provider = os.environ.get("JARVIS_TTS_PROVIDER", "fish")
+    if provider not in ("fish", "local"):
+        log.warning("Unknown speech output provider; synthesis disabled")
+        return None
+    if provider == "local":
+        try:
+            audio = await local_tts.client.synthesize(text, os.environ.get("JARVIS_LOCAL_VOICE", "george"))
+            subsystem_diagnostics.voice_output_calls.note(True)
+            return audio
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            subsystem_diagnostics.voice_output_calls.note(False)
+            log.warning("local voice: %s", e)
+            return None  # Never fall back to a billable provider.
     r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client,
                                    language=spoken_words.active_language())
     if FISH_API_KEY and (text or "").strip():
@@ -1512,6 +1540,7 @@ async def stop_brain_and_speech() -> None:
         log.warning(f"shutdown journal failed: {e}")
     for label, coro in (("brain", brain_instance.stop() if brain_instance else None),
                         ("speech", speech.stop() if speech else None),
+                        ("local voice", local_tts.client.close()),
                         ("tts client", _tts_client.aclose() if _tts_client else None)):
         if coro is None:
             continue
@@ -2706,6 +2735,47 @@ class _OneLinePerTurn:
             self._sink(text)
 
 
+class _ReplyText:
+    """Full assistant text, independent of narration filters and audio acks.
+
+    One pending snapshot coalesces fast deltas; finishing cancels that timer
+    and publishes the provider's canonical result last. No background task
+    or provider generation is cancelled when the user skips its reading.
+    """
+
+    def __init__(self, utt: int):
+        self.utt = utt
+        self.at = time.time()
+        self.text = ""
+        self._timer: Optional[asyncio.TimerHandle] = None
+        self._done = False
+        _queue_voice({"type": "reply", "utt": utt, "at": self.at, "text": "", "done": False})
+
+    def feed(self, delta: str) -> None:
+        if self._done:
+            return
+        self.text += delta
+        if self._timer is None:
+            self._timer = asyncio.get_running_loop().call_later(0.05, self._publish)
+
+    def _publish(self) -> None:
+        self._timer = None
+        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
+                      "text": self.text, "done": False})
+
+    def finish(self, text: Optional[str] = None) -> None:
+        if self._done:
+            return
+        self._done = True
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if text is not None:
+            self.text = text
+        _queue_voice({"type": "reply", "utt": self.utt, "at": self.at,
+                      "text": self.text, "done": True})
+
+
 async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
     """One user utterance → one brain turn → streamed speech. Runs as a task so
     the socket loop keeps receiving `played` acks and interim text meanwhile.
@@ -2727,19 +2797,25 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
         return
     await _turn_lock.acquire()
     utt = speech.begin_turn()
+    reply = _ReplyText(utt.id)
     _turn_utt, _turn_heard = utt, heard
     try:
         try:
             try:
                 screen = _ScreenOnly(lambda d: speech.feed(utt, d), _show_on_screen)
                 hold = _OneLinePerTurn(screen.feed)
+                def delta(d: str) -> None:
+                    reply.feed(d)
+                    hold.delta(d)
                 result = await brain_instance.turn(_with_notes_for_brain(text),
                                                    origin="user",
-                                                   on_delta=hold.delta,
+                                                   on_delta=delta,
                                                    on_tool=hold.tool_started)
+                reply.finish(result.text)
                 hold.finish()    # the one line this turn is allowed
                 screen.finish()  # a "Sources:" block it held goes on the screen
             finally:
+                reply.finish()  # errors/cancellation also close the live text stream
                 _turn_utt, _turn_heard = None, None
                 try:
                     await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
@@ -2762,7 +2838,8 @@ async def _handle_utterance(text: str, heard: Optional[int] = None) -> None:
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
         if result.stop_reason == "result":
-            _record(conversation_log.ItemKind.JARVIS, result.text)
+            _record(conversation_log.ItemKind.JARVIS, result.text,
+                    detail={"utt": utt.id, "reply_started_at": reply.at})
         # first_audio is only known once the scheduler has sent the first chunk;
         # wait for playback so the latency line is accurate rather than early.
         await speech.wait_for(utt, timeout=120.0)
@@ -3010,7 +3087,7 @@ async def tts_test():
     GET is the one method OriginGuard cannot cover, so as a GET this was an
     <img> tag on any page the user visited, in a loop.
     """
-    audio = await synthesize_speech("Testing audio, sir.")
+    audio = await _synth_for_speech("Testing audio, sir.")
     if audio:
         return {"audio": base64.b64encode(audio).decode()}
     return {"audio": None, "error": "TTS failed"}
@@ -8414,6 +8491,7 @@ def _subsystems() -> list:
     return subsystem_diagnostics.gather(
         watcher=session_watcher, brain_now=brain_instance, autostart=_brain_autostart(),
         has_fish_key=bool(FISH_API_KEY), started_at=_server_started_at,
+        local_voice=(_voice_output_status() if os.environ.get("JARVIS_TTS_PROVIDER") == "local" else None),
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
                  if folder_catalog is not None else None))
@@ -11759,6 +11837,7 @@ async def voice_handler(ws: WebSocket):
                                                      typed into the white box
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
+        {"type": "skip_to_end", "utt": 3}           stop this reply's reading, not generation
 
     Server -> Client:
         {"type": "config", "muteMicDuringSpeech": false}
@@ -11767,6 +11846,9 @@ async def voice_handler(ws: WebSocket):
         {"type": "drop_queued"}                      keep the playing chunk, drop the rest
         {"type": "status", "state": "thinking"|"speaking"|"idle"}
         {"type": "text", "text": "..."}              a chunk TTS could not voice
+        {"type": "reply", "utt": 3, "at": 1234.5, "text": "...", "done": false}
+                                                     cumulative text; `at` is stable per turn
+        {"type": "reading_skipped", "utt": 3}       drop only this reply's audio, no fake ack
 
     Run lifecycle events are published on /ws/runs, not here.
     """
@@ -11778,7 +11860,7 @@ async def voice_handler(ws: WebSocket):
         """One whole thing he said (or typed): record it, and answer it."""
         log.info(f"User{' (typed)' if typed else ''}: {text}")
         _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
-                text)
+                text, detail={"client_turn_id": heard} if heard is not None else {})
         cleared = _take_clear_answer(text)
         if cleared:
             return
@@ -11830,6 +11912,11 @@ async def voice_handler(ws: WebSocket):
                 ui_clients.event(ws, msg)
                 continue
             if speech is None:
+                continue
+            if kind == "skip_to_end":
+                target = msg.get("utt")
+                if type(target) is int and target > 0:
+                    await speech.skip_reply(target)
                 continue
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
@@ -11939,6 +12026,7 @@ async def voice_handler(ws: WebSocket):
 # a restart.
 SETTABLE_ENV_KEYS = frozenset({
     "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC",
+    "JARVIS_TTS_PROVIDER", "JARVIS_LOCAL_VOICE",
 })
 
 # A value may not carry anything that ends the line it is written on.
@@ -11994,6 +12082,10 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot contain a null byte"
     if value.splitlines() != ([value] if value else []):
         return "A setting cannot contain a line break"
+    if key == "JARVIS_TTS_PROVIDER" and value not in ("fish", "local"):
+        return "Voice provider must be fish or local"
+    if key == "JARVIS_LOCAL_VOICE" and value not in local_tts.VOICES:
+        return "Unknown local voice"
     if _ENV_CONTROL_RE.search(value):
         return "A setting cannot contain a control character"
     if _parse_env_lines(f"{key}={value}") != [(key, value)]:
@@ -12043,7 +12135,11 @@ def _write_env_key(key: str, value: str) -> None:
     problem = _env_value_problem(key, value)
     if problem:
         raise ValueError(problem)
-    lines, _ = _read_env(create=True)
+    lines, saved = _read_env(create=True)
+    if key == "FISH_VOICE_ID" and value and value in (saved.get("FISH_API_KEY"), os.getenv("FISH_API_KEY")):
+        raise ValueError("Use a Fish Audio voice model ID in Voice ID")
+    if key == "FISH_API_KEY" and value and value in (saved.get("FISH_VOICE_ID"), os.getenv("FISH_VOICE_ID")):
+        raise ValueError("Replace the key in Voice ID with a Fish Audio voice model ID first")
     found = False
     new_lines = []
     for line in lines:
@@ -12084,6 +12180,8 @@ async def api_test_fish(body: KeyTest):
     key = body.key_value or os.getenv("FISH_API_KEY", "")
     if not key:
         return {"valid": False, "error": "No key provided"}
+    if FISH_VOICE_ID == key:
+        return {"valid": False, "error": "Use a Fish Audio voice model ID in Voice ID", "status_code": 400}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Not `synthesize_chunk`: this check needs the status code, to
@@ -12096,11 +12194,45 @@ async def api_test_fish(body: KeyTest):
             if resp.status_code in (200, 201):
                 return {"valid": True}
             elif resp.status_code == 401:
-                return {"valid": False, "error": "Invalid API key"}
+                return {"valid": False, "error": "Invalid API key", "status_code": 401}
             else:
-                return {"valid": False, "error": f"HTTP {resp.status_code}"}
+                return {"valid": False, "error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
+
+class VoiceOutputUpdate(BaseModel):
+    provider: str
+    voice: str = "george"
+
+
+@app.post("/api/settings/voice-output")
+async def api_voice_output(body: VoiceOutputUpdate):
+    for key, value in (("JARVIS_TTS_PROVIDER", body.provider), ("JARVIS_LOCAL_VOICE", body.voice)):
+        problem = _env_value_problem(key, value)
+        if problem:
+            return JSONResponse({"error": problem}, status_code=400)
+    # Cancel queued playback/synthesis before switching models/providers.
+    if speech:
+        await speech.barge_in(reason="voice provider changed")
+    await local_tts.client.close()
+    _write_env_key("JARVIS_TTS_PROVIDER", body.provider)
+    _write_env_key("JARVIS_LOCAL_VOICE", body.voice)
+    return _voice_output_status()
+
+
+_voice_install_lock = asyncio.Lock()
+
+
+@app.post("/api/settings/voice-output/install")
+async def api_install_voice_output():
+    from jarvis.setup_speech_output import install
+    async with _voice_install_lock:
+        try:
+            await asyncio.to_thread(install)
+        except (Exception, SystemExit) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+    return _voice_output_status()
+
 
 @app.get("/api/settings/status")
 async def api_settings_status():
@@ -12108,6 +12240,7 @@ async def api_settings_status():
     _, env_dict = _read_env()
     claude_installed = _shutil.which("claude") is not None
     return {
+        "voice_output": _voice_output_status(),
         "claude_code_installed": claude_installed,
         "server_port": 8340,
         "uptime_seconds": int(time.time() - _session_start),

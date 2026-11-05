@@ -485,7 +485,7 @@ async def test_synth_failure_emits_text_and_continues(h):
     await asyncio.sleep(0.15)
     await h.ack_all()
     assert [t for _, _, t in h.audio()] == ["First one.", "Third one."]
-    assert {"type": "text", "text": "Second one."} in h.msgs
+    assert {"type": "text", "text": "Second one.", "utt": u.id, "idx": 1} in h.msgs
     assert u.done
 
 
@@ -1645,6 +1645,94 @@ async def test_the_quiet_room_bar_returns_once_his_audio_has_ended(h):
     await asyncio.sleep(0.05)
     assert not s.is_speaking
 
+
+@pytest.mark.asyncio
+async def test_text_only_turn_emits_identified_text_and_returns_to_idle(h):
+    h.fail_texts.add("Text response.")
+    u = h.sched.begin_turn()
+    h.sched.feed(u, "Text response.")
+    await h.sched.end_turn(u)
+    assert await h.sched.wait_for(u, timeout=1)
+    await asyncio.sleep(0.05)
+    text = next(m for m in h.msgs if m["type"] == "text")
+    assert text["text"] == "Text response."
+    assert text["utt"] == u.id and text["idx"] == 0
+    assert not h.audio()
+    assert h.msgs[-1] == {"type": "status", "state": "idle"}
+
+
+@pytest.mark.asyncio
+async def test_skip_reply_cancels_reading_without_faking_played_or_resuming(h):
+    s = h.sched
+    u = s.begin_turn()
+    s.feed(u, "First sentence. Second sentence. ")
+    await asyncio.sleep(0.15)
+    assert h.audio()
+    assert u.played == -1
+    assert await s.skip_reply(u.id)
+    assert u.cancelled and u.played == -1
+    assert {"type": "reading_skipped", "utt": u.id} in h.msgs
+    count = len(h.audio())
+    s.feed(u, "Generated after skipping. ")
+    await s.end_turn(u)
+    await asyncio.sleep(0.1)
+    assert len(h.audio()) == count
+    assert not await s.wait_for(u, timeout=0.1)
+    # A later independent reply must still work.
+    next_reply = await s.say("Next reply.")
+    await asyncio.sleep(0.1)
+    assert any(utt == next_reply.id for utt, _, _ in h.audio())
+
+
+@pytest.mark.asyncio
+async def test_skip_reply_retires_its_pending_synthesis_only(h):
+    s = h.sched
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def slow_synth(text):
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    s._synth = slow_synth
+    u = s.begin_turn()
+    s.feed(u, "Still generating audio. ")
+    await asyncio.wait_for(started.wait(), 1)
+    assert await s.skip_reply(u.id)
+    await asyncio.wait_for(cancelled.wait(), 1)
+    assert u.played == -1
+    assert not h.audio()
+
+
+@pytest.mark.asyncio
+async def test_skip_reply_does_not_cancel_readback_or_urgent_speech(h):
+    from jarvis.speech import Priority
+    s = h.sched
+    notice = await s.say("Urgent notice.", Priority.URGENT)
+    reading = s.read_aloud("Read this capture.", capture=81)
+    assert not await s.skip_reply(notice.id)
+    assert not await s.skip_reply(reading.id)
+    assert not await s.skip_reply(999999)
+    assert not notice.cancelled and not reading.cancelled
+    assert not any(m["type"] == "reading_skipped" for m in h.msgs)
+
+
+@pytest.mark.asyncio
+async def test_skipping_a_pending_reply_leaves_another_utterance_playing(h):
+    from jarvis.speech import Priority
+    s = h.sched
+    urgent = await s.say("An urgent announcement.", Priority.URGENT, immediate=True)
+    await asyncio.sleep(0.1)
+    assert s._current is urgent and s.is_speaking
+    u = s.begin_turn()
+    s.feed(u, "Pending reply. ")
+    assert await s.skip_reply(u.id)
+    assert s._current is urgent and s.is_speaking
+    assert not urgent.cancelled
+    assert not any(m["type"] == "stop" for m in h.msgs)
 
 # ── in Spanish ──────────────────────────────────────────────────────────────
 # The same rules, read with the Spanish word lists once the active language

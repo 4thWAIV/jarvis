@@ -313,3 +313,71 @@ def test_fmt_reset_names_the_day_when_it_is_not_today(client):
     assert far.endswith(" at 10 AM") and any(ch.isdigit() for ch in far.split(" at ")[0])
     assert server._fmt_reset(None) == "later"
     assert server._fmt_reset("not a time") == "later"
+
+
+def test_complete_reply_reaches_screen_without_any_audio_ack(client):
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "full reply", "isFinal": True,
+                      "typed": True, "id": 44})
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
+        final = seen[-1]
+        assert final["text"] == "Echo: full reply."
+        assert final["at"] > 0
+        records = c.get("/api/conversation").json()["items"]
+        user = next(i for i in records if i["kind"] == "typed" and i["text"] == "full reply")
+        answer = next(i for i in records if i["kind"] == "jarvis" and i["text"] == final["text"])
+        assert user["detail"]["client_turn_id"] == 44
+        assert answer["detail"] == {"utt": final["utt"], "reply_started_at": final["at"]}
+        # No `played` message was sent by this client.
+
+
+def test_skip_reading_does_not_stop_generation_or_drop_the_rest_of_reply(client):
+    import asyncio
+    import threading
+    from jarvis.brain import TurnResult
+
+    c, server = client
+    release = threading.Event()
+    class StreamingBrain(FakeBrain):
+        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
+            on_delta("First sentence. ")
+            await asyncio.sleep(0.65)  # allow the speech narration gate to open
+            on_delta("Second sentence. ")
+            await asyncio.to_thread(release.wait, 2)
+            on_delta("The rest generated after skipping.")
+            return TurnResult(origin, "First sentence. Second sentence. The rest generated after skipping.", "result")
+
+    server.brain_instance = StreamingBrain()
+    try:
+        with c.websocket_connect("/ws/voice") as ws:
+            ws.receive_json(); ws.receive_json()
+            ws.send_json({"type": "transcript", "text": "long answer", "isFinal": True, "typed": True})
+            seen = _drain_until(ws, lambda m: m["type"] == "audio", limit=30)
+            utt = seen[-1]["utt"]
+            ws.send_json({"type": "skip_to_end", "utt": utt})
+            _drain_until(ws, lambda m: m["type"] == "reading_skipped" and m["utt"] == utt, limit=20)
+            release.set()
+            after = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
+            assert after[-1]["text"].endswith("The rest generated after skipping.")
+            assert not any(m["type"] == "audio" and m["utt"] == utt for m in after)
+            assert server.speech.utterances[utt].played == -1
+            assert server.speech.utterances[utt].cancelled
+    finally:
+        release.set()
+
+
+def test_reply_stream_closes_with_partial_text_when_provider_raises(client):
+    c, server = client
+    class FailingBrain(FakeBrain):
+        async def turn(self, text, origin="user", on_delta=None, on_tool=None):
+            on_delta("Partial answer before failure.")
+            raise RuntimeError("synthetic provider failure")
+
+    server.brain_instance = FailingBrain()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "answer", "isFinal": True, "typed": True})
+        seen = _drain_until(ws, lambda m: m["type"] == "reply" and m["done"], limit=20)
+        assert seen[-1]["text"] == "Partial answer before failure."

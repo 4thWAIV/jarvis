@@ -211,20 +211,25 @@ export function undrawn(el: Element): boolean {
 /** The part of `el`'s box that can be seen, or null when none can: inside
  *  the window and inside every ancestor that clips what overflows it (a
  *  scrolling view or list), up to a fixed-position one, which nothing
- *  above it clips. */
-function seenPart(el: Element): { left: number; top: number; right: number; bottom: number } | null {
-  const r = el.getBoundingClientRect();
+ *  above it clips. Given `inside`, a box drawn inside `el` (a line of its
+ *  text), the part of that box instead, which `el` clips too. */
+export function seenPart(el: Element, inside?: DOMRect): { left: number; top: number; right: number; bottom: number } | null {
+  const r = inside ?? el.getBoundingClientRect();
   let left = Math.max(r.left, 0), top = Math.max(r.top, 0);
   let right = Math.min(r.right, window.innerWidth - 1), bottom = Math.min(r.bottom, window.innerHeight - 1);
   const styled = typeof getComputedStyle === "function";
-  for (let at: Element | null = el; styled && at && getComputedStyle(at).position !== "fixed"; ) {
-    at = at.parentElement ?? null;
-    if (!at) break;
+  const clip = (at: Element) => {
     const style = getComputedStyle(at);
-    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    if (style.overflowX === "visible" && style.overflowY === "visible") return;
     const c = at.getBoundingClientRect();
     left = Math.max(left, c.left); top = Math.max(top, c.top);
     right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+  };
+  if (styled && inside) clip(el);
+  for (let at: Element | null = el; styled && at && getComputedStyle(at).position !== "fixed"; ) {
+    at = at.parentElement ?? null;
+    if (!at) break;
+    clip(at);
   }
   return right > left && bottom > top ? { left, top, right, bottom } : null;
 }

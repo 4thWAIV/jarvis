@@ -1,3 +1,4 @@
+import "../theme";
 // frontend/src/dashboard/main.ts
 //
 // The Runs view and the shell around it (masthead readouts, tab switching,

@@ -13,4 +13,8 @@ export const voiceState = createStore<OrbState>("idle");
 export const stopSpeaking = { current: () => {} };
 // Sending what Tim typed into the white box instead of saying it; jarvis.ts
 // puts its handler here.
-export const sendTyped = { current: (_text: string) => {} };
+export const sendTyped = { current: (_text: string): boolean => false };
+
+// Connection and explicit user navigation, shared by the composer/playback UI.
+export const voiceConnected = createStore(false);
+export const conversationJump = createStore(0);

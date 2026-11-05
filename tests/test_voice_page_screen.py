@@ -69,7 +69,7 @@ async def test_a_display_is_a_yellow_sources_item_in_the_conversation(page_playw
             timeout=10000)
         head = await page.evaluate("""() => {
           const h = document.querySelector('.sources-chip-head');
-          const turns = [...document.querySelectorAll('.conversation-history > *')];
+          const turns = [...document.querySelectorAll('.conversation-messages > *')];
           return {text: h.textContent, colour: getComputedStyle(h).color,
                   after: turns.findIndex(t => t.querySelector('.sources-chip'))
                        > turns.findIndex(t => t.textContent.includes('rain tomorrow')),
@@ -126,7 +126,7 @@ async def test_a_capture_shows_white_above_the_captions_with_its_state_on_the_bo
         await page.wait_for_selector(".capture-box")
         got = await page.evaluate(_box_js())
         assert got["state"] == "capturing" and got["text"] == TEXT
-        assert got["border"].startswith("rgba(255, 255, 255"), got
+        assert got["border"] == "rgb(96, 120, 146)", got
         assert got["labelOnBorder"] and 0 <= got["labelRight"] <= 20, got
         assert 0 <= got["gap"] <= 8 and abs(got["left"]) < 0.5 and abs(got["width"]) < 0.5, got
 
@@ -195,7 +195,7 @@ async def test_a_capture_for_an_agent_is_amber_and_several_stack(page_playwright
           id: b.dataset.capture, border: getComputedStyle(b).borderTopColor,
           top: b.getBoundingClientRect().top}))""")
         assert [g["id"] for g in got] == ["3", "4"] and got[0]["top"] < got[1]["top"], got
-        assert got[0]["border"].startswith("rgba(255, 255, 255"), got     # not yet a message
+        assert got[0]["border"] == "rgb(96, 120, 146)", got     # not yet a message
         assert got[1]["border"].startswith("rgba(251, 191, 36"), got      # a message: amber
         await browser.close()
 

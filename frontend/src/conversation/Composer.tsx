@@ -1,0 +1,52 @@
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useT } from "../locale";
+import { sendTyped, voiceConnected } from "../voiceStatus";
+
+const DRAFT_KEY = "jarvis.conversation.draft";
+function readDraft() { try { return sessionStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; } }
+function keepDraft(text: string) {
+  try { text ? sessionStorage.setItem(DRAFT_KEY, text) : sessionStorage.removeItem(DRAFT_KEY); } catch { /* storage is optional */ }
+}
+
+export function Composer({ partRef }: { partRef: (el: Element | null) => void }) {
+  const t = useT();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const [draft, setDraft] = useState(readDraft);
+  const [error, setError] = useState(false);
+  const connected = useSyncExternalStore(voiceConnected.subscribe, voiceConnected.get);
+  useLayoutEffect(() => {
+    const field = input.current;
+    if (!field) return;
+    field.style.height = "0px";
+    field.style.height = `${Math.min(field.scrollHeight, Math.min(180, window.innerHeight * 0.25))}px`;
+  }, [draft]);
+  function send() {
+    const text = draft.trim();
+    if (!text) return;
+    if (!sendTyped.current(text)) {
+      setError(true);
+      return;
+    }
+    setDraft(""); keepDraft(""); setError(false); input.current?.focus();
+  }
+  return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
+    <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>
+    <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}
+      data-ui-action="input" className="hearing-input" rows={1}
+      aria-label={t("main.conversation.messageJarvis")} aria-describedby="composer-help"
+      placeholder={t("main.conversation.draftPlaceholder")}
+      value={draft} onChange={e => { setDraft(e.target.value); keepDraft(e.target.value); setError(false); }}
+      onKeyDown={e => {
+        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+          e.preventDefault(); send();
+        }
+      }} />
+    {error && <p className="composer-error" role="alert">{t("main.conversation.sendDisconnected")}</p>}
+    <div className="composer-footer">
+      <span id="composer-help">{t(connected ? "main.conversation.composerHelp" : "main.conversation.reconnecting")}</span>
+      <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
+        {t("main.conversation.send")} <span aria-hidden="true">↑</span>
+      </button>
+    </div>
+  </form>;
+}

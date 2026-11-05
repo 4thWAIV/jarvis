@@ -43,6 +43,7 @@
      "parts": ["label"],
      "keys": ["name", "honorific", "saveYou",
               "language", "spanishModel", "voiceId", "saveVoiceId", "fishKey", "testFishKey", "saveFishKey",
+              "voiceOutputProvider", "localVoice", "installLocalVoice", "previewVoice", "appearance",
               "teamState", "teamAddress", "teamSignIn", "teamApproval", "teamCancel", "teamSignInAgain",
               "teamDisconnect", "teamLogin", "teamLookUp", "teamRole", "teamAdd", "teamAddCancel",
               "currentVersion", "checkUpdates", "installUpdate",

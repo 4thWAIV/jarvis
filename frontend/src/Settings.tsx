@@ -40,6 +40,7 @@ import { useLiveRead } from "./liveRead";
 import { formatDateTime, placed, useT, type Translate } from "./locale";
 import { SettingsRow, useSettingsItem, useSettingsRow } from "./SettingsRow";
 import { StatusDot, type Dot } from "./StatusDot";
+import { theme, setTheme, type Theme } from "./theme";
 import { createStore } from "./store";
 import type { CommandArgs, SideEffect } from "./uiContract";
 import { bind, bindingProps, detailSlot } from "./uiNavigation";
@@ -115,6 +116,8 @@ registerCommand("settings.close", {
 });
 
 interface Status {
+  voice_output?: { provider: string; voice: string; installed: boolean; state: string;
+    error: string | null; download_bytes: number; metrics: { rtf: number } | null };
   claude_code_installed: boolean;
   server_port: number;
   uptime_seconds: number;
@@ -144,7 +147,7 @@ export function useFirstRunSetup(): void {
   useEffect(() => {
     const timer = setTimeout(async () => {
       const s = await readStatus().catch(() => null);
-      if (s && !s.env_keys_set.fish_audio) void dispatch("settings.open", { setup: true }, { actor: "human" });
+      if (s && !(s.voice_output?.provider === "local" ? s.voice_output.installed : s.env_keys_set.fish_audio)) void dispatch("settings.open", { setup: true }, { actor: "human" });
     }, SETUP_DELAY_MS);
     return () => clearTimeout(timer);
   }, []);
@@ -294,65 +297,142 @@ function YouSection() {
   );
 }
 
+const fishTestErrors: Partial<Record<number, "invalidKey" | "noCredit" | "badVoiceId">> = {
+  400: "badVoiceId",
+  401: "invalidKey",
+  402: "noCredit",
+};
+
 function VoiceSection({ status, reload }: { status: Status | null; reload: () => void }) {
   const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<"saveFailed" | "installFailed" | "previewFailed" | "keySaveFailed" | "voiceIdSaveFailed" | null>(null);
+  const [sample, setSample] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const output = status?.voice_output;
+  const provider = output?.provider ?? "fish";
+  const voice = output?.voice ?? "george";
+  const change = async (provider: string, voice: string) => {
+    setSaving(true); setError(null); setSample(null);
+    try { await postJson("/api/settings/voice-output", { provider, voice }); await reload(); }
+    catch { setError("saveFailed"); }
+    finally { setSaving(false); }
+  };
+  const installLocal = async () => {
+    setBusy(true); setError(null);
+    try { await postJson("/api/settings/voice-output/install", {}); await reload(); }
+    catch { setError("installFailed"); }
+    finally { setBusy(false); }
+  };
+  const preview = async () => {
+    setBusy(true); setError(null); setSample(null);
+    try {
+      const result = await postJson<{audio: string | null}>("/api/tts-test", {});
+      if (!result.audio) throw new Error("No audio");
+      setSample(`data:audio/${provider === "local" ? "wav" : "mpeg"};base64,${result.audio}`);
+      await reload();
+    } catch { setError("previewFailed"); }
+    finally { setBusy(false); }
+  };
+  const providerUi = useSettingsItem("voiceOutputProvider", t("left.voice.outputProvider"));
+  const localVoiceUi = useSettingsItem("localVoice", t("left.voice.localVoice"), provider === "local");
+  const localInstallUi = useSettingsItem("installLocalVoice", t("left.voice.installLocal"), provider === "local" && !output?.installed);
+  const previewUi = useSettingsItem("previewVoice", t("left.voice.preview"));
   const [key, setKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
-  const [tested, setTested] = useState<Dot | null>(null);
-  const [savedKey, setSavedKey] = useState(false);
-  const voiceUi = useSettingsItem("voiceId", t("left.voice.voiceId"));
-  const saveVoiceUi = useSettingsItem("saveVoiceId", t("left.settings.save"));
-  const keyUi = useSettingsItem("fishKey", t("left.voice.fishKey"));
-  const testUi = useSettingsItem("testFishKey", t("left.voice.test"));
-  const saveKeyUi = useSettingsItem("saveFishKey", t("left.settings.save"));
-  // The dot says a test's result, or that no key is saved; a saved key is
-  // the ordinary state and shows none.
-  const dot: Dot | null = tested ?? (status && !status.env_keys_set.fish_audio ? "red" : null);
+  const [tested, setTested] = useState<"testing" | "testPassed" | "invalidKey" | "noCredit" | "badVoiceId" | "testFailed" | null>(null);
+  const [restartNeeded, setRestartNeeded] = useState(false);
+  const voiceUi = useSettingsItem("voiceId", t("left.voice.voiceId"), provider === "fish");
+  const saveVoiceUi = useSettingsItem("saveVoiceId", t("left.settings.save"), provider === "fish");
+  const keyUi = useSettingsItem("fishKey", t("left.voice.fishKey"), provider === "fish");
+  const testUi = useSettingsItem("testFishKey", t("left.voice.test"), provider === "fish");
+  const saveKeyUi = useSettingsItem("saveFishKey", t("left.settings.save"), provider === "fish");
+  const hasSavedKey = status?.env_keys_set.fish_audio;
+  const testing = tested === "testing";
+  const dot: Dot | null = tested ? (testing ? "yellow" : tested === "testPassed" ? "green" : "red") : null;
 
   const test = async () => {
-    setTested("yellow");
+    setError(null); setTested("testing");
     try {
-      const r = await postJson<{ valid: boolean }>("/api/settings/test-fish",
-                                                    { key_value: key.trim() || undefined });
-      setTested(r.valid ? "green" : "red");
+      const r = await postJson<{ valid: boolean; status_code?: number }>("/api/settings/test-fish",
+                                                                        { key_value: key.trim() || undefined });
+      setTested(r.valid ? "testPassed" : fishTestErrors[r.status_code ?? 0] ?? "testFailed");
     } catch {
-      setTested("red");
+      setTested("testFailed");
     }
   };
-  const saveKey = async () => {
-    const value = key.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: value });
-    setTested(null);
-    reload();
-    setSavedKey(Boolean(value));
-  };
-  const saveVoice = async () => {
-    const value = voiceId.trim();
-    if (value) await postJson("/api/settings/keys", { key_name: "FISH_VOICE_ID", key_value: value });
+  const saveFishSetting = async (name: "FISH_API_KEY" | "FISH_VOICE_ID", value: string) => {
+    setSaving(true); setError(null);
+    try {
+      await postJson("/api/settings/keys", { key_name: name, key_value: value.trim() });
+      if (name === "FISH_API_KEY") setKey("");
+      setTested(null);
+      setRestartNeeded(true);
+      reload();
+    } catch {
+      setError(name === "FISH_API_KEY" ? "keySaveFailed" : "voiceIdSaveFailed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <>
       <LanguageControl />
+      <SettingsRow label={t("left.voice.outputProvider")} labelRef={providerUi.part("label")} htmlFor="voice-provider">
+        <select data-ui-action="input" id="voice-provider" ref={providerUi.whole}
+                value={provider} disabled={!status || saving || busy}
+                onChange={e => void change(e.target.value, voice)}>
+          <option value="fish">{t("left.voice.fishCloud")}</option>
+          <option value="local">{t("left.voice.kokoroCpu")}</option>
+        </select>
+      </SettingsRow>
+      {provider === "local" && <>
+        <SettingsRow label={t("left.voice.localVoice")} labelRef={localVoiceUi.part("label")} htmlFor="local-voice">
+          <select data-ui-action="input" id="local-voice" ref={localVoiceUi.whole}
+                  value={voice} disabled={saving || busy} onChange={e => void change("local", e.target.value)}>
+            {(["george", "daniel", "lewis", "emma"] as const).map(id =>
+              <option key={id} value={id}>{t(`left.voice.preset.${id}`)}</option>)}
+          </select>
+        </SettingsRow>
+        <p role="status">{busy ? t("left.voice.working") : output?.error ?? t(
+          output?.installed ? "left.voice.localInstalled" : "left.voice.localMissing")}</p>
+        {!output?.installed && <button data-ui-action="domain" className="settings-btn"
+          ref={localInstallUi.whole} disabled={busy || saving} onClick={() => void installLocal()}>
+          {t("left.voice.installLocal")}</button>}
+        {output?.metrics && <p>{t("left.voice.computeTime", { rtf: output.metrics.rtf.toFixed(2) })}</p>}
+      </>}
+      {provider === "fish" && <>
       <SettingsRow label={t("left.voice.voiceId")} labelRef={voiceUi.part("label")} htmlFor="settings-voice-id">
         <input data-ui-action="input" id="settings-voice-id" type="text" placeholder="612b878b113047d9a770c069c8b4fdfe"
-               value={voiceId} ref={voiceUi.whole} onChange={(e) => setVoiceId(e.target.value)} />
-        <button data-ui-action="domain" className="settings-btn" onClick={saveVoice} ref={saveVoiceUi.whole}>
+               value={voiceId} ref={voiceUi.whole} disabled={saving} onChange={(e) => setVoiceId(e.target.value)} />
+        <button data-ui-action="domain" className="settings-btn" disabled={!voiceId.trim() || testing || saving}
+                onClick={() => void saveFishSetting("FISH_VOICE_ID", voiceId)} ref={saveVoiceUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
       <SettingsRow label={t("left.voice.fishKey")} labelRef={keyUi.part("label")} htmlFor="settings-fish-key">
         <input data-ui-action="input" id="settings-fish-key" type="password" autoComplete="off"
                placeholder={t("left.voice.fishKeyPlaceholder")} value={key} ref={keyUi.whole}
-               onChange={(e) => setKey(e.target.value)} />
-        <button data-ui-action="domain" className="settings-btn" onClick={test} ref={testUi.whole}>
+               disabled={testing || saving} onChange={(e) => { setKey(e.target.value); setTested(null); }} />
+        <button data-ui-action="domain" className="settings-btn" disabled={testing || saving}
+                onClick={test} ref={testUi.whole}>
           {t("left.voice.test")}</button>
         {dot && <StatusDot status={dot} />}
-        <button data-ui-action="domain" className="settings-btn primary" onClick={saveKey} ref={saveKeyUi.whole}>
+        <button data-ui-action="domain" className="settings-btn primary" disabled={!key.trim() || testing || saving}
+                onClick={() => void saveFishSetting("FISH_API_KEY", key)} ref={saveKeyUi.whole}>
           {t("left.settings.save")}</button>
       </SettingsRow>
-      {savedKey && (
+      {hasSavedKey !== undefined && <p role="status">{t(hasSavedKey ? "left.voice.keySaved" : "left.voice.keyMissing")}</p>}
+      {tested && <p role="status">{t(`left.voice.${tested}`)}</p>}
+      {restartNeeded && (
         <p className="settings-restart-notice">{t("left.voice.restartNotice", { restart: t("menu.restart") })}</p>
       )}
+      </>}
+      <button data-ui-action="domain" className="settings-btn" ref={previewUi.whole}
+              disabled={busy || saving || (provider === "local" && !output?.installed)}
+              onClick={() => void preview()}>{t("left.voice.preview")}</button>
+      {sample && <audio controls autoPlay src={sample} aria-label={t("left.voice.previewLabel")} />}
+      {error && <p role="alert">{t(`left.voice.${error}`)}</p>}
     </>
   );
 }
@@ -677,6 +757,8 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
   const t = useT();
   const port = useSettingsItem("serverPort", t("left.server.port"));
   const uptime = useSettingsItem("serverUptime", t("left.server.uptime"));
+  const appearance = useSettingsItem("appearance", t("left.server.appearance"));
+  const selectedTheme = useSyncExternalStore(theme.subscribe, theme.get);
   const known = status !== null && !failed;
   return (
     <>
@@ -689,6 +771,14 @@ function ServerSection({ status, failed }: { status: Status | null; failed: bool
       <SettingsRow label={t("left.server.uptime")} labelRef={uptime.part("label")}>
         <span className="settings-value" ref={uptime.whole}>{known ? formatUptime(t, status.uptime_seconds) : "—"}</span>
       </SettingsRow>
+      <SettingsRow label={t("left.server.appearance")} labelRef={appearance.part("label")} htmlFor="workspace-theme">
+        <select data-ui-action="input" id="workspace-theme" ref={appearance.whole} value={selectedTheme}
+                onChange={e => setTheme(e.target.value as Theme)}>
+          <option value="classic">{t("left.server.classic")}</option>
+          <option value="graphite">{t("left.server.graphite")}</option>
+        </select>
+      </SettingsRow>
+      <p className="settings-hint">{t("left.server.appearanceHint")}</p>
     </>
   );
 }

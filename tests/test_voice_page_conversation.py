@@ -49,6 +49,7 @@ async def _open(p, url, voice=None):
     page = await browser.new_page(viewport={"width": 1440, "height": 900})
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice or _Voice())
+    await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
     await page.goto(url)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
     return browser, page
@@ -60,9 +61,8 @@ BOXES = """() => {
   return {history: text('.conversation-history .history-turn'),
           historyWho: [...document.querySelectorAll('.conversation-history .history-turn')]
             .map(e => e.classList.contains('jarvis') ? 'jarvis' : 'user'),
-          speaking: q('.conversation-speaking').textContent.trim(),
-          hearing: q('.conversation-hearing').textContent.trim(),
-          now: text('.conversation-speaking .spoken-word.now')};
+          speaking: q('.chat-playback')?.textContent.trim() ?? '',
+          hearing: q('.conversation-interim p')?.textContent.trim() ?? ''};
 }"""
 
 
@@ -86,139 +86,70 @@ async def test_conversation_and_folders_are_the_tabs_offered_and_main_opens_by_a
         await browser.close()
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_the_white_box_is_at_the_bottom_and_the_history_fills_the_height(page_playwright, page_url):
-    """Anchored to the bottom: the white box sits on the footer's gap, the
-    four-line blue box above it, and the history takes every bit of height
-    left, up to the header, scrolling."""
-    voice = _Voice()
-    clip = _silence_wav(0.2)
-    async with page_playwright as p:
-        browser, page = await _open(p, page_url, voice)
-        geo = """() => {
+@pytest.mark.asyncio
+async def test_composer_and_timeline_have_separate_non_overlapping_scroll_areas(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url)
+        editor = page.get_by_role("textbox", name="Message JARVIS")
+        await editor.fill("\n".join(f"Draft line {n}" for n in range(40)))
+        got = await page.evaluate("""() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
-          const e = s => document.querySelector(s);
-          const left = document.getElementById('left-column').getBoundingClientRect();
-          const right = document.getElementById('right-column').getBoundingClientRect();
-          const c = r('#conversation');
-          return {header: r('.centre-tabs'), c, history: r('.conversation-history'),
-                  speaking: r('.conversation-speaking'), hearing: r('.conversation-hearing'),
-                  speakingLines: (e('.conversation-speaking').clientHeight - 16) / 20,
-                  hearingLines: (e('.conversation-hearing').clientHeight - 16) / 20,
-                  historyScroll: [e('.conversation-history').scrollHeight, e('.conversation-history').clientHeight,
-                                  getComputedStyle(e('.conversation-history')).overflowY],
-                  footerTop: document.getElementById('footer').getBoundingClientRect().top,
-                  gaps: [c.left - left.right, right.left - c.right], columnBottom: left.bottom};
-        }"""
-        got = await page.evaluate(geo)
-        # Bottom up: the white box, then the blue box, then the history.
-        assert abs(got["hearing"]["bottom"] - got["columnBottom"]) < 0.5, got
-        assert got["history"]["bottom"] <= got["speaking"]["top"] < got["hearing"]["top"], got
-        assert got["speakingLines"] == 4 and got["hearingLines"] == 1, got
-        # The history fills up to just under the header.
-        assert 0 < got["history"]["top"] - got["header"]["bottom"] <= 12, got
-        assert got["history"]["top"] == got["c"]["top"], got
-        assert got["gaps"][0] > 0 and abs(got["gaps"][0] - got["gaps"][1]) < 0.5, got
-
-        # The white box grows to four lines and no further.
-        await page.evaluate("window.__hear(" + json.dumps(" ".join(["what is going on"] * 80)) + ", false)")
-        got = await page.evaluate(geo)
-        assert got["hearingLines"] == 4, got
-        assert abs(got["hearing"]["bottom"] - got["columnBottom"]) < 0.5, "it grows upward"
-
-        # Many turns: the history keeps every one and scrolls.
-        await page.evaluate("window.__hear('one more thing', true)")
-        for n in range(1, 46):
-            voice.send({"type": "status", "state": "speaking"},
-                       {"type": "audio", "utt": n, "idx": 0, "data": clip,
-                        "text": f"Answer number {n}, sir.", "kind": "reply"},
-                       {"type": "status", "state": "idle"})
-        await page.wait_for_function(
-            "document.querySelectorAll('.history-turn').length >= 40", timeout=30000)
-        scroll_height, client_height, overflow = (await page.evaluate(geo))["historyScroll"]
-        assert scroll_height > client_height and overflow == "auto", (scroll_height, client_height)
+          const e = document.querySelector('.hearing-input');
+          return {history:r('.conversation-history'), composer:r('.chat-composer'),
+            field:r('.hearing-input'), footer:r('.composer-footer'),
+            overflow:getComputedStyle(e).overflowY, scroll:e.scrollHeight, client:e.clientHeight};
+        }""")
+        assert got["history"]["bottom"] <= got["composer"]["top"]
+        assert got["field"]["bottom"] <= got["footer"]["top"]
+        assert got["scroll"] > got["client"] and got["overflow"] == "auto"
+        assert await page.locator('.conversation-speaking').count() == 0
+        assert await page.get_by_role("button", name="Send message").is_visible()
         await browser.close()
 
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_a_turn_moves_from_the_live_boxes_into_the_history(page_playwright, page_url):
+@pytest.mark.asyncio
+async def test_final_spoken_turns_and_full_reply_share_one_timeline(page_url):
     voice = _Voice()
-    clip = _silence_wav(1.2)
-    async with page_playwright as p:
+    async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, voice)
         await page.evaluate("window.__hear('how are the', false)")
-        got = await page.evaluate(BOXES)
-        assert got["hearing"] == "how are the" and got["history"] == [], got
-
+        assert (await page.evaluate(BOXES))["hearing"] == "how are the"
         await page.evaluate("window.__hear('how are the agents', true)")
-        await asyncio.sleep(0.2)
+        await page.wait_for_function("document.querySelector('.history-turn.user')?.textContent === 'how are the agents'")
+        voice.send({"type":"reply", "utt":1, "text":"All six agents are idle, sir.", "done":True},
+                   {"type":"status", "state":"speaking"},
+                   {"type":"audio", "utt":1, "idx":0, "data":_silence_wav(1.2),
+                    "text":"All six agents are idle, sir.", "kind":"reply"})
+        await page.wait_for_selector('.chat-playback')
         got = await page.evaluate(BOXES)
-        assert got["hearing"] == "how are the agents" and got["history"] == [], \
-            "his finished words wait in the white box until JARVIS answers"
-        sent = [m for m in voice.got if m.get("type") == "transcript"]
-        assert sent and isinstance(sent[-1].get("id"), int), sent
-
-        voice.send({"type": "status", "state": "speaking"},
-                   {"type": "audio", "utt": 1, "idx": 0, "data": clip,
-                    "text": "All six agents are idle, sir.", "kind": "reply"})
-        await page.wait_for_function(
-            "document.querySelector('.conversation-speaking').textContent.includes('idle')",
-            timeout=10000)
-        got = await page.evaluate(BOXES)
-        assert got["history"] == ["how are the agents"] and got["historyWho"] == ["user"], got
-        assert got["hearing"] == "" and len(got["now"]) == 1, got
-
-        voice.send({"type": "status", "state": "idle"})
-        await page.wait_for_function(
-            "document.querySelector('.conversation-speaking').textContent === ''", timeout=10000)
-        got = await page.evaluate(BOXES)
-        assert got["history"] == ["how are the agents", "All six agents are idle, sir."], got
-        assert got["historyWho"] == ["user", "jarvis"], got
-        colours = await page.evaluate("""() => [...document.querySelectorAll('.history-turn')]
-          .map(e => getComputedStyle(e).color)""")
-        assert colours[0].startswith("rgba(255, 255, 255") and colours[1].startswith("rgba(14, 165, 233"), colours
+        assert got["history"] == ["how are the agents", "All six agents are idle, sir."]
+        assert got["historyWho"] == ["user", "jarvis"]
+        assert got["hearing"] == ""
+        voice.send({"type":"status", "state":"idle"})
+        await page.wait_for_selector('.chat-playback', state='detached')
+        assert (await page.evaluate(BOXES))["history"] == got["history"]
         await browser.close()
 
-
-
 @pytest.mark.asyncio(loop_scope="session")
-async def test_typing_in_the_white_box_sends_it_as_if_he_had_said_it(page_playwright, page_url):
-    """Clicked, the white box takes typing. Shift+Enter starts a new line;
-    Enter sends it, marked typed, and the words wait in the box as spoken
-    ones do until JARVIS answers."""
+async def test_multiline_composer_sends_with_keyboard_and_button(page_playwright, page_url):
     voice = _Voice()
     async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
-        await page.evaluate("window.__hear('something half heard', false)")
-        await page.click(".conversation-hearing")
-        assert await page.evaluate("document.activeElement.className") == "hearing-input"
-        await page.keyboard.type("check the build")
-        await page.keyboard.press("Shift+Enter")
-        await page.keyboard.type("and the tests")
+        editor = page.get_by_role("textbox", name="Message JARVIS")
+        await editor.fill("check the build")
+        await editor.press("Shift+Enter")
+        await editor.type("and the tests")
         assert not [m for m in voice.got if m.get("type") == "transcript"]
-        lines = await page.evaluate("document.querySelector('.hearing-input').clientHeight / 20")
-        assert lines == 2, lines
-
-        await page.keyboard.press("Enter")
-        await asyncio.sleep(0.2)
-        (sent,) = [m for m in voice.got if m.get("type") == "transcript"]
-        assert sent["text"] == "check the build\nand the tests" and sent["typed"] is True, sent
-        assert sent["isFinal"] is True and isinstance(sent["id"], int), sent
-        assert await page.evaluate("document.activeElement.tagName") == "BODY"
-        got = await page.evaluate(BOXES)
-        assert got["hearing"] == "check the build\nand the tests", got
-        assert got["history"] == ["something half heard"], got
-
-        # Heard words start a new turn after the typed one.
-        await page.evaluate("window.__hear('and deploy', false)")
-        got = await page.evaluate(BOXES)
-        assert got["hearing"] == "and deploy", got
-        assert got["history"] == ["something half heard", "check the build\nand the tests"], got
-        # In the history it is his turn like any other: same place, same look.
-        assert got["historyWho"] == ["user", "user"], got
-        classes = await page.evaluate(
-            "() => [...document.querySelectorAll('.history-turn')].map(e => e.className)")
-        assert classes[0] == classes[1] == "history-turn user", classes
+        await editor.evaluate("e => e.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true, cancelable:true}))")
+        assert not [m for m in voice.got if m.get("type") == "transcript"]
+        await editor.press("Enter")
+        await page.wait_for_function("document.querySelector('.history-turn.user')?.textContent.includes('and the tests')")
+        sent = [m for m in voice.got if m.get("type") == "transcript"][-1]
+        assert sent["text"] == "check the build\nand the tests" and sent["typed"] is True
+        assert await editor.input_value() == "" and await editor.evaluate("e => e === document.activeElement")
+        await editor.fill("A second message")
+        await page.get_by_role("button", name="Send message").click()
+        await page.wait_for_function("document.querySelectorAll('.history-turn.user').length === 2")
+        assert await editor.input_value() == ""
         await browser.close()
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -239,7 +170,7 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
                   colour: getComputedStyle(p.querySelector('.capture-chip-head')).color}; }""")
         assert look["align"] == "right" and look["colour"].startswith("rgba(251, 191, 36"), look
         order = await page.evaluate("""() => ['.conversation-history', '.capture-box',
-          '.conversation-speaking'].map(s => document.querySelector(s).getBoundingClientRect().top)""")
+          '.chat-composer'].map(s => document.querySelector(s).getBoundingClientRect().top)""")
         assert order == sorted(order), order
 
         await page.click(".capture-chip-head")
@@ -249,7 +180,7 @@ async def test_words_made_into_a_capture_become_a_collapsed_item_and_a_box(page_
         (said, sent) = opened
         assert said[0] == "tell hammer to ship it" and sent[0] == "Ship it.", opened
         assert said[2] < sent[2], "what he said comes first, then the capture"
-        assert said[1].startswith("rgba(210, 214, 222"), said        # quiet grey
+        assert said[1] == "rgb(167, 181, 198)", said                # readable secondary text
         assert sent[1].startswith("rgba(251, 191, 36"), sent          # the transmission's amber
         await page.wait_for_timeout(400)           # the crossfade from his words
         text = await page.evaluate("document.querySelector('.capture-box .capture-body').textContent")
@@ -336,28 +267,20 @@ async def test_a_message_box_says_send_to_and_has_its_buttons_in_the_corner(page
         await browser.close()
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_a_long_turn_shows_two_lines_and_opens_when_clicked(page_playwright, page_url):
+@pytest.mark.asyncio
+async def test_long_replies_are_full_length_without_hidden_expansion(page_url):
     voice = _Voice()
-    clip = _silence_wav(0.3)
-    long = " ".join(["The build finished and every one of the tests passed."] * 20)
-    async with page_playwright as p:
+    text = "\n\n".join(f"Paragraph {n}. The complete answer stays readable." for n in range(30))
+    async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, voice)
-        voice.send({"type": "status", "state": "speaking"},
-                   {"type": "audio", "utt": 1, "idx": 0, "data": clip, "text": long, "kind": "reply"})
-        await page.wait_for_function(
-            "document.querySelector('.conversation-speaking').textContent.includes('build')",
-            timeout=10000)
-        voice.send({"type": "status", "state": "idle"})
-        await page.wait_for_selector(".history-turn.clamped", timeout=10000)
-        lines = await page.evaluate("""() => { const e = document.querySelector('.history-turn');
-          return e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight); }""")
-        assert lines == 2, lines
-        await page.click(".history-turn.clamped")
-        lines = await page.evaluate("""() => { const e = document.querySelector('.history-turn');
-          return e.scrollHeight / parseFloat(getComputedStyle(e).lineHeight); }""")
-        assert lines > 4, lines
-        assert await page.locator(".history-turn.clamped").count() == 0
+        voice.send({"type":"reply", "utt":1, "text":text, "done":True})
+        await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('Paragraph 29')")
+        assert await page.locator('.history-turn.clamped').count() == 0
+        last = page.locator('.reply-prose p').last
+        await last.scroll_into_view_if_needed()
+        assert await last.is_visible()
+        size = await page.locator('.history-turn.jarvis').evaluate("e => [e.scrollHeight,e.clientHeight,getComputedStyle(e).overflowY]")
+        assert size[0] == size[1] and size[2] == 'visible'
         await browser.close()
 
 
@@ -490,4 +413,47 @@ async def test_a_cleared_capture_has_a_restore_button_until_it_is_restored(page_
         await page.click(".record-restore")
         await page.wait_for_selector(".record-restore", state="detached", timeout=10000)
         assert posted == ["capture/3/restore?notice=2"], posted
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_text_only_reply_and_sent_draft_stay_visible_without_audio(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        editor = page.get_by_role("textbox", name="Message JARVIS")
+        await editor.fill("Please reply in text.")
+        await editor.press("Enter")
+        await page.wait_for_function("document.querySelector('.history-turn.user')?.textContent === 'Please reply in text.'")
+        assert await editor.input_value() == ""
+        await editor.click()
+        await editor.press("Tab")
+        assert await editor.input_value() == ""
+        assert await page.locator('.history-turn.user').inner_text() == "Please reply in text."
+        voice.send({"type": "status", "state": "thinking"},
+                   {"type": "reply", "utt": 17, "text": "Text works.", "done": False})
+        await page.get_by_text("JARVIS is thinking", exact=True).wait_for()
+        # With no audio, completion of the reply itself must end thinking.
+        voice.send({"type": "reply", "utt": 17, "text": "Text works. No audio needed.", "done": True})
+        await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('No audio needed.')")
+        await page.wait_for_selector(".chat-playback", state="detached")
+        got = await page.evaluate(BOXES)
+        assert got["history"] == ["Please reply in text.", "Text works. No audio needed."]
+        assert got["hearing"] == "" and got["speaking"] == ""
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_disconnected_submission_preserves_draft_with_error(page_url):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        editor = page.get_by_role("textbox", name="Message JARVIS")
+        await editor.fill("Keep this draft")
+        await voice.ws.close()
+        await asyncio.sleep(0.1)
+        await editor.press("Enter")
+        assert await editor.input_value() == "Keep this draft"
+        assert "has not been sent" in await page.get_by_role("alert").inner_text()
+        assert not [m for m in voice.got if m.get("type") == "transcript"]
         await browser.close()

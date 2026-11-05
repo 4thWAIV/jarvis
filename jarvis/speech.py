@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import io
+import wave
 import re
 import time
 from dataclasses import dataclass, field
@@ -220,7 +222,14 @@ def mp3_seconds(data: Optional[bytes]) -> float:
 
 
 def ack_floor_seconds(audio: Optional[bytes]) -> float:
-    return min(mp3_seconds(audio) * ACK_FLOOR_FACTOR, ACK_FLOOR_MAX_SEC)
+    seconds = mp3_seconds(audio)
+    if audio and audio[:4] == b"RIFF":
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as wav:
+                seconds = wav.getnframes() / wav.getframerate()
+        except (wave.Error, EOFError, ZeroDivisionError):
+            seconds = 0.0
+    return min(seconds * ACK_FLOOR_FACTOR, ACK_FLOOR_MAX_SEC)
 
 # A one- or two-word utterance whose every token JARVIS just said is only an
 # echo if it arrived while that speech was still coming out of the speaker.
@@ -286,6 +295,7 @@ class Chunk:
     ready: bool = False
     notice: bool = False        # this chunk's failure was the third in a row: warn after it
     earliest_ack: float = 0.0   # no honest ack can arrive before this (see ACK_FLOOR_FACTOR)
+    synthesis: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
     capture: Optional[int] = None   # the capture this chunk reads back, if it does
     # What the page shows while this chunk plays (a story beat's targets):
     # sent verbatim on its audio frame as `cue`, never read here. The last
@@ -326,6 +336,12 @@ class Utterance:
     last_progress_at: Optional[float] = None    # last send or ack; the ack watchdog reads it
     alias: Optional["Utterance"] = None         # a batched LOW item points at the merged utterance
     splitter: SentenceSplitter = field(default_factory=SentenceSplitter)
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        for chunk in self.chunks:
+            if chunk.synthesis and not chunk.synthesis.done():
+                chunk.synthesis.cancel()
 
     @property
     def done(self) -> bool:
@@ -421,6 +437,7 @@ class SpeechScheduler:
         self._cancel_window_open = False
         self._cancel_event = asyncio.Event()
         self._speaking = False
+        self._text_status_pending = False
         self._wake = asyncio.Event()
         self._tick_task: Optional[asyncio.Task] = None
         self._tasks: set[asyncio.Task] = set()
@@ -472,10 +489,11 @@ class SpeechScheduler:
         async with self._emit_lock:
             await self._emit_raw(msg)
 
-    def _spawn(self, coro) -> None:
+    def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     @property
     def is_speaking(self) -> bool:
@@ -963,6 +981,30 @@ class SpeechScheduler:
                 u.held_ack = -1
                 self._accept_ack(u, u.id, idx, now)
 
+    async def skip_reply(self, utt_id: int) -> bool:
+        """Cancel only a conversation reply's reading, never its generation.
+
+        Played indices remain truthful. Unlike hush/barge-in this does not
+        touch other speech, unread notices, or approval cancellation windows.
+        The client drops this utterance's queued audio on reading_skipped.
+        """
+        u = self.utterances.get(utt_id)
+        if u is None or u.kind != "turn" or u.label != "reply" or u.done:
+            return False
+        u.cancel()  # flag/cancel synthesis before awaiting a transport operation
+        active = self._current is u
+        if active:
+            self._current = None
+        if self._paused is u:
+            self._paused = None
+        self._pending = [p for p in self._pending if p is not u]
+        self._settle(u.id)  # retire echo bookkeeping, not played acknowledgements
+        await self._emit({"type": "reading_skipped", "utt": u.id})
+        if active:
+            await self._set_speaking(False)
+        self._kick()
+        return True
+
     async def barge_in(self, keep_unread: bool = True, reason: str = "") -> None:
         """The user is talking: stop everything now."""
         cur = self._current
@@ -982,14 +1024,14 @@ class SpeechScheduler:
                 rest = cur.remaining_text()
                 if rest:
                     self._unread.append(rest)
-            cur.cancelled = True
+            cur.cancel()
             self._current = None
         if self._paused is not None:
-            self._paused.cancelled = True
+            self._paused.cancel()
             self._paused = None
         for u in self._pending:
             if u.priority == Priority.NORMAL:
-                u.cancelled = True
+                u.cancel()
             else:
                 u.immediate = False          # anything that survives waits for a pause
         self._pending = [u for u in self._pending if not u.cancelled]
@@ -1005,7 +1047,7 @@ class SpeechScheduler:
                    cue: Optional[dict] = None) -> None:
         chunk = Chunk(text, capture=capture, cue=cue)
         utt.chunks.append(chunk)
-        self._spawn(self._synthesize(utt, chunk))
+        chunk.synthesis = self._spawn(self._synthesize(utt, chunk))
 
     async def _synthesize(self, utt: Utterance, chunk: Chunk) -> None:
         audio: Optional[bytes] = None
@@ -1114,6 +1156,7 @@ class SpeechScheduler:
     async def _set_speaking(self, on: bool) -> None:
         if on != self._speaking:
             self._speaking = on
+            self._text_status_pending = False
             await self._emit({"type": "status", "state": "speaking" if on else "idle"})
 
     def _release_gated(self, now: float) -> None:
@@ -1210,7 +1253,7 @@ class SpeechScheduler:
                 spoke = self._last_user_speech is not None and p.paused_at is not None \
                     and self._last_user_speech > p.paused_at
                 if p.cancelled or stale or spoke or p.resumes >= MAX_RESUMES:
-                    p.cancelled = True
+                    p.cancel()
                     self._settle(p.id, above=p.played + 1)   # the kept chunk may still be playing
                     self._orphan(p.id)                       # ...but not for two minutes
                 else:
@@ -1222,8 +1265,12 @@ class SpeechScheduler:
                 self._pending.remove(nxt)
                 self._current = nxt
                 return True
-            if self._speaking and self._nothing_in_flight():
-                await self._set_speaking(False)
+            if self._nothing_in_flight():
+                if self._speaking:
+                    await self._set_speaking(False)
+                elif self._text_status_pending:
+                    self._text_status_pending = False
+                    await self._emit({"type": "status", "state": "idle"})
             return False
 
         cur = self._current
@@ -1254,7 +1301,7 @@ class SpeechScheduler:
         # bridge played before its audio exists. The chunks it referred to
         # are re-sent behind the bridge, so the client acks them again.
         u.held_ack = -1
-        self._spawn(self._synthesize(u, bridge))
+        bridge.synthesis = self._spawn(self._synthesize(u, bridge))
 
     async def _send_ready(self, u: Utterance, now: float) -> bool:
         progressed = False
@@ -1279,8 +1326,11 @@ class SpeechScheduler:
                 else:
                     u.held_ack = max(u.held_ack, idx)
                     self._kick_later(chunk.earliest_ack - now)
-                if not await self._send({"type": "text", "text": chunk.text}, u):
+                if not await self._send({"type": "text", "text": chunk.text,
+                                         "utt": u.id, "idx": idx,
+                                         **({"capture": chunk.capture} if chunk.capture is not None else {})}, u):
                     return False
+                self._text_status_pending = True
                 if chunk.notice:
                     await self._send({"type": "text", "text": "My voice is failing, sir."}, u)
                 progressed = True
@@ -1340,7 +1390,7 @@ class SpeechScheduler:
             rest = u.remaining_text()
             if rest:
                 self._unread.append(rest)
-        u.cancelled = True
+        u.cancel()
         u.abandoned = True
         self._settle(u.id)
         if self._current is u:

@@ -479,6 +479,19 @@ EXEMPT = {
         "it reads the voice record's own `state` and the stage states of its "
         "pipeline, fixed words the server classified; the cause it shows is the "
         "server's own classification, for the Diagnostics tab only"),
+    "subsystem_diagnostics.voice_output": (
+        "the `state` and `error` it reads are the local voice's own status "
+        "(`_voice_output_status`): one of JARVIS's fixed state words and an "
+        "error that is `model_problem`'s fixed line or the local worker's own "
+        "exception, never a session's or a run's field; the row goes to the "
+        "Diagnostics tab as React text, reaches the brain only inside "
+        "`diagnostics`' untrusted block, and is never spoken"),
+    "local_tts.synthesize": (
+        "the `error` it reads is the reply of JARVIS's own Kokoro worker "
+        "subprocess, an exception's text, kept as the local voice's status; "
+        "the one string it builds is the JSON request line it writes to that "
+        "worker, and nothing it reads is spoken, logged or put in a note to "
+        "the brain"),
     "subsystem_diagnostics.tool_channel": (
         "it reads the `status` the brain's CLI reports for JARVIS's own MCP "
         "server and shows it on the Diagnostics tab only; no session's text "

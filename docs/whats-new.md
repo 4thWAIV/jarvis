@@ -2,6 +2,19 @@
 
 Updated 2026-11-01. This guide describes functionality present in the checkout. The [roadmap](roadmap.md) describes the development direction and successor engines.
 
+## Two appearances across the app
+
+Settings → Server → Appearance offers Classic Refined, a quiet navy palette, and
+Graphite, a neutral dark palette with a soft blue-violet accent. Conversation,
+folders, agent threads, Queue/review, workflows, Network, Diagnostics, settings
+and the run dashboard share readable text, surfaces and focus treatments. Tim's
+layout, type sizes, controls and interactions remain in place. The orbs and
+semantic state colors keep their identities.
+
+The choice is saved in this browser, applies before the page is drawn and follows
+changes made in another JARVIS tab on the same origin. It does not change server
+settings or anyone else's appearance.
+
 ## Conversation is the main view
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.

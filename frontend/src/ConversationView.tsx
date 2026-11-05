@@ -1,65 +1,25 @@
-/**
- * The Conversation view of the centre area, anchored to the bottom, top to
- * bottom:
- *
- *   - the history: every finished turn (JARVIS's in blue, Tim's in white), in
- *     all the height left up to the header, scrolling. A turn longer than
- *     four lines shows its first two and an ellipsis, and opens to full size
- *     when clicked. What the brain showed instead of saying it (its sources)
- *     is a collapsed yellow Sources item after the words it goes with;
- *   - the open captures (CaptureBox.tsx);
- *   - the blue box: four lines, what JARVIS is saying now, scrolled so the
- *     line being spoken stays in view;
- *   - the white box, at the very bottom: what Tim is saying now, as it is
- *     heard, one line growing to four. Clicked, it takes typing instead:
- *     Enter sends what he typed as if he had said it, Shift+Enter starts a
- *     new line.
- *
- * The history is the conversation's record (conversation.ts) as well as the
- * live captions: what was said before the page opened, and every message to
- * an agent with its status as it moves (Queued, Sent, Delivered, Working on
- * it, Answered), opening to the agent's answer. An agent's name opens that
- * agent's thread in the centre area. "Earlier" at the top reads further back.
- *
- * What is live is in the two boxes. Tim's finished words stay in the white
- * box until the brain answers: they go to a capture if it makes one of them
- * (and the history shows a collapsed item for them), and otherwise into the
- * history when JARVIS starts to reply. JARVIS's reply moves into the history
- * once he has finished saying it.
- */
-
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { conversation, turnKey, useRecordOpen, type Turn } from "./captions";
 import { TurnWords } from "./CaptionBox";
 import { CaptureList } from "./CaptureBox";
 import { captureKind } from "./capture";
-import { conversationChanged, fromRecord, getConversation, restoreCapture,
+import { conversationChanged, getConversation, restoreCapture,
          statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
 import { SaidText, useT, type Said, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
-import type { OrbState } from "./orb";
 import { createStore } from "./store";
 import type { AvailabilityReason, TargetRef } from "./uiContract";
 import { bind, bindingProps } from "./uiNavigation";
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome, type Socket } from "./uiRegistry";
-import { sendTyped, voiceState } from "./voiceStatus";
+import { MessageList, historyRows, type ConversationRow } from "./conversation/MessageList";
+import { ChatMessage } from "./conversation/ChatMessage";
+import { Composer } from "./conversation/Composer";
+import { PlaybackBar } from "./conversation/PlaybackBar";
+import "./conversation/conversation.css";
 
-// A history turn longer than this many lines is shown as its first two.
-const LONG_LINES = 4;
-
-/** Which turns are live and which are history. */
-export function placeTurns(turns: Turn[], voice: OrbState):
-    { history: Turn[]; speaking: Turn | null; hearing: Turn | null } {
-  // Something shown after the words being spoken goes into the history at
-  // once; the words stay in their box until they are said.
-  const last = [...turns].reverse().find((t) => !t.display);
-  const speaking = last && last.speaker === "jarvis" && voice === "speaking" ? last : null;
-  const hearing = last && last.speaker === "user" && !last.capture ? last : null;
-  const history = turns.filter((t) => t !== speaking && t !== hearing);
-  return { history, speaking, hearing };
-}
+export { historyRows };
 
 // ── earlier pages ───────────────────────────────────────────────────────
 
@@ -168,79 +128,40 @@ const conversationRef = <K extends "conversation" | "conversationRecord" | "sour
   : TargetRef & { view: "main.conversation"; kind: K } =>
   ({ region: "main", view: "main.conversation", kind, ...(key === undefined ? {} : { key }) });
 
-export function ConversationView() {
-  const { turns, speaking: word } = useSyncExternalStore(conversation.subscribe, conversation.get);
-  const voice = useSyncExternalStore(voiceState.subscribe, voiceState.get);
-  const { history, speaking, hearing } = placeTurns(turns, voice);
-  const t = useT();
-  const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
-  return (
-    <div id="conversation" ref={ui.whole}>
-      <History turns={history} partRef={ui.part} />
-      <CaptureList view="main.conversation" />
-      <SpeakingBox turn={speaking} word={word} partRef={ui.part("speaking")} />
-      <HearingBox turn={hearing} partRef={ui.part("input")} />
-    </div>
-  );
-}
-
-type Row = { at: number; key: string; turn?: Turn; item?: ConversationItem;
-             answer?: ConversationItem; restorable?: boolean };
-
-/** The live turns and the record's items, in the order they happened. An
- *  agent's answer is drawn inside the message it answers when both are here.
- *  `everything`: every record item (an agent's thread), not only those the
- *  live captions do not draw. */
-export function historyRows(turns: Turn[], items: ConversationItem[],
-                            everything = false): Row[] {
-  const shown = everything ? items : items.filter(fromRecord);
-  const asked = new Set(shown.filter((i) => i.kind === "to_agent").map((i) => i.message_id));
-  const answers = new Map(shown.filter((i) => i.kind === "answer" && i.message_id != null)
-    .map((i) => [i.message_id, i] as const));
-  // A cleared capture can be restored until a later notice says it was.
-  const restoredLater = (i: ConversationItem) => items.some((j) => j.id > i.id
-    && j.capture_id === i.capture_id && j.detail?.capture_event === "restored");
-  const rows: Row[] = [
-    ...turns.map((t) => ({ at: t.at ?? 0, key: turnKey(t), turn: t })),
-    ...shown.filter((i) => !(i.kind === "answer" && asked.has(i.message_id)))
-      .map((i) => ({ at: i.at, key: `r${i.id}`, item: i,
-                     answer: i.kind === "to_agent" && i.message_id != null
-                       ? answers.get(i.message_id) : undefined,
-                     restorable: i.detail?.capture_event === "cleared" && !restoredLater(i) })),
-  ];
-  return rows.sort((a, b) => a.at - b.at);
-}
-
 /** A part's callback ref, from a registered target (`useUiTarget`). */
 type PartRef = (part: string) => (el: Element | null) => void;
 
-function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
+export function ConversationView() {
+  const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
+  const hearing = [...turns].reverse().find(turn => turn.speaker === "user" && turn.open);
   const t = useT();
-  const ref = useRef<HTMLDivElement | null>(null);
-  const live = useLiveRead(() => getConversation(), [conversationChanged]);
-  const { older, earlier } = historyPages.use(HISTORY, live.value ? live.value.earlier : undefined);
-  const latest = live.value?.items ?? [];
-  const newestIds = new Set(latest.map((i) => i.id));
-  const items = [...older.filter((i) => !newestIds.has(i.id)), ...latest];
-  const rows = historyRows(turns, items);
-  const newest = rows[rows.length - 1];
-  // Rolling: the newest turn is in view whenever one arrives.
-  useLayoutEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [newest?.key, newest?.turn?.sentences.length, newest?.item?.message?.status]);
-  const history = partRef("history");
-  return (
-    <div className="conversation-history" aria-label={t("main.conversation.history")}
-         ref={(el) => { ref.current = el; history(el); }}>
-      {earlier != null && <button type="button" className="history-earlier" ref={partRef("earlier")}
-                                  {...bindingProps(bind("conversation.earlier", {}))}>{t("main.conversation.earlier")}</button>}
-      {rows.map((r) => (r.item ? <RecordItem key={r.key} item={r.item} answer={r.answer}
-                                             restorable={r.restorable} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: r.key }} />
-        : r.turn!.display
-          ? <SourcesRow key={r.key} turn={r.turn!} />
-          : <HistoryTurn key={r.key} turn={r.turn!} />))}
+  const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
+  return <section id="conversation" ref={ui.whole} aria-label={t("tabs.main.conversation")}>
+    <History turns={turns.filter(turn => !turn.open)} partRef={ui.part} />
+    <div className="conversation-dock">
+      <div className="conversation-captures"><CaptureList view="main.conversation" /></div>
+      <PlaybackBar partRef={ui.part("speaking")} />
+      {hearing && <div className="conversation-interim" role="status">
+        <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
+      </div>}
+      <Composer partRef={ui.part("input")} />
     </div>
-  );
+  </section>;
+}
+
+function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
+  const live = useLiveRead(() => getConversation(), [conversationChanged]);
+  const { older, earlier } = historyPages.use(HISTORY, live.value?.earlier);
+  return <MessageList turns={turns} older={older} earlier={earlier} live={live}
+    partRef={partRef} renderRow={renderHistoryRow} />;
+}
+
+function renderHistoryRow(row: ConversationRow) {
+  if (row.item) return <RecordItem key={row.key} item={row.item} answer={row.answer}
+    restorable={row.restorable} place={{ region: "main", view: "main.conversation", kind: "conversationRecord", key: row.key }} />;
+  if (!row.turn) return null;
+  return row.turn.display ? <SourcesRow key={row.key} turn={row.turn} />
+    : <HistoryTurn key={row.key} turn={row.turn} />;
 }
 
 /** What the brain showed instead of saying it, as a history row. */
@@ -346,7 +267,8 @@ export function RecordItem({ item, answer, restorable, place }: {
   const whole = (el: Element | null) => { ui.whole(el); text(el); };
   if (item.kind === "notice") return <p className="history-turn record-notice" ref={whole}>{item.text}</p>;
   const speaker = item.kind === "jarvis" ? "jarvis" : "user";
-  return <p className={`history-turn ${speaker} record-said kind-${item.kind}`} ref={whole}>{item.text}</p>;
+  return <ChatMessage speaker={speaker} at={item.at} text={item.text}
+    kind={`record-said kind-${item.kind}`} wholeRef={ui.whole} textRef={text} />;
 }
 
 /** A captured turn takes its capture kind's look in the history. */
@@ -358,94 +280,13 @@ function kindClass(turn: Turn): string {
 
 function HistoryTurn({ turn }: { turn: Turn }) {
   const t = useT();
-  const ref = useRef<HTMLParagraphElement | null>(null);
-  const [long, setLong] = useState(false);
   const key = turnKey(turn);
-  const { open, toggle } = useOpener(key, long);
   const ui = useUiTarget({ ref: conversationRef("conversationRecord", key),
-                           label: turn.speaker === "jarvis" ? t("main.record.jarvis") : t("main.record.yours"), socket: CENTRE_SOCKET });
-  // Measured unclamped: more than LONG_LINES lines makes it a long turn.
-  useLayoutEffect(() => {
-    const p = ref.current;
-    if (!p || long) return;
-    const line = parseFloat(getComputedStyle(p).lineHeight) || 20;
-    if (p.scrollHeight > LONG_LINES * line + 1) setLong(true);
-  }, [turn.sentences, long]);
-  const clamped = long && !open;
-  const text = ui.part("text");
-  const expand = ui.part("expand");
-  return (
-    <p ref={(el) => { ref.current = el; ui.whole(el); text(el); if (long) expand(el); }}
-       className={`history-turn ${turn.speaker}${clamped ? " clamped" : ""}${
-         long ? " long" : ""}${kindClass(turn)}`}
-       {...(long ? toggle : {})}
-       title={long ? (open ? t("main.conversation.showLess") : t("main.conversation.showAll")) : undefined}>
-      <TurnWords turn={turn} speaking={null} partRef={ui.part} />
-    </p>
-  );
-}
-
-function SpeakingBox({ turn, word, partRef }: { turn: Turn | null;
-                                                word: [number, number, number] | null;
-                                                partRef: (el: Element | null) => void }) {
-  const t = useT();
-  const ref = useRef<HTMLDivElement | null>(null);
-  // The line being spoken stays in view, with the line before it above.
-  useLayoutEffect(() => {
-    const box = ref.current;
-    const now = box?.querySelector<HTMLElement>(".spoken-word.now");
-    if (!box || !now) return;
-    const line = parseFloat(getComputedStyle(box).lineHeight) || 20;
-    const top = now.offsetTop;           // the box is the word's offset parent
-    if (top < box.scrollTop || top + line > box.scrollTop + box.clientHeight) {
-      box.scrollTop = Math.max(0, top - line);
-    }
-  }, [word, turn?.id]);
-  return (
-    <div className="conversation-speaking" aria-label={t("main.conversation.speaking")}
-         ref={(el) => { ref.current = el; partRef(el); }}>
-      {turn && <p className="caption-turn jarvis"><TurnWords turn={turn} speaking={word} /></p>}
-    </div>
-  );
-}
-
-function HearingBox({ turn, partRef }: { turn: Turn | null; partRef: (el: Element | null) => void }) {
-  const t = useT();
-  const ref = useRef<HTMLDivElement | null>(null);
-  const input = useRef<HTMLTextAreaElement>(null);
-  const [typing, setTyping] = useState(false);
-  const [draft, setDraft] = useState("");
-  // What was heard shows until he starts typing; a draft keeps the box.
-  const heard = turn && !typing && !draft ? turn.sentences.join(" ") : null;
-  useLayoutEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [turn?.sentences, draft]);
-  useLayoutEffect(() => {
-    if (typing) input.current?.focus();
-  }, [typing]);
-  function send() {
-    const text = draft.trim();
-    if (!text) return;
-    sendTyped.current(text);
-    setDraft("");
-    // Sent, his words wait in the box as spoken ones do.
-    input.current?.blur();
-  }
-  return (
-    <div data-ui-action="input" className="conversation-hearing" aria-label={t("main.conversation.hearing")}
-         ref={(el) => { ref.current = el; partRef(el); }}
-         onClick={() => setTyping(true)}>
-      {heard !== null && <p className="caption-turn user">{heard}</p>}
-      <textarea data-ui-action="input" ref={input} className="hearing-input" rows={1} hidden={heard !== null}
-                aria-label={t("main.conversation.typeInstead")} placeholder={t("main.conversation.typePlaceholder")}
-                value={draft} onChange={(e) => setDraft(e.target.value)}
-                onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    send();
-                  }
-                }} />
-    </div>
-  );
+    label: turn.speaker === "jarvis" ? t("main.record.jarvis") : t("main.record.yours"), socket: CENTRE_SOCKET });
+  return <ChatMessage speaker={turn.speaker} at={turn.at}
+    text={turn.text ?? turn.sentences.join(" ")} kind={kindClass(turn)}
+    pending={turn.complete === false && !turn.interrupted} interrupted={turn.interrupted}
+    wholeRef={ui.whole} textRef={ui.part("text")}>
+    {turn.capture ? <TurnWords turn={turn} speaking={null} partRef={ui.part} /> : undefined}
+  </ChatMessage>;
 }

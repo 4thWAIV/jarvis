@@ -474,7 +474,7 @@ def test_spending_the_users_tts_quota_is_not_a_get(env, monkeypatch):
         calls.append(text)
         return b"MP3"
 
-    monkeypatch.setattr(server, "synthesize_speech", fake_synth)
+    monkeypatch.setattr(server, "_synth_for_speech", fake_synth)
 
     assert c.get("/api/tts-test").status_code == 405
     assert c.post("/api/tts-test").status_code == 403

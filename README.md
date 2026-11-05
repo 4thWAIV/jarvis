@@ -39,6 +39,10 @@ The [full roadmap](docs/roadmap.md) separates current capabilities, next develop
 
 Workflow details include phases, tasks, progress, attached transcripts, waits, blockers, decisions and events. Voice diagnostics show pipeline health and incident history, with notification analysis and a quiet-page comparison. See [what's new](docs/whats-new.md) for a short guide.
 
+Choose **Classic Refined** or **Graphite** in Settings → System → Appearance.
+Both cover the workspace and run dashboard while preserving their layout and
+controls. The choice stays in this browser and applies on reload.
+
 These are fresh captures of the actual React interface, rendered with fictional conversation, workflow, agent and diagnostic data. They do not show a live account or production measurements.
 
 ### Conversation and agents
@@ -57,7 +61,7 @@ Regenerate these captures with `.venv/bin/python scripts/capture_docs.py`.
 
 ## Run the workspace
 
-Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Fish Audio credentials are required for spoken output; without working synthesis, replies can appear as text.
+Use macOS and Chrome; the microphone path is tested in Chrome. Python 3.11+ and Node.js are needed for development. Install and authenticate the conversational provider you intend to use. Claude Code is also used by the current development-run executor. Choose Fish Audio or local Kokoro CPU speech in Settings → Voice. Fish needs its own key; local output needs an explicit model installation. See [local voice setup](docs/local-voice.md). Without working synthesis, replies remain visible as text.
 
 From a clone of this repository:
 

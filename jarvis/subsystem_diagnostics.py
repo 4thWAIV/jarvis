@@ -587,12 +587,18 @@ def brain(b, autostart: bool, now: float, started_at: float,
     return one(OK, say("brainReady"))
 
 
-def voice_output(has_key: bool, calls: Outcomes, now: float) -> Subsystem:
+def voice_output(has_key: bool, calls: Outcomes, now: float, local: Optional[dict] = None) -> Subsystem:
     """Fish Audio, from each synthesis's outcome."""
     def one(state: str, line: tuple[Said, str]) -> Subsystem:
         # Fish Audio is a product's name: it has no code, and is shown as it is.
         return subsystem("voice_output", state, line,
                          [Check("fish", "Fish Audio", state, line[1], None, line[0])])
+    if local is not None:
+        problem = local.get("error")
+        state = DOWN if problem else (OK if local.get("state") == "ready" else UNKNOWN)
+        summary = problem or ("Local Kokoro CPU voice ready" if state == OK else "Local Kokoro model installed; loads on first speech")
+        return Subsystem("voice_output", "Voice output", state, summary,
+                         [Check("local", "Local voice (Kokoro)", state, summary)])
     if not has_key:
         return one(DOWN, say("outputNoKey"))
     items = list(calls.items)
@@ -737,6 +743,7 @@ def team_server(team: dict, now: float) -> Subsystem:
 
 def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_at: float,
            team: Optional[dict] = None, folders: Optional[dict] = None,
+           local_voice: Optional[dict] = None,
            now: Optional[float] = None) -> list[Subsystem]:
     """Every subsystem, read now. Blocking (it reads the database): run it
     off the event loop."""
@@ -749,7 +756,7 @@ def gather(*, watcher, brain_now, autostart: bool, has_fish_key: bool, started_a
                        run_store.queued_messages()),
         voice_input(voice_diagnostics.summary(now), now),
         brain(brain_now, autostart, now, started_at, tool_calls),
-        voice_output(has_fish_key, voice_output_calls, now),
+        voice_output(has_fish_key, voice_output_calls, now, local_voice),
         tool_channel(brain_now, tool_calls, now),
         workflows(workflow_store.active(), beats_now.get(WORKFLOW_LOOP), now),
         folder_catalog(folders, beats_now.get(FOLDERS_LOOP), now),

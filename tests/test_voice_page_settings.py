@@ -122,8 +122,11 @@ class _Server:
         async def test_fish(route):
             body = json.loads(route.request.post_data or "{}")
             self.posts.append(("test-fish", body))
+            result = {"valid": body.get("key_value") == "good-key"}
+            if body.get("key_value") == "voice-rejected":
+                result["status_code"] = 400
             await route.fulfill(status=200, content_type="application/json",
-                                body=json.dumps({"valid": body.get("key_value") == "good-key"}))
+                                body=json.dumps(result))
 
         async def brains(route):
             url = route.request.url
@@ -261,11 +264,17 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
         await _open_settings(page)
         key = page.locator(".settings-row", has=page.locator("#settings-fish-key"))
         assert await key.locator("#settings-fish-key").get_attribute("type") == "password"
-        await page.get_by_placeholder("Fish Audio key...").fill("good-key")
+        key_input = page.get_by_placeholder("Fish Audio key...")
+        await key_input.fill("voice-rejected")
+        await key.get_by_role("button", name="Test", exact=True).click()
+        await async_api.expect(page.get_by_text("Fish Audio rejected the speech request.", exact=False)).to_be_visible()
+        await key_input.fill("good-key")
         await key.get_by_role("button", name="Test", exact=True).click()
         await page.wait_for_function(f"({DOT})('Test') === 'green'")
+        await async_api.expect(page.get_by_text("Fish Audio generated speech successfully.")).to_be_visible()
         await key.get_by_role("button", name="Save", exact=True).click()
         await page.get_by_text("Restart the server").wait_for()
+        await async_api.expect(key_input).to_have_value("")
         assert ("test-fish", {"key_value": "good-key"}) in server.posts
         assert ("keys", {"key_name": "FISH_API_KEY", "key_value": "good-key"}) in server.posts
 
@@ -275,6 +284,10 @@ async def test_saving_the_fish_key_says_to_restart_and_testing_it_checks_it(page
         await page.wait_for_function("1")
         await page.wait_for_timeout(300)
         assert ("keys", {"key_name": "FISH_VOICE_ID", "key_value": "voice-42"}) in server.posts
+        await page.reload()
+        await _open_settings(page)
+        await async_api.expect(page.get_by_text("API key saved. Enter a new key here to replace it.")).to_be_visible()
+        await async_api.expect(key_input).to_have_value("")
         await browser.close()
 
 
