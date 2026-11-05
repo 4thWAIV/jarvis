@@ -13,6 +13,10 @@
 .chat-author { font-size: 12px; font-weight: 650; color: var(--ui-secondary); }
 .jarvis .chat-author { color: var(--ui-accent); }
 #conversation .chat-message-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ui-text); font-size: 14px; line-height: 1.75; letter-spacing: 0; margin: 0; }
+/* JARVIS's words in his blue, Tim's sent words white (his words still being
+   heard stay grey, below); the word being read aloud glows (SpokenWords.tsx). */
+#conversation .chat-message.jarvis .chat-message-body { color: var(--ui-accent); }
+#conversation .chat-message.user .chat-message-body { color: var(--ui-text); }
 .chat-message.user .chat-message-body { background: rgba(var(--ui-text-rgb), .035); border: 1px solid rgba(var(--ui-text-rgb), .07); border-radius: 2px 12px 12px; padding: 10px 14px; }
 .chat-copy { margin-left: auto; border: 0; background: transparent; color: var(--ui-muted); font: inherit; cursor: pointer; padding: 4px 8px; border-radius: 5px; }
 .chat-copy:hover { color: var(--ui-text); background: var(--ui-raised); }
@@ -73,7 +77,7 @@
 #conversation .reply-prose { white-space: normal; }
 .reply-prose p { margin: 0 0 12px; white-space: pre-wrap; }
 .reply-prose > :last-child { margin-bottom: 0; }
-.reply-prose .md-h { color: var(--ui-text); font-size: 15px; line-height: 1.5; font-weight: 600; margin: 18px 0 8px; }
+.reply-prose .md-h { color: inherit; font-size: 15px; line-height: 1.5; font-weight: 600; margin: 18px 0 8px; }
 .reply-prose > .md-h:first-child { margin-top: 0; }
 .reply-prose ul, .reply-prose ol { margin: 8px 0 14px; padding-left: 24px; }
 .reply-prose li { margin: 5px 0; }

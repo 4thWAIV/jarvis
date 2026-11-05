@@ -234,3 +234,60 @@ async def test_remote_skip_removes_queued_reply_without_stopping_other_audio(pag
         assert not [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 8]
         assert await page.locator('.history-turn.jarvis').inner_text() == 'A queued reply.'
         await browser.close()
+
+
+# ── the polish after the voice update: colours, the reading highlight,
+#    one owner of the timeline's scrolling, and the bottom box ─────────────
+
+def _long_history(n=34):
+    return {'items': [_record_item(k, 'jarvis' if k % 2 else 'typed',
+                                   (f'Reply {k}. ' + 'A readable response about the work. ' * 8) if k % 2
+                                   else f'Question {k}: how is it going?', at=1_000_000.0 + k)
+                      for k in range(1, n + 1)], 'earlier': None}
+
+
+async def _with_history(page, voice, record=None):
+    record = record or _long_history()
+    async def read(route):
+        await route.fulfill(json=record)
+    await page.route('**/api/conversation', read)
+    voice.send({'type': 'conversation'})
+    await page.wait_for_function(f"document.querySelectorAll('.chat-message').length >= {len(record['items'])}")
+
+
+GAP = "(() => { const b = document.querySelector('.conversation-history'); return b.scrollHeight - b.scrollTop - b.clientHeight; })()"
+TOP = "document.querySelector('.conversation-history').scrollTop"
+
+
+async def _wheel(page, dy):
+    box = await page.locator('.conversation-history').bounding_box()
+    await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    await page.mouse.wheel(0, dy)
+    await asyncio.sleep(.35)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('theme', ['classic', 'graphite'])
+async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(page_url, theme):
+    voice = _Voice()
+    async with async_api.async_playwright() as p:
+        browser, page = await _open(p, page_url, voice)
+        await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
+        await _with_history(page, voice, {'items': [_record_item(1, 'typed', 'Typed and sent.'),
+                                                    _record_item(2, 'jarvis', '## Done\n\nAll is well, sir.')],
+                                          'earlier': None})
+        await page.evaluate("window.__hear('still being', false)")
+        await page.wait_for_selector('.conversation-interim p')
+        got = await page.evaluate("""() => {
+          const colour = v => { const e = document.createElement('i'); e.style.color = `var(${v})`;
+            document.body.append(e); const c = getComputedStyle(e).color; e.remove(); return c; };
+          const of = s => getComputedStyle(document.querySelector(s)).color;
+          return {accent: colour('--ui-accent'), text: colour('--ui-text'), secondary: colour('--ui-secondary'),
+                  jarvis: of('.chat-message.jarvis .chat-message-body .reply-prose p'),
+                  heading: of('.chat-message.jarvis .reply-prose .md-h'),
+                  sent: of('.chat-message.user .chat-message-body'),
+                  heard: of('.conversation-interim p')}; }""")
+        assert got['jarvis'] == got['heading'] == got['accent'], got
+        assert got['sent'] == got['text'], got
+        assert got['heard'] == got['secondary'] and got['heard'] != got['text'], got
+        await browser.close()
