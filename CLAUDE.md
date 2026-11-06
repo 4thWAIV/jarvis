@@ -689,6 +689,21 @@ the page words the code in its own language (`subsystems.ts` `subsystemName`,
 and shows a line with no code (another program's words) as it came. A test
 keeps the Python English and the catalog's English word for word the same.
 
+## Tool activity
+Every brain tool call that names a real tool at `/internal/tool` is a call
+in `tool_activity.py`'s feed, in memory only: `started`, then once
+`refused` (the digest and acting-tool gates), `failed` (raised, or the
+request went away) or `completed` (the handler returned; its text is never
+read). An event is its sequence number, call id, tool, category, stage,
+time and, on an ending, duration; never arguments, results or words. The
+category is the orb study's grouping (`data`, `communication`, `execution`,
+`ui`), one table, `tool_activity.CATEGORIES`, checked against `TOOL_SPECS`.
+At most `KEEP_EVENTS` are kept, oldest dropped first; `generation` changes
+with each process. `GET /api/tools/activity?since=<seq>` reads it. There is
+no `/ws/sessions` hint, so a reader asks again with the last `seq` it saw.
+`internal_tool` runs the gates in `_dispatch_tool`, which returns the reply
+unchanged and how the call ended.
+
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
 where they are and nothing here creates, moves, edits or deletes one. The
@@ -1067,6 +1082,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `jarvis/transcribeProtocol.json`, read by both sides
 - `voice_diagnostics.py` — The voice record (see "Voice diagnostics");
   `frontend/src/voiceHealth.ts` is the page's side of it
+- `tool_activity.py` — The brain's tool calls as a bounded in-memory feed
+  and each tool's category (see "Tool activity")
 - `subsystem_diagnostics.py` — Each subsystem's state, worked out at read
   time (see "Subsystem diagnostics"); `frontend/src/subsystems.ts` is the
   page's side of it

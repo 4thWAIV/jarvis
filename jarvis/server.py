@@ -93,6 +93,7 @@ from jarvis import voice_control
 from jarvis.voice_control import ReplyFailure, ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
+from jarvis import tool_activity
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -4096,18 +4097,34 @@ async def internal_tool(request: Request):
     if handler is None:
         return _tool_reply(False, f"Unknown tool: {tool}")
 
+    # From here the call is an activity (tool_activity.py): started now,
+    # ended exactly once by how `_dispatch_tool` answered. A request that
+    # goes away mid-call (cancelled) ends `failed`. Never its words.
+    call = tool_activity.activity.start(tool)
+    stage = tool_activity.FAILED
+    try:
+        reply, stage = await _dispatch_tool(tool, handler, args)
+        return reply
+    finally:
+        tool_activity.activity.end(call, stage)
+
+
+async def _dispatch_tool(tool: str, handler, args: dict) -> tuple[dict, str]:
+    """Run one named tool through the gates: its reply, and how the call
+    ended for the activity feed (refused, failed or completed)."""
     if brain_instance is not None and brain_instance.current_origin == attention.DIGEST_ORIGIN:
         # The attention digest is read-only: its facts are in its prompt,
         # and no tool, reading or acting, runs in that turn.
-        return _tool_reply(False, "not_allowed_in_digest — no tools in a digest turn.")
+        return (_tool_reply(False, "not_allowed_in_digest — no tools in a digest turn."),
+                tool_activity.REFUSED)
 
     if tool in ACTING_TOOLS:
         origin = brain_instance.current_origin if brain_instance else None
         if origin != "user":
-            return _tool_reply(
+            return (_tool_reply(
                 False,
                 "not_allowed_from_event — I can only do that when you ask "
-                "me to, sir, not off my own back.")
+                "me to, sir, not off my own back."), tool_activity.REFUSED)
         # The origin gate is not enough here: the poisoned README arrives
         # DURING the very turn the user asked about the repository, so its
         # origin is "user". And for a memory writer the TURN is not enough
@@ -4119,7 +4136,7 @@ async def internal_tool(request: Request):
         if refusal:
             log.warning("refused %s: %s was read in this %s", tool, source,
                         "session" if tool in MEMORY_WRITERS else "turn")
-            return _tool_reply(False, refusal)
+            return _tool_reply(False, refusal), tool_activity.REFUSED
 
     try:
         result = handler(args)
@@ -4127,17 +4144,26 @@ async def internal_tool(request: Request):
             result = await result
     except Exception as e:
         log.error(f"tool {tool} failed: {e}", exc_info=True)
-        return _tool_reply(False, f"That tool failed: {e}")
+        return _tool_reply(False, f"That tool failed: {e}"), tool_activity.FAILED
     # The turn now holds whatever that tool brought back. Marked HERE, once,
     # rather than in each handler: a reader added later cannot forget, and
     # `TAINTING_TOOLS` is then the entire decision, in one readable place.
     _mark_the_turn_untrusted(tool)
     if isinstance(result, ToolImage):
-        return _tool_reply(
+        return (_tool_reply(
             True, result.text,
             image={"data": base64.b64encode(result.png).decode("ascii"),
-                   "mimeType": result.mime})
-    return _tool_reply(True, str(result))
+                   "mimeType": result.mime}), tool_activity.COMPLETED)
+    return _tool_reply(True, str(result)), tool_activity.COMPLETED
+
+
+@app.get("/api/tools/activity")
+async def api_tools_activity(since: int = Query(0, ge=0)):
+    """The brain's tool calls after sequence number `since`: each call's id,
+    tool, category, stage and timing, never its arguments or result. A
+    different `generation` means the server restarted and `seq` began
+    again; `oldest` above `since + 1` means events were dropped between."""
+    return tool_activity.activity.since(since)
 
 
 # The last conversation JARVIS talked about, so "that one" can be resolved.
