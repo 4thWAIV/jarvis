@@ -139,9 +139,12 @@ class RosterEntry:
         """A process can only be steered if it bound an inbox socket.
 
         Measured: 4 of 17 live entries had none. `ListAgents` cannot see those
-        at all, which is why this watcher exists.
+        at all, which is why this watcher exists. A Windows named pipe is not
+        steerable and is never opened to find out (session_steer), so a busy
+        one cannot make the roster unreadable.
         """
-        return bool(self.socket_path) and Path(self.socket_path).exists()
+        from jarvis import session_steer
+        return session_steer.inbox_available(self.socket_path)
 
 
 def _parse_entry(path: Path, root: Path) -> RosterEntry | None:

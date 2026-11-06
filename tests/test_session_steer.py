@@ -98,6 +98,27 @@ def test_an_empty_prompt_is_refused_before_it_reaches_the_socket(fake_session):
     assert received == []
 
 
+@pytest.mark.parametrize("pipe", [
+    "\\\\.\\pipe\\LOCAL\\cc-msg-0123456789abcdef0123456789abcdef",
+    "//./pipe/LOCAL/cc-msg-0123456789abcdef0123456789abcdef",
+    "\\\\.\\PIPE\\LOCAL\\cc-msg-0123456789abcdef0123456789abcdef",
+])
+def test_a_windows_inbox_pipe_is_refused_without_being_probed_or_opened(pipe, monkeypatch):
+    """Claude Code's inbox on Windows is a named pipe. Checking it opens it
+    (WinError 231 when all its instances are busy), and JARVIS cannot send
+    to one, so it is refused by its spelling: no existence check, no socket."""
+    def no_probe(self, *args, **kwargs):
+        raise AssertionError(f"probed {self}")
+
+    def no_socket(*args, **kwargs):
+        raise AssertionError("a socket was created")
+    monkeypatch.setattr(session_steer.Path, "exists", no_probe)
+    monkeypatch.setattr(session_steer.socket, "socket", no_socket)
+
+    outcome = session_steer.post_to_session(pipe, "carry on")
+    assert session_steer.outcome_code(outcome) == "failed"
+
+
 def test_an_auth_token_is_sent_first_when_the_environment_has_one(fake_session, monkeypatch):
     path, received, _ = fake_session
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok")

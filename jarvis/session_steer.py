@@ -62,6 +62,31 @@ def message_body(text: str) -> str:
 # from Claude Code 2.1.309's inbox handler.
 INTERRUPT_PRIORITY = "now"
 
+# On Windows, Claude Code's inbox (its `messagingSocketPath`) is a local named
+# pipe, \\.\pipe\LOCAL\cc-msg-<hex>, not a Unix socket file. Asking whether
+# one exists opens it: os.stat connects as a client and takes one of the
+# pipe's instances, and fails with WinError 231 ("All pipe instances are
+# busy") when they are all taken (measured: a busy pipe made the whole Claude
+# roster unreadable for that poll). JARVIS cannot deliver to a pipe yet, so a
+# pipe is recognised by its spelling alone and never probed.
+PIPE_UNAVAILABLE = "Claude Code's inbox here is a Windows named pipe, which JARVIS cannot send to"
+
+
+def is_windows_pipe(path: str | None) -> bool:
+    """Whether `path` names a local Windows named pipe (\\\\.\\pipe\\... or
+    //./pipe/...), by its spelling alone: nothing is opened or checked."""
+    if not path:
+        return False
+    return path.replace("/", "\\").lower().startswith("\\\\.\\pipe\\")
+
+
+def inbox_available(socket_path: str | None) -> bool:
+    """Whether there is an inbox to deliver to at `socket_path`: a Unix socket
+    file that exists. A Windows named pipe is never one (see above)."""
+    if not socket_path or is_windows_pipe(socket_path):
+        return False
+    return Path(socket_path).exists()
+
 
 def post_to_session(socket_path: str | None, prompt: str,
                     timeout: float = 5.0, interrupt: bool = False) -> str:
@@ -69,10 +94,13 @@ def post_to_session(socket_path: str | None, prompt: str,
 
     A missing socket file and a stale one left by a dead process are both
     `not_live`: from the user's point of view there is nothing to talk to.
+    A Windows named pipe is `failed` with the reason, before it is probed.
     """
     if not prompt or not prompt.strip():
         return REFUSED
-    if not socket_path or not Path(socket_path).exists():
+    if is_windows_pipe(socket_path):
+        return failed(PIPE_UNAVAILABLE)
+    if not inbox_available(socket_path):
         return NOT_LIVE
 
     lines = []

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import pathlib
 import threading
 import time
 
@@ -182,6 +183,39 @@ def test_a_brief_flicker_of_work_is_not_announced(tmp_path):
     write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="idle")
     w.poll_once(now=1002.0)
 
+    assert events == []
+
+
+# Claude Code's inbox on Windows, as its roster writes it.
+PIPE = "\\\\.\\pipe\\LOCAL\\cc-msg-0123456789abcdef0123456789abcdef"
+
+
+def test_a_busy_windows_inbox_pipe_never_drops_a_working_session_as_finished(
+        tmp_path, monkeypatch):
+    """Measured on Windows: the roster's inbox is a named pipe, and checking
+    whether it existed opened it; when all its instances were busy that
+    raised WinError 231, the whole Claude roster went unread for the poll,
+    and a session working for over a minute was announced as finished. The
+    session stays working and is not steerable, and nothing is announced."""
+    real = pathlib.Path.exists
+
+    def busy_pipe(self, *args, **kwargs):             # as os.stat on a busy pipe fails
+        if str(self).startswith("\\\\.\\pipe\\"):
+            raise OSError(None, "All pipe instances are busy", str(self), 231)
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(pathlib.Path, "exists", busy_pipe)
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p", name="n", status="busy",
+                 extra={"messagingSocketPath": PIPE})
+    write_transcript(root, cwd="/p", session_id="s", title="T", last_prompt="P")
+    w = _watcher(root)
+    events = []
+    w.on_event(events.append)
+    w.poll_once(now=1000.0)
+    snap = w.poll_once(now=1000.0 + 45)
+
+    (s,) = snap.sessions
+    assert (s.state, s.steerable) == (sw.WORKING, False)
     assert events == []
 
 
