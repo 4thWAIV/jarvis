@@ -15,6 +15,7 @@ export function MicOffButton({ partRef }: { partRef?: (el: Element | null) => vo
   return (
     <button
       id="btn-mic-off"
+      type="button"
       ref={partRef}
       data-ui-action="microphone"
       className={`control-button small${off ? " muted" : ""}`}
