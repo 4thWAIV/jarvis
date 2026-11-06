@@ -419,36 +419,49 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         await page.set_viewport_size({'width': 1000, 'height': 720})
         await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
         await _with_history(page, voice)
+        draft = '\n'.join(['A long draft line'] * 30)
+        await page.get_by_role('textbox', name='Message JARVIS').fill(draft)
         voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
                     'text': 'Tell hammer to ship the folder catalog fix once the review passes. ' * 2},
                    {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'},
-                   {'type': 'reply', 'utt': 60, 'text': 'A long reply being read. ' * 120, 'done': True},
-                   {'type': 'audio', 'utt': 60, 'idx': 0, 'text': 'A long reply being read.', 'kind': 'reply',
-                    'data': _silence_wav(5)})
-        await page.wait_for_selector('.chat-playback')
-        await page.wait_for_selector('#voice-turn')
-        await page.get_by_role('textbox', name='Message JARVIS').fill('\n'.join(['A long draft line'] * 30))
+                   {'type': 'reply', 'utt': 60, 'text': 'A reply being prepared.', 'done': False},
+                   {'type': 'status', 'state': 'thinking'})
+        await page.wait_for_selector('.chat-composer #voice-turn')
+        assert await page.locator('.conversation-dock > .chat-playback').count() == 0
+        assert await page.locator('.chat-composer .chat-playback').count() == 1
+        assert await page.get_by_role('textbox', name='Message JARVIS').count() == 0
         await asyncio.sleep(.5)
         got = await page.evaluate("""() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
           const dock = document.querySelector('.conversation-dock');
-          const field = document.querySelector('.hearing-input');
-          return {view: r('#conversation'), history: r('.conversation-history'), capture: r('#conversation .capture-box'),
-                  list: document.querySelector('#conversation .capture-list').scrollHeight
-                        - document.querySelector('#conversation .capture-list').clientHeight,
-                  playback: r('.chat-playback'), turn: r('#voice-turn'), composer: r('.chat-composer'),
-                  send: r('.composer-send'), dockScroll: dock.scrollHeight - dock.clientHeight,
-                  dockOverflow: getComputedStyle(dock).overflowY, dockTop: dock.scrollTop,
-                  fieldScroll: field.scrollHeight > field.clientHeight}; }""")
-        for part in ('capture', 'playback', 'turn', 'composer', 'send'):
-            assert got[part]['top'] >= got['view']['top'] and got[part]['bottom'] <= got['view']['bottom'] + 1, (part, got)
-        assert got['history']['bottom'] <= got['capture']['top'] + 1, got
-        assert got['capture']['bottom'] <= got['playback']['top'] <= got['turn']['top'] <= got['composer']['top'], got
-        assert got['composer']['bottom'] <= 720 and abs(got['composer']['bottom'] - got['view']['bottom']) < 2, got
-        assert got['list'] <= 1, 'the one capture is shown whole'
-        assert got['dockScroll'] <= 1 and got['dockOverflow'] == 'visible' and got['dockTop'] == 0, got
-        assert got['fieldScroll'], 'only the long draft scrolls, inside the editor'
-        assert got['history']['height'] >= 70, got
+          return {view:r('#conversation'), history:r('.conversation-history'), capture:r('#conversation .capture-box'),
+                  turn:r('#voice-turn'), composer:r('.chat-composer'),
+                  dockScroll:dock.scrollHeight-dock.clientHeight}; }""")
+        assert got['capture']['bottom'] + 10 <= got['composer']['top'], got
+        assert got['composer']['top'] <= got['turn']['top'] < got['turn']['bottom'] <= got['composer']['bottom'], got
+        assert got['dockScroll'] <= 1 and got['history']['height'] >= 70, got
+        # Rapid replacements must retain the action row's bottom inset.
+        for words in ['Short.', 'A longer replacement with several lines. ' * 15, 'Final words.']:
+            voice.send({'type':'capture','id':3,'state':'capturing','text':words})
+            await asyncio.sleep(.08)
+            assert await page.evaluate("""() => {
+              const box=document.querySelector('#conversation .capture-box');
+              const actions=box.querySelector('.capture-buttons');
+              return box.getBoundingClientRect().bottom-actions.getBoundingClientRect().bottom >= 11;
+            }""")
+        for stage, label in [('tentative', 'Finished? Not sent yet'), ('deciding', 'Deciding'), ('likely', 'Sending soon')]:
+            voice.send({'type':'turn','state':'pause','stage':stage,'turnId':5,'text':'Ready when I finish speaking','sound':False})
+            await page.wait_for_function("label => document.querySelector('.chat-composer #voice-turn strong')?.textContent === label", arg=label)
+            assert await page.locator('.chat-composer .chat-playback').count() == 1
+        await page.screenshot(path=f'/tmp/conversation-control-status-{theme}.png')
+        voice.send({'type':'turn','state':'committed','turnId':5})
+        await page.wait_for_selector('#voice-turn', state='detached')
+        await page.wait_for_selector('.chat-composer .chat-playback')
+        assert await page.locator('.chat-composer .chat-playback').count() == 1
+        voice.send({'type':'reply','utt':60,'text':'A reply being prepared.','done':True})
+        await page.wait_for_selector('.hearing-input')
+        assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
+        await page.screenshot(path=f'/tmp/conversation-control-{theme}.png')
         await browser.close()
 
 

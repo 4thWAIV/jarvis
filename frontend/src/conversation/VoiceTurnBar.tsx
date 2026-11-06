@@ -1,5 +1,5 @@
 /**
- * What he has said aloud and not yet sent, above the composer: Send now
+ * What he has said aloud and not yet sent, inside the message surface: Send now
  * while it is being gathered, and, for a turn the speech recogniser could
  * not finish, Retry (wait for it again), Send now (as it was heard) and
  * Keep as draft (into the message box, unsent). While he is quiet in a

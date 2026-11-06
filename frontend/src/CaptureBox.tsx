@@ -64,12 +64,13 @@ function CaptureBox({ capture, view }: { capture: Capture; view: CaptureView }) 
     if (!shown.leaving || !body) { setPx(null); return; }
     const from = body.querySelector<HTMLElement>(".capture-text.leaving")?.offsetHeight;
     const to = body.querySelector<HTMLElement>(".capture-text.arriving")?.offsetHeight;
+    let frame = 0;
     if (from !== undefined && to !== undefined) {
       setPx(from);
-      requestAnimationFrame(() => setPx(to));
+      frame = requestAnimationFrame(() => setPx(to));
     }
     const done = setTimeout(() => setShown((s) => ({ ...s, leaving: null })), FADE_MS);
-    return () => clearTimeout(done);
+    return () => { clearTimeout(done); cancelAnimationFrame(frame); };
   }, [shown]);
 
   const message = capture.to ? " message" : "";

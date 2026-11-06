@@ -17,6 +17,7 @@ import { MessageList, historyRows, type ConversationRow } from "./conversation/M
 import { ChatMessage } from "./conversation/ChatMessage";
 import { Composer } from "./conversation/Composer";
 import { PlaybackBar } from "./conversation/PlaybackBar";
+import { voiceState, voiceTurn } from "./voiceStatus";
 import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
 import "./conversation/conversation.css";
 
@@ -135,18 +136,22 @@ type PartRef = (part: string) => (el: Element | null) => void;
 export function ConversationView() {
   const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const hearing = [...turns].reverse().find(turn => turn.speaker === "user" && turn.open);
+  const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
+  const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   const t = useT();
   const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
   return <section id="conversation" ref={ui.whole} aria-label={t("tabs.main.conversation")}>
     <History turns={turns.filter(turn => !turn.open)} partRef={ui.part} />
     <div className="conversation-dock">
       <div className="conversation-captures"><CaptureList view="main.conversation" /></div>
-      <PlaybackBar partRef={ui.part("speaking")} />
-      {hearing && <div className="conversation-interim" role="status">
-        <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
-      </div>}
-      <VoiceTurnBar partRef={ui.part("turn")} />
-      <Composer partRef={ui.part("input")} />
+      <Composer partRef={ui.part("input")} status={
+        turn?.text.trim() ? <VoiceTurnBar partRef={ui.part("turn")} />
+        : hearing ? <div className="conversation-interim" role="status">
+          <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
+        </div>
+        : state === "speaking" || state === "thinking" ? <PlaybackBar partRef={ui.part("speaking")} />
+        : null
+      } />
     </div>
   </section>;
 }
