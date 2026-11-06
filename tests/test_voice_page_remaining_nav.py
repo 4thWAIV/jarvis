@@ -139,7 +139,10 @@ async def test_the_voice_records_range_zoom_and_quiet_page_are_the_same_by_hand_
 
             # A drop's mark zooms to it by hand; voice.zoom without a moment
             # zooms out; a range chosen by request zooms out too.
-            mark = page.locator(".voice-timeline .spark-mark").first
+            # The record's two drops are 5 s apart, one point on a day's
+            # track: the later mark is drawn over the earlier and is the one
+            # a hand reaches.
+            mark = page.locator(".voice-timeline .spark-mark").last
             await mark.wait_for()
             assert await mark.get_attribute("data-ui-command") == "voice.zoom"
             await mark.click()

@@ -29,7 +29,11 @@ def _record(now: float):
     """The voice record with one incident whose cause has a code, and one
     from before the codes."""
     summary, history = record(now)
-    coded = {**history["events"][0], "id": 3, "at": now - 10, "cause": "The page was busy for 807 ms",
+    overload = next(e for e in history["events"] if e["kind"] == "overload")
+    # Its own id: an incident's id is its target's key, and two the same
+    # are one target registered twice.
+    coded = {**overload, "id": max(e["id"] for e in history["events"]) + 1, "at": now - 10,
+             "cause": "The page was busy for 807 ms",
              "causeCode": "pageBusy", "causeValues": {"ms": 807}}
     return summary, {**history, "events": [*history["events"], coded]}
 
