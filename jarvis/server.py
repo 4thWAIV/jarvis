@@ -984,7 +984,9 @@ def _fmt_reset(ts) -> str:
         when = datetime.fromtimestamp(float(ts))
     except (TypeError, ValueError, OSError, OverflowError):
         return "later"
-    clock = when.strftime("%-I:%M %p").replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
+    # The hour and day unpadded by hand: strftime's "%-I" / "%-d" are POSIX-only.
+    hour = when.hour % 12 or 12
+    clock = f"{hour}:{when.strftime('%M %p')}".replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
     days = (when.date() - datetime.now().date()).days
     if days <= 0:
         return clock
@@ -992,7 +994,7 @@ def _fmt_reset(ts) -> str:
         return f"tomorrow at {clock}"
     if days < 7:
         return f"{when.strftime('%A')} at {clock}"
-    return f"{when.strftime('%A %-d %B')} at {clock}"
+    return f"{when.strftime('%A')} {when.day} {when.strftime('%B')} at {clock}"
 
 
 # "Down" names neither cause nor remedy: a failure classified "auth" (the
