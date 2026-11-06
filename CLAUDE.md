@@ -941,7 +941,7 @@ it was scheduled for (a timer is never trusted to have been cancelled) and
 against coverage: the recogniser must have decoded every frame the page had
 sent when the hold began (`transcriber` `coverage_of`, read on the server).
 Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
-on its own; the page's bar (`VoiceTurnBar.tsx`) offers Retry (wait again),
+on its own; the conversation control (`ConversationControl.tsx`) offers Retry (wait again),
 Send now (as heard) and Keep as draft (into the composer, unsent), and the
 brain's acting `voice_turn` calls the same `server._turn_action`. Send now
 is offered while a turn is gathered too (coverage still checked). The
@@ -1090,8 +1090,14 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   playback frame)
 - `frontend/src/voiceSettings.ts` / `VoiceInputSettingsControl.tsx` — The
   settings read and changed on the page, and their Settings rows
-- `frontend/src/conversation/VoiceTurnBar.tsx` — What he said and has not
-  sent: Send now, and Retry, Send now and Keep as draft for a stalled turn
+- `frontend/src/conversation/ConversationControl.tsx` / `controlState.ts` —
+  The conversation control, the message input's heading row: one state
+  model (`controlView`, from voiceState, voiceTurn, the turns, voice input's
+  status and health, the socket and the history read) and one table of
+  every state's words, light and buttons; what he said and has not sent
+  (Send now; Retry, Send now and Keep as draft when stalled), JARVIS
+  thinking or speaking (Skip to end), two at once in yellow, and the
+  conversation's errors in red (see docs/conversation-ux.md)
 - `transcriber.py` — Local speech recognition: the model list (`MODELS`,
   English and Spanish Kroko, each with its digest) and where each lives, the
   sherpa-onnx engine, and the worker that owns it (one model loaded at a
