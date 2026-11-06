@@ -35,11 +35,14 @@ export const shellEs: CatalogOf<typeof shellEn> = {
 
   "language.label": "Idioma",
   "language.loading": "Cargando el modelo de voz; tarda unos segundos.",
+  "language.englishModel": "Modelo de voz en inglés",
   "language.spanishModel": "Modelo de voz en español",
   "language.downloading": "Descargando, {done} de {total}",
   "language.verifying": "Verificando la descarga",
   "language.installing": "Instalando",
   "language.download": "Descargar ({size})",
+  "language.retry": "Reintentar ({size})",
+  "language.relaunch": "El modelo de voz está instalado, pero la entrada de voz sigue indicando un fallo. Detenga JARVIS y vuelva a iniciarlo.",
   "language.unreadable": "No se pudo leer el idioma ({error}); reintentando.",
   "language.reading": "Leyendo el idioma…",
 

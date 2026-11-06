@@ -80,7 +80,12 @@ def test_without_the_speech_model_typing_still_works_and_the_page_is_told_why(cl
                       "captureEpoch": 1})
         msg = ws.receive_json()
         assert (msg["type"], msg["code"]) == ("error", "model-unavailable")
-        assert "setup_speech_input.py" in msg["message"]
+        if sys.platform == "win32":
+            assert ("Install it in JARVIS's Settings, Voice and language "
+                    "(English speech model)") in msg["message"]
+            assert "setup_speech_input.py" not in msg["message"]
+        else:
+            assert "setup_speech_input.py" in msg["message"]
     with c.websocket_connect("/ws/voice") as ws:
         assert ws.receive_json() == {"type": "config", "muteMicDuringSpeech": False}
         assert ws.receive_json() == {"type": "status", "state": "idle"}

@@ -59,7 +59,9 @@ $env:JARVIS_BRAIN_MODEL = "opus"                 # the brain's model; without it
 
 ## Optional: the English speech model
 
-With JARVIS running, from a second PowerShell window:
+The simplest way: with JARVIS running, open Settings, Voice and language. While the English model is not installed it shows an "English speech model" row with Download (57 MB); click it and wait for the row to go (it shows its progress meanwhile, and Try again if the download failed). Then stop JARVIS (Ctrl+C) and launch it again on the same data, as below.
+
+The Settings download uses the same install route as the alternative here. Instead, with JARVIS running, from a second PowerShell window:
 
 ```powershell
 $Url = "http://127.0.0.1:8340"
@@ -73,8 +75,8 @@ Then check its status once; run this again until `installed` is `True` or the in
 ```
 
 - This downloads `sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06` (57,267,600 bytes) from the sherpa-onnx release and checks its pinned SHA-256 before extracting it into `<data>\models`. Tested: installed in about 8 s.
-- After the first install, stop JARVIS (Ctrl+C) and start it again on the same data: the running server keeps reporting the model as not installed until it restarts. Then `(Invoke-RestMethod "$Url/api/speech/models").state` reads `ready` (tested: about 5 s after launch).
-- The installed app's message may tell you to run `.venv/bin/python scripts/setup_speech_input.py`. That is the macOS checkout command; use the route above instead.
+- After the first install, by either way, stop JARVIS (Ctrl+C) and start it again on the same data: the model files are installed, but the recognizer still needs to reload them. Then `(Invoke-RestMethod "$Url/api/speech/models").state` reads `ready` (tested: about 5 s after launch).
+- On Windows, JARVIS's missing-model message points to Settings, Voice and language. An older build's message may instead tell you to run `.venv/bin/python scripts/setup_speech_input.py`; that is the macOS checkout command, so use Settings or the route above instead.
 
 ## Stop, restart and roll back
 

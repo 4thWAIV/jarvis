@@ -136,7 +136,11 @@ def test_the_model_list_has_english_by_default_and_spanish():
     assert transcriber.setup_command(spanish).endswith("--language es")
 
 
-def test_a_missing_or_incomplete_model_names_the_setup_command(tmp_path):
+SETTINGS_GUIDANCE = "Install it in JARVIS's Settings, Voice and language (English speech model)"
+
+
+def test_a_missing_or_incomplete_model_names_the_setup_command(monkeypatch, tmp_path):
+    monkeypatch.setattr(transcriber.sys, "platform", "darwin")
     assert transcriber.SETUP_COMMAND in transcriber.model_problem(tmp_path / "none")
     (tmp_path / "m").mkdir()
     (tmp_path / "m" / "tokens.txt").write_text("a 0")
@@ -147,8 +151,27 @@ def test_a_missing_or_incomplete_model_names_the_setup_command(tmp_path):
     assert transcriber.model_problem(tmp_path / "m") is None
 
 
-def test_building_the_engine_without_a_model_loads_nothing(tmp_path):
-    with pytest.raises(FileNotFoundError, match="setup_speech_input"):
+def test_a_missing_or_incomplete_model_on_windows_names_the_settings_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(transcriber.sys, "platform", "win32")
+    problem = transcriber.model_problem(tmp_path / "none")
+    assert SETTINGS_GUIDANCE in problem and transcriber.SETUP_COMMAND not in problem
+    (tmp_path / "m").mkdir()
+    (tmp_path / "m" / "tokens.txt").write_text("a 0")
+    problem = transcriber.model_problem(tmp_path / "m")
+    assert SETTINGS_GUIDANCE in problem and transcriber.SETUP_COMMAND not in problem
+    assert transcriber.ENCODER in problem and "tokens.txt" not in problem.split("missing")[1]
+    for name in transcriber.MODEL_FILES:
+        (tmp_path / "m" / name).write_text("x")
+    assert transcriber.model_problem(tmp_path / "m") is None
+
+
+@pytest.mark.parametrize("platform, guidance", [
+    ("darwin", "setup_speech_input"),
+    ("win32", r"Settings, Voice and language \(English speech model\)"),
+])
+def test_building_the_engine_without_a_model_loads_nothing(monkeypatch, tmp_path, platform, guidance):
+    monkeypatch.setattr(transcriber.sys, "platform", platform)
+    with pytest.raises(FileNotFoundError, match=guidance):
         transcriber.SherpaEngine(tmp_path / "none")
 
 

@@ -684,7 +684,9 @@ def _check_speech_input_sync() -> Check:
     if problem:
         return Check(name="speech_input", status=STATUS_WARN,
                      message=problem + " Typing still works.",
-                     remedy=f"Run: {transcriber.setup_command(model)}")
+                     remedy=(transcriber.install_guidance(model) + "."
+                             if sys.platform == "win32"
+                             else f"Run: {transcriber.setup_command(model)}"))
     return Check(name="speech_input", status=STATUS_OK,
                  message=f"The speech model is installed at {transcriber.model_dir(model)}.")
 

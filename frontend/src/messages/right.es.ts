@@ -120,7 +120,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.network.readiness.signIn": "Iniciar sesión",
   "right.network.paceAhead": "{points} puntos por delante de un ritmo parejo",
   "right.network.paceBehind": "{points} puntos por detrás de un ritmo parejo, rumbo al límite",
-  "right.node.thisMac": "· ESTA MAC",
+  "right.node.thisMac": "· ESTE DISPOSITIVO",
   "right.node.human": "HUMANO",
   "right.node.memory": "RAM",
   "right.node.brain": "IA",

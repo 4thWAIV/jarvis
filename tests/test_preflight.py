@@ -535,10 +535,21 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
 # --- speech input ------------------------------------------------------------
 
 def test_speech_input_names_the_setup_command_when_the_model_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(preflight.sys, "platform", "darwin")
     monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
     check = preflight._check_speech_input_sync()
     assert check.status == STATUS_WARN
     assert "setup_speech_input.py" in check.remedy
+    assert "Typing still works" in check.message
+
+
+def test_speech_input_on_windows_names_the_settings_path_when_the_model_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(preflight.sys, "platform", "win32")
+    monkeypatch.setenv("JARVIS_STT_MODEL_DIR", str(tmp_path / "no-model"))
+    check = preflight._check_speech_input_sync()
+    assert check.status == STATUS_WARN
+    assert check.remedy == "Install it in JARVIS's Settings, Voice and language (English speech model)."
+    assert "setup_speech_input.py" not in check.message
     assert "Typing still works" in check.message
 
 

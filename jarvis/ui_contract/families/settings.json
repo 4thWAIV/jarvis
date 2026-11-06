@@ -46,7 +46,7 @@
     {"kind": "settingsItem", "entity": null, "label": "One control or reading in Settings, by its name",
      "parts": ["label"],
      "keys": ["name", "honorific", "saveYou",
-              "language", "spanishModel", "voiceInputStop", "voiceInputSwitch", "voicePatience", "voiceId", "saveVoiceId", "fishKey", "testFishKey", "saveFishKey",
+              "language", "englishModel", "spanishModel", "voiceInputStop", "voiceInputSwitch", "voicePatience", "voiceId", "saveVoiceId", "fishKey", "testFishKey", "saveFishKey",
               "voiceOutputProvider", "localVoice", "installLocalVoice", "previewVoice", "appearance",
               "teamState", "teamAddress", "teamSignIn", "teamApproval", "teamCancel", "teamSignInAgain",
               "teamDisconnect", "teamLogin", "teamLookUp", "teamRole", "teamAdd", "teamAddCancel",
