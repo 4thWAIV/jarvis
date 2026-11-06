@@ -462,10 +462,113 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         assert await page.locator('.composer-heading .playback-indicator i').count() == 3
         await page.screenshot(path=f'/tmp/conversation-control-thinking-{theme}.png')
         voice.send({'type':'reply','utt':60,'text':'A reply being prepared.','done':True})
-        await page.wait_for_selector('.composer-heading > label')
+        await page.wait_for_selector('.composer-status .chat-playback', state='detached')
+        assert await page.locator('.composer-heading > label').inner_text() == 'Message JARVIS'
         assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
         await page.screenshot(path=f'/tmp/conversation-control-{theme}.png')
         await browser.close()
+
+
+# ── the composer's heading row: the status at the left, "Message JARVIS"
+#    at the right, one fixed height in every state, a line under it ────────
+
+HEARD = 'tell hammer to ship the folder catalog fix once the review passes and post the notes ' * 4 + 'newest'
+HEADING_STATES = {
+    'idle': [],
+    'hearing': [HEARD],
+    'gathering': [{'type': 'turn', 'state': 'gathering', 'turnId': 5, 'text': HEARD}],
+    'stalled': [{'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': HEARD}],
+    'speaking': [{'type': 'reply', 'utt': 60, 'text': 'A reply being read.', 'done': True},
+                 {'type': 'audio', 'utt': 60, 'idx': 0, 'text': 'A reply being read.', 'kind': 'reply', 'seconds': 30}],
+    'thinking': [{'type': 'reply', 'utt': 60, 'text': 'A reply being prepared.', 'done': False},
+                 {'type': 'status', 'state': 'thinking'}],
+}
+HEADING = """() => {
+  const box = e => { const b = e.getBoundingClientRect(); return {left: b.left, right: b.right, top: b.top, bottom: b.bottom}; };
+  const q = s => document.querySelector(s);
+  const heading = q('.composer-heading'), label = q('.composer-heading > label'), style = getComputedStyle(heading);
+  const edge = document.createElement('i'); edge.style.color = 'var(--ui-edge)'; document.body.append(edge);
+  const edgeColour = getComputedStyle(edge).color; edge.remove();
+  const words = q('.composer-heading .heard-words');
+  let newest = null;
+  if (words && words.clientWidth > 0) {
+    const text = words.firstChild.firstChild, range = document.createRange();
+    range.setStart(text, text.length - 1); range.setEnd(text, text.length);
+    const last = range.getBoundingClientRect(), shown = words.getBoundingClientRect();
+    newest = {shown: last.left >= shown.left - 1 && last.right <= shown.right + 1,
+              cut: words.scrollWidth > words.clientWidth, text: words.textContent};
+  }
+  return {conversation: box(q('#conversation')), heading: box(heading), content: parseFloat(style.height),
+          history: box(q('.conversation-history')), field: box(q('.hearing-input')),
+          label: {...box(label), whole: label.scrollWidth <= label.clientWidth, text: label.textContent},
+          line: [style.borderBottomWidth, style.borderBottomStyle, style.borderBottomColor, edgeColour],
+          status: q('.composer-status').textContent, newest,
+          buttons: [...heading.querySelectorAll('button')].map(b => ({...box(b), name: b.textContent,
+                                                                   whole: b.scrollWidth <= b.clientWidth}))};
+}"""
+
+
+async def _heading_in(page_url, p, state, widths):
+    voice = _Voice()
+    browser, page = await _open(p, page_url, voice)
+    for frame in HEADING_STATES[state]:
+        if isinstance(frame, str):
+            await page.evaluate('words => window.__hear(words, false)', frame)
+        elif 'seconds' in frame:
+            voice.send({k: v for k, v in frame.items() if k != 'seconds'} | {'data': _silence_wav(frame['seconds'])})
+        else:
+            voice.send(frame)
+    status = {'idle': None, 'hearing': '.conversation-interim', 'gathering': '#voice-turn',
+              'stalled': '#voice-turn-retry', 'speaking': '.chat-playback button',
+              'thinking': '.chat-playback .playback-indicator.waiting'}[state]
+    if status:
+        await page.wait_for_selector(f'.composer-status {status}')
+    got = {}
+    for width in widths:
+        await page.set_viewport_size({'width': width, 'height': 760})
+        await asyncio.sleep(.3)
+        got[width] = await page.evaluate(HEADING)
+    await browser.close()
+    return got
+
+
+@pytest.mark.asyncio
+async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_the_label_at_its_right(page_url):
+    """Every state, long words included: the row's height, the text box's
+    top and the history's bottom are the idle page's to the pixel; "Message
+    JARVIS" is at the row's right; a line in the border colour is under it;
+    no button is cut or overlaps; heard words keep their newest end in view.
+    1000 px wide, and 686 px, where the conversation is 360 px wide."""
+    wide, narrow = 1000, 686
+    async with async_api.async_playwright() as p:
+        seen = {state: await _heading_in(page_url, p, state, (wide, narrow)) for state in HEADING_STATES}
+    assert abs(seen['idle'][narrow]['conversation']['right'] - seen['idle'][narrow]['conversation']['left'] - 360) < 2
+    for state, widths in seen.items():
+        for width, got in widths.items():
+            idle = seen['idle'][width]
+            where = (state, width, got)
+            assert got['content'] == 28, where
+            for part, edge in (('heading', 'top'), ('heading', 'bottom'), ('field', 'top'), ('history', 'bottom')):
+                assert abs(got[part][edge] - idle[part][edge]) < .5, (part, edge, where)
+            assert got['heading']['bottom'] <= got['field']['top'], where
+            width_, style, colour, edge_colour = got['line']
+            assert (width_, style, colour) == ('1px', 'solid', edge_colour), where
+            assert got['label']['text'] == 'Message JARVIS', where
+            assert abs(got['label']['right'] - got['heading']['right']) < 1, where
+            assert abs(got['label']['top'] - idle['label']['top']) < .5, where
+            # Only the narrow stalled row, its three buttons wider than what
+            # is left, shortens the label; nothing else does.
+            assert got['label']['whole'] or (state, width) == ('stalled', narrow), where
+            buttons = got['buttons']
+            assert len(buttons) == {'gathering': 1, 'stalled': 3, 'speaking': 1}.get(state, 0), where
+            for n, button in enumerate(buttons):
+                assert button['whole'], (button, where)
+                assert button['left'] >= got['heading']['left'] - .5 and button['right'] <= got['label']['left'] + .5, (button, where)
+                assert button['top'] >= got['heading']['top'] - .5 and button['bottom'] <= got['heading']['top'] + 28.5, (button, where)
+                assert n == 0 or buttons[n - 1]['right'] <= button['left'], (button, where)
+            if state in ('hearing', 'gathering') or (state == 'stalled' and width == wide):
+                assert got['newest'] == {'shown': True, 'cut': True, 'text': HEARD.strip()}, where
+    assert not seen['idle'][wide]['status'] and not seen['idle'][wide]['buttons']
 
 
 # ── following the word being read through a reply taller than the box ─────

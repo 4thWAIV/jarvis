@@ -1,5 +1,5 @@
 /**
- * What he has said aloud and not yet sent, inside the message surface: Send now
+ * What he has said aloud and not yet sent, in the composer's heading: Send now
  * while it is being gathered, and, for a turn the speech recogniser could
  * not finish, Retry (wait for it again), Send now (as it was heard) and
  * Keep as draft (into the message box, unsent). While he is quiet in a
@@ -11,6 +11,7 @@
 
 import { useSyncExternalStore } from "react";
 import { useT } from "../locale";
+import { HeardWords } from "./Composer";
 import { turnAction, voiceTurn, type VoiceTurn } from "../voiceStatus";
 
 export function voiceTurnLabel(turn: VoiceTurn) {
@@ -27,7 +28,7 @@ export function VoiceTurnBar({ partRef }: { partRef: (el: Element | null) => voi
               ref={partRef} aria-label={t("main.conversation.turn")} data-pause={turn.pause ?? undefined}>
     <div className="playback-label" role="status">
       <strong>{t(voiceTurnLabel(turn))}</strong>
-      <span>{turn.text}</span>
+      <HeardWords text={turn.text} />
     </div>
     {stalled && <button type="button" id="voice-turn-retry" data-ui-action="domain"
                         onClick={() => turnAction.current("retry")} title={t("main.conversation.turnRetryTitle")}>

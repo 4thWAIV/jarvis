@@ -94,13 +94,25 @@
 .reply-prose blockquote { color: var(--ui-secondary); border-left: 2px solid var(--ui-edge); padding-left: 14px; margin: 12px 0; }
 .reply-prose hr { border: 0; border-top: 1px solid var(--ui-divider); margin: 16px 0; }
 
-/* The status heading lives in the composer; keep the transcript visible. */
-#conversation .chat-voice-turn .playback-label > span { display: block; }
-
-/* The whole status control occupies the label slot; the editor stays put. */
-.composer-heading { margin-bottom: 7px; }
-.composer-heading > label { margin-bottom: 0; }
-.composer-heading > .chat-playback,
-.composer-heading > .conversation-interim { margin: 0; padding: 0; border: 0; background: transparent; }
-.composer-heading .playback-label > span { display: block; }
-.composer-heading .chat-voice-turn .playback-label > span { white-space: pre-wrap; max-height: 65px; overflow: auto; }
+/* The composer's heading row: the status on the left, "Message JARVIS"
+   always at the right, a line under it. Its height is fixed at the tallest
+   state's (a button's), so nothing above or below moves as states come and
+   go or the words grow: every state is one line, the heard words keeping
+   their newest end in view. Where the row is short of room the words and
+   the status's own title give way first (they count for nothing in the
+   row's minimum), then the label, with an ellipsis; a button never does. */
+.composer-heading { --composer-heading-height: 28px; box-sizing: content-box; display: flex; align-items: center; gap: 10px; height: var(--composer-heading-height); padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--ui-edge); }
+.composer-heading > label { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-status { flex: 1 1 0; height: 100%; display: flex; align-items: center; }
+.composer-status > .chat-playback,
+.composer-status > .conversation-interim { flex: 1; height: 100%; margin: 0; padding: 0; border: 0; background: transparent; display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; }
+.composer-status .playback-label,
+.composer-status .conversation-interim p { contain: inline-size; flex: 1 1 0; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; }
+.composer-status .playback-label { flex-direction: row; align-items: baseline; gap: 6px; }
+.composer-status .playback-label strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.composer-status .playback-label > span { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.composer-status .conversation-interim > span { flex: none; }
+.composer-status .conversation-interim p { max-height: none; }
+.composer-status button { box-sizing: border-box; height: var(--composer-heading-height); padding: 0 10px; white-space: nowrap; }
+.heard-words { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.heard-words > span { direction: ltr; unicode-bidi: isolate; }

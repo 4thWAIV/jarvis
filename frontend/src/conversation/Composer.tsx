@@ -17,6 +17,12 @@ export function offerDraft(text: string): void {
   if (words) offered.set({ text: words });
 }
 
+// Words heard from him, on one line: the newest stay in view and the start
+// gives way to an ellipsis (conversation.css, .heard-words).
+export function HeardWords({ text }: { text: string }) {
+  return <span className="heard-words"><span>{text}</span></span>;
+}
+
 export function Composer({ partRef, status }: { partRef: (el: Element | null) => void; status?: ReactNode }) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
@@ -50,7 +56,10 @@ export function Composer({ partRef, status }: { partRef: (el: Element | null) =>
     setDraft(""); keepDraft(""); setError(false); input.current?.focus();
   }
   return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
-    <div className="composer-heading">{status ?? <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>}</div>
+    <div className="composer-heading">
+      <div className="composer-status">{status}</div>
+      <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>
+    </div>
     <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}
       data-ui-action="input" className="hearing-input" rows={1}
       aria-label={t("main.conversation.messageJarvis")} aria-describedby="composer-help"

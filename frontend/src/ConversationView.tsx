@@ -15,7 +15,7 @@ import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome, type Socket } from "./uiRegistry";
 import { MessageList, historyRows, type ConversationRow } from "./conversation/MessageList";
 import { ChatMessage } from "./conversation/ChatMessage";
-import { Composer } from "./conversation/Composer";
+import { Composer, HeardWords } from "./conversation/Composer";
 import { PlaybackBar } from "./conversation/PlaybackBar";
 import { voiceState, voiceTurn } from "./voiceStatus";
 import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
@@ -147,7 +147,7 @@ export function ConversationView() {
       <Composer partRef={ui.part("input")} status={
         turn?.text.trim() ? <VoiceTurnBar partRef={ui.part("turn")} />
         : hearing ? <div className="conversation-interim" role="status">
-          <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
+          <span>{t("main.conversation.hearing")}</span><p><HeardWords text={hearing.sentences.join(" ")} /></p>
         </div>
         : state === "speaking" || state === "thinking" ? <PlaybackBar partRef={ui.part("speaking")} />
         : null
