@@ -504,6 +504,8 @@ HEADING = """() => {
           history: box(q('.conversation-history')), field: box(q('.hearing-input')),
           label: {...box(label), whole: label.scrollWidth <= label.clientWidth, text: label.textContent},
           line: [style.borderBottomWidth, style.borderBottomStyle, style.borderBottomColor, colour('--ui-edge')],
+          heard: q('.conversation-interim > span') && {title: box(q('.conversation-interim > span')),
+                                                        words: box(q('.conversation-interim p'))},
           marked: heading.classList.contains('overlap'), yellow: colour('--ui-overlap'),
           outline: getComputedStyle(q('.composer-status')).outlineColor,
           overlap: q('.composer-overlap') && getComputedStyle(q('.composer-overlap')).color,
@@ -562,7 +564,7 @@ async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_th
         for width, got in widths.items():
             idle = seen['idle'][width]
             where = (state, width, got)
-            assert got['content'] == 28, where
+            assert got['content'] == 36, where
             for part, edge in (('heading', 'top'), ('heading', 'bottom'), ('field', 'top'), ('history', 'bottom')):
                 assert abs(got[part][edge] - idle[part][edge]) < .5, (part, edge, where)
             assert got['heading']['bottom'] <= got['field']['top'], where
@@ -570,7 +572,7 @@ async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_th
             assert (width_, style, colour) == ('1px', 'solid', edge_colour), where
             assert got['label']['text'] == 'Message JARVIS', where
             assert abs(got['label']['right'] - got['heading']['right']) < 1, where
-            assert abs(got['label']['top'] - idle['label']['top']) < .5, where
+            assert abs(got['label']['top'] - got['heading']['top']) < 1, where
             # Only the narrow stalled row, its three buttons wider than what
             # is left, shortens the label; nothing else does.
             assert got['label']['whole'] or (state, width) == ('stalled', narrow), where
@@ -579,8 +581,12 @@ async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_th
             for n, button in enumerate(buttons):
                 assert button['whole'], (button, where)
                 assert button['left'] >= got['heading']['left'] - .5 and button['right'] <= got['label']['left'] + .5, (button, where)
-                assert button['top'] >= got['heading']['top'] - .5 and button['bottom'] <= got['heading']['top'] + 28.5, (button, where)
+                assert button['top'] >= got['heading']['top'] - .5 and button['bottom'] <= got['heading']['top'] + 36.5, (button, where)
                 assert n == 0 or buttons[n - 1]['right'] <= button['left'], (button, where)
+            if state == 'hearing':
+                title, words = got['heard']['title'], got['heard']['words']
+                assert abs(title['top'] - got['heading']['top']) < 1 and words['top'] >= title['bottom'] - .5, where
+                assert words['bottom'] <= got['heading']['top'] + 36.5, where
             if state in ('hearing', 'gathering') or (state == 'stalled' and width == wide):
                 assert got['newest'] == {'shown': True, 'cut': True, 'text': HEARD.strip()}, where
     assert not seen['idle'][wide]['status'] and not seen['idle'][wide]['buttons']
@@ -614,7 +620,7 @@ async def test_two_states_at_once_are_called_out_in_yellow_in_the_same_row(page_
             assert [b['name'] for b in got['buttons']] == buttons and all(b['whole'] for b in got['buttons']), where
             for part, edge in (('heading', 'top'), ('heading', 'bottom'), ('field', 'top'), ('history', 'bottom')):
                 assert abs(got[part][edge] - idle[part][edge]) < .5, (part, edge, where)
-            assert got['content'] == 28 and got['label']['whole'], where
+            assert got['content'] == 36 and got['label']['whole'], where
             assert abs(got['label']['right'] - got['heading']['right']) < 1, where
 
 
