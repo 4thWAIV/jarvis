@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Optional
 from uuid import UUID
 
+from jarvis import brain_activity
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 
@@ -96,6 +97,11 @@ class ServePresentation:
             return
         self._recent[event.event_id] = event
         self._presented_at[event.event_id] = self._clock()
+        # On the brain activity feed too: which way, never who or what.
+        brain_activity.note(
+            brain_activity.PERSON_MESSAGE,
+            brain_activity.ARRIVED if event.direction == "incoming" else brain_activity.SENT,
+            id=str(event.message_id), counterpart=brain_activity.A_PERSON)
         try:
             self._send(transfer_frame(event, replay=False))
         except Exception as e:

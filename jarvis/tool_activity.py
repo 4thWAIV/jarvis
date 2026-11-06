@@ -11,10 +11,12 @@ tool) is a diagnostic, not an activity.
 
 An event holds the call's id, the tool's name and category, the stage, when
 it happened and, on an ending, how long the call took. Never the arguments,
-the result or any words. The record is memory only: at most `KEEP_EVENTS`,
-the oldest dropped first, gone on a restart (`generation` says which
-process the sequence numbers belong to). `GET /api/tools/activity?since=`
-reads it. There is no `/ws/sessions` hint: every tool call would send
+the result or any words. The record is the brain's one activity feed
+(`brain_activity.py`), where these are the `tool` events beside the brain's
+turns and communications: memory only, bounded, the oldest dropped first,
+gone on a restart (`generation` says which process the sequence numbers
+belong to). `GET /api/tools/activity?since=` reads the tool events alone,
+in the shape below; `GET /api/brain/activity` reads them with the rest. There is no `/ws/sessions` hint: every tool call would send
 two, and the tests that check a tool sent nothing would all see them; a
 reader asks again with the last `seq` it saw.
 
@@ -26,8 +28,9 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from collections import deque
 from typing import Callable, Optional
+
+from jarvis import brain_activity
 
 # The categories the orb tool study groups JARVIS's tools into: Data and
 # memory, Communication, Work and execution, UI guidance.
@@ -113,8 +116,12 @@ COMPLETED = "completed"
 FAILED = "failed"
 ENDINGS = (REFUSED, COMPLETED, FAILED)
 
-# Events kept: enough for several turns of calls, small enough to read whole.
+# Events kept by a feed of its own (a test's); the module's calls go into
+# the brain's one feed, which keeps `brain_activity.KEEP_EVENTS`.
 KEEP_EVENTS = 500
+
+# What /api/tools/activity shows of each tool event.
+TOOL_FIELDS = ("seq", "call_id", "tool", "category", "stage", "at", "duration_ms")
 
 
 def category_of(tool: str) -> str:
@@ -122,25 +129,26 @@ def category_of(tool: str) -> str:
 
 
 class ToolActivity:
-    """The feed. Safe from any thread."""
+    """The tool calls, recorded into an activity feed. Safe from any thread."""
 
     def __init__(self, keep: int = KEEP_EVENTS,
                  clock: Callable[[], float] = time.time,
-                 monotonic: Callable[[], float] = time.monotonic):
-        self.generation = uuid.uuid4().hex
-        self._events: deque = deque(maxlen=keep)
-        self._seq = 0
+                 monotonic: Callable[[], float] = time.monotonic,
+                 feed: Optional[brain_activity.ActivityFeed] = None):
+        self.feed = feed or brain_activity.ActivityFeed(keep, clock, monotonic)
         self._open: dict[str, tuple[str, float]] = {}
         self._lock = threading.Lock()
-        self._clock = clock
-        self._monotonic = monotonic
+
+    @property
+    def generation(self) -> str:
+        return self.feed.generation
 
     def start(self, tool: str) -> str:
         """Record a call's start; return its id for `end`."""
         call_id = uuid.uuid4().hex
         with self._lock:
-            self._open[call_id] = (tool, self._monotonic())
-            self._append(call_id, tool, STARTED, None)
+            self._open[call_id] = (tool, self.feed.monotonic())
+        self._record(call_id, tool, STARTED, None)
         return call_id
 
     def end(self, call_id: str, stage: str) -> None:
@@ -149,29 +157,24 @@ class ToolActivity:
             raise ValueError(f"not an ending: {stage}")
         with self._lock:
             opened = self._open.pop(call_id, None)
-            if opened is None:
-                return
-            tool, began = opened
-            duration_ms = round((self._monotonic() - began) * 1000, 1)
-            self._append(call_id, tool, stage, duration_ms)
+        if opened is None:
+            return
+        tool, began = opened
+        duration_ms = round((self.feed.monotonic() - began) * 1000, 1)
+        self._record(call_id, tool, stage, duration_ms)
 
     def since(self, seq: int = 0) -> dict:
-        """Every kept event after `seq`, oldest first, with the latest
-        sequence number and the oldest one still kept (None when empty)."""
-        with self._lock:
-            events = [dict(e) for e in self._events if e["seq"] > seq]
-            oldest = self._events[0]["seq"] if self._events else None
-            latest = self._seq
-        return {"generation": self.generation, "seq": latest,
-                "oldest": oldest, "events": events}
+        """Every kept tool event after `seq`, oldest first, with the latest
+        sequence number and the oldest one the feed still keeps (None when
+        empty). Other kinds share the numbers, so a reader may see gaps."""
+        body = self.feed.since(seq, kinds=(brain_activity.TOOL,))
+        body["events"] = [{k: e[k] for k in TOOL_FIELDS} for e in body["events"]]
+        return body
 
-    def _append(self, call_id: str, tool: str, stage: str,
+    def _record(self, call_id: str, tool: str, stage: str,
                 duration_ms: Optional[float]) -> None:
-        self._seq += 1
-        event = {"seq": self._seq, "call_id": call_id, "tool": tool,
-                 "category": category_of(tool), "stage": stage,
-                 "at": self._clock(), "duration_ms": duration_ms}
-        self._events.append(event)
+        self.feed.record(brain_activity.TOOL, stage, call_id=call_id, tool=tool,
+                         category=category_of(tool), duration_ms=duration_ms)
 
 
-activity = ToolActivity()
+activity = ToolActivity(feed=brain_activity.feed)

@@ -15,7 +15,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Optional
 
-from jarvis import session_steer
+from jarvis import brain_activity, session_steer
 from jarvis.data_paths import db_path
 
 log = logging.getLogger("jarvis.run_store")
@@ -500,7 +500,17 @@ def create_message(session_id: str, provider: str, agent_name: str,
             (session_id, provider, agent_name, project, capture_id, text,
              str(status), time.time(), failure))
         conn.commit()
-        return int(cur.lastrowid)
+        message_id = int(cur.lastrowid)
+    _message_activity(message_id, str(status), session_id, agent_name)
+    return message_id
+
+
+def _message_activity(message_id: int, status: str, session_id: str,
+                      agent_name: str) -> None:
+    """The brain activity feed's `agent_message` event for a status just
+    written: ids, the agent's name and the status; never the text."""
+    brain_activity.note(brain_activity.AGENT_MESSAGE, status, id=str(message_id),
+                        session_id=session_id, counterpart=agent_name)
 
 
 def update_message(message_id: int, **fields) -> None:
@@ -513,9 +523,15 @@ def update_message(message_id: int, **fields) -> None:
         fields["status"] = str(MessageStatus(fields["status"]))
     assignments = ", ".join(f"{k}=?" for k in fields)
     with closing(_connect()) as conn:
+        before = (conn.execute("SELECT status, session_id, agent_name FROM messages "
+                               "WHERE id=?", (message_id,)).fetchone()
+                  if "status" in fields else None)
         conn.execute(f"UPDATE messages SET {assignments} WHERE id=?",
                      (*fields.values(), message_id))
         conn.commit()
+    if before is not None and before["status"] != fields["status"]:
+        _message_activity(message_id, fields["status"], before["session_id"],
+                          before["agent_name"])
 
 
 def get_message(message_id: int) -> Optional[Message]:
@@ -620,7 +636,11 @@ def create_session_message(project: str, agent_name: str, subject: str,
             "received_at) VALUES (?, ?, ?, ?, ?)",
             (project, agent_name, subject, body, time.time()))
         conn.commit()
-        return int(cur.lastrowid)
+        message_id = int(cur.lastrowid)
+    # Its arrival on the brain activity feed: who sent it, never what.
+    brain_activity.note(brain_activity.SESSION_MESSAGE, brain_activity.ARRIVED,
+                        id=str(message_id), counterpart=agent_name)
+    return message_id
 
 
 def get_session_message(message_id: int) -> Optional[SessionMessage]:

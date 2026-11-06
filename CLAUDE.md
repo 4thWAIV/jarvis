@@ -745,6 +745,28 @@ no `/ws/sessions` hint, so a reader asks again with the last `seq` it saw.
 `internal_tool` runs the gates in `_dispatch_tool`, which returns the reply
 unchanged and how the call ended.
 
+## Brain activity
+The tool calls are one kind in the brain's one activity feed,
+`brain_activity.py` (`feed`; `tool_activity` records into it), which the
+Denice page reads at `GET /api/brain/activity?since=<seq>` (same
+`generation`, `seq` and `oldest` as above; `/api/tools/activity` reads only
+its `tool` events, in their old shape). Each event is a kind, a stage, a
+time, the brain provider in force and, where there is one, the counterpart
+(an agent's name, or "a person"); `record` refuses any field outside
+`FIELDS`, so no words, arguments, results or subjects. Each is recorded by
+the one writer of its fact: `turn` in `Brain._turn_locked` (`started` with
+its origin, `first_output`, `streaming` at most every `PROGRESS_EVERY_SEC`
+with `chars_per_sec`, then `completed`, `failed` or `cancelled`);
+`agent_message` in `run_store.create_message` / `update_message` (each status
+it takes, with the session id); `session_message` in
+`run_store.create_session_message`; `person_message` in
+`ServePresentation.present` (`sent`, `arrived`) and `Delivery.submit`
+(`accepted`); `digest` in `AttentionStore.begin_digest` / `finish_digest`;
+`speech` in `SpeechScheduler` (`started` when the page says it began to
+sound, `ended` with its outcome, through `Utterance.close_outcomes` or its
+retirement). Recording never raises into the caller. At most
+`brain_activity.KEEP_EVENTS`, oldest first dropped; no hint.
+
 ## The folder catalog
 A folder is a place on this Mac JARVIS knows by a stable ID; its files stay
 where they are and nothing here creates, moves, edits or deletes one. The
@@ -1200,6 +1222,8 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `frontend/src/voiceHealth.ts` is the page's side of it
 - `tool_activity.py` — The brain's tool calls as a bounded in-memory feed
   and each tool's category (see "Tool activity")
+- `brain_activity.py` — Everything the brain does (turns, streaming, tool
+  calls, messages, digests, speech) as one bounded in-memory feed, no words
 - `subsystem_diagnostics.py` — Each subsystem's state, worked out at read
   time (see "Subsystem diagnostics"); `frontend/src/subsystems.ts` is the
   page's side of it

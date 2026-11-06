@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Awaitable, Callable, Optional
 
+from jarvis import brain_activity
 from jarvis import spoken_words
 from jarvis.turn_controller import DEFAULT_PATIENCE
 
@@ -371,6 +372,8 @@ class Utterance:
     resumes: int = 0
     first_sent_at: Optional[float] = None
     last_progress_at: Optional[float] = None    # last send or ack; the ack watchdog reads it
+    sounded_at: Optional[float] = None          # monotonic: its first audio began (brain_activity.py)
+    activity_ended: bool = False                # its end is on the activity feed
     splitter: SentenceSplitter = field(default_factory=SentenceSplitter)
 
     def cancel(self) -> None:
@@ -416,12 +419,28 @@ class Utterance:
         for c in self.chunks:
             if c.outcome in Outcome.OPEN:
                 c.outcome = outcome
+        # Every stop, skip, withdrawal and lost connection passes here.
+        _activity_ended(self, outcome)
 
     def remaining_text(self) -> str:
         return " ".join(c.text for c in self.chunks[self.played + 1:])
 
     def texts(self) -> list[str]:
         return [c.text for c in self.chunks]
+
+
+def _activity_ended(u: "Utterance", outcome: Optional[str] = None) -> None:
+    """The brain activity feed's end of an utterance that began to sound:
+    how it ended, never what it said. One that never sounded says nothing."""
+    if u.sounded_at is None or u.activity_ended:
+        return
+    u.activity_ended = True
+    outcome = outcome or (Outcome.SKIPPED if u.was_skipped
+                          else Outcome.INTERRUPTED if u.was_cancelled or u.was_abandoned
+                          else Outcome.PLAYED if u.heard_in_full
+                          else Outcome.FAILED)
+    brain_activity.safely(brain_activity.feed.speech_ended, u.id, u.label, outcome,
+                          max(0.0, time.monotonic() - u.sounded_at))
 
 
 @dataclass
@@ -1083,6 +1102,10 @@ class SpeechScheduler:
             chunk.outcome = Outcome.STARTED
             chunk.started_at = self._clock()
             u.last_progress_at = chunk.started_at
+            if u.sounded_at is None:
+                # The brain activity feed: this utterance began to sound.
+                u.sounded_at = time.monotonic()
+                brain_activity.safely(brain_activity.feed.speech_started, u.id, u.label)
 
     def playback_failed(self, utt_id: int, idx: int) -> None:
         """The page could not play chunk `idx` of `utt_id` (its audio would
@@ -1372,6 +1395,7 @@ class SpeechScheduler:
             if self._current is not None and self._current.done:
                 finished = self._current
                 self._current = None
+                _activity_ended(finished)
                 # What "say that again" replays: the last utterance that was
                 # actually heard in full, never one that was interrupted (it
                 # is `cancelled`, so `was_cancelled` is True) or lost to a

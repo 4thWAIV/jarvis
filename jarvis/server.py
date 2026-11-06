@@ -93,7 +93,7 @@ from jarvis import voice_control
 from jarvis.voice_control import ReplyFailure, ReplyOutcome
 from jarvis import ui_control
 from jarvis import ui_contract
-from jarvis import tool_activity
+from jarvis import brain_activity, tool_activity
 from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
@@ -4192,6 +4192,17 @@ async def api_tools_activity(since: int = Query(0, ge=0)):
     different `generation` means the server restarted and `seq` began
     again; `oldest` above `since + 1` means events were dropped between."""
     return tool_activity.activity.since(since)
+
+
+@app.get("/api/brain/activity")
+async def api_brain_activity(since: int = Query(0, ge=0)):
+    """Everything the brain did after sequence number `since`
+    (brain_activity.py): its turns started, streaming and ended, its tool
+    calls, the messages to and from agents and people, digests and what was
+    spoken. Each event is a kind, a stage, a time, the brain provider and,
+    where there is one, the counterpart's name; never words, arguments or
+    results. `generation` and `oldest` are read as for /api/tools/activity."""
+    return brain_activity.feed.since(since)
 
 
 # The last conversation JARVIS talked about, so "that one" can be resolved.

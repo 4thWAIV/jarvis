@@ -42,7 +42,7 @@ from contextlib import closing
 from dataclasses import dataclass, field, fields
 from typing import Callable, Iterable, Optional
 
-from jarvis import data_paths, run_store
+from jarvis import brain_activity, data_paths, run_store
 
 PENDING, SEEN, RESOLVED = "pending", "seen", "resolved"
 STATES = (PENDING, SEEN, RESOLVED)
@@ -405,6 +405,7 @@ class AttentionStore:
             conn.executemany(
                 "INSERT INTO attention_presentations (digest_id, item_id, revision) "
                 "VALUES (?, ?, ?)", [(digest_id, i.id, i.revision) for i in items])
+        brain_activity.note(brain_activity.DIGEST, brain_activity.STARTED, id=str(digest_id))
         return digest_id
 
     def current_revisions(self, items: list[Item]) -> dict[int, tuple[int, str]]:
@@ -437,6 +438,8 @@ class AttentionStore:
                     " AND p.item_id = attention_items.id)) "
                     "WHERE id IN (SELECT item_id FROM attention_presentations WHERE digest_id = ?)",
                     (digest_id, digest_id))
+        # Its outcome on the brain activity feed; never its text or reason.
+        brain_activity.note(brain_activity.DIGEST, outcome, id=str(digest_id))
         self._changed()
 
     def last_digest_started(self) -> Optional[float]:
