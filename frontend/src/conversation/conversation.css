@@ -96,3 +96,11 @@
 
 /* The status heading lives in the composer; keep the transcript visible. */
 #conversation .chat-voice-turn .playback-label > span { display: block; }
+
+/* The whole status control occupies the label slot; the editor stays put. */
+.composer-heading { margin-bottom: 7px; }
+.composer-heading > label { margin-bottom: 0; }
+.composer-heading > .chat-playback,
+.composer-heading > .conversation-interim { margin: 0; padding: 0; border: 0; background: transparent; }
+.composer-heading .playback-label > span { display: block; }
+.composer-heading .chat-voice-turn .playback-label > span { white-space: pre-wrap; max-height: 65px; overflow: auto; }

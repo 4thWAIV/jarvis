@@ -18,7 +18,7 @@ import { ChatMessage } from "./conversation/ChatMessage";
 import { Composer } from "./conversation/Composer";
 import { PlaybackBar } from "./conversation/PlaybackBar";
 import { voiceState, voiceTurn } from "./voiceStatus";
-import { VoiceTurnBar, voiceTurnLabel } from "./conversation/VoiceTurnBar";
+import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
 import "./conversation/conversation.css";
 
 export { historyRows };
@@ -144,16 +144,13 @@ export function ConversationView() {
     <History turns={turns.filter(turn => !turn.open)} partRef={ui.part} />
     <div className="conversation-dock">
       <div className="conversation-captures"><CaptureList view="main.conversation" /></div>
-      <PlaybackBar partRef={ui.part("speaking")} labelInComposer />
-      {hearing && <div className="conversation-interim" role="status">
-        <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
-      </div>}
-      <VoiceTurnBar partRef={ui.part("turn")} labelInComposer />
-      <Composer partRef={ui.part("input")} statusLabel={
-        turn?.text.trim() ? t(voiceTurnLabel(turn))
-        : state === "thinking" ? t("main.conversation.isThinking")
-        : state === "speaking" ? t("main.conversation.isSpeaking")
-        : hearing ? t("main.conversation.hearing") : undefined
+      <Composer partRef={ui.part("input")} status={
+        turn?.text.trim() ? <VoiceTurnBar partRef={ui.part("turn")} />
+        : hearing ? <div className="conversation-interim" role="status">
+          <span>{t("main.conversation.hearing")}</span><p>{hearing.sentences.join(" ")}</p>
+        </div>
+        : state === "speaking" || state === "thinking" ? <PlaybackBar partRef={ui.part("speaking")} />
+        : null
       } />
     </div>
   </section>;

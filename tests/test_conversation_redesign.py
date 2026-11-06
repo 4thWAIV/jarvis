@@ -426,9 +426,10 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
                    {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'},
                    {'type': 'reply', 'utt': 60, 'text': 'A reply being prepared.', 'done': False},
                    {'type': 'status', 'state': 'thinking'})
-        await page.wait_for_selector('#voice-turn')
-        assert await page.locator('.chat-composer > label').inner_text() == 'Speech recognition could not finish this'
-        assert await page.locator('.chat-composer .chat-playback').count() == 0
+        await page.wait_for_selector('.composer-heading #voice-turn')
+        assert await page.locator('.composer-heading strong').inner_text() == 'Speech recognition could not finish this'
+        assert await page.locator('.chat-composer .chat-playback').count() == 1
+        assert await page.locator('.conversation-dock > .chat-playback').count() == 0
         assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
         await asyncio.sleep(.5)
         got = await page.evaluate("""() => {
@@ -438,7 +439,7 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
                   turn:r('#voice-turn'), composer:r('.chat-composer'),
                   dockScroll:dock.scrollHeight-dock.clientHeight}; }""")
         assert got['capture']['bottom'] + 10 <= got['composer']['top'], got
-        assert got['turn']['bottom'] <= got['composer']['top'], got
+        assert got['composer']['top'] <= got['turn']['top'] < got['turn']['bottom'] <= got['composer']['bottom'], got
         assert got['dockScroll'] <= 1 and got['history']['height'] >= 70, got
         # Rapid replacements must retain the action row's bottom inset.
         for words in ['Short.', 'A longer replacement with several lines. ' * 15, 'Final words.']:
@@ -451,15 +452,17 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
             }""")
         for stage, label in [('tentative', 'Finished? Not sent yet'), ('deciding', 'Deciding'), ('likely', 'Sending soon')]:
             voice.send({'type':'turn','state':'pause','stage':stage,'turnId':5,'text':'Ready when I finish speaking','sound':False})
-            await page.wait_for_function("label => document.querySelector('.chat-composer > label')?.textContent === label", arg=label)
-            assert await page.locator('.chat-composer .chat-playback').count() == 0
+            await page.wait_for_function("label => document.querySelector('.composer-heading strong')?.textContent === label", arg=label)
+            assert await page.locator('.composer-heading .chat-playback').count() == 1
         await page.screenshot(path=f'/tmp/conversation-control-status-{theme}.png')
         voice.send({'type':'turn','state':'committed','turnId':5})
         await page.wait_for_selector('#voice-turn', state='detached')
-        await page.wait_for_function("document.querySelector('.chat-composer > label')?.textContent === 'JARVIS is thinking'")
-        assert await page.locator('.chat-composer .chat-playback').count() == 0
+        await page.wait_for_function("document.querySelector('.composer-heading strong')?.textContent === 'JARVIS is thinking'")
+        assert await page.locator('.composer-heading .chat-playback').count() == 1
+        assert await page.locator('.composer-heading .playback-indicator i').count() == 3
+        await page.screenshot(path=f'/tmp/conversation-control-thinking-{theme}.png')
         voice.send({'type':'reply','utt':60,'text':'A reply being prepared.','done':True})
-        await page.wait_for_selector('.hearing-input')
+        await page.wait_for_selector('.composer-heading > label')
         assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
         await page.screenshot(path=f'/tmp/conversation-control-{theme}.png')
         await browser.close()

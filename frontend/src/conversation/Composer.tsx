@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useT } from "../locale";
 import { createStore } from "../store";
 import { sendTyped, voiceConnected } from "../voiceStatus";
@@ -17,7 +17,7 @@ export function offerDraft(text: string): void {
   if (words) offered.set({ text: words });
 }
 
-export function Composer({ partRef, statusLabel }: { partRef: (el: Element | null) => void; statusLabel?: string }) {
+export function Composer({ partRef, status }: { partRef: (el: Element | null) => void; status?: ReactNode }) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(readDraft);
@@ -50,7 +50,7 @@ export function Composer({ partRef, statusLabel }: { partRef: (el: Element | nul
     setDraft(""); keepDraft(""); setError(false); input.current?.focus();
   }
   return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
-    <label htmlFor="conversation-draft">{statusLabel ?? t("main.conversation.messageJarvis")}</label>
+    <div className="composer-heading">{status ?? <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>}</div>
     <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}
       data-ui-action="input" className="hearing-input" rows={1}
       aria-label={t("main.conversation.messageJarvis")} aria-describedby="composer-help"
