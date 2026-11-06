@@ -50,6 +50,15 @@ once per stage per pause and never late. `on_pause` is told the turn and
 the stage, whether that cue is on or off; whether a sound plays is the
 caller's to decide.
 
+When he begins speaking, `on_heard` is told the turn and the pause cue
+given before it (None at a turn's start): when a new turn starts gathering
+(its first word accepted as his: never echo, never a stale epoch's), and
+when he resumes after a pause cue was given in this pause (the first word
+accepted as his after it, a final or an interim heard as speech). Once per
+start or resume, never for each word after: accepted speech starts the
+pause again, so no pause cue has been given until the next one is. The
+"speech heard" cue's moment, again the caller's to sound or not.
+
 Every time-dependent step takes its clock and timers from the caller, so
 tests drive it with a fake clock.
 """
@@ -129,6 +138,7 @@ class TurnController:
                  on_stalled: Callable[[int, str], None] = lambda _turn, _text: None,
                  on_resumed: Callable[[int], None] = lambda _turn: None,
                  on_pause: Callable[[int, str], None] = lambda _turn, _stage: None,
+                 on_heard: Callable[[int, Optional[str]], None] = lambda _turn, _after: None,
                  clock: Optional[Callable[[], float]] = None,
                  call_later: Optional[CallLater] = None,
                  spawn: Optional[Callable[[Awaitable[None]], object]] = None,
@@ -144,6 +154,7 @@ class TurnController:
         self._on_stalled = on_stalled
         self._on_resumed = on_resumed
         self._on_pause = on_pause
+        self._on_heard = on_heard
         self._clock = clock or (lambda: asyncio.get_running_loop().time())
         self._call_later = call_later or (lambda d, f: asyncio.get_running_loop().call_later(d, f))
         self._spawn = spawn or asyncio.ensure_future
@@ -193,8 +204,11 @@ class TurnController:
         if not self.current(client, epoch):
             return False
         self._took_floor()
+        new = self._turn is None or not self._turn.parts
         turn = self._gathering(client)
         turn.parts.append(text)
+        if new:
+            self._heard(turn.id, None)
         if heard is not None:
             turn.heard = heard
         self._open_interim = False
@@ -285,8 +299,16 @@ class TurnController:
             self._turn.client = client
         return self._turn
 
+    def _heard(self, turn_id: int, after: Optional[str]) -> None:
+        log.info("turn %d: speech heard%s", turn_id, f" after the {after} cue" if after else "")
+        self._on_heard(turn_id, after)
+
     def _activity(self) -> None:
-        """Accepted speech: the revision moves on and the hold starts again."""
+        """Accepted speech: the revision moves on and the hold starts again;
+        after a pause cue in this pause, he has resumed speaking."""
+        if self.pause_stage is not None and self._turn is not None:
+            self._heard(self._turn.id, self.pause_stage)
+            self.pause_stage = None
         self.revision += 1
         self.state = "gathering"
         if self._turn is None or not self._turn.parts:

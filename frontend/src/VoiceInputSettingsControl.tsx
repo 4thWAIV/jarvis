@@ -5,7 +5,8 @@
  *   When I stop the microphone      Keep captured words | Discard unfinished input
  *   When I switch away from JARVIS  Continue listening  | Stop listening
  *   Capture sounds                  On | Off (the master switch)
- *   Listening started, stopped      Off | one of the tones, and Test
+ *   Listening started, stopped,     Off | one of the tones, and Test
+ *   speech heard
  *   The pause, stage by stage       each interval (seconds after the stage
  *                                   before) and its time after he stops;
  *                                   a pause cue's Off | tone, and Test
@@ -33,7 +34,7 @@ import { useState, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { voiceInputSettings } from "./mic";
 import { SettingsRow, useSettingsItem, type SettingsItem } from "./SettingsRow";
-import { INTERVAL_MAX, INTERVAL_MIN, isPauseCue, LISTEN_CUES, PAUSE_STAGES, STOP_MODES, SWITCH_MODES, TONES, VOLUME_MAX,
+import { HEARD, INTERVAL_MAX, INTERVAL_MIN, isPauseCue, LISTEN_CUES, PAUSE_STAGES, STOP_MODES, SWITCH_MODES, TONES, VOLUME_MAX,
          VOLUME_MIN, type CueName, type PauseStage, type StopMode, type SwitchMode, type Tone,
          type VoiceInputSettings } from "./voiceControl";
 import { changeVoiceInputSettings, type VoiceInputChange } from "./voiceSettings";
@@ -45,6 +46,7 @@ type Save = (change: VoiceInputChange) => Promise<void>;
 const CUE_ITEMS: Record<CueName, { choice: SettingsItem; test: SettingsItem }> = {
   start: { choice: "cueStart", test: "cueStartTest" },
   stop: { choice: "cueStop", test: "cueStopTest" },
+  heard: { choice: "cueHeard", test: "cueHeardTest" },
   tentative: { choice: "cueTentative", test: "cueTentativeTest" },
   deciding: { choice: "cueDeciding", test: "cueDecidingTest" },
   likely: { choice: "cueLikely", test: "cueLikelyTest" },
@@ -181,7 +183,7 @@ export function VoiceInputSettingsControl() {
         </select>
       </SettingsRow>
       <p className="settings-hint">{t("left.voiceInput.soundsHelp")}</p>
-      {LISTEN_CUES.map((name) => <CueRows key={name} name={name} settings={settings} disabled={disabled} save={save} />)}
+      {[...LISTEN_CUES, HEARD].map((name) => <CueRows key={name} name={name} settings={settings} disabled={disabled} save={save} />)}
       <p className="settings-hint">{t("left.voiceInput.pauseHelp", { min: INTERVAL_MIN, max: INTERVAL_MAX })}</p>
       {PAUSE_STAGES.map((stage) => <PauseStageRows key={stage} stage={stage} settings={settings}
                                                    disabled={disabled} save={save} />)}

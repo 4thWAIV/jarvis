@@ -302,7 +302,7 @@ def test_cue_sounds_need_the_master_switch_and_the_cue():
 def test_the_deciding_cue_off_silences_only_it():
     settings = voice_control.change(cues={"deciding": {"on": False}})
     assert [voice_control.cue_sounds(settings, n) for n in voice_control.CUES] == [
-        True, True, True, False, True]
+        True, True, True, True, False, True]
     assert "deciding" in dict(voice_control.schedule_of(settings))
 
 
@@ -402,3 +402,16 @@ def test_the_brain_s_schema_offers_the_same_cues_and_tones():
                                                       voice_control.VOLUME_MAX)
     play = next(t for t in jarvis_mcp.TOOL_SPECS if t["name"] == "play_cue")
     assert tuple(play["inputSchema"]["properties"]["cue"]["enum"]) == voice_control.CUES
+
+
+def test_the_speech_heard_cue_is_its_own_setting_and_off_silences_only_it():
+    assert voice_control.CUES == ("start", "stop", "heard", "tentative", "deciding", "likely")
+    assert voice_control.read()["cues"]["heard"] == {"on": True, "tone": "double"}
+    others = {voice_control.CUE_DEFAULTS[n]["tone"] for n in voice_control.CUES if n != "heard"}
+    assert "double" not in others, "its default tone is used by no other cue"
+    settings = voice_control.change(cues={"heard": {"on": False}})
+    assert [n for n in voice_control.CUES if not voice_control.cue_sounds(settings, n)] == ["heard"]
+    settings = voice_control.change(cues={"heard": {"on": True, "tone": "pulse"}})
+    assert settings["cues"]["heard"] == {"on": True, "tone": "pulse"}
+    with pytest.raises(voice_control.Invalid):
+        voice_control.change(cues={"heard": {"tone": "siren"}})

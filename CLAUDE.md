@@ -904,8 +904,8 @@ audio context, and dropped, never delayed, while audio is locked. His third
 setting, capture sounds (`sounds`, default on, in the same
 `voice_control.py` service, route and tools), is the master switch for
 every cue; the page shows the same either way. Beside it, per user in the
-same service: each of the five cues (`start`, `stop`, and the pause cues
-`tentative`, `deciding`, `likely`) on or off with a tone from
+same service: each of the six cues (`start`, `stop`, `heard`, and the pause
+cues `tentative`, `deciding`, `likely`) on or off with a tone from
 `voice_control.TONES` (notes in `voice.ts` `TONE_NOTES`, placeholders), one
 `volume`, and the pause's four `intervals`. The pause has four stages in
 one ordered list, `turn_controller.PAUSE_STAGES` (the pause cues, then
@@ -928,7 +928,16 @@ his patience as a reading; each cue has a Test (`voiceStatus.cueTest`; the
 brain's acting `play_cue` sends the page of the turn a `cue_test` frame to
 the same call). The brain's `voice_input_settings` reads, and
 `set_voice_input_settings` takes, the four intervals. The pause cue in the
-middle is "Deciding" ("Decidiendo"), default tone `low`. Migration 7 drops
+middle is "Deciding" ("Decidiendo"), default tone `low`. The "speech heard"
+cue (`heard`, default tone `double`) plays once when he begins speaking:
+the turn controller's `on_heard` when a new turn starts gathering (the
+first word accepted as his) and when he resumes after a pause cue was given
+in this pause (the first word accepted as his after it, final or interim),
+never for echo, a stale epoch's or a typed word, and not again for each
+word after; the server sends only the page gathering it a `turn` frame with
+state `heard` and `sound` (as the pause cues', `server._cue_sounds_here`;
+on a resume only if that pause cue sounded too), and the page plays it only
+while listening, on the output, never into the microphone's graph. Migration 7 drops
 a patience saved on its own and the cues' earlier shares of it (`percent`,
 and before migration 6 `before`): those rows read with the default
 intervals, a total of 3.0 s, keeping each cue's tone and on or off. The

@@ -5028,16 +5028,30 @@ def _show_turn(ws, frame: dict) -> None:
         _enqueue(queue, {"type": "turn", **frame})
 
 
+def _cue_sounds_here(cue: str) -> bool:
+    """Whether a turn cue's sound plays: his capture sounds and that cue on,
+    and him engaged here (never while away or unknown)."""
+    return (voice_control.cue_sounds(voice_control.read_or_defaults(), cue)
+            and _availability() == attention.ENGAGED)
+
+
 def _pause_frame(turn_id: int, stage: str, text: str) -> dict:
     """A pause cue in his turn, for the one page the turn is gathered from
     (its own voice socket): the stage it has reached, shown either way, and
-    whether its sound plays, which needs his capture sounds and that cue on,
-    and him engaged here (never while away or unknown). The page plays it
-    only while it is listening, at once or not at all."""
-    settings = voice_control.read_or_defaults()
-    sound = (voice_control.cue_sounds(settings, stage)
-             and _availability() == attention.ENGAGED)
-    return {"state": "pause", "stage": stage, "turnId": turn_id, "text": text, "sound": sound}
+    whether its sound plays (`_cue_sounds_here`). The page plays it only
+    while it is listening, at once or not at all."""
+    return {"state": "pause", "stage": stage, "turnId": turn_id, "text": text,
+            "sound": _cue_sounds_here(stage)}
+
+
+def _heard_frame(turn_id: int, after: Optional[str]) -> dict:
+    """He began speaking, for the one page the turn is gathered from: a new
+    turn started gathering (`after` None), or he resumed after the pause
+    cue `after` was given. Whether the "speech heard" cue sounds
+    (`_cue_sounds_here`), on a resume only when that pause cue sounded too.
+    The page plays it only while listening."""
+    sound = _cue_sounds_here(voice_control.HEARD) and (after is None or _cue_sounds_here(after))
+    return {"state": "heard", "turnId": turn_id, "sound": sound}
 
 
 def _turn_action(ws, action: str) -> str:
@@ -8467,6 +8481,7 @@ def _voice_input_settings_said(settings: dict) -> str:
 
 
 _STAGE_SAID = {"start": "listening started", "stop": "listening stopped",
+               "heard": "speech heard (he began speaking)",
              "tentative": "tentative (he may be done)",
              "deciding": "deciding (whether he is done)",
              "likely": "likely end (about to send)"}
@@ -8493,7 +8508,7 @@ def _pause_said(settings: dict) -> str:
 def _cues_said(settings: dict) -> str:
     """Each capture cue: on or off and its tone, then the pause."""
     parts = []
-    for name in voice_control.LISTEN_CUES:
+    for name in voice_control.LISTEN_CUES + (voice_control.HEARD,):
         cue = settings["cues"][name]
         parts.append(f"{_STAGE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}")
     master = "" if settings["sounds"] else " (all silent while capture sounds are off)"
@@ -12176,7 +12191,8 @@ async def voice_handler(ws: WebSocket):
             {"state": "stalled", "turnId": turn_id, "text": text}),
         on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)),
         on_pause=lambda turn_id, stage: show_turn(
-            _pause_frame(turn_id, stage, turns.gathered_text)))
+            _pause_frame(turn_id, stage, turns.gathered_text)),
+        on_heard=lambda turn_id, after: show_turn(_heard_frame(turn_id, after)))
     _voice_turns[ws] = turns
 
     try:

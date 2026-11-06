@@ -68,7 +68,7 @@ CUE_SPY = """
 TONES = {(660, 880): "rise", (880, 660): "fall", (587,): "pulse", (440,): "low",
          (740, 740): "double", (784, 523): "resolve"}
 # The cue each tone is by default (voice_control.CUE_DEFAULTS).
-BY_DEFAULT = {"rise": "start", "fall": "stop", "pulse": "tentative", "low": "deciding",
+BY_DEFAULT = {"rise": "start", "fall": "stop", "double": "heard", "pulse": "tentative", "low": "deciding",
               "resolve": "likely"}
 # The notes played so far, one list per cue, in order.
 NOTES = """() => { const out = []; let key = null;
@@ -298,6 +298,41 @@ def _gathering(page, turn=1, text="book a table"):
 
 
 PAUSE_SHOWN = "document.querySelector('#voice-turn')?.dataset.pause ?? null"
+
+
+def _heard(page, turn=1, sound=True):
+    """The server's frame that he began speaking: a new turn started."""
+    page.voice.socket.send(json.dumps({"type": "turn", "state": "heard", "turnId": turn,
+                                       "sound": sound}))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_speech_heard_plays_once_on_the_output_never_into_the_microphone(
+        page_playwright, page_url):
+    """Once per frame the server gives (once per turn), on the output and
+    never through the capture graph, never as words; silent when the
+    server says so, and never while muted or off."""
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await _cue_page(context, page_url, view="")
+        await _listening(page)
+        await _cues_become(page, ["start"], settle_ms=0)
+        _heard(page)
+        _gathering(page)
+        _gathering(page, text="book a table for two")          # further words: no cue
+        await _cues_become(page, ["start", "heard"])
+        capture = await page.evaluate("window.__captureContexts")
+        played = await page.evaluate("window.__oscillators.map((o) => o.ctx)")
+        assert not set(capture) & set(played) and len(set(played)) == 1
+        assert page.voice.finals() == [], "a cue became words"
+        _heard(page, turn=2, sound=False)                      # off, or he is away
+        await page.click("#btn-mute")
+        await _cues_become(page, ["start", "heard", "stop"], settle_ms=0)
+        _heard(page, turn=3)                                   # muted: never heard
+        await page.click("#btn-mic-off")
+        _heard(page, turn=4)                                   # off: never heard
+        await _cues_become(page, ["start", "heard", "stop"])
+        await context.close()
 
 
 @pytest.mark.asyncio(loop_scope="session")

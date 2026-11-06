@@ -35,7 +35,7 @@ from jarvis.turn_controller import PAUSE_STAGES as _PAUSE_STAGES
 # The capture cues, their tones and the bounds of a pause interval
 # (voice_control.CUES, TONES and INTERVAL_MIN/MAX; a test keeps them the
 # same: this child does not import the server's modules).
-_CUE_NAMES = ("start", "stop") + _PAUSE_CUES
+_CUE_NAMES = ("start", "stop", "heard") + _PAUSE_CUES
 _CUE_TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
 _INTERVAL_MIN, _INTERVAL_MAX = 0.25, 5.0
 
@@ -2011,8 +2011,9 @@ TOOL_SPECS = [
                 "cues": {
                     "type": "object",
                     "description": (
-                        "Any of the five capture cues, each with only what changes. start: "
-                        "listening started; stop: listening stopped; and the pause cues, in "
+                        "Any of the six capture cues, each with only what changes. start: "
+                        "listening started; stop: listening stopped; heard: he began "
+                        "speaking (once per turn, never for echo); and the pause cues, in "
                         "the order they play: tentative: he paused and may be done; "
                         "deciding: he is still quiet and JARVIS is deciding whether he is "
                         "done; likely: the turn is about to be sent. When each plays is "

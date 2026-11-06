@@ -9,8 +9,9 @@
  *           already started, or stop listening.
  *   sounds  Capture sounds: the master switch for every cue (voice.ts
  *           `cue`): off plays none.
- *   cues    The five capture cues, each on or off with its tone: start and
- *           stop (listening started, stopped), and the pause cues in the
+ *   cues    The six capture cues, each on or off with its tone: start and
+ *           stop (listening started, stopped), heard (he began speaking: a
+ *           new turn started gathering), and the pause cues in the
  *           order they play, tentative, deciding and likely.
  *   intervals  The pause, four stages in order (PAUSE_STAGES: the pause
  *           cues, then the send), each its interval in seconds after the
@@ -31,7 +32,9 @@ export const SWITCH_MODES: readonly SwitchMode[] = ["continue", "stop"];
  *  may play (voice_control.TONES; voice.ts holds their notes). */
 export const PAUSE_CUES = ["tentative", "deciding", "likely"] as const;
 export const LISTEN_CUES = ["start", "stop"] as const;
-export const CUE_NAMES = [...LISTEN_CUES, ...PAUSE_CUES] as const;
+/** He began speaking: a new turn started gathering (voice_control.HEARD). */
+export const HEARD = "heard" as const;
+export const CUE_NAMES = [...LISTEN_CUES, HEARD, ...PAUSE_CUES] as const;
 export type PauseCue = (typeof PAUSE_CUES)[number];
 /** The pause stages in order: the pause cues, then the send
  *  (turn_controller.PAUSE_STAGES). */

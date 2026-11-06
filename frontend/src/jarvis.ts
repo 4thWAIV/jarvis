@@ -24,7 +24,7 @@ import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
 import { cueTest, sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
          conversationJump } from "./voiceStatus";
-import { CUE_NAMES, isPauseCue, PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type CueName,
+import { CUE_NAMES, HEARD, isPauseCue, PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type CueName,
          type PlaybackReport, type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
 import { startLocale } from "./locale";
@@ -129,6 +129,11 @@ export function startJarvis(orb: Orb): void {
       const stage = msg.stage;
       voiceTurn.set({ state: "gathering", turnId, text, pause: stage });
       if (msg.sound === true && capturing) playCue(stage);
+    } else if (msg.state === "heard") {
+      // He began speaking (a new turn the server started gathering from
+      // this page's words, never echo): heard now or never, only while
+      // this page is listening. What is shown waits for `gathering`.
+      if (msg.sound === true && capturing) playCue(HEARD);
     } else if (msg.state === "draft") {
       keepUnsent(text);
     } else {

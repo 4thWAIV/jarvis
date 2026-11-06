@@ -21,12 +21,14 @@ turn_controller.PAUSE_STAGES) and his capture sounds (`sounds`, on or off,
 default on): the master switch for every capture cue. Off plays none;
 what the page shows is the same either way.
 
-The capture cues (`cues`, `volume`) are five quiet sounds, each on or off
+The capture cues (`cues`, `volume`) are six quiet sounds, each on or off
 and each one tone of the fixed presets (TONES; the page holds their
 notes, voice.ts):
 
   start      listening really started
   stop       listening really stopped, for any reason
+  heard      he began speaking: a new turn started gathering (the first
+             word accepted as his; never echo, never again for each word)
   tentative  he has paused in a gathered turn: JARVIS thinks he may be done
   deciding   he is still quiet: JARVIS is deciding whether he is done
   likely     he is still quiet: the turn is about to be sent
@@ -94,7 +96,8 @@ DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
 # presets each may play. The pause cues, the pause stages (the pause cues,
 # then the send) and their default intervals are turn_controller's.
 LISTEN_CUES = ("start", "stop")
-CUES = LISTEN_CUES + PAUSE_CUES
+HEARD = "heard"
+CUES = LISTEN_CUES + (HEARD,) + PAUSE_CUES
 TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
 # A pause stage's interval after the stage before, in seconds.
 INTERVAL_MIN, INTERVAL_MAX = 0.25, 5.0
@@ -103,6 +106,7 @@ VOLUME_MIN, VOLUME_MAX = 5, 100
 CUE_DEFAULTS = {
     "start": {"on": True, "tone": "rise"},
     "stop": {"on": True, "tone": "fall"},
+    "heard": {"on": True, "tone": "double"},
     "tentative": {"on": True, "tone": "pulse"},
     "deciding": {"on": True, "tone": "low"},
     "likely": {"on": True, "tone": "resolve"},

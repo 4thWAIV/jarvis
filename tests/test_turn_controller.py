@@ -53,6 +53,7 @@ class Harness:
         self.clock = Clock(leaky)
         self.intervals = intervals      # {stage: seconds after the stage before}, or a hold alone
         self.paused: list[tuple] = []   # (turn, stage, when)
+        self.heard: list[tuple] = []    # (turn, the pause cue before it or None)
         self.committed: list[tuple] = []
         self.stalled: list[tuple] = []
         self.resumed: list[int] = []
@@ -66,6 +67,7 @@ class Harness:
             on_stalled=lambda turn, text: self.stalled.append((turn, text)),
             on_resumed=self.resumed.append,
             on_pause=lambda turn, stage: self.paused.append((turn, stage, self.clock.now)),
+            on_heard=lambda turn, after: self.heard.append((turn, after)),
             clock=lambda: self.clock.now, call_later=self.clock.call_later,
             spawn=self._spawn)
 
@@ -483,3 +485,62 @@ def test_without_a_schedule_the_hold_alone_is_timed_and_no_cue_is_given():
     h.c.final("hi", 1)
     h.clock.advance(1.5)
     assert h.texts() == ["hi"] and h.paused == []
+
+
+# ── speech heard ─────────────────────────────────────────────────────────
+
+def test_speech_heard_is_told_once_when_a_turn_starts_gathering_not_for_each_word():
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.interim("book")                          # no turn yet: nothing gathered
+    assert h.heard == []
+    h.c.final("book a table", 1, client="page-a", epoch=1)
+    first = h.c.turn_id
+    assert h.heard == [(first, None)]
+    h.c.interim("for")
+    h.c.final("for two", 2, client="page-a", epoch=1)
+    h.clock.advance(0.9)                         # before any pause cue
+    h.c.final("at eight", 3, client="page-a", epoch=1)
+    assert h.heard == [(first, None)], "not again for each further word"
+    h.clock.advance(3.0)
+    assert h.texts() == ["book a table for two at eight"]
+    h.c.final("and a cab", 4, client="page-a", epoch=1)     # the next turn
+    assert h.heard == [(first, None), (h.c.turn_id, None)] and h.c.turn_id != first
+
+
+def test_speech_heard_is_never_told_for_words_not_taken_as_his():
+    h = Harness(floor={"page-a": 5})
+    assert h.c.final("stale words", 1, client="page-a", epoch=4) is False
+    assert h.heard == []
+    h.c.final("hello", 2, client="page-a", epoch=5)
+    h.c.discard("page-a", 6)
+    h.c.final("late", 3, client="page-a", epoch=5)          # before the discard's epoch
+    assert len(h.heard) == 1
+
+
+@pytest.mark.parametrize("resume_at,after", [(1.2, "tentative"), (2.0, "deciding"),
+                                             (2.7, "likely")])
+@pytest.mark.parametrize("word", ["interim", "final"])
+def test_speech_heard_is_told_when_he_resumes_after_a_pause_cue_once_per_resume(
+        resume_at, after, word):
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.final("book a table", 1)
+    turn = h.c.turn_id
+    h.clock.advance(resume_at)
+    getattr(h.c, word)("for two", *((2,) if word == "final" else ()))
+    assert h.heard == [(turn, None), (turn, after)]
+    h.c.interim("for two at")
+    h.c.final("for two at eight", 3)
+    assert h.heard == [(turn, None), (turn, after)], "not again for each further word"
+    h.clock.advance(1.1)                          # past the next tentative cue
+    h.c.final("please", 4)
+    assert h.heard[-1] == (turn, "tentative") and len(h.heard) == 3
+
+
+def test_no_resume_is_told_when_he_speaks_again_before_any_pause_cue():
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.final("book a table", 1)
+    h.clock.advance(0.9)                          # before the tentative cue (1.0)
+    h.c.final("for two", 2)
+    h.clock.advance(0.9)
+    h.c.interim("at")
+    assert len(h.heard) == 1

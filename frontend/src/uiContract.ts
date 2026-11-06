@@ -2427,6 +2427,8 @@ export const UI_CONTRACT = {
         "cueStartTest",
         "cueStop",
         "cueStopTest",
+        "cueHeard",
+        "cueHeardTest",
         "intervalTentative",
         "cueTentative",
         "cueTentativeTest",
