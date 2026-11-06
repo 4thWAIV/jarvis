@@ -37,8 +37,9 @@ class _Speech:
         self.said.append(text)
         return _Utterance()
 
-    def read_aloud(self, text, capture):
-        self.read.append((capture, text))
+    def read_aloud(self, text, capture, lead=""):
+        # A person's read-back names them in its own text, so it has no lead.
+        self.read.append((capture, f"{lead}\n{text}" if lead else text))
         return _Utterance()
 
     async def wait_for(self, utt, timeout=60.0):
@@ -174,6 +175,44 @@ async def test_voice_read_back_then_send_message_approves_the_heard_revision(ser
     assert f"Capture {n} is staged for Matt" in staged and tim.speech.said == []
     await server._perform_staged_steers()
     assert tim.store.approved(*NS, draft.message_id, 1).via == "voice"
+
+
+@pytest.mark.asyncio
+async def test_his_yes_binds_the_person_the_read_back_named(server, tim):
+    """The read-back opens "To Matt."; his yes approves Matt, by GitHub id,
+    and "send it to <name>" approves only when the name is Matt."""
+    draft, n = _reviewed(tim)
+    assert (await server.tool_read_capture({"capture": n})).startswith("Read back in full")
+    assert tim.speech.read == [(n, "To Matt.\nFriday?")], "the read-back names him"
+    assert server._captures[n]["read_to"] == transmission.person_recipient(MATT)
+
+    assert server._approve_on_his_yes(server._take_read_back_answers(), "send it to Tim") == []
+    assert "was read back to him as going to Matt" in server._with_notes_for_brain("")
+    assert "has not been approved" in server.tool_send_message({"capture": n})
+
+    await server.tool_read_capture({"capture": n})
+    assert server._approve_on_his_yes(server._take_read_back_answers(),
+                                      "send it to me") == [], "Me is Tim, not Matt"
+    await server.tool_read_capture({"capture": n})
+    assert server._approve_on_his_yes(server._take_read_back_answers(),
+                                      "send it to mattk") == [n], "his login is Matt too"
+    assert f"Capture {n} is staged for Matt" in server.tool_send_message({"capture": n})
+
+
+@pytest.mark.asyncio
+async def test_a_new_recipient_is_a_new_review_and_needs_a_new_yes(server, tim):
+    """Changing who a message is for is a change: the new revision's capture
+    has not been read back, and the old approval does not carry to it."""
+    draft, n = _reviewed(tim)
+    await server.tool_read_capture({"capture": n})
+    assert server._approve_on_his_yes(server._take_read_back_answers(), "yes") == [n]
+    current = tim.store.draft(*NS, draft.message_id)
+    tim.store.save_draft(*NS, current.model_copy(update={
+        "recipient_github_id": TIM, "send": ports.revise(current)}), current.draft_revision)
+    again = tim.reviews.review(*NS, draft.message_id, current.draft_revision + 1)
+    assert again.capture_id != n and n not in server._captures
+    assert server._captures[again.capture_id]["text"].startswith("To Me.")
+    assert "has not been read" in server.tool_send_message({"capture": again.capture_id})
 
 
 @pytest.mark.asyncio

@@ -4972,8 +4972,9 @@ READBACK_TIMEOUT = 60.0
 # tool, on a turn he drove. Several can be open at once, each with its number,
 # and each is read back and sent on its own by that number; the brain folds
 # only ones that are parts of one message together (`merge_captures`). `read_capture` reads one back to him inside the brain's
-# own turn, lighting the capture box line by line, and `steer_session` sends
-# only a capture he approved: read back in full and unchanged since, then a
+# own turn, naming who it is for and then lighting the capture box line by
+# line, and `steer_session` sends only a capture he approved, to the recipient
+# its read-back named: read back in full and unchanged since, then a
 # plain yes as the very next thing he said (`_take_read_back_answers`), or his
 # own Send on its box. The brain's call alone never approves one: a yes it
 # infers inside the turn that read it back is no yes. Sending closes it;
@@ -4983,8 +4984,9 @@ READBACK_TIMEOUT = 60.0
 CAPTURE_MAX_CHARS = 4000
 CAPTURE_TO_MAX_CHARS = 80
 # Each: {"id", "text", "to", "heard": [transcript ids], "read": the text as it
-# was last read back in full, or None, "state"}, and his approval
-# (`transmission`: "asking", "approved"). In the order they opened.
+# was last read back in full, or None, "state"}, the session it is for once
+# addressed ("to_session"), and his approval (`transmission`: "read_to",
+# "asking", "approved"). In the order they opened.
 _captures: dict[int, dict] = {}
 _capture_ids = itertools.count(1)
 
@@ -5186,23 +5188,31 @@ def tool_capture(args: dict) -> str:
     if capture.get("human"):
         return (f"Capture {number} is the review of a message to a person: change it "
                 f"with draft_message and review it again. Nothing was changed.")
+    readdressed = bool(to_session) and to_session != capture.get("to_session")
     changed = capture["text"] != text
-    if changed:
-        transmission.changed(capture)   # it has to be heard and approved again
+    if changed or readdressed:
+        # A new text or a new recipient: heard and approved again, naming it.
+        transmission.changed(capture)
     capture["text"] = text
-    capture["to"] = to or capture["to"]
+    if to_session:
+        capture["to"], capture["to_session"] = to, to_session
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
         capture["heard"].append(_turn_heard)
-    if changed:
+    if changed or readdressed:
         _record_capture(capture, to_session)
     _capture_show(capture, "capturing")
     if len(_unsent_captures()) > 1:
         return (f"Capture {number} holds it. {_open_captures_note()} Each is "
                 f"read back and sent on its own, by its number; merge_captures "
                 f"only those that are parts of one message.")
-    return (f"Capture {number} holds it. Ask him whether he wants it read back; "
-            f"read_capture reads it. steer_session sends only a capture read "
-            f"back in full since it last changed and then approved by his own yes.")
+    if not capture.get("to_session"):
+        return (f"Capture {number} holds it, but it is not addressed to anyone yet: "
+                f"once he says who it is for, capture it again with that `to`. It is "
+                f"read back naming who it is for, so it cannot be read back until then.")
+    return (f"Capture {number} holds it. Read it back now with read_capture, without "
+            f"asking first: the read-back names {_plain_name(capture['to'], 'its session')} "
+            f"as who it is for. steer_session sends only a capture read back in full "
+            f"since it or its recipient last changed and then approved by his own yes.")
 
 
 def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
@@ -5250,16 +5260,20 @@ async def tool_read_capture(args: dict) -> str:
         return "I have no voice to read it with."
     if capture.get("staged") or capture.get("state") == "reading":
         return f"Capture {number} is being read or sent already."
-    text = capture["text"]
+    recipient = transmission.recipient(capture)
+    if recipient is None:
+        return _unaddressed(number)
+    text, lead = capture["text"], _read_back_lead(capture)
     _capture_show(capture, "reading")
     utt = _turn_utt
-    last = speech.read_into(utt, text, number) if utt is not None else -1
+    last = speech.read_into(utt, text, number, lead) if utt is not None else -1
     if last >= 0:
         heard = await speech.wait_played(utt, last, timeout=READBACK_TIMEOUT)
     else:
-        heard = await speech.wait_for(speech.read_aloud(text, number), timeout=READBACK_TIMEOUT)
+        heard = await speech.wait_for(speech.read_aloud(text, number, lead),
+                                      timeout=READBACK_TIMEOUT)
     if number in _captures:
-        if heard and capture["text"] == text:
+        if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
             transmission.read_back(capture, text)
         _capture_show(capture, "capturing")
     if heard:
@@ -5269,6 +5283,23 @@ async def tool_read_capture(args: dict) -> str:
                 f"steer_session refuses it until then.")
     return (f"Interrupted before the end, so capture {number} has not been heard "
             f"in full and cannot be sent until it is read back again.")
+
+
+def _read_back_lead(capture: dict) -> str:
+    """What a read-back opens with to name who the capture is for. A review
+    of a message to a person needs none: its text opens with "To <name>."
+    (`messaging_ports.human_readback`)."""
+    if capture.get("human"):
+        return ""
+    return f"To {_plain_name(capture['to'], 'that session')}."
+
+
+def _unaddressed(number: int) -> str:
+    """Why a capture with no recipient is neither read back nor sent: his
+    yes covers the recipient its read-back names, and this one names none."""
+    return (f"Capture {number} is not addressed to anyone yet, and a read-back names "
+            f"who it is for. Ask him who it is for, then capture it again with that "
+            f"`to`. Nothing was read or sent.")
 
 
 def tool_merge_captures(args: dict) -> str:
@@ -5290,7 +5321,8 @@ def tool_merge_captures(args: dict) -> str:
     keep["text"] = text
     transmission.changed(keep)
     for other in gone:
-        keep["to"] = keep["to"] or other["to"]
+        if not keep.get("to_session") and other.get("to_session"):
+            keep["to"], keep["to_session"] = other["to"], other["to_session"]
         keep["heard"] += [h for h in other["heard"] if h not in keep["heard"]]
         del _captures[other["id"]]
         _record_capture_cleared(other, "JARVIS", f"merged into capture {keep['id']}")
@@ -5301,8 +5333,12 @@ def tool_merge_captures(args: dict) -> str:
             f"reading back before it can be sent.")
 
 
-def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
-    """(the capture, None), or (None, why it cannot be sent)."""
+def _capture_to_send(number, to: Optional[tuple[str, str]] = None
+                     ) -> tuple[Optional[dict], Optional[str]]:
+    """(the capture, None), or (None, why it cannot be sent). `to` is where
+    the send would take it, (recipient identity, its name said aloud): his
+    yes covers only the recipient its read-back named, so any other is
+    refused."""
     wanted = _capture_number(number)
     if wanted is None:
         return None, ("There is nothing to send without a capture: capture his "
@@ -5311,6 +5347,8 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if capture is None:
         return None, (f"There is no open capture {wanted}: it was sent, merged "
                       f"or never made. Capture his words again.")
+    if to is not None and to[0] != transmission.recipient(capture):
+        return None, _other_recipient(wanted, capture, to[1])
     if not transmission.heard(capture):
         return None, (f"Capture {wanted} has not been read back to him in full "
                       f"since it last changed. Call read_capture first; nothing "
@@ -5318,6 +5356,16 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if not transmission.accepted(capture):
         return None, _not_approved(wanted, capture)
     return capture, None
+
+
+def _other_recipient(number: int, capture: dict, said: str) -> str:
+    """Why a capture is not sent to a recipient other than its own."""
+    if transmission.recipient(capture) is None:
+        return _unaddressed(number)
+    return (f"Capture {number} is for {_plain_name(capture['to'], 'someone else')}, not "
+            f"{said}: his yes covers only the recipient its read-back names. If he wants "
+            f"it to go to {said}, capture it again with `to` naming {said}, read it back "
+            f"(the read-back names {said}) and wait for his yes. Nothing was sent.")
 
 
 def _not_approved(number: int, capture: dict) -> str:
@@ -5346,14 +5394,22 @@ def _take_read_back_answers() -> list[tuple[int, dict]]:
 
 def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
     """His words after a read-back, on their way to the brain: a plain yes
-    (`_rotation_answer`, the same short unhedged yes that clears or compacts)
-    approves exactly the text each capture had when it was read back, if it
-    is still open and unchanged. The numbers approved."""
-    if not _send_answer(text):
+    or an instruction to send (`_send_instruction`) approves exactly the text
+    each capture had when it was read back, for the recipient that read-back
+    named, if it is still open and unchanged. "Send it to <name>" approves
+    only the captures whose recipient <name> is; the others it approves
+    nothing of, and the brain is told why. The numbers approved."""
+    said = _send_instruction(text)
+    if said is None:
         return []
-    approved = []
+    approved, elsewhere = [], []
     for number, capture in asked:
-        if _captures.get(number) is capture and transmission.said_yes(capture):
+        if _captures.get(number) is not capture:
+            continue
+        if said and not _names_recipient(said, capture):
+            elsewhere.append(capture)
+            continue
+        if transmission.said_yes(capture):
             approved.append(number)
     if approved:
         names = ", ".join(str(n) for n in approved)
@@ -5362,36 +5418,79 @@ def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
             f"His yes approved capture{'s' if len(approved) > 1 else ''} {names}, read "
             f"back to him just before: send {'them' if len(approved) > 1 else 'it'} now "
             f"(steer_session, or send_message for a message to a person).")
+    for capture in elsewhere:
+        named = _plain_name(said, "someone else")
+        log.info("read-back not approved: capture %s is for %r, he said send it to %r",
+                 capture["id"], capture["to"], said)
+        _notes_for_brain.append(
+            f"He said to send it to {named}, but capture {capture['id']} was read back "
+            f"to him as going to {_plain_name(capture['to'], 'someone else')}, so nothing "
+            f"was approved and nothing may be sent. If he wants it to go to {named}, "
+            f"address it there (capture with `to`, or draft_message for a person), read "
+            f"it back naming {named} and wait for his yes.")
     return approved
+
+
+def _names_recipient(said: str, capture: dict) -> bool:
+    """Whether `said`, the name in his "send it to <name>", is exactly the
+    recipient the capture is for: the one agent session, or the one person,
+    it resolves to. A name that resolves to several, or to none, is not."""
+    if capture.get("human"):
+        human = messaging.human if messaging is not None else None
+        found = message_approvals.github_ids_called(said, human) if human else []
+        found = [transmission.person_recipient(g) for g in found]
+    else:
+        found = [transmission.session_recipient(a.session_id)
+                 for a in agent_directory.find(said, last_mentioned=last_mentioned_session)]
+    return found == [transmission.recipient(capture)]
 
 
 # An instruction to send may name where ("send it to chitauri"), so it may be
 # longer than a plain yes, but not a whole sentence.
 SEND_ANSWER_MAX_WORDS = 8
+# Before the name in "send it to chitauri" / "envíalo a chitauri", and what
+# may follow an instruction to send without changing it.
+_SEND_TO_WORDS = ("to", "a", "al")
+_SEND_TRAILING_WORDS = ("now", "please", "ahora", "ya")
 
 
 def _send_answer(text: str) -> bool:
-    """His words after a read-back approve it: a plain yes (`_rotation_answer`)
-    or an explicit instruction to send ("send it", "send it to chitauri",
-    "envíalo"), with no word of refusal or delay anywhere in it."""
+    """Whether his words after a read-back approve it (`_send_instruction`)."""
+    return _send_instruction(text) is not None
+
+
+def _send_instruction(text: str) -> Optional[str]:
+    """His words after a read-back as an approval: None when they are not
+    one; "" for a plain yes (`_rotation_answer`) or an explicit instruction
+    to send ("send it", "envíalo"); the name for one that says where ("send
+    it to chitauri"), which then approves only that recipient. No word of
+    refusal or delay may be anywhere in it."""
     if _rotation_answer(text) is True:
-        return True
+        return ""
     words = _action_words(text)
     if words and words[0] in ("jarvis", "ok", "okay", "yes", "yeah", "please"):
         words = words[1:]
     vocabulary = spoken_words.vocabulary()
     if not words or len(words) > SEND_ANSWER_MAX_WORDS:
-        return False
+        return None
     if any(w in vocabulary.no_words for w in words):
-        return False
+        return None
     joined = " ".join(words)
     for phrase in vocabulary.send_phrases:
-        if joined == phrase or joined.startswith(phrase + " "):
-            rest = joined[len(phrase):].split()
-            # Only "now", "please" or a destination may follow.
-            if not rest or rest[0] in ("now", "please", "to", "a", "al", "a la"):
-                return True
-    return False
+        if joined != phrase and not joined.startswith(phrase + " "):
+            continue
+        rest = joined[len(phrase):].split()
+        while rest and rest[0] in _SEND_TRAILING_WORDS:
+            rest.pop(0)
+        while rest and rest[-1] in _SEND_TRAILING_WORDS:
+            rest.pop()
+        if not rest:
+            return ""
+        if rest[0] in _SEND_TO_WORDS:
+            rest = rest[2:] if rest[:2] == ["a", "la"] else rest[1:]
+            if rest:
+                return " ".join(rest)
+    return None
 
 
 def _capture_transmitting(capture_id: Optional[int]) -> None:
@@ -5488,6 +5587,8 @@ def _restore_capture(number: int, notice_id: Optional[int] = None,
     capture = {"id": new_number, "text": item.text, "to": item.agent_name or "",
                "heard": list(item.detail.get("heard") or []), "read": None,
                "state": "capturing"}
+    if item.agent_name and item.agent_session_id:
+        capture["to_session"] = item.agent_session_id
     _captures[new_number] = capture
     _record_capture(capture, item.agent_session_id)
     _record(conversation_log.ItemKind.NOTICE,
@@ -5571,6 +5672,14 @@ def _capture_approved(capture: dict) -> None:
     _capture_show(capture, capture["state"])
 
 
+def _refuse_unaddressed(capture: dict) -> None:
+    """Read or accepted, a capture names who it is for; one for no one yet
+    is refused, as Send refuses it."""
+    if transmission.recipient(capture) is None:
+        raise HTTPException(status_code=409,
+                            detail="It isn't addressed to anyone yet: tell me who it is for.")
+
+
 def _refuse_an_agent_approving(request: Request, capture: dict) -> None:
     """A message to a person is approved by him alone: an agent admitted on
     an access key may draft it and ask for the review, never accept or
@@ -5585,6 +5694,7 @@ async def api_capture_accept(number: int, request: Request):
     """He has read it on the screen: it counts as read back in full."""
     capture = _open_capture_or_404(number)
     _refuse_an_agent_approving(request, capture)
+    _refuse_unaddressed(capture)
     _capture_accepted(capture)
     _notes_for_brain.append(
         f"He accepted capture {number} on screen: it counts as read back to him "
@@ -5605,19 +5715,20 @@ async def api_capture_read(number: int):
         raise HTTPException(status_code=409, detail="It is being read now.")
     if speech is None:
         raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    _refuse_unaddressed(capture)
     text = capture["text"]
     _capture_show(capture, "reading")
-    utt = speech.read_aloud(text, number)
-    _spawn(_finish_reading_aloud(capture, text, utt))
+    utt = speech.read_aloud(text, number, _read_back_lead(capture))
+    _spawn(_finish_reading_aloud(capture, text, transmission.recipient(capture), utt))
     return {"capture": number, "reading": True}
 
 
-async def _finish_reading_aloud(capture: dict, text: str, utt) -> None:
+async def _finish_reading_aloud(capture: dict, text: str, recipient: str, utt) -> None:
     heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
     number = capture["id"]
     if _captures.get(number) is not capture:
         return                                  # sent, merged or deleted meanwhile
-    if heard and capture["text"] == text:
+    if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
         transmission.read_back(capture, text)
         _notes_for_brain.append(
             f"He had capture {number} read aloud from its box and heard it to the "
@@ -5663,12 +5774,11 @@ async def api_capture_send(number: int, request: Request):
         message_id, problem = _stage_human_capture(capture, "gui")
         to = capture["to"]
     else:
-        if not capture["to"]:
-            raise HTTPException(status_code=409,
-                                detail="It isn't addressed to anyone yet: tell me who it is for.")
-        session, problem, _reason = _resolve_or_explain(capture["to"])
+        _refuse_unaddressed(capture)
+        # The session it is addressed to, by its id: the recipient his Send approves.
+        session, problem, _reason = _resolve_or_explain(capture["to_session"])
         if problem:
-            raise HTTPException(status_code=409, detail=problem)
+            raise HTTPException(status_code=409, detail=_no_such_agent(capture["to"]))
         _capture_approved(capture)
         message_id, problem = _stage_capture(session, capture)
         to = _said_name(session)
@@ -6265,15 +6375,18 @@ async def tool_steer_session(args: dict) -> str:
         return problem
     # The text is never the brain's to write here: it is a capture of Tim's
     # own words, made on his turn (`capture`), named by its number.
-    capture, problem = _capture_to_send(args.get("capture"))
+    held = _captures.get(_capture_number(args.get("capture")))
+    if held is not None and held.get("human"):
+        return (f"Capture {held['id']} is a message to a person, not to a session: "
+                f"send it with send_message. Nothing was sent.")
+    capture, problem = _capture_to_send(
+        args.get("capture"),
+        (transmission.session_recipient(session.session_id), _said_name(session)))
     if problem:
         # No capture, no message: nothing was formed to record as one.
         run_store.record_steer(session.session_id, session.voice_name,
                                session.project, "", "no_capture")
         return problem
-    if capture.get("human"):
-        return (f"Capture {capture['id']} is a message to a person, not to a session: "
-                f"send it with send_message. Nothing was sent.")
 
     global last_mentioned_session
     last_mentioned_session = session.session_id

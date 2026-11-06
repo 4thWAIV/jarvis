@@ -61,11 +61,17 @@ def _approved(server, number):
     assert server._approve_on_his_yes(asked, "yes") == [number]
 
 
+def _chitauri(path):
+    """The session the fixture's agent chitauri is, with its socket at `path`."""
+    import dataclasses
+    return dataclasses.replace(_fake_session_state(path), session_id="c")
+
+
 def _steering(server, monkeypatch, path, speech=None):
     monkeypatch.setattr(server, "speech", speech or FakeSpeech())
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
     monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (_fake_session_state(path), None, None))
+                        lambda n: (_chitauri(path), None, None))
 
 
 @pytest.mark.asyncio
@@ -134,7 +140,7 @@ async def test_the_message_tool_refuses_anything_but_an_open_capture(
 async def test_a_capture_not_read_back_since_it_changed_is_refused(wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path)
-    server.tool_capture({"text": "use Postgres"})
+    server.tool_capture({"text": "use Postgres", "to": "chitauri"})
     out = await server.tool_steer_session({"name": "chitauri", "capture": 1})
     assert "read_capture" in out and server._staged_steers == []
 
@@ -159,7 +165,7 @@ async def test_a_send_uses_the_capture_s_text_shows_transmitting_then_clears(
     speech = FakeSpeech()
     _steering(server, monkeypatch, path, speech)
 
-    server.tool_capture({"text": "Use Postgres, not SQLite."})
+    server.tool_capture({"text": "Use Postgres, not SQLite.", "to": "chitauri"})
     _approved(server, 1)
     await server.tool_steer_session({"name": "chitauri", "capture": 1})
     await server._perform_staged_steers()
@@ -183,7 +189,7 @@ async def test_a_send_uses_the_capture_s_text_shows_transmitting_then_clears(
 async def test_a_cancelled_send_keeps_the_capture_open(wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path, FakeSpeech(cancelled=True))
-    server.tool_capture({"text": "drop it"})
+    server.tool_capture({"text": "drop it", "to": "chitauri"})
     _approved(server, 1)
     await server.tool_steer_session({"name": "chitauri", "capture": 1})
     await server._perform_staged_steers()
@@ -238,8 +244,10 @@ async def _read_turn(server, monkeypatch, emitted, skip=None):
 async def test_read_capture_reads_it_inside_the_turn_then_the_brain_asks(wired, monkeypatch, emitted):
     h, brain = await _read_turn(wired, monkeypatch, emitted)
     audio = [m for m in h.msgs if m["type"] == "audio"]
-    assert [(m["text"], m.get("capture")) for m in audio] == [
-        ("Use Postgres.", 1), ("Drop SQLite by Friday.", 1), ("Shall I send it, sir?", None)]
+    assert [(m["text"], m.get("capture"), m.get("captureLead")) for m in audio] == [
+        ("To chitauri.", 1, True), ("Use Postgres.", 1, None),
+        ("Drop SQLite by Friday.", 1, None), ("Shall I send it, sir?", None, None)], \
+        "the read-back names who it is for, a line the box does not light"
     assert len({m["utt"] for m in audio}) == 1, "one utterance: the brain's own turn"
     assert brain.read_result.startswith("Read back in full.")
     assert wired._captures[1]["read"] == wired._captures[1]["text"]
@@ -291,7 +299,7 @@ async def _read_and_send_turn(server, monkeypatch, path, said):
     monkeypatch.setattr(server, "brain_instance", brain)
     monkeypatch.setattr(server, "READBACK_TIMEOUT", 2.0)
     monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (_fake_session_state(path), None, None))
+                        lambda n: (_chitauri(path), None, None))
     await h.sched.start()
     client.start()
     try:
@@ -370,7 +378,7 @@ async def test_an_edit_after_his_yes_needs_a_new_read_back_and_a_new_yes(
         wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path)
-    server.tool_capture({"text": "Use Postgres."})
+    server.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
     _approved(server, 1)
     server.tool_capture({"text": "Use MySQL.", "capture": 1})
     refused = await server.tool_steer_session({"name": "chitauri", "capture": 1})
@@ -387,7 +395,7 @@ async def test_an_edit_after_his_yes_needs_a_new_read_back_and_a_new_yes(
 async def test_a_cancelled_send_spends_his_yes(wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path, FakeSpeech(cancelled=True))
-    server.tool_capture({"text": "drop it"})
+    server.tool_capture({"text": "drop it", "to": "chitauri"})
     _approved(server, 1)
     await server.tool_steer_session({"name": "chitauri", "capture": 1})
     await server._perform_staged_steers()                # he said stop
@@ -512,7 +520,7 @@ async def test_read_capture_outside_a_turn_reads_it_on_its_own(wired, monkeypatc
     assert out.startswith("Read back in full."), out
     assert wired._captures[1]["read"] == wired._captures[1]["text"]
     assert [(m["text"], m.get("capture")) for m in h.msgs if m["type"] == "audio"] == [
-        ("Use Postgres.", 1), ("Drop SQLite.", 1)]
+        ("To chitauri.", 1), ("Use Postgres.", 1), ("Drop SQLite.", 1)]
     assert [s for _, s, _ in _captures(emitted)] == ["capturing", "reading", "capturing"]
 
 def test_the_capture_tools_are_acting_tools_offered_to_the_brain(wired):
@@ -551,9 +559,9 @@ async def test_several_open_captures_are_each_sent_on_their_own_by_number(wired,
     leaves the others open, and they go one at a time."""
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path)
-    server.tool_capture({"text": "Use Postgres."})
-    server.tool_capture({"text": "Add a health check."})
-    out = server.tool_capture({"text": "Write the release notes."})
+    server.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
+    server.tool_capture({"text": "Add a health check.", "to": "chitauri"})
+    out = server.tool_capture({"text": "Write the release notes.", "to": "chitauri"})
     assert "Open captures: 1, 2, 3." in out and "on its own" in out
 
     _approved(server, 2)
@@ -599,10 +607,10 @@ async def test_a_staged_message_does_not_hold_up_a_second_and_an_unsent_one_coun
         wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path, FakeSpeech(cancelled=True))
-    server.tool_capture({"text": "use Postgres"})
+    server.tool_capture({"text": "use Postgres", "to": "chitauri"})
     _approved(server, 1)
     assert "staged" in await server.tool_steer_session({"name": "chitauri", "capture": 1})
-    server.tool_capture({"text": "ship it"})
+    server.tool_capture({"text": "ship it", "to": "chitauri"})
     _approved(server, 2)
     assert "staged" in await server.tool_steer_session({"name": "chitauri", "capture": 2})
 
@@ -626,10 +634,10 @@ async def test_the_brain_can_clear_capture_boxes_and_a_cleared_one_is_never_sent
         wired, fake_session, monkeypatch, emitted):
     server, (path, received, _) = wired, fake_session
     _steering(server, monkeypatch, path)
-    server.tool_capture({"text": "use Postgres"})
+    server.tool_capture({"text": "use Postgres", "to": "chitauri"})
     _approved(server, 1)
     await server.tool_steer_session({"name": "chitauri", "capture": 1})
-    server.tool_capture({"text": "ship it"})
+    server.tool_capture({"text": "ship it", "to": "chitauri"})
     server.tool_capture({"text": "and tell the team"})
     await asyncio.sleep(0)
     emitted.clear()
@@ -684,7 +692,7 @@ async def test_delete_closes_the_box_and_cancels_a_staged_send(
     server, (path, _received, _) = wired, fake_session
     _steering(server, monkeypatch, path)
     monkeypatch.setattr(server, "_notes_for_brain", [])
-    server.tool_capture({"text": "Use Postgres."})
+    server.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
     _approved(server, 1)
     await server.tool_steer_session({"name": "chitauri", "capture": 1})
 
@@ -706,7 +714,7 @@ async def test_send_accepts_and_sends_to_the_agent_it_is_addressed_to(
     monkeypatch.setattr(server, "_notes_for_brain", [])
     asked = []
     monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (asked.append(n), (_fake_session_state(path), None, None))[1])
+                        lambda n: (asked.append(n), (_chitauri(path), None, None))[1])
     sent = []
     monkeypatch.setattr(server, "_deliver", lambda item, text: (
         sent.append(text), server.session_steer.SENT)[1])
@@ -719,7 +727,7 @@ async def test_send_accepts_and_sends_to_the_agent_it_is_addressed_to(
         await asyncio.sleep(0.01)
 
     assert r.status_code == 200 and r.json()["capture"] == 1
-    assert asked == ["chitauri"], "it goes to the name the box says Send to"
+    assert asked == ["c"], "it goes to the session the box is addressed to, by its id"
     assert sent == [server.STEER_SIGNATURE + "Add a health check."]
     assert f"as message {r.json()['message']}" in server._with_notes_for_brain("")
 
@@ -736,9 +744,9 @@ async def test_send_refuses_with_the_reason_and_sends_nothing(
 
     server.tool_capture({"text": "Who is this for?", "capture": 1, "to": "hammer"})
     monkeypatch.setattr(server, "_resolve_or_explain",
-                        lambda n: (None, "There are two hammers: which one?", "ambiguous"))
+                        lambda n: (None, "No agent is called h.", "unresolved"))
     r = _press(server, 1, "send")
-    assert r.status_code == 409 and r.json()["detail"] == "There are two hammers: which one?"
+    assert r.status_code == 409 and r.json()["detail"].startswith("No agent is called hammer.")
     assert server._staged_steers == [] and 1 in server._captures
     assert _press(server, 9, "send").status_code == 404
     assert _press(server, 9, "accept").status_code == 404
@@ -762,8 +770,8 @@ class _ReadingSpeech:
         self.ended = asyncio.Event()
         self.heard = True
 
-    def read_aloud(self, text, capture):
-        self.read.append((capture, text))
+    def read_aloud(self, text, capture, lead=""):
+        self.read.append((capture, lead, text))
         return object()
 
     async def wait_for(self, utt, timeout=60.0):
@@ -793,7 +801,7 @@ async def test_read_reads_it_aloud_and_heard_to_the_end_it_counts_as_read_back(
 
     speech = await _read_aloud(wired, monkeypatch)
 
-    assert speech.read == [(1, "Ship it.")]
+    assert speech.read == [(1, "To hammer.", "Ship it.")], "it names who it is for first"
     assert "has not said yes" in wired._capture_to_send(1)[1]
     assert wired._approve_on_his_yes(wired._take_read_back_answers(), "yes") == [1]
     assert wired._capture_to_send(1)[1] is None
@@ -851,3 +859,99 @@ def test_spanish_send_instructions_approve(spanish):
     assert server._send_answer("envíalo") is True
     assert server._send_answer("mándalo a chitauri") is True
     assert server._send_answer("no lo envíes") is False
+
+
+# --- his yes binds the recipient its read-back named ---------------------------
+#
+# Approved 2026-11-06: the read-back names who it is for, his yes covers that
+# recipient (the session, by id) and no other, and a new recipient is a change.
+
+def _hammer(path):
+    import dataclasses
+    return dataclasses.replace(_fake_session_state(path), session_id="h", voice_name="hammer",
+                               project="hammer", cwd="/p/hammer")
+
+
+@pytest.mark.asyncio
+async def test_his_yes_binds_the_session_the_read_back_named(wired, fake_session, monkeypatch, emitted):
+    server, (path, received, _) = wired, fake_session
+    _steering(server, monkeypatch, path)
+    server.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
+    _approved(server, 1)
+    assert server._captures[1]["read_to"] == "session:c"
+
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (_hammer(path), None, None))
+    refused = await server.tool_steer_session({"name": "hammer", "capture": 1})
+    assert "is for chitauri, not hammer" in refused and "read it back" in refused
+    assert server._staged_steers == [], "a different recipient is refused"
+
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (_chitauri(path), None, None))
+    assert "staged" in await server.tool_steer_session({"name": "chitauri", "capture": 1})
+
+
+@pytest.mark.asyncio
+async def test_a_capture_for_no_one_is_not_read_back(wired, emitted, monkeypatch):
+    monkeypatch.setattr(wired, "speech", FakeSpeech())
+    out = wired.tool_capture({"text": "Use Postgres."})
+    assert "not addressed to anyone yet" in out
+    assert "not addressed to anyone yet" in await wired.tool_read_capture({"capture": 1})
+    assert wired._captures[1]["read"] is None
+    assert _press(wired, 1, "read").status_code == 409
+    assert _press(wired, 1, "accept").status_code == 409
+
+
+@pytest.mark.parametrize("words, approved", [
+    ("send it to chitauri", True), ("send it to chitauri now", True),
+    ("yes, send it to chitauri", True), ("send it to hammer", False),
+    ("send it to nobody i know", False)])
+@pytest.mark.asyncio
+async def test_send_it_to_a_name_approves_only_that_recipient(wired, emitted, monkeypatch, words, approved):
+    monkeypatch.setattr(wired, "_notes_for_brain", [])
+    wired.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
+    _read_back(wired, 1)
+    assert _his_next_words(wired, words) == ([1] if approved else []), words
+    assert transmission_accepted(wired, 1) is approved
+    notes = wired._with_notes_for_brain("")
+    if not approved:
+        assert "was read back to him as going to chitauri" in notes
+        assert "nothing was approved" in notes
+
+
+def transmission_accepted(server, number):
+    from jarvis import transmission
+    return transmission.accepted(server._captures[number])
+
+
+@pytest.mark.parametrize("words, said", [
+    ("send it", ""), ("yes", ""), ("send it now please", ""), ("send it to chitauri", "chitauri"),
+    ("send it now to the hammer one", "the hammer one"), ("send it later", None),
+    ("send it to", None)])
+def test_the_send_instruction_says_where(wired, words, said):
+    assert wired._send_instruction(words) == said, words
+
+
+@pytest.mark.asyncio
+async def test_a_new_recipient_clears_his_yes_like_an_edit(wired, fake_session, monkeypatch, emitted):
+    server, (path, received, _) = wired, fake_session
+    _steering(server, monkeypatch, path)
+    server.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
+    _approved(server, 1)
+    server.tool_capture({"text": "Use Postgres.", "capture": 1, "to": "hammer"})
+    capture = server._captures[1]
+    assert (capture["to"], capture["to_session"], capture["read"], capture["approved"]) == \
+        ("hammer", "h", None, None)
+    monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (_hammer(path), None, None))
+    refused = await server.tool_steer_session({"name": "hammer", "capture": 1})
+    assert "read_capture" in refused and server._staged_steers == [], "unread for hammer"
+
+    _approved(server, 1)
+    assert server._captures[1]["read_to"] == "session:h"
+    assert "staged" in await server.tool_steer_session({"name": "hammer", "capture": 1})
+
+
+@pytest.mark.asyncio
+async def test_the_same_recipient_restated_keeps_his_yes(wired, emitted):
+    wired.tool_capture({"text": "Use Postgres.", "to": "chitauri"})
+    _approved(wired, 1)
+    wired.tool_capture({"text": "Use Postgres.", "capture": 1, "to": "chitauri"})
+    assert transmission_accepted(wired, 1)

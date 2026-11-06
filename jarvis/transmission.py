@@ -6,13 +6,14 @@ through the team server (the messaging service's destination) differ only
 in who they are, so each is an adapter and the sequence is here once.
 
     acceptance    a capture is sendable only once he has approved exactly
-                  its text: heard in full since it last changed
-                  (`read_capture`, Read on its box, or Accept on screen) and
-                  then a plain yes as the very next thing he said, or his
-                  own Send on its box. `accepted` is that rule, and the
-                  brain's tool call alone never satisfies it; the payload a
-                  destination binds to it (a human message's files and
-                  revision) is the destination's.
+                  its text for exactly its recipient: heard in full, naming
+                  who it is for, since either last changed (`read_capture`,
+                  Read on its box, or Accept on screen) and then a plain yes
+                  as the very next thing he said, or his own Send on its box.
+                  `accepted` is that rule, and the brain's tool call alone
+                  never satisfies it; the payload a destination binds to it
+                  (a human message's files and revision) is the
+                  destination's.
     staging       `stage`: the recipient's own refusals first, then "no
                   voice, nothing goes unheard", then the durable record is
                   written and the send is staged; nothing is spoken or sent.
@@ -47,15 +48,41 @@ NO_VOICE = "no_voice"          # the failure when there is no voice to hear it
 
 # A capture's approval, kept on the capture itself:
 #   read      the text as it was last heard in full (or read on screen), or None
+#   read_to   the recipient that read-back named (`recipient`), or None
 #   asking    heard, and his next words are the answer to whether to send it
 #   approved  the text he said yes to (or pressed Send on), or None
-# Any change of text, a new read-back and a send that did not go each clear
-# the approval; only `said_yes` (his yes) and `approve` (his Send) set it.
+# Any change of text or of recipient, a new read-back and a send that did not
+# go each clear the approval; only `said_yes` (his yes) and `approve` (his
+# Send) set it.
+
+
+def session_recipient(session_id: str) -> str:
+    """An agent's session as a recipient identity."""
+    return f"session:{session_id}"
+
+
+def person_recipient(github_id: int) -> str:
+    """A person on the team as a recipient identity."""
+    return f"person:{github_id}"
+
+
+def recipient(capture: dict) -> Optional[str]:
+    """Who a capture is for, as an identity rather than a spoken name: the
+    person's GitHub id for a reviewed message to a person, the agent's
+    session id for a message to a session, or None while it is addressed to
+    no one. His yes covers this recipient and no other."""
+    human = capture.get("human")
+    if human:
+        return person_recipient(human["github_id"])
+    session = capture.get("to_session")
+    return session_recipient(session) if session else None
 
 
 def heard(capture: dict) -> bool:
-    """Heard in full, or read on screen, since it last changed."""
-    return capture["read"] == capture["text"]
+    """Heard in full, or read on screen, naming the recipient it has now,
+    since its text or its recipient last changed."""
+    return (capture["read"] == capture["text"]
+            and capture.get("read_to") == recipient(capture))
 
 
 def accepted(capture: dict) -> bool:
@@ -73,6 +100,7 @@ def read_back(capture: dict, text: str) -> None:
     """He heard `text` in full: his next words decide whether it goes. A
     yes given before this read-back does not carry over to it."""
     capture["read"] = text
+    capture["read_to"] = recipient(capture)
     capture["approved"] = None
     capture["asking"] = True
 
@@ -84,8 +112,10 @@ def accept(capture: dict) -> None:
 
 
 def changed(capture: dict) -> None:
-    """Its text changed: it has to be heard again and approved again."""
+    """Its text or its recipient changed: it has to be heard again and
+    approved again."""
     capture["read"] = None
+    capture["read_to"] = None
     capture["approved"] = None
     capture["asking"] = False
 
@@ -106,8 +136,10 @@ def said_yes(capture: dict) -> bool:
 
 
 def approve(capture: dict) -> None:
-    """His own Send on its box: read on the screen and approved at once."""
+    """His own Send on its box: read on the screen, with the recipient it
+    names, and approved at once."""
     capture["read"] = capture["text"]
+    capture["read_to"] = recipient(capture)
     capture["approved"] = capture["text"]
     capture["asking"] = False
 

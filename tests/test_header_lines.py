@@ -585,6 +585,10 @@ EXEMPT = {
     "run_store.get_messages": (
         "it reads message rows back by id for the conversation's live status, "
         "and returns records; it prints nothing at all"),
+    "server._approve_on_his_yes": (
+        "the `id` it reads is a capture's number, an int JARVIS assigned; the "
+        "names in its notes are the capture's `to` (the agent directory's name, "
+        "settled by `capture`) and his own words, each through `_plain_name`"),
     "server.tool_capture": (
         "it records a capture in the conversation under the agent the "
         "directory found; its sentences name agents only through `_agent_said` "

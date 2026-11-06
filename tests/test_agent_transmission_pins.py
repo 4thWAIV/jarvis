@@ -56,7 +56,7 @@ class _Speech:
         self.said.append(text)
         return _Utterance()
 
-    def read_aloud(self, text, capture):
+    def read_aloud(self, text, capture, lead=""):
         self.read.append((capture, text))
         return _Utterance()
 
@@ -122,7 +122,10 @@ def wire(server, monkeypatch):
 def _capture(server, text, to="guard"):
     server.tool_capture({"text": text})
     number = max(server._captures)
+    # Addressed as `capture` addresses it: the name and the session it is.
     server._captures[number]["to"] = to
+    if to:
+        server._captures[number]["to_session"] = SID
     return number
 
 

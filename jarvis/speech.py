@@ -317,12 +317,24 @@ class Chunk:
     earliest_ack: float = 0.0   # no honest ack can arrive before this (see ACK_FLOOR_FACTOR)
     synthesis: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
     capture: Optional[int] = None   # the capture this chunk reads back, if it does
+    # The read-back's opening line naming who the capture is for ("To
+    # chitauri."): part of the reading, so it must be heard, but not of the
+    # box's text, so the page lights no line of the box for it.
+    lead: bool = False
     # What the page shows while this chunk plays (a story beat's targets):
     # sent verbatim on its audio frame as `cue`, never read here. The last
     # chunk of a cue carries `"last": True`, so the page knows where it ends.
     cue: Optional[dict] = None
     outcome: str = Outcome.PENDING   # what became of it (Outcome)
     started_at: Optional[float] = None
+
+
+def _capture_fields(chunk: Chunk) -> dict:
+    """What a chunk's frame says of the capture it reads back: its number,
+    and `captureLead` for the line naming who it is for."""
+    if chunk.capture is None:
+        return {}
+    return {"capture": chunk.capture, **({"captureLead": True} if chunk.lead else {})}
 
 
 @dataclass
@@ -597,27 +609,28 @@ class SpeechScheduler:
         for text in utt.splitter.feed(delta):
             self._add_chunk(utt, text)
 
-    def read_into(self, utt: Utterance, text: str, capture: int) -> int:
+    def read_into(self, utt: Utterance, text: str, capture: int, lead: str = "") -> int:
         """Speak `text` inside `utt`, after what has been fed so far, with every
         chunk marked as reading capture `capture` (the page lights the capture
-        box instead of the captions for them). Whatever the turn had half
-        fed is flushed first, so the order holds. Returns the index of the
-        last chunk added, or -1 when nothing could be added."""
+        box instead of the captions for them), after `lead` (who it is for)
+        when given. Whatever the turn had half fed is flushed first, so the
+        order holds. Returns the index of the last chunk added, or -1 when
+        nothing could be added."""
         if utt.cancelled or utt.closed:
             return -1
         tail = utt.splitter.flush()
         if tail:
             self._add_chunk(utt, tail)
-        self._add_reading(utt, text, capture)
+        self._add_reading(utt, text, capture, lead=lead)
         self._kick()
         return len(utt.chunks) - 1
 
-    def read_aloud(self, text: str, capture: int) -> Utterance:
+    def read_aloud(self, text: str, capture: int, lead: str = "") -> Utterance:
         """Read capture `capture` on its own, outside any turn (the Read
         button on its box), after whatever is already queued. Its chunks are
         marked as read_into's are; wait_for says when it has been heard."""
         u = self._new(Priority.NORMAL, "say", immediate=True, label="reply")
-        self._add_reading(u, text, capture)
+        self._add_reading(u, text, capture, lead=lead)
         u.closed = True
         self._pending.append(u)
         self._kick()
@@ -656,7 +669,9 @@ class SpeechScheduler:
         self._kick()
 
     def _add_reading(self, utt: Utterance, text: str, capture: Optional[int] = None,
-                     cue: Optional[dict] = None) -> None:
+                     cue: Optional[dict] = None, lead: str = "") -> None:
+        if lead:
+            self._add_chunk(utt, lead, capture=capture, lead=True)
         reading = SentenceSplitter()
         pieces = [p for p in [*reading.feed(text), reading.flush()] if p]
         for n, piece in enumerate(pieces):
@@ -981,7 +996,7 @@ class SpeechScheduler:
             replay = self._new(Priority.NORMAL, "say", immediate=True, label=u.label)
             for c in u.chunks:
                 replay.chunks.append(Chunk(c.text, audio=c.audio, ready=True,
-                                           capture=c.capture, cue=c.cue))
+                                           capture=c.capture, cue=c.cue, lead=c.lead))
             replay.closed = True
             self._pending.append(replay)
             self._kick()
@@ -1182,8 +1197,8 @@ class SpeechScheduler:
 
     # ── internals ──────────────────────────────────────────────────────
     def _add_chunk(self, utt: Utterance, text: str, capture: Optional[int] = None,
-                   cue: Optional[dict] = None) -> None:
-        chunk = Chunk(text, capture=capture, cue=cue)
+                   cue: Optional[dict] = None, lead: bool = False) -> None:
+        chunk = Chunk(text, capture=capture, cue=cue, lead=lead)
         utt.chunks.append(chunk)
         chunk.synthesis = self._spawn(self._synthesize(utt, chunk))
 
@@ -1467,7 +1482,7 @@ class SpeechScheduler:
                     self._kick_later(chunk.earliest_ack - now)
                 if not await self._send({"type": "text", "text": chunk.text,
                                          "utt": u.id, "idx": idx,
-                                         **({"capture": chunk.capture} if chunk.capture is not None else {})}, u):
+                                         **_capture_fields(chunk)}, u):
                     return False
                 self._text_status_pending = True
                 if chunk.notice:
@@ -1493,8 +1508,7 @@ class SpeechScheduler:
                     msg = {"type": "audio", "utt": u.id, "idx": idx,
                            "data": base64.b64encode(chunk.audio).decode(),
                            "text": chunk.text, "kind": u.label}
-                    if chunk.capture is not None:
-                        msg["capture"] = chunk.capture
+                    msg.update(_capture_fields(chunk))
                     if chunk.cue is not None:
                         msg["cue"] = chunk.cue
                     await self._emit_raw(msg)

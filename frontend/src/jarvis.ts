@@ -307,7 +307,9 @@ export function startJarvis(orb: Orb): void {
   // arrives, so the captions keep pace with the voice and the highlight is
   // on the sentence being heard. A sentence reading a capture back lights
   // the capture's box instead, and is not added to the captions.
-  const chunkText = new Map<string, { text: string; capture?: number }>();
+  // A read-back's opening line naming who it is for (`lead`) is heard as part
+  // of the reading but is not the box's text, so it lights no line.
+  const chunkText = new Map<string, { text: string; capture?: number; lead?: boolean }>();
   // A story beat's cue, by chunk (packages.ts): shown in the package's frame
   // as the beat's words START playing, and ended as its last words end.
   const chunkCue = new Map<string, StoryCue>();
@@ -328,7 +330,8 @@ export function startJarvis(orb: Orb): void {
     if (!chunk) return;
     if (chunk.capture !== undefined) {
       jarvisQuiet();
-      captureSpeaking(chunk.capture, chunk.text, seconds);
+      if (chunk.lead) captureQuiet();
+      else captureSpeaking(chunk.capture, chunk.text, seconds);
     } else {
       captureQuiet();
       jarvisSpeaking(utt, chunk.text, seconds, idx);
@@ -437,6 +440,7 @@ export function startJarvis(orb: Orb): void {
           chunkText.set(`${msg.utt}:${msg.idx}`, {
             text: String(msg.text),
             ...(typeof msg.capture === "number" ? { capture: msg.capture } : {}),
+            ...(msg.captureLead === true ? { lead: true } : {}),
           });
         }
         if (msg.cue && typeof msg.cue === "object") {
