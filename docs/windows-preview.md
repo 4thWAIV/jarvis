@@ -108,7 +108,6 @@ On a Windows 11 Pro virtual machine, under an elevated administrator account:
 
 - A standard (non-administrator) user account, and a second user on the same machine.
 - Physical audio: a real microphone, browser capture and permissions, voice output and playback. Chrome was not installed; Chrome on macOS remains the tested voice page.
-- Packets: the page's 100 ms PCM packets from a live capture are unverified.
-- Work packages: opening a local zip (or a received one) fails in Windows extraction, which stays unimplemented until the pending extraction proposal is approved.
+- Work packets: opening a local zip fails in Windows extraction (`bundle_archive.extract`), which stays unimplemented until the pending extraction proposal is approved. Received packets are unverified.
 - JarvisNet: team server sign-in, the Network view and messages between people.
 - Codex as a brain, cancelling runs (process termination), steering other Claude Code sessions, and project paths longer than 260 characters (Windows long paths stay off).
