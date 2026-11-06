@@ -177,11 +177,11 @@ def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
 # ── the pause cues ───────────────────────────────────────────────────────
 
 def _quick_cues(cue="likely", **change):
-    """Cues inside the default patience (1.5 s): tentative after 0.3 s of
-    quiet, deciding after 0.6 s, likely-end after 0.9 s; with
-    `change` made to `cue`."""
+    """The pause cues at the default patience (1.5 s): tentative after 0.3 s
+    of quiet (20 percent), deciding after 0.6 s, likely-end after 0.9 s;
+    with `change` made to `cue`."""
     from jarvis import voice_control
-    cues = {"tentative": {"before": 1.2}, "deciding": {"before": 0.9}, "likely": {"before": 0.6}}
+    cues = {"tentative": {"percent": 20}, "deciding": {"percent": 40}, "likely": {"percent": 60}}
     cues[cue] = {**cues[cue], **change}
     voice_control.change(cues=cues)
 
@@ -215,7 +215,7 @@ def test_the_pause_cues_go_to_the_page_gathering_the_turn_and_no_other(client):
 
 
 @pytest.mark.parametrize("cue", ["deciding", "likely"])
-def test_a_cue_that_is_off_is_shown_without_its_sound(client, cue):
+def test_a_cue_that_is_off_is_skipped_and_the_others_keep_their_order(client, cue):
     c, server = client
     _quick_cues(cue, on=False)
     with c.websocket_connect("/ws/voice") as ws:
@@ -225,7 +225,7 @@ def test_a_cue_that_is_off_is_shown_without_its_sound(client, cue):
         seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
                             limit=40)
         assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [
-            ("tentative", True), ("deciding", cue != "deciding"), ("likely", cue != "likely")]
+            (stage, True) for stage in ("tentative", "deciding", "likely") if stage != cue]
 
 
 def test_no_cue_sounds_while_he_is_away(client, monkeypatch):

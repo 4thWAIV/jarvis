@@ -11,10 +11,11 @@
  *           `cue`): off plays none.
  *   cues    The five capture cues, each on or off with its tone: start and
  *           stop (listening started, stopped), and the pause cues in the
- *           order they play, tentative, deciding and likely, each `before`
- *           seconds before the end of his turn (it plays at patience -
- *           before seconds of quiet, and not at all when that is not after
- *           he stopped); each earlier one's `before` is the larger.
+ *           order they play, tentative, deciding and likely, each at its
+ *           `percent` of his patience from when his speech was last heard
+ *           (the send is at 100); the ones that are on each at least
+ *           PERCENT_SPACING after the one before, so they keep their order
+ *           at any patience.
  *   volume  One cue volume, in percent of a quiet ceiling.
  */
 
@@ -42,45 +43,65 @@ export function isPauseCue(name: unknown): name is PauseCue {
 }
 export type Tone = "rise" | "fall" | "pulse" | "low" | "double" | "resolve";
 export const TONES: readonly Tone[] = ["rise", "fall", "pulse", "low", "double", "resolve"];
-/** A pause cue's seconds before the end of his turn, and the cue volume in
- *  percent (voice_control.BEFORE_MIN/MAX, VOLUME_MIN/MAX). */
-export const BEFORE_MIN = 0.25;
-export const BEFORE_MAX = 10;
+/** A pause cue's share of his patience in whole percent, the least spacing
+ *  between two that are on, and the cue volume in percent
+ *  (voice_control.PERCENT_SPACING, PERCENT_MIN/MAX, VOLUME_MIN/MAX). */
+export const PERCENT_SPACING = 5;
+export const PERCENT_MIN = PERCENT_SPACING;
+export const PERCENT_MAX = 100 - PERCENT_SPACING;
 export const VOLUME_MIN = 5;
 export const VOLUME_MAX = 100;
 
-export interface CueSetting { on: boolean; tone: Tone; before?: number }
+export interface CueSetting { on: boolean; tone: Tone; percent?: number }
 export type CueSettings = Record<CueName, CueSetting>;
 
-/** When a pause cue plays at this patience: seconds of quiet, or null
- *  when it falls at or before the moment he stopped. */
+/** Seconds of quiet after which a pause cue plays at this patience, to the
+ *  hundredth, halves up (voice_control.pause_cue_at); null while his
+ *  patience is not known. */
 export function pauseCueAt(patience: number | null, cue: CueSetting): number | null {
-  if (patience == null || cue.before == null) return null;
-  const at = Math.round((patience - cue.before) * 100) / 100;
-  return at > 0 ? at : null;
+  if (patience == null || cue.percent == null) return null;
+  return Math.floor(patience * cue.percent + 0.5) / 100;
 }
 
-/** The gaps around one pause cue at this patience, each tuned by that
- *  cue's own `before` and its neighbour's (there is no shared spacing):
- *  the seconds since the nearest earlier pause cue that is on and plays,
- *  and until the nearest later one, or until what he said is sent when
- *  none later plays (`next: null`). Null when this cue does not play. */
+/** The pause cues that are on, in the order they play. */
+function pauseCuesOn(cues: CueSettings): PauseCue[] {
+  return PAUSE_CUES.filter((n) => cues[n].on);
+}
+
+/** The shares a pause cue may take without crossing a neighbour that is on
+ *  (voice_control.pause_cue_bounds): PERCENT_SPACING after the nearest
+ *  earlier one (or PERCENT_MIN) to PERCENT_SPACING before the nearest
+ *  later one (or PERCENT_MAX), whether this cue is on or not. */
+export function pauseCueBounds(cues: CueSettings, name: PauseCue): { min: number; max: number } {
+  const i = PAUSE_CUES.indexOf(name);
+  const on = pauseCuesOn(cues).filter((n) => n !== name);
+  const earlier = on.filter((n) => PAUSE_CUES.indexOf(n) < i).pop();
+  const later = on.find((n) => PAUSE_CUES.indexOf(n) > i);
+  return { min: earlier ? (cues[earlier].percent as number) + PERCENT_SPACING : PERCENT_MIN,
+           max: later ? (cues[later].percent as number) - PERCENT_SPACING : PERCENT_MAX };
+}
+
+/** The gaps around one pause cue at this patience, in seconds
+ *  (voice_control.pause_cue_gaps): since the nearest earlier pause cue
+ *  that is on, and until the nearest later one, or until what he said is
+ *  sent when none later is on (`next: null`). Null while his patience is
+ *  not known. */
 export interface PauseCueGaps {
   after: { cue: PauseCue; gap: number } | null;
   until: { next: PauseCue | null; gap: number };
 }
 export function pauseCueGaps(patience: number | null, cues: CueSettings, name: PauseCue): PauseCueGaps | null {
   const at = pauseCueAt(patience, cues[name]);
-  if (at == null) return null;
-  const sounding = (n: PauseCue) => cues[n].on && pauseCueAt(patience, cues[n]) != null;
-  const round = (seconds: number) => Math.round(seconds * 100) / 100;
+  if (patience == null || at == null) return null;
+  const seconds = (n: PauseCue) => pauseCueAt(patience, cues[n]) as number;
+  const round = (value: number) => Math.round(value * 100) / 100;
   const i = PAUSE_CUES.indexOf(name);
-  const earlier = PAUSE_CUES.slice(0, i).filter(sounding).pop();
-  const later = PAUSE_CUES.slice(i + 1).find(sounding) ?? null;
+  const on = pauseCuesOn(cues);
+  const earlier = on.filter((n) => PAUSE_CUES.indexOf(n) < i).pop();
+  const later = on.find((n) => PAUSE_CUES.indexOf(n) > i) ?? null;
   return {
-    after: earlier ? { cue: earlier, gap: round(at - (pauseCueAt(patience, cues[earlier]) as number)) } : null,
-    until: { next: later, gap: round(later ? (pauseCueAt(patience, cues[later]) as number) - at
-                                           : cues[name].before as number) },
+    after: earlier ? { cue: earlier, gap: round(at - seconds(earlier)) } : null,
+    until: { next: later, gap: round((later ? seconds(later) : patience) - at) },
   };
 }
 
@@ -126,8 +147,8 @@ function parseCues(value: unknown): CueSettings | null {
     const c = (value as Record<string, unknown>)[name] as Record<string, unknown> | undefined;
     if (!c || typeof c.on !== "boolean" || !TONES.includes(c.tone as Tone)) return null;
     const pause = isPauseCue(name);
-    if (pause && (typeof c.before !== "number" || !Number.isFinite(c.before))) return null;
-    out[name] = { on: c.on, tone: c.tone as Tone, ...(pause ? { before: c.before as number } : {}) };
+    if (pause && (typeof c.percent !== "number" || !Number.isFinite(c.percent))) return null;
+    out[name] = { on: c.on, tone: c.tone as Tone, ...(pause ? { percent: c.percent as number } : {}) };
   }
   return out as CueSettings;
 }

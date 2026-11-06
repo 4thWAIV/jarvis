@@ -51,7 +51,7 @@ class Clock:
 class Harness:
     def __init__(self, hold=1.5, leaky=False, frames=None, floor=None, cues=()):
         self.clock = Clock(leaky)
-        self.cues = list(cues)          # [(stage, seconds before the deadline)]
+        self.cues = list(cues)          # [(stage, share of the hold)]
         self.paused: list[tuple] = []   # (turn, stage, when)
         self.committed: list[tuple] = []
         self.stalled: list[tuple] = []
@@ -329,64 +329,92 @@ def test_a_closed_socket_commits_nothing_and_gives_the_words_back():
 
 
 # ── the pause cues ───────────────────────────────────────────────────────
-# Patience 4, tentative 2.5 s before the end of the turn, deciding 1.75 s
-# and likely-end 1.0 s before: the cues at 1.5, 2.25 and 3 s of quiet, the
-# commit at 4.
+# Each pause cue at its share of the hold from when it began (the defaults,
+# 40, 65 and 85 percent), the commit at 100: at his patience of 1.5 the cues
+# after 0.6, 0.975 and 1.275 s of quiet, at a patience of 4 after 1.6, 2.6
+# and 3.4 s.
 
-TRIAL = (("tentative", 2.5), ("deciding", 1.75), ("likely", 1.0))
+TRIAL = (("tentative", 0.40), ("deciding", 0.65), ("likely", 0.85))
+STAGES = ["tentative", "deciding", "likely"]
 
 
 def _stages(h):
     return [stage for _, stage, _ in h.paused]
 
 
-def test_the_pause_cues_come_once_each_at_their_times_then_the_commit():
-    h = Harness(hold=4, cues=TRIAL)
+def _times(h):
+    return [(stage, pytest.approx(at)) for _, stage, at in h.paused]
+
+
+@pytest.mark.parametrize("patience", [1.5, 4.0])
+def test_all_three_pause_cues_come_once_each_in_order_at_their_shares_then_the_commit(patience):
+    h = Harness(hold=patience, cues=TRIAL)
     h.c.final("book a table", 1)
-    h.clock.advance(1.49)
-    assert h.paused == []
-    h.clock.advance(0.01)
-    assert h.paused == [(h.c.turn_id, "tentative", 1.5)]
-    assert h.c.pause_stage == "tentative" and h.c.state == "gathering"
-    h.clock.advance(0.74)
-    assert _stages(h) == ["tentative"]
-    h.clock.advance(0.01)
-    assert h.paused[-1] == (h.c.turn_id, "deciding", 2.25), "between the other two"
-    assert h.c.pause_stage == "deciding" and h.c.state == "gathering"
-    h.clock.advance(0.75)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("deciding", 2.25),
-                                                          ("likely", 3.0)]
+    for (stage, share), n in zip(TRIAL, range(1, 4)):
+        h.clock.advance(patience * share - h.clock.now - 0.005)
+        assert len(h.paused) == n - 1, f"nothing before the {stage} cue's time"
+        h.clock.advance(0.005)
+        assert h.paused[-1] == (h.c.turn_id, stage, pytest.approx(patience * share))
+        assert h.c.pause_stage == stage and h.c.state == "gathering"
+    assert h.committed == [], "every cue comes before the send"
+    h.clock.advance(patience - h.clock.now - 0.005)
     assert h.committed == []
-    h.clock.advance(1.0)
+    h.clock.advance(0.005)
     assert h.texts() == ["book a table"]
     h.clock.advance(10)
-    assert _stages(h) == ["tentative", "deciding", "likely"], "at most once per stage per pause"
+    assert _stages(h) == STAGES, "at most once per stage per pause"
+    assert _times(h) == [(stage, patience * share) for stage, share in TRIAL]
 
 
+@pytest.mark.parametrize("patience", [1.5, 4.0])
 @pytest.mark.parametrize("leaky", [False, True])
-@pytest.mark.parametrize("speak_at,given", [
-    (1.5, []), (2.0, ["tentative"]), (2.25, ["tentative"]), (2.5, ["tentative", "deciding"]),
-    (3.0, ["tentative", "deciding"]), (3.5, ["tentative", "deciding", "likely"])])
-def test_speech_at_or_after_either_cue_cancels_what_is_still_due_and_starts_again(
-        speak_at, given, leaky):
+@pytest.mark.parametrize("share,given", [
+    (0.40, []), (0.50, ["tentative"]), (0.65, ["tentative"]),
+    (0.75, ["tentative", "deciding"]), (0.85, ["tentative", "deciding"]),
+    (0.95, STAGES)])
+def test_speech_at_or_between_the_cues_cancels_what_is_still_due_and_starts_again(
+        patience, share, given, leaky):
     """At each boundary (his word landing the moment a cue falls due, before
     its callback runs) and between them, accepted speech cancels the cues
-    still pending, the revision moves on, and a timer that fires anyway
-    (leaky) gives nothing."""
-    h = Harness(hold=4, leaky=leaky, cues=TRIAL)
+    still pending and the send, the revision moves on, and a timer that
+    fires anyway (leaky) gives nothing. The next pause has all three again."""
+    h = Harness(hold=patience, leaky=leaky, cues=TRIAL)
     h.c.final("book a table", 1)
+    speak_at = patience * share
     h.clock.advance(speak_at - 0.001)
     h.clock.now = speak_at                       # the cue due now has not run yet
     h.c.interim("for")
     before = list(h.paused)
     assert _stages(h) == given
-    h.clock.advance(1.49)
+    h.clock.advance(patience * 0.35)             # the old times pass; the new pause's first is at 0.4
     assert h.paused == before, "a cue from before he spoke again"
+    assert h.committed == [], "an interim heard as speech holds the turn"
     h.c.final("for two", 2)
-    h.clock.advance(4.0)
-    assert _stages(h)[len(before):] == ["tentative", "deciding", "likely"]
-    assert all(at > speak_at for _, _, at in h.paused[len(before):])
+    restart = h.clock.now
+    h.clock.advance(patience + 0.01)
+    assert _stages(h)[len(before):] == STAGES
+    assert [at for _, _, at in h.paused[len(before):]] == [
+        pytest.approx(restart + patience * s) for _, s in TRIAL]
     assert h.texts() == ["book a table for two"]
+
+
+@pytest.mark.parametrize("patience", [1.5, 4.0])
+def test_interims_that_keep_coming_never_commit_and_never_give_a_cue(patience):
+    """While he keeps talking (interims heard as speech closer together than
+    the first cue's share), nothing is sent and no cue plays, for as long as
+    he talks, with or without a final gathered."""
+    h = Harness(hold=patience, cues=TRIAL)
+    for word in range(3):                        # before any final: no turn yet
+        h.c.interim("so " * (word + 1))
+        h.clock.advance(0.3)
+    h.c.final("so the plan", 1)
+    for word in range(200):                      # 60 s of talking after it
+        h.clock.advance(0.3)
+        h.c.interim("is " * (word + 1))
+    assert h.committed == [] and h.paused == []
+    h.c.final("is long", 2)
+    h.clock.advance(patience)
+    assert _stages(h) == STAGES and h.texts() == ["so the plan is long"]
 
 
 def test_a_cue_whose_revision_moved_on_is_never_given_late():
@@ -394,14 +422,14 @@ def test_a_cue_whose_revision_moved_on_is_never_given_late():
     h.c.final("one", 1)
     h.clock.advance(1.0)
     h.c.final("two", 2)                          # the old cues' token is stale now
-    h.clock.advance(0.6)                         # past the first cue's old time
+    h.clock.advance(0.7)                         # past the first cue's old time (1.6)
     assert h.paused == []
     h.clock.advance(0.9)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 2.5)]
-    h.clock.advance(0.7)                         # past the deciding cue's old time (2.75)
+    assert _times(h) == [("tentative", 2.6)]
+    h.clock.advance(0.99)                        # past the deciding cue's old time (2.6)
     assert _stages(h) == ["tentative"]
-    h.clock.advance(0.05)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 2.5), ("deciding", 3.25)]
+    h.clock.advance(0.0101)
+    assert _times(h) == [("tentative", 2.6), ("deciding", 3.6)]
 
 
 @pytest.mark.parametrize("end", ["discard", "close", "send_now"])
@@ -421,20 +449,28 @@ def test_no_cue_while_idle_or_only_an_interim_is_heard():
     assert h.paused == []
 
 
-def test_a_cue_not_after_he_stopped_is_not_scheduled():
-    """At patience 1.5 the tentative cue (2.5 s before) and the deciding cue
-    (1.75 s before) would fall before he stopped: only the likely-end cue
-    plays, at 0.5 s."""
-    h = Harness(hold=1.5, cues=TRIAL)
+@pytest.mark.parametrize("share", [0.0, 1.0, 1.2, -0.1])
+def test_a_share_outside_the_hold_is_not_scheduled(share):
+    """Only a cue strictly inside the hold plays: never at the moment he
+    stopped, and never at or after the send."""
+    h = Harness(hold=1.5, cues=(("tentative", share), ("likely", 0.85)))
     h.c.final("hi", 1)
-    h.clock.advance(2)
-    assert [(stage, at) for _, stage, at in h.paused] == [("likely", 0.5)]
+    h.clock.advance(5)
+    assert _times(h) == [("likely", 1.275)]
+
+
+def test_a_cue_left_out_is_skipped_and_the_rest_keep_their_times():
+    """A pause cue that is off is not given to the controller at all."""
+    h = Harness(hold=1.5, cues=(("tentative", 0.40), ("likely", 0.85)))
+    h.c.final("hi", 1)
+    h.clock.advance(5)
+    assert _times(h) == [("tentative", 0.6), ("likely", 1.275)]
 
 
 def test_no_cue_while_the_commit_waits_for_the_recogniser_or_after_a_stall():
-    h = Harness(hold=4, frames={"page-a": (40, 10)}, cues=(("late", 0.25),))
+    h = Harness(hold=4, frames={"page-a": (40, 10)}, cues=(("late", 0.95),))
     h.c.final("transfer the", 1, client="page-a")
-    h.clock.advance(3.75)
+    h.clock.advance(3.8)
     assert _stages(h) == ["late"]
     h.clock.advance(10)                          # commit-pending, then stalled
     assert h.c.state == "stalled" and _stages(h) == ["late"]
@@ -446,10 +482,9 @@ def test_no_cue_while_the_commit_waits_for_the_recogniser_or_after_a_stall():
 def test_the_cue_timings_are_read_again_each_time_the_hold_starts():
     h = Harness(hold=4, cues=TRIAL)
     h.c.final("one", 1)
-    h.cues = [("likely", 2.0)]
+    h.cues = [("likely", 0.5)]
     h.clock.advance(4.0)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("deciding", 2.25),
-                                                          ("likely", 3.0)]
+    assert _times(h) == [("tentative", 1.6), ("deciding", 2.6), ("likely", 3.4)]
     h.c.final("two", 2)
     h.clock.advance(4.0)
-    assert [(stage, at) for _, stage, at in h.paused[3:]] == [("likely", 6.0)]
+    assert _times(h)[3:] == [("likely", 6.0)]

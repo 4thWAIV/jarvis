@@ -35,16 +35,17 @@ Discard) drops the turn; a closed voice socket commits nothing and gives
 back what was gathered.
 
 While he pauses in a gathered turn, pause cues may be due before the
-commit (`pause_cues`: each stage with its seconds before the deadline,
-read again each time the hold starts; voice_control.PAUSE_CUES):
+commit (`pause_cues`: each stage with its share of the hold, read again each
+time the hold starts; voice_control.PAUSE_CUES, only those that are on):
 `tentative`, when JARVIS thinks he may be done, `deciding`, while it is
-still deciding, and `likely`, at the threshold. Each is timed from the same
-deadline as the commit and checked, when due, against the turn, the
-revision and the deadline it was scheduled for, and that the turn is still
-being gathered; any accepted speech moves the revision on and starts the
-pause again, so a cue is given at most once per stage per pause and never
-late. A stage whose time falls at or before the moment he stopped
-(seconds before >= the hold) is not scheduled. `on_pause` is told the
+still deciding, and `likely`, when it is almost done. Each is timed from
+the moment the hold starts (his speech last heard) at its share of the
+same hold the commit ends, so at any patience they come in their order,
+each before the commit; a share outside 0 to 1 is not scheduled. Each is
+checked, when due, against the turn, the revision and the deadline it was
+scheduled for, and that the turn is still being gathered; any accepted
+speech moves the revision on and starts the pause again, so a cue is given
+at most once per stage per pause and never late. `on_pause` is told the
 turn and the stage; whether a sound plays is the caller's to decide.
 
 Every time-dependent step takes its clock and timers from the caller, so
@@ -75,7 +76,7 @@ Commit = Callable[[str, Optional[int], int], Awaitable[None]]
 # None when it has none open.
 Coverage = Callable[[str], Optional[tuple[int, int]]]
 CallLater = Callable[[float, Callable[[], None]], object]
-# The pause cues to time: each stage with its seconds before the deadline.
+# The pause cues to time: each stage with its share of the hold (0 to 1).
 PauseCues = Callable[[], Sequence[tuple[str, float]]]
 
 
@@ -270,13 +271,15 @@ class TurnController:
         self._arm_cues(token)
 
     def _arm_cues(self, token: tuple) -> None:
-        """This pause's cues, each once, timed back from the deadline."""
+        """This pause's cues, each once, at its share of the hold from the
+        moment it started."""
         self._cancel_cues()
-        for stage, before in self._pause_cues():
-            delay = self.hold - before
-            if delay > 0:
+        start = token[2] - self.hold
+        for stage, share in self._pause_cues():
+            if 0 < share < 1:
+                delay = self.hold * share
                 self._cue_timers.append(self._call_later(
-                    delay, lambda stage=stage, at=token[2] - before: self._cue_due(token, stage, at)))
+                    delay, lambda stage=stage, at=start + delay: self._cue_due(token, stage, at)))
 
     def _cancel_cues(self) -> None:
         for timer in self._cue_timers:

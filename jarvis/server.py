@@ -8455,10 +8455,9 @@ _CUE_SAID = {"start": "listening started", "stop": "listening stopped",
 
 
 def _gaps_said(settings: dict, name: str) -> str:
-    """A playing pause cue's gaps to its neighbours, as Settings shows them."""
+    """A pause cue's gaps to its neighbours that are on, as Settings shows
+    them."""
     gaps = voice_control.pause_cue_gaps(settings, name)
-    if gaps is None:
-        return ""
     said = ""
     if gaps["after"]:
         earlier, gap = gaps["after"]
@@ -8469,17 +8468,17 @@ def _gaps_said(settings: dict, name: str) -> str:
 
 
 def _cues_said(settings: dict) -> str:
-    """Each capture cue: on or off, its tone, and a pause cue's time at his
-    patience (voice_control: patience minus its seconds before the end)."""
+    """Each capture cue: on or off, its tone, and a pause cue's share of his
+    patience with its time and gaps at his patience (voice_control)."""
     parts = []
     for name in voice_control.CUES:
         cue = settings["cues"][name]
         part = f"{_CUE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}"
         if name in voice_control.PAUSE_CUES:
             at = voice_control.pause_cue_at(settings, name)
-            part += (f", {cue['before']:g} s before the end of his turn ("
-                     + (f"after {at:g} s of quiet{_gaps_said(settings, name)})" if at else
-                        "longer than his patience, so it does not play)"))
+            part += (f", at {cue['percent']} percent of his patience"
+                     + (f" (after {at:g} s of quiet{_gaps_said(settings, name)})" if cue["on"]
+                        else ", skipped while off"))
         parts.append(part)
     master = "" if settings["sounds"] else " (all silent while capture sounds are off)"
     return (f"Cues{master}: " + "; ".join(parts)
@@ -12159,7 +12158,7 @@ async def voice_handler(ws: WebSocket):
         on_stalled=lambda turn_id, text: show_turn(
             {"state": "stalled", "turnId": turn_id, "text": text}),
         on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)),
-        pause_cues=lambda: voice_control.pause_cue_leads(voice_control.read_or_defaults()),
+        pause_cues=lambda: voice_control.pause_cue_shares(voice_control.read_or_defaults()),
         on_pause=lambda turn_id, stage: show_turn(
             _pause_frame(turn_id, stage, turns.gathered_text)))
     _voice_turns[ws] = turns

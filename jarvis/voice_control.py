@@ -35,17 +35,23 @@ notes, voice.ts):
   deciding   he is still quiet: JARVIS is deciding whether he is done
   likely     he is still quiet: the turn is about to be sent
 
-The pause cues (PAUSE_CUES, in the order they play) are timed in seconds
-before the end of his turn (`before`), never on a clock of their own: the
-end of his turn is his patience after the last word accepted as his, and a
-pause cue plays at patience - before seconds of quiet. So each pause cue's
-`before` must be more than the next one's (tentative, then deciding, then
-likely), each within BEFORE_MIN to BEFORE_MAX, and a cue whose time falls
-at or before the moment he stopped (before >= patience) does not play at
-that patience. Changing his patience never invalidates them. The defaults
-(2.5, 1.75 and 1.0) give the trial timings in turn-taking.md at a patience
-of 4: tentative after 1.5 s, deciding after 2.25 s, likely-end after
-3 s, the commit at 4. `volume` is one cue
+The pause cues (PAUSE_CUES, in the order they play) are timed as a share
+of his patience (`percent`), never on a clock of their own: from the moment
+the hold starts (his speech last heard), a pause cue plays after percent of
+his patience, and the commit comes at 100 percent. So at any patience every
+pause cue that is on plays, in order, before the turn is sent. The order is
+kept by construction: the pause cues that are on must each be at least
+PERCENT_SPACING points after the one before, within PERCENT_MIN to
+PERCENT_MAX (so the first is that far from the start and the last that far
+from the send); a cue that is off is skipped, is not timed, and does not
+constrain the others (`pause_cue_bounds`). A change that would break the
+order is refused, turning a cue on included. The defaults (40, 65 and 85)
+at his patience of 1.5 s play after 0.6, 0.98 and 1.28 s of quiet, the commit at 1.5;
+at a patience of 4, after 1.6, 2.6 and 3.4 s. Timings saved before as seconds
+before the end of his turn (`before`) were dropped by migration 6, since a
+lead in seconds has no meaning as a share once his patience changes: those
+pause cues read with the default shares, keeping their tone and on or off.
+`volume` is one cue
 volume, VOLUME_MIN to VOLUME_MAX percent of a quiet ceiling the page sets.
 
 They are per user, on this JARVIS (the node's SQLite, its own schema
@@ -67,6 +73,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import time
 from contextlib import closing
@@ -88,23 +95,26 @@ DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
 # His patience may be set within these bounds, in seconds.
 PATIENCE_MIN, PATIENCE_MAX = 0.5, 10.0
 # The capture cues: the two that mark listening, the pause cues that mark
-# the stages of a pause in his turn (in the order they play, each earlier
-# one further before the end of his turn), and the quiet presets each may
-# play.
+# the stages of a pause in his turn (in the order they play, each at a
+# larger share of his patience than the one before), and the quiet presets
+# each may play.
 LISTEN_CUES = ("start", "stop")
 PAUSE_CUES = ("tentative", "deciding", "likely")
 CUES = LISTEN_CUES + PAUSE_CUES
 TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
-# A pause cue's seconds before the end of his turn.
-BEFORE_MIN, BEFORE_MAX = 0.25, PATIENCE_MAX
+# A pause cue's share of his patience, in whole percent, and the least
+# spacing between two pause cues that are on (and from the start and the
+# send).
+PERCENT_SPACING = 5
+PERCENT_MIN, PERCENT_MAX = PERCENT_SPACING, 100 - PERCENT_SPACING
 # The cue volume, in percent of the page's quiet ceiling.
 VOLUME_MIN, VOLUME_MAX = 5, 100
 CUE_DEFAULTS = {
     "start": {"on": True, "tone": "rise"},
     "stop": {"on": True, "tone": "fall"},
-    "tentative": {"on": True, "tone": "pulse", "before": 2.5},
-    "deciding": {"on": True, "tone": "low", "before": 1.75},
-    "likely": {"on": True, "tone": "resolve", "before": 1.0},
+    "tentative": {"on": True, "tone": "pulse", "percent": 40},
+    "deciding": {"on": True, "tone": "low", "percent": 65},
+    "likely": {"on": True, "tone": "resolve", "percent": 85},
 }
 VOLUME_DEFAULT = 50
 LOCAL_OWNER = "local"
@@ -157,6 +167,18 @@ _MIGRATIONS = {
                    AND json_type(cue_settings, '$.deciding') IS NULL) AS e
          WHERE voice_input_settings.user_key = e.k AND e.t > e.l
            AND NOT (e.t > 1.75 AND 1.75 > e.l);
+    """,
+    # The pause cues are timed as a share of his patience now, not in
+    # seconds before the end of his turn. A saved lead in seconds cannot be
+    # turned into a share (the same lead is a different share at every
+    # patience, and a lead longer than his patience never played), so each
+    # is dropped: those cues read with the default shares, keeping their
+    # tone and on or off.
+    6: """
+        UPDATE voice_input_settings
+           SET cue_settings = json_remove(cue_settings, '$.tentative.before',
+                                          '$.deciding.before', '$.likely.before')
+         WHERE json_valid(cue_settings) AND json_type(cue_settings) = 'object';
     """,
 }
 
@@ -269,8 +291,8 @@ def _cue_problem(name: object, choice: object) -> Optional[str]:
         return f"The cues are {', '.join(CUES)}."
     if not isinstance(choice, dict) or not choice:
         return f"Say what to change about the {name} cue: on, tone" + (
-            " or before." if name in PAUSE_CUES else ".")
-    keys = {"on", "tone", "before"} if name in PAUSE_CUES else {"on", "tone"}
+            " or percent." if name in PAUSE_CUES else ".")
+    keys = {"on", "tone", "percent"} if name in PAUSE_CUES else {"on", "tone"}
     for key, value in choice.items():
         if key not in keys:
             return f"The {name} cue has {', '.join(sorted(keys))}."
@@ -278,9 +300,10 @@ def _cue_problem(name: object, choice: object) -> Optional[str]:
             return f"The {name} cue is on (true) or off (false)."
         if key == "tone" and value not in TONES:
             return f"A cue's tone is one of {', '.join(TONES)}."
-        if key == "before" and not (_number(value) and BEFORE_MIN <= value <= BEFORE_MAX):
-            return (f"A pause cue plays {BEFORE_MIN:g} to {BEFORE_MAX:g} seconds before the "
-                    "end of his turn.")
+        if key == "percent" and not (_number(value) and float(value).is_integer()  # type: ignore[arg-type]
+                                     and PERCENT_MIN <= value <= PERCENT_MAX):  # type: ignore[operator]
+            return (f"A pause cue plays at a whole percent of his patience from {PERCENT_MIN} "
+                    f"to {PERCENT_MAX}.")
     return None
 
 
@@ -300,52 +323,68 @@ def _cues_in_force(saved: Optional[dict]) -> dict:
     """Each cue's defaults with his choices over them. Saved pause timings
     out of order are the defaults' timings."""
     cues = {name: {**CUE_DEFAULTS[name], **((saved or {}).get(name) or {})} for name in CUES}
+    for name in CUES:
+        if "percent" in cues[name]:
+            cues[name]["percent"] = int(cues[name]["percent"])
     if not _in_order(cues):
         for name in PAUSE_CUES:
-            cues[name]["before"] = CUE_DEFAULTS[name]["before"]
+            cues[name]["percent"] = CUE_DEFAULTS[name]["percent"]
     return cues
 
 
+def _on(cues: dict) -> list[str]:
+    """The pause cues that are on, in the order they play."""
+    return [name for name in PAUSE_CUES if cues[name]["on"]]
+
+
 def _in_order(cues: dict) -> bool:
-    """Each pause cue further before the end of his turn than the next."""
-    leads = [cues[name]["before"] for name in PAUSE_CUES]
-    return all(earlier > later for earlier, later in zip(leads, leads[1:]))
+    """Each pause cue that is on at least PERCENT_SPACING after the one
+    before that is on (each within PERCENT_MIN to PERCENT_MAX)."""
+    shares = [cues[name]["percent"] for name in _on(cues)]
+    return all(later - earlier >= PERCENT_SPACING for earlier, later in zip(shares, shares[1:]))
 
 
-def pause_cue_leads(settings: dict) -> list[tuple[str, float]]:
-    """The pause cues to time in a gathered turn, each with its seconds
-    before the end of his turn: every pause cue, on or off (whether one
-    sounds is decided when it is due, so turning it on or off applies at
-    once)."""
-    return [(name, float(settings["cues"][name]["before"])) for name in PAUSE_CUES]
-
-
-def pause_cue_at(settings: dict, name: str) -> Optional[float]:
-    """Seconds of quiet after which this pause cue plays at his patience,
-    or None when that is not after he stopped."""
-    at = round(settings["patience"] - settings["cues"][name]["before"], 2)
-    return at if at > 0 else None
-
-
-def pause_cue_gaps(settings: dict, name: str) -> Optional[dict]:
-    """The gaps around one pause cue at his patience, each set by that cue's
-    own `before` and its neighbour's (there is no shared spacing): `after`,
-    (the nearest earlier pause cue that is on and plays, seconds since it)
-    or None; `until`, (the nearest later one, seconds until it), or (None,
-    seconds until what he said is sent) when none later plays. None when
-    this cue does not play."""
-    at = pause_cue_at(settings, name)
-    if at is None:
-        return None
-    sounding = [n for n in PAUSE_CUES
-                if settings["cues"][n]["on"] and pause_cue_at(settings, n) is not None]
+def pause_cue_bounds(cues: dict, name: str) -> tuple[int, int]:
+    """The shares this pause cue may take without crossing a neighbour: from
+    PERCENT_SPACING after the nearest earlier cue that is on (or
+    PERCENT_MIN) to PERCENT_SPACING before the nearest later one (or
+    PERCENT_MAX). The cue's own on or off does not matter: turning it on
+    keeps the order only within these bounds."""
+    on = [n for n in _on(cues) if n != name]
     i = PAUSE_CUES.index(name)
-    earlier = [n for n in sounding if PAUSE_CUES.index(n) < i]
-    later = [n for n in sounding if PAUSE_CUES.index(n) > i]
-    after = ((earlier[-1], round(at - pause_cue_at(settings, earlier[-1]), 2))  # type: ignore[operator]
-             if earlier else None)
-    until = ((later[0], round(pause_cue_at(settings, later[0]) - at, 2))  # type: ignore[operator]
-             if later else (None, float(settings["cues"][name]["before"])))
+    earlier = [cues[n]["percent"] for n in on if PAUSE_CUES.index(n) < i]
+    later = [cues[n]["percent"] for n in on if PAUSE_CUES.index(n) > i]
+    return (earlier[-1] + PERCENT_SPACING if earlier else PERCENT_MIN,
+            later[0] - PERCENT_SPACING if later else PERCENT_MAX)
+
+
+def pause_cue_shares(settings: dict) -> list[tuple[str, float]]:
+    """The pause cues to time in a gathered turn, each with its share of his
+    patience (0 to 1): only the ones that are on; whether one sounds (his
+    capture sounds) is decided when it is due."""
+    return [(name, settings["cues"][name]["percent"] / 100) for name in _on(settings["cues"])]
+
+
+def pause_cue_at(settings: dict, name: str) -> float:
+    """Seconds of quiet after which this pause cue plays at his patience, to
+    the hundredth, halves up (as the page rounds it)."""
+    return math.floor(settings["patience"] * settings["cues"][name]["percent"] + 0.5) / 100
+
+
+def pause_cue_gaps(settings: dict, name: str) -> dict:
+    """The gaps around one pause cue at his patience, in seconds, each set by
+    the two cues' own shares (there is no shared spacing): `after`, (the
+    nearest earlier pause cue that is on, seconds since it) or None;
+    `until`, (the nearest later one that is on, seconds until it), or
+    (None, seconds until what he said is sent) when none later is on."""
+    at = pause_cue_at(settings, name)
+    i = PAUSE_CUES.index(name)
+    on = _on(settings["cues"])
+    earlier = [n for n in on if PAUSE_CUES.index(n) < i]
+    later = [n for n in on if PAUSE_CUES.index(n) > i]
+    after = (earlier[-1], round(at - pause_cue_at(settings, earlier[-1]), 2)) if earlier else None
+    until = ((later[0], round(pause_cue_at(settings, later[0]) - at, 2)) if later
+             else (None, round(settings["patience"] - at, 2)))
     return {"after": after, "until": until}
 
 
@@ -396,7 +435,8 @@ def change(stop: object = None, switch: object = None, patience: object = None,
     nothing: they apply from the next stop or page switch (the cues from
     the next one due). A change to the cues is merged into what he chose
     before, and refused when it would put the pause cues out of their
-    order (tentative, deciding, likely)."""
+    order (tentative, deciding, likely, each that is on at least
+    PERCENT_SPACING after the one before), a cue turned on included."""
     stop, switch, patience, sounds, cues, volume = validate(stop, switch, patience, sounds,
                                                             cues, volume)
     user = user or user_key()
@@ -405,12 +445,16 @@ def change(stop: object = None, switch: object = None, patience: object = None,
     chosen = _saved_cues(row["cue_settings"]) if row is not None else {}
     for name, choice in (cues or {}).items():
         chosen[name] = {**chosen.get(name, {}), **choice}
-    if cues and not _in_order({name: {**CUE_DEFAULTS[name], **chosen.get(name, {})}
-                               for name in PAUSE_CUES}):
-        raise Invalid("invalid-cue-timing",
-                      "The pause cues play in order, tentative, then deciding, then likely: "
-                      "each one's seconds before the end of his turn must be more than the "
-                      "next one's.")
+    if cues:
+        wanted = {name: {**CUE_DEFAULTS[name], **chosen.get(name, {})} for name in PAUSE_CUES}
+        if not _in_order(wanted):
+            bounds = "; ".join(
+                f"{name} {low} to {high}" for name in PAUSE_CUES if name in cues
+                for low, high in [pause_cue_bounds(now["cues"], name)])
+            raise Invalid("invalid-cue-timing",
+                          "The pause cues that are on play in order, tentative, then deciding, "
+                          f"then likely, each at least {PERCENT_SPACING} percent of his "
+                          f"patience after the one before. Now that allows {bounds}.")
     new = {"stop": stop or now["stop"], "switch": switch or now["switch"],
            "patience": patience,        # None: keep what is saved
            "sounds": None if sounds is None else int(sounds),

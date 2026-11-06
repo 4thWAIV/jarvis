@@ -1960,7 +1960,7 @@ TOOL_SPECS = [
             "what he was saying when he stops the microphone (keep or discard), whether "
             "listening continues or stops when he switches away from JARVIS, his patience, "
             "whether capture sounds play at all, and each capture cue: on or off, its tone, "
-            "a pause cue's seconds before the end of his turn, and the cue volume."),
+            "a pause cue's share of his patience, and the cue volume."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -1992,17 +1992,20 @@ TOOL_SPECS = [
                         "listening started; stop: listening stopped; and the pause cues, in "
                         "the order they play: tentative: he paused and may be done; "
                         "deciding: he is still quiet and JARVIS is deciding whether he is "
-                        "done; likely: the turn is about to be sent. A pause cue plays at "
-                        "his patience minus its `before` seconds of quiet, so tentative's "
-                        "before must be more than deciding's and deciding's more than "
-                        "likely's, and one at or over his patience does not play."),
+                        "done; likely: JARVIS is almost done waiting. A pause cue plays at "
+                        "`percent` of his patience after his speech was last heard (the turn "
+                        "is sent at 100), so every pause cue that is on plays, in order, at "
+                        "any patience. The ones that are on must each be at least 5 percent "
+                        "after the one before, from 5 to 95; a change that would cross them "
+                        "is refused, turning a cue on included. A cue that is off does not "
+                        "count."),
                     "properties": {
                         name: {"type": "object", "properties": {
                             "on": {"type": "boolean"},
                             "tone": {"type": "string", "enum": list(_CUE_TONES)},
-                            **({"before": {"type": "number", "minimum": 0.25, "maximum": 10,
-                                           "description": "Seconds before the end of his "
-                                                          "turn."}}
+                            **({"percent": {"type": "integer", "minimum": 5, "maximum": 95,
+                                            "description": "Percent of his patience after "
+                                                           "which it plays."}}
                                if name in _PAUSE_CUES else {})}}
                         for name in _CUE_NAMES},
                 },

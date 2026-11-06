@@ -636,24 +636,27 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     assert "Nothing was changed" in _call(wired, "set_voice_input_settings", sounds="loud")["text"]
     cued = _call(wired, "set_voice_input_settings", volume=30,
                  cues={"likely": {"tone": "low", "on": False}})
-    assert cued["ok"] and "likely end (about to send): off, tone low" in cued["text"]
+    assert cued["ok"] and ("likely end (about to send): off, tone low, at 85 percent of his "
+                           "patience, skipped while off") in cued["text"]
     assert "Cue volume 30 percent" in cued["text"]
-    assert "longer than his patience, so it does not play" in cued["text"]   # tentative at 1.5
+    assert ("tentative (he may be done): on, tone pulse, at 40 percent of his patience (after "
+            "0.6 s of quiet, 0.38 s before the deciding (whether he is done) cue)") in cued["text"]
     page = wired.client.get(voice_control.PATH).json()
     assert (page["volume"], page["cues"]["likely"]) == (30, {"on": False, "tone": "low",
-                                                             "before": 1.0})
-    timing = _call(wired, "set_voice_input_settings", cues={"likely": {"before": 3}})
+                                                             "percent": 85})
+    timing = _call(wired, "set_voice_input_settings", cues={"tentative": {"percent": 63}})
     assert "Nothing was changed" in timing["text"] and "play in order" in timing["text"]
-    timing = _call(wired, "set_voice_input_settings", cues={"deciding": {"before": 2.5}})
+    assert "tentative 5 to 60" in timing["text"]
+    timing = _call(wired, "set_voice_input_settings", cues={"deciding": {"percent": 40}})
     assert "Nothing was changed" in timing["text"] and "play in order" in timing["text"]
     deciding = _call(wired, "set_voice_input_settings", patience=4,
-                     cues={"deciding": {"before": 2, "tone": "double"}})
+                     cues={"deciding": {"percent": 50, "tone": "double"}})
     assert deciding["ok"] and (   # likely is off: the next beep is the send
-        "deciding (whether he is done): on, tone double, 2 s before the end of his turn (after "
-        "2 s of quiet, 0.5 s after the tentative (he may be done) cue, 2 s before it is sent)"
+        "deciding (whether he is done): on, tone double, at 50 percent of his patience (after "
+        "2 s of quiet, 0.4 s after the tentative (he may be done) cue, 2 s before it is sent)"
     ) in deciding["text"]
     assert wired.client.get(voice_control.PATH).json()["cues"]["deciding"] == {
-        "on": True, "tone": "double", "before": 2}
+        "on": True, "tone": "double", "percent": 50}
     page = wired.client.get(voice_control.PATH).json()
     refused = _call(wired, "set_voice_input_settings", stop="forever")
     assert "Nothing was changed" in refused["text"]

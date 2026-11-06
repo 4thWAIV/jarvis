@@ -7,15 +7,18 @@
  *   Patience                        seconds of quiet that end his turn
  *   Capture sounds                  On | Off (the master switch)
  *   Each capture cue                Off | one of the tones, and Test
- *   Each pause cue's timing         seconds before what he said is sent
+ *   Each pause cue's timing         percent of his patience
  *   Sound volume                    percent of a quiet ceiling
  *
- * Each cue says, under it, when it plays; a pause cue's timing says when
- * it plays at his patience (patience minus its seconds), or that it does
- * not, and its gap after the pause cue before it and before the next one
- * (or before sending): each gap is tuned by the two cues' own timings, so
- * the gaps need not be equal. Test plays the cue once as it is set (voiceStatus.ts `cueTest`, the
- * same as the brain's play_cue), whether it is on or not.
+ * Each cue says, under it, when it plays; a pause cue's timing says after
+ * how many seconds of quiet it plays at his patience, and its gap after
+ * the pause cue before it that is on and before the next one (or before
+ * sending). A timing field is bounded by its neighbours that are on
+ * (voiceControl.pauseCueBounds) and a typed value is kept inside them, so
+ * the pause cues can never be set to cross; one that is off is skipped and
+ * holds nothing in place. Test plays the cue once as it is set
+ * (voiceStatus.ts `cueTest`, the same as the brain's play_cue), whether it
+ * is on or not.
  *
  * Each shows the value in force, read with the page (voiceSettings.ts) and
  * again whenever another page or the brain changes it. Changing one saves
@@ -29,9 +32,9 @@ import { useState, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { voiceInputSettings } from "./mic";
 import { SettingsRow, useSettingsItem, type SettingsItem } from "./SettingsRow";
-import { BEFORE_MAX, BEFORE_MIN, CUE_NAMES, isPauseCue, PATIENCE_MAX, PATIENCE_MIN, pauseCueAt, pauseCueGaps, STOP_MODES,
-         SWITCH_MODES, TONES, VOLUME_MAX, VOLUME_MIN, type CueName, type PauseCue, type StopMode, type SwitchMode,
-         type Tone, type VoiceInputSettings } from "./voiceControl";
+import { CUE_NAMES, isPauseCue, PATIENCE_MAX, PATIENCE_MIN, pauseCueAt, pauseCueBounds, pauseCueGaps, PERCENT_MAX,
+         PERCENT_MIN, PERCENT_SPACING, STOP_MODES, SWITCH_MODES, TONES, VOLUME_MAX, VOLUME_MIN, type CueName,
+         type PauseCue, type StopMode, type SwitchMode, type Tone, type VoiceInputSettings } from "./voiceControl";
 import { changeVoiceInputSettings, type VoiceInputChange } from "./voiceSettings";
 import { cueTest } from "./voiceStatus";
 
@@ -39,19 +42,20 @@ type Save = (change: VoiceInputChange) => Promise<void>;
 
 /** Each cue's registered keys: its choice, its Test button and, for a
  *  pause cue, its timing. */
-const CUE_ITEMS: Record<CueName, { choice: SettingsItem; test: SettingsItem; before?: SettingsItem }> = {
+const CUE_ITEMS: Record<CueName, { choice: SettingsItem; test: SettingsItem; timing?: SettingsItem }> = {
   start: { choice: "cueStart", test: "cueStartTest" },
   stop: { choice: "cueStop", test: "cueStopTest" },
-  tentative: { choice: "cueTentative", test: "cueTentativeTest", before: "cueTentativeBefore" },
-  deciding: { choice: "cueDeciding", test: "cueDecidingTest", before: "cueDecidingBefore" },
-  likely: { choice: "cueLikely", test: "cueLikelyTest", before: "cueLikelyBefore" },
+  tentative: { choice: "cueTentative", test: "cueTentativeTest", timing: "cueTentativeTiming" },
+  deciding: { choice: "cueDeciding", test: "cueDecidingTest", timing: "cueDecidingTiming" },
+  likely: { choice: "cueLikely", test: "cueLikelyTest", timing: "cueLikelyTiming" },
 };
 
 /** A number typed and saved when he leaves the field or presses Enter,
- *  only when it changed. */
-function NumberField({ id, uiRef, min, max, step, value, disabled, onSave }: {
+ *  only when it changed; with `clamp`, a value outside min to max is
+ *  saved as the nearest of them. */
+function NumberField({ id, uiRef, min, max, step, value, disabled, onSave, clamp = false }: {
   id: string; uiRef: (el: Element | null) => void; min: number; max: number; step: number;
-  value: number | null; disabled: boolean; onSave: (value: number) => void;
+  value: number | null; disabled: boolean; onSave: (value: number) => void; clamp?: boolean;
 }) {
   const [typed, setTyped] = useState<string | null>(null);
   return <input id={id} type="number" data-ui-action="input" ref={uiRef}
@@ -61,7 +65,7 @@ function NumberField({ id, uiRef, min, max, step, value, disabled, onSave }: {
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                 onBlur={() => {
                   if (typed === null) return;
-                  const number = Number(typed);
+                  const number = clamp ? Math.min(max, Math.max(min, Number(typed))) : Number(typed);
                   setTyped(null);
                   if (typed.trim() && Number.isFinite(number) && number !== value) onSave(number);
                 }} />;
@@ -77,11 +81,13 @@ function CueRows({ name, settings, disabled, save }: {
   const label = t(`left.voiceInput.cue.${name}`);
   const choiceUi = useSettingsItem(items.choice, label);
   const testUi = useSettingsItem(items.test, `${label}: ${t("left.voiceInput.cueTest")}`);
-  const beforeLabel = isPauseCue(name) ? t(`left.voiceInput.cueBefore.${name}`) : "";
-  const beforeUi = useSettingsItem(items.before ?? items.choice, beforeLabel, items.before !== undefined);
+  const timingLabel = isPauseCue(name) ? t(`left.voiceInput.cuePercent.${name}`) : "";
+  const timingUi = useSettingsItem(items.timing ?? items.choice, timingLabel, items.timing !== undefined);
   const cue = settings?.cues[name];
   const at = settings && cue ? pauseCueAt(settings.patience, cue) : null;
   const gaps = settings && isPauseCue(name) ? pauseCueGaps(settings.patience, settings.cues, name) : null;
+  const bounds = settings && isPauseCue(name) ? pauseCueBounds(settings.cues, name)
+                                              : { min: PERCENT_MIN, max: PERCENT_MAX };
   const named = (other: PauseCue) => t(`left.voiceInput.cue.${other}`).toLowerCase();
   return <>
     <SettingsRow label={label} labelRef={choiceUi.part("label")} htmlFor={`settings-cue-${name}`}>
@@ -100,17 +106,17 @@ function CueRows({ name, settings, disabled, save }: {
       </button>
     </SettingsRow>
     <p className="settings-hint">{t(`left.voiceInput.cueHelp.${name}`)}</p>
-    {items.before && <>
-      <SettingsRow label={beforeLabel} labelRef={beforeUi.part("label")} htmlFor={`settings-cue-${name}-before`}>
-        <NumberField id={`settings-cue-${name}-before`} uiRef={beforeUi.whole} min={BEFORE_MIN} max={BEFORE_MAX}
-                     step={0.25} value={cue?.before ?? null} disabled={disabled}
-                     onSave={(before) => void save({ cues: { [name]: { before } } })} />
+    {items.timing && <>
+      <SettingsRow label={timingLabel} labelRef={timingUi.part("label")} htmlFor={`settings-cue-${name}-percent`}>
+        <NumberField id={`settings-cue-${name}-percent`} uiRef={timingUi.whole} min={bounds.min} max={bounds.max}
+                     step={1} value={cue?.percent ?? null} disabled={disabled} clamp
+                     onSave={(percent) => void save({ cues: { [name]: { percent: Math.round(percent) } } })} />
       </SettingsRow>
       {settings && <p className="settings-hint" id={`settings-cue-${name}-at`}>
-        {at != null ? t("left.voiceInput.cueAt", { patience: settings.patience ?? "", at })
-                    : t("left.voiceInput.cueNever", { patience: settings.patience ?? "" })}
-        {gaps?.after && <> {t("left.voiceInput.cueGapAfter", { gap: gaps.after.gap, cue: named(gaps.after.cue) })}</>}
-        {gaps && <> {gaps.until.next
+        {at != null && t("left.voiceInput.cueAt", { patience: settings.patience ?? "", at })}
+        {cue?.on === false && <> {t("left.voiceInput.cueSkipped")}</>}
+        {cue?.on && gaps?.after && <> {t("left.voiceInput.cueGapAfter", { gap: gaps.after.gap, cue: named(gaps.after.cue) })}</>}
+        {cue?.on && gaps && <> {gaps.until.next
           ? t("left.voiceInput.cueGapBefore", { gap: gaps.until.gap, cue: named(gaps.until.next) })
           : t("left.voiceInput.cueGapSend", { gap: gaps.until.gap })}</>}
       </p>}
@@ -179,7 +185,7 @@ export function VoiceInputSettingsControl() {
       </SettingsRow>
       <p className="settings-hint">{t("left.voiceInput.soundsHelp")}</p>
       {CUE_NAMES.map((name) => <CueRows key={name} name={name} settings={settings} disabled={disabled} save={save} />)}
-      <p className="settings-hint">{t("left.voiceInput.cueBeforeHelp", { min: BEFORE_MIN, max: BEFORE_MAX })}</p>
+      <p className="settings-hint">{t("left.voiceInput.cuePercentHelp", { min: PERCENT_MIN, max: PERCENT_MAX, spacing: PERCENT_SPACING })}</p>
       <SettingsRow label={t("left.voiceInput.volume")} labelRef={volumeUi.part("label")} htmlFor="settings-cue-volume">
         <NumberField id="settings-cue-volume" uiRef={volumeUi.whole} min={VOLUME_MIN} max={VOLUME_MAX} step={5}
                      value={settings?.volume ?? null} disabled={disabled}
