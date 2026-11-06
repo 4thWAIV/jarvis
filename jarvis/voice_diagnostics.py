@@ -389,8 +389,11 @@ class CpuMeter:
 
 
 def load_average() -> float:
+    getloadavg = getattr(os, "getloadavg", None)    # absent on Windows
+    if getloadavg is None:
+        return 0.0
     try:
-        return os.getloadavg()[0]
+        return getloadavg()[0]
     except OSError:
         return 0.0
 
