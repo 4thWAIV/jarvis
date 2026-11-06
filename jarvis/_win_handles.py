@@ -101,12 +101,14 @@ def open_relative(parent: int, name: str, access: int, share: int, disposition: 
 
 
 def rename_into(handle: int, parent: int, name: str, attempts: int, wait: float,
-                busy: tuple[int, ...]) -> None:
+                busy: tuple[int, ...], replace: bool = True) -> None:
     """Rename the file open as `handle` to `name` in the folder open as
     `parent`, replacing what is there: POSIX style where the filesystem has
     it (the old name is unlinked even while open with delete sharing),
     otherwise the plain replacing rename. A Windows error in `busy` (a
-    destination someone holds open) is tried again `attempts` times."""
+    destination someone holds open) is tried again `attempts` times. Without
+    `replace`, an existing `name` is left as it is and FileExistsError is
+    raised."""
     import time
     ctypes, _, ntdll, _, _, IoStatusBlock = _nt()
     encoded = name.encode("utf-16-le", "surrogatepass")
@@ -115,8 +117,9 @@ def rename_into(handle: int, parent: int, name: str, attempts: int, wait: float,
     ctypes.c_void_p.from_buffer(buffer, 8).value = parent
     ctypes.c_uint32.from_buffer(buffer, 16).value = len(encoded)
     ctypes.memmove(ctypes.addressof(buffer) + 20, encoded, len(encoded))
-    classes = [(_FILE_RENAME_INFORMATION_EX, _RENAME_REPLACE_IF_EXISTS | _RENAME_POSIX_SEMANTICS),
-               (_FILE_RENAME_INFORMATION, 1)]
+    classes = [(_FILE_RENAME_INFORMATION_EX,
+                (_RENAME_REPLACE_IF_EXISTS if replace else 0) | _RENAME_POSIX_SEMANTICS),
+               (_FILE_RENAME_INFORMATION, 1 if replace else 0)]
     for info_class, flags in classes:
         ctypes.c_uint32.from_buffer(buffer, 0).value = flags
         for attempt in range(attempts):

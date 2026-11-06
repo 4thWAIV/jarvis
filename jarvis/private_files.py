@@ -13,6 +13,10 @@ Four calls, one rule each:
   ours to fill").
 - `replace`: the file's whole contents, owner-only afterwards.
 
+And on Windows only, `PartialFile`: a new owner-only file written, read
+back, given a named stream and renamed into place through its one handle
+(a received download, messaging_files.py).
+
 On macOS and Linux each call is exactly the code its caller had before:
 O_EXCL at 0600; O_NOFOLLOW with fstat, the owner's uid and fchmod on the one
 descriptor; mkdir 0700; and for `replace`, a write and then chmod 0600.
@@ -474,7 +478,7 @@ def _check_plain_file(handle: int, path: Path, one_link: bool) -> None:
         raise NotPrivate(f"{path} is owned by {owner}, not by us")
 
 
-def _write_handle(handle: int, data: bytes, path) -> None:
+def _write_handle(handle: int, data: bytes, path, flush: bool = True) -> None:
     ctypes, wintypes, k32, _, _ = _api()
     buffer = ctypes.create_string_buffer(data, len(data))
     done, written = 0, wintypes.DWORD()
@@ -483,7 +487,7 @@ def _write_handle(handle: int, data: bytes, path) -> None:
                              ctypes.byref(written), None):
             raise _last_error(path)
         done += written.value
-    if not k32.FlushFileBuffers(handle):
+    if flush and not k32.FlushFileBuffers(handle):
         raise _last_error(path)
 
 
@@ -562,6 +566,115 @@ def _win_adopt(path: Path) -> int:
     except BaseException:
         _close(handle)
         raise
+
+
+class PartialFile:
+    """Windows only: a new owner-only file `name` in the private folder
+    `directory`, held by one handle from creation until it is published or
+    discarded. The folder is pinned as `_pin_folder` pins it (a junction or
+    link on the way refused, held without delete sharing), the file is
+    created relative to it with this user's descriptor and no sharing, and
+    every later step goes through the file's own handle: writing, reading
+    back, adding a named stream, renaming into place (`publish`) and
+    deleting (`discard`), never a path that could have changed."""
+
+    def __init__(self, directory: Path, name: str):
+        import msvcrt
+        from jarvis import _win_handles as wh
+        self.path = Path(os.path.abspath(directory)) / name
+        self._folder = _pin_folder(self.path.parent)
+        try:
+            with _Descriptor() as security:
+                handle = _child(self._folder, name, _GENERIC_READ | _GENERIC_WRITE | _DELETE,
+                                wh.FILE_CREATE, wh.FILE_NON_DIRECTORY_FILE, security, share=0)
+            try:
+                self._fd: "int | None" = msvcrt.open_osfhandle(handle, os.O_RDWR)
+            except BaseException:
+                _close(handle)
+                raise
+        except BaseException:
+            _close(self._folder)
+            raise
+        self._handle = handle
+
+    def write(self, data: bytes) -> None:
+        _write_handle(self._handle, data, self.path, flush=False)
+
+    def digest(self, chunk: int = 1 << 20) -> tuple[int, str]:
+        """(size, sha256) of what is on disk now, read back by handle."""
+        import hashlib
+        from jarvis import _win_handles as wh
+        if not _api()[2].FlushFileBuffers(self._handle):
+            raise _last_error(self.path)
+        hasher, size = hashlib.sha256(), 0
+        while data := wh.pread(self._fd, chunk, size):
+            hasher.update(data)
+            size += len(data)
+        return size, hasher.hexdigest()
+
+    def add_stream(self, stream: str, data: bytes) -> None:
+        """A new named stream `stream` of this file holding `data`, opened
+        relative to the file's handle. It shares delete: the file's own
+        handle holds DELETE, which NTFS checks against every stream."""
+        from jarvis import _win_handles as wh
+        handle = wh.open_relative(self._handle, ":" + stream, _GENERIC_WRITE, _SHARE_ALL,
+                                  wh.FILE_CREATE, wh.FILE_NON_DIRECTORY_FILE)
+        try:
+            _write_handle(handle, data, f"{self.path}:{stream}")
+        finally:
+            _close(handle)
+
+    def read_stream(self, stream: str, limit: int = 4096) -> bytes:
+        """At most `limit` bytes of this file's named stream `stream`,
+        opened relative to the file's handle (FileNotFoundError if none)."""
+        import msvcrt
+        from jarvis import _win_handles as wh
+        handle = wh.open_relative(self._handle, ":" + stream, _GENERIC_READ, _SHARE_ALL,
+                                  wh.FILE_OPEN, wh.FILE_NON_DIRECTORY_FILE)
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+        except BaseException:
+            _close(handle)
+            raise
+        try:
+            return wh.pread(fd, limit, 0)
+        finally:
+            os.close(fd)
+
+    def publish(self, name: str, replace: bool = False) -> None:
+        """Rename the file to `name` in its folder and let it go. Without
+        `replace`, FileExistsError if `name` is there, which is left as it
+        is. With it, what is there must be a regular file of ours, as for
+        `replace` (NotPrivate for a link, junction or folder, never
+        replaced). On any failure the file is still held, to discard."""
+        from jarvis import _win_handles as wh
+        _check_plain_file(self._handle, self.path, one_link=True)
+        if replace:
+            existing = _child(self._folder, name, _READ_CONTROL | _FILE_READ_ATTRIBUTES,
+                              wh.FILE_OPEN)
+            try:
+                _check_plain_file(existing, self.path.parent / name, one_link=False)
+            finally:
+                _close(existing)
+            wh.rename_into(self._handle, self._folder, name, REPLACE_ATTEMPTS, REPLACE_WAIT_SEC,
+                           (_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION))
+        else:
+            wh.rename_into(self._handle, self._folder, name, 1, 0, (), replace=False)
+        self.close()
+
+    def discard(self) -> None:
+        """Delete the file by its handle, its streams with it, and let it
+        go. Nothing once it is published or let go."""
+        from jarvis import _win_handles as wh
+        if self._fd is not None:
+            wh.delete_on_close(self._handle)
+        self.close()
+
+    def close(self) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+            _close(self._folder)
 
 
 def _win_replace(path: Path, data: bytes) -> None:

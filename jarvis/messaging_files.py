@@ -28,6 +28,9 @@ manifest's, and with the macOS quarantine mark a browser download
 carries (`quarantine`). JARVIS never opens a received file: the owner's one
 action on a verified download is Reveal in Finder (`open -R`), which shows
 it without running it. A cancelled download keeps the message and is offered again.
+On Windows the same steps go through one held handle (`_fetch_windows`,
+`private_files.PartialFile`), and the mark is the Mark of the Web
+(`Zone.Identifier`) a browser download carries.
 
 File states (`messaging_ports.FileState`): sending, staged -> uploading ->
 available (verified on the team server), or failed (with a code) or
@@ -54,6 +57,7 @@ import os
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import closing
@@ -66,7 +70,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from jarvis import data_paths, run_store
+from jarvis import data_paths, private_files, run_store
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
 
@@ -137,7 +141,10 @@ class Corrupt(Exception):
 
 def private_dir(path: Path) -> Path:
     """`path` and its missing parents, each made owner-only; refused if it
-    is a link or someone else's."""
+    is a link or someone else's. On Windows, `private_files.ensure_dir`
+    (NotPrivate for a junction or link anywhere on the way)."""
+    if sys.platform == "win32":
+        return private_files.ensure_dir(path)
     missing = [p for p in (path, *path.parents) if not p.exists()]
     for p in reversed(missing):
         p.mkdir(mode=0o700, exist_ok=True)
@@ -169,6 +176,8 @@ def _unlink(path: Path) -> None:
 def _hash_file(path: Path) -> Optional[tuple[int, str]]:
     """(size, sha256) of a regular file, never through a link; None if it
     is not there or not a regular file."""
+    if sys.platform == "win32":
+        return _win_hash_file(path)
     try:
         fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
@@ -185,8 +194,75 @@ def _hash_file(path: Path) -> Optional[tuple[int, str]]:
         os.close(fd)
 
 
+def _win_marked(fd: int) -> bool:
+    """Whether the file open as `fd` still carries the Mark of the Web
+    `_fetch_windows` gave it: its `ZONE_STREAM`, opened relative to the
+    file's own handle, naming an outside zone (3 Internet, 4 Restricted)."""
+    import msvcrt
+    from jarvis import _win_handles as wh
+    try:
+        handle = wh.open_relative(msvcrt.get_osfhandle(fd), ":" + ZONE_STREAM,
+                                  0x80000000, 0x7, wh.FILE_OPEN,          # GENERIC_READ, share all
+                                  wh.FILE_NON_DIRECTORY_FILE)
+    except OSError:
+        return False
+    try:
+        stream = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    except BaseException:
+        wh._close(handle)
+        raise
+    try:
+        lines = wh.pread(stream, 4096, 0).replace(b"\r", b"").split(b"\n")
+    except OSError:
+        return False
+    finally:
+        os.close(stream)
+    return any(line.strip() in ZONE_OUTSIDE for line in lines)
+
+
+def _win_hash_file(path: Path, marked: bool = False) -> Optional[tuple[int, str]]:
+    """`_hash_file` on Windows: the folder opened as itself and the file
+    relative to it (`_win_handles`), so a junction, symlink, device or
+    stream name, cloud placeholder or second hard link is None, never
+    followed; read by offset (`pread`), never through the C runtime's text
+    mode. With `marked`, None too unless the file still has its Mark of the
+    Web (`_win_marked`), read through the same handle."""
+    from jarvis import _win_handles as wh
+    path = Path(os.path.abspath(path))
+    if wh.name_refused(path.name):
+        return None
+    try:
+        with wh.open_root(path.parent) as parent:
+            fd, _, _ = wh.open_child_file(parent, path.name)
+    except OSError:
+        return None
+    try:
+        hasher, size = hashlib.sha256(), 0
+        while chunk := wh.pread(fd, wire.UPLOAD_CHUNK_BYTES, size):
+            hasher.update(chunk)
+            size += len(chunk)
+        if marked and not _win_marked(fd):
+            return None
+        return size, hasher.hexdigest()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def file_digest(path: Path) -> Optional[tuple[int, str]]:
     """(size, sha256) of a regular file, never through a link, or None."""
+    return _hash_file(path)
+
+
+def download_digest(path: Path) -> Optional[tuple[int, str]]:
+    """`file_digest` of a received file, which only counts as the verified
+    download while it still carries its download mark: on Windows None
+    once its Mark of the Web is gone (or names a trusted zone), so a copy
+    whose bytes match but whose mark was stripped is not verified. On
+    macOS exactly `file_digest`."""
+    if sys.platform == "win32":
+        return _win_hash_file(path, marked=True)
     return _hash_file(path)
 
 
@@ -198,12 +274,20 @@ def reveal_in_finder(path: Path) -> None:
 
 
 QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
+# Windows' Mark of the Web: the stream a browser writes on a download, zone
+# 3 (Internet), so Explorer, SmartScreen and Office treat it as from outside.
+ZONE_STREAM = "Zone.Identifier"
+ZONE_MARK = b"[ZoneTransfer]\r\nZoneId=3\r\n"
+# The zones a kept download's mark may name: Internet, or Restricted if the
+# owner raised it. Anything lower says the file is trusted, which it is not.
+ZONE_OUTSIDE = (b"ZoneId=3", b"ZoneId=4")
 
 
 def quarantine(path: Path) -> None:
     """Mark a received file as come from someone else, as a browser marks a
     download: opened from Finder, macOS asks first (Gatekeeper). Raises if
-    the mark could not be set."""
+    the mark could not be set. (On Windows the mark is `ZONE_MARK`, written
+    and read back through the partial file's handle, `_fetch_windows`.)"""
     value = f"0081;{int(time.time()):x};JARVIS;"
     subprocess.run(["/usr/bin/xattr", "-w", QUARANTINE_ATTRIBUTE, value, str(path)],
                    check=True, timeout=10, stdout=subprocess.DEVNULL,
@@ -587,20 +671,36 @@ class FileSnapshots:
         """Fetch, verify and keep one received file. A file already verified
         is not fetched again, and one already downloading is not fetched
         twice. Wrong bytes, a refusal or no answer leave no file and a
-        `failed` state to retry from; cancelling leaves it `available`."""
+        `failed` state to retry from; cancelling leaves it `available`.
+        A `downloading` row no live fetch here owns (one that died, or a
+        restart) is fetched again; a live one never twice. On Windows a
+        fetch that dies without saying how it ended is `failed`
+        (`interrupted`) rather than left `downloading`, and a copy kept as
+        verified must still carry its Mark of the Web (`download_digest`)."""
         ref = self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
         key = (server_id, owner_github_id, attachment_id)
         current = self._download_file(server_id, owner_github_id, attachment_id)
         if key in self._downloading or (
-                current.state == "verified" and _hash_file(self.download_path(ref))
+                current.state == "verified" and download_digest(self.download_path(ref))
                 == (ref.size_bytes, ref.sha256)):
             return current
         self._downloading.add(key)
         try:
             self._insert(server_id, owner_github_id, ref, message_id, DOWNLOAD, "downloading")
             return await self._fetch(server_id, owner_github_id, message_id, ref)
+        except BaseException:
+            if sys.platform == "win32" and self._download_file(
+                    server_id, owner_github_id, attachment_id).state == "downloading":
+                self._set(server_id, owner_github_id, attachment_id, DOWNLOAD, state="failed",
+                          bytes_done=0, failure="interrupted")
+            raise
         finally:
             self._downloading.discard(key)
+
+    def fetching(self, server_id: str, owner_github_id: int, attachment_id: UUID) -> bool:
+        """Whether a fetch of this file is running here now: a `downloading`
+        row without one is a fetch that died."""
+        return (server_id, owner_github_id, attachment_id) in self._downloading
 
     async def _fetch(self, server_id: str, owner: int, message_id: UUID,
                      ref: wire.AttachmentRef) -> ports.LocalFile:
@@ -608,6 +708,8 @@ class FileSnapshots:
             self._set(server_id, owner, ref.attachment_id, DOWNLOAD, state=state, **kw)
             return self._download_file(server_id, owner, ref.attachment_id)
 
+        if sys.platform == "win32":
+            return await self._fetch_windows(message_id, ref, set_state)
         final = self.download_path(ref)
         folder = private_dir(final.parent)
         partial = folder / f"{PARTIAL}{uuid.uuid4()}"
@@ -656,15 +758,97 @@ class FileSnapshots:
         os.replace(partial, final)
         return set_state("verified", bytes_done=size)
 
+    async def _fetch_windows(self, message_id: UUID, ref: wire.AttachmentRef,
+                             set_state: Callable[..., ports.LocalFile]) -> ports.LocalFile:
+        """`_fetch` on Windows, through `private_files.PartialFile`: the
+        attachment's folder pinned and the partial file held by one handle
+        from creation to publication. A name Windows would read as something
+        else (a device such as CON or COM1, a `:stream`, a trailing dot) is
+        `unsafe_name`; a junction or link on the way, or a folder others can
+        change, is `unsafe_location`; neither is fetched. The bytes are
+        counted and hashed as they arrive and read back from disk before the
+        Mark of the Web is added (and read back) and the file renamed into
+        place; the injected `quarantine` is macOS's and is not called here. A verified
+        copy already at the name is kept, never replaced. Every failure
+        deletes the partial file by its handle and leaves `failed` (or
+        `available`, cancelled) to fetch again from."""
+        from jarvis import _win_handles as wh
+        if wh.name_refused(ref.filename):
+            log.warning("received file's name is not one Windows takes as itself; not fetched")
+            return set_state("failed", bytes_done=0, failure="unsafe_name")
+        final = (self._downloads or data_paths.messaging_downloads_dir()) / \
+            str(ref.attachment_id) / ref.filename
+        try:
+            self.downloads_dir()
+            partial = private_files.PartialFile(private_dir(final.parent),
+                                                f"{PARTIAL}{uuid.uuid4()}")
+        except OSError as e:
+            log.warning("no private place for a received file (%s); not fetched",
+                        type(e).__name__)
+            return set_state("failed", bytes_done=0, failure="unsafe_location")
+        expected = (ref.size_bytes, ref.sha256)
+        hasher, size, written = hashlib.sha256(), 0, time.monotonic()
+        try:
+            async for chunk in self.transport().download_attachment(message_id,
+                                                                    ref.attachment_id):
+                size += len(chunk)
+                if size > ref.size_bytes:
+                    raise Corrupt()
+                hasher.update(chunk)
+                partial.write(chunk)
+                if time.monotonic() - written >= PROGRESS_EVERY_SEC:
+                    written = time.monotonic()
+                    set_state("downloading", bytes_done=size)
+            if (size, hasher.hexdigest()) != expected or partial.digest() != expected:
+                raise Corrupt()
+        except Corrupt:
+            partial.discard()
+            return set_state("failed", bytes_done=0, failure="attachment_mismatch")
+        except ports.TransportError as e:
+            partial.discard()
+            return set_state("failed", bytes_done=0, failure=e.code)
+        except asyncio.CancelledError:
+            partial.discard()
+            set_state("available", bytes_done=0)
+            raise
+        except BaseException:
+            partial.discard()
+            set_state("failed", bytes_done=0, failure="transport")
+            raise
+        try:
+            partial.add_stream(ZONE_STREAM, ZONE_MARK)
+            if partial.read_stream(ZONE_STREAM) != ZONE_MARK:
+                raise OSError("the Mark of the Web did not read back")
+        except OSError as e:
+            partial.discard()
+            log.warning("received file not marked as downloaded (%s); not kept",
+                        type(e).__name__)
+            return set_state("failed", bytes_done=0, failure="quarantine")
+        try:
+            try:
+                partial.publish(final.name)
+            except FileExistsError:
+                if download_digest(final) == expected:
+                    partial.discard()           # the verified, still marked copy is kept
+                else:
+                    partial.publish(final.name, replace=True)
+        except OSError as e:
+            partial.discard()
+            log.warning("received file could not be put in place (%s); not kept",
+                        type(e).__name__)
+            return set_state("failed", bytes_done=0, failure="unsafe_location")
+        return set_state("verified", bytes_done=size)
+
     def verified_path(self, server_id: str, owner_github_id: int, message_id: UUID,
                       attachment_id: UUID) -> Path:
         """Where a verified download is, after checking its bytes are still
-        the manifest's."""
+        the manifest's (and, on Windows, that it still has its Mark of the
+        Web, `download_digest`)."""
         ref = self._manifest_entry(server_id, owner_github_id, message_id, attachment_id)
         if self._download_file(server_id, owner_github_id, attachment_id).state != "verified":
             raise wire.ContractError("attachment_not_ready")
         path = self.download_path(ref)
-        if _hash_file(path) != (ref.size_bytes, ref.sha256):
+        if download_digest(path) != (ref.size_bytes, ref.sha256):
             self._set(server_id, owner_github_id, attachment_id, DOWNLOAD, state="failed",
                       failure="attachment_mismatch")
             raise wire.ContractError("attachment_mismatch")
