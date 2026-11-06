@@ -312,7 +312,8 @@ def index_is_full() -> bool:
 # One project note is one line: `_YYYY-MM-DD HH:MM_ — text`. Every other line
 # of the file (the `# project` header, anything the user wrote by hand) is not
 # a note, is never numbered and is kept exactly as it is by every change.
-_NOTE_LINE_RE = re.compile(r"_(\d{4}-\d{2}-\d{2} \d{2}:\d{2})_ — (.*)")
+_NOTE_LINE_RE = re.compile(
+    rf"_(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})_ — ({_ON_ONE_LINE}*)")
 
 # Appending and rewriting the same file from two tool calls at once would lose
 # whichever finished first; every project-note write holds this.

@@ -266,6 +266,7 @@ SAMPLES = {
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_URL_RE": "https://github.com/owner/name",
     "_INDEX_LINE_RE": "- [a fact](a-fact.md) — the hook",
+    "_NOTE_LINE_RE": "_2026-11-05 14:02_ — the store is Postgres",
     "_JOURNAL_NAME_RE": "2026-09-04-133912-123456-manual.md",
     "_TABLE_ROW": "|zeltar pro|99|",
     "_HEADING": "# Title",
