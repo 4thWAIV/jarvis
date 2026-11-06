@@ -118,7 +118,10 @@ alone never approves it (`transmission.accepted`, checked by
 means one of two things. Either it was heard in full since it last changed
 (`read_capture` or the box's Read, played and not skipped or cut short; or
 Accept on screen), and then the very next thing he said, spoken or typed,
-was a plain yes by the clear command's rule (`_rotation_answer`), on its way
+was a plain yes by the clear command's rule (`_rotation_answer`) or an
+explicit instruction to send (`server._send_answer`: "send it", "send it to
+chitauri", "envíalo", at most `SEND_ANSWER_MAX_WORDS`, no word of refusal or
+delay; the phrases are each `Vocabulary`'s `send_phrases`), on its way
 to the brain as his own turn: every utterance closes the read-backs waiting
 for an answer (`server._take_read_back_answers`) and only that yes approves
 them (`server._approve_on_his_yes`), which tells the brain in a note. A yes in

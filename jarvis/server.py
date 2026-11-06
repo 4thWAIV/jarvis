@@ -5349,7 +5349,7 @@ def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
     (`_rotation_answer`, the same short unhedged yes that clears or compacts)
     approves exactly the text each capture had when it was read back, if it
     is still open and unchanged. The numbers approved."""
-    if _rotation_answer(text) is not True:
+    if not _send_answer(text):
         return []
     approved = []
     for number, capture in asked:
@@ -5363,6 +5363,35 @@ def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
             f"back to him just before: send {'them' if len(approved) > 1 else 'it'} now "
             f"(steer_session, or send_message for a message to a person).")
     return approved
+
+
+# An instruction to send may name where ("send it to chitauri"), so it may be
+# longer than a plain yes, but not a whole sentence.
+SEND_ANSWER_MAX_WORDS = 8
+
+
+def _send_answer(text: str) -> bool:
+    """His words after a read-back approve it: a plain yes (`_rotation_answer`)
+    or an explicit instruction to send ("send it", "send it to chitauri",
+    "envíalo"), with no word of refusal or delay anywhere in it."""
+    if _rotation_answer(text) is True:
+        return True
+    words = _action_words(text)
+    if words and words[0] in ("jarvis", "ok", "okay", "yes", "yeah", "please"):
+        words = words[1:]
+    vocabulary = spoken_words.vocabulary()
+    if not words or len(words) > SEND_ANSWER_MAX_WORDS:
+        return False
+    if any(w in vocabulary.no_words for w in words):
+        return False
+    joined = " ".join(words)
+    for phrase in vocabulary.send_phrases:
+        if joined == phrase or joined.startswith(phrase + " "):
+            rest = joined[len(phrase):].split()
+            # Only "now", "please" or a destination may follow.
+            if not rest or rest[0] in ("now", "please", "to", "a", "al", "a la"):
+                return True
+    return False
 
 
 def _capture_transmitting(capture_id: Optional[int]) -> None:

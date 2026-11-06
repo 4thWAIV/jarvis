@@ -337,8 +337,9 @@ async def test_heard_then_his_yes_in_his_next_words_sends(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("next_words", ["send it to chitauri", "what was the last line",
-                                        "yes but change it first", "no"])
+@pytest.mark.parametrize("next_words", ["what was the last line",
+                                        "yes but change it first", "no", "don't send it",
+                                        "send it later"])
 async def test_anything_but_a_plain_yes_next_closes_the_question(
         wired, fake_session, monkeypatch, emitted, next_words):
     """Same strictness as the clear command's yes: short and unhedged, and
@@ -430,7 +431,7 @@ def test_a_yes_heard_by_the_voice_socket_approves_and_tells_the_brain(monkeypatc
         with c.websocket_connect("/ws/voice") as ws:
             ws.receive_json(); ws.receive_json()
             heard(1, "Use Postgres.")
-            say(ws, "send it to chitauri")
+            say(ws, "what was the last line")
             assert not transmission.accepted(server._captures[1])
             say(ws, "yes")
             assert not transmission.accepted(server._captures[1]), "too late: not his next words"
@@ -828,3 +829,25 @@ async def test_read_is_refused_while_it_is_being_read_or_sent(wired, emitted, mo
     with pytest.raises(HTTPException) as missing:
         await wired.api_capture_read(9)
     assert missing.value.status_code == 404
+
+
+@pytest.mark.parametrize("words,ok", [
+    ("send it", True), ("Send it.", True), ("send it to chitauri", True), ("send that now", True),
+    ("okay send it", True), ("jarvis send it to planning please", True), ("send", True),
+    ("yes", True), ("go ahead", True),
+    ("don't send it", False), ("send it later", False), ("wait, send it", False),
+    ("send it but change the second line first please", False),
+    ("send me the last line", False), ("sending is fine I guess", False),
+])
+def test_an_explicit_send_instruction_approves_a_read_back(words, ok):
+    """Tim's rule: after a read-back, "send it" (or "send it to <agent>") is
+    approval, the same as yes; any word of refusal or delay is not."""
+    import jarvis.server as server
+    assert server._send_answer(words) is ok, words
+
+
+def test_spanish_send_instructions_approve(spanish):
+    import jarvis.server as server
+    assert server._send_answer("envíalo") is True
+    assert server._send_answer("mándalo a chitauri") is True
+    assert server._send_answer("no lo envíes") is False
