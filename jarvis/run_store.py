@@ -677,13 +677,15 @@ AGENT_ENDED_KEEP_SEC = 30 * 24 * 3600
 # tools one"). An agent whose stored name is one of these, and that he never named,
 # gets its plain name the next time it is seen running; nothing else ever
 # replaces a stored name (sync_agents).
+# One line only: a stored name with a line break in it is not one of them.
+_ONE_LINE = r"[^\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]+"
 _MADE_UP_NAME = re.compile(
-    r"the (newer|older|newest|second|third|fourth|fifth) .+"
-    r"|the .+ (that needs you|that's working|that's idle|"
+    rf"the (newer|older|newest|second|third|fourth|fifth) {_ONE_LINE}"
+    rf"|the {_ONE_LINE} (that needs you|that's working|that's idle|"
     r"that's working in the background|that's finished|that hasn't started|"
     r"in an unclear state)"
-    r"|.+, the .+ one"
-    r"|.+ number \d+")
+    rf"|{_ONE_LINE}, the {_ONE_LINE} one"
+    rf"|{_ONE_LINE} number \d+")
 
 
 def sync_agents(running: dict[str, tuple[str, str]], now: float | None = None) -> bool:
