@@ -631,10 +631,6 @@ EXEMPT = {
         "with spaces to compare it with what the user said, and it returns "
         "the matching agents, whose names every caller says through "
         "`_agent_said`"),
-    "server._find_agent": (
-        "its sentences name agents only through `_agent_said` and "
-        "`_no_such_agent`, both driven, and it is itself driven through "
-        "tool_set_agent_active and tool_rename_agent"),
     "server._rename_agent": (
         "it reads other agents' names only to compare them with the new one "
         "(`agent_directory.same_name`) and returns a row and a reason code, "
@@ -811,20 +807,6 @@ EXEMPT = {
         "that comes out is a number; no name from this reaches a header"),
 
     # --- session_watch BUILDS the names; it never speaks them ------------
-    "session_watch._assign_voice_names": (
-        "this module is the SOURCE of the foreign values, not a consumer of "
-        "them: it reads the roster and composes a voice name. It imports "
-        "neither `speech` nor anything that returns text to the brain. Every "
-        "name it can emit is driven through the wall by "
-        "test_no_real_voice_name_is_refused_by_the_wall, which is a stronger "
-        "check than driving the composer would be"),
-    "session_watch._name_by_topic": (
-        "one of the three naming rules `_assign_voice_names` composes with; "
-        "same argument, and its output is in the sweep that test drives"),
-    "session_watch._name_by_state": (
-        "another of the three naming rules — it turns a roster state into "
-        "the phrase that tells two same-named conversations apart. Same "
-        "argument as `_assign_voice_names`, which is the only caller"),
 
     # --- values compared, not printed ------------------------------------
     "server._approval_clause": (
@@ -1006,7 +988,11 @@ def _drive_resolve_or_explain(server, session, monkeypatch):
     from jarvis import agent_directory
     twin = copy.deepcopy(session)
     twin.session_id = "s2"
-    monkeypatch.setattr(agent_directory, "_snapshot", lambda: _hostile_snapshot(server, session))
+    twin.cwd = "/elsewhere/" + str(session.cwd)      # so the folder is said too
+    both = __import__("jarvis.session_watch", fromlist=["Snapshot"]).Snapshot(
+        sessions=[session, twin], taken_at=0.0)
+    monkeypatch.setattr(agent_directory, "_snapshot", lambda: both)
+    monkeypatch.setattr(server, "_snapshot_or_empty", lambda: both)
     monkeypatch.setattr(agent_directory, "_rows", lambda: [])
     out = []
     monkeypatch.setattr(agent_directory, "find_sessions", lambda name, last_mentioned=None: [])
@@ -1271,6 +1257,7 @@ def _drive_build_progress_clause(server, session, monkeypatch):
 DRIVERS = {
     "server._build_progress_clause": _drive_build_progress_clause,
     "server._resolve_or_explain": _drive_resolve_or_explain,
+    "server._ask_which": _drive_resolve_or_explain,
     "server.tool_session_detail": _drive_session_detail,
     "server.tool_list_agents": _drive_list_agents,
     "server._agent_line": _drive_list_agents,
@@ -2086,7 +2073,7 @@ def test_every_real_voice_name_survives_the_needs_you_notice(server, monkeypatch
     import asyncio
 
     names = _every_voice_name_session_watch_can_produce()
-    assert len(names) >= 12, names
+    assert len(names) >= 10, names
     erased = []
     for name in names:
         lines = []
@@ -2119,7 +2106,7 @@ def test_the_class_is_big_enough_to_be_the_class():
     # More than one module, or the universe is still one file.
     assert len({name.split(".")[0] for name in PRINTERS}) >= 6, sorted(PRINTERS)
     for missed in ("server.tool_steer_session", "server.tool_answer_dialog",
-                   "server._resolve_or_explain",
+                   "server._ask_which",
                    "server._tty_for_session_or_explain",
                    # The three the FOURTH audit found, each invisible to the
                    # walk as it stood: a `.get("voice_name")` read, and two
@@ -2178,33 +2165,26 @@ def test_the_fields_the_auditor_confirmed_clean_stay_clean(server):
 
 def _every_voice_name_session_watch_can_produce() -> list:
     """Every shape `_assign_voice_names` actually emits, produced by driving
-    it — not typed here. The naming chain has three rules and each has its
-    own format; a wall that admits only the first erases the other two."""
+    it — not typed here. A name is the one the user gave the conversation in
+    Claude Code, else its project's; never a phrase made up to tell two
+    apart (two in one folder are both "hammer")."""
     from jarvis import session_watch
 
-    def _s(sid, cwd, title=None, state="idle", started=0.0):
+    def _s(sid, cwd, given="", state="idle", started=0.0):
         return session_watch.SessionState(
             session_id=sid, cwd=cwd, project=session_watch.project_name(cwd),
-            state=state, title=title, started=started, since=started)
+            state=state, given_name=given, started=started, since=started)
 
     groups = [
-        # one alone: the bare project name
         [_s("a", "/Users/e/Projects/hammer")],
-        # two directories: "hammer in Projects" / "hammer in Desktop"
         [_s("a", "/Users/e/Projects/hammer"), _s("b", "/Users/e/Desktop/hammer")],
-        # one directory, distinct titles: ", the … one"
-        [_s("a", "/p/hammer", title="the memory tools"),
-         _s("b", "/p/hammer", title="the run pipeline")],
-        # one directory, no titles, distinct states: "the hammer that's working"
-        [_s("a", "/p/hammer", state="working"),
-         _s("b", "/p/hammer", state="idle")],
-        # nothing to tell them apart but age: "the newer hammer"
-        [_s("a", "/p/hammer", started=2.0), _s("b", "/p/hammer", started=1.0)],
-        # more than two of those: ordinals
+        [_s("a", "/p/hammer", state="working"), _s("b", "/p/hammer", state="idle")],
         [_s("a", "/p/hammer", started=3.0), _s("b", "/p/hammer", started=2.0),
          _s("c", "/p/hammer", started=1.0)],
         # a directory name with a space in it, which is an ordinary folder
         [_s("a", "/Users/e/My Projects/note taker")],
+        # names he gave in Claude Code, with ordinary punctuation
+        [_s("a", "/p/x", given="Tim's notes, draft"), _s("b", "/p/x", given="Designer")],
     ]
     names = []
     for group in groups:
@@ -2214,15 +2194,16 @@ def _every_voice_name_session_watch_can_produce() -> list:
 
 
 def test_no_real_voice_name_is_refused_by_the_wall(server):
-    """The wall that erases every disambiguated name is not a fix: the user
-    is told "one of them: idle" about two conversations and has no way to
-    answer "which one?". `_plain_name` forbids a space, and every name past
-    the first rule of the naming chain has one."""
+    """Every name a conversation can go by passes the wall unchanged: a name
+    with a space, a comma or an apostrophe in it is still a name, and
+    erasing it would leave him no way to say which agent he means."""
     names = _every_voice_name_session_watch_can_produce()
-    assert len(names) >= 12, names
+    assert len(names) >= 10, names
     assert any(" " in n for n in names), names
     assert any("," in n for n in names), names
     assert any("'" in n for n in names), names
+    assert not any(w in n for n in names
+                   for w in ("newer", "older", "that's", "that hasn't", ", the ")), names
     for name in names:
         session = _blank()
         session.voice_name = name

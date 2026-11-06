@@ -1,10 +1,13 @@
 """The agent directory: the one way JARVIS lists and finds agents.
 
 An agent is a conversation running on this machine (Claude Code or Codex),
-active or inactive, by the name it goes by: the official name the user gave
-it (run_store.rename_agent), else the one the session watcher derived. Every
+active or inactive, by its ONE name: the agents table's `name`, given once
+when the agent is first seen (its plain derived name, session_watch.agent_name)
+and changed only when the user renames it (run_store.rename_agent). Every
 tool that lists agents or takes an agent's name comes here, and nowhere else
-matches names, so a name that works once works everywhere.
+matches names, so a name that works once works everywhere. Two agents may
+share a name: they are told apart by session id, and a name that fits
+several is asked about, never guessed.
 
 Names are matched as they are SPOKEN: `spoken_key` lowercases, folds
 accents (`spoken_words.fold`, since the recogniser may or may not write them) and turns
@@ -33,7 +36,7 @@ from jarvis import spoken_words
 @dataclass(frozen=True)
 class Agent:
     session_id: str
-    name: str             # official name if set, else the derived one
+    name: str             # its one name (the agents table's `name`)
     project: str
     provider: str | None
     state: str            # working, idle, needs_you, ...
@@ -46,7 +49,7 @@ class Agent:
 
 
 # Words a person says around a name that carry no identity of their own.
-# "the newer one" distinguishes; "the", "one", "session" do not.
+# "the", "one", "session" carry no identity.
 _FILLER = frozenset({
     "the", "a", "an", "one", "ones", "session", "sessions", "conversation",
     "conversations", "project", "in", "on", "at", "my", "please", "that",
@@ -98,8 +101,8 @@ _needs: Callable[[], dict[str, int]] = _needs_by_project
 def connect(snapshot: Callable[[], session_watch.Snapshot],
             rows: Callable[[], list[dict]] = _agent_rows,
             needs: Callable[[], dict[str, int]] = _needs_by_project) -> None:
-    """Where the directory reads from: the sessions running now (with
-    official names applied), the agents table (activation and order), and
+    """Where the directory reads from: the sessions running now (going by
+    the agents table's names), the agents table (activation and order), and
     the needs boards."""
     global _snapshot, _rows, _needs
     _snapshot, _rows, _needs = snapshot, rows, needs
@@ -163,9 +166,11 @@ def _find(reference: str, last_mentioned: str | None):
     if ref in _THAT_ONE:
         return [e for e in entries if e[0].session_id == last_mentioned]
 
+    # Two agents may share a name (two conversations in one project, never
+    # renamed): every one of them comes back, and the caller asks.
     exact = [e for e in entries if spoken_key(e[0].name) == ref]
     if exact:
-        return exact
+        return _prefer_real(exact)
     sid = [e for e in entries if e[0].session_id == (reference or "").strip()]
     if sid:
         return sid
@@ -179,8 +184,8 @@ def _find(reference: str, last_mentioned: str | None):
     if exact_project:
         return _prefer_real(exact_project)
 
-    # Every distinguishing word the user said is in the name or project, so
-    # an answer to "which one?" ("the newer one in webapp-fresh") narrows.
+    # Every distinguishing word the user said is in the name or project
+    # ("the webapp-fresh one" finds webapp-fresh).
     ref_words = {w for w in _words(ref) if w not in _FILLER}
     if ref_words:
         hits = [e for e in entries if ref_words <= _words(f"{e[0].name} {e[0].project}")]
@@ -195,7 +200,7 @@ def _find(reference: str, last_mentioned: str | None):
                 return narrowed
 
     # Substring, both directions: "the chitauri one" contains "chitauri",
-    # and "hammer" is contained in "the newer hammer".
+    # and "tokens" is contained in "tokens for cash".
     loose = [e for e in entries
              if (e[0].name and (spoken_key(e[0].name) in ref or ref in spoken_key(e[0].name)))
              or (e[0].project and spoken_key(e[0].project) in ref)]

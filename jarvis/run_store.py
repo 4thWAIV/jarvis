@@ -5,6 +5,7 @@ transitions are persisted before they are announced.
 """
 
 import logging
+import re
 import sqlite3
 import time
 import uuid
@@ -188,9 +189,9 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 active INTEGER NOT NULL DEFAULT 0,
                 state TEXT NOT NULL DEFAULT '',
-                -- The name the user set, if any: the agent's official name.
-                -- Never written by sync_agents. NULL means "use the derived
-                -- one". `name` holds whichever applies.
+                -- The name the user set, if any. Never written by
+                -- sync_agents. `name` is the agent's one name either way:
+                -- set once when first seen, and only he changes it.
                 custom_name TEXT,
                 -- When JARVIS last sent it a message (0: never). Orders the list.
                 last_message_at REAL NOT NULL DEFAULT 0,
@@ -671,18 +672,37 @@ def _agent_row(row) -> dict:
 AGENT_ENDED_KEEP_SEC = 30 * 24 * 3600
 
 
+# The labels JARVIS used to make up to tell two conversations of one project
+# apart ("the older denice", "the denice that's working", "hammer, the memory
+# tools one"). An agent whose stored name is one of these, and that he never named,
+# gets its plain name the next time it is seen running; nothing else ever
+# replaces a stored name (sync_agents).
+_MADE_UP_NAME = re.compile(
+    r"the (newer|older|newest|second|third|fourth|fifth) .+"
+    r"|the .+ (that needs you|that's working|that's idle|"
+    r"that's working in the background|that's finished|that hasn't started|"
+    r"in an unclear state)"
+    r"|.+, the .+ one"
+    r"|.+ number \d+")
+
+
 def sync_agents(running: dict[str, tuple[str, str]], now: float | None = None) -> bool:
     """Make the agents list match what is running now: `running` maps each
     running session's id to its (name, state).
 
-    A session seen for the first time is added INACTIVE; only the user
-    activates one (set_agent_active). A known one keeps its `active` and has
-    its state refreshed, and its name too unless the user has set one
-    (rename_agent), which always wins. One that is no longer running is
-    marked ended, not removed: the same session resumed (same session id)
-    comes back with its name and activation. Ended ones are dropped after
-    AGENT_ENDED_KEEP_SEC. Returns whether the running list changed, so the
-    caller only tells the pages when it did.
+    An agent has ONE name, `name`, and every screen, record and lookup reads
+    it. A session seen for the first time is added INACTIVE (only the user
+    activates one, set_agent_active) under the name it is given then: its
+    plain derived name (session_watch.agent_name). From then on its name is
+    never changed here: not by a new Claude Code title, a resume or a
+    restart. Only the user renames an agent (rename_agent), and that name is
+    kept for good. The one exception is a made-up label stored before this
+    rule (`_MADE_UP_NAME`) on an agent he never named, replaced once by its
+    plain name. A known one has its state refreshed. One that is no longer
+    running is marked ended, not removed: the same session resumed (same
+    session id) comes back with its name and activation. Ended ones are
+    dropped after AGENT_ENDED_KEEP_SEC. Returns whether the running list
+    changed, so the caller only tells the pages when it did.
     """
     now = time.time() if now is None else now
     with closing(_connect()) as conn:
@@ -690,24 +710,25 @@ def sync_agents(running: dict[str, tuple[str, str]], now: float | None = None) -
             "SELECT session_id, name, state, custom_name, ended_at FROM agents").fetchall()
         known = {r["session_id"]: (r["name"], r["state"]) for r in rows}
         stopped = {r["session_id"] for r in rows if r["ended_at"] is not None}
-        # A name the user set is the official one, whatever was derived.
-        custom = {r["session_id"]: r["custom_name"] for r in rows if r["custom_name"]}
-        running = {sid: (custom.get(sid, name), state)
-                   for sid, (name, state) in running.items()}
+        made_up = {r["session_id"] for r in rows
+                   if not r["custom_name"] and _MADE_UP_NAME.fullmatch(r["name"] or "")}
         added = [(sid, name, state) for sid, (name, state) in running.items()
                  if sid not in known]
-        changed = [(name, state, sid) for sid, (name, state) in running.items()
-                   if sid in known and (known[sid] != (name, state) or sid in stopped)]
+        renamed = [(name, sid) for sid, (name, _state) in running.items()
+                   if sid in made_up and name != known[sid][0]]
+        changed = [(state, sid) for sid, (_name, state) in running.items()
+                   if sid in known and (known[sid][1] != state or sid in stopped)]
         ended = [(now, sid) for sid in known if sid not in running and sid not in stopped]
         conn.executemany(
             "INSERT INTO agents (session_id, name, state, active) VALUES (?, ?, ?, 0)",
             added)
+        conn.executemany("UPDATE agents SET name=? WHERE session_id=?", renamed)
         conn.executemany(
-            "UPDATE agents SET name=?, state=?, ended_at=NULL WHERE session_id=?", changed)
+            "UPDATE agents SET state=?, ended_at=NULL WHERE session_id=?", changed)
         conn.executemany("UPDATE agents SET ended_at=? WHERE session_id=?", ended)
         conn.execute("DELETE FROM agents WHERE ended_at < ?", (now - AGENT_ENDED_KEEP_SEC,))
         conn.commit()
-    return bool(added or changed or ended)
+    return bool(added or renamed or changed or ended)
 
 
 # The states that count as busy: doing something, or waiting on the user.
@@ -750,13 +771,18 @@ class DuplicateAgentName(ValueError):
     """Another agent, running or kept for a resume, already goes by that name."""
 
 
-def official_names() -> dict[str, str]:
-    """session id -> the name the user set, for every agent that has one."""
+def agent_names() -> dict[str, str]:
+    """session id -> its name, for every agent on the list, running or kept
+    for a resume (but a made-up label it was never renamed from, see
+    `_MADE_UP_NAME`). The one field an agent's name is read from: the session
+    snapshot goes by it (session_watch.Snapshot.named), so every screen,
+    record and lookup says the same name."""
     with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT session_id, custom_name FROM agents WHERE custom_name IS NOT NULL"
-        ).fetchall()
-    return {r["session_id"]: r["custom_name"] for r in rows}
+        rows = conn.execute("SELECT session_id, name, custom_name FROM agents").fetchall()
+    # A made-up label stored before names were made one is not a name: the
+    # snapshot keeps the plain derived name, and sync_agents stores it.
+    return {r["session_id"]: r["name"] for r in rows
+            if r["custom_name"] or not _MADE_UP_NAME.fullmatch(r["name"] or "")}
 
 
 def rename_agent(session_id: str, new_name: str) -> dict | None:

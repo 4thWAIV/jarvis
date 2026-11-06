@@ -533,7 +533,7 @@ def test_a_name_the_user_set_in_claude_code_is_the_agent_s_name(tmp_path, all_al
                      title="T", last_prompt="P")
 
     s = sw.build_snapshot(roots=[root]).sessions[0]
-    assert (s.given_name, s.voice_name) == ("Diagnostics", "chitauri")
+    assert (s.given_name, s.voice_name) == ("Diagnostics", "Diagnostics")
     assert sw.agent_name(s) == "Diagnostics"
 
 
@@ -549,32 +549,65 @@ def test_a_name_claude_code_derived_is_not_the_agent_s_name(tmp_path, all_alive)
     assert sw.agent_name(s) == "chitauri"
 
 
-def test_same_named_projects_in_different_folders_are_named_by_folder(tmp_path, all_alive):
-    """Measured: chitauri exists on the Desktop and in Projects."""
+def test_same_named_projects_in_different_folders_share_the_plain_name(tmp_path, all_alive):
+    """Measured: chitauri exists on the Desktop and in Projects. Each is
+    "chitauri": the folder is a fact said beside the name when he is asked
+    which, never part of the name."""
     root = tmp_path / ".claude"
     me = os.getpid()
     for i, cwd in enumerate(("/Users/e/Desktop/chitauri", "/Users/e/Projects/chitauri")):
         write_roster(root, pid=me + i, session_id=f"s{i}", cwd=cwd, name=f"chitauri-{i}")
         write_transcript(root, cwd=cwd, session_id=f"s{i}", title="T", last_prompt="P")
 
-    names = {s.voice_name for s in sw.build_snapshot(roots=[root]).sessions}
-    assert names == {"chitauri in Desktop", "chitauri in Projects"}
+    names = [s.voice_name for s in sw.build_snapshot(roots=[root]).sessions]
+    assert names == ["chitauri", "chitauri"]
 
 
-def test_two_conversations_in_one_folder_are_named_by_age(tmp_path, all_alive):
-    """Measured: hammer had two conversations in the SAME directory, so the
-    folder cannot disambiguate them and the roster suffix is unsayable."""
+# The labels JARVIS used to make up to tell two conversations apart. None
+# may ever be a name again.
+MADE_UP = ("newer", "older", "newest", "second", "that's", "that needs",
+           "that hasn't", "unclear", " the ", " one", " number ", " in ")
+
+
+@pytest.mark.parametrize("statuses,titles,started", [
+    (("idle", "idle"), ("T", "T"), (1_000_000_000_000, 1_788_000_000_000)),     # was age
+    (("busy", "idle"), ("Same title", "Same title"), (None, None)),            # was state
+    (("waiting", "idle"), ("Review the worker", None), (None, None)),          # was state
+    (("idle", "idle"), ("App development status review",
+                        "Coach architecture and handoff"), (None, None)),      # was topic
+])
+def test_two_conversations_in_one_folder_both_go_by_the_project_s_name(
+        tmp_path, all_alive, statuses, titles, started):
+    """Live: Tim heard "the older denice" and "the denice that's working" for
+    the agent called Denice. Two conversations in one folder are each named
+    after the folder, whatever their age, state or title."""
     root = tmp_path / ".claude"
     me = os.getpid()
-    write_roster(root, pid=me, session_id="old", cwd="/p/hammer", name="hammer-4b",
-                 started_at=1_000_000_000_000)
-    write_roster(root, pid=me + 1, session_id="new", cwd="/p/hammer", name="hammer-18",
-                 started_at=1_788_000_000_000)
-    for sid in ("old", "new"):
-        write_transcript(root, cwd="/p/hammer", session_id=sid, title="T", last_prompt="P")
+    for i, sid in enumerate(("s1", "s2")):
+        extra = {"waiting_for": "input needed"} if statuses[i] == "waiting" else {}
+        write_roster(root, pid=me + i, session_id=sid, cwd="/p/denice", name=f"denice-{i}",
+                     status=statuses[i], **({"started_at": started[i]} if started[i] else {}),
+                     **extra)
+        write_transcript(root, cwd="/p/denice", session_id=sid, title=titles[i],
+                         last_prompt="P")
 
-    by_id = {s.session_id: s.voice_name for s in sw.build_snapshot(roots=[root]).sessions}
-    assert by_id == {"old": "the older hammer", "new": "the newer hammer"}
+    snap = sw.build_snapshot(roots=[root])
+    assert [s.voice_name for s in snap.sessions] == ["denice", "denice"]
+    assert [sw.agent_name(s) for s in snap.sessions] == ["denice", "denice"]
+    for s in snap.sessions:
+        assert not any(w in f" {s.voice_name} " for w in MADE_UP), s.voice_name
+
+
+def test_a_snapshot_goes_by_the_agents_list_s_names(tmp_path, all_alive):
+    """The agents list's name is the one name: applied to the snapshot, it is
+    the voice name and the agent name, whatever Claude Code calls it."""
+    root = tmp_path / ".claude"
+    write_roster(root, pid=os.getpid(), session_id="s", cwd="/p/denice",
+                 name="Something", extra={"nameSource": "user"})
+    write_transcript(root, cwd="/p/denice", session_id="s", title="T", last_prompt="P")
+
+    s, = sw.build_snapshot(roots=[root]).named({"s": "Designer"}).sessions
+    assert (s.voice_name, sw.agent_name(s)) == ("Designer", "Designer")
 
 
 def test_started_and_since_are_different_fields_with_different_sources(tmp_path, all_alive):
@@ -597,150 +630,6 @@ def test_started_and_since_are_different_fields_with_different_sources(tmp_path,
     assert s.since == status_updated_at_ms / 1000.0
     assert s.started != s.since
     assert (s.since - s.started) == 367_200.0  # 102 hours, in seconds
-
-
-def test_two_conversations_with_distinct_titles_are_named_by_topic(tmp_path, all_alive):
-    """When titles differ, name by what the conversation is ABOUT, not its
-    age -- age tells the user nothing about which is which. Measured live:
-    two webapp-fresh conversations, one about a status review and
-    one about an architecture handoff."""
-    root = tmp_path / ".claude"
-    me = os.getpid()
-    cwd = "/Users/e/Desktop/webapp-fresh"
-    write_roster(root, pid=me, session_id="s1", cwd=cwd, name="secf-1",
-                 started_at=1_788_000_000_000)
-    write_roster(root, pid=me + 1, session_id="s2", cwd=cwd, name="secf-2",
-                 started_at=1_000_000_000_000)
-    write_transcript(root, cwd=cwd, session_id="s1",
-                     title="App development status review", last_prompt="P")
-    write_transcript(root, cwd=cwd, session_id="s2",
-                     title="Resume search engine coach architecture and handoff",
-                     last_prompt="P")
-
-    by_id = {s.session_id: s.voice_name
-             for s in sw.build_snapshot(roots=[root]).sessions}
-
-    assert by_id["s1"] == "webapp-fresh, the status review one"
-    assert by_id["s2"] == "webapp-fresh, the architecture handoff one"
-    assert "newer" not in by_id["s1"] and "older" not in by_id["s2"]
-
-
-def test_a_missing_title_on_either_side_falls_through_to_state_naming(tmp_path, all_alive):
-    """Live shape: one hammer conversation has a title, its sibling has none
-    at all -- topic naming cannot tell the whole group apart, so it falls
-    through to state, which can."""
-    root = tmp_path / ".claude"
-    me = os.getpid()
-    write_roster(root, pid=me, session_id="s1", cwd="/p/hammer", name="hammer-a",
-                 status="waiting", waiting_for="input needed")
-    write_roster(root, pid=me + 1, session_id="s2", cwd="/p/hammer", name="hammer-b",
-                 status="idle")
-    write_transcript(root, cwd="/p/hammer", session_id="s1",
-                     title="Review and improve the hammer worker",
-                     last_prompt="P")
-    write_transcript(root, cwd="/p/hammer", session_id="s2", title=None,
-                     last_prompt="version")
-
-    by_id = {s.session_id: s.voice_name
-             for s in sw.build_snapshot(roots=[root]).sessions}
-
-    assert by_id["s1"] == "the hammer that needs you"
-    assert by_id["s2"] == "the hammer that's idle"
-
-
-def test_identical_titles_also_fall_through_to_state_naming(tmp_path, all_alive):
-    """Two titles that are both non-empty but identical are just as
-    undistinguishing as a missing one -- must fall through the same way."""
-    root = tmp_path / ".claude"
-    me = os.getpid()
-    write_roster(root, pid=me, session_id="s1", cwd="/p/chitauri", name="chitauri-a",
-                 status="busy")
-    write_roster(root, pid=me + 1, session_id="s2", cwd="/p/chitauri", name="chitauri-b",
-                 status="idle")
-    for sid in ("s1", "s2"):
-        write_transcript(root, cwd="/p/chitauri", session_id=sid, title="Same title",
-                         last_prompt="P")
-
-    by_id = {s.session_id: s.voice_name
-             for s in sw.build_snapshot(roots=[root]).sessions}
-
-    assert by_id["s1"] == "the chitauri that's working"
-    assert by_id["s2"] == "the chitauri that's idle"
-
-
-def test_identical_titles_and_identical_states_fall_all_the_way_to_age(tmp_path, all_alive):
-    """When NEITHER topic nor state distinguishes the group, age is still
-    the last resort it always was."""
-    root = tmp_path / ".claude"
-    me = os.getpid()
-    write_roster(root, pid=me, session_id="s1", cwd="/p/chitauri", name="chitauri-a",
-                 status="idle", started_at=1_000_000_000_000)
-    write_roster(root, pid=me + 1, session_id="s2", cwd="/p/chitauri", name="chitauri-b",
-                 status="idle", started_at=1_788_000_000_000)
-    for sid in ("s1", "s2"):
-        write_transcript(root, cwd="/p/chitauri", session_id=sid, title="Same title",
-                         last_prompt="P")
-
-    by_id = {s.session_id: s.voice_name
-             for s in sw.build_snapshot(roots=[root]).sessions}
-
-    assert by_id == {"s1": "the older chitauri", "s2": "the newer chitauri"}
-
-
-def test_every_generated_voice_name_resolves_to_exactly_one_session(tmp_path, all_alive):
-    """The whole point of naming by topic/state instead of age: every name
-    JARVIS speaks must be a name the user can hand straight back and have it
-    resolve unambiguously -- otherwise this rebuilds the dead-end
-    disambiguation loop that was already fixed once. Build one snapshot that
-    mixes every naming strategy (topic, state, and age) plus a lone
-    conversation, and check the property holds for every generated name."""
-    root = tmp_path / ".claude"
-    me = os.getpid()
-    pids = iter(range(me, me + 100))
-
-    # topic-named pair
-    secf_cwd = "/Users/e/Desktop/webapp-fresh"
-    write_roster(root, pid=next(pids), session_id="secf1", cwd=secf_cwd, name="secf-1")
-    write_roster(root, pid=next(pids), session_id="secf2", cwd=secf_cwd, name="secf-2")
-    write_transcript(root, cwd=secf_cwd, session_id="secf1",
-                     title="App development status review", last_prompt="P")
-    write_transcript(root, cwd=secf_cwd, session_id="secf2",
-                     title="Resume search engine coach architecture and handoff",
-                     last_prompt="P")
-
-    # state-named pair (title missing on one side)
-    write_roster(root, pid=next(pids), session_id="h1", cwd="/p/hammer", name="hammer-a",
-                 status="waiting", waiting_for="input needed")
-    write_roster(root, pid=next(pids), session_id="h2", cwd="/p/hammer", name="hammer-b",
-                 status="idle")
-    write_transcript(root, cwd="/p/hammer", session_id="h1",
-                     title="Review and improve the hammer worker",
-                     last_prompt="P")
-    write_transcript(root, cwd="/p/hammer", session_id="h2", title=None,
-                     last_prompt="version")
-
-    # age-named pair (identical titles AND identical states)
-    write_roster(root, pid=next(pids), session_id="c1", cwd="/p/chitauri", name="chitauri-a",
-                 started_at=1_000_000_000_000)
-    write_roster(root, pid=next(pids), session_id="c2", cwd="/p/chitauri", name="chitauri-b",
-                 started_at=1_788_000_000_000)
-    for sid in ("c1", "c2"):
-        write_transcript(root, cwd="/p/chitauri", session_id=sid, title="Same",
-                         last_prompt="P")
-
-    # lone conversation
-    write_roster(root, pid=next(pids), session_id="lone", cwd="/p/solo", name="solo-1")
-    write_transcript(root, cwd="/p/solo", session_id="lone", title="T", last_prompt="P")
-
-    snap = sw.build_snapshot(roots=[root])
-
-    voice_names = [s.voice_name for s in snap.sessions]
-    assert len(voice_names) == len(set(voice_names)), "voice names must be unique"
-
-    for s in snap.sessions:
-        got = _resolve(snap, s.voice_name)
-        assert [x.session_id for x in got] == [s.session_id], \
-            f"{s.voice_name!r} must resolve to exactly {s.session_id!r}, got {got}"
 
 
 def test_a_voice_name_never_contains_the_roster_suffix(tmp_path, all_alive):
@@ -795,9 +684,12 @@ def test_resolve_returns_every_candidate_when_ambiguous_it_never_guesses(tmp_pat
     assert {s.session_id for s in matches} == {"h1", "h2"}
 
 
-def test_resolve_disambiguates_on_the_voice_name(tmp_path, all_alive):
+def test_resolve_picks_one_of_two_same_named_by_its_session_id(tmp_path, all_alive):
+    """Two agents called hammer: the name asks, the session id (what the
+    brain is given with the question) picks exactly one."""
     snap = _two_hammers(tmp_path)
-    assert [s.session_id for s in _resolve(snap, "the newer hammer")] == ["h2"]
+    assert {s.session_id for s in _resolve(snap, "hammer")} == {"h1", "h2"}
+    assert [s.session_id for s in _resolve(snap, "h2")] == ["h2"]
 
 
 def test_that_one_resolves_to_the_last_mentioned_session(tmp_path, all_alive):
@@ -992,22 +884,12 @@ def _two_named(tmp_path, project, cwd="/p/proj"):
     return sw.build_snapshot(roots=[root])
 
 
-def test_a_qualified_answer_picks_one(tmp_path, all_alive):
-    snap = _two_named(tmp_path, "webapp-fresh",
-                      cwd="/Users/e/Desktop/webapp-fresh")
+def test_the_answer_to_which_one_is_the_session_id(tmp_path, all_alive):
+    snap = _two_named(tmp_path, "webapp-fresh", cwd="/Users/e/Desktop/webapp-fresh")
 
-    got = _resolve(snap, "newer webapp-fresh")
-
-    assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
-
-
-def test_a_qualified_answer_with_filler_words_still_picks_one(tmp_path, all_alive):
-    snap = _two_named(tmp_path, "webapp-fresh",
-                      cwd="/Users/e/Desktop/webapp-fresh")
-
-    got = _resolve(snap, "let's go with the newer one in webapp-fresh")
-
-    assert [s.voice_name for s in got] == ["the newer webapp-fresh"]
+    assert len(_resolve(snap, "webapp-fresh")) == 2
+    got = _resolve(snap, "s2")
+    assert [(s.session_id, s.voice_name) for s in got] == [("s2", "webapp-fresh")]
 
 
 # --- excluding JARVIS's own brain from the roster ----------------------------

@@ -165,49 +165,34 @@ def test_a_gone_session_is_retained_so_the_completion_can_still_be_spoken(tmp_pa
     assert w.snapshot.by_id("s") is None, "dropped after the retention window"
 
 
-def test_a_gone_then_returned_session_does_not_duplicate_a_live_sessions_name(
+def test_a_gone_session_and_a_live_one_in_one_project_share_the_name_not_the_id(
         tmp_path, monkeypatch):
-    """Review finding 8: gone-cache entries are appended to the snapshot
-    AFTER `_assign_voice_names` has already run for the live sessions, so a
-    stale name computed in an earlier poll (when the now-gone session was
-    the only one in its project) can collide with a live session's name
-    computed independently in this poll. Every session in a published
-    snapshot must have been through naming TOGETHER."""
-    # "new" below uses a placeholder pid (not a real process) to represent a
-    # second, later conversation -- pinned alive per the `all_alive`
-    # precedent in test_session_watch.py.
+    """A conversation that has ended and a new one in the same project are
+    both "hammer": a name is never turned into "the older hammer" to tell
+    them apart. They are two agents by session id, and that is what every
+    message and lookup goes by."""
     monkeypatch.setattr(sw, "pid_alive", lambda pid: True)
     root = tmp_path / ".claude"
     old_pid = os.getpid()
     new_pid = os.getpid() + 1000003
 
     write_roster(root, pid=old_pid, session_id="old", cwd="/p/hammer",
-                name="hammer-old", status="idle", started_at=1_000_000_000_000)
+                 name="hammer-old", status="idle", started_at=1_000_000_000_000)
     write_transcript(root, cwd="/p/hammer", session_id="old", title="T",
                      last_prompt="P")
     w = _watcher(root)
     w.poll_once(now=1000.0)
-    assert w.snapshot.by_id("old").voice_name == "hammer", "baseline: alone, plain name"
-
-    # "old" exits -> GONE, cached with the voice_name from when it was alone.
     (root / "sessions" / f"{old_pid}.json").unlink()
     w.poll_once(now=1001.0)
-    assert w.snapshot.by_id("old").state == sw.GONE
-    assert w.snapshot.by_id("old").voice_name == "hammer"
-
-    # A NEW conversation for the SAME project appears while "old" is still
-    # within the gone-cache retention window. Named independently (as the
-    # only LIVE session in its project) it would also come out "hammer".
     write_roster(root, pid=new_pid, session_id="new", cwd="/p/hammer",
-                name="hammer-new", status="idle", started_at=1_800_000_000_000)
+                 name="hammer-new", status="idle", started_at=1_800_000_000_000)
     write_transcript(root, cwd="/p/hammer", session_id="new", title="T",
                      last_prompt="P")
     w.poll_once(now=1002.0)
 
     old, new = w.snapshot.by_id("old"), w.snapshot.by_id("new")
-    assert old is not None and new is not None
-    assert old.voice_name != new.voice_name, \
-        f"gone {old.voice_name!r} collides with live {new.voice_name!r}"
+    assert old.state == sw.GONE and new.state != sw.GONE
+    assert (old.voice_name, new.voice_name) == ("hammer", "hammer")
 
 
 def test_a_failing_callback_cannot_stop_the_watcher(tmp_path):

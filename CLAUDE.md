@@ -1225,9 +1225,15 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
   names as they are said (`spoken_key`: hyphens and underscores are spaces).
-  An agent's name is the one set in JARVIS (`rename_agent`), else the one
-  the user set in Claude Code (`session_watch.agent_name`, which survives a
-  resume), else the derived voice name. A stopped session's agent is kept,
+  An agent has one name, the agents table's `name`
+  (`run_store.agent_names`), which the session snapshot goes by, so every
+  screen, record, read-back, tool result and lookup says it. It is given
+  once, when the agent is first seen (`session_watch.agent_name`: the name
+  the user set in Claude Code, else the project's; never a phrase made up to
+  tell two apart), and only the user's `rename_agent` changes it, for good.
+  Two agents may share a name: they are kept apart by session id, and a name
+  that fits both is asked about (`server._ask_which`: the name with a fact
+  beside it and the session id). A stopped session's agent is kept,
   ended, for `run_store.AGENT_ENDED_KEEP_SEC` (30 days), so resuming the same
   session brings back its name and activation (`run_store.sync_agents`)
 - `session_steer.py` — Sends a message into a running session's inbox socket;
@@ -1513,7 +1519,7 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
-`test_voice_page_playback.py`, `test_voice_page_updates.py`,
+`test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
 `test_voice_page_capture_cues.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the

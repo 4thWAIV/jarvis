@@ -154,7 +154,7 @@ def test_a_message_goes_through_codex_s_own_queue(tmp_path):
     assert provider.send(session, "   ") == session_steer.REFUSED
 
 
-def test_both_providers_merge_into_one_list_with_names_across_them(tmp_path):
+def test_both_providers_merge_into_one_list_each_named_after_its_project(tmp_path):
     class Claude:
         name, can_answer_dialogs = "anthropic", True
 
@@ -169,7 +169,8 @@ def test_both_providers_merge_into_one_list_with_names_across_them(tmp_path):
     snap = sw.build_snapshot(now=NOW, providers=[Claude(), codex])
     by = {s.session_id: s for s in snap.sessions}
     assert {by["c1"].provider, by[T2].provider} == {"anthropic", "openai"}
-    assert by["c1"].voice_name != by[T2].voice_name, "two sessions in one project get two names"
+    assert by["c1"].voice_name == by[T2].voice_name == "proteus", \
+        "two sessions in one project share its name and are kept apart by session id"
 
 
 def test_one_provider_that_cannot_be_read_does_not_hide_the_others(tmp_path):

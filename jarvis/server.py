@@ -604,7 +604,7 @@ def _agent_links(event: dict) -> dict:
     session = event.get("session") or {}
     message = event.get("message") or {}
     sid = session.get("session_id") or message.get("session_id")
-    name = session.get("voice_name") or message.get("agent_name")
+    name = _name_of(sid, session.get("voice_name") or message.get("agent_name"))
     links = {"agent_session_id": sid, "agent_name": name}
     if isinstance(message.get("id"), int):
         links["message_id"] = message["id"]
@@ -1775,16 +1775,17 @@ def _list_join(items: list[str]) -> str:
     return ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
-def _with_official_name(event: dict) -> dict:
-    """The event with its session going by its official name, if it has one.
+def _with_agent_name(event: dict) -> dict:
+    """The event with its session going by its name on the agents list.
 
     The watcher builds an event from its own copy of the session, which has
-    the derived voice name; official names are applied only to the snapshot
-    the server reads (`_snapshot_or_empty`). So every announcement, the note
-    to the brain and the broadcast all said the old name. Applied here, once,
-    before anything reads the event. A copy: the watcher's dict is not ours."""
+    the plain derived name; the agents list's names are applied only to the
+    snapshot the server reads (`_snapshot_or_empty`). So every announcement,
+    the note to the brain and the broadcast all said another name. Applied
+    here, once, before anything reads the event. A copy: the watcher's dict
+    is not ours."""
     session = event.get("session") or {}
-    official = _official_agent_names().get(session.get("session_id"))
+    official = _agent_names().get(session.get("session_id"))
     if not official or session.get("voice_name") == official:
         return event
     return {**event, "session": {**session, "voice_name": official}}
@@ -1794,7 +1795,7 @@ def _on_session_event(event: dict) -> None:
     """Watcher callback. The watcher marshals this onto the event loop thread
     via call_soon_threadsafe before calling it, so scheduling work here with
     _spawn directly (no further thread-hop) is safe."""
-    event = _with_official_name(event)
+    event = _with_agent_name(event)
     kind = event.get("kind")
     session = event.get("session") or {}
     if session.get("session_id") in _jarvis_run_session_ids():
@@ -3682,7 +3683,7 @@ def _rename_agent(session_id: str, name: str) -> tuple[dict | None, str | None]:
         return None, "duplicate"
     if row is None:
         return None, "missing"
-    _forget_official_names()
+    _forget_agent_names()
     _hint_agents_changed()
     return row, None
 
@@ -4352,26 +4353,17 @@ def _plain_phrase(text: str, fallback: str) -> str:
 # context; in a spoken line it is at minimum garbage read aloud.
 #
 # But `_plain_name` is the WRONG wall for this one field, and it was already
-# the wrong wall in `_session_line` and `_needs_you_clause`. A voice name is
-# not an identifier — `_assign_voice_names` COMPOSES a phrase:
+# the wrong wall in `_session_line` and `_needs_you_clause`. A name is not an
+# identifier: a folder ("note taker", "My Projects"), the name he gave the
+# conversation in Claude Code ("Tim's notes, draft") or the one he set in
+# JARVIS may hold spaces, commas and apostrophes, and `_plain_name` forbids
+# a space, so it erased them and left him no way to say which agent he
+# meant. tests/test_header_lines.py drives every name `session_watch` can
+# actually produce through this function and asserts it comes back
+# unchanged.
 #
-#     chitauri in Desktop            f"{project} in {parent}"
-#     hammer, the memory tools one   f"{base}, the {phrase} one"
-#     the newer hammer               f"the newer {base}"
-#     the chitauri that's working    f"the {base} {state phrase}"
-#
-# `_plain_name` forbids a space, so it erased every one of them: the moment
-# two conversations shared a project, the user was told "one of them: idle"
-# and had no way to answer "which one?". tests/test_header_lines.py drives
-# every name `session_watch` can actually produce through this function and
-# asserts it comes back unchanged.
-#
-# So the wall is on the character CLASS and a bound, not on the shape. The
-# variable parts of a composed name are two directory names (which may hold
-# spaces, commas and apostrophes — "My Projects" is an ordinary folder) and
-# up to two words split out of a title on `[^a-z0-9]+`. Everything else is
-# JARVIS's own connective tissue. Sixty-four characters of that class, ending
-# on a word character.
+# So the wall is on the character CLASS and a bound, not on the shape.
+# Sixty-four characters of that class, ending on a word character.
 #
 # The residual is honest and is the same one `_plain_phrase` accepts for
 # `waitingFor`: somebody who can create a directory on this machine can put
@@ -4466,41 +4458,52 @@ def _snapshot_or_empty():
     """
     snap = session_watcher.snapshot if session_watcher is not None else \
         session_watch.Snapshot()
-    return snap.excluding(_jarvis_run_session_ids()).named(_official_agent_names())
+    return snap.excluding(_jarvis_run_session_ids()).named(_agent_names())
 
 
 # Every agent JARVIS lists or finds comes out of this same snapshot.
 agent_directory.connect(lambda: _snapshot_or_empty())
 
 
-# The names the user has set for agents (run_store.rename_agent), read on
-# every snapshot access, so cached for a moment; a rename clears the cache.
-_OFFICIAL_NAMES_TTL_SEC = 1.0
-_official_names_cache: tuple[float, dict] = (0.0, {})
+# Every agent's one name (run_store.agent_names: set once when first seen,
+# changed only by rename_agent), read on every snapshot access, so cached for
+# a moment; a rename clears the cache.
+_AGENT_NAMES_TTL_SEC = 1.0
+_agent_names_cache: tuple[float, dict] = (0.0, {})
 
 
-def _official_agent_names() -> dict:
-    """session id -> official name. Fails open (no renames) if the store
-    cannot be read, so the roster is never lost over it."""
-    global _official_names_cache
+def _agent_names() -> dict:
+    """session id -> the agent's name. Fails open (the plain derived names)
+    if the store cannot be read, so the roster is never lost over it."""
+    global _agent_names_cache
     now = time.time()
-    stamped, names = _official_names_cache
-    if now - stamped < _OFFICIAL_NAMES_TTL_SEC:
+    stamped, names = _agent_names_cache
+    if now - stamped < _AGENT_NAMES_TTL_SEC:
         return names
     try:
-        names = run_store.official_names()
+        names = run_store.agent_names()
     except sqlite3.OperationalError:
         names = {}                          # before init_db, as for run ids
     except Exception:
-        log.warning("could not read official agent names", exc_info=True)
+        log.warning("could not read the agents' names", exc_info=True)
         names = {}
-    _official_names_cache = (now, names)
+    _agent_names_cache = (now, names)
     return names
 
 
-def _forget_official_names() -> None:
-    global _official_names_cache
-    _official_names_cache = (0.0, {})
+def _name_of(session_id, recorded):
+    """An agent's one name, for a record that names it: what the agents list
+    calls that session now, else the name the record was written with (an
+    agent forgotten after its keep period). Every record read back to him
+    (conversation items, messages) goes through this, so an agent renamed
+    since, or a label stored before names were made one, is never shown or
+    said in place of its name."""
+    return (_agent_names().get(session_id) if session_id else None) or recorded
+
+
+def _forget_agent_names() -> None:
+    global _agent_names_cache
+    _agent_names_cache = (0.0, {})
 
 
 _STATE_WORDS = {
@@ -4580,12 +4583,42 @@ def _resolve_or_explain(name: str):
         # DROPPED rather than replaced.
         return None, _no_such_agent(name), "unresolved"
     if len(matches) > 1:
-        # Every candidate's name, in a sentence with no wrapper: the ambiguity
-        # list was the one site in this function nobody had looked at.
-        names = [_said_name(m, "one of them") for m in matches]
-        listed = ", ".join(names[:-1]) + f" and {names[-1]}"
-        return None, (f"There are {len(matches)}: {listed}. Which one?"), "ambiguous"
+        return None, _ask_which([m.session_id for m in matches]), "ambiguous"
     return matches[0], None, None
+
+
+def _ask_which(session_ids: list[str]) -> str:
+    """Several agents fit what he said: ask which, naming each by its one
+    name with a fact said beside it (what it is doing, its folder when they
+    differ, when it started) and its session id for the brain to pick it by.
+
+    Never a made-up name. Two agents called Denice are each "Denice"; they
+    used to be renamed "the older denice" and "the denice that's working",
+    and those labels were what he heard, what was stored and what was shown
+    (session_watch._assign_voice_names). The fact is said separately; the
+    name is not changed."""
+    agents = {a.session_id: a for a in agent_directory.agents()}
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    folders = {sessions[i].cwd for i in session_ids if i in sessions}
+    now = time.time()
+    lines = []
+    for sid in session_ids:
+        a, s = agents.get(sid), sessions.get(sid)
+        name = _agent_said(a) if a is not None else _said_name(s, "an agent with an unsayable name")
+        state = a.state if a is not None else (s.state if s is not None else None)
+        facts = [_state_word(state)] if state else []
+        if s is not None and len(folders) > 1 and s.cwd:
+            facts.append("in " + _said_name({"voice_name": Path(s.cwd).parent.name},
+                                            "another folder"))
+        if s is not None and s.started:
+            facts.append(f"started {_say_age(now - s.started)}")
+        detail = f" ({', '.join(facts)})" if facts else ""
+        lines.append(f"{name}{detail}, session {_plain_name(sid, 'unknown')}")
+    n = len(session_ids)
+    return (f"{_say_number(n).capitalize()} agents fit that, sir. Which one?\n"
+            + "\n".join(lines)
+            + "\nAsk him by the name and a fact said beside it, never by any other "
+              "name; once he says, use that one's session id.")
 
 
 def _no_such_agent(name: str) -> str:
@@ -4832,7 +4865,7 @@ def tool_list_messages(args: dict) -> str:
     now = time.time()
     lines = []
     for m in messages:
-        to = _said_name({"voice_name": m.agent_name}, "a session")
+        to = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "a session")
         body = m.body
         if len(body) > LIST_MESSAGE_CHARS:
             body = body[:LIST_MESSAGE_CHARS - 1] + "…"
@@ -4852,7 +4885,7 @@ def tool_read_message_reply(args: dict) -> str:
     m = run_store.get_message(number)
     if m is None:
         return f"There is no message {number}; list_messages has them."
-    name = _said_name({"voice_name": m.agent_name}, "That session")
+    name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "That session")
     if str(m.status) != run_store.MessageStatus.ANSWERED:
         return f"Message {number} to {name} has no answer yet: {_message_state(m, time.time())}."
     if not m.reply:
@@ -5170,8 +5203,8 @@ def tool_capture(args: dict) -> str:
         if not found:
             return _no_such_agent(to) + "\nNothing was captured; capture it again with one of these."
         if len(found) > 1:
-            return ("That could be " + ", or ".join(_agent_said(a) for a in found)
-                    + ". Nothing was captured; ask him which, then capture it again.")
+            return (_ask_which([a.session_id for a in found])
+                    + "\nNothing was captured; capture it again with that `to`.")
         to = found[0].name
         to_session = found[0].session_id
     else:
@@ -9150,6 +9183,7 @@ def _conversation_json(items: list) -> dict:
     out = []
     for item in items:
         row = dataclasses.asdict(item)
+        row["agent_name"] = _name_of(item.agent_session_id, item.agent_name)
         m = messages.get(item.message_id) if item.message_id is not None else None
         row["message"] = None if m is None else {
             "id": m.id, "status": str(m.status), "answered": bool(m.reply),
@@ -9174,8 +9208,8 @@ async def api_conversation_thread(session_id: str, before: Optional[int] = None,
     body = await asyncio.to_thread(_conversation_json, items)
     agent = next((a for a in agent_directory.agents() if a.session_id == session_id), None)
     body["agent"] = {"session_id": session_id,
-                     "name": agent.name if agent else next(
-                         (i.agent_name for i in reversed(items) if i.agent_name), None),
+                     "name": agent.name if agent else _name_of(session_id, next(
+                         (i.agent_name for i in reversed(items) if i.agent_name), None)),
                      "state": agent.state if agent else "gone"}
     return body
 
@@ -9188,7 +9222,8 @@ def _history_line(item, message) -> str:
     who = {"heard": "He said", "typed": "He typed", "jarvis": "You said",
            "capture": "Captured", "to_agent": "To", "from_agent": "From",
            "answer": "Answer from", "notice": "Notice"}[str(item.kind)]
-    agent = f" {item.agent_name}" if item.agent_name and str(item.kind) in (
+    named = _name_of(item.agent_session_id, item.agent_name)
+    agent = f" {named}" if named and str(item.kind) in (
         "to_agent", "from_agent", "answer") else ""
     status = f" [message {message.id}, {message.status}]" if message is not None else ""
     when = time.strftime("%d %b %H:%M", time.localtime(item.at))
@@ -9448,8 +9483,7 @@ def _find_agent(args: dict) -> tuple[dict | None, str | None]:
     if not matches:
         return None, _no_such_agent(wanted)
     if len(matches) > 1:
-        return None, ("That could be " + ", or ".join(_agent_said(a) for a in matches)
-                      + ", sir. Which one?")
+        return None, _ask_which([a.session_id for a in matches])
     return {"session_id": matches[0].session_id, "name": matches[0].name}, None
 
 
