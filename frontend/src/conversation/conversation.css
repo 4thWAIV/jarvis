@@ -40,7 +40,9 @@
 #conversation > .conversation-dock { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: visible; padding: 0 12px; }
 .conversation-dock > * { flex: none; box-sizing: border-box; width: 100%; max-width: 820px; margin-left: auto; margin-right: auto; }
 #conversation > .conversation-dock > .conversation-captures { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.conversation-captures > .capture-list { flex: 0 1 auto; min-height: 0; }
+/* Under the history the last box keeps clear of the composer; on Main it
+   sits just above the captions (style.css). */
+.conversation-captures > .capture-list { flex: 0 1 auto; min-height: 0; padding-bottom: 12px; }
 .conversation-captures:empty { display: none; }
 .chat-composer { container-type: inline-size; container-name: composer; box-sizing: border-box; position: relative; border: 1px solid var(--ui-edge); border-radius: 14px; background: var(--ui-surface); padding: 14px 16px 10px; box-shadow: 0 -8px 30px rgba(var(--ui-ground-rgb), .55); }
 .chat-composer:focus-within { border-color: var(--ui-accent); box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), .13); }
