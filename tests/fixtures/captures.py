@@ -3,9 +3,9 @@
 `steer_session` no longer takes free text: the brain first captures Tim's words
 (`capture`), reads the capture back to him (`read_capture`), and passes that
 capture's number. Tests written against the old `{"name", "prompt"}` shape go
-through `captured`, which opens a capture already read back in full, the way
-those two tools would leave it (without telling a page), and returns the new
-arguments. An empty prompt opens no capture.
+through `captured`, which opens a capture already read back in full and
+approved by his yes, the way those two tools and his next words would leave it
+(without telling a page), and returns the new arguments. An empty prompt opens no capture.
 """
 
 
@@ -20,5 +20,5 @@ def captured(server, args: dict) -> dict:
         del server._captures[n]
     number = next(server._capture_ids)
     server._captures[number] = {"id": number, "text": text, "to": "", "heard": [],
-                                "read": text, "state": "capturing"}
+                                "read": text, "approved": text, "state": "capturing"}
     return {**rest, "capture": number}

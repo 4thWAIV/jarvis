@@ -7,8 +7,9 @@ What is local stays local: drafts, review and the queue's last known state
 are served from the store whatever the team server is doing, and a work
 command made while it cannot be reached is kept and sent later. Approving
 is not here: the review opens the capture the owner accepts (the existing
-`POST /api/capture/{n}/send`, or the read-back heard in full), and only that
-acceptance, through the approval guard, puts an envelope in the outbox.
+`POST /api/capture/{n}/send`, or the read-back heard in full and then his
+plain yes), and only that acceptance, through the approval guard, puts an
+envelope in the outbox.
 Reading a message is the one way a read receipt is made: the page calls
 `.../read` once the body was displayed.
 

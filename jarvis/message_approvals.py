@@ -2,8 +2,9 @@
 outgoing human message passes.
 
 A message to a person goes the way a message to an agent goes
-(`transmission.py`): it is accepted (Accept or Send on its capture box, or
-its read-back heard in full), staged, held for the turn, offered the cancel
+(`transmission.py`): it is accepted (his Send on its capture box, or its
+read-back heard in full, or Accept, and then his plain yes as the very next
+thing he said; never the brain's call alone), staged, held for the turn, offered the cancel
 window and handed over. What differs is only who it is for, so this module
 is the human adapters and the guard behind them:
 

@@ -15,6 +15,7 @@ import pytest
 from jarvis import message_approvals
 from jarvis import messaging_ports as ports
 from jarvis import messaging_wire as wire
+from jarvis import transmission
 from tests.fixtures import messaging_fakes as fakes
 
 SERVER = "f0000000-0000-4000-8000-00000000000b"
@@ -165,6 +166,10 @@ async def test_voice_read_back_then_send_message_approves_the_heard_revision(ser
     assert server.tool_send_message({"capture": n}).startswith(f"Capture {n} has not been read")
     assert (await server.tool_read_capture({"capture": n})).startswith("Read back in full")
     assert tim.speech.read == [(n, "To Matt.\nFriday?")]
+    refused = server.tool_send_message({"capture": n})
+    assert "has not said yes" in refused and server._staged_steers == [], \
+        "heard is not approved: the brain may not send in the turn that read it back"
+    assert server._approve_on_his_yes(server._take_read_back_answers(), "yes") == [n]
     staged = server.tool_send_message({"capture": n})
     assert f"Capture {n} is staged for Matt" in staged and tim.speech.said == []
     await server._perform_staged_steers()
@@ -191,7 +196,7 @@ async def test_steer_session_refuses_a_person_s_message(server, tim, monkeypatch
                               pids=[1], primary_pid=1, between_turns=True)
     monkeypatch.setattr(server, "_resolve_or_explain", lambda n: (session, None, None))
     draft, n = _reviewed(tim)
-    server._captures[n]["read"] = server._captures[n]["text"]
+    transmission.approve(server._captures[n])
     out = await server.tool_steer_session({"name": "guard", "capture": n})
     assert "send it with send_message" in out and server._staged_steers == []
     assert server.run_store.list_messages() == [], "no agent message is formed"

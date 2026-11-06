@@ -4946,14 +4946,18 @@ READBACK_TIMEOUT = 60.0
 # and each is read back and sent on its own by that number; the brain folds
 # only ones that are parts of one message together (`merge_captures`). `read_capture` reads one back to him inside the brain's
 # own turn, lighting the capture box line by line, and `steer_session` sends
-# only a capture read back in full and unchanged since. Sending closes it;
+# only a capture he approved: read back in full and unchanged since, then a
+# plain yes as the very next thing he said (`_take_read_back_answers`), or his
+# own Send on its box. The brain's call alone never approves one: a yes it
+# infers inside the turn that read it back is no yes. Sending closes it;
 # memory only. The voice page draws each one: white until it is known to be a
 # message for an agent (`to` is set), amber from then on, through sending.
 
 CAPTURE_MAX_CHARS = 4000
 CAPTURE_TO_MAX_CHARS = 80
 # Each: {"id", "text", "to", "heard": [transcript ids], "read": the text as it
-# was last read back in full, or None, "state"}. In the order they opened.
+# was last read back in full, or None, "state"}, and his approval
+# (`transmission`: "asking", "approved"). In the order they opened.
 _captures: dict[int, dict] = {}
 _capture_ids = itertools.count(1)
 
@@ -5072,7 +5076,7 @@ def _capture_message(capture: dict, state: Optional[str]) -> dict:
     msg = {"type": "capture", "id": capture["id"], "state": state}
     if state:
         msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]),
-                   accepted=capture["read"] == capture["text"])
+                   accepted=transmission.heard(capture))
         if capture.get("human"):
             # The revision a review's capture is for, so the page puts its
             # buttons only under that revision.
@@ -5130,7 +5134,7 @@ def tool_capture(args: dict) -> str:
                 f"with draft_message and review it again. Nothing was changed.")
     changed = capture["text"] != text
     if changed:
-        capture["read"] = None          # changed: it has to be heard again
+        transmission.changed(capture)   # it has to be heard and approved again
     capture["text"] = text
     capture["to"] = to or capture["to"]
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
@@ -5144,7 +5148,7 @@ def tool_capture(args: dict) -> str:
                 f"only those that are parts of one message.")
     return (f"Capture {number} holds it. Ask him whether he wants it read back; "
             f"read_capture reads it. steer_session sends only a capture read "
-            f"back in full since it last changed.")
+            f"back in full since it last changed and then approved by his own yes.")
 
 
 def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
@@ -5202,11 +5206,13 @@ async def tool_read_capture(args: dict) -> str:
         heard = await speech.wait_for(speech.read_aloud(text, number), timeout=READBACK_TIMEOUT)
     if number in _captures:
         if heard and capture["text"] == text:
-            capture["read"] = text
+            transmission.read_back(capture, text)
         _capture_show(capture, "capturing")
     if heard:
-        return (f"Read back in full. Ask him whether to send capture {number}; "
-                f"on his yes, call steer_session with it.")
+        return (f"Read back in full. Ask him whether to send capture {number}, then "
+                f"end your turn and wait: it can be sent only once the very next "
+                f"thing he says is a plain yes. Never send it in this turn; "
+                f"steer_session refuses it until then.")
     return (f"Interrupted before the end, so capture {number} has not been heard "
             f"in full and cannot be sent until it is read back again.")
 
@@ -5228,7 +5234,7 @@ def tool_merge_captures(args: dict) -> str:
         return "Give the merged restatement."
     keep, *gone = [_captures[n] for n in numbers]
     keep["text"] = text
-    keep["read"] = None
+    transmission.changed(keep)
     for other in gone:
         keep["to"] = keep["to"] or other["to"]
         keep["heard"] += [h for h in other["heard"] if h not in keep["heard"]]
@@ -5251,11 +5257,58 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if capture is None:
         return None, (f"There is no open capture {wanted}: it was sent, merged "
                       f"or never made. Capture his words again.")
-    if not transmission.accepted(capture):
+    if not transmission.heard(capture):
         return None, (f"Capture {wanted} has not been read back to him in full "
                       f"since it last changed. Call read_capture first; nothing "
                       f"is sent unheard.")
+    if not transmission.accepted(capture):
+        return None, _not_approved(wanted, capture)
     return capture, None
+
+
+def _not_approved(number: int, capture: dict) -> str:
+    """Why a capture that was read back cannot be sent yet: his yes is
+    the gate, and the brain's call alone never stands in for it."""
+    if transmission.awaiting_answer(capture):
+        return (f"Capture {number} was read back, but he has not said yes to it. "
+                f"Ask him whether to send it and end your turn: it can be sent only "
+                f"once the very next thing he says is a plain yes, or he presses "
+                f"Send on its box. Nothing was sent.")
+    return (f"Capture {number} has not been approved: the first thing he said after "
+            f"its read-back was not a plain yes, or a send of it did not go. Read it "
+            f"back again with read_capture and wait for his yes. Nothing was sent.")
+
+
+def _take_read_back_answers() -> list[tuple[int, dict]]:
+    """Every utterance of his, spoken or typed, is the answer to the
+    read-backs waiting for one: the question closes, whatever he said. The
+    (number, capture) pairs it answers, for `_approve_on_his_yes` once his
+    words are known to go to the brain as an ordinary turn."""
+    asked = [(n, c) for n, c in _captures.items() if transmission.awaiting_answer(c)]
+    for _number, capture in asked:
+        transmission.close_question(capture)
+    return asked
+
+
+def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
+    """His words after a read-back, on their way to the brain: a plain yes
+    (`_rotation_answer`, the same short unhedged yes that clears or compacts)
+    approves exactly the text each capture had when it was read back, if it
+    is still open and unchanged. The numbers approved."""
+    if _rotation_answer(text) is not True:
+        return []
+    approved = []
+    for number, capture in asked:
+        if _captures.get(number) is capture and transmission.said_yes(capture):
+            approved.append(number)
+    if approved:
+        names = ", ".join(str(n) for n in approved)
+        log.info("read-back approved by his yes: captures %s (utterance=%r)", names, text)
+        _notes_for_brain.append(
+            f"His yes approved capture{'s' if len(approved) > 1 else ''} {names}, read "
+            f"back to him just before: send {'them' if len(approved) > 1 else 'it'} now "
+            f"(steer_session, or send_message for a message to a person).")
+    return approved
 
 
 def _capture_transmitting(capture_id: Optional[int]) -> None:
@@ -5302,7 +5355,10 @@ def tool_list_captures(args: dict) -> str:
         return "No capture boxes are open." + cleared_note
     lines = []
     for c in _captures.values():
-        heard = "read back in full" if c["read"] == c["text"] else "not read back since it changed"
+        heard = ("approved by him" if transmission.accepted(c) else
+                 "read back, waiting for his yes" if transmission.awaiting_answer(c) else
+                 "read back, not approved (read it back again)" if transmission.heard(c) else
+                 "not read back since it changed")
         going = ", staged to send" if c.get("staged") else ""
         going += ", a message to a person: send_message sends it" if c.get("human") else ""
         lines.append(f"Capture {c['id']} ({c['state']}, {heard}{going})"
@@ -5426,6 +5482,12 @@ def _capture_accepted(capture: dict) -> None:
     _capture_show(capture, capture["state"])
 
 
+def _capture_approved(capture: dict) -> None:
+    """His own Send: read on the screen and approved, by his hand."""
+    transmission.approve(capture)
+    _capture_show(capture, capture["state"])
+
+
 def _refuse_an_agent_approving(request: Request, capture: dict) -> None:
     """A message to a person is approved by him alone: an agent admitted on
     an access key may draft it and ask for the review, never accept or
@@ -5443,8 +5505,8 @@ async def api_capture_accept(number: int, request: Request):
     _capture_accepted(capture)
     _notes_for_brain.append(
         f"He accepted capture {number} on screen: it counts as read back to him "
-        f"in full, so do not read it back. Send it with steer_session when he "
-        f"says to.")
+        f"in full, so do not read it back. It goes only if the next thing he says "
+        f"is a plain yes; ask him whether to send it.")
     return {"capture": number, "accepted": True}
 
 
@@ -5473,11 +5535,11 @@ async def _finish_reading_aloud(capture: dict, text: str, utt) -> None:
     if _captures.get(number) is not capture:
         return                                  # sent, merged or deleted meanwhile
     if heard and capture["text"] == text:
-        capture["read"] = text
+        transmission.read_back(capture, text)
         _notes_for_brain.append(
             f"He had capture {number} read aloud from its box and heard it to the "
-            f"end: it counts as read back in full. Send it with steer_session when "
-            f"he says to.")
+            f"end: it counts as read back in full. It goes only if the next thing he "
+            f"says is a plain yes; ask him whether to send it.")
     _capture_show(capture, "capturing")
 
 
@@ -5514,7 +5576,7 @@ async def api_capture_send(number: int, request: Request):
         raise HTTPException(status_code=409, detail="It is already being sent.")
     if capture.get("human"):
         # A reviewed message to a person: Send is his yes to that revision.
-        _capture_accepted(capture)
+        _capture_approved(capture)
         message_id, problem = _stage_human_capture(capture, "gui")
         to = capture["to"]
     else:
@@ -5524,7 +5586,7 @@ async def api_capture_send(number: int, request: Request):
         session, problem, _reason = _resolve_or_explain(capture["to"])
         if problem:
             raise HTTPException(status_code=409, detail=problem)
-        _capture_accepted(capture)
+        _capture_approved(capture)
         message_id, problem = _stage_capture(session, capture)
         to = _said_name(session)
     if problem:
@@ -5773,9 +5835,11 @@ class _CaptureBox:
 
     def reopen(self, capture_id: Optional[int]) -> None:
         # Not sent (cancelled, no voice, failed): the capture is his to deal
-        # with again, so it counts as open once more.
+        # with again, so it counts as open once more, and his yes was spent
+        # on the send that did not go.
         if capture_id in _captures:
             _captures[capture_id]["staged"] = False
+            transmission.withdraw(_captures[capture_id])
 
 
 async def _transmit(destination: transmission.Destination) -> None:
@@ -6085,9 +6149,10 @@ async def tool_steer_session(args: dict) -> str:
     """Validate the user's decision and STAGE it; the server sends it later.
 
     The policy the user chose: the message is a capture the brain has read
-    back to him in full (`read_capture`), and once he says to send it JARVIS
-    waits a moment and sends unless told to stop. Silence is consent; 'wait'
-    is not.
+    back to him in full (`read_capture`) and that he then approved with a
+    plain yes as the very next thing he said (or his Send on its box); the
+    brain's call alone is never his yes. Once approved, JARVIS waits a moment
+    and sends unless told to stop.
 
     The waiting and sending cannot happen here. This handler runs mid-turn,
     called by the brain through the MCP child, while `speech.begin_turn()`'s
@@ -12047,6 +12112,9 @@ async def voice_handler(ws: WebSocket):
         log.info(f"User{' (typed)' if typed else ''}: {text}")
         _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
                 text, detail={"client_turn_id": heard} if heard is not None else {})
+        # Whatever he said answers the read-backs waiting for it; only a
+        # plain yes that goes on to the brain as his turn approves them.
+        read_backs = _take_read_back_answers()
         cleared = _take_clear_answer(text)
         if cleared:
             return
@@ -12061,6 +12129,7 @@ async def voice_handler(ws: WebSocket):
             return                  # a plain no: consumed, not a request
         if _take_rotation_answer(text):
             return
+        _approve_on_his_yes(read_backs, text)
         _spawn(_handle_utterance(text, heard))
 
     def show_turn(frame: dict) -> None:

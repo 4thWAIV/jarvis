@@ -487,8 +487,8 @@ class WorkCommandResult(_Local):
 # Recipient when capture["human"] is set and agent resolution otherwise; a
 # human is never an agent session. Because the read-back names the
 # recipient, the subject, the text and every file with its size, any change
-# to them changes the capture's text and so undoes its acceptance
-# (`transmission.accepted`); a new content revision closes the capture.
+# to them changes the capture's text and so undoes its read-back and his
+# yes (`transmission.accepted`); a new content revision closes the capture.
 
 def spoken_size(size_bytes: int) -> str:
     for unit, scale in (("gigabytes", 1 << 30), ("megabytes", 1 << 20), ("kilobytes", 1 << 10)):
