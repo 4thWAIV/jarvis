@@ -320,6 +320,7 @@ class ClaudeSession:
         self._on_exit = on_exit
         self.claude = config.claude_path or shutil.which("claude") or "claude"
         self.proc: Optional[asyncio.subprocess.Process] = None
+        self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         # Text blocks of the turn in flight: an API error arrives as one.
@@ -351,7 +352,11 @@ class ClaudeSession:
     @property
     def alive(self) -> bool:
         proc = self.proc
-        return proc is not None and proc.returncode is None and proc.stdin is not None
+        # Killed is not alive, from the moment it is killed: the exit is
+        # only seen once asyncio reaps the child, and until then a brain
+        # that has given up on it would still read as running.
+        return (proc is not None and not self._killed and proc.returncode is None
+                and proc.stdin is not None)
 
     async def open(self, instructions: str) -> None:
         self.proc = await asyncio.create_subprocess_exec(
@@ -379,6 +384,7 @@ class ClaudeSession:
     def kill(self) -> None:
         if self.proc is None:
             return
+        self._killed = True
         try:
             self.proc.kill()
         except ProcessLookupError:
