@@ -298,3 +298,62 @@ def test_a_tool_the_provider_failed_is_on_the_tool_channel_s_record(tmp_path, mo
     b._on_event(session, brain_provider.ToolFailed("exec", "failed to read code-mode host message"))
     assert [(ok, detail) for _, ok, detail in calls.items] == [
         (False, "exec: failed to read code-mode host message")]
+
+
+# ── the argv codex starts with ───────────────────────────────────────────
+
+WINDOWS_CODEX = r"C:\Users\Jane Doe\AppData\Roaming\npm\codex.cmd"
+
+
+def test_on_windows_a_codex_found_on_path_is_one_element_for_the_brain_and_settings(
+        tmp_path, monkeypatch):
+    r"""shlex's POSIX rules made shutil.which's C:\Users\...\codex.cmd into
+    C:Users...codex.cmd, and split it at the space."""
+    monkeypatch.setattr(codex_provider.sys, "platform", "win32")
+    monkeypatch.setattr(codex_provider.shutil, "which",
+                        lambda name: WINDOWS_CODEX if name == "codex" else None)
+    monkeypatch.setattr(codex_provider.claude_env, "_windows_split",
+                        lambda text: pytest.fail("a discovered path is never split"))
+    assert codex_provider._codex_binary(None) == [WINDOWS_CODEX]
+    session = codex_provider.CodexSession(brain.BrainConfig(home=tmp_path, provider="openai"),
+                                          lambda *a: None, None)
+    assert session._cmd("app-server") == [WINDOWS_CODEX, "app-server"]
+
+    started = []
+
+    def popen(argv, **kw):
+        started.append(argv)
+        raise OSError("not really started")
+    monkeypatch.setattr(codex_provider.subprocess, "Popen", popen)
+    with pytest.raises(brain_provider.UsageUnavailable):
+        codex_provider.AppServer()
+    assert started == [[WINDOWS_CODEX, "app-server"]]
+
+
+def test_on_windows_a_configured_codex_keeps_its_quotes_and_arguments(tmp_path, monkeypatch):
+    exe = tmp_path / "Program Files" / "codex.cmd"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    monkeypatch.setattr(codex_provider.sys, "platform", "win32")
+    monkeypatch.setattr(codex_provider.claude_env, "_windows_split",
+                        lambda text: [r"C:\py\python.exe", r"C:\fake codex.py"])
+    assert codex_provider._codex_binary(f'"{exe}"') == [str(exe)]
+    assert codex_provider._codex_binary(str(exe)) == [str(exe)]
+    assert codex_provider._codex_binary(r'C:\py\python.exe "C:\fake codex.py"') == [
+        r"C:\py\python.exe", r"C:\fake codex.py"]
+
+
+def test_on_macos_a_configured_codex_keeps_shell_rules_and_a_found_one_is_whole(monkeypatch):
+    monkeypatch.setattr(codex_provider.sys, "platform", "darwin")
+    assert codex_provider._codex_binary("node '/opt/my tools/codex.js' --x") == [
+        "node", "/opt/my tools/codex.js", "--x"]
+    monkeypatch.setattr(codex_provider.shutil, "which", lambda name: "/opt/homebrew/bin/codex")
+    assert codex_provider._codex_binary(None) == ["/opt/homebrew/bin/codex"]
+    monkeypatch.setattr(codex_provider.shutil, "which", lambda name: None)
+    assert codex_provider._codex_binary(None) == ["codex"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own command-line rules")
+def test_natively_a_configured_interpreter_and_script_split_by_windows_rules():
+    assert codex_provider._codex_binary(f'"{sys.executable}" "{FAKE}"') == [
+        sys.executable, str(FAKE)]
