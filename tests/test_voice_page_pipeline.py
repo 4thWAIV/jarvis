@@ -427,8 +427,7 @@ BESIDE = [
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-2", "part": "dismiss"},
      ".workflow-row[data-workflow-id=wf-2]", ".workflow-item:has([data-workflow-id=wf-2]) .workflow-dismiss"),
-    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
-    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "off"}, "#mic-control", "#btn-mic-off"),
+    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
 ]
 
 # What a leaf inside an object may not cross: its controls and the lines of
@@ -457,7 +456,8 @@ def _inside(x, y, box, tol=0.5):
 @pytest.mark.asyncio
 async def test_a_part_beside_others_in_its_row_is_reached_over_or_under_the_row(page_url):
     """The workflow's Decisions tab, the Folders tabs, the microphone's mute
-    and off (under the row, in the lane kept below it), the reminder's
+    (under the row, in the lane kept below it; off, the row's last, is
+    reached straight from its side), the reminder's
     Sign in and a finished
     workflow's Dismiss each sit beside another part on the side their leaf
     comes from. Each is reached: along the fixed map to its object's
@@ -652,7 +652,8 @@ TOUR = [
     (("network.open", {"kind": "node", "nodeId": MINI_ID}), DETAIL_CPU, [f"main.network|node|{MINI_ID}"]),
     (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "database"},
      ["left.fixed|teamServer|"]),
-    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, ["main.conversation|mic|"]),
+    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"},
+     ["main.conversation|conversation|", "main.conversation|mic|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
      [WORKFLOW_BOX, "main.workflow.view", "main.workflow.phases"]),
