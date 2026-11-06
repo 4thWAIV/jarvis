@@ -260,11 +260,21 @@ GAP = "(() => { const b = document.querySelector('.conversation-history'); retur
 TOP = "document.querySelector('.conversation-history').scrollTop"
 
 
+async def _his_scroll(page, act):
+    """Does what he does to scroll the history (`act`) and waits for that
+    scroll to end. The wheel and the keys scroll smoothly, so the list read
+    part way through is not where he left it."""
+    await page.evaluate("""() => { window.__scrollEnded = false;
+      document.querySelector('.conversation-history').addEventListener(
+        'scrollend', () => { window.__scrollEnded = true; }, {once: true}); }""")
+    await act()
+    await page.wait_for_function('window.__scrollEnded')
+
+
 async def _wheel(page, dy):
     box = await page.locator('.conversation-history').bounding_box()
     await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-    await page.mouse.wheel(0, dy)
-    await asyncio.sleep(.35)
+    await _his_scroll(page, lambda: page.mouse.wheel(0, dy))
 
 
 @pytest.mark.asyncio
@@ -401,7 +411,7 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
 
         # The keys move it as his too, and Jump to latest brings it back.
         await page.locator('.chat-message .chat-copy').last.focus()
-        await page.keyboard.press('PageUp')
+        await _his_scroll(page, lambda: page.keyboard.press('PageUp'))
         await page.wait_for_selector('.conversation-jump')
         # How far PageUp moves depends on how tall the history is beside the
         # bottom box; what matters is that it stays where his key left it.
