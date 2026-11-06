@@ -22,12 +22,13 @@ import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voi
 import { loadVoiceInputSettings } from "./voiceSettings";
 import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
+import { audioNeedsClick } from "./conversation/controlState";
 import { cueTest, sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
          conversationJump } from "./voiceStatus";
 import { CUE_NAMES, isPauseCue, PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type CueName,
          type PlaybackReport, type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
-import { startLocale } from "./locale";
+import { startLocale, t } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
 import { startUiClient } from "./uiClient";
 import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
@@ -109,7 +110,7 @@ export function startJarvis(orb: Orb): void {
   // (its `turn` frames: only words it accepted as his, never echo). If the
   // voice socket drops it is not sent but kept as an unsent draft; a turn
   // the recogniser could not finish waits for his Retry, Send now or Keep
-  // as draft (VoiceTurnBar.tsx), and kept as a draft it comes back here.
+  // as draft (ConversationControl.tsx), and kept as a draft it comes back here.
   const unsentText = () => voiceTurn.get()?.text ?? "";
   const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); voiceTurn.set(null); };
   socket.onMessage((msg) => {
@@ -378,8 +379,13 @@ export function startJarvis(orb: Orb): void {
     jarvisPaused(); captureQuiet(); storyCue.set(null);
   });
 
+  // Shown in the conversation control until the browser lets it play.
   audioPlayer.onNeedsGesture(() => {
-    notice("Playback", "Click anywhere to enable audio.");
+    notice("Playback", t("main.conversation.clickToEnableAudio"));
+    const ctx = audioPlayer.getAnalyser().context;
+    if (ctx.state === "running") return;
+    audioNeedsClick.set(true);
+    ctx.addEventListener("statechange", () => { if (ctx.state === "running") audioNeedsClick.set(false); });
   });
 
   // ---------------------------------------------------------------------------

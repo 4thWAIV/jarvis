@@ -440,7 +440,7 @@ async def test_mute_turns_what_was_said_into_an_unsent_draft_and_unmute_never_se
         # The server says what it gathered as his: the page keeps only that.
         page.voice.socket.send(json.dumps({"type": "turn", "state": "gathering", "turnId": 1,
                                            "text": "book a table"}))
-        await page.wait_for_selector("#voice-turn", timeout=5000)
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'turn-gathering'", timeout=5000)
         await page.evaluate("window.__hear('at', false)")
         await page.click("#btn-mute")
         await page.wait_for_function(

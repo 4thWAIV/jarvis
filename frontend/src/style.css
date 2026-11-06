@@ -3565,8 +3565,3 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
-
-/* What he said and has not sent (VoiceTurnBar.tsx): the playback bar's
-   look, marked when speech recognition could not finish it. */
-.chat-voice-turn .playback-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-voice-turn.stalled { border-color: var(--ui-warning, var(--ui-accent)); }

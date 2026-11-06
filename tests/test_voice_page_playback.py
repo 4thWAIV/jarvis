@@ -71,7 +71,7 @@ async def test_skip_stops_one_reading_and_stop_stops_all(page_url):
                     "kind": "reply", "data": _silence_wav(8)},
                    {"type": "audio", "utt": 32, "idx": 0, "text": "An announcement after it.",
                     "kind": "announcement", "data": _silence_wav(8)})
-        await page.wait_for_selector(".chat-playback")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         await page.get_by_role("button", name="Skip to end").click()
         assert _of(voice, "skip_to_end") == [{"type": "skip_to_end", "utt": 31}]
         # The announcement behind it still plays: Skip touched only reply 31.
@@ -97,11 +97,11 @@ async def test_a_skip_by_the_brain_ends_the_reading_like_the_button(page_url):
                     "done": True, "outcome": "succeeded"},
                    {"type": "audio", "utt": 41, "idx": 0, "text": "Being read.",
                     "kind": "reply", "data": _silence_wav(8)})
-        await page.wait_for_selector(".chat-playback")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         voice.send({"type": "reading_skipped", "utt": 41},
                    {"type": "audio", "utt": 41, "idx": 1, "text": "Late audio.",
                     "kind": "reply", "data": _silence_wav(0.1)})
-        await page.wait_for_selector(".chat-playback", state="detached")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state !== 'speaking'")
         await asyncio.sleep(0.4)
         assert not _of(voice, "played", 41), "late audio never revives a skipped reading"
         assert not _of(voice, "skip_to_end"), "the server skipped it; the page only follows"

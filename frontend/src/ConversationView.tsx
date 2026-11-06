@@ -6,7 +6,7 @@ import { captureKind } from "./capture";
 import { conversationChanged, getConversation, restoreCapture,
          statusWords, type ConversationItem } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { formatDateTime, SaidText, useT, type Said, type Translate } from "./locale";
+import { SaidText, useT, type Said, type Translate } from "./locale";
 import { SourcesChip } from "./SourcesChip";
 import { createStore } from "./store";
 import type { AvailabilityReason, TargetRef } from "./uiContract";
@@ -15,10 +15,10 @@ import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand, useUiTarget, type Availability, type CommandOutcome, type Socket } from "./uiRegistry";
 import { MessageList, historyRows, type ConversationRow } from "./conversation/MessageList";
 import { ChatMessage } from "./conversation/ChatMessage";
-import { Composer, HeardWords } from "./conversation/Composer";
-import { PlaybackBar } from "./conversation/PlaybackBar";
+import { Composer } from "./conversation/Composer";
+import { ConversationControl } from "./conversation/ConversationControl";
+import { controlError, controlView, failureNote, historyUnavailable } from "./conversation/controlState";
 import { voiceState, voiceTurn } from "./voiceStatus";
-import { VoiceTurnBar } from "./conversation/VoiceTurnBar";
 import "./conversation/conversation.css";
 
 export { historyRows };
@@ -133,46 +133,34 @@ const conversationRef = <K extends "conversation" | "conversationRecord" | "sour
 /** A part's callback ref, from a registered target (`useUiTarget`). */
 type PartRef = (part: string) => (el: Element | null) => void;
 
-// Two of the status control's states true at once, called out while Tim
-// decides which should win; the status shown, with its buttons, is the one
-// chosen below either way (unsent words, then words heard, then the reply).
-type OverlapPart = "Reading" | "Thinking" | "Waiting" | "Hearing" | "Earlier";
-function overlapOf(unsent: boolean, hearing: boolean, state: string): [OverlapPart, OverlapPart] | null {
-  if (state === "speaking" && unsent) return ["Reading", "Waiting"];
-  if (state === "speaking" && hearing) return ["Reading", "Hearing"];
-  if (hearing && unsent) return ["Hearing", "Earlier"];
-  if (state === "thinking" && unsent) return ["Thinking", "Waiting"];
-  return null;
-}
+// The conversation control's parts as the UI contract names them: his
+// unsent turn, and the reply's playback.
+const GROUP_PART = { turn: "turn", playback: "speaking" } as const;
 
 export function ConversationView() {
   const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const hearing = [...turns].reverse().find(turn => turn.speaker === "user" && turn.open);
   const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
   const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
-  const unsent = Boolean(turn?.text.trim());
-  const pair = overlapOf(unsent, Boolean(hearing), state);
+  const error = useSyncExternalStore(controlError.subscribe, controlError.get);
+  const live = useLiveRead(() => getConversation(), [conversationChanged]);
+  useEffect(() => { historyUnavailable.set(Boolean(live.error)); }, [live.error]);
+  useEffect(() => () => historyUnavailable.set(false), []);
   const t = useT();
+  const view = controlView({ state, turn, hearing: hearing ? hearing.sentences.join(" ") : null, error }, t);
   const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
   return <section id="conversation" ref={ui.whole} aria-label={t("tabs.main.conversation")}>
-    <History turns={turns.filter(turn => !turn.open)} partRef={ui.part} />
+    <History turns={turns.filter(turn => !turn.open)} live={live} partRef={ui.part} />
     <div className="conversation-dock">
       <div className="conversation-captures"><CaptureList view="main.conversation" /></div>
-      <Composer partRef={ui.part("input")} overlap={pair ? t("main.conversation.overlap", {
-        first: t(`main.conversation.overlap${pair[0]}`), second: t(`main.conversation.overlap${pair[1]}`) }) : undefined} status={
-        unsent ? <VoiceTurnBar partRef={ui.part("turn")} />
-        : hearing ? <div className="conversation-interim" role="status">
-          <span>{t("main.conversation.hearing")}</span><p><HeardWords text={hearing.sentences.join(" ")} /></p>
-        </div>
-        : state === "speaking" || state === "thinking" ? <PlaybackBar partRef={ui.part("speaking")} />
-        : null
-      } />
+      <Composer partRef={ui.part("input")} heading={
+        <ConversationControl view={view} groupRef={group => ui.part(GROUP_PART[group])} readAgain={live.refresh} />} />
     </div>
   </section>;
 }
 
-function History({ turns, partRef }: { turns: Turn[]; partRef: PartRef }) {
-  const live = useLiveRead(() => getConversation(), [conversationChanged]);
+function History({ turns, live, partRef }: { turns: Turn[]; live: Parameters<typeof MessageList>[0]["live"];
+                                             partRef: PartRef }) {
   const { older, earlier } = historyPages.use(HISTORY, live.value?.earlier);
   return <MessageList turns={turns} older={older} earlier={earlier} live={live}
     partRef={partRef} renderRow={renderHistoryRow} />;
@@ -307,15 +295,6 @@ const OUTCOME_NOTE = { failed: "main.conversation.replyFailed",
 const READING_NOTE = { skipped: "main.conversation.readingSkipped",
                        stopped: "main.conversation.readingStopped",
                        failed: "main.conversation.readingFailed" } as const;
-
-/** Why a reply failed, in the interface's language. */
-function failureNote(failure: NonNullable<Turn["failure"]>, t: Translate): string {
-  if (failure.reason === "rate_limited" && failure.resetsAt) {
-    return t("main.conversation.replyReason.rate_limited_until",
-             { time: formatDateTime(failure.resetsAt * 1000, { hour: "numeric", minute: "2-digit" }) });
-  }
-  return t(`main.conversation.replyReason.${failure.reason}`);
-}
 
 /** How a live JARVIS turn ended, when not complete and heard: a reply the
  *  provider did not finish, and a reading not heard in full. */

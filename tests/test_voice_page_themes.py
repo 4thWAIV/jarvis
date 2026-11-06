@@ -12,7 +12,7 @@ pytestmark = pytest.mark.page
 
 METRICS = """() => Object.fromEntries([
  '#left-column','#orb-control','#orb-canvas','#right-column','.centre-tabs',
- '#conversation','.chat-playback','.chat-composer','#footer',
+ '#conversation','.conversation-control','.chat-composer','#footer',
  '.agents-list li:first-child','#settings-view','.settings-nav','#settings-server .settings-row'
 ].flatMap(s=>{
  const e=document.querySelector(s); if(!e || !e.getClientRects().length) return [];

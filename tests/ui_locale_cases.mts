@@ -25,7 +25,9 @@ import {
 /** Entries reviewed as reading the same in Spanish as in English. The team
  *  row's error is nothing but its value, itself worded by its own code. */
 // left.updates.prName: "PR 42" is GitHub's own name for a pull request, in both.
-const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError", "left.updates.prName"]);
+// main.conversation.overlapLead: "· {second}", a mark before words worded by their own key.
+const SAME_IN_BOTH = new Set<string>(["units.megabytes", "right.subsystem.said.teamError", "left.updates.prName",
+                                      "main.conversation.overlapLead"]);
 
 const done: string[] = [];
 const check = (name: string, fn: () => void) => ({ name, fn });

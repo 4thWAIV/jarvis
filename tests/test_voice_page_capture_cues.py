@@ -297,7 +297,7 @@ def _gathering(page, turn=1, text="book a table"):
                                        "text": text}))
 
 
-PAUSE_SHOWN = "document.querySelector('#voice-turn')?.dataset.pause ?? null"
+PAUSE_SHOWN = "document.querySelector('#conversation-control')?.dataset.pause ?? null"
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -315,7 +315,7 @@ async def test_each_pause_cue_plays_once_on_the_output_shown_and_never_heard_as_
         _pause(page, "deciding")
         await _cues_become(page, ["start", "tentative", "deciding"], settle_ms=0)
         await page.wait_for_function(f"{PAUSE_SHOWN} === 'deciding'", timeout=3000)
-        assert "Deciding" in await page.locator("#voice-turn .playback-label strong").text_content()
+        assert await page.locator("#conversation-control .control-title").text_content() == "Deciding"
         _pause(page, "likely")
         await _cues_become(page, ["start", "tentative", "deciding", "likely"])
         await page.wait_for_function(f"{PAUSE_SHOWN} === 'likely'", timeout=3000)

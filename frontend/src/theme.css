@@ -17,6 +17,9 @@
   --ui-inset: #090f18;
   --ui-overlap: #fbbf24;
   --ui-overlap-rgb: 251, 191, 36;
+  /* A failure (the conversation control's errors): the voice page's red. */
+  --ui-error: #f87171;
+  --ui-error-rgb: 248, 113, 113;
 }
 :root[data-theme="graphite"] {
   --ui-ground: #101114;
@@ -34,6 +37,8 @@
   --ui-inset: #121419;
   --ui-overlap: #f5c84c;
   --ui-overlap-rgb: 245, 200, 76;
+  --ui-error: #f28b8b;
+  --ui-error-rgb: 242, 139, 139;
 }
 /* The run dashboard already has a semantic vocabulary. Bridge colors only;
    keep its spacing, type, radius, tone states and shell geometry untouched. */

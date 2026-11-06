@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../locale";
 import { createStore } from "../store";
-import { sendTyped, voiceConnected } from "../voiceStatus";
+import { sendTyped } from "../voiceStatus";
+import { clearTypedRefusal, refuseTyped } from "./controlState";
 
 const DRAFT_KEY = "jarvis.conversation.draft";
 function readDraft() { try { return sessionStorage.getItem(DRAFT_KEY) ?? ""; } catch { return ""; } }
@@ -17,20 +18,13 @@ export function offerDraft(text: string): void {
   if (words) offered.set({ text: words });
 }
 
-// Words heard from him, on one line: the newest stay in view and the start
-// gives way to an ellipsis (conversation.css, .heard-words).
-export function HeardWords({ text }: { text: string }) {
-  return <span className="heard-words"><span>{text}</span></span>;
-}
-
-export function Composer({ partRef, status, overlap }: {
-  partRef: (el: Element | null) => void; status?: ReactNode; overlap?: string;
-}) {
+/** The message input: its heading row (the conversation control, which
+ *  also says when a typed message could not be sent), the text box, the
+ *  help line and Send. */
+export function Composer({ partRef, heading }: { partRef: (el: Element | null) => void; heading: ReactNode }) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(readDraft);
-  const [error, setError] = useState(false);
-  const connected = useSyncExternalStore(voiceConnected.subscribe, voiceConnected.get);
   useEffect(() => {
     // Offered while the composer was not on show, or now.
     const take = () => {
@@ -52,32 +46,25 @@ export function Composer({ partRef, status, overlap }: {
     const text = draft.trim();
     if (!text) return;
     if (!sendTyped.current(text)) {
-      setError(true);
+      refuseTyped();
       return;
     }
-    setDraft(""); keepDraft(""); setError(false); input.current?.focus();
+    setDraft(""); keepDraft(""); clearTypedRefusal(); input.current?.focus();
   }
   return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
-    <div className={`composer-heading${overlap ? " overlap" : ""}`}>
-      <div className="composer-status">
-        {overlap && <strong className="composer-overlap" role="status" title={overlap}>{overlap}</strong>}
-        {status}
-      </div>
-      <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>
-    </div>
+    {heading}
     <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}
       data-ui-action="input" className="hearing-input" rows={1}
       aria-label={t("main.conversation.messageJarvis")} aria-describedby="composer-help"
       placeholder={t("main.conversation.draftPlaceholder")}
-      value={draft} onChange={e => { setDraft(e.target.value); keepDraft(e.target.value); setError(false); }}
+      value={draft} onChange={e => { setDraft(e.target.value); keepDraft(e.target.value); clearTypedRefusal(); }}
       onKeyDown={e => {
         if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
           e.preventDefault(); send();
         }
       }} />
-    {error && <p className="composer-error" role="alert">{t("main.conversation.sendDisconnected")}</p>}
     <div className="composer-footer">
-      <span id="composer-help">{t(connected ? "main.conversation.composerHelp" : "main.conversation.reconnecting")}</span>
+      <span id="composer-help">{t("main.conversation.composerHelp")}</span>
       <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
         {t("main.conversation.send")} <span aria-hidden="true">↑</span>
       </button>

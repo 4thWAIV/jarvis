@@ -52,6 +52,8 @@ type NamesOf<M> = M extends string ? Names<M> : M extends Plural ? "count" | Nam
 /** The values a message needs, by name, from its English text. */
 export type Params<K extends MessageKey> = { readonly [P in NamesOf<(typeof en)[K]>]: string | number };
 type ParamArgs<K extends MessageKey> = [NamesOf<(typeof en)[K]>] extends [never] ? [] : [Params<K>];
+/** A message with no named values: said with its key alone. */
+export type PlainKey = { [K in MessageKey]: [NamesOf<(typeof en)[K]>] extends [never] ? K : never }[MessageKey];
 
 // ── the language in force ────────────────────────────────────────────────
 
