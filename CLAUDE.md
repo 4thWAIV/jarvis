@@ -94,7 +94,8 @@ same rules.
 ## Spoken words
 Every matcher of what the user said against fixed words splits and folds it
 with `spoken_words.py`: the yes and no to clearing and compaction
-(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4) and the same
+yes to a read-back (`server._approve_on_his_yes`), the clear
 command, the cancel and replay words and echo rejection (`speech._tokens`),
 agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
 (`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
@@ -108,6 +109,25 @@ never "para"; replay: repite, otra vez). Which list counts is
 only `language_setting` sets it (see "The language setting"). Every test
 starts in English (`conftest._english_until_a_test_chooses`) and switches
 with the `spanish` fixture.
+
+## Sending on his yes
+A capture (a message to a session, or the review of a message to a person)
+is sent only once he has approved exactly its text, and the brain's tool call
+alone never approves it (`transmission.accepted`, checked by
+`server._capture_to_send` for `steer_session` and `send_message`). Approved
+means one of two things. Either it was heard in full since it last changed
+(`read_capture` or the box's Read, played and not skipped or cut short; or
+Accept on screen), and then the very next thing he said, spoken or typed,
+was a plain yes by the clear command's rule (`_rotation_answer`), on its way
+to the brain as his own turn: every utterance closes the read-backs waiting
+for an answer (`server._take_read_back_answers`) and only that yes approves
+them (`server._approve_on_his_yes`), which tells the brain in a note. A yes in
+the words that started the turn that read it back is no answer to it, and a
+yes taken by another question (clearing, compaction) approves nothing. Or he
+pressed Send on its box (`transmission.approve`). Any change of its text, a
+new read-back, and a send of it that did not go (cancelled in the window,
+failed) each clear the approval, so it is read back and approved again. The
+refusal tells the brain to ask and wait for his yes, or to read it back again.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -227,8 +247,8 @@ on. The old `human_switch` table is kept and nothing reads it. A JARVIS
 trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s). A message to a
 person goes the agents' way (`transmission.py`): drafted (the page or the
 brain's `draft_message`), reviewed on a capture of its own whose text is
-the read-back (`message_approvals.Reviews`), accepted with Send or after
-the read-back (`send_message`), staged and offered the cancel window; the
+the read-back (`message_approvals.Reviews`), accepted with Send or with
+his yes after the read-back (`send_message`; see "Sending on his yes"), staged and offered the cancel window; the
 hand-over is the owner's approval (`MessageApprovals.approve`). Nothing
 reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on

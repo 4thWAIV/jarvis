@@ -5,11 +5,14 @@ shared: an agent session (`server._AgentDestination`) and a human's JARVIS
 through the team server (the messaging service's destination) differ only
 in who they are, so each is an adapter and the sequence is here once.
 
-    acceptance    a capture is sendable only once it has been heard in full
-                  since it last changed (`read_capture`, or Read on its box)
-                  or accepted on screen (Accept, Send). `accepted` is that
-                  rule; the payload a destination binds to it (a human
-                  message's files and revision) is the destination's.
+    acceptance    a capture is sendable only once he has approved exactly
+                  its text: heard in full since it last changed
+                  (`read_capture`, Read on its box, or Accept on screen) and
+                  then a plain yes as the very next thing he said, or his
+                  own Send on its box. `accepted` is that rule, and the
+                  brain's tool call alone never satisfies it; the payload a
+                  destination binds to it (a human message's files and
+                  revision) is the destination's.
     staging       `stage`: the recipient's own refusals first, then "no
                   voice, nothing goes unheard", then the durable record is
                   written and the send is staged; nothing is spoken or sent.
@@ -42,14 +45,78 @@ FAILED = "failed"
 NO_VOICE = "no_voice"          # the failure when there is no voice to hear it
 
 
-def accepted(capture: dict) -> bool:
-    """Heard in full, or accepted on screen, since it last changed."""
+# A capture's approval, kept on the capture itself:
+#   read      the text as it was last heard in full (or read on screen), or None
+#   asking    heard, and his next words are the answer to whether to send it
+#   approved  the text he said yes to (or pressed Send on), or None
+# Any change of text, a new read-back and a send that did not go each clear
+# the approval; only `said_yes` (his yes) and `approve` (his Send) set it.
+
+
+def heard(capture: dict) -> bool:
+    """Heard in full, or read on screen, since it last changed."""
     return capture["read"] == capture["text"]
 
 
+def accepted(capture: dict) -> bool:
+    """Sendable: heard since it last changed, and that exact text approved
+    by him since (his yes after the read-back, or his Send)."""
+    return heard(capture) and capture.get("approved") == capture["text"]
+
+
+def awaiting_answer(capture: dict) -> bool:
+    """Read back to him, and waiting for his next words to say yes or not."""
+    return bool(capture.get("asking")) and heard(capture)
+
+
+def read_back(capture: dict, text: str) -> None:
+    """He heard `text` in full: his next words decide whether it goes. A
+    yes given before this read-back does not carry over to it."""
+    capture["read"] = text
+    capture["approved"] = None
+    capture["asking"] = True
+
+
 def accept(capture: dict) -> None:
-    """He has read it on the screen (Accept, Send): it counts as heard."""
+    """He has read it on the screen (Accept): it counts as heard, and his
+    next words decide whether it goes."""
+    read_back(capture, capture["text"])
+
+
+def changed(capture: dict) -> None:
+    """Its text changed: it has to be heard again and approved again."""
+    capture["read"] = None
+    capture["approved"] = None
+    capture["asking"] = False
+
+
+def close_question(capture: dict) -> None:
+    """His next words came after its read-back: whatever they were, a later
+    yes is no answer to it."""
+    capture["asking"] = False
+
+
+def said_yes(capture: dict) -> bool:
+    """Those next words were his plain yes: exactly the text he heard is
+    approved, if it is still that text. Whether it was."""
+    if not heard(capture):
+        return False
+    capture["approved"] = capture["text"]
+    return True
+
+
+def approve(capture: dict) -> None:
+    """His own Send on its box: read on the screen and approved at once."""
     capture["read"] = capture["text"]
+    capture["approved"] = capture["text"]
+    capture["asking"] = False
+
+
+def withdraw(capture: dict) -> None:
+    """A send of it that did not go (cancelled, refused in the window,
+    failed): his yes was spent on that send, so it needs a new one."""
+    capture["approved"] = None
+    capture["asking"] = False
 
 
 @runtime_checkable

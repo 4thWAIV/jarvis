@@ -190,7 +190,7 @@ class Jarvis:
                           messaging="default"):
         capture = self.captures.open[capture_id]
         if accept:
-            transmission.accept(capture)
+            transmission.approve(capture)                   # his Send on its box
         assert transmission.accepted(capture), "only an accepted capture is staged"
         staged = []
         recipient = HumanRecipient(capture, via,
@@ -573,7 +573,8 @@ def test_accepted_on_screen_it_is_approved_at_the_hand_over_and_drawn_going(tim,
 def test_heard_in_full_by_voice_it_is_approved_the_voice_way(tim):
     draft, reviewed = _reviewed(tim)
     capture = tim.captures.open[reviewed.capture_id]
-    capture["read"] = capture["text"]                       # read_capture heard it
+    transmission.read_back(capture, capture["text"])        # read_capture heard it
+    transmission.said_yes(capture)                          # and his next words: yes
     tim.stage_and_perform(reviewed.capture_id, via="voice", accept=False)
     assert tim.store.approved(*NS, draft.message_id, 1).via == "voice"
 
