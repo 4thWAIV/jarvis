@@ -284,6 +284,18 @@ async def _check_claude_login(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     where = f"config dir: {config_dir}"
 
     rc, stdout, stderr = await _run_subprocess(claude, "auth", "status", timeout=timeout, env=env)
+    if rc == -1:
+        # `_run_subprocess`'s "could not run it" answer (a timeout or a
+        # spawn failure), not `claude` saying the login is bad: at startup
+        # a slow `claude auth status` timed out while the brain was logged
+        # in and replying, so this is unknown, never a login failure.
+        return Check(
+            name="claude_login",
+            status=STATUS_WARN,
+            message=(f"Could not verify the Claude login ({where}): "
+                     f"{(stderr or stdout).strip() or 'no answer'}"),
+            remedy="Recheck: run `claude auth status` yourself to confirm you're logged in.",
+        )
     if rc != 0:
         return Check(
             name="claude_login",
