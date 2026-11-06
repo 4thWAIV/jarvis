@@ -4,8 +4,8 @@
  * "Muted", "Muted · microphone inactive" or "Mic off" in its place while
  * nothing is sent, "Finishing" while the words from before a stop are
  * finished, and Start listening while this page is not listening), mute,
- * mic off, and
- * the health dot while voice input has a problem (loading, blocked, busy in
+ * mic off; and, in its own kept slot left of Stop (MicHealth), the health
+ * dot while voice input has a problem (loading, blocked, busy in
  * another tab, interrupted, unavailable, or the recogniser falling behind).
  * The words are in the dot's title and in the Diagnostics view's Messages,
  * which clicking the dot opens; nothing is written under the orb.
@@ -17,7 +17,7 @@
  * waits until his voice input settings have been read.
  */
 
-import { useSyncExternalStore } from "react";
+import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { codeWords, saidShown, useT, type Translate } from "./locale";
 import { inputStatus, quiet, startListening, voiceInputSettings } from "./mic";
@@ -105,10 +105,35 @@ function MicLevel({ partRef, listenRef }: { partRef: PartRef; listenRef: PartRef
   return <span id="mic-silenced" data-state={status.state} ref={partRef}>{t(key)}</span>;
 }
 
-export function MicControl() {
+type MicTarget = ReturnType<typeof useUiTarget>;
+const MicTargetContext = createContext<MicTarget | null>(null);
+
+function useMicTarget(): MicTarget {
+  const ui = useContext(MicTargetContext);
+  if (!ui) throw new Error("the microphone's parts are drawn inside MicTarget");
+  return ui;
+}
+
+/** The microphone's one target, shared by its two places in the message
+ *  input's lower right: the health dot (MicHealth), left of Stop, and the
+ *  rest (MicControl), right of Send. */
+export function MicTarget({ children }: { children: ReactNode }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "main", view: "main.conversation", kind: "mic" }, label: t("targets.microphone"),
                            socket: CENTRE_SOCKET });
+  return <MicTargetContext.Provider value={ui}>{children}</MicTargetContext.Provider>;
+}
+
+/** The health dot's slot: kept at the dot's width while there is no
+ *  problem, so nothing beside it moves when the dot comes or goes. */
+export function MicHealth() {
+  const ui = useMicTarget();
+  return <span id="health-slot"><HealthDot partRef={ui.part("health")} /></span>;
+}
+
+export function MicControl() {
+  const t = useT();
+  const ui = useMicTarget();
   const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
   // The state as assistive technology reads it: beside the control, not in
   // it, so its (hidden) words are not something the pointer must avoid.
@@ -118,7 +143,6 @@ export function MicControl() {
       <MicLevel partRef={ui.part("meter")} listenRef={ui.part("listen")} />
       <MuteButton partRef={ui.part("mute")} />
       <MicOffButton partRef={ui.part("off")} />
-      <HealthDot partRef={ui.part("health")} />
     </div>
   </>);
 }
