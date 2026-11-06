@@ -93,3 +93,6 @@
 .reply-prose pre code { background: none; padding: 0; }
 .reply-prose blockquote { color: var(--ui-secondary); border-left: 2px solid var(--ui-edge); padding-left: 14px; margin: 12px 0; }
 .reply-prose hr { border: 0; border-top: 1px solid var(--ui-divider); margin: 16px 0; }
+
+/* The status heading lives in the composer; keep the transcript visible. */
+#conversation .chat-voice-turn .playback-label > span { display: block; }

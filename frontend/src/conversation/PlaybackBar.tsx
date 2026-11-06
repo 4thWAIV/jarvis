@@ -7,6 +7,7 @@ export function PlaybackBar({ partRef, labelInComposer = false }: { labelInCompo
   const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   if (state !== "speaking" && state !== "thinking") return null;
   const speaking = state === "speaking";
+  if (labelInComposer && !speaking) return null;
   return <div className="chat-playback" role="group" ref={partRef} aria-label={t("main.conversation.playback")}>
     <span className={`playback-indicator ${speaking ? "playing" : "waiting"}`} aria-hidden="true"><i /><i /><i /></span>
     <div className="playback-label" role="status">
