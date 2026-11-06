@@ -1198,7 +1198,15 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `notifier.py` — macOS notification fallback when no browser tab is
   connected to speak through
 - `jarvis_memory.py` — Long-term memory: a folder of plain Markdown files the
-  user can read and edit directly, not a database
+  user can read and edit directly, not a database. A project note is one
+  stamped line in `projects/<project>.md`, appended by `project_note`; the
+  brain reads one project's notes numbered with `project_notes` and, only
+  when he asks, changes one with the acting `edit_project_note` (keeps its
+  stamp) or `remove_project_note`, each naming the note's number and its
+  current text and refused if the file no longer says it; the file is
+  rewritten through one rename and every line that is not a note, the
+  header included, is kept. Both are `MEMORY_WRITERS`, and every answer
+  gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `preflight.py` — First-run environment checks: `claude` CLI/login,

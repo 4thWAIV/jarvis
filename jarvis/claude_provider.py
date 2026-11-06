@@ -86,6 +86,9 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__remember",
     "mcp__jarvis__recall",
     "mcp__jarvis__project_note",
+    "mcp__jarvis__project_notes",
+    "mcp__jarvis__edit_project_note",
+    "mcp__jarvis__remove_project_note",
     "mcp__jarvis__write_journal",
     # The folder catalog (server.py's folder tools): reads come back in an
     # untrusted block, and registering and removing are ACTING_TOOLS.

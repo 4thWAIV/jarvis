@@ -1108,6 +1108,54 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "project_notes",
+        "description": (
+            "Read one project's notes, numbered from 1. Read them before "
+            "editing or removing one, and tell the user which note you mean."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project": {"type": "string"}},
+            "required": ["project"],
+        },
+    },
+    {
+        "name": "edit_project_note",
+        "description": (
+            "Change the text of one project note, keeping its date. Only when "
+            "the user asks. Give the number and current text from "
+            "project_notes; if the note no longer says that, nothing changes."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "number": {"type": "integer",
+                           "description": "The note's number from project_notes."},
+                "expect": {"type": "string",
+                           "description": "The note's text now, as project_notes gave it."},
+                "text": {"type": "string", "description": "The note's new text, one line."},
+            },
+            "required": ["project", "number", "expect", "text"],
+        },
+    },
+    {
+        "name": "remove_project_note",
+        "description": (
+            "Remove one project note. Only when the user asks. Give the number "
+            "and current text from project_notes; if the note no longer says "
+            "that, nothing is removed."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "number": {"type": "integer",
+                           "description": "The note's number from project_notes."},
+                "expect": {"type": "string",
+                           "description": "The note's text now, as project_notes gave it."},
+            },
+            "required": ["project", "number", "expect"],
+        },
+    },
+    {
         "name": "write_journal",
         "description": (
             "Write a handover note for your next conversation: what you worked on, "

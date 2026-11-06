@@ -354,6 +354,12 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server.tool_project_notes": (
+        "the `text` and `stamp` it prints are a project note's, read from "
+        "JARVIS's own projects folder, and every one goes back only inside the "
+        "memory block (`_wrap_untrusted(_MEMORY_WRAP_NAME, ...)`); the header "
+        "line says only the project, through `_plain_name`. Driven by "
+        "tests/test_memory_tools.py"),
     "server.tool_voice_turn": (
         "it checks `action` against TURN_ACTIONS before acting and answers only "
         "with the fixed sentences of _TURN_SAID or a fixed refusal; neither the "
