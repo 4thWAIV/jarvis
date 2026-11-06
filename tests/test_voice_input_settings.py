@@ -205,11 +205,13 @@ def test_a_row_saved_before_capture_sounds_existed_reads_them_on():
 # ── the capture cues ─────────────────────────────────────────────────────
 
 def test_the_cue_defaults_put_the_pause_cues_at_the_trial_timings_at_a_patience_of_four():
-    """turn-taking.md's trial: tentative after 1.5 s, likely-end after 3 s,
-    the commit at 4."""
+    """turn-taking.md's trial: tentative after 1.5 s, the deciding cue after
+    2.25 s, likely-end after 3 s, the commit at 4."""
     got = voice_control.change(patience=4)
-    leads = dict(voice_control.pause_cue_leads(got))
-    assert (4 - leads["tentative"], 4 - leads["likely"]) == (1.5, 3.0)
+    leads = voice_control.pause_cue_leads(got)
+    assert [(name, 4 - before) for name, before in leads] == [
+        ("tentative", 1.5), ("deciding", 2.25), ("likely", 3.0)]
+    assert got["cues"]["deciding"] == {"on": True, "tone": "low", "before": 1.75}
 
 
 def test_each_cue_is_changed_alone_and_merged_with_what_he_chose_before(published):
@@ -240,12 +242,21 @@ def test_the_volume_and_the_timings_are_saved_and_keep_the_other_settings():
     ({"cues": {"start": {}}}, "invalid-cue"),
     ({"cues": {"start": {"on": "no"}}}, "invalid-cue"),
     ({"cues": {"start": {"tone": "siren"}}}, "invalid-cue"),
-    ({"cues": {"start": {"before": 1}}}, "invalid-cue"),          # only a pause cue is timed
+    ({"cues": {"start": {"before": 1}}}, "invalid-cue"),  # only a pause cue is timed
     ({"cues": {"likely": {"before": 0.1}}}, "invalid-cue"),
     ({"cues": {"likely": {"before": 11}}}, "invalid-cue"),
     ({"cues": {"likely": {"before": "1"}}}, "invalid-cue"),
     ({"cues": {"likely": {"before": 2.5}}}, "invalid-cue-timing"),  # not before the tentative
     ({"cues": {"tentative": {"before": 0.5}}}, "invalid-cue-timing"),
+    ({"cues": {"tentative": {"before": 1.5}}}, "invalid-cue-timing"),  # not before deciding
+    ({"cues": {"likely": {"before": 2}}}, "invalid-cue-timing"),  # not after deciding
+    ({"cues": {"deciding": {"before": 2.5}}}, "invalid-cue-timing"),  # level with the tentative
+    ({"cues": {"deciding": {"before": 3}}}, "invalid-cue-timing"),  # before the tentative
+    ({"cues": {"deciding": {"before": 1.0}}}, "invalid-cue-timing"),  # level with the likely
+    ({"cues": {"deciding": {"before": 0.5}}}, "invalid-cue-timing"),  # after the likely
+    ({"cues": {"deciding": {"before": 0.1}}}, "invalid-cue"),  # the same bounds
+    ({"cues": {"deciding": {"before": 11}}}, "invalid-cue"),
+    ({"cues": {"deciding": {"tone": "siren"}}}, "invalid-cue"),
 ])
 def test_a_bad_cue_change_is_refused_and_nothing_is_saved(published, change, code):
     with pytest.raises(voice_control.Invalid) as refused:
@@ -254,9 +265,38 @@ def test_a_bad_cue_change_is_refused_and_nothing_is_saved(published, change, cod
     assert voice_control.read()["saved"] is False and published == []
 
 
-def test_moving_both_timings_at_once_is_judged_together():
-    got = voice_control.change(cues={"tentative": {"before": 6}, "likely": {"before": 4}})
-    assert (got["cues"]["tentative"]["before"], got["cues"]["likely"]["before"]) == (6, 4)
+def test_moving_the_timings_at_once_is_judged_together():
+    with pytest.raises(voice_control.Invalid) as refused:   # the deciding cue left behind
+        voice_control.change(cues={"tentative": {"before": 6}, "likely": {"before": 4}})
+    assert refused.value.code == "invalid-cue-timing"
+    got = voice_control.change(cues={"tentative": {"before": 6}, "deciding": {"before": 5},
+                                     "likely": {"before": 4}})
+    assert [got["cues"][n]["before"] for n in voice_control.PAUSE_CUES] == [6, 5, 4]
+
+
+def test_the_deciding_cue_s_timing_moves_alone_between_the_other_two(published):
+    got = voice_control.change(cues={"deciding": {"before": 2.25}})
+    assert [got["cues"][n]["before"] for n in voice_control.PAUSE_CUES] == [2.5, 2.25, 1.0]
+    got = voice_control.change(cues={"deciding": {"before": 1.25, "tone": "double"}})
+    assert got["cues"]["deciding"] == {"on": True, "tone": "double", "before": 1.25}
+    assert voice_control.read()["cues"] == got["cues"] and len(published) == 2
+
+
+def test_each_gap_between_the_pause_cues_is_set_on_its_own():
+    """No shared spacing: each cue's own timing sets the gaps either side of
+    it, so the two gaps need not be equal, and a cue off or not playing is
+    skipped when finding a neighbour."""
+    got = voice_control.change(patience=4, cues={"tentative": {"before": 3.5},
+                                                 "deciding": {"before": 3}})
+    gaps = {n: voice_control.pause_cue_gaps(got, n) for n in voice_control.PAUSE_CUES}
+    assert gaps["tentative"] == {"after": None, "until": ("deciding", 0.5)}
+    assert gaps["deciding"] == {"after": ("tentative", 0.5), "until": ("likely", 2.0)}
+    assert gaps["likely"] == {"after": ("deciding", 2.0), "until": (None, 1.0)}
+    got = voice_control.change(cues={"deciding": {"on": False}})
+    assert voice_control.pause_cue_gaps(got, "tentative")["until"] == ("likely", 2.5)
+    got = voice_control.change(patience=3.25, cues={"deciding": {"on": True}})
+    assert voice_control.pause_cue_gaps(got, "tentative") is None      # 3.25 - 3.5: does not play
+    assert voice_control.pause_cue_gaps(got, "deciding") == {"after": None, "until": ("likely", 2.0)}
 
 
 def test_a_pause_cue_at_or_over_his_patience_is_kept_but_not_timed_by_the_turn():
@@ -276,6 +316,14 @@ def test_cue_sounds_need_the_master_switch_and_the_cue():
     assert not voice_control.cue_sounds(settings, "likely")
 
 
+def test_the_deciding_cue_off_silences_only_it():
+    settings = voice_control.change(cues={"deciding": {"on": False}})
+    assert [voice_control.cue_sounds(settings, n) for n in voice_control.CUES] == [
+        True, True, True, False, True]
+    # Off still times it (the turn bar shows its stage); only its sound goes.
+    assert ("deciding", 1.75) in voice_control.pause_cue_leads(settings)
+
+
 def test_saved_cues_jarvis_no_longer_takes_read_as_the_defaults():
     voice_control.change(stop="keep")
     with run_store._connect() as conn:
@@ -285,8 +333,8 @@ def test_saved_cues_jarvis_no_longer_takes_read_as_the_defaults():
     got = voice_control.read()
     assert got["cues"]["start"] == voice_control.CUE_DEFAULTS["start"]
     assert got["cues"]["stop"]["on"] is False
-    # Out of order: both timings are the defaults' pair.
-    assert (got["cues"]["tentative"]["before"], got["cues"]["likely"]["before"]) == (2.5, 1.0)
+    # Out of order: every pause timing is the default.
+    assert [got["cues"][n]["before"] for n in voice_control.PAUSE_CUES] == [2.5, 1.75, 1.0]
     assert got["volume"] == voice_control.VOLUME_DEFAULT
 
 
@@ -306,9 +354,44 @@ def test_the_route_changes_the_cues_and_refuses_what_the_service_refuses(client,
     assert (r.status_code, r.json()["code"]) == (400, "invalid-cue-timing")
 
 
+def _a_row_from_before_the_deciding_cue(cue_settings):
+    """A row saved at schema 4, before the deciding cue, read now."""
+    with run_store._connect() as conn:
+        run_store.migrate(conn, "voice_control_schema",
+                          {k: v for k, v in voice_control._MIGRATIONS.items() if k < 5}, "voice control")
+        conn.execute("INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
+                     "cue_settings, updated_at) VALUES ('local', 'keep', 'stop', 4, ?, 0)", (cue_settings,))
+    return voice_control.read()
+
+
+@pytest.mark.parametrize("saved", [None, '{"start": {"tone": "double"}}',
+                                   '{"tentative": {"before": 3, "tone": "low"}, "likely": {"before": 0.5}}',
+                                   '{"likely": {"before": "x"}}'])
+def test_a_row_saved_before_the_deciding_cue_reads_with_the_default_deciding_cue(saved):
+    got = _a_row_from_before_the_deciding_cue(saved)
+    assert got["cues"]["deciding"] == voice_control.CUE_DEFAULTS["deciding"]
+    if saved and "tentative" in saved:
+        assert [got["cues"][n]["before"] for n in voice_control.PAUSE_CUES] == [3, 1.75, 0.5]
+
+
+@pytest.mark.parametrize("saved,timings", [
+    ('{"tentative": {"before": 1.5}}', [1.5, 1.25, 1.0]),
+    ('{"tentative": {"before": 6}, "likely": {"before": 4, "on": false}}', [6, 5, 4]),
+    ('{"likely": {"before": 2}}', [2.5, 2.25, 2]),
+])
+def test_a_row_whose_timings_leave_no_room_for_the_default_deciding_cue_keeps_them(saved, timings):
+    """His tentative and likely-end timings from before are kept: the deciding
+    cue goes halfway between them, never his choices back to the defaults."""
+    got = _a_row_from_before_the_deciding_cue(saved)
+    assert [got["cues"][n]["before"] for n in voice_control.PAUSE_CUES] == timings
+    assert (got["cues"]["deciding"]["on"], got["cues"]["deciding"]["tone"]) == (True, "low")
+
+
 def test_the_brain_s_schema_offers_the_same_cues_and_tones():
     from jarvis import jarvis_mcp
     assert jarvis_mcp._CUE_TONES == voice_control.TONES
+    assert jarvis_mcp._PAUSE_CUES == voice_control.PAUSE_CUES
+    assert jarvis_mcp._CUE_NAMES == voice_control.CUES
     spec = next(t for t in jarvis_mcp.TOOL_SPECS if t["name"] == "set_voice_input_settings")
     cues = spec["inputSchema"]["properties"]["cues"]["properties"]
     assert tuple(cues) == voice_control.CUES

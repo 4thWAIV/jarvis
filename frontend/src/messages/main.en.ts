@@ -53,6 +53,7 @@ export const mainEn = {
   "main.conversation.turn": "What you said, not sent yet",
   "main.conversation.turnGathering": "Not sent yet",
   "main.conversation.turnPause.tentative": "Finished? Not sent yet",
+  "main.conversation.turnPause.deciding": "Deciding",
   "main.conversation.turnPause.likely": "Sending soon",
   "main.conversation.turnStalled": "Speech recognition could not finish this",
   "main.conversation.turnSend": "Send now",

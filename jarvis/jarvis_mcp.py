@@ -25,8 +25,11 @@ from jarvis.messaging_wire import ATTACHMENTS_MAX
 # The ui_* tools' schemas come from the UI contract, the page's own declarations.
 from jarvis import ui_contract
 
-# The capture cues' tones (voice_control.TONES; a test keeps them the same:
-# this child does not import the server's modules).
+# The capture cues, the pause cues among them in the order they play, and
+# their tones (voice_control.CUES, PAUSE_CUES and TONES; a test keeps them
+# the same: this child does not import the server's modules).
+_PAUSE_CUES = ("tentative", "deciding", "likely")
+_CUE_NAMES = ("start", "stop") + _PAUSE_CUES
 _CUE_TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -1985,11 +1988,13 @@ TOOL_SPECS = [
                 "cues": {
                     "type": "object",
                     "description": (
-                        "Any of the four capture cues, each with only what changes. start: "
-                        "listening started; stop: listening stopped; tentative: he paused "
-                        "and may be done; likely: he is still quiet and the turn is about "
-                        "to be sent. A pause cue plays at his patience minus its `before` "
-                        "seconds of quiet, so tentative's before must be more than "
+                        "Any of the five capture cues, each with only what changes. start: "
+                        "listening started; stop: listening stopped; and the pause cues, in "
+                        "the order they play: tentative: he paused and may be done; "
+                        "deciding: he is still quiet and JARVIS is deciding whether he is "
+                        "done; likely: the turn is about to be sent. A pause cue plays at "
+                        "his patience minus its `before` seconds of quiet, so tentative's "
+                        "before must be more than deciding's and deciding's more than "
                         "likely's, and one at or over his patience does not play."),
                     "properties": {
                         name: {"type": "object", "properties": {
@@ -1998,8 +2003,8 @@ TOOL_SPECS = [
                             **({"before": {"type": "number", "minimum": 0.25, "maximum": 10,
                                            "description": "Seconds before the end of his "
                                                           "turn."}}
-                               if name in ("tentative", "likely") else {})}}
-                        for name in ("start", "stop", "tentative", "likely")},
+                               if name in _PAUSE_CUES else {})}}
+                        for name in _CUE_NAMES},
                 },
                 "volume": {"type": "integer", "minimum": 5, "maximum": 100,
                            "description": "One volume for every cue, in percent of a quiet "
@@ -2016,7 +2021,7 @@ TOOL_SPECS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "cue": {"type": "string", "enum": ["start", "stop", "tentative", "likely"]},
+                "cue": {"type": "string", "enum": list(_CUE_NAMES)},
             },
             "required": ["cue"],
         },

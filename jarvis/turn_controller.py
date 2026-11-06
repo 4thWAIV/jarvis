@@ -34,10 +34,11 @@ being gathered, which go on as their own turn. A discard (his stop under
 Discard) drops the turn; a closed voice socket commits nothing and gives
 back what was gathered.
 
-While he pauses in a gathered turn, two pause cues may be due before the
+While he pauses in a gathered turn, pause cues may be due before the
 commit (`pause_cues`: each stage with its seconds before the deadline,
-read again each time the hold starts): `tentative`, when JARVIS thinks he
-may be done, and `likely`, at the threshold. Each is timed from the same
+read again each time the hold starts; voice_control.PAUSE_CUES):
+`tentative`, when JARVIS thinks he may be done, `deciding`, while it is
+still deciding, and `likely`, at the threshold. Each is timed from the same
 deadline as the commit and checked, when due, against the turn, the
 revision and the deadline it was scheduled for, and that the turn is still
 being gathered; any accepted speech moves the revision on and starts the

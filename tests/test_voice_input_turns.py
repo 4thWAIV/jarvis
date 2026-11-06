@@ -176,11 +176,14 @@ def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
 
 # ── the pause cues ───────────────────────────────────────────────────────
 
-def _quick_cues(**likely):
+def _quick_cues(cue="likely", **change):
     """Cues inside the default patience (1.5 s): tentative after 0.3 s of
-    quiet, likely-end after 0.9 s."""
+    quiet, deciding after 0.6 s, likely-end after 0.9 s; with
+    `change` made to `cue`."""
     from jarvis import voice_control
-    voice_control.change(cues={"tentative": {"before": 1.2}, "likely": {"before": 0.6, **likely}})
+    cues = {"tentative": {"before": 1.2}, "deciding": {"before": 0.9}, "likely": {"before": 0.6}}
+    cues[cue] = {**cues[cue], **change}
+    voice_control.change(cues=cues)
 
 
 def _pauses(seen):
@@ -205,22 +208,24 @@ def test_the_pause_cues_go_to_the_page_gathering_the_turn_and_no_other(client):
         pauses = _pauses(seen)
         turn = seen[-1]["turnId"]
         assert [(p["stage"], p["turnId"], p["text"], p["sound"]) for p in pauses] == [
-            ("tentative", turn, "book a table", True), ("likely", turn, "book a table", True)]
+            ("tentative", turn, "book a table", True), ("deciding", turn, "book a table", True),
+            ("likely", turn, "book a table", True)]
         assert _pauses(_typed_ping(b)) == [], "a cue reached a page whose turn it was not"
     assert server.brain_instance.turns[0] == ("book a table", "user")
 
 
-def test_a_cue_that_is_off_is_shown_without_its_sound(client):
+@pytest.mark.parametrize("cue", ["deciding", "likely"])
+def test_a_cue_that_is_off_is_shown_without_its_sound(client, cue):
     c, server = client
-    _quick_cues(on=False)
+    _quick_cues(cue, on=False)
     with c.websocket_connect("/ws/voice") as ws:
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
                       "clientId": "page-a", "captureEpoch": 1})
         seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
                             limit=40)
-        assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [("tentative", True),
-                                                                       ("likely", False)]
+        assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [
+            ("tentative", True), ("deciding", cue != "deciding"), ("likely", cue != "likely")]
 
 
 def test_no_cue_sounds_while_he_is_away(client, monkeypatch):
@@ -233,7 +238,7 @@ def test_no_cue_sounds_while_he_is_away(client, monkeypatch):
                       "clientId": "page-a", "captureEpoch": 1})
         seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
                             limit=40)
-        assert [p["sound"] for p in _pauses(seen)] == [False, False]
+        assert [p["sound"] for p in _pauses(seen)] == [False, False, False]
 
 
 def test_no_cue_once_mute_or_mic_off_drops_the_turn(client):
@@ -263,8 +268,10 @@ def test_the_brain_s_play_cue_plays_on_his_page_only(client):
                       "visible": True, "reducedMotion": False, "navigationRevision": 0,
                       "layoutRevision": 0})
         _drain_until(ws, lambda m: m.get("type") == "ui_welcome")
-        said = c.portal.call(server.tool_play_cue, {"cue": "tentative"})
-        assert said.startswith("Played the tentative")
-        seen = _drain_until(ws, lambda m: m.get("type") == "cue_test", limit=10)
-        assert seen[-1] == {"type": "cue_test", "cue": "tentative"}
+        for cue, said_as in (("tentative", "tentative (he may be done)"),
+                             ("deciding", "deciding (whether he is done)")):
+            said = c.portal.call(server.tool_play_cue, {"cue": cue})
+            assert said.startswith(f"Played the {said_as} cue")
+            seen = _drain_until(ws, lambda m: m.get("type") == "cue_test", limit=10)
+            assert seen[-1] == {"type": "cue_test", "cue": cue}
         assert "Nothing was played" in c.portal.call(server.tool_play_cue, {"cue": "siren"})

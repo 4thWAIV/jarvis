@@ -3,8 +3,8 @@
  * while it is being gathered, and, for a turn the speech recogniser could
  * not finish, Retry (wait for it again), Send now (as it was heard) and
  * Keep as draft (into the message box, unsent). While he is quiet in a
- * gathered turn its label says the pause cue's stage (tentative, then
- * likely end), the visual twin of the cue's sound. Each is a frame to the
+ * gathered turn its label says the pause cue's stage (tentative, deciding,
+ * then likely end), the visual twin of the cue's sound. Each is a frame to the
  * server, the same call as the brain's voice_turn; nothing is sent here
  * on its own.
  */

@@ -41,6 +41,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.conversation.turn": "Lo que dijo, aún sin enviar",
   "main.conversation.turnGathering": "Aún sin enviar",
   "main.conversation.turnPause.tentative": "¿Terminaste? Aún sin enviar",
+  "main.conversation.turnPause.deciding": "Decidiendo",
   "main.conversation.turnPause.likely": "Enviando pronto",
   "main.conversation.turnStalled": "El reconocimiento de voz no pudo terminar esto",
   "main.conversation.turnSend": "Enviar ahora",

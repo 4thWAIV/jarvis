@@ -329,10 +329,11 @@ def test_a_closed_socket_commits_nothing_and_gives_the_words_back():
 
 
 # ── the pause cues ───────────────────────────────────────────────────────
-# Patience 4, tentative 2.5 s before the end of the turn and likely-end 1.0
-# s before: the cues at 1.5 and 3 s of quiet, the commit at 4.
+# Patience 4, tentative 2.5 s before the end of the turn, deciding 1.75 s
+# and likely-end 1.0 s before: the cues at 1.5, 2.25 and 3 s of quiet, the
+# commit at 4.
 
-TRIAL = (("tentative", 2.5), ("likely", 1.0))
+TRIAL = (("tentative", 2.5), ("deciding", 1.75), ("likely", 1.0))
 
 
 def _stages(h):
@@ -347,18 +348,25 @@ def test_the_pause_cues_come_once_each_at_their_times_then_the_commit():
     h.clock.advance(0.01)
     assert h.paused == [(h.c.turn_id, "tentative", 1.5)]
     assert h.c.pause_stage == "tentative" and h.c.state == "gathering"
-    h.clock.advance(1.5)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("likely", 3.0)]
+    h.clock.advance(0.74)
+    assert _stages(h) == ["tentative"]
+    h.clock.advance(0.01)
+    assert h.paused[-1] == (h.c.turn_id, "deciding", 2.25), "between the other two"
+    assert h.c.pause_stage == "deciding" and h.c.state == "gathering"
+    h.clock.advance(0.75)
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("deciding", 2.25),
+                                                          ("likely", 3.0)]
     assert h.committed == []
     h.clock.advance(1.0)
     assert h.texts() == ["book a table"]
     h.clock.advance(10)
-    assert _stages(h) == ["tentative", "likely"], "at most once per stage per pause"
+    assert _stages(h) == ["tentative", "deciding", "likely"], "at most once per stage per pause"
 
 
 @pytest.mark.parametrize("leaky", [False, True])
-@pytest.mark.parametrize("speak_at,given", [(1.5, []), (2.0, ["tentative"]),
-                                             (3.0, ["tentative"]), (3.5, ["tentative", "likely"])])
+@pytest.mark.parametrize("speak_at,given", [
+    (1.5, []), (2.0, ["tentative"]), (2.25, ["tentative"]), (2.5, ["tentative", "deciding"]),
+    (3.0, ["tentative", "deciding"]), (3.5, ["tentative", "deciding", "likely"])])
 def test_speech_at_or_after_either_cue_cancels_what_is_still_due_and_starts_again(
         speak_at, given, leaky):
     """At each boundary (his word landing the moment a cue falls due, before
@@ -376,7 +384,7 @@ def test_speech_at_or_after_either_cue_cancels_what_is_still_due_and_starts_agai
     assert h.paused == before, "a cue from before he spoke again"
     h.c.final("for two", 2)
     h.clock.advance(4.0)
-    assert _stages(h)[len(before):] == ["tentative", "likely"]
+    assert _stages(h)[len(before):] == ["tentative", "deciding", "likely"]
     assert all(at > speak_at for _, _, at in h.paused[len(before):])
     assert h.texts() == ["book a table for two"]
 
@@ -390,6 +398,10 @@ def test_a_cue_whose_revision_moved_on_is_never_given_late():
     assert h.paused == []
     h.clock.advance(0.9)
     assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 2.5)]
+    h.clock.advance(0.7)                         # past the deciding cue's old time (2.75)
+    assert _stages(h) == ["tentative"]
+    h.clock.advance(0.05)
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 2.5), ("deciding", 3.25)]
 
 
 @pytest.mark.parametrize("end", ["discard", "close", "send_now"])
@@ -410,8 +422,9 @@ def test_no_cue_while_idle_or_only_an_interim_is_heard():
 
 
 def test_a_cue_not_after_he_stopped_is_not_scheduled():
-    """At patience 1.5 the tentative cue (2.5 s before) would fall before
-    he stopped: only the likely-end cue plays, at 0.5 s."""
+    """At patience 1.5 the tentative cue (2.5 s before) and the deciding cue
+    (1.75 s before) would fall before he stopped: only the likely-end cue
+    plays, at 0.5 s."""
     h = Harness(hold=1.5, cues=TRIAL)
     h.c.final("hi", 1)
     h.clock.advance(2)
@@ -435,7 +448,8 @@ def test_the_cue_timings_are_read_again_each_time_the_hold_starts():
     h.c.final("one", 1)
     h.cues = [("likely", 2.0)]
     h.clock.advance(4.0)
-    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("likely", 3.0)]
+    assert [(stage, at) for _, stage, at in h.paused] == [("tentative", 1.5), ("deciding", 2.25),
+                                                          ("likely", 3.0)]
     h.c.final("two", 2)
     h.clock.advance(4.0)
-    assert [(stage, at) for _, stage, at in h.paused[2:]] == [("likely", 6.0)]
+    assert [(stage, at) for _, stage, at in h.paused[3:]] == [("likely", 6.0)]

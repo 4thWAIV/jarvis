@@ -26,8 +26,9 @@ export const sendTyped = { current: (_text: string): boolean => false };
 // never echo. `stalled` is a turn the recogniser could not finish, waiting
 // for his Retry, Send now or Keep as draft (VoiceTurnBar.tsx). `pause` is
 // the pause cue the server last gave while he is quiet in a gathered turn
-// (tentative: he may be done; likely: about to be sent), shown whether or
-// not its sound plays; any accepted speech clears it.
+// (tentative: he may be done; deciding: still deciding; likely: about to be
+// sent), shown whether or not its sound plays; any accepted speech clears
+// it.
 export type VoiceTurnState = "gathering" | "commit-pending" | "stalled";
 export interface VoiceTurn { state: VoiceTurnState; turnId: number | null; text: string; pause?: PauseCue }
 export const voiceTurn = createStore<VoiceTurn | null>(null);

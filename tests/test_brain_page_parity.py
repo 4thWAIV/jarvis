@@ -643,7 +643,18 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     assert (page["volume"], page["cues"]["likely"]) == (30, {"on": False, "tone": "low",
                                                              "before": 1.0})
     timing = _call(wired, "set_voice_input_settings", cues={"likely": {"before": 3}})
-    assert "Nothing was changed" in timing["text"] and "tentative cue comes first" in timing["text"]
+    assert "Nothing was changed" in timing["text"] and "play in order" in timing["text"]
+    timing = _call(wired, "set_voice_input_settings", cues={"deciding": {"before": 2.5}})
+    assert "Nothing was changed" in timing["text"] and "play in order" in timing["text"]
+    deciding = _call(wired, "set_voice_input_settings", patience=4,
+                     cues={"deciding": {"before": 2, "tone": "double"}})
+    assert deciding["ok"] and (   # likely is off: the next beep is the send
+        "deciding (whether he is done): on, tone double, 2 s before the end of his turn (after "
+        "2 s of quiet, 0.5 s after the tentative (he may be done) cue, 2 s before it is sent)"
+    ) in deciding["text"]
+    assert wired.client.get(voice_control.PATH).json()["cues"]["deciding"] == {
+        "on": True, "tone": "double", "before": 2}
+    page = wired.client.get(voice_control.PATH).json()
     refused = _call(wired, "set_voice_input_settings", stop="forever")
     assert "Nothing was changed" in refused["text"]
     from jarvis import data_paths

@@ -68,7 +68,8 @@ CUE_SPY = """
 TONES = {(660, 880): "rise", (880, 660): "fall", (587,): "pulse", (440,): "low",
          (740, 740): "double", (784, 523): "resolve"}
 # The cue each tone is by default (voice_control.CUE_DEFAULTS).
-BY_DEFAULT = {"rise": "start", "fall": "stop", "pulse": "tentative", "resolve": "likely"}
+BY_DEFAULT = {"rise": "start", "fall": "stop", "pulse": "tentative", "low": "deciding",
+              "resolve": "likely"}
 # The notes played so far, one list per cue, in order.
 NOTES = """() => { const out = []; let key = null;
   for (const o of window.__oscillators) {
@@ -311,8 +312,12 @@ async def test_each_pause_cue_plays_once_on_the_output_shown_and_never_heard_as_
         _pause(page, "tentative")
         await _cues_become(page, ["start", "tentative"], settle_ms=0)
         await page.wait_for_function(f"{PAUSE_SHOWN} === 'tentative'", timeout=3000)
+        _pause(page, "deciding")
+        await _cues_become(page, ["start", "tentative", "deciding"], settle_ms=0)
+        await page.wait_for_function(f"{PAUSE_SHOWN} === 'deciding'", timeout=3000)
+        assert "Deciding" in await page.locator("#voice-turn .playback-label strong").text_content()
         _pause(page, "likely")
-        await _cues_become(page, ["start", "tentative", "likely"])
+        await _cues_become(page, ["start", "tentative", "deciding", "likely"])
         await page.wait_for_function(f"{PAUSE_SHOWN} === 'likely'", timeout=3000)
         # He speaks again: a new gathering frame, the pause no longer shown.
         _gathering(page, text="book a table for two")
@@ -338,24 +343,26 @@ async def test_a_pause_cue_without_its_sound_or_while_muted_or_off_is_only_shown
         await _cues_become(page, ["start", "stop"], settle_ms=0)
         _gathering(page, turn=2)
         _pause(page, "likely", turn=2)                  # muted: never heard
+        _pause(page, "deciding", turn=2)
         await page.click("#btn-mic-off")
+        _pause(page, "deciding", turn=2)
         _pause(page, "tentative", turn=2)               # off: never heard
         await _cues_become(page, ["start", "stop"])
         await context.close()
 
 
+@pytest.mark.parametrize("off", ["tentative", "deciding"])
 @pytest.mark.asyncio(loop_scope="session")
-async def test_turning_one_cue_off_silences_that_cue_alone(page_playwright, page_url):
+async def test_turning_one_cue_off_silences_that_cue_alone(page_playwright, page_url, off):
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        cues = {**voice_control.CUE_DEFAULTS,
-                "tentative": {**voice_control.CUE_DEFAULTS["tentative"], "on": False}}
+        cues = {**voice_control.CUE_DEFAULTS, off: {**voice_control.CUE_DEFAULTS[off], "on": False}}
         page = await _cue_page(context, page_url, view="", cues=cues)
         await _listening(page)
         _gathering(page)
-        _pause(page, "tentative")
-        _pause(page, "likely")
-        await _cues_become(page, ["start", "likely"])
+        for stage in voice_control.PAUSE_CUES:
+            _pause(page, stage)
+        await _cues_become(page, ["start"] + [c for c in voice_control.PAUSE_CUES if c != off])
         await context.close()
 
 
@@ -389,8 +396,8 @@ async def test_a_pause_cue_given_while_audio_is_locked_never_plays_once_it_is_un
         await page.evaluate(f"window.__contexts[{output}].suspend()")
         await page.wait_for_function(f"window.__contexts[{output}].state === 'suspended'", timeout=3000)
         _gathering(page)
-        _pause(page, "tentative")
-        _pause(page, "likely")
+        for stage in voice_control.PAUSE_CUES:
+            _pause(page, stage)
         await page.wait_for_timeout(500)
         await page.evaluate(f"window.__contexts[{output}].resume()")
         await page.wait_for_function(f"window.__contexts[{output}].state === 'running'", timeout=3000)
@@ -423,7 +430,9 @@ async def test_each_test_button_plays_its_cue_once_even_when_it_is_off(page_play
         assert page.posted == [], "a Test changed a setting"
         # The brain's play_cue reaches the same call.
         page.voice.socket.send(json.dumps({"type": "cue_test", "cue": "likely"}))
-        await _cues_become(page, played + ["likely"])
+        await _cues_become(page, played + ["likely"], settle_ms=300)
+        page.voice.socket.send(json.dumps({"type": "cue_test", "cue": "deciding"}))
+        await _cues_become(page, played + ["likely", "deciding"])
         await context.close()
 
 
@@ -436,7 +445,15 @@ async def test_the_cue_rows_save_through_the_settings_route_and_say_when_each_pl
         await _settings(page)
         at = page.locator("#settings-cue-tentative-at")
         assert "after 1.5 s of quiet" in await at.text_content()
-        assert "after 3 s of quiet" in await page.locator("#settings-cue-likely-at").text_content()
+        # Each timing says when it plays and its gaps to the beeps either side.
+        said = {name: await page.locator(f"#settings-cue-{name}-at").text_content()
+                for name in voice_control.PAUSE_CUES}
+        assert "after 1.5 s of quiet. The deciding sound comes 0.75 s later." in said["tentative"]
+        assert ("after 2.25 s of quiet. That is 0.75 s after the pause sound. The about-to-send "
+                "sound comes 0.75 s later.") in said["deciding"]
+        assert ("after 3 s of quiet. That is 0.75 s after the deciding sound. What you said is "
+                "sent 1 s later.") in said["likely"]
+        assert "Deciding sound" in await page.locator("label[for='settings-cue-deciding']").text_content()
         await page.select_option("#settings-cue-likely", "low")
         await page.select_option("#settings-cue-start", "off")
         before = page.locator("#settings-cue-tentative-before")
@@ -445,13 +462,24 @@ async def test_the_cue_rows_save_through_the_settings_route_and_say_when_each_pl
         volume = page.locator("#settings-cue-volume")
         await volume.fill("30")
         await volume.press("Enter")
-        assert await _until(lambda: len(page.posted) == 4)
+        deciding = page.locator("#settings-cue-deciding-before")
+        await deciding.fill("2")
+        await deciding.press("Enter")
+        await page.select_option("#settings-cue-deciding", "double")
+        assert await _until(lambda: len(page.posted) == 6)
         assert page.posted == [{"cues": {"likely": {"on": True, "tone": "low"}}},
                                {"cues": {"start": {"on": False}}},
                                {"cues": {"tentative": {"before": 3.5}}},
-                               {"volume": 30}]
+                               {"volume": 30},
+                               {"cues": {"deciding": {"before": 2}}},
+                               {"cues": {"deciding": {"on": True, "tone": "double"}}}]
         await page.wait_for_function(
             "document.querySelector('#settings-cue-tentative-at').textContent.includes('after 0.5 s')",
             timeout=3000)
+        # The two gaps are set apart: 1.5 s after the pause sound, 1 s before the next.
+        await page.wait_for_function(
+            "document.querySelector('#settings-cue-deciding-at').textContent.includes("
+            "'after 2 s of quiet. That is 1.5 s after the pause sound. The about-to-send sound "
+            "comes 1 s later.')", timeout=3000)
         assert await _cues(page) == [], "saving played or started nothing"
         await context.close()

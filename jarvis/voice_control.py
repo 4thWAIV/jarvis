@@ -25,25 +25,27 @@ nothing saved, or anything unreadable, is the current constant
 default on): the master switch for every capture cue. Off plays none;
 what the page shows is the same either way.
 
-The capture cues (`cues`, `volume`) are four quiet sounds, each on or off
+The capture cues (`cues`, `volume`) are five quiet sounds, each on or off
 and each one tone of the fixed presets (TONES; the page holds their
 notes, voice.ts):
 
   start      listening really started
   stop       listening really stopped, for any reason
   tentative  he has paused in a gathered turn: JARVIS thinks he may be done
+  deciding   he is still quiet: JARVIS is deciding whether he is done
   likely     he is still quiet: the turn is about to be sent
 
-The two pause cues are timed in seconds before the end of his turn
-(`before`), never on a clock of their own: the end of his turn is his
-patience after the last word accepted as his, and a pause cue plays at
-patience - before seconds of quiet. So `tentative.before` must be more
-than `likely.before` (the tentative cue comes first), each within
-BEFORE_MIN to BEFORE_MAX, and a cue whose time falls at or before the
-moment he stopped (before >= patience) does not play at that patience.
-Changing his patience never invalidates them. The defaults (2.5 and 1.0)
-give the trial timings in turn-taking.md at a patience of 4: tentative
-after 1.5 s, likely-end after 3 s, the commit at 4. `volume` is one cue
+The pause cues (PAUSE_CUES, in the order they play) are timed in seconds
+before the end of his turn (`before`), never on a clock of their own: the
+end of his turn is his patience after the last word accepted as his, and a
+pause cue plays at patience - before seconds of quiet. So each pause cue's
+`before` must be more than the next one's (tentative, then deciding, then
+likely), each within BEFORE_MIN to BEFORE_MAX, and a cue whose time falls
+at or before the moment he stopped (before >= patience) does not play at
+that patience. Changing his patience never invalidates them. The defaults
+(2.5, 1.75 and 1.0) give the trial timings in turn-taking.md at a patience
+of 4: tentative after 1.5 s, deciding after 2.25 s, likely-end after
+3 s, the commit at 4. `volume` is one cue
 volume, VOLUME_MIN to VOLUME_MAX percent of a quiet ceiling the page sets.
 
 They are per user, on this JARVIS (the node's SQLite, its own schema
@@ -85,10 +87,12 @@ SWITCH_MODES = ("continue", "stop")
 DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
 # His patience may be set within these bounds, in seconds.
 PATIENCE_MIN, PATIENCE_MAX = 0.5, 10.0
-# The capture cues: the two that mark listening, the two that mark a pause
-# in his turn, and the quiet presets each may play.
+# The capture cues: the two that mark listening, the pause cues that mark
+# the stages of a pause in his turn (in the order they play, each earlier
+# one further before the end of his turn), and the quiet presets each may
+# play.
 LISTEN_CUES = ("start", "stop")
-PAUSE_CUES = ("tentative", "likely")
+PAUSE_CUES = ("tentative", "deciding", "likely")
 CUES = LISTEN_CUES + PAUSE_CUES
 TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
 # A pause cue's seconds before the end of his turn.
@@ -99,6 +103,7 @@ CUE_DEFAULTS = {
     "start": {"on": True, "tone": "rise"},
     "stop": {"on": True, "tone": "fall"},
     "tentative": {"on": True, "tone": "pulse", "before": 2.5},
+    "deciding": {"on": True, "tone": "low", "before": 1.75},
     "likely": {"on": True, "tone": "resolve", "before": 1.0},
 }
 VOLUME_DEFAULT = 50
@@ -129,6 +134,29 @@ _MIGRATIONS = {
     4: """
         ALTER TABLE voice_input_settings ADD COLUMN cue_settings TEXT;
         ALTER TABLE voice_input_settings ADD COLUMN cue_volume INTEGER;
+    """,
+    # The deciding pause cue came after his tentative and likely-end timings
+    # could be chosen. A row whose timings in force (saved, else the
+    # defaults then: 2.5 and 1.0) do not have the deciding cue's default
+    # (1.75) between them would read as out of order and lose them, so it
+    # gets a deciding cue halfway between instead; every other row reads with
+    # the default deciding cue, unchanged.
+    5: """
+        UPDATE voice_input_settings
+           SET cue_settings = json_set(cue_settings, '$.deciding',
+                                       json(json_object('before', (e.t + e.l) / 2.0)))
+          FROM (SELECT user_key AS k,
+                       CASE WHEN json_type(cue_settings, '$.tentative.before') IN ('integer', 'real')
+                             AND json_extract(cue_settings, '$.tentative.before') BETWEEN 0.25 AND 10
+                            THEN json_extract(cue_settings, '$.tentative.before') ELSE 2.5 END AS t,
+                       CASE WHEN json_type(cue_settings, '$.likely.before') IN ('integer', 'real')
+                             AND json_extract(cue_settings, '$.likely.before') BETWEEN 0.25 AND 10
+                            THEN json_extract(cue_settings, '$.likely.before') ELSE 1.0 END AS l
+                  FROM voice_input_settings
+                 WHERE json_valid(cue_settings) AND json_type(cue_settings) = 'object'
+                   AND json_type(cue_settings, '$.deciding') IS NULL) AS e
+         WHERE voice_input_settings.user_key = e.k AND e.t > e.l
+           AND NOT (e.t > 1.75 AND 1.75 > e.l);
     """,
 }
 
@@ -269,8 +297,8 @@ def _saved_cues(raw: object) -> dict:
 
 
 def _cues_in_force(saved: Optional[dict]) -> dict:
-    """Each cue's defaults with his choices over them. A saved pair of pause
-    timings out of order is the defaults' pair."""
+    """Each cue's defaults with his choices over them. Saved pause timings
+    out of order are the defaults' timings."""
     cues = {name: {**CUE_DEFAULTS[name], **((saved or {}).get(name) or {})} for name in CUES}
     if not _in_order(cues):
         for name in PAUSE_CUES:
@@ -279,7 +307,9 @@ def _cues_in_force(saved: Optional[dict]) -> dict:
 
 
 def _in_order(cues: dict) -> bool:
-    return cues["tentative"]["before"] > cues["likely"]["before"]
+    """Each pause cue further before the end of his turn than the next."""
+    leads = [cues[name]["before"] for name in PAUSE_CUES]
+    return all(earlier > later for earlier, later in zip(leads, leads[1:]))
 
 
 def pause_cue_leads(settings: dict) -> list[tuple[str, float]]:
@@ -288,6 +318,35 @@ def pause_cue_leads(settings: dict) -> list[tuple[str, float]]:
     sounds is decided when it is due, so turning it on or off applies at
     once)."""
     return [(name, float(settings["cues"][name]["before"])) for name in PAUSE_CUES]
+
+
+def pause_cue_at(settings: dict, name: str) -> Optional[float]:
+    """Seconds of quiet after which this pause cue plays at his patience,
+    or None when that is not after he stopped."""
+    at = round(settings["patience"] - settings["cues"][name]["before"], 2)
+    return at if at > 0 else None
+
+
+def pause_cue_gaps(settings: dict, name: str) -> Optional[dict]:
+    """The gaps around one pause cue at his patience, each set by that cue's
+    own `before` and its neighbour's (there is no shared spacing): `after`,
+    (the nearest earlier pause cue that is on and plays, seconds since it)
+    or None; `until`, (the nearest later one, seconds until it), or (None,
+    seconds until what he said is sent) when none later plays. None when
+    this cue does not play."""
+    at = pause_cue_at(settings, name)
+    if at is None:
+        return None
+    sounding = [n for n in PAUSE_CUES
+                if settings["cues"][n]["on"] and pause_cue_at(settings, n) is not None]
+    i = PAUSE_CUES.index(name)
+    earlier = [n for n in sounding if PAUSE_CUES.index(n) < i]
+    later = [n for n in sounding if PAUSE_CUES.index(n) > i]
+    after = ((earlier[-1], round(at - pause_cue_at(settings, earlier[-1]), 2))  # type: ignore[operator]
+             if earlier else None)
+    until = ((later[0], round(pause_cue_at(settings, later[0]) - at, 2))  # type: ignore[operator]
+             if later else (None, float(settings["cues"][name]["before"])))
+    return {"after": after, "until": until}
 
 
 def cue_sounds(settings: dict, name: str) -> bool:
@@ -336,8 +395,8 @@ def change(stop: object = None, switch: object = None, patience: object = None,
     force, as `read` gives them. Starts, stops, submits and discards
     nothing: they apply from the next stop or page switch (the cues from
     the next one due). A change to the cues is merged into what he chose
-    before, and refused when it would put the tentative cue at or after
-    the likely-end cue."""
+    before, and refused when it would put the pause cues out of their
+    order (tentative, deciding, likely)."""
     stop, switch, patience, sounds, cues, volume = validate(stop, switch, patience, sounds,
                                                             cues, volume)
     user = user or user_key()
@@ -349,8 +408,9 @@ def change(stop: object = None, switch: object = None, patience: object = None,
     if cues and not _in_order({name: {**CUE_DEFAULTS[name], **chosen.get(name, {})}
                                for name in PAUSE_CUES}):
         raise Invalid("invalid-cue-timing",
-                      "The tentative cue comes first: its seconds before the end of his turn "
-                      "must be more than the likely-end cue's.")
+                      "The pause cues play in order, tentative, then deciding, then likely: "
+                      "each one's seconds before the end of his turn must be more than the "
+                      "next one's.")
     new = {"stop": stop or now["stop"], "switch": switch or now["switch"],
            "patience": patience,        # None: keep what is saved
            "sounds": None if sounds is None else int(sounds),

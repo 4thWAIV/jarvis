@@ -8449,7 +8449,23 @@ def _voice_input_settings_said(settings: dict) -> str:
 
 
 _CUE_SAID = {"start": "listening started", "stop": "listening stopped",
-             "tentative": "tentative (he may be done)", "likely": "likely end (about to send)"}
+             "tentative": "tentative (he may be done)",
+             "deciding": "deciding (whether he is done)",
+             "likely": "likely end (about to send)"}
+
+
+def _gaps_said(settings: dict, name: str) -> str:
+    """A playing pause cue's gaps to its neighbours, as Settings shows them."""
+    gaps = voice_control.pause_cue_gaps(settings, name)
+    if gaps is None:
+        return ""
+    said = ""
+    if gaps["after"]:
+        earlier, gap = gaps["after"]
+        said += f", {gap:g} s after the {_CUE_SAID[earlier]} cue"
+    later, gap = gaps["until"]
+    return said + (f", {gap:g} s before the {_CUE_SAID[later]} cue" if later
+                   else f", {gap:g} s before it is sent")
 
 
 def _cues_said(settings: dict) -> str:
@@ -8460,9 +8476,9 @@ def _cues_said(settings: dict) -> str:
         cue = settings["cues"][name]
         part = f"{_CUE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}"
         if name in voice_control.PAUSE_CUES:
-            at = settings["patience"] - cue["before"]
+            at = voice_control.pause_cue_at(settings, name)
             part += (f", {cue['before']:g} s before the end of his turn ("
-                     + (f"after {at:g} s of quiet)" if at > 0 else
+                     + (f"after {at:g} s of quiet{_gaps_said(settings, name)})" if at else
                         "longer than his patience, so it does not play)"))
         parts.append(part)
     master = "" if settings["sounds"] else " (all silent while capture sounds are off)"

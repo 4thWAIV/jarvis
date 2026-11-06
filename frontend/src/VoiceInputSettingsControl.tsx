@@ -12,7 +12,9 @@
  *
  * Each cue says, under it, when it plays; a pause cue's timing says when
  * it plays at his patience (patience minus its seconds), or that it does
- * not. Test plays the cue once as it is set (voiceStatus.ts `cueTest`, the
+ * not, and its gap after the pause cue before it and before the next one
+ * (or before sending): each gap is tuned by the two cues' own timings, so
+ * the gaps need not be equal. Test plays the cue once as it is set (voiceStatus.ts `cueTest`, the
  * same as the brain's play_cue), whether it is on or not.
  *
  * Each shows the value in force, read with the page (voiceSettings.ts) and
@@ -27,8 +29,8 @@ import { useState, useSyncExternalStore } from "react";
 import { useT } from "./locale";
 import { voiceInputSettings } from "./mic";
 import { SettingsRow, useSettingsItem, type SettingsItem } from "./SettingsRow";
-import { BEFORE_MAX, BEFORE_MIN, CUE_NAMES, PATIENCE_MAX, PATIENCE_MIN, pauseCueAt, STOP_MODES,
-         SWITCH_MODES, TONES, VOLUME_MAX, VOLUME_MIN, type CueName, type StopMode, type SwitchMode,
+import { BEFORE_MAX, BEFORE_MIN, CUE_NAMES, isPauseCue, PATIENCE_MAX, PATIENCE_MIN, pauseCueAt, pauseCueGaps, STOP_MODES,
+         SWITCH_MODES, TONES, VOLUME_MAX, VOLUME_MIN, type CueName, type PauseCue, type StopMode, type SwitchMode,
          type Tone, type VoiceInputSettings } from "./voiceControl";
 import { changeVoiceInputSettings, type VoiceInputChange } from "./voiceSettings";
 import { cueTest } from "./voiceStatus";
@@ -41,6 +43,7 @@ const CUE_ITEMS: Record<CueName, { choice: SettingsItem; test: SettingsItem; bef
   start: { choice: "cueStart", test: "cueStartTest" },
   stop: { choice: "cueStop", test: "cueStopTest" },
   tentative: { choice: "cueTentative", test: "cueTentativeTest", before: "cueTentativeBefore" },
+  deciding: { choice: "cueDeciding", test: "cueDecidingTest", before: "cueDecidingBefore" },
   likely: { choice: "cueLikely", test: "cueLikelyTest", before: "cueLikelyBefore" },
 };
 
@@ -74,10 +77,12 @@ function CueRows({ name, settings, disabled, save }: {
   const label = t(`left.voiceInput.cue.${name}`);
   const choiceUi = useSettingsItem(items.choice, label);
   const testUi = useSettingsItem(items.test, `${label}: ${t("left.voiceInput.cueTest")}`);
-  const beforeLabel = name === "tentative" || name === "likely" ? t(`left.voiceInput.cueBefore.${name}`) : "";
+  const beforeLabel = isPauseCue(name) ? t(`left.voiceInput.cueBefore.${name}`) : "";
   const beforeUi = useSettingsItem(items.before ?? items.choice, beforeLabel, items.before !== undefined);
   const cue = settings?.cues[name];
   const at = settings && cue ? pauseCueAt(settings.patience, cue) : null;
+  const gaps = settings && isPauseCue(name) ? pauseCueGaps(settings.patience, settings.cues, name) : null;
+  const named = (other: PauseCue) => t(`left.voiceInput.cue.${other}`).toLowerCase();
   return <>
     <SettingsRow label={label} labelRef={choiceUi.part("label")} htmlFor={`settings-cue-${name}`}>
       <select id={`settings-cue-${name}`} data-ui-action="domain" ref={choiceUi.whole}
@@ -104,6 +109,10 @@ function CueRows({ name, settings, disabled, save }: {
       {settings && <p className="settings-hint" id={`settings-cue-${name}-at`}>
         {at != null ? t("left.voiceInput.cueAt", { patience: settings.patience ?? "", at })
                     : t("left.voiceInput.cueNever", { patience: settings.patience ?? "" })}
+        {gaps?.after && <> {t("left.voiceInput.cueGapAfter", { gap: gaps.after.gap, cue: named(gaps.after.cue) })}</>}
+        {gaps && <> {gaps.until.next
+          ? t("left.voiceInput.cueGapBefore", { gap: gaps.until.gap, cue: named(gaps.until.next) })
+          : t("left.voiceInput.cueGapSend", { gap: gaps.until.gap })}</>}
       </p>}
     </>}
   </>;
