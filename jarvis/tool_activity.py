@@ -45,6 +45,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
     # one at the other end.
     DATA: (
         "recall", "remember", "project_note", "write_journal",
+        "project_notes", "edit_project_note", "remove_project_note",
         "read_file", "search_repo", "repo_overview", "list_projects",
         "github_repo", "search_history", "read_history",
         "read_page", "look_at_page", "what_is_on_screen", "look_at_screen",
@@ -58,7 +59,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "voice_input_settings", "attention_updates", "mark_updates_seen",
         "set_attention_settings", "update_status",
         "skip_reading", "stop_speaking", "quiet_microphone", "voice_turn",
-        "set_language", "set_voice_input_settings",
+        "set_language", "set_voice_input_settings", "play_cue",
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (
