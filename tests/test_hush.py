@@ -45,9 +45,15 @@ def test_the_client_sends_a_key_press_not_a_word():
     assert 'e.key === "Escape"' in main
 
 
-def test_the_button_only_exists_while_he_is_speaking():
+def test_the_button_only_shows_while_he_is_speaking():
+    """Stop keeps its slot left of Send so nothing moves, and is hidden
+    (visibility, so not seen, focused or clicked) and no pointer target
+    unless he is speaking."""
     control = (Path(__file__).parent.parent / "frontend/src/StatusControl.tsx").read_text()
-    assert 'state === "speaking" && (' in control
+    assert '=== "speaking"' in control
+    assert 'ref={speaking ? ui.part("stop") : undefined} data-shown={speaking}' in control
+    css = (Path(__file__).parent.parent / "frontend/src/conversation/conversation.css").read_text()
+    assert '#hush[data-shown="false"] { visibility: hidden; }' in css
     main = (Path(__file__).parent.parent / "frontend/src/jarvis.ts").read_text()
     assert "voiceState.set(newState)" in main and "stopSpeaking.current = hush" in main
 

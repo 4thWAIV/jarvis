@@ -7,7 +7,9 @@
     {"kind": "orb", "entity": null, "label": "The main orb", "parts": ["canvas", "logo"],
      "presentations": [{"view": "left.fixed"}]},
     {"kind": "status", "entity": null, "label": "Status", "parts": ["text", "stop"],
-     "presentations": [{"view": "left.fixed"}]},
+     "presentations": [{"view": "left.fixed", "parts": ["text"]},
+                       {"view": "main.conversation", "parts": ["stop"],
+                        "reveal": {"command": "main.tab.select", "args": {"tab": "conversation"}}}]},
     {"kind": "brainAccount", "entity": "provider", "label": "Brain account",
      "parts": ["name", "remaining", "pace", "reset"],
      "presentations": [{"view": "left.fixed"}]}

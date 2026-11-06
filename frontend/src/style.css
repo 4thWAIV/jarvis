@@ -164,7 +164,7 @@ html, body {
   pointer-events: auto;
 }
 
-/* Exactly the Stop button's height in every state, so nothing below moves. */
+/* The status line's height in every state, so nothing below moves. */
 #status-control {
   height: 26px;
   display: flex;
@@ -1150,7 +1150,7 @@ html, body {
 }
 
 /* Stop — shown only while he is speaking, because that is the only moment it
-   means anything. Escape does the same thing without reaching for the mouse. */
+   means anything; left of Send in the message input (StatusControl.tsx). */
 #hush {
   height: 26px;
   padding: 0 22px;

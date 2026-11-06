@@ -465,3 +465,36 @@ async def test_disconnected_submission_preserves_draft_with_error(page_url):
         assert "has not been sent" in await page.locator("#conversation-control .control-note").inner_text()
         assert not [m for m in voice.got if m.get("type") == "transcript"]
         await browser.close()
+
+
+SEND_PLACE = """() => {
+  const r = s => { const b = document.querySelector(s).getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
+  return {send: r('.composer-send'), mic: r('#mic-control'), slot: r('#stop-slot'),
+          stop: getComputedStyle(document.querySelector('#hush')).visibility};
+}"""
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_stop_sits_left_of_send_and_nothing_moves_when_it_shows_or_goes(page_playwright, page_url):
+    """Stop is in the message input's lower right, immediately left of Send,
+    then the microphone. Its slot is kept while it is hidden, so Send and
+    the microphone are exactly where they were whether Stop shows or not."""
+    voice = _Voice()
+    async with page_playwright as p:
+        browser, page = await _open(p, page_url, voice)
+        hidden = await page.evaluate(SEND_PLACE)
+        assert hidden["stop"] == "hidden"
+        assert hidden["slot"][0] + hidden["slot"][2] <= hidden["send"][0] <= hidden["mic"][0]
+        voice.send({"type": "reply", "utt": 1, "text": "All six agents are idle, sir.", "done": True},
+                   {"type": "status", "state": "speaking"},
+                   {"type": "audio", "utt": 1, "idx": 0, "data": _silence_wav(1.2),
+                    "text": "All six agents are idle, sir.", "kind": "reply"})
+        await page.wait_for_selector("#hush", state="visible")
+        shown = await page.evaluate(SEND_PLACE)
+        assert shown["stop"] == "visible"
+        assert (shown["send"], shown["mic"], shown["slot"]) == (hidden["send"], hidden["mic"], hidden["slot"])
+        voice.send({"type": "status", "state": "idle"})
+        await page.wait_for_selector("#hush", state="hidden")
+        again = await page.evaluate(SEND_PLACE)
+        assert (again["send"], again["mic"]) == (hidden["send"], hidden["mic"])
+        await browser.close()

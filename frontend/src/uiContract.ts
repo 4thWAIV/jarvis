@@ -2285,7 +2285,22 @@ export const UI_CONTRACT = {
       ],
       "presentations": [
         {
-          "view": "left.fixed"
+          "view": "left.fixed",
+          "parts": [
+            "text"
+          ]
+        },
+        {
+          "view": "main.conversation",
+          "parts": [
+            "stop"
+          ],
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
         }
       ],
       "family": "left"
