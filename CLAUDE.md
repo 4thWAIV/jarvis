@@ -112,25 +112,43 @@ with the `spanish` fixture.
 
 ## Sending on his yes
 A capture (a message to a session, or the review of a message to a person)
-is sent only once he has approved exactly its text, and the brain's tool call
-alone never approves it (`transmission.accepted`, checked by
-`server._capture_to_send` for `steer_session` and `send_message`). Approved
-means one of two things. Either it was heard in full since it last changed
-(`read_capture` or the box's Read, played and not skipped or cut short; or
-Accept on screen), and then the very next thing he said, spoken or typed,
+is sent only once he has approved exactly its text for exactly its
+recipient, and the brain's tool call alone never approves it
+(`transmission.accepted`, checked by `server._capture_to_send` for
+`steer_session` and `send_message`). The recipient is an identity, not a
+spoken name (`transmission.recipient`): the agent's session id, settled when
+`capture` is given `to` (`capture["to_session"]`), or the person's GitHub id
+from the reviewed revision (`capture["human"]`). A capture addressed to no
+one is neither read back nor accepted (`server._unaddressed`). Every
+read-back names who it is for: a session's opens with "To chitauri." (a
+`lead` chunk, heard as part of the reading, which the page does not light on
+the box; `captureLead` on its frame), and a person's text already opens "To
+<name>." (`messaging_ports.human_readback`). The brain reads a capture back
+as soon as it is addressed, without asking whether he wants it read back.
+Approved means one of two things. Either it was heard in full since its text
+or its recipient last changed (`read_capture` or the box's Read, played and
+not skipped or cut short; or Accept on screen), recording the recipient it
+named (`read_to`), and then the very next thing he said, spoken or typed,
 was a plain yes by the clear command's rule (`_rotation_answer`) or an
-explicit instruction to send (`server._send_answer`: "send it", "send it to
-chitauri", "envíalo", at most `SEND_ANSWER_MAX_WORDS`, no word of refusal or
-delay; the phrases are each `Vocabulary`'s `send_phrases`), on its way
+explicit instruction to send (`server._send_instruction`: "send it", "send it
+to chitauri", "envíalo", at most `SEND_ANSWER_MAX_WORDS`, no word of refusal
+or delay; the phrases are each `Vocabulary`'s `send_phrases`), on its way
 to the brain as his own turn: every utterance closes the read-backs waiting
 for an answer (`server._take_read_back_answers`) and only that yes approves
-them (`server._approve_on_his_yes`), which tells the brain in a note. A yes in
-the words that started the turn that read it back is no answer to it, and a
-yes taken by another question (clearing, compaction) approves nothing. Or he
-pressed Send on its box (`transmission.approve`). Any change of its text, a
-new read-back, and a send of it that did not go (cancelled in the window,
-failed) each clear the approval, so it is read back and approved again. The
-refusal tells the brain to ask and wait for his yes, or to read it back again.
+them (`server._approve_on_his_yes`), which tells the brain in a note. "Send
+it to <name>" approves a capture only when <name> resolves to exactly its
+recipient (`server._names_recipient`: the agent directory for a session,
+`message_approvals.github_ids_called` for a person); for any other it
+approves nothing and the note says why. A yes in the words that started the
+turn that read it back is no answer to it, and a yes taken by another
+question (clearing, compaction) approves nothing. Or he pressed Send on its
+box (`transmission.approve`). `steer_session` to any session other than the
+capture's recipient is refused, telling the brain to address it there and
+read it back naming the new recipient. Any change of its text or of its
+recipient, a new read-back, and a send of it that did not go (cancelled in
+the window, failed) each clear the approval, so it is read back and approved
+again. The refusal tells the brain to ask and wait for his yes, or to read it
+back again.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the

@@ -224,9 +224,11 @@ TOOL_SPECS = [
         "description": (
             "Read a capture back to the user aloud, lighting each line in its capture "
             "box as it is read: inside your reply when you are answering him, and on "
-            "its own otherwise. Call it when he says yes to "
-            "hearing it. Returns once the reading ends: read in full, or interrupted. "
-            "Say nothing before calling it; after it, ask whether to send."),
+            "its own otherwise. It opens by naming who the capture is for (\"To "
+            "chitauri.\"), and refuses a capture addressed to no one. Call it as soon "
+            "as the capture is addressed, without asking him first. Returns once the "
+            "reading ends: read in full, or interrupted. Say nothing before calling "
+            "it; after it, ask whether to send and end your turn."),
         "inputSchema": {
             "type": "object",
             "properties": {"capture": {"type": "integer"}},
@@ -293,9 +295,11 @@ TOOL_SPECS = [
             "Send a message into a running Claude Code session, as if the user had "
             "typed it. The message is ALWAYS a capture: call `capture` first with "
             "the user's words, read it back with `read_capture`, then pass that "
-            "capture's number here once he says to send it; there is no other way "
-            "to give the text, and a capture not read back in full since it last "
-            "changed is refused. Returns as soon as the message is staged: it is "
+            "capture's number here once his very next words after the read-back "
+            "said yes or to send it; there is no other way to give the text. A "
+            "capture not read back in full since it or its recipient last changed, "
+            "not approved by his yes, or for a session other than the one its "
+            "read-back named, is refused. Returns as soon as the message is staged: it is "
             "sent when your turn ends, after a moment in which he can stop it. Say "
             "briefly that it is going out, then end your turn — do not call this "
             "twice for the same message. Cannot answer a permission "
@@ -1233,9 +1237,9 @@ TOOL_SPECS = [
         "description": (
             "Ask the user to review a draft message exactly as it would go: it opens "
             "a capture box holding the recipient, subject, text and every file with "
-            "its size. It approves nothing. Offer to read it back (read_capture); "
-            "once he has heard it in full or accepted it on screen and says to send "
-            "it, call send_message with that capture."),
+            "its size. It approves nothing. Read it back at once with read_capture, "
+            "without asking first; once his very next words after hearing it say yes "
+            "or to send it, call send_message with that capture."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1251,7 +1255,8 @@ TOOL_SPECS = [
         "description": (
             "Send a reviewed message to a person: pass the capture request_message_review "
             "opened, once the user has heard it read back in full (or accepted it on "
-            "screen) since it last changed and has said to send it. Returns as soon as "
+            "screen) since it last changed and his very next words said yes or to "
+            "send it to that person. Returns as soon as "
             "it is staged: when your turn ends it is approved and goes out, after a "
             "moment in which he can stop it. Approved is not delivered. Agents' "
             "messages go with steer_session, never this."),
