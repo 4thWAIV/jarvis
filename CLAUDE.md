@@ -876,7 +876,8 @@ SQLite, keyed by the signed-in member's GitHub id or `local`): "When I stop
 the microphone" (`keep` finishes only audio from before the stop, its words
 under the ordinary turn rules, never a new automatic send; `discard` throws
 away unfinished input) and "When I switch away from JARVIS" (`continue` a
-session he started, or `stop`); with them his patience (seconds). Defaults
+session he started, or `stop`); with them his four pause intervals (see
+below), whose total is his patience. Defaults
 are `keep` and `stop`, to be assessed. Until they are read Start listening
 is unavailable. `GET`/`POST /api/settings/voice-input` and the brain's
 `voice_input_settings` and acting `set_voice_input_settings` share
@@ -903,38 +904,52 @@ audio context, and dropped, never delayed, while audio is locked. His third
 setting, capture sounds (`sounds`, default on, in the same
 `voice_control.py` service, route and tools), is the master switch for
 every cue; the page shows the same either way. Beside it, per user in the
-same service: each of the five cues (`start`, `stop`, and the pause cues
-`tentative`, `deciding`, `likely`, one list in play order,
-`voice_control.PAUSE_CUES`, mirrored by `voiceControl.ts` and
-`jarvis_mcp._PAUSE_CUES`) on or off with a tone from `voice_control.TONES`
-(notes in `voice.ts` `TONE_NOTES`, placeholders), each pause cue's own
-`percent` (its share of his patience, from when his speech was last heard;
-the send is at 100), and one `volume`. The pause cues that are on are
-ordered by construction: each at least `PERCENT_SPACING` (5) after the one
-before, within 5 to 95 (`voice_control.pause_cue_bounds`, mirrored by
-`voiceControl.pauseCueBounds`); a change that would cross them is refused,
-turning a cue on included, and Settings bounds each field by its
-neighbours that are on and keeps a typed value inside them. A cue that is
-off is not timed and does not constrain the others. So at any patience all
-three play, in order, before the send (defaults 40, 65, 85: at 1.5 s after
-0.6, 0.98 and 1.28 s). Settings, Voice
-and language shows each with a Test (`voiceStatus.cueTest`; the brain's
-acting `play_cue` sends the page of the turn a `cue_test` frame to the same
-call) and when it plays, and each pause cue's timing its gaps to the
-neighbouring beeps (`voice_control.pause_cue_gaps`, `voiceControl.pauseCueGaps`;
-the brain's settings read says the same), each row with its seconds at
-his patience. The pause cue in the middle is "Deciding" ("Decidiendo"),
-default tone `low`. Timings saved as seconds before the end of his turn
-(`before`, before migration 6) are dropped, since a lead in seconds means a
-different share at every patience: those cues read with the default
-shares, keeping their tone and on or off. The pause cues are the turn
-controller's (see "Turn-taking").
+same service: each of the six cues (`start`, `stop`, `heard`, and the pause
+cues `tentative`, `deciding`, `likely`) on or off with a tone from
+`voice_control.TONES` (notes in `voice.ts` `TONE_NOTES`, placeholders), one
+`volume`, and the pause's four `intervals`. The pause has four stages in
+one ordered list, `turn_controller.PAUSE_STAGES` (the pause cues, then
+`send`; mirrored by `voiceControl.ts` and imported by `jarvis_mcp`), each
+with its own interval in seconds measured from the stage before, the first
+from when his speech was last heard: to the "may be finished" cue, to the
+"Deciding" cue, to the "about to send" cue, to the send. Defaults 1.0,
+0.75, 0.75 and 0.5 (`turn_controller.INTERVAL_DEFAULTS`), each 0.25 to 5.
+One function, `turn_controller.pause_schedule`, turns them into each
+stage's time after he stops (their running sum; `voice_control.schedule_of`,
+and `schedule` on the route's answer, which the page shows and never works
+out itself), so every cue plays, in order, before the send, and none can
+come after a later one or after the send. His patience is the send's time,
+their total (3.0 s by default, `speech.END_OF_TURN_SEC`): shown, never set
+on its own. A cue that is off keeps its interval: the time passes, its
+stage still reaches the turn bar, no sound. Settings, Voice and language
+shows the four intervals in order, each with its own field, the time that
+stage comes after he stops, and a pause cue's tone and Test beside it, then
+his patience as a reading; each cue has a Test (`voiceStatus.cueTest`; the
+brain's acting `play_cue` sends the page of the turn a `cue_test` frame to
+the same call). The brain's `voice_input_settings` reads, and
+`set_voice_input_settings` takes, the four intervals. The pause cue in the
+middle is "Deciding" ("Decidiendo"), default tone `low`. The "speech heard"
+cue (`heard`, default tone `double`) plays once when he begins speaking:
+the turn controller's `on_heard` when a new turn starts gathering (the
+first word accepted as his) and when he resumes after a pause cue was given
+in this pause (the first word accepted as his after it, final or interim),
+never for echo, a stale epoch's or a typed word, and not again for each
+word after; the server sends only the page gathering it a `turn` frame with
+state `heard` and `sound` (as the pause cues', `server._cue_sounds_here`;
+on a resume only if that pause cue sounded too), and the page plays it only
+while listening, on the output, never into the microphone's graph. Migration 7 drops
+a patience saved on its own and the cues' earlier shares of it (`percent`,
+and before migration 6 `before`): those rows read with the default
+intervals, a total of 3.0 s, keeping each cue's tone and on or off. The
+pause is the turn controller's (see "Turn-taking").
 
 ## Turn-taking
 JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
 voice page gathers what he says into a turn with an id and a revision that
 every accepted word moves on; a final or an interim heard as speech starts
-the hold (`voice_control.patience`, default `speech.END_OF_TURN_SEC`) again,
+the hold (his patience, the total of his pause intervals, read from
+`voice_control.schedule_of` each time it starts; default
+`speech.END_OF_TURN_SEC`) again,
 and an interim not yet followed by its final keeps older finals back. At
 the deadline the commit is checked against the turn, revision and deadline
 it was scheduled for (a timer is never trusted to have been cancelled) and
@@ -952,18 +967,19 @@ Speech after a commit and before its reply sounds stops that reply's
 reading (its text stays, nothing is undone) and starts the next turn. Typed
 Send is its own message; voice words being gathered go on as their own
 turn. A stop under Discard is `turn_discard`. While he is quiet in a gathered turn the
-controller gives the pause cues that are on (`pause_cues`, `on_pause`),
-each at its share of the same hold the commit ends, from when it began:
-`tentative`, then `deciding`, then `likely`, then the commit, at any
-patience, each checked when due against the turn, revision and deadline
-and that it is still gathering, so any accepted speech cancels them and
-each plays at most once per pause. The server sends them only to that
+controller times the pause from one schedule (`schedule`, read each time
+the hold starts; `on_pause`): `tentative`, then `deciding`, then `likely`,
+each at its running time after he stopped, then the commit at their total,
+each cue checked when due against the turn, revision and deadline and that
+it is still gathering, so any accepted speech cancels them and starts again
+from the first interval, and each plays at most once per pause. The server sends them only to that
 page, as a `turn` frame with state `pause`, its `stage` (shown on the turn
-bar whether or not it sounds) and `sound` (his capture sounds on, and him
+bar whether or not it sounds) and `sound` (his capture sounds and that cue on, and him
 engaged, never away); the page plays it only while listening, at once or
 never. Nothing JARVIS says starts
 while he has spoken within his patience, replies included (the scheduler's
-`end_of_turn` is the same value, never clamped shorter), and announcements
+`end_of_turn` is the same value, set when a page connects and again on
+every change of his settings, never clamped shorter), and announcements
 also wait for the floor (see "Attention").
 
 ## Playback and its outcomes
@@ -1082,10 +1098,11 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/mic.ts` — The quiet preference (read before anything
   starts), the input status and the voice input settings in force
 - `turn_controller.py` — One page's turns: patient, identity-checked,
-  covered commits; stalled turns and their three ways on (see
+  covered commits; stalled turns and their three ways on; the pause stages,
+  their default intervals and the one schedule function (see
   "Turn-taking")
 - `voice_control.py` / `frontend/src/voiceControl.ts` — His voice input
-  settings and patience, per user, with their route and the brain's tools;
+  settings and pause intervals (their total his patience), per user, with their route and the brain's tools;
   and the words the voice socket names (reply outcomes and failures, the
   playback frame)
 - `frontend/src/voiceSettings.ts` / `VoiceInputSettingsControl.tsx` — The

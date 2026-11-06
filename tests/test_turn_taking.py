@@ -73,7 +73,7 @@ async def test_send_now_sends_what_was_heard_at_once_and_only_once():
 
 def test_the_server_and_the_scheduler_share_one_patience():
     from jarvis import voice_control
-    assert voice_control.patience() == END_OF_TURN_SEC == 1.5
+    assert voice_control.patience() == END_OF_TURN_SEC == 3.0
 
 
 # ── JARVIS does not talk over him ────────────────────────────────────────

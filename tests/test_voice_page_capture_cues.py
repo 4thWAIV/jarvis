@@ -68,7 +68,7 @@ CUE_SPY = """
 TONES = {(660, 880): "rise", (880, 660): "fall", (587,): "pulse", (440,): "low",
          (740, 740): "double", (784, 523): "resolve"}
 # The cue each tone is by default (voice_control.CUE_DEFAULTS).
-BY_DEFAULT = {"rise": "start", "fall": "stop", "pulse": "tentative", "low": "deciding",
+BY_DEFAULT = {"rise": "start", "fall": "stop", "double": "heard", "pulse": "tentative", "low": "deciding",
               "resolve": "likely"}
 # The notes played so far, one list per cue, in order.
 NOTES = """() => { const out = []; let key = null;
@@ -300,6 +300,41 @@ def _gathering(page, turn=1, text="book a table"):
 PAUSE_SHOWN = "document.querySelector('#conversation-control')?.dataset.pause ?? null"
 
 
+def _heard(page, turn=1, sound=True):
+    """The server's frame that he began speaking: a new turn started."""
+    page.voice.socket.send(json.dumps({"type": "turn", "state": "heard", "turnId": turn,
+                                       "sound": sound}))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_speech_heard_plays_once_on_the_output_never_into_the_microphone(
+        page_playwright, page_url):
+    """Once per frame the server gives (once per turn), on the output and
+    never through the capture graph, never as words; silent when the
+    server says so, and never while muted or off."""
+    async with page_playwright as p:
+        context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
+        page = await _cue_page(context, page_url, view="")
+        await _listening(page)
+        await _cues_become(page, ["start"], settle_ms=0)
+        _heard(page)
+        _gathering(page)
+        _gathering(page, text="book a table for two")          # further words: no cue
+        await _cues_become(page, ["start", "heard"])
+        capture = await page.evaluate("window.__captureContexts")
+        played = await page.evaluate("window.__oscillators.map((o) => o.ctx)")
+        assert not set(capture) & set(played) and len(set(played)) == 1
+        assert page.voice.finals() == [], "a cue became words"
+        _heard(page, turn=2, sound=False)                      # off, or he is away
+        await page.click("#btn-mute")
+        await _cues_become(page, ["start", "heard", "stop"], settle_ms=0)
+        _heard(page, turn=3)                                   # muted: never heard
+        await page.click("#btn-mic-off")
+        _heard(page, turn=4)                                   # off: never heard
+        await _cues_become(page, ["start", "heard", "stop"])
+        await context.close()
+
+
 @pytest.mark.asyncio(loop_scope="session")
 async def test_each_pause_cue_plays_once_on_the_output_shown_and_never_heard_as_words(
         page_playwright, page_url):
@@ -436,96 +471,80 @@ async def test_each_test_button_plays_its_cue_once_even_when_it_is_off(page_play
         await context.close()
 
 
+async def _said_at(page, stage):
+    return await page.locator(f"#settings-interval-{stage}-at").text_content()
+
+
 @pytest.mark.asyncio(loop_scope="session")
-async def test_the_cue_rows_save_through_the_settings_route_and_say_when_each_plays(
+async def test_the_four_intervals_are_in_order_each_with_its_running_time_and_the_total(
         page_playwright, page_url):
+    """The pause shows its four intervals in their order, each with its own
+    field, the time that stage comes after he stops, and a pause cue's
+    sound beside it; his patience is the total, a reading, not a field."""
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        page = await _cue_page(context, page_url, patience=4)
+        page = await _cue_page(context, page_url)
         await _settings(page)
-        # Each timing says, at his patience, when it plays and its gaps to the
-        # beeps either side (40, 65 and 85 percent of 4 s).
-        said = {name: await page.locator(f"#settings-cue-{name}-at").text_content()
-                for name in voice_control.PAUSE_CUES}
-        assert "after 1.6 s of quiet. The deciding sound comes 1 s later." in said["tentative"]
-        assert ("after 2.6 s of quiet. That is 1 s after the pause sound. The about-to-send "
-                "sound comes 0.8 s later.") in said["deciding"]
-        assert ("after 3.4 s of quiet. That is 0.8 s after the deciding sound. What you said is "
-                "sent 0.6 s later.") in said["likely"]
-        assert "Deciding sound" in await page.locator("label[for='settings-cue-deciding']").text_content()
-        await page.select_option("#settings-cue-likely", "low")
-        await page.select_option("#settings-cue-start", "off")
-        tentative = page.locator("#settings-cue-tentative-percent")
-        await tentative.fill("20")
-        await tentative.press("Enter")
-        volume = page.locator("#settings-cue-volume")
-        await volume.fill("30")
-        await volume.press("Enter")
-        deciding = page.locator("#settings-cue-deciding-percent")
-        await deciding.fill("50")
+        order = await page.evaluate("""() => [...document.querySelectorAll(
+            '[id^="settings-interval-"]:not([id$="-at"]), #settings-cue-tentative, '
+            + '#settings-cue-deciding, #settings-cue-likely, #settings-voice-patience')].map((e) => e.id)""")
+        assert order == ["settings-interval-tentative", "settings-cue-tentative",
+                         "settings-interval-deciding", "settings-cue-deciding",
+                         "settings-interval-likely", "settings-cue-likely",
+                         "settings-interval-send", "settings-voice-patience"]
+        assert [await page.locator(f"#settings-interval-{s}").input_value()
+                for s in voice_control.PAUSE_STAGES] == ["1", "0.75", "0.75", "0.5"]
+        assert "comes 1 s after you stop" in await _said_at(page, "tentative")
+        assert "comes 1.75 s after you stop" in await _said_at(page, "deciding")
+        assert "comes 2.5 s after you stop" in await _said_at(page, "likely")
+        assert "sent 3 s after you stop" in await _said_at(page, "send")
+        assert await page.locator("#settings-voice-patience").text_content() == "3 seconds"
+        assert await page.locator("#settings-voice-patience").evaluate("e => e.tagName") == "OUTPUT"
+        for gone in ("settings-cue-tentative-percent", "settings-cue-tentative-at"):
+            assert await page.locator(f"#{gone}").count() == 0
+
+        deciding = page.locator("#settings-interval-deciding")
+        await deciding.fill("2")
         await deciding.press("Enter")
-        await page.select_option("#settings-cue-deciding", "double")
-        assert await _until(lambda: len(page.posted) == 6)
-        assert page.posted == [{"cues": {"likely": {"on": True, "tone": "low"}}},
-                               {"cues": {"start": {"on": False}}},
-                               {"cues": {"tentative": {"percent": 20}}},
-                               {"volume": 30},
-                               {"cues": {"deciding": {"percent": 50}}},
-                               {"cues": {"deciding": {"on": True, "tone": "double"}}}]
+        send = page.locator("#settings-interval-send")
+        await send.fill("9")                              # kept at the most, 5
+        await send.press("Enter")
+        assert await _until(lambda: len(page.posted) == 2)
+        assert page.posted == [{"intervals": {"deciding": 2}}, {"intervals": {"send": 5}}]
         await page.wait_for_function(
-            "document.querySelector('#settings-cue-tentative-at').textContent.includes('after 0.8 s')",
+            "document.querySelector('#settings-voice-patience').textContent === '8.75 seconds'",
             timeout=3000)
-        # The two gaps are set apart: 1.2 s after the pause sound, 1.4 s before the next.
-        await page.wait_for_function(
-            "document.querySelector('#settings-cue-deciding-at').textContent.includes("
-            "'after 2 s of quiet. That is 1.2 s after the pause sound. The about-to-send sound "
-            "comes 1.4 s later.')", timeout=3000)
+        assert "comes 1 s after you stop" in await _said_at(page, "tentative")   # unchanged
+        assert "comes 3 s after you stop" in await _said_at(page, "deciding")
+        assert "comes 3.75 s after you stop" in await _said_at(page, "likely")
+        assert "sent 8.75 s after you stop" in await _said_at(page, "send")
         assert await _cues(page) == [], "saving played or started nothing"
         await context.close()
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_the_timing_fields_cannot_cross_and_show_seconds_at_his_patience(page_playwright, page_url):
-    """At his patience of 1.5 s every pause cue plays, in order, and says when.
-    Each field is bounded by its neighbours that are on (5 points apart, 5 to
-    95): a value typed past a neighbour is saved at the bound, never across
-    it; a cue that is off holds nothing in place."""
+async def test_the_cue_rows_save_through_the_settings_route_and_an_off_cue_keeps_its_time(
+        page_playwright, page_url):
     async with page_playwright as p:
         context = await (await _browser(p)).new_context(viewport={"width": 1440, "height": 900})
-        page = await _cue_page(context, page_url, patience=1.5)
+        page = await _cue_page(context, page_url)
         await _settings(page)
-        said = {name: await page.locator(f"#settings-cue-{name}-at").text_content()
-                for name in voice_control.PAUSE_CUES}
-        assert "after 0.6 s of quiet." in said["tentative"]
-        assert "after 0.98 s of quiet." in said["deciding"]
-        assert "after 1.28 s of quiet." in said["likely"] and "sent 0.22 s later" in said["likely"]
-
-        async def bounds(name):
-            field = page.locator(f"#settings-cue-{name}-percent")
-            return (await field.get_attribute("min"), await field.get_attribute("max"))
-        assert [await bounds(n) for n in voice_control.PAUSE_CUES] == [
-            ("5", "60"), ("45", "80"), ("70", "95")]
-
-        async def type_into(name, value):
-            field = page.locator(f"#settings-cue-{name}-percent")
-            await field.fill(value)
-            await field.press("Enter")
-        await type_into("tentative", "90")               # past deciding and likely
-        await type_into("likely", "10")                  # past both, the other way
-        assert await _until(lambda: len(page.posted) == 2)
-        assert page.posted == [{"cues": {"tentative": {"percent": 60}}},
-                               {"cues": {"likely": {"percent": 70}}}]
-        await page.wait_for_function(
-            "document.querySelector('#settings-cue-deciding-percent').max === '65'", timeout=3000)
-        assert await bounds("deciding") == ("65", "65")   # held in place between them
-        await type_into("deciding", "99")                # kept at 65: nothing to save
-        await page.wait_for_timeout(500)
-        assert len(page.posted) == 2
-
-        # Off, deciding is skipped: its neighbours' bounds open up to each other.
+        assert "Deciding sound" in await page.locator("label[for='settings-cue-deciding']").text_content()
+        await page.select_option("#settings-cue-likely", "low")
+        await page.select_option("#settings-cue-start", "off")
+        volume = page.locator("#settings-cue-volume")
+        await volume.fill("30")
+        await volume.press("Enter")
         await page.select_option("#settings-cue-deciding", "off")
-        await page.wait_for_function(
-            "document.querySelector('#settings-cue-tentative-percent').max === '65'", timeout=3000)
-        assert await bounds("likely") == ("65", "95")
-        assert "skipped" in await page.locator("#settings-cue-deciding-at").text_content()
+        assert await _until(lambda: len(page.posted) == 4)
+        assert page.posted == [{"cues": {"likely": {"on": True, "tone": "low"}}},
+                               {"cues": {"start": {"on": False}}},
+                               {"volume": 30},
+                               {"cues": {"deciding": {"on": False}}}]
+        await page.get_by_text("its interval still passes").wait_for(timeout=3000)
+        # Off, the deciding sound's interval still passes: every time is the same.
+        assert "comes 1.75 s after you stop" in await _said_at(page, "deciding")
+        assert "comes 2.5 s after you stop" in await _said_at(page, "likely")
+        assert await page.locator("#settings-voice-patience").text_content() == "3 seconds"
+        assert await _cues(page) == [], "saving played or started nothing"
         await context.close()

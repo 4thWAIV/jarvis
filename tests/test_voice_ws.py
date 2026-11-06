@@ -55,7 +55,7 @@ def client(monkeypatch, tmp_path):
         yield c, server
 
 
-def _drain_until(ws, predicate, limit=10):
+def _drain_until(ws, predicate, limit=20):
     seen = []
     for _ in range(limit):
         msg = ws.receive_json()

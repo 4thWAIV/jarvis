@@ -17,7 +17,7 @@ import { reconnected } from "./liveRead";
 import { voiceInputSettings } from "./mic";
 import {
   parseVoiceInputSettings, VOICE_INPUT_SETTINGS_PATH, type CueName, type CueSetting, type StopMode,
-  type SwitchMode, type VoiceInputSettings,
+  type PauseStage, type SwitchMode, type VoiceInputSettings,
 } from "./voiceControl";
 
 let reads = 0;
@@ -43,7 +43,9 @@ export class SettingsRefused extends Error {
 
 /** A change to any of the settings. */
 export type VoiceInputChange = {
-  stop?: StopMode; switch?: SwitchMode; patience?: number; sounds?: boolean;
+  stop?: StopMode; switch?: SwitchMode; sounds?: boolean;
+  /** Any pause interval, in seconds after the stage before. */
+  intervals?: Partial<Record<PauseStage, number>>;
   /** Any cue, with only what changes. */
   cues?: Partial<Record<CueName, Partial<CueSetting>>>;
   volume?: number;

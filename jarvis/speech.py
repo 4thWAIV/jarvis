@@ -16,6 +16,7 @@ from enum import IntEnum
 from typing import Awaitable, Callable, Optional
 
 from jarvis import spoken_words
+from jarvis.turn_controller import DEFAULT_PATIENCE
 
 log = logging.getLogger("jarvis.speech")
 
@@ -424,12 +425,13 @@ class _Spoken:
 
 
 # How long he must have been quiet before JARVIS takes it that he has
-# finished: his patience when he has set none (voice_control.py). The
+# finished: his patience when he has set none, the total of the default
+# pause intervals (turn_controller.INTERVAL_DEFAULTS; voice_control.py). The
 # server's turn controller waits this long after the last words it heard
 # before it commits them to the brain (so a pause mid-sentence does not send
 # half of it), and nothing JARVIS says starts while he has spoken more
 # recently than this, his replies included. One value governs both.
-END_OF_TURN_SEC = 1.5
+END_OF_TURN_SEC = DEFAULT_PATIENCE
 # How soon an announcement waiting for the floor looks again.
 FLOOR_RECHECK_SEC = 0.25
 

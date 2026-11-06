@@ -34,19 +34,30 @@ being gathered, which go on as their own turn. A discard (his stop under
 Discard) drops the turn; a closed voice socket commits nothing and gives
 back what was gathered.
 
-While he pauses in a gathered turn, pause cues may be due before the
-commit (`pause_cues`: each stage with its share of the hold, read again each
-time the hold starts; voice_control.PAUSE_CUES, only those that are on):
-`tentative`, when JARVIS thinks he may be done, `deciding`, while it is
-still deciding, and `likely`, when it is almost done. Each is timed from
-the moment the hold starts (his speech last heard) at its share of the
-same hold the commit ends, so at any patience they come in their order,
-each before the commit; a share outside 0 to 1 is not scheduled. Each is
-checked, when due, against the turn, the revision and the deadline it was
-scheduled for, and that the turn is still being gathered; any accepted
-speech moves the revision on and starts the pause again, so a cue is given
-at most once per stage per pause and never late. `on_pause` is told the
-turn and the stage; whether a sound plays is the caller's to decide.
+While he pauses in a gathered turn, the pause is timed by its schedule
+(`schedule`, read again each time the hold starts): the pause stages in
+their order (PAUSE_STAGES), each with its seconds after his speech was last
+heard, the last of them the send. The stages are `tentative`, when JARVIS
+thinks he may be done, `deciding`, while it is still deciding, `likely`,
+when it is about to send, and `send`, the commit. Each is its own interval
+after the stage before (`pause_schedule`: the running sum of the
+intervals), so the hold, his patience, is their total and every cue comes,
+in its order, before the commit. Each cue is checked, when due, against the
+turn, the revision and the deadline it was scheduled for, and that the turn
+is still being gathered; any accepted speech moves the revision on and
+starts the pause again from the first interval, so a cue is given at most
+once per stage per pause and never late. `on_pause` is told the turn and
+the stage, whether that cue is on or off; whether a sound plays is the
+caller's to decide.
+
+When he begins speaking, `on_heard` is told the turn and the pause cue
+given before it (None at a turn's start): when a new turn starts gathering
+(its first word accepted as his: never echo, never a stale epoch's), and
+when he resumes after a pause cue was given in this pause (the first word
+accepted as his after it, a final or an interim heard as speech). Once per
+start or resume, never for each word after: accepted speech starts the
+pause again, so no pause cue has been given until the next one is. The
+"speech heard" cue's moment, again the caller's to sound or not.
 
 Every time-dependent step takes its clock and timers from the caller, so
 tests drive it with a fake clock.
@@ -76,8 +87,32 @@ Commit = Callable[[str, Optional[int], int], Awaitable[None]]
 # None when it has none open.
 Coverage = Callable[[str], Optional[tuple[int, int]]]
 CallLater = Callable[[float, Callable[[], None]], object]
-# The pause cues to time: each stage with its share of the hold (0 to 1).
-PauseCues = Callable[[], Sequence[tuple[str, float]]]
+# The pause stages in the order they come: three pause cues, then the send.
+# Each one's interval is measured from the stage before (the first from his
+# speech last heard).
+PAUSE_CUES = ("tentative", "deciding", "likely")
+SEND = "send"
+PAUSE_STAGES = PAUSE_CUES + (SEND,)
+# Each stage's interval when he has chosen none, in seconds: the hold is
+# their total, DEFAULT_PATIENCE (speech.END_OF_TURN_SEC).
+INTERVAL_DEFAULTS = {"tentative": 1.0, "deciding": 0.75, "likely": 0.75, "send": 0.5}
+# The pause to time: each stage with its seconds after his speech was last
+# heard, in order, the send last (`pause_schedule`).
+Schedule = Callable[[], Sequence[tuple[str, float]]]
+
+
+def pause_schedule(intervals: dict) -> list[tuple[str, float]]:
+    """The one schedule of a pause: each stage of PAUSE_STAGES, in order,
+    with its seconds after his speech was last heard, the running sum of
+    the intervals to the hundredth. The last is the send: his patience."""
+    schedule, at = [], 0.0
+    for stage in PAUSE_STAGES:
+        at += intervals[stage]
+        schedule.append((stage, round(at, 2)))
+    return schedule
+
+
+DEFAULT_PATIENCE = pause_schedule(INTERVAL_DEFAULTS)[-1][1]
 
 
 @dataclass
@@ -96,26 +131,30 @@ class TurnController:
 
     _ids = itertools.count(1)
 
-    def __init__(self, commit: Commit, *, hold: float,
+    def __init__(self, commit: Commit, *, hold: Optional[float] = None,
+                 schedule: Optional[Schedule] = None,
                  coverage: Coverage = lambda _client: None,
                  epoch_floor: Callable[[str], Optional[int]] = lambda _client: None,
                  on_stalled: Callable[[int, str], None] = lambda _turn, _text: None,
                  on_resumed: Callable[[int], None] = lambda _turn: None,
-                 pause_cues: PauseCues = lambda: (),
                  on_pause: Callable[[int, str], None] = lambda _turn, _stage: None,
+                 on_heard: Callable[[int, Optional[str]], None] = lambda _turn, _after: None,
                  clock: Optional[Callable[[], float]] = None,
                  call_later: Optional[CallLater] = None,
                  spawn: Optional[Callable[[Awaitable[None]], object]] = None,
                  coverage_bound: float = COVERAGE_BOUND_SEC,
                  coverage_poll: float = COVERAGE_POLL_SEC) -> None:
         self._commit = commit
-        self.hold = hold
+        # No schedule: a hold of `hold` with no cues.
+        only_send = ((SEND, DEFAULT_PATIENCE if hold is None else hold),)
+        self._schedule = schedule or (lambda: only_send)
+        self.hold: Optional[float] = hold      # the hold last timed
         self._coverage = coverage
         self._epoch_floor = epoch_floor
         self._on_stalled = on_stalled
         self._on_resumed = on_resumed
-        self._pause_cues = pause_cues
         self._on_pause = on_pause
+        self._on_heard = on_heard
         self._clock = clock or (lambda: asyncio.get_running_loop().time())
         self._call_later = call_later or (lambda d, f: asyncio.get_running_loop().call_later(d, f))
         self._spawn = spawn or asyncio.ensure_future
@@ -165,8 +204,11 @@ class TurnController:
         if not self.current(client, epoch):
             return False
         self._took_floor()
+        new = self._turn is None or not self._turn.parts
         turn = self._gathering(client)
         turn.parts.append(text)
+        if new:
+            self._heard(turn.id, None)
         if heard is not None:
             turn.heard = heard
         self._open_interim = False
@@ -257,27 +299,37 @@ class TurnController:
             self._turn.client = client
         return self._turn
 
+    def _heard(self, turn_id: int, after: Optional[str]) -> None:
+        log.info("turn %d: speech heard%s", turn_id, f" after the {after} cue" if after else "")
+        self._on_heard(turn_id, after)
+
     def _activity(self) -> None:
-        """Accepted speech: the revision moves on and the hold starts again."""
+        """Accepted speech: the revision moves on and the hold starts again;
+        after a pause cue in this pause, he has resumed speaking."""
+        if self.pause_stage is not None and self._turn is not None:
+            self._heard(self._turn.id, self.pause_stage)
+            self.pause_stage = None
         self.revision += 1
         self.state = "gathering"
         if self._turn is None or not self._turn.parts:
             return
-        self._deadline = self._clock() + self.hold
+        *cues, (_send, hold) = self._schedule()
+        self.hold = hold
+        start = self._clock()
+        self._deadline = start + hold
         sent = self._frames()
         self._need = sent[0] if sent else None
         token = (self._turn.id, self.revision, self._deadline)
-        self._arm(self.hold, token)
-        self._arm_cues(token)
+        self._arm(hold, token)
+        self._arm_cues(token, start, cues)
 
-    def _arm_cues(self, token: tuple) -> None:
-        """This pause's cues, each once, at its share of the hold from the
-        moment it started."""
+    def _arm_cues(self, token: tuple, start: float, cues: Sequence[tuple[str, float]]) -> None:
+        """This pause's cues, each once, at its seconds after the moment the
+        hold started; only one strictly between that moment and the send
+        (the schedule never has another)."""
         self._cancel_cues()
-        start = token[2] - self.hold
-        for stage, share in self._pause_cues():
-            if 0 < share < 1:
-                delay = self.hold * share
+        for stage, delay in cues:
+            if 0 < delay < (self.hold or 0):
                 self._cue_timers.append(self._call_later(
                     delay, lambda stage=stage, at=start + delay: self._cue_due(token, stage, at)))
 

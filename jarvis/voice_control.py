@@ -16,41 +16,40 @@ and the words the page and the server both name on the voice socket
           starts listening, and neither setting can turn on a microphone
           that is muted or off.
 
-With them are his patience (`patience`): how many seconds of quiet end his
-turn, One value governs both sides of the conversation: the turn
-controller's hold and how long the speech scheduler waits before JARVIS
-starts talking after he has spoken. Read when a voice client connects;
-nothing saved, or anything unreadable, is the current constant
-(speech.END_OF_TURN_SEC); and his capture sounds (`sounds`, on or off,
+With them are his pause intervals (`intervals`, one per pause stage,
+turn_controller.PAUSE_STAGES) and his capture sounds (`sounds`, on or off,
 default on): the master switch for every capture cue. Off plays none;
 what the page shows is the same either way.
 
-The capture cues (`cues`, `volume`) are five quiet sounds, each on or off
+The capture cues (`cues`, `volume`) are six quiet sounds, each on or off
 and each one tone of the fixed presets (TONES; the page holds their
 notes, voice.ts):
 
   start      listening really started
   stop       listening really stopped, for any reason
+  heard      he began speaking: a new turn started gathering (the first
+             word accepted as his; never echo, never again for each word)
   tentative  he has paused in a gathered turn: JARVIS thinks he may be done
   deciding   he is still quiet: JARVIS is deciding whether he is done
   likely     he is still quiet: the turn is about to be sent
 
-The pause cues (PAUSE_CUES, in the order they play) are timed as a share
-of his patience (`percent`), never on a clock of their own: from the moment
-the hold starts (his speech last heard), a pause cue plays after percent of
-his patience, and the commit comes at 100 percent. So at any patience every
-pause cue that is on plays, in order, before the turn is sent. The order is
-kept by construction: the pause cues that are on must each be at least
-PERCENT_SPACING points after the one before, within PERCENT_MIN to
-PERCENT_MAX (so the first is that far from the start and the last that far
-from the send); a cue that is off is skipped, is not timed, and does not
-constrain the others (`pause_cue_bounds`). A change that would break the
-order is refused, turning a cue on included. The defaults (40, 65 and 85)
-at his patience of 1.5 s play after 0.6, 0.98 and 1.28 s of quiet, the commit at 1.5;
-at a patience of 4, after 1.6, 2.6 and 3.4 s. Timings saved before as seconds
-before the end of his turn (`before`) were dropped by migration 6, since a
-lead in seconds has no meaning as a share once his patience changes: those
-pause cues read with the default shares, keeping their tone and on or off.
+A pause in his turn has four stages, in order (turn_controller.PAUSE_STAGES):
+the three pause cues, then the send. Each stage's interval (`intervals`,
+INTERVAL_MIN to INTERVAL_MAX seconds, defaults 1.0, 0.75, 0.75 and 0.5) is
+measured from the stage before, the first from when his speech was last
+heard (the hold start): to the tentative cue, then to the deciding cue,
+then to the likely cue, then to the send. Each stage's time after he
+stopped is their running sum (`schedule`, turn_controller.pause_schedule,
+the one function that works it out), so every cue that is on plays, in
+order, before the turn is sent, and none can play after a later one or
+after the send. A cue that is off keeps its interval: the time passes, with
+no sound. His patience (`patience`) is the total, the send's time (3.0 s
+by default): never set on its own, it governs both sides of the
+conversation, the turn controller's hold and how long the speech
+scheduler waits before JARVIS starts talking after he has spoken. Patience
+saved on its own before (`patience_sec`) and the cues' shares of it
+(`percent`) were dropped by migration 7: those rows read with the default
+intervals, a total of 3.0 s, keeping each cue's tone and on or off.
 `volume` is one cue
 volume, VOLUME_MIN to VOLUME_MAX percent of a quiet ceiling the page sets.
 
@@ -73,7 +72,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import sqlite3
 import time
 from contextlib import closing
@@ -83,7 +81,8 @@ from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse
 
 from jarvis import run_store
-from jarvis.speech import END_OF_TURN_SEC
+from jarvis.turn_controller import (DEFAULT_PATIENCE, INTERVAL_DEFAULTS, PAUSE_CUES, PAUSE_STAGES,
+                                    pause_schedule)
 
 log = logging.getLogger("jarvis.voice_control")
 
@@ -92,29 +91,25 @@ SWITCH_MODES = ("continue", "stop")
 # What a user who has chosen nothing gets. Provisional: the defaults are
 # assessed separately, during validation.
 DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
-# His patience may be set within these bounds, in seconds.
-PATIENCE_MIN, PATIENCE_MAX = 0.5, 10.0
 # The capture cues: the two that mark listening, the pause cues that mark
-# the stages of a pause in his turn (in the order they play, each at a
-# larger share of his patience than the one before), and the quiet presets
-# each may play.
+# the stages of a pause in his turn (in the order they play), and the quiet
+# presets each may play. The pause cues, the pause stages (the pause cues,
+# then the send) and their default intervals are turn_controller's.
 LISTEN_CUES = ("start", "stop")
-PAUSE_CUES = ("tentative", "deciding", "likely")
-CUES = LISTEN_CUES + PAUSE_CUES
+HEARD = "heard"
+CUES = LISTEN_CUES + (HEARD,) + PAUSE_CUES
 TONES = ("rise", "fall", "pulse", "low", "double", "resolve")
-# A pause cue's share of his patience, in whole percent, and the least
-# spacing between two pause cues that are on (and from the start and the
-# send).
-PERCENT_SPACING = 5
-PERCENT_MIN, PERCENT_MAX = PERCENT_SPACING, 100 - PERCENT_SPACING
+# A pause stage's interval after the stage before, in seconds.
+INTERVAL_MIN, INTERVAL_MAX = 0.25, 5.0
 # The cue volume, in percent of the page's quiet ceiling.
 VOLUME_MIN, VOLUME_MAX = 5, 100
 CUE_DEFAULTS = {
     "start": {"on": True, "tone": "rise"},
     "stop": {"on": True, "tone": "fall"},
-    "tentative": {"on": True, "tone": "pulse", "percent": 40},
-    "deciding": {"on": True, "tone": "low", "percent": 65},
-    "likely": {"on": True, "tone": "resolve", "percent": 85},
+    "heard": {"on": True, "tone": "double"},
+    "tentative": {"on": True, "tone": "pulse"},
+    "deciding": {"on": True, "tone": "low"},
+    "likely": {"on": True, "tone": "resolve"},
 }
 VOLUME_DEFAULT = 50
 LOCAL_OWNER = "local"
@@ -180,6 +175,20 @@ _MIGRATIONS = {
                                           '$.deciding.before', '$.likely.before')
          WHERE json_valid(cue_settings) AND json_type(cue_settings) = 'object';
     """,
+    # The pause is four intervals now, each after the stage before, and his
+    # patience is their total. A patience saved on its own and the cues'
+    # shares of it cannot become intervals (he never chose them), so both
+    # are dropped: those rows read with the default intervals (a total of
+    # 3.0 s), keeping each cue's tone and on or off. The intervals he
+    # chooses are saved as JSON, only those he chose (NULL: none).
+    7: """
+        ALTER TABLE voice_input_settings ADD COLUMN pause_intervals TEXT;
+        UPDATE voice_input_settings SET patience_sec = NULL;
+        UPDATE voice_input_settings
+           SET cue_settings = json_remove(cue_settings, '$.tentative.percent',
+                                          '$.deciding.percent', '$.likely.percent')
+         WHERE json_valid(cue_settings) AND json_type(cue_settings) = 'object';
+    """,
 }
 
 Publish = Callable[[dict], None]
@@ -224,32 +233,36 @@ def _row(user: str) -> Optional[sqlite3.Row]:
     try:
         with closing(_connect()) as conn:
             return conn.execute(
-                "SELECT stop_mode, switch_mode, patience_sec, capture_sounds, cue_settings, "
-                "cue_volume FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
+                "SELECT stop_mode, switch_mode, capture_sounds, cue_settings, cue_volume, "
+                "pause_intervals FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
     except (sqlite3.Error, RuntimeError) as e:
         log.warning("voice input settings could not be read (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be read.") from e
 
 
-def _answer(user: str, stop: str, switch: str, saved: bool, patience: float, sounds: bool,
+def _answer(user: str, stop: str, switch: str, saved: bool, intervals: dict, sounds: bool,
             cues: dict, volume: int) -> dict:
-    return {"stop": stop, "switch": switch, "saved": saved, "patience": patience,
+    schedule = dict(pause_schedule(intervals))
+    return {"stop": stop, "switch": switch, "saved": saved, "intervals": intervals,
+            "schedule": schedule, "patience": schedule[PAUSE_STAGES[-1]],
             "sounds": sounds, "cues": cues, "volume": volume,
             "scope": "local" if user == LOCAL_OWNER else "member"}
 
 
 def defaults(user: str = LOCAL_OWNER) -> dict:
     """What `read` answers for a user who has chosen nothing."""
-    return _answer(user, DEFAULTS["stop"], DEFAULTS["switch"], False, END_OF_TURN_SEC,
+    return _answer(user, DEFAULTS["stop"], DEFAULTS["switch"], False, _intervals_in_force(None),
                    DEFAULTS["sounds"], _cues_in_force(None), VOLUME_DEFAULT)
 
 
 def read(user: Optional[str] = None) -> dict:
     """The settings in force for `user` (the user now, by default):
-    {stop, switch, patience, sounds, cues, volume, saved, scope}. Raises
-    Unreadable if the store cannot be read, and treats a saved row it does
-    not understand as unreadable too. A saved patience, cue or volume that
-    is not one JARVIS knows is the default instead."""
+    {stop, switch, intervals, schedule, patience, sounds, cues, volume,
+    saved, scope}: `schedule` is each pause stage's seconds after he
+    stopped, `patience` the send's. Raises Unreadable if the store cannot
+    be read, and treats a saved row it does not understand as unreadable
+    too. A saved interval, cue or volume that is not one JARVIS knows is
+    the default instead."""
     user = user or user_key()
     row = _row(user)
     if row is None:
@@ -257,11 +270,10 @@ def read(user: Optional[str] = None) -> dict:
     stop, switch = row["stop_mode"], row["switch_mode"]
     if stop not in STOP_MODES or switch not in SWITCH_MODES:
         raise Unreadable("Your saved voice input settings are not ones JARVIS knows.")
-    patience = float(row["patience_sec"]) if _patience_ok(row["patience_sec"]) else END_OF_TURN_SEC
     sounds = DEFAULTS["sounds"] if row["capture_sounds"] is None else bool(row["capture_sounds"])
     volume = int(row["cue_volume"]) if _volume_ok(row["cue_volume"]) else VOLUME_DEFAULT
-    return _answer(user, stop, switch, True, patience, sounds,
-                   _cues_in_force(_saved_cues(row["cue_settings"])), volume)
+    return _answer(user, stop, switch, True, _intervals_in_force(_saved(row["pause_intervals"])),
+                   sounds, _cues_in_force(_saved_cues(row["cue_settings"])), volume)
 
 
 def read_or_defaults(user: Optional[str] = None) -> dict:
@@ -277,8 +289,8 @@ def _number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _patience_ok(value: object) -> bool:
-    return _number(value) and PATIENCE_MIN <= value <= PATIENCE_MAX  # type: ignore[operator]
+def _interval_ok(value: object) -> bool:
+    return _number(value) and INTERVAL_MIN <= value <= INTERVAL_MAX  # type: ignore[operator]
 
 
 def _volume_ok(value: object) -> bool:
@@ -290,9 +302,8 @@ def _cue_problem(name: object, choice: object) -> Optional[str]:
     if name not in CUES:
         return f"The cues are {', '.join(CUES)}."
     if not isinstance(choice, dict) or not choice:
-        return f"Say what to change about the {name} cue: on, tone" + (
-            " or percent." if name in PAUSE_CUES else ".")
-    keys = {"on", "tone", "percent"} if name in PAUSE_CUES else {"on", "tone"}
+        return f"Say what to change about the {name} cue: on or tone."
+    keys = {"on", "tone"}
     for key, value in choice.items():
         if key not in keys:
             return f"The {name} cue has {', '.join(sorted(keys))}."
@@ -300,92 +311,57 @@ def _cue_problem(name: object, choice: object) -> Optional[str]:
             return f"The {name} cue is on (true) or off (false)."
         if key == "tone" and value not in TONES:
             return f"A cue's tone is one of {', '.join(TONES)}."
-        if key == "percent" and not (_number(value) and float(value).is_integer()  # type: ignore[arg-type]
-                                     and PERCENT_MIN <= value <= PERCENT_MAX):  # type: ignore[operator]
-            return (f"A pause cue plays at a whole percent of his patience from {PERCENT_MIN} "
-                    f"to {PERCENT_MAX}.")
     return None
 
 
-def _saved_cues(raw: object) -> dict:
-    """The cue choices saved, only those JARVIS still takes."""
+def _intervals_problem(intervals: object) -> Optional[str]:
+    """Why a change to the pause intervals is not one JARVIS takes, or
+    None."""
+    if not isinstance(intervals, dict) or not intervals:
+        return f"Say which pause interval to change: {', '.join(PAUSE_STAGES)}."
+    for stage, value in intervals.items():
+        if stage not in PAUSE_STAGES:
+            return f"The pause intervals are {', '.join(PAUSE_STAGES)}."
+        if not _interval_ok(value):
+            return (f"Each pause interval is {INTERVAL_MIN:g} to {INTERVAL_MAX:g} seconds "
+                    "after the stage before.")
+    return None
+
+
+def _saved(raw: object) -> dict:
+    """A JSON object saved, or nothing."""
     try:
         saved = json.loads(raw) if isinstance(raw, str) else {}
     except ValueError:
         saved = {}
-    if not isinstance(saved, dict):
-        return {}
-    return {name: choice for name, choice in saved.items()
+    return saved if isinstance(saved, dict) else {}
+
+
+def _saved_cues(raw: object) -> dict:
+    """The cue choices saved, only those JARVIS still takes."""
+    return {name: choice for name, choice in _saved(raw).items()
             if _cue_problem(name, choice) is None}
 
 
+def _intervals_in_force(saved: Optional[dict]) -> dict:
+    """Each pause stage's interval: what he chose, where JARVIS still takes
+    it, else the default, rounded to the hundredth."""
+    saved = saved or {}
+    return {stage: round(float(saved[stage]) if _interval_ok(saved.get(stage))
+                         else INTERVAL_DEFAULTS[stage], 2)
+            for stage in PAUSE_STAGES}
+
+
 def _cues_in_force(saved: Optional[dict]) -> dict:
-    """Each cue's defaults with his choices over them. Saved pause timings
-    out of order are the defaults' timings."""
-    cues = {name: {**CUE_DEFAULTS[name], **((saved or {}).get(name) or {})} for name in CUES}
-    for name in CUES:
-        if "percent" in cues[name]:
-            cues[name]["percent"] = int(cues[name]["percent"])
-    if not _in_order(cues):
-        for name in PAUSE_CUES:
-            cues[name]["percent"] = CUE_DEFAULTS[name]["percent"]
-    return cues
+    """Each cue's defaults with his choices over them."""
+    return {name: {**CUE_DEFAULTS[name], **((saved or {}).get(name) or {})} for name in CUES}
 
 
-def _on(cues: dict) -> list[str]:
-    """The pause cues that are on, in the order they play."""
-    return [name for name in PAUSE_CUES if cues[name]["on"]]
-
-
-def _in_order(cues: dict) -> bool:
-    """Each pause cue that is on at least PERCENT_SPACING after the one
-    before that is on (each within PERCENT_MIN to PERCENT_MAX)."""
-    shares = [cues[name]["percent"] for name in _on(cues)]
-    return all(later - earlier >= PERCENT_SPACING for earlier, later in zip(shares, shares[1:]))
-
-
-def pause_cue_bounds(cues: dict, name: str) -> tuple[int, int]:
-    """The shares this pause cue may take without crossing a neighbour: from
-    PERCENT_SPACING after the nearest earlier cue that is on (or
-    PERCENT_MIN) to PERCENT_SPACING before the nearest later one (or
-    PERCENT_MAX). The cue's own on or off does not matter: turning it on
-    keeps the order only within these bounds."""
-    on = [n for n in _on(cues) if n != name]
-    i = PAUSE_CUES.index(name)
-    earlier = [cues[n]["percent"] for n in on if PAUSE_CUES.index(n) < i]
-    later = [cues[n]["percent"] for n in on if PAUSE_CUES.index(n) > i]
-    return (earlier[-1] + PERCENT_SPACING if earlier else PERCENT_MIN,
-            later[0] - PERCENT_SPACING if later else PERCENT_MAX)
-
-
-def pause_cue_shares(settings: dict) -> list[tuple[str, float]]:
-    """The pause cues to time in a gathered turn, each with its share of his
-    patience (0 to 1): only the ones that are on; whether one sounds (his
-    capture sounds) is decided when it is due."""
-    return [(name, settings["cues"][name]["percent"] / 100) for name in _on(settings["cues"])]
-
-
-def pause_cue_at(settings: dict, name: str) -> float:
-    """Seconds of quiet after which this pause cue plays at his patience, to
-    the hundredth, halves up (as the page rounds it)."""
-    return math.floor(settings["patience"] * settings["cues"][name]["percent"] + 0.5) / 100
-
-
-def pause_cue_gaps(settings: dict, name: str) -> dict:
-    """The gaps around one pause cue at his patience, in seconds, each set by
-    the two cues' own shares (there is no shared spacing): `after`, (the
-    nearest earlier pause cue that is on, seconds since it) or None;
-    `until`, (the nearest later one that is on, seconds until it), or
-    (None, seconds until what he said is sent) when none later is on."""
-    at = pause_cue_at(settings, name)
-    i = PAUSE_CUES.index(name)
-    on = _on(settings["cues"])
-    earlier = [n for n in on if PAUSE_CUES.index(n) < i]
-    later = [n for n in on if PAUSE_CUES.index(n) > i]
-    after = (earlier[-1], round(at - pause_cue_at(settings, earlier[-1]), 2)) if earlier else None
-    until = ((later[0], round(pause_cue_at(settings, later[0]) - at, 2)) if later
-             else (None, round(settings["patience"] - at, 2)))
-    return {"after": after, "until": until}
+def schedule_of(settings: dict) -> list[tuple[str, float]]:
+    """The pause stages to time in a gathered turn, each with its seconds
+    after he stopped, the send last: every stage, a cue on or off (whether
+    one sounds is decided when it is due)."""
+    return pause_schedule(settings["intervals"])
 
 
 def cue_sounds(settings: dict, name: str) -> bool:
@@ -393,21 +369,22 @@ def cue_sounds(settings: dict, name: str) -> bool:
     return bool(settings["sounds"] and settings["cues"][name]["on"])
 
 
-def validate(stop: object = None, switch: object = None, patience: object = None,
+def validate(stop: object = None, switch: object = None, intervals: object = None,
              sounds: object = None, cues: object = None, volume: object = None
-             ) -> tuple[Optional[str], Optional[str], Optional[float], Optional[bool],
+             ) -> tuple[Optional[str], Optional[str], Optional[dict], Optional[bool],
                         Optional[dict], Optional[int]]:
     """The change asked for, checked: each given value must be one of its
     setting's, and at least one must be given."""
-    if all(v is None for v in (stop, switch, patience, sounds, cues, volume)):
+    if all(v is None for v in (stop, switch, intervals, sounds, cues, volume)):
         raise Invalid("nothing-to-change",
-                      "Say which setting to change: stop, switch, patience, sounds, cues or "
+                      "Say which setting to change: stop, switch, intervals, sounds, cues or "
                       "volume.")
     if sounds is not None and not isinstance(sounds, bool):
         raise Invalid("invalid-sounds", "Capture sounds are on (true) or off (false).")
-    if patience is not None and not _patience_ok(patience):
-        raise Invalid("invalid-patience",
-                      f"Patience is a number of seconds from {PATIENCE_MIN:g} to {PATIENCE_MAX:g}.")
+    if intervals is not None:
+        problem = _intervals_problem(intervals)
+        if problem:
+            raise Invalid("invalid-interval", problem)
     if stop is not None and stop not in STOP_MODES:
         raise Invalid("invalid-stop", "When I stop the microphone is keep or discard.")
     if switch is not None and switch not in SWITCH_MODES:
@@ -422,64 +399,58 @@ def validate(stop: object = None, switch: object = None, patience: object = None
             problem = _cue_problem(name, choice)
             if problem:
                 raise Invalid("invalid-cue", problem)
-    return (stop, switch, None if patience is None else float(patience),  # type: ignore[return-value]
+    return (stop, switch,  # type: ignore[return-value]
+            None if intervals is None else {k: round(float(v), 2)  # type: ignore[union-attr]
+                                            for k, v in intervals.items()},  # type: ignore[union-attr]
             sounds, cues,  # type: ignore[return-value]
             None if volume is None else int(round(volume)))  # type: ignore[arg-type]
 
 
-def change(stop: object = None, switch: object = None, patience: object = None,
+def change(stop: object = None, switch: object = None, intervals: object = None,
            sounds: object = None, cues: object = None, volume: object = None,
            user: Optional[str] = None) -> dict:
     """Save any of the settings for `user` and answer the settings now in
     force, as `read` gives them. Starts, stops, submits and discards
-    nothing: they apply from the next stop or page switch (the cues from
-    the next one due). A change to the cues is merged into what he chose
-    before, and refused when it would put the pause cues out of their
-    order (tentative, deciding, likely, each that is on at least
-    PERCENT_SPACING after the one before), a cue turned on included."""
-    stop, switch, patience, sounds, cues, volume = validate(stop, switch, patience, sounds,
-                                                            cues, volume)
+    nothing: they apply from the next stop or page switch (the cues and
+    intervals from the next pause). A change to the cues or the intervals
+    is merged into what he chose before; any intervals keep the stages in
+    order, since each is measured from the stage before."""
+    stop, switch, intervals, sounds, cues, volume = validate(stop, switch, intervals, sounds,
+                                                             cues, volume)
     user = user or user_key()
     now = read(user)
     row = _row(user)
     chosen = _saved_cues(row["cue_settings"]) if row is not None else {}
     for name, choice in (cues or {}).items():
         chosen[name] = {**chosen.get(name, {}), **choice}
-    if cues:
-        wanted = {name: {**CUE_DEFAULTS[name], **chosen.get(name, {})} for name in PAUSE_CUES}
-        if not _in_order(wanted):
-            bounds = "; ".join(
-                f"{name} {low} to {high}" for name in PAUSE_CUES if name in cues
-                for low, high in [pause_cue_bounds(now["cues"], name)])
-            raise Invalid("invalid-cue-timing",
-                          "The pause cues that are on play in order, tentative, then deciding, "
-                          f"then likely, each at least {PERCENT_SPACING} percent of his "
-                          f"patience after the one before. Now that allows {bounds}.")
+    waits = _saved(row["pause_intervals"]) if row is not None else {}
+    waits.update(intervals or {})
     new = {"stop": stop or now["stop"], "switch": switch or now["switch"],
-           "patience": patience,        # None: keep what is saved
+           "intervals": json.dumps(waits, sort_keys=True) if intervals else None,
            "sounds": None if sounds is None else int(sounds),
            "cues": json.dumps(chosen, sort_keys=True) if cues else None,
            "volume": volume}
     try:
         with closing(_connect()) as conn, conn:
             conn.execute(
-                "INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, patience_sec, "
-                "capture_sounds, cue_settings, cue_volume, updated_at) "
+                "INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, "
+                "pause_intervals, capture_sounds, cue_settings, cue_volume, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
                 "UPDATE SET stop_mode = excluded.stop_mode, switch_mode = excluded.switch_mode, "
-                "patience_sec = COALESCE(excluded.patience_sec, voice_input_settings.patience_sec), "
+                "pause_intervals = COALESCE(excluded.pause_intervals, "
+                "voice_input_settings.pause_intervals), "
                 "capture_sounds = COALESCE(excluded.capture_sounds, "
                 "voice_input_settings.capture_sounds), "
                 "cue_settings = COALESCE(excluded.cue_settings, voice_input_settings.cue_settings), "
                 "cue_volume = COALESCE(excluded.cue_volume, voice_input_settings.cue_volume), "
                 "updated_at = excluded.updated_at",
-                (user, new["stop"], new["switch"], new["patience"], new["sounds"], new["cues"],
+                (user, new["stop"], new["switch"], new["intervals"], new["sounds"], new["cues"],
                  new["volume"], time.time()))
     except sqlite3.Error as e:
         log.warning("voice input settings could not be saved (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be saved.") from e
-    log.info("voice input settings for %s: stop=%s switch=%s patience=%s sounds=%s cues=%s "
-             "volume=%s", user, new["stop"], new["switch"], new["patience"], new["sounds"],
+    log.info("voice input settings for %s: stop=%s switch=%s intervals=%s sounds=%s cues=%s "
+             "volume=%s", user, new["stop"], new["switch"], new["intervals"], new["sounds"],
              new["cues"], new["volume"])
     saved = read(user)
     if _publish is not None:
@@ -488,12 +459,12 @@ def change(stop: object = None, switch: object = None, patience: object = None,
 
 
 def patience(user: Optional[str] = None) -> float:
-    """His patience in seconds: the saved value, or the current constant
-    when there is none or the store cannot be read."""
+    """His patience in seconds: the total of his pause intervals, or the
+    defaults' total when the store cannot be read."""
     try:
         return read(user)["patience"]
     except Unreadable:
-        return END_OF_TURN_SEC
+        return DEFAULT_PATIENCE
 
 
 # ── the page's routes ────────────────────────────────────────────────────
@@ -512,7 +483,7 @@ async def api_read():
 async def api_change(body: dict = Body(default_factory=dict)):
     try:
         return change(stop=body.get("stop"), switch=body.get("switch"),
-                      patience=body.get("patience"), sounds=body.get("sounds"),
+                      intervals=body.get("intervals"), sounds=body.get("sounds"),
                       cues=body.get("cues"), volume=body.get("volume"))
     except Invalid as e:
         return JSONResponse(status_code=400, content=e.to_json())
