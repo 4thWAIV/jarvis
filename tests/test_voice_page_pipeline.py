@@ -427,8 +427,8 @@ BESIDE = [
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-2", "part": "dismiss"},
      ".workflow-row[data-workflow-id=wf-2]", ".workflow-item:has([data-workflow-id=wf-2]) .workflow-dismiss"),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "off"}, "#mic-control", "#btn-mic-off"),
+    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, "#mic-control", "#btn-mute"),
+    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "off"}, "#mic-control", "#btn-mic-off"),
 ]
 
 # What a leaf inside an object may not cross: its controls and the lines of
@@ -652,7 +652,7 @@ TOUR = [
     (("network.open", {"kind": "node", "nodeId": MINI_ID}), DETAIL_CPU, [f"main.network|node|{MINI_ID}"]),
     (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "database"},
      ["left.fixed|teamServer|"]),
-    (None, {"region": "left", "view": "left.fixed", "kind": "mic", "part": "mute"}, ["left.fixed|mic|"]),
+    (None, {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"}, ["main.conversation|mic|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
      [WORKFLOW_BOX, "main.workflow.view", "main.workflow.phases"]),

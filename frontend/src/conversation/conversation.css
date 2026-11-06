@@ -52,6 +52,10 @@
 .composer-send { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; border: 1px solid rgba(var(--ui-accent-rgb), .35); border-radius: 8px; padding: 6px 12px; background: rgba(var(--ui-accent-rgb), .14); color: var(--ui-accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .composer-send:hover { background: rgba(var(--ui-accent-rgb), .22); }
 .composer-send:disabled { color: var(--ui-muted); background: var(--ui-raised); border-color: var(--ui-divider); cursor: default; }
+/* The microphone (MicControl.tsx) at the lower right, right of Send: one
+   row that never wraps, so no state of it changes the composer's height. */
+.composer-footer .composer-send { margin-left: auto; }
+.composer-footer #mic-control { flex: none; flex-wrap: nowrap; }
 .composer-error { color: var(--ui-secondary); font-size: 12px; line-height: 1.5; margin: 8px 0; }
 #conversation button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 @media (max-width: 1100px) {

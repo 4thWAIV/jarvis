@@ -2291,24 +2291,6 @@ export const UI_CONTRACT = {
       "family": "left"
     },
     {
-      "kind": "mic",
-      "entity": null,
-      "label": "Microphone",
-      "parts": [
-        "meter",
-        "health",
-        "mute",
-        "off",
-        "listen"
-      ],
-      "presentations": [
-        {
-          "view": "left.fixed"
-        }
-      ],
-      "family": "left"
-    },
-    {
       "kind": "brainAccount",
       "entity": "provider",
       "label": "Brain account",
@@ -3362,6 +3344,30 @@ export const UI_CONTRACT = {
         "speaking",
         "turn",
         "input"
+      ],
+      "presentations": [
+        {
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
+        }
+      ],
+      "family": "conversation"
+    },
+    {
+      "kind": "mic",
+      "entity": null,
+      "label": "Microphone",
+      "parts": [
+        "meter",
+        "health",
+        "mute",
+        "off",
+        "listen"
       ],
       "presentations": [
         {

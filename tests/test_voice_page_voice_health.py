@@ -222,7 +222,7 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
     pointing at it is refused, never drawn where it was."""
     from tests.test_voice_page_pipeline import _UiServer
     ui = _UiServer()
-    health = {"region": "left", "view": "left.fixed", "kind": "mic", "part": "health"}
+    health = {"region": "main", "view": "main.conversation", "kind": "mic", "part": "health"}
 
     async def point():
         rid, _ = ui.request({"kind": "indicate", "target": health, "reveal": "never"})

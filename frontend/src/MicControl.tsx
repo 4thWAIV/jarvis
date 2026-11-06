@@ -1,5 +1,6 @@
 /**
- * The microphone control, directly below the orb: the level meter (a red
+ * The microphone control, at the lower right of the Conversation's message
+ * input (Composer.tsx), right of Send: the level meter (a red
  * "Muted", "Muted · microphone inactive" or "Mic off" in its place while
  * nothing is sent, "Finishing" while the words from before a stop are
  * finished, and Start listening while this page is not listening), mute,
@@ -17,6 +18,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { CENTRE_SOCKET } from "./ConversationView";
 import { codeWords, saidShown, useT, type Translate } from "./locale";
 import { inputStatus, quiet, startListening, voiceInputSettings } from "./mic";
 import { MicMeter } from "./MicMeter";
@@ -105,8 +107,8 @@ function MicLevel({ partRef, listenRef }: { partRef: PartRef; listenRef: PartRef
 
 export function MicControl() {
   const t = useT();
-  const ui = useUiTarget({ ref: { region: "left", view: "left.fixed", kind: "mic" }, label: t("targets.microphone"),
-                           socket: { rail: "rail.left", side: "left" } });
+  const ui = useUiTarget({ ref: { region: "main", view: "main.conversation", kind: "mic" }, label: t("targets.microphone"),
+                           socket: CENTRE_SOCKET });
   const status = useSyncExternalStore(inputStatus.subscribe, inputStatus.get);
   // The state as assistive technology reads it: beside the control, not in
   // it, so its (hidden) words are not something the pointer must avoid.

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../locale";
+import { MicControl } from "../MicControl";
 import { createStore } from "../store";
 import { sendTyped } from "../voiceStatus";
 import { clearTypedRefusal, refuseTyped } from "./controlState";
@@ -20,7 +21,7 @@ export function offerDraft(text: string): void {
 
 /** The message input: its heading row (the conversation control, which
  *  also says when a typed message could not be sent), the text box, the
- *  help line and Send. */
+ *  help line, Send and, at its lower right, the microphone (MicControl). */
 export function Composer({ partRef, heading }: { partRef: (el: Element | null) => void; heading: ReactNode }) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
@@ -68,6 +69,7 @@ export function Composer({ partRef, heading }: { partRef: (el: Element | null) =
       <button type="submit" className="composer-send" disabled={!draft.trim()} aria-label={t("main.conversation.sendMessage")}>
         {t("main.conversation.send")} <span aria-hidden="true">↑</span>
       </button>
+      <MicControl />
     </div>
   </form>;
 }

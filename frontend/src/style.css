@@ -10,7 +10,7 @@
   /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
      mirrored on the right. */
   --ray-lane: 4vw;
-  /* The two side panels: the left column (orb, status, mic, brains) and the
+  /* The two side panels: the left column (orb, status, team server, brains) and the
      right-hand display. One width for both, the only place either width is
      set. It never grows past 230px and only shrinks, with the window, so the
      centre area (whose edges are --panel-edge) is never covered. */
@@ -857,7 +857,7 @@ html, body {
 /* Microphone input meter — the answer to "is it even hearing me?", visible
    without opening a console. Deliberately small and out of the way: it is
    reassurance while things work and evidence when they do not. */
-/* The microphone control, centred under the status control. */
+/* The microphone control, at the message input's lower right. */
 #mic-control {
   display: flex;
   flex-wrap: wrap;
@@ -2550,7 +2550,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* The Team Server tile: a server symbol and its readiness word in a 62px
    column, beside three rows each led by a status dot. Full width of the
-   left column, under the microphone. */
+   left column, under the status control. */
 #team-server-tile .tile-body {
   grid-template-columns: 62px minmax(0, 1fr);
   gap: 8px;

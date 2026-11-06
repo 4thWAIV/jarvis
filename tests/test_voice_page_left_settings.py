@@ -42,6 +42,7 @@ UI_CONTRACT = load_contract()
 pytestmark = pytest.mark.page
 
 LEFT = {"region": "left", "view": "left.fixed"}
+MIC = {"region": "main", "view": "main.conversation"}
 
 
 def _week(provider="anthropic"):
@@ -170,14 +171,16 @@ LEFT_TARGETS = [
     ({"kind": "orb"}, [None, "canvas", "logo"]),
     ({"kind": "status"}, [None]),
     # A page loads not listening: Start listening stands where the meter goes.
-    ({"kind": "mic"}, [None, "listen", "mute", "off"]),
+    # The microphone moved to the Conversation's message input, right of
+    # Send; it is checked here with the left column's controls it left.
+    ({**MIC, "kind": "mic"}, [None, "listen", "mute", "off"]),
     ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
 # A part beside another on the side its leaf comes from is reached over or
 # under its row (uiPipeline.ts leafEdge; the Team Server's last write and the
 # microphone's mute and off go under their rows, the mic in the lane it
-# keeps below it, --ui-leaf-lane). Every left target and part is reached.
+# keeps below it, --ui-leaf-lane). Every target and part is reached.
 LEFT_MISSED = []
 
 
@@ -295,8 +298,10 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             await page.wait_for_selector(".weekly-usage .weekly-figure")
             answer = await _ask(ui, {"kind": "map", "region": "left"})
             kinds = sorted({(t["ref"]["kind"], t["ref"].get("key")) for t in answer["map"]["targets"]})
-            assert kinds == [("brainAccount", "anthropic"), ("mic", None), ("orb", None), ("status", None),
+            assert kinds == [("brainAccount", "anthropic"), ("orb", None), ("status", None),
                              ("teamServer", None)]
+            main = await _ask(ui, {"kind": "map", "view": "main.conversation"})
+            assert "mic" in {t["ref"]["kind"] for t in main["map"]["targets"]}
             overlay = await _ask(ui, {"kind": "map", "region": "overlay"})
             assert "menu.toggle" in {c["id"] for c in overlay["map"]["commands"]}
             settings = await _ask(ui, {"kind": "map", "view": "main.settings"})
