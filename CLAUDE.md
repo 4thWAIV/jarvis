@@ -954,12 +954,18 @@ and an interim not yet followed by its final keeps older finals back. At
 the deadline the commit is checked against the turn, revision and deadline
 it was scheduled for (a timer is never trusted to have been cancelled) and
 against coverage: the recogniser must have decoded every frame the page had
-sent when the hold began (`transcriber` `coverage_of`, read on the server).
-Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
+sent by the send moment (the deadline, or his Send now), and a frame whose
+interim is still held back to coalesce does not count until it has gone to
+the page (`transcriber` `coverage_of`, `Capture.frames_settled`, read on the
+server). A final or an interim heard as speech from that last stretch of
+audio moves the revision on, so nothing is sent and gathering goes on; with
+no words in it the send waits only for the recogniser to catch up, looked at
+every `COVERAGE_POLL_SEC` (0.02 s). Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
 on its own; the conversation control (`ConversationControl.tsx`) offers Retry (wait again),
 Send now (as heard) and Keep as draft (into the composer, unsent), and the
 brain's acting `voice_turn` calls the same `server._turn_action`. Send now
-is offered while a turn is gathered too (coverage still checked). The
+is offered while a turn is gathered too (it waits for coverage to the
+press, as at a deadline). The
 server tells the page what it has gathered (`turn` frames: `gathering` with
 its text, `commit-pending`, `stalled`, `committed`, `draft`, `idle`), so only
 words it accepted as his, never echo, become a draft if the socket drops.

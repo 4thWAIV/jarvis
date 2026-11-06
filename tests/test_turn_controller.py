@@ -55,6 +55,7 @@ class Harness:
         self.paused: list[tuple] = []   # (turn, stage, when)
         self.heard: list[tuple] = []    # (turn, the pause cue before it or None)
         self.committed: list[tuple] = []
+        self.committed_at: list[float] = []
         self.stalled: list[tuple] = []
         self.resumed: list[int] = []
         self.frames = frames            # {client: (sent, decoded)}
@@ -73,6 +74,7 @@ class Harness:
 
     async def _commit(self, text, heard, turn):
         self.committed.append((text, heard, turn))
+        self.committed_at.append(self.clock.now)
 
     def _spawn(self, coro):
         # Run the commit coroutine to completion at once (it never awaits).
@@ -254,17 +256,115 @@ def test_no_capture_means_nothing_to_wait_for():
     assert h.texts() == ["hello"]
 
 
-def test_send_now_commits_at_once_but_not_before_the_recogniser_has_caught_up():
-    frames = {"page-a": (40, 30)}
+def test_send_now_commits_at_once_when_the_recogniser_has_caught_up():
+    frames = {"page-a": (40, 40)}
     h = Harness(frames=frames)
-    assert h.c.send_now() is False
+    assert h.c.send_now() is False, "nothing to send"
     h.c.final("ship it", 1, client="page-a", epoch=1)
-    assert h.c.send_now() is False
-    frames["page-a"] = (40, 40)
     assert h.c.send_now() is True
-    assert h.texts() == ["ship it"]
+    assert h.texts() == ["ship it"] and h.committed_at == [0.0]
     h.clock.advance(5)
     assert len(h.committed) == 1
+
+
+def test_send_now_waits_for_the_audio_sent_until_he_pressed_it():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("ship it", 1, client="page-a", epoch=1)
+    h.clock.advance(0.5)
+    frames["page-a"] = (45, 43)                  # sent since the hold began, not yet decoded
+    assert h.c.send_now() is True
+    assert h.committed == [] and h.c.state == "commit-pending"
+    h.clock.advance(0.05)
+    frames["page-a"] = (46, 45)
+    h.clock.advance(0.05)
+    assert h.texts() == ["ship it"]
+
+
+def test_send_now_is_carried_on_by_words_in_the_audio_sent_until_he_pressed_it():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("ship it", 1, client="page-a", epoch=1)
+    h.clock.advance(0.5)
+    frames["page-a"] = (45, 40)
+    h.c.send_now()
+    h.clock.advance(0.05)
+    assert h.c.interim("today", client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+
+
+# ── the send moment: the last stretch of audio before the deadline ───────
+
+def _speaks_just_before_the_deadline(h, frames):
+    """He starts again 0.4 s before the deadline: the page has sent those
+    frames, the recogniser has not finished them when the deadline comes."""
+    h.c.final("remind me to call", 1, client="page-a", epoch=1)
+    h.clock.advance(1.1)
+    frames["page-a"] = (44, 40)                  # 0.4 s more audio sent, not yet decoded
+    h.clock.advance(0.4)                         # the deadline
+
+
+def test_words_from_the_audio_sent_in_the_last_half_second_cancel_the_send():
+    frames = {"page-a": (40, 40)}                # all decoded when the hold began
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    assert h.committed == [] and h.c.state == "commit-pending"
+    frames["page-a"] = (45, 43)
+    h.clock.advance(0.06)                        # the recogniser reaches his words
+    assert h.c.interim("my", client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+    frames["page-a"] = (60, 60)
+    h.clock.advance(1.0)
+    h.c.final("my sister", 2, client="page-a", epoch=1)
+    h.clock.advance(1.6)
+    assert h.texts() == ["remind me to call my sister"], "one turn, nothing sent early"
+
+
+def test_a_final_from_that_last_stretch_carries_the_turn_on_too():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    frames["page-a"] = (46, 43)                  # his words out before the rest decoded
+    h.clock.advance(0.04)
+    assert h.c.final("the plumber", 2, client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+    frames["page-a"] = (70, 70)
+    h.clock.advance(1.6)
+    assert h.texts() == ["remind me to call the plumber"]
+
+
+def test_no_words_in_the_last_stretch_sends_once_the_recogniser_has_caught_up():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)   # a cough: audio, no words
+    h.clock.advance(0.06)
+    assert h.committed == []
+    frames["page-a"] = (45, 44)                  # every frame sent by the deadline decoded
+    h.clock.advance(0.02)
+    assert h.texts() == ["remind me to call"]
+    assert h.committed_at[0] - 1.5 == pytest.approx(0.08), \
+        "the send waited only for the recogniser to catch up (and one look)"
+
+
+def test_a_recogniser_caught_up_at_the_deadline_adds_no_delay():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("lights off", 1, client="page-a", epoch=1)
+    h.clock.advance(1.0)
+    frames["page-a"] = (45, 45)                  # live audio, decoded as it comes
+    h.clock.advance(0.5)
+    assert h.texts() == ["lights off"] and h.committed_at == [1.5]
+
+
+def test_a_recogniser_that_never_reaches_the_send_moment_stalls_as_before():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    h.clock.advance(2.9)
+    assert h.committed == [] and h.c.state == "commit-pending"
+    h.clock.advance(0.2)
+    assert h.committed == [] and h.c.state == "stalled"
+    assert [text for _, text in h.stalled] == ["remind me to call"]
 
 
 # ── epochs and discards ──────────────────────────────────────────────────

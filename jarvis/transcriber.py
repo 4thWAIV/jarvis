@@ -327,6 +327,9 @@ class Capture:
         # the turn controller's coverage check compares them.
         self.frames_received = 0
         self.frames_decoded = 0
+        # While an interim is held back (coalesced), the frames decoded
+        # before the one that produced it: its words have not gone yet.
+        self._held_before: Optional[int] = None
         self._loop = asyncio.get_running_loop()
         self._out: asyncio.Queue = asyncio.Queue()
         self.pending_bytes = 0
@@ -433,8 +436,17 @@ class Capture:
             self._finished.set()
             self._out.put_nowait(None)
 
+    @property
+    def frames_settled(self) -> int:
+        """Frames decoded whose words have all gone to the page: a frame
+        whose interim is still held back is not, so coverage never counts
+        audio whose words he has not been heard saying yet."""
+        return self.frames_decoded if self._held_before is None else self._held_before
+
     def _interim(self, event: RecognitionEvent) -> None:
         wait = self._last_interim + INTERIM_EVERY_SEC - time.monotonic()
+        if self._held is None:
+            self._held_before = max(self.frames_decoded - 1, 0)
         self._held = event
         if wait <= 0:
             self._flush_held()
@@ -447,12 +459,14 @@ class Capture:
             self._out.put_nowait(self._held)
             self._last_interim = time.monotonic()
         self._held = None
+        self._held_before = None
 
     def _cancel_held(self) -> None:
         if self._held_timer is not None:
             self._held_timer.cancel()
             self._held_timer = None
         self._held = None
+        self._held_before = None
 
 
 class TranscriptionService:
@@ -540,10 +554,10 @@ class TranscriptionService:
         return self._epochs.get(client_id)
 
     def coverage_of(self, client_id: str) -> Optional[tuple[int, int]]:
-        """(frames received, frames decoded) of this page's open capture,
-        or None when it has none open."""
+        """(frames received, frames decoded with their words gone to the
+        page) of this page's open capture, or None when it has none open."""
         capture = self.capture_of(client_id)
-        return None if capture is None else (capture.frames_received, capture.frames_decoded)
+        return None if capture is None else (capture.frames_received, capture.frames_settled)
 
     def admit(self, client_id: Optional[str] = None, epoch: Optional[int] = None,
               claim: bool = False) -> Capture:

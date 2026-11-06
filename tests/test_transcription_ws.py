@@ -266,6 +266,10 @@ def test_the_capture_counts_the_frames_it_was_given_and_decoded(client, engine):
         assert capture.frames_decoded == 3
         service = transcription_api.service
         assert service.capture_of("page-a") is capture and service.capture_of("page-b") is None
+        # Covered once the last frames' interim, held back to coalesce, has
+        # gone to the page too (test_transcriber.py has the rule).
+        while "three" not in _until(ws, "interim")[-1]["text"]:
+            pass
         assert service.coverage_of("page-a") == (3, 3) and service.coverage_of("page-b") is None
         assert service.epoch_of("page-a") == 1 and service.epoch_of("page-b") is None
 

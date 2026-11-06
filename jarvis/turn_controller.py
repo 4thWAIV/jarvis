@@ -12,10 +12,13 @@ hold's deadline comes, the commit is checked against the turn, the revision
 and the deadline it was scheduled for, every one of which must still match:
 cancelling a timer is never relied on, because its callback may already be
 on its way. The recogniser must also have caught up with him: it must have
-decoded every frame the page had sent when the hold began (coverage, read
-from the transcriber's capture for the page, so the page's own word is not
-trusted for it). Not yet: it waits, up to `coverage_bound`, then the turn
-is `stalled`: kept, never an old fragment sent on its own, and the page
+decoded every frame the page had sent by the moment of the send (the
+deadline, or his Send now), with the words of that audio gone to the page
+(coverage, read from the transcriber's capture for the page, so the page's
+own word is not trusted for it). Words from that last stretch of audio, a
+final or an interim heard as speech, move the revision on and gathering
+starts again: nothing is sent. Not yet caught up: it waits, up to
+`coverage_bound`, then the turn is `stalled`: kept, never an old fragment sent on its own, and the page
 offers his three ways on (`retry` waits for the recogniser again,
 `send_now` sends what was heard as it is, on his word, and
 `keep_as_draft` gives it back as an unsent draft). Anything more he says
@@ -72,19 +75,20 @@ from typing import Awaitable, Callable, Optional, Sequence
 
 log = logging.getLogger("jarvis.turns")
 
-# How often a commit waiting for the recogniser looks again, and how long
-# past the deadline it waits before giving the turn back as a draft. The
-# recogniser refuses audio more than two seconds behind (overload), so
+# How often a commit waiting for the recogniser looks again (often, so the
+# send waits for little more than the recogniser's own catch-up), and how
+# long past the deadline it waits before giving the turn back as a draft.
+# The recogniser refuses audio more than two seconds behind (overload), so
 # three is enough for anything still on its way.
-COVERAGE_POLL_SEC = 0.1
+COVERAGE_POLL_SEC = 0.02
 COVERAGE_BOUND_SEC = 3.0
 # A loop may run a timer up to its clock's resolution early: a pause cue
 # that early is still on time.
 CUE_SLACK_SEC = 0.01
 
 Commit = Callable[[str, Optional[int], int], Awaitable[None]]
-# (frames the page had sent, frames decoded) for the page's capture, or
-# None when it has none open.
+# (frames the page has sent, frames decoded with their words gone to the
+# page) for the page's capture, or None when it has none open.
 Coverage = Callable[[str], Optional[tuple[int, int]]]
 CallLater = Callable[[float, Callable[[], None]], object]
 # The pause stages in the order they come: three pause cues, then the send.
@@ -164,7 +168,8 @@ class TurnController:
         self.revision = 0
         self._turn: Optional[_Turn] = None
         self._deadline: Optional[float] = None
-        self._need: Optional[int] = None       # frames sent when the hold began
+        self._need: Optional[int] = None       # frames sent by the send moment
+        self._need_for: Optional[float] = None # the deadline `_need` was taken at
         self._open_interim = False             # speech heard and not yet finalised
         self._timer: object = None
         self._cue_timers: list[object] = []    # this pause's cues, not yet due
@@ -246,15 +251,18 @@ class TurnController:
         return self._drop()
 
     def send_now(self) -> bool:
-        """Commit now, on his word. While gathering the coverage check still
-        applies; a stalled turn is sent as it was heard, because he has seen
-        it could not be finished and chose to send it. False when there is
-        nothing to send or the recogniser has not caught up."""
+        """Send on his word. A stalled turn is sent as it was heard, because
+        he has seen it could not be finished and chose to send it. Otherwise
+        now is the send moment: it goes as soon as the recogniser has caught
+        up with the audio sent until now (at once when it already has), and
+        words in that audio carry the turn on instead, as at a deadline.
+        False when there is nothing to send."""
         if self._turn is None or not self._turn.parts:
             return False
-        if self.state != "stalled" and (self._open_interim or not self._covered()):
-            return False
-        self._commit_turn()
+        if self.state == "stalled":
+            self._commit_turn()
+        elif self.state != "commit-pending":
+            self._send_from_now()
         return True
 
     def retry(self) -> bool:
@@ -262,10 +270,7 @@ class TurnController:
         `coverage_bound`. False when no turn is stalled."""
         if self.state != "stalled" or self._turn is None:
             return False
-        self.state = "commit-pending"
-        self._deadline = self._clock()
-        token = (self._turn.id, self.revision, self._deadline)
-        self._arm(0.0, token)
+        self._send_from_now()
         return True
 
     def keep_as_draft(self) -> Optional[str]:
@@ -317,8 +322,6 @@ class TurnController:
         self.hold = hold
         start = self._clock()
         self._deadline = start + hold
-        sent = self._frames()
-        self._need = sent[0] if sent else None
         token = (self._turn.id, self.revision, self._deadline)
         self._arm(hold, token)
         self._arm_cues(token, start, cues)
@@ -359,6 +362,12 @@ class TurnController:
             cancel()
         self._timer = self._call_later(delay, lambda: self._due(token))
 
+    def _send_from_now(self) -> None:
+        """Now is the send moment: the deadline is now, checked at once."""
+        assert self._turn is not None
+        self._deadline, self._need_for = self._clock(), None
+        self._due((self._turn.id, self.revision, self._deadline))
+
     def _frames(self) -> Optional[tuple[int, int]]:
         client = self._turn.client if self._turn else None
         return self._coverage(client) if client else None
@@ -379,6 +388,11 @@ class TurnController:
         if now < deadline:
             return
         self.state = "commit-pending"
+        if self._need_for != deadline:
+            # The send moment: every frame the page has sent by now must be
+            # decoded, and its words heard, before the turn may go.
+            sent = self._frames()
+            self._need, self._need_for = (sent[0] if sent else None), deadline
         if not self._open_interim and self._covered():
             self._commit_turn()
             return
@@ -391,7 +405,7 @@ class TurnController:
         turn = self._turn
         assert turn is not None
         self._cancel_cues()
-        self._turn, self._deadline, self._need, self._timer = None, None, None, None
+        self._turn, self._deadline, self._need, self._need_for, self._timer = None, None, None, None, None
         self.state = "awaiting-reply"
         self.committed = turn.id
         text = " ".join(turn.parts)
@@ -417,7 +431,7 @@ class TurnController:
             cancel()
         self._cancel_cues()
         turn = self._turn
-        self._turn, self._deadline, self._need, self._timer = None, None, None, None
+        self._turn, self._deadline, self._need, self._need_for, self._timer = None, None, None, None, None
         self._open_interim = False
         self.revision += 1
         if self.state in ("gathering", "commit-pending", "stalled"):

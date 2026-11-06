@@ -107,6 +107,36 @@ def test_finish_pads_the_tail_and_finalises_what_is_left():
     assert session._stream.finished
 
 
+def test_a_frame_whose_interim_is_held_back_is_not_yet_covered():
+    """Coverage (the turn controller's send check) counts a decoded frame
+    only once its words have gone to the page: a coalesced interim held
+    back keeps its frame, and every one after it, uncovered."""
+    import asyncio
+
+    async def run():
+        service = type("Service", (), {"_submit": lambda self, command: None,
+                                       "_release": lambda self, capture: None})()
+        capture = transcriber.Capture(service, 1, "page-a", 1)
+        frame = b"\0" * 3200
+        for _ in range(3):
+            capture.feed(frame)
+        capture._deliver(len(frame), [RecognitionEvent("interim", "turn", 0)], None, False)
+        assert (capture.frames_decoded, capture.frames_settled) == (1, 1)   # sent at once
+        capture._deliver(len(frame), [RecognitionEvent("interim", "turn it", 0)], None, False)
+        capture._deliver(len(frame), [RecognitionEvent("interim", "turn it up", 0)], None, False)
+        assert (capture.frames_decoded, capture.frames_settled) == (3, 1)   # held back
+        capture._flush_held()
+        assert capture.frames_settled == 3
+        capture.feed(frame)
+        capture._deliver(len(frame), [RecognitionEvent("interim", "turn it up now", 0)], None, False)
+        assert capture.frames_settled == 3
+        capture._deliver(0, [RecognitionEvent("final", "turn it up now", 0)], None, False)
+        assert capture.frames_settled == 4, "the final goes at once, in the held interim's place"
+        capture.abort()
+
+    asyncio.run(run())
+
+
 def test_pcm16_is_read_little_endian_and_signed():
     pcm = struct.pack("<4h", 0, 16384, -32768, 32767)
     assert transcriber.pcm16_to_float(pcm) == [0.0, 0.5, -1.0, 32767 / 32768]

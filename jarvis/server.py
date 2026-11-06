@@ -5066,7 +5066,8 @@ def _heard_frame(turn_id: int, after: Optional[str]) -> dict:
 
 def _turn_action(ws, action: str) -> str:
     """Act on one page's turn. Answers what happened, as a code: `sent`
-    (committed now), `retrying` (waiting for the recogniser again), `kept`
+    (committed, at once or once the recogniser has caught up with the audio
+    sent until now; words in that audio carry the turn on instead), `retrying` (waiting for the recogniser again), `kept`
     (an unsent draft on that page), or `nothing` (no turn it applies to)."""
     turns = _voice_turns.get(ws)
     if turns is None or action not in TURN_ACTIONS:
