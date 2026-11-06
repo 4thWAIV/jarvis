@@ -3854,6 +3854,15 @@ TAINT_EXEMPT_TOOLS = {
     "enable_session_inbox": "it edits a settings file, it does not read",
     "remember": "it writes a memory, it does not read",
     "project_note": "it writes a note, it does not read",
+    "edit_project_note": (
+        "it changes one of JARVIS's own project notes and says what it "
+        "said, inside a block; it reads nothing foreign"),
+    "remove_project_note": (
+        "it removes one of JARVIS's own project notes and says what it "
+        "said, inside a block; it reads nothing foreign"),
+    "project_notes": (
+        "it reads JARVIS's own project notes, as recall does, inside a "
+        "block; what protects them is that the WRITERS are gated"),
     "write_journal": "it writes the journal, it does not read",
     "set_agent_active": "it switches a flag on the agents list, it does not read",
     "capture": "it records Tim's own words to be sent, it does not read",
@@ -3920,11 +3929,12 @@ UI_EFFECTS_REFUSED_WHEN_TAINTED = {"queue.item-activated", "queue.read-marked"}
 # system text. A run can be asked for again in a second; a memory is kept for
 # good, so the refusal says so.
 #
-# These three, and ONLY these three, are gated on the GENERATION rather than
+# These, and ONLY these, are gated on the GENERATION rather than
 # the turn — see `_writer_untrusted_source`. Held exhaustive against the tools
 # that actually call a `jarvis_memory` writer by
 # tests/test_memory_writers.py::test_every_tool_that_writes_memory_is_named_as_one.
-MEMORY_WRITERS = {"remember", "project_note", "write_journal"}
+MEMORY_WRITERS = {"remember", "project_note", "edit_project_note",
+                  "remove_project_note", "write_journal"}
 
 
 def _writer_untrusted_source(tool: str) -> str | None:
@@ -11664,6 +11674,84 @@ def tool_project_note(args: dict) -> str:
     return f"Noted against {_plain_name(project, 'that project')}."
 
 
+def _note_number(args: dict) -> int | None:
+    try:
+        number = int(str(args.get("number") or "").strip())
+    except ValueError:
+        return None
+    return number if number >= 1 else None
+
+
+def tool_project_notes(args: dict) -> str:
+    """One project's notes, numbered, so one can be edited or removed by
+    number. What the notes say is memory, read back inside a block as
+    `tool_recall` reads it."""
+    project = str(args.get("project") or "").strip()
+    if not project:
+        return "Which project's notes?"
+    name = _plain_name(project, "that project")
+    notes = jarvis_memory.project_notes(project)
+    if not notes:
+        return f"I have no notes on {name}."
+    lines = "\n".join(f"{n.number}. [{n.stamp}] {n.text}" for n in notes)
+    return (f"Notes on {name}, by number:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, lines)}")
+
+
+def _project_note_target(args: dict):
+    """The note `edit_project_note` and `remove_project_note` name: the
+    project, the number, the text expected and the project's name as it may
+    be said — or the sentence that says what is missing."""
+    project = str(args.get("project") or "").strip()
+    expect = str(args.get("expect") or "").strip()
+    number = _note_number(args)
+    if not project or number is None or not expect:
+        return ("I need the project, the note's number and what it says now — "
+                "read them with project_notes first.")
+    return project, number, expect, _plain_name(project, "that project")
+
+
+def _project_note_refused(error: Exception, number: int, name: str) -> str:
+    """Why a change to a note was refused; nothing was changed. What the
+    note says now is memory, so it is said inside a block."""
+    if isinstance(error, jarvis_memory.NoteChanged):
+        return (f"Note {number} on {name} no longer says that, sir, so nothing "
+                "was changed. It says now:\n"
+                f"{_wrap_untrusted(_MEMORY_WRAP_NAME, error.current)}")
+    return (f"There is no note {number} on {name}, sir. Nothing was "
+            "changed; read the notes again with project_notes.")
+
+
+def tool_edit_project_note(args: dict) -> str:
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return "I need the note's new text."
+    target = _project_note_target(args)
+    if isinstance(target, str):
+        return target
+    project, number, expect, name = target
+    try:
+        old = jarvis_memory.edit_project_note(project, number, expect, text)
+    except (jarvis_memory.NoSuchNote, jarvis_memory.NoteChanged) as e:
+        return _project_note_refused(e, number, name)
+    said = f"Was: {old.text}\nNow: {jarvis_memory.one_line(text)}"
+    return (f"Changed note {number} on {name}. It said, and says now:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, said)}")
+
+
+def tool_remove_project_note(args: dict) -> str:
+    target = _project_note_target(args)
+    if isinstance(target, str):
+        return target
+    project, number, expect, name = target
+    try:
+        old = jarvis_memory.remove_project_note(project, number, expect)
+    except (jarvis_memory.NoSuchNote, jarvis_memory.NoteChanged) as e:
+        return _project_note_refused(e, number, name)
+    return (f"Removed note {number} from {name}. It said:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, old.text)}")
+
+
 def tool_write_journal(args: dict) -> str:
     text = str(args.get("text") or "").strip()
     if not text:
@@ -11676,11 +11764,14 @@ TOOL_HANDLERS.update({
     "remember": tool_remember,
     "recall": tool_recall,
     "project_note": tool_project_note,
+    "project_notes": tool_project_notes,
+    "edit_project_note": tool_edit_project_note,
+    "remove_project_note": tool_remove_project_note,
     "write_journal": tool_write_journal,
 })
-# These three WRITE. A watcher-origin turn must never reach them, or text from
+# These WRITE. A watcher-origin turn must never reach them, or text from
 # somebody else's transcript could plant a "fact" JARVIS then repeats as his own.
-ACTING_TOOLS.update({"remember", "project_note", "write_journal"})
+ACTING_TOOLS.update(MEMORY_WRITERS)
 
 
 @app.websocket("/ws/sessions")
