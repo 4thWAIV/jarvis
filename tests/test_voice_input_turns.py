@@ -54,7 +54,7 @@ def test_a_closed_socket_sends_nothing_it_was_gathering(client):
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "half a", "isFinal": True,
                       "clientId": "page-a", "captureEpoch": 1})
-    time.sleep(2.0)                                 # longer than the hold
+    time.sleep(3.2)                                 # longer than the hold (3.0 s)
     assert server.brain_instance.turns == []
 
 
@@ -177,13 +177,12 @@ def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
 # ── the pause cues ───────────────────────────────────────────────────────
 
 def _quick_cues(cue="likely", **change):
-    """The pause cues at the default patience (1.5 s): tentative after 0.3 s
-    of quiet (20 percent), deciding after 0.6 s, likely-end after 0.9 s;
-    with `change` made to `cue`."""
+    """A quick pause: tentative after 0.3 s of quiet, deciding after 0.6 s,
+    likely-end after 0.9 s, the send at 1.2 s; with `change` made to
+    `cue`."""
     from jarvis import voice_control
-    cues = {"tentative": {"percent": 20}, "deciding": {"percent": 40}, "likely": {"percent": 60}}
-    cues[cue] = {**cues[cue], **change}
-    voice_control.change(cues=cues)
+    voice_control.change(intervals={stage: 0.3 for stage in voice_control.PAUSE_STAGES},
+                         **({"cues": {cue: change}} if change else {}))
 
 
 def _pauses(seen):
@@ -215,7 +214,9 @@ def test_the_pause_cues_go_to_the_page_gathering_the_turn_and_no_other(client):
 
 
 @pytest.mark.parametrize("cue", ["deciding", "likely"])
-def test_a_cue_that_is_off_is_skipped_and_the_others_keep_their_order(client, cue):
+def test_a_cue_that_is_off_is_silent_and_keeps_its_place(client, cue):
+    """Off, its stage still comes in its place (its interval passes), with
+    no sound; the others sound in their order."""
     c, server = client
     _quick_cues(cue, on=False)
     with c.websocket_connect("/ws/voice") as ws:
@@ -225,7 +226,7 @@ def test_a_cue_that_is_off_is_skipped_and_the_others_keep_their_order(client, cu
         seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
                             limit=40)
         assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [
-            (stage, True) for stage in ("tentative", "deciding", "likely") if stage != cue]
+            (stage, stage != cue) for stage in ("tentative", "deciding", "likely")]
 
 
 def test_no_cue_sounds_while_he_is_away(client, monkeypatch):
@@ -275,3 +276,19 @@ def test_the_brain_s_play_cue_plays_on_his_page_only(client):
             seen = _drain_until(ws, lambda m: m.get("type") == "cue_test", limit=10)
             assert seen[-1] == {"type": "cue_test", "cue": cue}
         assert "Nothing was played" in c.portal.call(server.tool_play_cue, {"cue": "siren"})
+
+
+def test_the_scheduler_waits_his_patience_the_total_of_the_intervals(client):
+    """Nothing JARVIS says starts while he has spoken within his patience:
+    the scheduler's wait is the intervals' total when a page connects, and
+    follows a change at once, as the hold does from the next pause."""
+    from jarvis import voice_control
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        assert server.speech.end_of_turn == voice_control.patience() == 3.0
+        voice_control.change(intervals={"send": 1.5})
+        assert server.speech.end_of_turn == 4.0
+        c.post(voice_control.PATH, json={"intervals": {"tentative": 0.5}})
+        assert server.speech.end_of_turn == 3.5
+        assert server._voice_turns[next(iter(server._voice_turns))]._schedule()[-1] == ("send", 3.5)

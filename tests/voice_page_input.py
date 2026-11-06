@@ -22,11 +22,17 @@ async def start_listening(page, timeout: float = 10000) -> None:
 
 async def route_settings(page, stop="keep", switch="stop", status=200, sounds=True, **more):
     """Answer the voice input settings with these (or fail with `status`),
-    the rest the defaults (`more` overrides any: cues, volume, patience),
-    and accept a change, answering what was saved. Returns the list of
-    changes the page posted."""
+    the rest the defaults (`more` overrides any: cues, volume, intervals),
+    and accept a change, answering what was saved, its schedule and
+    patience worked out as the server does. Returns the list of changes
+    the page posted."""
     state = {**voice_control.defaults(), "stop": stop, "switch": switch, "sounds": sounds,
              "saved": True, **more}
+
+    def timed():
+        schedule = dict(voice_control.schedule_of(state))
+        state.update(schedule=schedule, patience=schedule["send"])
+    timed()
     posted: list[dict] = []
 
     async def handle(route):
@@ -35,8 +41,10 @@ async def route_settings(page, stop="keep", switch="stop", status=200, sounds=Tr
             posted.append(change)
             for name, choice in (change.get("cues") or {}).items():
                 state["cues"] = {**state["cues"], name: {**state["cues"][name], **choice}}
+            state["intervals"] = {**state["intervals"], **(change.get("intervals") or {})}
             state.update({k: v for k, v in change.items()
-                          if k in ("stop", "switch", "patience", "sounds", "volume")})
+                          if k in ("stop", "switch", "sounds", "volume")})
+            timed()
         if status != 200:
             await route.fulfill(status=status, content_type="application/json",
                                 body=json.dumps({"code": "unreadable", "error": "no"}))

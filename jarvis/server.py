@@ -3076,7 +3076,24 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
-voice_control.mount(app, publish=_send_to_session_clients)
+def _follow_patience() -> float:
+    """His patience (the total of his pause intervals) put in force for
+    when JARVIS may start talking: the same wait the turn controller holds
+    his turn for (voice_control.py). Answers it."""
+    patience = voice_control.patience()
+    if speech is not None:
+        speech.end_of_turn = patience
+    return patience
+
+
+def _voice_input_settings_changed(frame: dict) -> None:
+    """His voice input settings changed: JARVIS's own wait follows his new
+    patience at once, and every page reads them again."""
+    _follow_patience()
+    _send_to_session_clients(frame)
+
+
+voice_control.mount(app, publish=_voice_input_settings_changed)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
@@ -8438,7 +8455,8 @@ def _voice_input_settings_said(settings: dict) -> str:
     stop = {"keep": "keep the words already captured",
             "discard": "discard unfinished input"}[settings["stop"]]
     switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
-    patience = f"His turn ends after {settings['patience']:g} seconds of quiet. "
+    patience = (f"His patience: his turn is sent after {settings['patience']:g} seconds of quiet, "
+                "the four pause intervals added up. ")
     sounds = ("A quiet sound plays when listening starts and when it stops. " if settings["sounds"]
               else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
@@ -8448,41 +8466,39 @@ def _voice_input_settings_said(settings: dict) -> str:
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
 
 
-_CUE_SAID = {"start": "listening started", "stop": "listening stopped",
+_STAGE_SAID = {"start": "listening started", "stop": "listening stopped",
              "tentative": "tentative (he may be done)",
              "deciding": "deciding (whether he is done)",
              "likely": "likely end (about to send)"}
 
 
-def _gaps_said(settings: dict, name: str) -> str:
-    """A pause cue's gaps to its neighbours that are on, as Settings shows
-    them."""
-    gaps = voice_control.pause_cue_gaps(settings, name)
-    said = ""
-    if gaps["after"]:
-        earlier, gap = gaps["after"]
-        said += f", {gap:g} s after the {_CUE_SAID[earlier]} cue"
-    later, gap = gaps["until"]
-    return said + (f", {gap:g} s before the {_CUE_SAID[later]} cue" if later
-                   else f", {gap:g} s before it is sent")
+def _pause_said(settings: dict) -> str:
+    """The pause stages in order, each with its interval after the stage
+    before and its time after he stops (voice_control.schedule_of), as
+    Settings shows them."""
+    parts = []
+    for stage, at in voice_control.schedule_of(settings):
+        wait = settings["intervals"][stage]
+        if stage in voice_control.PAUSE_CUES:
+            cue = settings["cues"][stage]
+            sound = f"tone {cue['tone']}" if cue["on"] else "off, silent"
+            parts.append(f"{_STAGE_SAID[stage]} cue ({sound}) {wait:g} s later, "
+                         f"at {at:g} s")
+        else:
+            parts.append(f"sent {wait:g} s later, at {at:g} s")
+    return ("Pause intervals, each after the one before, from when his speech was last "
+            "heard: " + "; then ".join(parts) + ". ")
 
 
 def _cues_said(settings: dict) -> str:
-    """Each capture cue: on or off, its tone, and a pause cue's share of his
-    patience with its time and gaps at his patience (voice_control)."""
+    """Each capture cue: on or off and its tone, then the pause."""
     parts = []
-    for name in voice_control.CUES:
+    for name in voice_control.LISTEN_CUES:
         cue = settings["cues"][name]
-        part = f"{_CUE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}"
-        if name in voice_control.PAUSE_CUES:
-            at = voice_control.pause_cue_at(settings, name)
-            part += (f", at {cue['percent']} percent of his patience"
-                     + (f" (after {at:g} s of quiet{_gaps_said(settings, name)})" if cue["on"]
-                        else ", skipped while off"))
-        parts.append(part)
+        parts.append(f"{_STAGE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}")
     master = "" if settings["sounds"] else " (all silent while capture sounds are off)"
-    return (f"Cues{master}: " + "; ".join(parts)
-            + f". Cue volume {settings['volume']} percent. ")
+    return (f"Cues{master}: " + "; ".join(parts) + ". " + _pause_said(settings)
+            + f"Cue volume {settings['volume']} percent. ")
 
 
 async def tool_voice_input_settings(args: dict) -> str:
@@ -8499,14 +8515,15 @@ async def tool_set_voice_input_settings(args: dict) -> str:
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
         settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        patience=args.get("patience"), sounds=args.get("sounds"),
+                                        intervals=args.get("intervals"), sounds=args.get("sounds"),
                                         cues=args.get("cues"), volume=args.get("volume"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
         return f"Nothing was changed, sir: {e}"
     return ("Saved. " + _voice_input_settings_said(settings)
-            + " It applies from the next time he stops the microphone or leaves the page.")
+            + " It applies from the next time he stops the microphone or leaves the page, the "
+              "intervals from his next pause.")
 
 
 # A cue played once on his page, as Settings' Test button plays it.
@@ -8528,7 +8545,7 @@ async def tool_play_cue(args: dict) -> str:
     if queue is None:
         return f"Nothing was played, sir: {why or 'no JARVIS page is open'}."
     _enqueue(queue, {"type": CUE_TEST_FRAME, "cue": cue})
-    return (f"Played the {_CUE_SAID[cue]} cue once on his page, sir, unless the page has not "
+    return (f"Played the {_STAGE_SAID[cue]} cue once on his page, sir, unless the page has not "
             "been allowed to play sound yet.")
 
 
@@ -12148,17 +12165,16 @@ async def voice_handler(ws: WebSocket):
         show_turn({"state": "committed", "turnId": turn_id})
         await take_utterance(text, heard)
 
-    # His patience: one value for the hold here and for when JARVIS may
-    # start talking (voice_control.py).
-    patience = voice_control.patience()
-    if speech is not None:
-        speech.end_of_turn = patience
+    # His patience: one value for the hold here (the schedule's total, read
+    # each time the hold starts) and for when JARVIS may start talking
+    # (voice_control.py).
+    _follow_patience()
     turns = TurnController(
-        commit_turn, hold=patience, coverage=_capture_coverage, epoch_floor=_capture_epoch,
+        commit_turn, schedule=lambda: voice_control.schedule_of(voice_control.read_or_defaults()),
+        coverage=_capture_coverage, epoch_floor=_capture_epoch,
         on_stalled=lambda turn_id, text: show_turn(
             {"state": "stalled", "turnId": turn_id, "text": text}),
         on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)),
-        pause_cues=lambda: voice_control.pause_cue_shares(voice_control.read_or_defaults()),
         on_pause=lambda turn_id, stage: show_turn(
             _pause_frame(turn_id, stage, turns.gathered_text)))
     _voice_turns[ws] = turns
