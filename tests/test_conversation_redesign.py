@@ -403,9 +403,13 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         await page.locator('.chat-message .chat-copy').last.focus()
         await page.keyboard.press('PageUp')
         await page.wait_for_selector('.conversation-jump')
+        # How far PageUp moves depends on how tall the history is beside the
+        # bottom box; what matters is that it stays where his key left it.
+        left = await page.evaluate(TOP)
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 9, 'done': True})
         await asyncio.sleep(.2)
-        assert await page.evaluate(GAP) > 50
+        assert abs(await page.evaluate(TOP) - left) < 2
+        assert await page.evaluate(GAP) > 0
         await page.get_by_role('button', name='Jump to latest').click()
         assert await page.evaluate(GAP) < 2
         voice.send({'type': 'reply', 'utt': 51, 'text': 'And one more.', 'done': True})
