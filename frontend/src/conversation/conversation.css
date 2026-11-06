@@ -53,13 +53,14 @@
 .composer-send:hover { background: rgba(var(--ui-accent-rgb), .22); }
 .composer-send:disabled { color: var(--ui-muted); background: var(--ui-raised); border-color: var(--ui-divider); cursor: default; }
 /* The health dot, Stop, Send and the microphone (MicControl.tsx) at the
-   lower right. The dot's and Stop's slots keep their width while they are
-   empty or hidden, so Send and the microphone never move; the microphone is one row that never wraps, so no state of it
+   lower right, anchored at the right: the dot's slot keeps its width while
+   it is empty, and Stop takes no room while it is absent, so only the dot
+   moves and Send and the microphone never do; the microphone is one row that never wraps, so no state of it
    changes the composer's height. */
 .composer-footer #health-slot { margin-left: auto; flex: none; width: 10px; height: 10px; display: flex; }
 .composer-footer #stop-slot { flex: none; display: flex; }
 .composer-footer #hush { height: 28px; padding: 0 14px; font-size: 12px; letter-spacing: 0.12em; }
-.composer-footer #hush[data-shown="false"] { visibility: hidden; }
+.composer-footer #stop-slot[data-shown="false"] { display: none; }
 /* Narrow: the help line goes (it still describes the input) and Send is its
    arrow, so Stop, Send and the microphone keep one row inside the box. */
 @container composer (max-width: 419px) {

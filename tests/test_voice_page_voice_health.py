@@ -219,7 +219,7 @@ async def test_the_health_dot_opens_the_diagnostics_view(page_playwright, page_u
 PLACES = """() => {
   const r = s => { const e = document.querySelector(s); if (!e) return undefined;
                    const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
-  const got = {stop: r('#stop-slot'), send: r('.composer-send'), mic: r('#mic-control')};
+  const got = {send: r('.composer-send'), mic: r('#mic-control')};
   const dot = r('#health-dot');
   return dot ? {...got, dot} : got;
 }"""
@@ -262,11 +262,12 @@ async def test_the_health_dot_is_named_and_reached_only_while_it_shows(page_url)
             # are (test_voice_page_left_settings.LEFT_MISSED).
             reached = await point()
             assert reached["status"] == "completed", reached
-            # Left of Stop, in a slot kept while it is gone: Stop, Send and
-            # the microphone are exactly where they were.
+            # Left of Stop (absent here, so beside Send), in a slot kept
+            # while it is gone: Send and the microphone are exactly where
+            # they were.
             shown = await page.evaluate(PLACES)
-            assert shown["dot"][0] + shown["dot"][2] <= shown["stop"][0]
-            assert {k: shown[k] for k in ("stop", "send", "mic")} == before
+            assert shown["dot"][0] + shown["dot"][2] <= shown["send"][0]
+            assert {k: shown[k] for k in ("send", "mic")} == before
             await _health(page)
             await page.wait_for_selector("#health-dot", state="detached")
             assert await page.evaluate(PLACES) == before

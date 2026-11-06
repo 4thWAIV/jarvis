@@ -469,32 +469,44 @@ async def test_disconnected_submission_preserves_draft_with_error(page_url):
 
 SEND_PLACE = """() => {
   const r = s => { const b = document.querySelector(s).getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; };
-  return {send: r('.composer-send'), mic: r('#mic-control'), slot: r('#stop-slot'),
-          stop: getComputedStyle(document.querySelector('#hush')).visibility};
+  const footer = document.querySelector('.composer-footer');
+  return {send: r('.composer-send'), mic: r('#mic-control'), stop: r('#stop-slot'), health: r('#health-slot'),
+          gap: parseFloat(getComputedStyle(footer).columnGap),
+          shown: getComputedStyle(document.querySelector('#stop-slot')).display !== 'none'};
 }"""
 
 
+def _right(box):
+    return box[0] + box[2]
+
+
 @pytest.mark.asyncio(loop_scope="session")
-async def test_stop_sits_left_of_send_and_nothing_moves_when_it_shows_or_goes(page_playwright, page_url):
+async def test_stop_sits_left_of_send_and_only_what_is_left_of_it_moves(page_playwright, page_url):
     """Stop is in the message input's lower right, immediately left of Send,
-    then the microphone. Its slot is kept while it is hidden, so Send and
-    the microphone are exactly where they were whether Stop shows or not."""
+    then the microphone. Absent, it takes no room: the health dot's slot
+    moves up to Send, and Send and the microphone are exactly where they
+    were whether Stop shows or not."""
     voice = _Voice()
     async with page_playwright as p:
         browser, page = await _open(p, page_url, voice)
         hidden = await page.evaluate(SEND_PLACE)
-        assert hidden["stop"] == "hidden"
-        assert hidden["slot"][0] + hidden["slot"][2] <= hidden["send"][0] <= hidden["mic"][0]
+        assert not hidden["shown"]
+        # Stop absent: the health slot is Send's left neighbour, one gap away.
+        assert abs(hidden["send"][0] - _right(hidden["health"]) - hidden["gap"]) < 0.5, hidden
+        assert _right(hidden["send"]) <= hidden["mic"][0]
         voice.send({"type": "reply", "utt": 1, "text": "All six agents are idle, sir.", "done": True},
                    {"type": "status", "state": "speaking"},
                    {"type": "audio", "utt": 1, "idx": 0, "data": _silence_wav(1.2),
                     "text": "All six agents are idle, sir.", "kind": "reply"})
         await page.wait_for_selector("#hush", state="visible")
         shown = await page.evaluate(SEND_PLACE)
-        assert shown["stop"] == "visible"
-        assert (shown["send"], shown["mic"], shown["slot"]) == (hidden["send"], hidden["mic"], hidden["slot"])
+        assert shown["shown"]
+        assert (shown["send"], shown["mic"]) == (hidden["send"], hidden["mic"])
+        # Health slot, Stop, Send: each one gap from the next.
+        assert abs(shown["send"][0] - _right(shown["stop"]) - shown["gap"]) < 0.5, shown
+        assert abs(shown["stop"][0] - _right(shown["health"]) - shown["gap"]) < 0.5, shown
         voice.send({"type": "status", "state": "idle"})
         await page.wait_for_selector("#hush", state="hidden")
         again = await page.evaluate(SEND_PLACE)
-        assert (again["send"], again["mic"]) == (hidden["send"], hidden["mic"])
+        assert (again["send"], again["mic"], again["health"]) == (hidden["send"], hidden["mic"], hidden["health"])
         await browser.close()

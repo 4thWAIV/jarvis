@@ -2,8 +2,7 @@
  * What JARVIS is doing. Directly below the orb, the status line while he is
  * listening or thinking (StatusControl). At the Conversation's message
  * input, immediately left of Send, Stop while he is speaking (StopControl):
- * its slot is kept while it is hidden, so Send and the microphone never
- * move. Each is a target the brain can point at (the text; Stop while it is
+ * absent, it takes no room, and Send and the microphone never move. Each is a target the brain can point at (the text; Stop while it is
  * there); Stop itself is hushing him, never navigation.
  */
 
@@ -35,18 +34,18 @@ export function StatusControl() {
   );
 }
 
-/** Stop, in a slot that keeps its width whether or not Stop is shown: the
- *  button is always laid out, and `visibility: hidden` (not seen, focused,
- *  read or clicked) while he is not speaking. */
+/** Stop, while he is speaking; otherwise its slot is not drawn and takes
+ *  no room. The group it sits in is anchored at the right, so only what is
+ *  left of it (the health dot) moves; Send and the microphone never do. */
 export function StopControl() {
   const t = useT();
   const speaking = useSyncExternalStore(voiceState.subscribe, voiceState.get) === "speaking";
   const ui = useUiTarget({ ref: { region: "main", view: "main.conversation", kind: "status" },
                            label: t("targets.status"), socket: CENTRE_SOCKET });
   return (
-    <span id="stop-slot" ref={ui.whole}>
+    <span id="stop-slot" ref={ui.whole} data-shown={speaking}>
       <button id="hush" type="button" title={t("left.status.stopTitle")} data-ui-action="speech"
-              ref={speaking ? ui.part("stop") : undefined} data-shown={speaking}
+              ref={speaking ? ui.part("stop") : undefined}
               onClick={() => stopSpeaking.current()}>
         {t("left.status.stop")}
       </button>

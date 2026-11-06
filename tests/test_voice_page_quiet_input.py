@@ -317,7 +317,9 @@ async def test_changing_a_setting_while_listening_starts_stops_and_sends_nothing
         assert await page.evaluate("window.__liveTracks()") == 1
         assert page.voice.finals() == [] and _sent(page.voice, "turn_discard") == []
 
-        # The next stop follows the new setting.
+        # The next stop follows the new setting. Mic off is on the
+        # Conversation view, under Settings: closing Settings stops nothing.
+        await page.click("#settings-view .settings-head .workflow-close")
         await page.click("#btn-mic-off")
         assert await _until(lambda: _sent(page.voice, "turn_discard"))
         await context.close()
