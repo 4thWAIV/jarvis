@@ -8767,8 +8767,10 @@ async def tool_play_cue(args: dict) -> str:
     """Settings' Test button for one capture cue, by voice or typing: the
     page of this turn plays it once, with its tone and the cue volume, on
     or off. An ACTING tool: it makes a sound; it changes nothing."""
-    cue = args.get("cue")
-    if cue not in voice_control.CUES:
+    # JARVIS's own name for the cue, never the brain's text: what is said and
+    # sent is the table's word for it.
+    cue = next((name for name in voice_control.CUES if name == args.get("cue")), None)
+    if cue is None:
         return f"Say which cue: {', '.join(voice_control.CUES)}. Nothing was played."
     # The page his words came from, else the only page open.
     page, why = ui_clients.target_page(None, _ui_origin(), _turn_heard)
