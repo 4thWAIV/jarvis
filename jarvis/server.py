@@ -604,7 +604,7 @@ def _agent_links(event: dict) -> dict:
     session = event.get("session") or {}
     message = event.get("message") or {}
     sid = session.get("session_id") or message.get("session_id")
-    name = session.get("voice_name") or message.get("agent_name")
+    name = _name_of(sid, session.get("voice_name") or message.get("agent_name"))
     links = {"agent_session_id": sid, "agent_name": name}
     if isinstance(message.get("id"), int):
         links["message_id"] = message["id"]
@@ -1775,16 +1775,17 @@ def _list_join(items: list[str]) -> str:
     return ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
-def _with_official_name(event: dict) -> dict:
-    """The event with its session going by its official name, if it has one.
+def _with_agent_name(event: dict) -> dict:
+    """The event with its session going by its name on the agents list.
 
     The watcher builds an event from its own copy of the session, which has
-    the derived voice name; official names are applied only to the snapshot
-    the server reads (`_snapshot_or_empty`). So every announcement, the note
-    to the brain and the broadcast all said the old name. Applied here, once,
-    before anything reads the event. A copy: the watcher's dict is not ours."""
+    the plain derived name; the agents list's names are applied only to the
+    snapshot the server reads (`_snapshot_or_empty`). So every announcement,
+    the note to the brain and the broadcast all said another name. Applied
+    here, once, before anything reads the event. A copy: the watcher's dict
+    is not ours."""
     session = event.get("session") or {}
-    official = _official_agent_names().get(session.get("session_id"))
+    official = _agent_names().get(session.get("session_id"))
     if not official or session.get("voice_name") == official:
         return event
     return {**event, "session": {**session, "voice_name": official}}
@@ -1794,7 +1795,7 @@ def _on_session_event(event: dict) -> None:
     """Watcher callback. The watcher marshals this onto the event loop thread
     via call_soon_threadsafe before calling it, so scheduling work here with
     _spawn directly (no further thread-hop) is safe."""
-    event = _with_official_name(event)
+    event = _with_agent_name(event)
     kind = event.get("kind")
     session = event.get("session") or {}
     if session.get("session_id") in _jarvis_run_session_ids():
@@ -3076,7 +3077,24 @@ transcription_api.mount(app)
 speech_models.mount(app)
 language_setting.mount(app, lambda line, note: _spawn(_say_notice(line, note, "language")),
                        publish=_send_to_session_clients)
-voice_control.mount(app, publish=_send_to_session_clients)
+def _follow_patience() -> float:
+    """His patience (the total of his pause intervals) put in force for
+    when JARVIS may start talking: the same wait the turn controller holds
+    his turn for (voice_control.py). Answers it."""
+    patience = voice_control.patience()
+    if speech is not None:
+        speech.end_of_turn = patience
+    return patience
+
+
+def _voice_input_settings_changed(frame: dict) -> None:
+    """His voice input settings changed: JARVIS's own wait follows his new
+    patience at once, and every page reads them again."""
+    _follow_patience()
+    _send_to_session_clients(frame)
+
+
+voice_control.mount(app, publish=_voice_input_settings_changed)
 team_api.mount(app)
 messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame(frame))
 human_activity.mount(app)
@@ -3665,7 +3683,7 @@ def _rename_agent(session_id: str, name: str) -> tuple[dict | None, str | None]:
         return None, "duplicate"
     if row is None:
         return None, "missing"
-    _forget_official_names()
+    _forget_agent_names()
     _hint_agents_changed()
     return row, None
 
@@ -3854,6 +3872,15 @@ TAINT_EXEMPT_TOOLS = {
     "enable_session_inbox": "it edits a settings file, it does not read",
     "remember": "it writes a memory, it does not read",
     "project_note": "it writes a note, it does not read",
+    "edit_project_note": (
+        "it changes one of JARVIS's own project notes and says what it "
+        "said, inside a block; it reads nothing foreign"),
+    "remove_project_note": (
+        "it removes one of JARVIS's own project notes and says what it "
+        "said, inside a block; it reads nothing foreign"),
+    "project_notes": (
+        "it reads JARVIS's own project notes, as recall does, inside a "
+        "block; what protects them is that the WRITERS are gated"),
     "write_journal": "it writes the journal, it does not read",
     "set_agent_active": "it switches a flag on the agents list, it does not read",
     "capture": "it records Tim's own words to be sent, it does not read",
@@ -3920,11 +3947,12 @@ UI_EFFECTS_REFUSED_WHEN_TAINTED = {"queue.item-activated", "queue.read-marked"}
 # system text. A run can be asked for again in a second; a memory is kept for
 # good, so the refusal says so.
 #
-# These three, and ONLY these three, are gated on the GENERATION rather than
+# These, and ONLY these, are gated on the GENERATION rather than
 # the turn — see `_writer_untrusted_source`. Held exhaustive against the tools
 # that actually call a `jarvis_memory` writer by
 # tests/test_memory_writers.py::test_every_tool_that_writes_memory_is_named_as_one.
-MEMORY_WRITERS = {"remember", "project_note", "write_journal"}
+MEMORY_WRITERS = {"remember", "project_note", "edit_project_note",
+                  "remove_project_note", "write_journal"}
 
 
 def _writer_untrusted_source(tool: str) -> str | None:
@@ -4325,26 +4353,17 @@ def _plain_phrase(text: str, fallback: str) -> str:
 # context; in a spoken line it is at minimum garbage read aloud.
 #
 # But `_plain_name` is the WRONG wall for this one field, and it was already
-# the wrong wall in `_session_line` and `_needs_you_clause`. A voice name is
-# not an identifier — `_assign_voice_names` COMPOSES a phrase:
+# the wrong wall in `_session_line` and `_needs_you_clause`. A name is not an
+# identifier: a folder ("note taker", "My Projects"), the name he gave the
+# conversation in Claude Code ("Tim's notes, draft") or the one he set in
+# JARVIS may hold spaces, commas and apostrophes, and `_plain_name` forbids
+# a space, so it erased them and left him no way to say which agent he
+# meant. tests/test_header_lines.py drives every name `session_watch` can
+# actually produce through this function and asserts it comes back
+# unchanged.
 #
-#     chitauri in Desktop            f"{project} in {parent}"
-#     hammer, the memory tools one   f"{base}, the {phrase} one"
-#     the newer hammer               f"the newer {base}"
-#     the chitauri that's working    f"the {base} {state phrase}"
-#
-# `_plain_name` forbids a space, so it erased every one of them: the moment
-# two conversations shared a project, the user was told "one of them: idle"
-# and had no way to answer "which one?". tests/test_header_lines.py drives
-# every name `session_watch` can actually produce through this function and
-# asserts it comes back unchanged.
-#
-# So the wall is on the character CLASS and a bound, not on the shape. The
-# variable parts of a composed name are two directory names (which may hold
-# spaces, commas and apostrophes — "My Projects" is an ordinary folder) and
-# up to two words split out of a title on `[^a-z0-9]+`. Everything else is
-# JARVIS's own connective tissue. Sixty-four characters of that class, ending
-# on a word character.
+# So the wall is on the character CLASS and a bound, not on the shape.
+# Sixty-four characters of that class, ending on a word character.
 #
 # The residual is honest and is the same one `_plain_phrase` accepts for
 # `waitingFor`: somebody who can create a directory on this machine can put
@@ -4439,41 +4458,52 @@ def _snapshot_or_empty():
     """
     snap = session_watcher.snapshot if session_watcher is not None else \
         session_watch.Snapshot()
-    return snap.excluding(_jarvis_run_session_ids()).named(_official_agent_names())
+    return snap.excluding(_jarvis_run_session_ids()).named(_agent_names())
 
 
 # Every agent JARVIS lists or finds comes out of this same snapshot.
 agent_directory.connect(lambda: _snapshot_or_empty())
 
 
-# The names the user has set for agents (run_store.rename_agent), read on
-# every snapshot access, so cached for a moment; a rename clears the cache.
-_OFFICIAL_NAMES_TTL_SEC = 1.0
-_official_names_cache: tuple[float, dict] = (0.0, {})
+# Every agent's one name (run_store.agent_names: set once when first seen,
+# changed only by rename_agent), read on every snapshot access, so cached for
+# a moment; a rename clears the cache.
+_AGENT_NAMES_TTL_SEC = 1.0
+_agent_names_cache: tuple[float, dict] = (0.0, {})
 
 
-def _official_agent_names() -> dict:
-    """session id -> official name. Fails open (no renames) if the store
-    cannot be read, so the roster is never lost over it."""
-    global _official_names_cache
+def _agent_names() -> dict:
+    """session id -> the agent's name. Fails open (the plain derived names)
+    if the store cannot be read, so the roster is never lost over it."""
+    global _agent_names_cache
     now = time.time()
-    stamped, names = _official_names_cache
-    if now - stamped < _OFFICIAL_NAMES_TTL_SEC:
+    stamped, names = _agent_names_cache
+    if now - stamped < _AGENT_NAMES_TTL_SEC:
         return names
     try:
-        names = run_store.official_names()
+        names = run_store.agent_names()
     except sqlite3.OperationalError:
         names = {}                          # before init_db, as for run ids
     except Exception:
-        log.warning("could not read official agent names", exc_info=True)
+        log.warning("could not read the agents' names", exc_info=True)
         names = {}
-    _official_names_cache = (now, names)
+    _agent_names_cache = (now, names)
     return names
 
 
-def _forget_official_names() -> None:
-    global _official_names_cache
-    _official_names_cache = (0.0, {})
+def _name_of(session_id, recorded):
+    """An agent's one name, for a record that names it: what the agents list
+    calls that session now, else the name the record was written with (an
+    agent forgotten after its keep period). Every record read back to him
+    (conversation items, messages) goes through this, so an agent renamed
+    since, or a label stored before names were made one, is never shown or
+    said in place of its name."""
+    return (_agent_names().get(session_id) if session_id else None) or recorded
+
+
+def _forget_agent_names() -> None:
+    global _agent_names_cache
+    _agent_names_cache = (0.0, {})
 
 
 _STATE_WORDS = {
@@ -4553,12 +4583,42 @@ def _resolve_or_explain(name: str):
         # DROPPED rather than replaced.
         return None, _no_such_agent(name), "unresolved"
     if len(matches) > 1:
-        # Every candidate's name, in a sentence with no wrapper: the ambiguity
-        # list was the one site in this function nobody had looked at.
-        names = [_said_name(m, "one of them") for m in matches]
-        listed = ", ".join(names[:-1]) + f" and {names[-1]}"
-        return None, (f"There are {len(matches)}: {listed}. Which one?"), "ambiguous"
+        return None, _ask_which([m.session_id for m in matches]), "ambiguous"
     return matches[0], None, None
+
+
+def _ask_which(session_ids: list[str]) -> str:
+    """Several agents fit what he said: ask which, naming each by its one
+    name with a fact said beside it (what it is doing, its folder when they
+    differ, when it started) and its session id for the brain to pick it by.
+
+    Never a made-up name. Two agents called Denice are each "Denice"; they
+    used to be renamed "the older denice" and "the denice that's working",
+    and those labels were what he heard, what was stored and what was shown
+    (session_watch._assign_voice_names). The fact is said separately; the
+    name is not changed."""
+    agents = {a.session_id: a for a in agent_directory.agents()}
+    sessions = {s.session_id: s for s in _snapshot_or_empty().sessions}
+    folders = {sessions[i].cwd for i in session_ids if i in sessions}
+    now = time.time()
+    lines = []
+    for sid in session_ids:
+        a, s = agents.get(sid), sessions.get(sid)
+        name = _agent_said(a) if a is not None else _said_name(s, "an agent with an unsayable name")
+        state = a.state if a is not None else (s.state if s is not None else None)
+        facts = [_state_word(state)] if state else []
+        if s is not None and len(folders) > 1 and s.cwd:
+            facts.append("in " + _said_name({"voice_name": Path(s.cwd).parent.name},
+                                            "another folder"))
+        if s is not None and s.started:
+            facts.append(f"started {_say_age(now - s.started)}")
+        detail = f" ({', '.join(facts)})" if facts else ""
+        lines.append(f"{name}{detail}, session {_plain_name(sid, 'unknown')}")
+    n = len(session_ids)
+    return (f"{_say_number(n).capitalize()} agents fit that, sir. Which one?\n"
+            + "\n".join(lines)
+            + "\nAsk him by the name and a fact said beside it, never by any other "
+              "name; once he says, use that one's session id.")
 
 
 def _no_such_agent(name: str) -> str:
@@ -4805,7 +4865,7 @@ def tool_list_messages(args: dict) -> str:
     now = time.time()
     lines = []
     for m in messages:
-        to = _said_name({"voice_name": m.agent_name}, "a session")
+        to = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "a session")
         body = m.body
         if len(body) > LIST_MESSAGE_CHARS:
             body = body[:LIST_MESSAGE_CHARS - 1] + "…"
@@ -4825,7 +4885,7 @@ def tool_read_message_reply(args: dict) -> str:
     m = run_store.get_message(number)
     if m is None:
         return f"There is no message {number}; list_messages has them."
-    name = _said_name({"voice_name": m.agent_name}, "That session")
+    name = _said_name({"voice_name": _name_of(m.session_id, m.agent_name)}, "That session")
     if str(m.status) != run_store.MessageStatus.ANSWERED:
         return f"Message {number} to {name} has no answer yet: {_message_state(m, time.time())}."
     if not m.reply:
@@ -4945,15 +5005,21 @@ READBACK_TIMEOUT = 60.0
 # tool, on a turn he drove. Several can be open at once, each with its number,
 # and each is read back and sent on its own by that number; the brain folds
 # only ones that are parts of one message together (`merge_captures`). `read_capture` reads one back to him inside the brain's
-# own turn, lighting the capture box line by line, and `steer_session` sends
-# only a capture read back in full and unchanged since. Sending closes it;
+# own turn, naming who it is for and then lighting the capture box line by
+# line, and `steer_session` sends only a capture he approved, to the recipient
+# its read-back named: read back in full and unchanged since, then a
+# plain yes as the very next thing he said (`_take_read_back_answers`), or his
+# own Send on its box. The brain's call alone never approves one: a yes it
+# infers inside the turn that read it back is no yes. Sending closes it;
 # memory only. The voice page draws each one: white until it is known to be a
 # message for an agent (`to` is set), amber from then on, through sending.
 
 CAPTURE_MAX_CHARS = 4000
 CAPTURE_TO_MAX_CHARS = 80
 # Each: {"id", "text", "to", "heard": [transcript ids], "read": the text as it
-# was last read back in full, or None, "state"}. In the order they opened.
+# was last read back in full, or None, "state"}, the session it is for once
+# addressed ("to_session"), and his approval (`transmission`: "read_to",
+# "asking", "approved"). In the order they opened.
 _captures: dict[int, dict] = {}
 _capture_ids = itertools.count(1)
 
@@ -5011,9 +5077,36 @@ def _show_turn(ws, frame: dict) -> None:
         _enqueue(queue, {"type": "turn", **frame})
 
 
+def _cue_sounds_here(cue: str) -> bool:
+    """Whether a turn cue's sound plays: his capture sounds and that cue on,
+    and him engaged here (never while away or unknown)."""
+    return (voice_control.cue_sounds(voice_control.read_or_defaults(), cue)
+            and _availability() == attention.ENGAGED)
+
+
+def _pause_frame(turn_id: int, stage: str, text: str) -> dict:
+    """A pause cue in his turn, for the one page the turn is gathered from
+    (its own voice socket): the stage it has reached, shown either way, and
+    whether its sound plays (`_cue_sounds_here`). The page plays it only
+    while it is listening, at once or not at all."""
+    return {"state": "pause", "stage": stage, "turnId": turn_id, "text": text,
+            "sound": _cue_sounds_here(stage)}
+
+
+def _heard_frame(turn_id: int, after: Optional[str]) -> dict:
+    """He began speaking, for the one page the turn is gathered from: a new
+    turn started gathering (`after` None), or he resumed after the pause
+    cue `after` was given. Whether the "speech heard" cue sounds
+    (`_cue_sounds_here`), on a resume only when that pause cue sounded too.
+    The page plays it only while listening."""
+    sound = _cue_sounds_here(voice_control.HEARD) and (after is None or _cue_sounds_here(after))
+    return {"state": "heard", "turnId": turn_id, "sound": sound}
+
+
 def _turn_action(ws, action: str) -> str:
     """Act on one page's turn. Answers what happened, as a code: `sent`
-    (committed now), `retrying` (waiting for the recogniser again), `kept`
+    (committed, at once or once the recogniser has caught up with the audio
+    sent until now; words in that audio carry the turn on instead), `retrying` (waiting for the recogniser again), `kept`
     (an unsent draft on that page), or `nothing` (no turn it applies to)."""
     turns = _voice_turns.get(ws)
     if turns is None or action not in TURN_ACTIONS:
@@ -5072,7 +5165,7 @@ def _capture_message(capture: dict, state: Optional[str]) -> dict:
     msg = {"type": "capture", "id": capture["id"], "state": state}
     if state:
         msg.update(text=capture["text"], to=capture["to"], heard=list(capture["heard"]),
-                   accepted=capture["read"] == capture["text"])
+                   accepted=transmission.heard(capture))
         if capture.get("human"):
             # The revision a review's capture is for, so the page puts its
             # buttons only under that revision.
@@ -5110,8 +5203,8 @@ def tool_capture(args: dict) -> str:
         if not found:
             return _no_such_agent(to) + "\nNothing was captured; capture it again with one of these."
         if len(found) > 1:
-            return ("That could be " + ", or ".join(_agent_said(a) for a in found)
-                    + ". Nothing was captured; ask him which, then capture it again.")
+            return (_ask_which([a.session_id for a in found])
+                    + "\nNothing was captured; capture it again with that `to`.")
         to = found[0].name
         to_session = found[0].session_id
     else:
@@ -5128,23 +5221,31 @@ def tool_capture(args: dict) -> str:
     if capture.get("human"):
         return (f"Capture {number} is the review of a message to a person: change it "
                 f"with draft_message and review it again. Nothing was changed.")
+    readdressed = bool(to_session) and to_session != capture.get("to_session")
     changed = capture["text"] != text
-    if changed:
-        capture["read"] = None          # changed: it has to be heard again
+    if changed or readdressed:
+        # A new text or a new recipient: heard and approved again, naming it.
+        transmission.changed(capture)
     capture["text"] = text
-    capture["to"] = to or capture["to"]
+    if to_session:
+        capture["to"], capture["to_session"] = to, to_session
     if _turn_heard is not None and _turn_heard not in capture["heard"]:
         capture["heard"].append(_turn_heard)
-    if changed:
+    if changed or readdressed:
         _record_capture(capture, to_session)
     _capture_show(capture, "capturing")
     if len(_unsent_captures()) > 1:
         return (f"Capture {number} holds it. {_open_captures_note()} Each is "
                 f"read back and sent on its own, by its number; merge_captures "
                 f"only those that are parts of one message.")
-    return (f"Capture {number} holds it. Ask him whether he wants it read back; "
-            f"read_capture reads it. steer_session sends only a capture read "
-            f"back in full since it last changed.")
+    if not capture.get("to_session"):
+        return (f"Capture {number} holds it, but it is not addressed to anyone yet: "
+                f"once he says who it is for, capture it again with that `to`. It is "
+                f"read back naming who it is for, so it cannot be read back until then.")
+    return (f"Capture {number} holds it. Read it back now with read_capture, without "
+            f"asking first: the read-back names {_plain_name(capture['to'], 'its session')} "
+            f"as who it is for. steer_session sends only a capture read back in full "
+            f"since it or its recipient last changed and then approved by his own yes.")
 
 
 def _record_capture(capture: dict, agent_session_id: Optional[str] = None) -> None:
@@ -5192,23 +5293,46 @@ async def tool_read_capture(args: dict) -> str:
         return "I have no voice to read it with."
     if capture.get("staged") or capture.get("state") == "reading":
         return f"Capture {number} is being read or sent already."
-    text = capture["text"]
+    recipient = transmission.recipient(capture)
+    if recipient is None:
+        return _unaddressed(number)
+    text, lead = capture["text"], _read_back_lead(capture)
     _capture_show(capture, "reading")
     utt = _turn_utt
-    last = speech.read_into(utt, text, number) if utt is not None else -1
+    last = speech.read_into(utt, text, number, lead) if utt is not None else -1
     if last >= 0:
         heard = await speech.wait_played(utt, last, timeout=READBACK_TIMEOUT)
     else:
-        heard = await speech.wait_for(speech.read_aloud(text, number), timeout=READBACK_TIMEOUT)
+        heard = await speech.wait_for(speech.read_aloud(text, number, lead),
+                                      timeout=READBACK_TIMEOUT)
     if number in _captures:
-        if heard and capture["text"] == text:
-            capture["read"] = text
+        if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
+            transmission.read_back(capture, text)
         _capture_show(capture, "capturing")
     if heard:
-        return (f"Read back in full. Ask him whether to send capture {number}; "
-                f"on his yes, call steer_session with it.")
+        return (f"Read back in full. Ask him whether to send capture {number}, then "
+                f"end your turn and wait: it can be sent only once the very next "
+                f"thing he says is a plain yes. Never send it in this turn; "
+                f"steer_session refuses it until then.")
     return (f"Interrupted before the end, so capture {number} has not been heard "
             f"in full and cannot be sent until it is read back again.")
+
+
+def _read_back_lead(capture: dict) -> str:
+    """What a read-back opens with to name who the capture is for. A review
+    of a message to a person needs none: its text opens with "To <name>."
+    (`messaging_ports.human_readback`)."""
+    if capture.get("human"):
+        return ""
+    return f"To {_plain_name(capture['to'], 'that session')}."
+
+
+def _unaddressed(number: int) -> str:
+    """Why a capture with no recipient is neither read back nor sent: his
+    yes covers the recipient its read-back names, and this one names none."""
+    return (f"Capture {number} is not addressed to anyone yet, and a read-back names "
+            f"who it is for. Ask him who it is for, then capture it again with that "
+            f"`to`. Nothing was read or sent.")
 
 
 def tool_merge_captures(args: dict) -> str:
@@ -5228,9 +5352,10 @@ def tool_merge_captures(args: dict) -> str:
         return "Give the merged restatement."
     keep, *gone = [_captures[n] for n in numbers]
     keep["text"] = text
-    keep["read"] = None
+    transmission.changed(keep)
     for other in gone:
-        keep["to"] = keep["to"] or other["to"]
+        if not keep.get("to_session") and other.get("to_session"):
+            keep["to"], keep["to_session"] = other["to"], other["to_session"]
         keep["heard"] += [h for h in other["heard"] if h not in keep["heard"]]
         del _captures[other["id"]]
         _record_capture_cleared(other, "JARVIS", f"merged into capture {keep['id']}")
@@ -5241,8 +5366,12 @@ def tool_merge_captures(args: dict) -> str:
             f"reading back before it can be sent.")
 
 
-def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
-    """(the capture, None), or (None, why it cannot be sent)."""
+def _capture_to_send(number, to: Optional[tuple[str, str]] = None
+                     ) -> tuple[Optional[dict], Optional[str]]:
+    """(the capture, None), or (None, why it cannot be sent). `to` is where
+    the send would take it, (recipient identity, its name said aloud): his
+    yes covers only the recipient its read-back named, so any other is
+    refused."""
     wanted = _capture_number(number)
     if wanted is None:
         return None, ("There is nothing to send without a capture: capture his "
@@ -5251,11 +5380,150 @@ def _capture_to_send(number) -> tuple[Optional[dict], Optional[str]]:
     if capture is None:
         return None, (f"There is no open capture {wanted}: it was sent, merged "
                       f"or never made. Capture his words again.")
-    if not transmission.accepted(capture):
+    if to is not None and to[0] != transmission.recipient(capture):
+        return None, _other_recipient(wanted, capture, to[1])
+    if not transmission.heard(capture):
         return None, (f"Capture {wanted} has not been read back to him in full "
                       f"since it last changed. Call read_capture first; nothing "
                       f"is sent unheard.")
+    if not transmission.accepted(capture):
+        return None, _not_approved(wanted, capture)
     return capture, None
+
+
+def _other_recipient(number: int, capture: dict, said: str) -> str:
+    """Why a capture is not sent to a recipient other than its own."""
+    if transmission.recipient(capture) is None:
+        return _unaddressed(number)
+    return (f"Capture {number} is for {_plain_name(capture['to'], 'someone else')}, not "
+            f"{said}: his yes covers only the recipient its read-back names. If he wants "
+            f"it to go to {said}, capture it again with `to` naming {said}, read it back "
+            f"(the read-back names {said}) and wait for his yes. Nothing was sent.")
+
+
+def _not_approved(number: int, capture: dict) -> str:
+    """Why a capture that was read back cannot be sent yet: his yes is
+    the gate, and the brain's call alone never stands in for it."""
+    if transmission.awaiting_answer(capture):
+        return (f"Capture {number} was read back, but he has not said yes to it. "
+                f"Ask him whether to send it and end your turn: it can be sent only "
+                f"once the very next thing he says is a plain yes, or he presses "
+                f"Send on its box. Nothing was sent.")
+    return (f"Capture {number} has not been approved: the first thing he said after "
+            f"its read-back was not a plain yes, or a send of it did not go. Read it "
+            f"back again with read_capture and wait for his yes. Nothing was sent.")
+
+
+def _take_read_back_answers() -> list[tuple[int, dict]]:
+    """Every utterance of his, spoken or typed, is the answer to the
+    read-backs waiting for one: the question closes, whatever he said. The
+    (number, capture) pairs it answers, for `_approve_on_his_yes` once his
+    words are known to go to the brain as an ordinary turn."""
+    asked = [(n, c) for n, c in _captures.items() if transmission.awaiting_answer(c)]
+    for _number, capture in asked:
+        transmission.close_question(capture)
+    return asked
+
+
+def _approve_on_his_yes(asked: list[tuple[int, dict]], text: str) -> list[int]:
+    """His words after a read-back, on their way to the brain: a plain yes
+    or an instruction to send (`_send_instruction`) approves exactly the text
+    each capture had when it was read back, for the recipient that read-back
+    named, if it is still open and unchanged. "Send it to <name>" approves
+    only the captures whose recipient <name> is; the others it approves
+    nothing of, and the brain is told why. The numbers approved."""
+    said = _send_instruction(text)
+    if said is None:
+        return []
+    approved, elsewhere = [], []
+    for number, capture in asked:
+        if _captures.get(number) is not capture:
+            continue
+        if said and not _names_recipient(said, capture):
+            elsewhere.append(capture)
+            continue
+        if transmission.said_yes(capture):
+            approved.append(number)
+    if approved:
+        names = ", ".join(str(n) for n in approved)
+        log.info("read-back approved by his yes: captures %s (utterance=%r)", names, text)
+        _notes_for_brain.append(
+            f"His yes approved capture{'s' if len(approved) > 1 else ''} {names}, read "
+            f"back to him just before: send {'them' if len(approved) > 1 else 'it'} now "
+            f"(steer_session, or send_message for a message to a person).")
+    for capture in elsewhere:
+        named = _plain_name(said, "someone else")
+        log.info("read-back not approved: capture %s is for %r, he said send it to %r",
+                 capture["id"], capture["to"], said)
+        _notes_for_brain.append(
+            f"He said to send it to {named}, but capture {capture['id']} was read back "
+            f"to him as going to {_plain_name(capture['to'], 'someone else')}, so nothing "
+            f"was approved and nothing may be sent. If he wants it to go to {named}, "
+            f"address it there (capture with `to`, or draft_message for a person), read "
+            f"it back naming {named} and wait for his yes.")
+    return approved
+
+
+def _names_recipient(said: str, capture: dict) -> bool:
+    """Whether `said`, the name in his "send it to <name>", is exactly the
+    recipient the capture is for: the one agent session, or the one person,
+    it resolves to. A name that resolves to several, or to none, is not."""
+    if capture.get("human"):
+        human = messaging.human if messaging is not None else None
+        found = message_approvals.github_ids_called(said, human) if human else []
+        found = [transmission.person_recipient(g) for g in found]
+    else:
+        found = [transmission.session_recipient(a.session_id)
+                 for a in agent_directory.find(said, last_mentioned=last_mentioned_session)]
+    return found == [transmission.recipient(capture)]
+
+
+# An instruction to send may name where ("send it to chitauri"), so it may be
+# longer than a plain yes, but not a whole sentence.
+SEND_ANSWER_MAX_WORDS = 8
+# Before the name in "send it to chitauri" / "envíalo a chitauri", and what
+# may follow an instruction to send without changing it.
+_SEND_TO_WORDS = ("to", "a", "al")
+_SEND_TRAILING_WORDS = ("now", "please", "ahora", "ya")
+
+
+def _send_answer(text: str) -> bool:
+    """Whether his words after a read-back approve it (`_send_instruction`)."""
+    return _send_instruction(text) is not None
+
+
+def _send_instruction(text: str) -> Optional[str]:
+    """His words after a read-back as an approval: None when they are not
+    one; "" for a plain yes (`_rotation_answer`) or an explicit instruction
+    to send ("send it", "envíalo"); the name for one that says where ("send
+    it to chitauri"), which then approves only that recipient. No word of
+    refusal or delay may be anywhere in it."""
+    if _rotation_answer(text) is True:
+        return ""
+    words = _action_words(text)
+    if words and words[0] in ("jarvis", "ok", "okay", "yes", "yeah", "please"):
+        words = words[1:]
+    vocabulary = spoken_words.vocabulary()
+    if not words or len(words) > SEND_ANSWER_MAX_WORDS:
+        return None
+    if any(w in vocabulary.no_words for w in words):
+        return None
+    joined = " ".join(words)
+    for phrase in vocabulary.send_phrases:
+        if joined != phrase and not joined.startswith(phrase + " "):
+            continue
+        rest = joined[len(phrase):].split()
+        while rest and rest[0] in _SEND_TRAILING_WORDS:
+            rest.pop(0)
+        while rest and rest[-1] in _SEND_TRAILING_WORDS:
+            rest.pop()
+        if not rest:
+            return ""
+        if rest[0] in _SEND_TO_WORDS:
+            rest = rest[2:] if rest[:2] == ["a", "la"] else rest[1:]
+            if rest:
+                return " ".join(rest)
+    return None
 
 
 def _capture_transmitting(capture_id: Optional[int]) -> None:
@@ -5302,7 +5570,10 @@ def tool_list_captures(args: dict) -> str:
         return "No capture boxes are open." + cleared_note
     lines = []
     for c in _captures.values():
-        heard = "read back in full" if c["read"] == c["text"] else "not read back since it changed"
+        heard = ("approved by him" if transmission.accepted(c) else
+                 "read back, waiting for his yes" if transmission.awaiting_answer(c) else
+                 "read back, not approved (read it back again)" if transmission.heard(c) else
+                 "not read back since it changed")
         going = ", staged to send" if c.get("staged") else ""
         going += ", a message to a person: send_message sends it" if c.get("human") else ""
         lines.append(f"Capture {c['id']} ({c['state']}, {heard}{going})"
@@ -5349,6 +5620,8 @@ def _restore_capture(number: int, notice_id: Optional[int] = None,
     capture = {"id": new_number, "text": item.text, "to": item.agent_name or "",
                "heard": list(item.detail.get("heard") or []), "read": None,
                "state": "capturing"}
+    if item.agent_name and item.agent_session_id:
+        capture["to_session"] = item.agent_session_id
     _captures[new_number] = capture
     _record_capture(capture, item.agent_session_id)
     _record(conversation_log.ItemKind.NOTICE,
@@ -5426,6 +5699,20 @@ def _capture_accepted(capture: dict) -> None:
     _capture_show(capture, capture["state"])
 
 
+def _capture_approved(capture: dict) -> None:
+    """His own Send: read on the screen and approved, by his hand."""
+    transmission.approve(capture)
+    _capture_show(capture, capture["state"])
+
+
+def _refuse_unaddressed(capture: dict) -> None:
+    """Read or accepted, a capture names who it is for; one for no one yet
+    is refused, as Send refuses it."""
+    if transmission.recipient(capture) is None:
+        raise HTTPException(status_code=409,
+                            detail="It isn't addressed to anyone yet: tell me who it is for.")
+
+
 def _refuse_an_agent_approving(request: Request, capture: dict) -> None:
     """A message to a person is approved by him alone: an agent admitted on
     an access key may draft it and ask for the review, never accept or
@@ -5440,11 +5727,12 @@ async def api_capture_accept(number: int, request: Request):
     """He has read it on the screen: it counts as read back in full."""
     capture = _open_capture_or_404(number)
     _refuse_an_agent_approving(request, capture)
+    _refuse_unaddressed(capture)
     _capture_accepted(capture)
     _notes_for_brain.append(
         f"He accepted capture {number} on screen: it counts as read back to him "
-        f"in full, so do not read it back. Send it with steer_session when he "
-        f"says to.")
+        f"in full, so do not read it back. It goes only if the next thing he says "
+        f"is a plain yes; ask him whether to send it.")
     return {"capture": number, "accepted": True}
 
 
@@ -5460,24 +5748,25 @@ async def api_capture_read(number: int):
         raise HTTPException(status_code=409, detail="It is being read now.")
     if speech is None:
         raise HTTPException(status_code=409, detail="I have no voice to read it with.")
+    _refuse_unaddressed(capture)
     text = capture["text"]
     _capture_show(capture, "reading")
-    utt = speech.read_aloud(text, number)
-    _spawn(_finish_reading_aloud(capture, text, utt))
+    utt = speech.read_aloud(text, number, _read_back_lead(capture))
+    _spawn(_finish_reading_aloud(capture, text, transmission.recipient(capture), utt))
     return {"capture": number, "reading": True}
 
 
-async def _finish_reading_aloud(capture: dict, text: str, utt) -> None:
+async def _finish_reading_aloud(capture: dict, text: str, recipient: str, utt) -> None:
     heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
     number = capture["id"]
     if _captures.get(number) is not capture:
         return                                  # sent, merged or deleted meanwhile
-    if heard and capture["text"] == text:
-        capture["read"] = text
+    if heard and capture["text"] == text and transmission.recipient(capture) == recipient:
+        transmission.read_back(capture, text)
         _notes_for_brain.append(
             f"He had capture {number} read aloud from its box and heard it to the "
-            f"end: it counts as read back in full. Send it with steer_session when "
-            f"he says to.")
+            f"end: it counts as read back in full. It goes only if the next thing he "
+            f"says is a plain yes; ask him whether to send it.")
     _capture_show(capture, "capturing")
 
 
@@ -5514,17 +5803,16 @@ async def api_capture_send(number: int, request: Request):
         raise HTTPException(status_code=409, detail="It is already being sent.")
     if capture.get("human"):
         # A reviewed message to a person: Send is his yes to that revision.
-        _capture_accepted(capture)
+        _capture_approved(capture)
         message_id, problem = _stage_human_capture(capture, "gui")
         to = capture["to"]
     else:
-        if not capture["to"]:
-            raise HTTPException(status_code=409,
-                                detail="It isn't addressed to anyone yet: tell me who it is for.")
-        session, problem, _reason = _resolve_or_explain(capture["to"])
+        _refuse_unaddressed(capture)
+        # The session it is addressed to, by its id: the recipient his Send approves.
+        session, problem, _reason = _resolve_or_explain(capture["to_session"])
         if problem:
-            raise HTTPException(status_code=409, detail=problem)
-        _capture_accepted(capture)
+            raise HTTPException(status_code=409, detail=_no_such_agent(capture["to"]))
+        _capture_approved(capture)
         message_id, problem = _stage_capture(session, capture)
         to = _said_name(session)
     if problem:
@@ -5773,9 +6061,11 @@ class _CaptureBox:
 
     def reopen(self, capture_id: Optional[int]) -> None:
         # Not sent (cancelled, no voice, failed): the capture is his to deal
-        # with again, so it counts as open once more.
+        # with again, so it counts as open once more, and his yes was spent
+        # on the send that did not go.
         if capture_id in _captures:
             _captures[capture_id]["staged"] = False
+            transmission.withdraw(_captures[capture_id])
 
 
 async def _transmit(destination: transmission.Destination) -> None:
@@ -6085,9 +6375,10 @@ async def tool_steer_session(args: dict) -> str:
     """Validate the user's decision and STAGE it; the server sends it later.
 
     The policy the user chose: the message is a capture the brain has read
-    back to him in full (`read_capture`), and once he says to send it JARVIS
-    waits a moment and sends unless told to stop. Silence is consent; 'wait'
-    is not.
+    back to him in full (`read_capture`) and that he then approved with a
+    plain yes as the very next thing he said (or his Send on its box); the
+    brain's call alone is never his yes. Once approved, JARVIS waits a moment
+    and sends unless told to stop.
 
     The waiting and sending cannot happen here. This handler runs mid-turn,
     called by the brain through the MCP child, while `speech.begin_turn()`'s
@@ -6117,15 +6408,18 @@ async def tool_steer_session(args: dict) -> str:
         return problem
     # The text is never the brain's to write here: it is a capture of Tim's
     # own words, made on his turn (`capture`), named by its number.
-    capture, problem = _capture_to_send(args.get("capture"))
+    held = _captures.get(_capture_number(args.get("capture")))
+    if held is not None and held.get("human"):
+        return (f"Capture {held['id']} is a message to a person, not to a session: "
+                f"send it with send_message. Nothing was sent.")
+    capture, problem = _capture_to_send(
+        args.get("capture"),
+        (transmission.session_recipient(session.session_id), _said_name(session)))
     if problem:
         # No capture, no message: nothing was formed to record as one.
         run_store.record_steer(session.session_id, session.voice_name,
                                session.project, "", "no_capture")
         return problem
-    if capture.get("human"):
-        return (f"Capture {capture['id']} is a message to a person, not to a session: "
-                f"send it with send_message. Nothing was sent.")
 
     global last_mentioned_session
     last_mentioned_session = session.session_id
@@ -8426,15 +8720,55 @@ def _voice_input_settings_said(settings: dict) -> str:
     stop = {"keep": "keep the words already captured",
             "discard": "discard unfinished input"}[settings["stop"]]
     switch = {"continue": "keep listening", "stop": "stop listening"}[settings["switch"]]
-    patience = f"His turn ends after {settings['patience']:g} seconds of quiet. "
+    patience = (f"His patience: his turn is sent after {settings['patience']:g} seconds of quiet, "
+                "the four pause intervals added up. ")
+    sounds = ("A quiet sound plays when listening starts and when it stops. " if settings["sounds"]
+              else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
     said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
-            f"from JARVIS, it will {switch}. {patience}These are {whose}'s settings")
+            f"from JARVIS, it will {switch}. {patience}{sounds}{_cues_said(settings)}"
+            f"These are {whose}'s settings")
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
 
 
+_STAGE_SAID = {"start": "listening started", "stop": "listening stopped",
+               "heard": "speech heard (he began speaking)",
+             "tentative": "tentative (he may be done)",
+             "deciding": "deciding (whether he is done)",
+             "likely": "likely end (about to send)"}
+
+
+def _pause_said(settings: dict) -> str:
+    """The pause stages in order, each with its interval after the stage
+    before and its time after he stops (voice_control.schedule_of), as
+    Settings shows them."""
+    parts = []
+    for stage, at in voice_control.schedule_of(settings):
+        wait = settings["intervals"][stage]
+        if stage in voice_control.PAUSE_CUES:
+            cue = settings["cues"][stage]
+            sound = f"tone {cue['tone']}" if cue["on"] else "off, silent"
+            parts.append(f"{_STAGE_SAID[stage]} cue ({sound}) {wait:g} s later, "
+                         f"at {at:g} s")
+        else:
+            parts.append(f"sent {wait:g} s later, at {at:g} s")
+    return ("Pause intervals, each after the one before, from when his speech was last "
+            "heard: " + "; then ".join(parts) + ". ")
+
+
+def _cues_said(settings: dict) -> str:
+    """Each capture cue: on or off and its tone, then the pause."""
+    parts = []
+    for name in voice_control.LISTEN_CUES + (voice_control.HEARD,):
+        cue = settings["cues"][name]
+        parts.append(f"{_STAGE_SAID[name]}: {'on' if cue['on'] else 'off'}, tone {cue['tone']}")
+    master = "" if settings["sounds"] else " (all silent while capture sounds are off)"
+    return (f"Cues{master}: " + "; ".join(parts) + ". " + _pause_said(settings)
+            + f"Cue volume {settings['volume']} percent. ")
+
+
 async def tool_voice_input_settings(args: dict) -> str:
-    """His two voice input settings: what the Settings route reads."""
+    """His voice input settings: what the Settings route reads."""
     try:
         return _voice_input_settings_said(voice_control.read())
     except voice_control.Unreadable as e:
@@ -8442,28 +8776,57 @@ async def tool_voice_input_settings(args: dict) -> str:
 
 
 async def tool_set_voice_input_settings(args: dict) -> str:
-    """Change one or both voice input settings: the Settings route's
+    """Change any of his voice input settings: the Settings route's
     `voice_control.change`, with its validation. An ACTING tool. It starts,
     stops and sends nothing; it applies from the next stop or page switch."""
     try:
         settings = voice_control.change(stop=args.get("stop"), switch=args.get("switch"),
-                                        patience=args.get("patience"))
+                                        intervals=args.get("intervals"), sounds=args.get("sounds"),
+                                        cues=args.get("cues"), volume=args.get("volume"))
     except voice_control.Invalid as e:
         return f"Nothing was changed, sir: {e.message}"
     except voice_control.Unreadable as e:
         return f"Nothing was changed, sir: {e}"
     return ("Saved. " + _voice_input_settings_said(settings)
-            + " It applies from the next time he stops the microphone or leaves the page.")
+            + " It applies from the next time he stops the microphone or leaves the page, the "
+              "intervals from his next pause.")
+
+
+# A cue played once on his page, as Settings' Test button plays it.
+CUE_TEST_FRAME = "cue_test"
+
+
+async def tool_play_cue(args: dict) -> str:
+    """Settings' Test button for one capture cue, by voice or typing: the
+    page of this turn plays it once, with its tone and the cue volume, on
+    or off. An ACTING tool: it makes a sound; it changes nothing."""
+    # JARVIS's own name for the cue, never the brain's text: what is said and
+    # sent is the table's word for it.
+    cue = next((name for name in voice_control.CUES if name == args.get("cue")), None)
+    if cue is None:
+        return f"Say which cue: {', '.join(voice_control.CUES)}. Nothing was played."
+    # The page his words came from, else the only page open.
+    page, why = ui_clients.target_page(None, _ui_origin(), _turn_heard)
+    if page is None and len(ui_clients.pages()) == 1:
+        page = ui_clients.pages()[0]
+    queue = _voice_queues.get(page.ws) if page is not None else None
+    if queue is None:
+        return f"Nothing was played, sir: {why or 'no JARVIS page is open'}."
+    _enqueue(queue, {"type": CUE_TEST_FRAME, "cue": cue})
+    return (f"Played the {_STAGE_SAID[cue]} cue once on his page, sir, unless the page has not "
+            "been allowed to play sound yet.")
 
 
 TOOL_HANDLERS.update({
     "voice_input_settings": tool_voice_input_settings,
     "set_voice_input_settings": tool_set_voice_input_settings,
+    "play_cue": tool_play_cue,
 })
-ACTING_TOOLS.update({"set_voice_input_settings"})
+ACTING_TOOLS.update({"set_voice_input_settings", "play_cue"})
 TAINT_EXEMPT_TOOLS.update({
-    "voice_input_settings": "it reads his own two voice input settings: fixed values",
+    "voice_input_settings": "it reads his own voice input settings: fixed values",
     "set_voice_input_settings": "it changes his voice input settings to fixed values, it does not read",
+    "play_cue": "it plays one fixed cue on his page; it reads nothing",
 })
 
 
@@ -8820,6 +9183,7 @@ def _conversation_json(items: list) -> dict:
     out = []
     for item in items:
         row = dataclasses.asdict(item)
+        row["agent_name"] = _name_of(item.agent_session_id, item.agent_name)
         m = messages.get(item.message_id) if item.message_id is not None else None
         row["message"] = None if m is None else {
             "id": m.id, "status": str(m.status), "answered": bool(m.reply),
@@ -8844,8 +9208,8 @@ async def api_conversation_thread(session_id: str, before: Optional[int] = None,
     body = await asyncio.to_thread(_conversation_json, items)
     agent = next((a for a in agent_directory.agents() if a.session_id == session_id), None)
     body["agent"] = {"session_id": session_id,
-                     "name": agent.name if agent else next(
-                         (i.agent_name for i in reversed(items) if i.agent_name), None),
+                     "name": agent.name if agent else _name_of(session_id, next(
+                         (i.agent_name for i in reversed(items) if i.agent_name), None)),
                      "state": agent.state if agent else "gone"}
     return body
 
@@ -8858,7 +9222,8 @@ def _history_line(item, message) -> str:
     who = {"heard": "He said", "typed": "He typed", "jarvis": "You said",
            "capture": "Captured", "to_agent": "To", "from_agent": "From",
            "answer": "Answer from", "notice": "Notice"}[str(item.kind)]
-    agent = f" {item.agent_name}" if item.agent_name and str(item.kind) in (
+    named = _name_of(item.agent_session_id, item.agent_name)
+    agent = f" {named}" if named and str(item.kind) in (
         "to_agent", "from_agent", "answer") else ""
     status = f" [message {message.id}, {message.status}]" if message is not None else ""
     when = time.strftime("%d %b %H:%M", time.localtime(item.at))
@@ -9118,8 +9483,7 @@ def _find_agent(args: dict) -> tuple[dict | None, str | None]:
     if not matches:
         return None, _no_such_agent(wanted)
     if len(matches) > 1:
-        return None, ("That could be " + ", or ".join(_agent_said(a) for a in matches)
-                      + ", sir. Which one?")
+        return None, _ask_which([a.session_id for a in matches])
     return {"session_id": matches[0].session_id, "name": matches[0].name}, None
 
 
@@ -11664,6 +12028,84 @@ def tool_project_note(args: dict) -> str:
     return f"Noted against {_plain_name(project, 'that project')}."
 
 
+def _note_number(args: dict) -> int | None:
+    try:
+        number = int(str(args.get("number") or "").strip())
+    except ValueError:
+        return None
+    return number if number >= 1 else None
+
+
+def tool_project_notes(args: dict) -> str:
+    """One project's notes, numbered, so one can be edited or removed by
+    number. What the notes say is memory, read back inside a block as
+    `tool_recall` reads it."""
+    project = str(args.get("project") or "").strip()
+    if not project:
+        return "Which project's notes?"
+    name = _plain_name(project, "that project")
+    notes = jarvis_memory.project_notes(project)
+    if not notes:
+        return f"I have no notes on {name}."
+    lines = "\n".join(f"{n.number}. [{n.stamp}] {n.text}" for n in notes)
+    return (f"Notes on {name}, by number:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, lines)}")
+
+
+def _project_note_target(args: dict):
+    """The note `edit_project_note` and `remove_project_note` name: the
+    project, the number, the text expected and the project's name as it may
+    be said — or the sentence that says what is missing."""
+    project = str(args.get("project") or "").strip()
+    expect = str(args.get("expect") or "").strip()
+    number = _note_number(args)
+    if not project or number is None or not expect:
+        return ("I need the project, the note's number and what it says now — "
+                "read them with project_notes first.")
+    return project, number, expect, _plain_name(project, "that project")
+
+
+def _project_note_refused(error: Exception, number: int, name: str) -> str:
+    """Why a change to a note was refused; nothing was changed. What the
+    note says now is memory, so it is said inside a block."""
+    if isinstance(error, jarvis_memory.NoteChanged):
+        return (f"Note {number} on {name} no longer says that, sir, so nothing "
+                "was changed. It says now:\n"
+                f"{_wrap_untrusted(_MEMORY_WRAP_NAME, error.current)}")
+    return (f"There is no note {number} on {name}, sir. Nothing was "
+            "changed; read the notes again with project_notes.")
+
+
+def tool_edit_project_note(args: dict) -> str:
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return "I need the note's new text."
+    target = _project_note_target(args)
+    if isinstance(target, str):
+        return target
+    project, number, expect, name = target
+    try:
+        old = jarvis_memory.edit_project_note(project, number, expect, text)
+    except (jarvis_memory.NoSuchNote, jarvis_memory.NoteChanged) as e:
+        return _project_note_refused(e, number, name)
+    said = f"Was: {old.text}\nNow: {jarvis_memory.one_line(text)}"
+    return (f"Changed note {number} on {name}. It said, and says now:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, said)}")
+
+
+def tool_remove_project_note(args: dict) -> str:
+    target = _project_note_target(args)
+    if isinstance(target, str):
+        return target
+    project, number, expect, name = target
+    try:
+        old = jarvis_memory.remove_project_note(project, number, expect)
+    except (jarvis_memory.NoSuchNote, jarvis_memory.NoteChanged) as e:
+        return _project_note_refused(e, number, name)
+    return (f"Removed note {number} from {name}. It said:\n"
+            f"{_wrap_untrusted(_MEMORY_WRAP_NAME, old.text)}")
+
+
 def tool_write_journal(args: dict) -> str:
     text = str(args.get("text") or "").strip()
     if not text:
@@ -11676,11 +12118,14 @@ TOOL_HANDLERS.update({
     "remember": tool_remember,
     "recall": tool_recall,
     "project_note": tool_project_note,
+    "project_notes": tool_project_notes,
+    "edit_project_note": tool_edit_project_note,
+    "remove_project_note": tool_remove_project_note,
     "write_journal": tool_write_journal,
 })
-# These three WRITE. A watcher-origin turn must never reach them, or text from
+# These WRITE. A watcher-origin turn must never reach them, or text from
 # somebody else's transcript could plant a "fact" JARVIS then repeats as his own.
-ACTING_TOOLS.update({"remember", "project_note", "write_journal"})
+ACTING_TOOLS.update(MEMORY_WRITERS)
 
 
 @app.websocket("/ws/sessions")
@@ -12047,6 +12492,9 @@ async def voice_handler(ws: WebSocket):
         log.info(f"User{' (typed)' if typed else ''}: {text}")
         _record(conversation_log.ItemKind.TYPED if typed else conversation_log.ItemKind.HEARD,
                 text, detail={"client_turn_id": heard} if heard is not None else {})
+        # Whatever he said answers the read-backs waiting for it; only a
+        # plain yes that goes on to the brain as his turn approves them.
+        read_backs = _take_read_back_answers()
         cleared = _take_clear_answer(text)
         if cleared:
             return
@@ -12061,6 +12509,7 @@ async def voice_handler(ws: WebSocket):
             return                  # a plain no: consumed, not a request
         if _take_rotation_answer(text):
             return
+        _approve_on_his_yes(read_backs, text)
         _spawn(_handle_utterance(text, heard))
 
     def show_turn(frame: dict) -> None:
@@ -12070,16 +12519,19 @@ async def voice_handler(ws: WebSocket):
         show_turn({"state": "committed", "turnId": turn_id})
         await take_utterance(text, heard)
 
-    # His patience: one value for the hold here and for when JARVIS may
-    # start talking (voice_control.py).
-    patience = voice_control.patience()
-    if speech is not None:
-        speech.end_of_turn = patience
+    # His patience: one value for the hold here (the schedule's total, read
+    # each time the hold starts) and for when JARVIS may start talking
+    # (voice_control.py).
+    _follow_patience()
     turns = TurnController(
-        commit_turn, hold=patience, coverage=_capture_coverage, epoch_floor=_capture_epoch,
+        commit_turn, schedule=lambda: voice_control.schedule_of(voice_control.read_or_defaults()),
+        coverage=_capture_coverage, epoch_floor=_capture_epoch,
         on_stalled=lambda turn_id, text: show_turn(
             {"state": "stalled", "turnId": turn_id, "text": text}),
-        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)))
+        on_resumed=lambda turn_id: _spawn(_take_back_the_floor(turn_id)),
+        on_pause=lambda turn_id, stage: show_turn(
+            _pause_frame(turn_id, stage, turns.gathered_text)),
+        on_heard=lambda turn_id, after: show_turn(_heard_frame(turn_id, after)))
     _voice_turns[ws] = turns
 
     try:

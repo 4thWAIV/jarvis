@@ -18,7 +18,7 @@ A cancellation race also exists in the simple hold timer: `_wait` schedules a ca
 
 Use a shared conversation-floor controller with persisted patience settings, then make both dispatch and audible output consult it. Do not replace ASR, speech output or the existing transmission approval flow.
 
-Trial defaults: tentative cue after 1.5 seconds of accepted-recognition inactivity; likely-end cue after 3 seconds; turn commit after 4 seconds. The last interval is an extra opportunity to continue, not immediate permission to speak. These are starting values for a local listening trial, not measured optimal timings. Do not claim these occur exactly 1.5/3/4 seconds after acoustic silence; recognition finalization changes the observed timing. Compare with 3.5 seconds if four feels too slow.
+Trial defaults: tentative cue after 1.5 seconds of accepted-recognition inactivity; likely-end cue after 3 seconds; turn commit after 4 seconds. (As built, 2026-11-05: the pause is four intervals, each set on its own and measured from the point before: to the tentative cue, to a third cue between them, Deciding, to the likely-end cue, and to the commit; defaults 1.0, 0.75, 0.75 and 0.5 seconds, so the cues after 1.0, 1.75 and 2.5 seconds and the commit at 3.0, the total being his patience; every cue always before the commit and in order; see [completion-cues](backlog/completion-cues.md#pause-cue-timing).) The last interval is an extra opportunity to continue, not immediate permission to speak. These are starting values for a local listening trial, not measured optimal timings. Do not claim these occur exactly 1.5/3/4 seconds after acoustic silence; recognition finalization changes the observed timing. Compare with 3.5 seconds if four feels too slow.
 
 The first code checkpoint can deliver the four-second shared hold, stale-callback protection and routine-notification suppression without audible cues. Add the two cues to that same local candidate after cancellation, audio ownership and echo behavior pass. Do not use `speech.say` to generate the tones or add two spoken prompts.
 
@@ -29,13 +29,14 @@ The first code checkpoint can deliver the four-second shared hold, stale-callbac
 | Idle/listening | No pending human utterance or reply | Eligible background digest only after its own quiet/cooldown policy |
 | Gathering | User owns the floor; finalized/interim segments belong to one utterance | No unsolicited speech |
 | Tentative end | First patience threshold reached, user still owns the floor | One optional soft cue plus existing orb/listening indication |
-| Likely end | Second threshold reached, user still owns the floor | Second optional soft cue; no digest or response playback |
+| Deciding | Middle threshold reached (added 2026-11-05), user still owns the floor | One optional soft cue of its own; no digest or response playback |
+| Likely end | Last threshold reached, user still owns the floor | Last optional soft cue; no digest or response playback |
 | Commit pending | Deadline reached; recognition and activity revision being checked | No speech until check succeeds |
 | Awaiting reply | One user turn dispatched | Only that reply/explicit requested readback may take the floor when still eligible |
 | Reply playing | Assistant has the floor while user may barge in | Current utterance only; queued events remain visual |
 | Away/unknown | User not available or availability not established | No ordinary speech or cue; persistent visual summary |
 
-Accepted speech at either cue stage immediately returns to gathering, cancels the cue/commit generation and extends the same buffered utterance. Merely reaching a likely-end threshold never dispatches an action. Do not speculate a model/tool turn at the first cue; resumed speech would otherwise arrive after an action has already started.
+Accepted speech at any cue stage immediately returns to gathering, cancels the cue/commit generation and extends the same buffered utterance. Merely reaching a likely-end threshold never dispatches an action. Do not speculate a model/tool turn at the first cue; resumed speech would otherwise arrive after an action has already started.
 
 An explicit typed submit is intentional completion and keeps its immediate behavior. A dedicated Send-now control may commit the current utterance without waiting; it must have a brain-callable equivalent under UI parity. Hush remains immediate. If a spoken wait phrase is accepted, keep gathering or explicitly hold; never auto-repeat a reminder each few seconds.
 
@@ -47,7 +48,7 @@ An explicit typed submit is intentional completion and keeps its immediate behav
 4. Recheck the same state at the actual audio-start boundary, after synthesis/loading. If the user resumed, hold or cancel the stale response before playback. Avoid assuming the check at model dispatch is enough.
 5. If a continuation arrives after the brain turn was already committed, preserve it as a next user input and prevent the now-stale spoken reply from barging over it. Do not rewind or silently duplicate already-started tool actions.
 6. Hold current finalized words if a later recognized segment is still interim-only. Preserve a pending-segment identity. Recognition backlog/failure is not silence: map the originating transcription session and its backlog/health to the floor controller; require relevant audio to be processed before commitment.
-7. A continuous stream always has fresh frames, so requiring total queue length zero forever is wrong. Use capture/processed sequence watermarks and a bounded lag threshold appropriate to frame timing. Capture identity must match the voice client; do not use a global worst/last monitor value.
+7. A continuous stream always has fresh frames, so requiring total queue length zero forever is wrong. Use capture/processed sequence watermarks and a bounded lag threshold appropriate to frame timing. Capture identity must match the voice client; do not use a global worst/last monitor value. (As built, 2026-11-05: the watermark is the frames the page has sent by the send moment, the deadline or Send now, not by the start of the hold, and a frame whose interim is held back to coalesce is not processed until that interim has gone to the page; words from that last stretch of audio carry the turn on instead of sending it.)
 8. If recognition stalls, preserve the partial text and show the existing voice-health condition with Retry/Send visible. Do not send only the old final portion as if the sentence were complete. A bounded error state is better than an invisible infinite wait; recovery must not duplicate buffered text.
 9. A raw level meter may veto output conservatively but must not establish turn completion or user identity. Stronger speech activity requires a tested VAD/AEC path; do not claim the current RMS/ASR event stream provides one.
 

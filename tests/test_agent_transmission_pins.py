@@ -9,10 +9,13 @@ the code BEFORE the extraction and must pass unchanged after it. Each drives
 the server's own entry points (the brain's tools, the capture box's buttons
 and the staged-send drain), with the provider faked at `_deliver`:
 
-    voice read-back      read_capture heard in full -> steer_session stages
-                         -> the drain sends exactly the capture's text
+    voice read-back      read_capture heard in full -> his plain yes as the
+                         next thing he says -> steer_session stages -> the
+                         drain sends exactly the capture's text (the yes gate
+                         was added after the extraction: 2026-11-05)
     changed capture      a capture changed after its read-back is refused
-    GUI acceptance       Accept counts as read back; Send accepts and sends
+    GUI acceptance       Accept counts as read back, his yes still to come;
+                         Send approves and sends
     cancellation         the cancel window, and Delete while staged
     turn deferral        a send staged mid-turn waits for the turn to end
     queue                a busy session queues it; priority skips the queue
@@ -53,7 +56,7 @@ class _Speech:
         self.said.append(text)
         return _Utterance()
 
-    def read_aloud(self, text, capture):
+    def read_aloud(self, text, capture, lead=""):
         self.read.append((capture, text))
         return _Utterance()
 
@@ -119,12 +122,27 @@ def wire(server, monkeypatch):
 def _capture(server, text, to="guard"):
     server.tool_capture({"text": text})
     number = max(server._captures)
+    # Addressed as `capture` addresses it: the name and the session it is.
     server._captures[number]["to"] = to
+    if to:
+        server._captures[number]["to_session"] = SID
     return number
 
 
 def _messages(server):
     return server.run_store.list_messages()
+
+
+def _his_yes(server, words="yes"):
+    """The next thing he says, as the voice socket takes it: the numbers it
+    approved."""
+    return server._approve_on_his_yes(server._take_read_back_answers(), words)
+
+
+async def _accepted_and_approved(server, n):
+    """Accept on screen, then his plain yes."""
+    await server.api_capture_accept(n, PAGE)
+    assert _his_yes(server) == [n]
 
 
 def _drew(wire):
@@ -139,6 +157,7 @@ async def test_voice_read_back_then_steer_sends_exactly_the_heard_text_once(serv
     out = await server.tool_read_capture({"capture": n})
     assert out.startswith("Read back in full")
     assert wire.speech.read == [(n, "Use Postgres, not SQLite.")]
+    assert _his_yes(server) == [n]
 
     staged = await server.tool_steer_session({"name": "guard", "capture": n})
     (m,) = _messages(server)
@@ -204,6 +223,9 @@ async def test_accept_on_screen_counts_as_read_back_for_the_voice_path(server, w
     assert await server.api_capture_accept(n, PAGE) == {"capture": n, "accepted": True}
     assert server._captures[n]["read"] == "Add a health check."
     assert "accepted capture" in server._with_notes_for_brain("")
+    refused = await server.tool_steer_session({"name": "guard", "capture": n})
+    assert "has not said yes" in refused and server._staged_steers == []
+    assert _his_yes(server) == [n]
 
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
@@ -252,7 +274,7 @@ async def test_send_on_screen_refuses_with_409_and_stages_nothing(server, wire):
 async def test_stop_in_the_cancel_window_cancels_and_reopens_the_capture(server, wire):
     wire.speech.cancelled = True
     n = _capture(server, "Drop the table.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
 
@@ -267,7 +289,7 @@ async def test_stop_in_the_cancel_window_cancels_and_reopens_the_capture(server,
 @pytest.mark.asyncio
 async def test_delete_while_staged_cancels_the_send(server, wire):
     n = _capture(server, "Drop the table.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
 
     await server.api_capture_delete(n)
@@ -299,7 +321,7 @@ async def test_a_send_pressed_during_a_turn_waits_for_the_turn_to_end(server, wi
 @pytest.mark.asyncio
 async def test_the_tool_only_stages_and_says_nothing(server, wire):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
     assert wire.sent == [] and wire.speech.said == [] and wire.speech.windows == 0
 
@@ -312,7 +334,7 @@ async def test_a_session_mid_turn_gets_it_queued_on_record(server, wire, monkeyp
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: sw.Snapshot(sessions=[_guard(state="working")]))
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
 
@@ -329,7 +351,7 @@ async def test_priority_skips_the_queue(server, wire, monkeypatch):
     monkeypatch.setattr(server, "_snapshot_or_empty",
                         lambda: sw.Snapshot(sessions=[_guard(state="working")]))
     n = _capture(server, "Stop everything.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n, "priority": True})
     await server._perform_staged_steers()
 
@@ -342,7 +364,7 @@ async def test_priority_skips_the_queue(server, wire, monkeypatch):
 
 async def _send_one(server, text="Add a health check."):
     n = _capture(server, text)
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
     await server._perform_staged_steers()
     (m,) = _messages(server)
@@ -389,7 +411,7 @@ async def test_sent_to_a_session_that_will_ask_first_is_an_update(server, wire, 
 @pytest.mark.asyncio
 async def test_no_voice_at_send_time_fails_without_sending(server, wire, monkeypatch):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     await server.tool_steer_session({"name": "guard", "capture": n})
     monkeypatch.setattr(server, "speech", None)
     await server._perform_staged_steers()
@@ -401,7 +423,7 @@ async def test_no_voice_at_send_time_fails_without_sending(server, wire, monkeyp
 @pytest.mark.asyncio
 async def test_no_voice_at_staging_refuses_and_records_it_failed(server, wire, monkeypatch):
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     monkeypatch.setattr(server, "speech", None)
     refused = await server.tool_steer_session({"name": "guard", "capture": n})
     assert "won't send it to guard unheard" in refused
@@ -414,7 +436,7 @@ async def test_a_session_that_cannot_take_it_is_refused_and_recorded(server, wir
     monkeypatch.setattr(server, "_resolve_or_explain",
                         lambda n: (_guard(steerable=False), None, None))
     n = _capture(server, "Add a health check.")
-    await server.api_capture_accept(n, PAGE)
+    await _accepted_and_approved(server, n)
     refused = await server.tool_steer_session({"name": "guard", "capture": n})
     assert "has no inbox socket" in refused
     (m,) = _messages(server)
@@ -426,7 +448,7 @@ async def test_a_session_that_cannot_take_it_is_refused_and_recorded(server, wir
 async def test_two_staged_in_one_turn_go_in_order(server, wire):
     for text in ("first", "second"):
         n = _capture(server, text)
-        await server.api_capture_accept(n, PAGE)
+        await _accepted_and_approved(server, n)
         await server.tool_steer_session({"name": "guard", "capture": n, "priority": True})
     await server._perform_staged_steers()
     assert [t for _, t, _ in wire.sent] == [server.STEER_SIGNATURE + "first",

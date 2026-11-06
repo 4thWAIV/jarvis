@@ -168,10 +168,38 @@ def test_staging_asks_the_recipient_first_then_the_voice_then_records():
     assert person.opened == [4] and len(staged) == 1 and capture["staged"] is True
 
 
-def test_acceptance_is_heard_or_accepted_since_the_last_change():
+def test_acceptance_is_heard_then_his_yes_since_the_last_change():
     capture = {"text": "hi", "read": None}
     assert not transmission.accepted(capture)
     transmission.accept(capture)
-    assert transmission.accepted(capture)
+    assert transmission.heard(capture) and transmission.awaiting_answer(capture)
+    assert not transmission.accepted(capture), "heard is not his yes"
+    assert transmission.said_yes(capture) and transmission.accepted(capture)
     capture["text"] = "hello"
+    assert not transmission.accepted(capture)
+
+
+def test_a_change_or_a_new_read_back_needs_a_new_yes():
+    capture = {"text": "hi", "read": None}
+    transmission.read_back(capture, "hi")
+    transmission.said_yes(capture)
+    transmission.changed(capture)
+    capture["text"] = "hi"                        # changed back to the same words
+    assert not transmission.heard(capture) and not transmission.accepted(capture)
+    transmission.read_back(capture, "hi")
+    assert not transmission.accepted(capture), "a yes before this read-back is spent"
+
+
+def test_his_send_approves_and_a_send_that_did_not_go_spends_it():
+    capture = {"text": "hi", "read": None}
+    transmission.approve(capture)
+    assert transmission.accepted(capture)
+    transmission.withdraw(capture)
+    assert transmission.heard(capture) and not transmission.accepted(capture)
+    assert not transmission.awaiting_answer(capture)
+
+
+def test_a_yes_to_words_not_heard_approves_nothing():
+    capture = {"text": "hi", "read": None}
+    assert not transmission.said_yes(capture)
     assert not transmission.accepted(capture)

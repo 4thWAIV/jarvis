@@ -8,7 +8,7 @@ audio takes the floor back; and a closed socket commits nothing."""
 
 import pytest
 
-from jarvis.turn_controller import TurnController
+from jarvis.turn_controller import INTERVAL_DEFAULTS, PAUSE_STAGES, TurnController, pause_schedule
 
 
 class Clock:
@@ -49,24 +49,32 @@ class Clock:
 
 
 class Harness:
-    def __init__(self, hold=1.5, leaky=False, frames=None, floor=None):
+    def __init__(self, hold=1.5, leaky=False, frames=None, floor=None, intervals=None):
         self.clock = Clock(leaky)
+        self.intervals = intervals      # {stage: seconds after the stage before}, or a hold alone
+        self.paused: list[tuple] = []   # (turn, stage, when)
+        self.heard: list[tuple] = []    # (turn, the pause cue before it or None)
         self.committed: list[tuple] = []
+        self.committed_at: list[float] = []
         self.stalled: list[tuple] = []
         self.resumed: list[int] = []
         self.frames = frames            # {client: (sent, decoded)}
         self.floor = floor or {}
         self.c = TurnController(
             self._commit, hold=hold,
+            schedule=(lambda: pause_schedule(self.intervals)) if intervals else None,
             coverage=lambda client: (self.frames or {}).get(client),
             epoch_floor=lambda client: self.floor.get(client),
             on_stalled=lambda turn, text: self.stalled.append((turn, text)),
             on_resumed=self.resumed.append,
+            on_pause=lambda turn, stage: self.paused.append((turn, stage, self.clock.now)),
+            on_heard=lambda turn, after: self.heard.append((turn, after)),
             clock=lambda: self.clock.now, call_later=self.clock.call_later,
             spawn=self._spawn)
 
     async def _commit(self, text, heard, turn):
         self.committed.append((text, heard, turn))
+        self.committed_at.append(self.clock.now)
 
     def _spawn(self, coro):
         # Run the commit coroutine to completion at once (it never awaits).
@@ -248,17 +256,115 @@ def test_no_capture_means_nothing_to_wait_for():
     assert h.texts() == ["hello"]
 
 
-def test_send_now_commits_at_once_but_not_before_the_recogniser_has_caught_up():
-    frames = {"page-a": (40, 30)}
+def test_send_now_commits_at_once_when_the_recogniser_has_caught_up():
+    frames = {"page-a": (40, 40)}
     h = Harness(frames=frames)
-    assert h.c.send_now() is False
+    assert h.c.send_now() is False, "nothing to send"
     h.c.final("ship it", 1, client="page-a", epoch=1)
-    assert h.c.send_now() is False
-    frames["page-a"] = (40, 40)
     assert h.c.send_now() is True
-    assert h.texts() == ["ship it"]
+    assert h.texts() == ["ship it"] and h.committed_at == [0.0]
     h.clock.advance(5)
     assert len(h.committed) == 1
+
+
+def test_send_now_waits_for_the_audio_sent_until_he_pressed_it():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("ship it", 1, client="page-a", epoch=1)
+    h.clock.advance(0.5)
+    frames["page-a"] = (45, 43)                  # sent since the hold began, not yet decoded
+    assert h.c.send_now() is True
+    assert h.committed == [] and h.c.state == "commit-pending"
+    h.clock.advance(0.05)
+    frames["page-a"] = (46, 45)
+    h.clock.advance(0.05)
+    assert h.texts() == ["ship it"]
+
+
+def test_send_now_is_carried_on_by_words_in_the_audio_sent_until_he_pressed_it():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("ship it", 1, client="page-a", epoch=1)
+    h.clock.advance(0.5)
+    frames["page-a"] = (45, 40)
+    h.c.send_now()
+    h.clock.advance(0.05)
+    assert h.c.interim("today", client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+
+
+# ── the send moment: the last stretch of audio before the deadline ───────
+
+def _speaks_just_before_the_deadline(h, frames):
+    """He starts again 0.4 s before the deadline: the page has sent those
+    frames, the recogniser has not finished them when the deadline comes."""
+    h.c.final("remind me to call", 1, client="page-a", epoch=1)
+    h.clock.advance(1.1)
+    frames["page-a"] = (44, 40)                  # 0.4 s more audio sent, not yet decoded
+    h.clock.advance(0.4)                         # the deadline
+
+
+def test_words_from_the_audio_sent_in_the_last_half_second_cancel_the_send():
+    frames = {"page-a": (40, 40)}                # all decoded when the hold began
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    assert h.committed == [] and h.c.state == "commit-pending"
+    frames["page-a"] = (45, 43)
+    h.clock.advance(0.06)                        # the recogniser reaches his words
+    assert h.c.interim("my", client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+    frames["page-a"] = (60, 60)
+    h.clock.advance(1.0)
+    h.c.final("my sister", 2, client="page-a", epoch=1)
+    h.clock.advance(1.6)
+    assert h.texts() == ["remind me to call my sister"], "one turn, nothing sent early"
+
+
+def test_a_final_from_that_last_stretch_carries_the_turn_on_too():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    frames["page-a"] = (46, 43)                  # his words out before the rest decoded
+    h.clock.advance(0.04)
+    assert h.c.final("the plumber", 2, client="page-a", epoch=1)
+    assert h.c.state == "gathering" and h.committed == []
+    frames["page-a"] = (70, 70)
+    h.clock.advance(1.6)
+    assert h.texts() == ["remind me to call the plumber"]
+
+
+def test_no_words_in_the_last_stretch_sends_once_the_recogniser_has_caught_up():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)   # a cough: audio, no words
+    h.clock.advance(0.06)
+    assert h.committed == []
+    frames["page-a"] = (45, 44)                  # every frame sent by the deadline decoded
+    h.clock.advance(0.02)
+    assert h.texts() == ["remind me to call"]
+    assert h.committed_at[0] - 1.5 == pytest.approx(0.08), \
+        "the send waited only for the recogniser to catch up (and one look)"
+
+
+def test_a_recogniser_caught_up_at_the_deadline_adds_no_delay():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    h.c.final("lights off", 1, client="page-a", epoch=1)
+    h.clock.advance(1.0)
+    frames["page-a"] = (45, 45)                  # live audio, decoded as it comes
+    h.clock.advance(0.5)
+    assert h.texts() == ["lights off"] and h.committed_at == [1.5]
+
+
+def test_a_recogniser_that_never_reaches_the_send_moment_stalls_as_before():
+    frames = {"page-a": (40, 40)}
+    h = Harness(frames=frames)
+    _speaks_just_before_the_deadline(h, frames)
+    h.clock.advance(2.9)
+    assert h.committed == [] and h.c.state == "commit-pending"
+    h.clock.advance(0.2)
+    assert h.committed == [] and h.c.state == "stalled"
+    assert [text for _, text in h.stalled] == ["remind me to call"]
 
 
 # ── epochs and discards ──────────────────────────────────────────────────
@@ -322,3 +428,219 @@ def test_a_closed_socket_commits_nothing_and_gives_the_words_back():
     h.clock.advance(5)
     assert h.committed == []
     assert h.c.close() is None
+
+
+# ── the pause cues ───────────────────────────────────────────────────────
+# Four intervals, each after the stage before: with the defaults (1.0, 0.75,
+# 0.75, 0.5) the cues after 1.0, 1.75 and 2.5 s of quiet and the send at 3.0.
+
+CUES = ["tentative", "deciding", "likely"]
+DEFAULT_TIMES = [("tentative", 1.0), ("deciding", 1.75), ("likely", 2.5)]
+CUSTOM = {"tentative": 0.25, "deciding": 2.0, "likely": 0.5, "send": 1.25}
+CUSTOM_TIMES = [("tentative", 0.25), ("deciding", 2.25), ("likely", 2.75)]
+
+
+def _stages(h):
+    return [stage for _, stage, _ in h.paused]
+
+
+def _times(h):
+    return [(stage, pytest.approx(at)) for _, stage, at in h.paused]
+
+
+def test_the_schedule_is_the_running_sum_of_the_intervals_in_stage_order():
+    assert PAUSE_STAGES == ("tentative", "deciding", "likely", "send")
+    assert pause_schedule(INTERVAL_DEFAULTS) == [("tentative", 1.0), ("deciding", 1.75),
+                                                 ("likely", 2.5), ("send", 3.0)]
+    assert pause_schedule(CUSTOM) == CUSTOM_TIMES + [("send", 4.0)]
+
+
+@pytest.mark.parametrize("intervals,times,send", [(INTERVAL_DEFAULTS, DEFAULT_TIMES, 3.0),
+                                                  (CUSTOM, CUSTOM_TIMES, 4.0)])
+def test_each_cue_comes_once_at_its_running_time_in_order_then_the_send(intervals, times, send):
+    h = Harness(intervals=intervals)
+    h.c.final("book a table", 1)
+    for n, (stage, at) in enumerate(times):
+        h.clock.advance(at - h.clock.now - 0.005)
+        assert len(h.paused) == n, f"nothing before the {stage} cue's time"
+        h.clock.advance(0.005)
+        assert h.paused[-1] == (h.c.turn_id, stage, pytest.approx(at))
+        assert h.c.pause_stage == stage and h.c.state == "gathering"
+    assert h.c.hold == send
+    h.clock.advance(send - h.clock.now - 0.005)
+    assert h.committed == [], "every cue comes before the send"
+    h.clock.advance(0.005)
+    assert h.texts() == ["book a table"]
+    h.clock.advance(10)
+    assert _times(h) == [(stage, at) for stage, at in times], "at most once per stage per pause"
+
+
+@pytest.mark.parametrize("leaky", [False, True])
+@pytest.mark.parametrize("speak_at,given", [
+    (1.0, []), (1.4, ["tentative"]), (1.75, ["tentative"]), (2.1, ["tentative", "deciding"]),
+    (2.5, ["tentative", "deciding"]), (2.8, CUES), (3.0, CUES)])
+def test_speech_at_or_between_the_boundaries_starts_again_from_the_first_interval(
+        speak_at, given, leaky):
+    """At each boundary (his word landing the moment a stage falls due,
+    before its callback runs) and between them, accepted speech cancels
+    the cues still pending and the send, the revision moves on, and a timer
+    that fires anyway (leaky) gives nothing. The next pause has every cue
+    again, timed from the new start."""
+    h = Harness(intervals=INTERVAL_DEFAULTS, leaky=leaky)
+    h.c.final("book a table", 1)
+    h.clock.advance(speak_at - 0.001)
+    h.clock.now = speak_at                       # the stage due now has not run yet
+    h.c.interim("for")
+    before = list(h.paused)
+    assert _stages(h) == given
+    h.clock.advance(0.9)                         # the old times pass; the new first is at 1.0
+    assert h.paused == before, "a cue from before he spoke again"
+    assert h.committed == [], "an interim heard as speech holds the turn"
+    h.c.final("for two", 2)
+    restart = h.clock.now
+    h.clock.advance(3.01)
+    assert [(stage, pytest.approx(at - restart)) for _, stage, at in h.paused[len(before):]] == \
+        DEFAULT_TIMES
+    assert h.texts() == ["book a table for two"]
+
+
+def test_continuous_talking_never_sends_and_never_gives_a_cue():
+    """While he keeps talking (speech heard closer together than the first
+    interval), nothing is sent and no cue plays, for as long as he talks,
+    with or without a final gathered."""
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    for word in range(3):                        # before any final: no turn yet
+        h.c.interim("so " * (word + 1))
+        h.clock.advance(0.9)
+    h.c.final("so the plan", 1)
+    for word in range(200):                      # three minutes of talking after it
+        h.clock.advance(0.9)
+        h.c.interim("is " * (word + 1))
+    assert h.committed == [] and h.paused == []
+    h.c.final("is long", 2)
+    h.clock.advance(3.0)
+    assert _stages(h) == CUES and h.texts() == ["so the plan is long"]
+
+
+def test_a_cue_whose_revision_moved_on_is_never_given_late():
+    h = Harness(intervals=INTERVAL_DEFAULTS, leaky=True)
+    h.c.final("one", 1)
+    h.clock.advance(0.5)
+    h.c.final("two", 2)                          # the old cues' token is stale now
+    h.clock.advance(0.6)                         # past the first cue's old time (1.0)
+    assert h.paused == []
+    h.clock.advance(0.4)
+    assert _times(h) == [("tentative", 1.5)]
+    h.clock.advance(0.749)                       # past the deciding cue's old time (1.75)
+    assert _stages(h) == ["tentative"]
+    h.clock.advance(0.002)
+    assert _times(h) == [("tentative", 1.5), ("deciding", 2.25)]
+
+
+@pytest.mark.parametrize("end", ["discard", "close", "send_now"])
+def test_no_cue_once_the_turn_is_dropped_closed_or_sent(end):
+    h = Harness(intervals=INTERVAL_DEFAULTS, leaky=True)
+    h.c.final("hello", 1)
+    getattr(h.c, end)()
+    h.clock.advance(10)
+    assert h.paused == []
+
+
+def test_no_cue_while_idle_or_only_an_interim_is_heard():
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.clock.advance(10)
+    h.c.interim("so")
+    h.clock.advance(10)
+    assert h.paused == []
+
+
+def test_no_cue_while_the_commit_waits_for_the_recogniser_or_after_a_stall():
+    h = Harness(intervals=INTERVAL_DEFAULTS, frames={"page-a": (40, 10)})
+    h.c.final("transfer the", 1, client="page-a")
+    h.clock.advance(2.9)
+    assert _stages(h) == CUES
+    h.clock.advance(10)                          # commit-pending, then stalled
+    assert h.c.state == "stalled" and _stages(h) == CUES
+    h.c.retry()
+    h.clock.advance(10)
+    assert _stages(h) == CUES
+
+
+def test_the_intervals_are_read_again_each_time_the_hold_starts():
+    """A change applies from the next pause: the hold (his patience) and
+    every cue together, so no cue is timed against another pause's send."""
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.final("one", 1)
+    h.intervals = CUSTOM
+    h.clock.advance(3.0)
+    assert _times(h) == DEFAULT_TIMES and h.texts() == ["one"]
+    h.c.final("two", 2)
+    h.clock.advance(4.0)
+    assert _times(h)[3:] == [(stage, 3.0 + at) for stage, at in CUSTOM_TIMES]
+    assert h.texts() == ["one", "two"] and h.c.hold == 4.0
+
+
+def test_without_a_schedule_the_hold_alone_is_timed_and_no_cue_is_given():
+    h = Harness(hold=1.5)
+    h.c.final("hi", 1)
+    h.clock.advance(1.5)
+    assert h.texts() == ["hi"] and h.paused == []
+
+
+# ── speech heard ─────────────────────────────────────────────────────────
+
+def test_speech_heard_is_told_once_when_a_turn_starts_gathering_not_for_each_word():
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.interim("book")                          # no turn yet: nothing gathered
+    assert h.heard == []
+    h.c.final("book a table", 1, client="page-a", epoch=1)
+    first = h.c.turn_id
+    assert h.heard == [(first, None)]
+    h.c.interim("for")
+    h.c.final("for two", 2, client="page-a", epoch=1)
+    h.clock.advance(0.9)                         # before any pause cue
+    h.c.final("at eight", 3, client="page-a", epoch=1)
+    assert h.heard == [(first, None)], "not again for each further word"
+    h.clock.advance(3.0)
+    assert h.texts() == ["book a table for two at eight"]
+    h.c.final("and a cab", 4, client="page-a", epoch=1)     # the next turn
+    assert h.heard == [(first, None), (h.c.turn_id, None)] and h.c.turn_id != first
+
+
+def test_speech_heard_is_never_told_for_words_not_taken_as_his():
+    h = Harness(floor={"page-a": 5})
+    assert h.c.final("stale words", 1, client="page-a", epoch=4) is False
+    assert h.heard == []
+    h.c.final("hello", 2, client="page-a", epoch=5)
+    h.c.discard("page-a", 6)
+    h.c.final("late", 3, client="page-a", epoch=5)          # before the discard's epoch
+    assert len(h.heard) == 1
+
+
+@pytest.mark.parametrize("resume_at,after", [(1.2, "tentative"), (2.0, "deciding"),
+                                             (2.7, "likely")])
+@pytest.mark.parametrize("word", ["interim", "final"])
+def test_speech_heard_is_told_when_he_resumes_after_a_pause_cue_once_per_resume(
+        resume_at, after, word):
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.final("book a table", 1)
+    turn = h.c.turn_id
+    h.clock.advance(resume_at)
+    getattr(h.c, word)("for two", *((2,) if word == "final" else ()))
+    assert h.heard == [(turn, None), (turn, after)]
+    h.c.interim("for two at")
+    h.c.final("for two at eight", 3)
+    assert h.heard == [(turn, None), (turn, after)], "not again for each further word"
+    h.clock.advance(1.1)                          # past the next tentative cue
+    h.c.final("please", 4)
+    assert h.heard[-1] == (turn, "tentative") and len(h.heard) == 3
+
+
+def test_no_resume_is_told_when_he_speaks_again_before_any_pause_cue():
+    h = Harness(intervals=INTERVAL_DEFAULTS)
+    h.c.final("book a table", 1)
+    h.clock.advance(0.9)                          # before the tentative cue (1.0)
+    h.c.final("for two", 2)
+    h.clock.advance(0.9)
+    h.c.interim("at")
+    assert len(h.heard) == 1

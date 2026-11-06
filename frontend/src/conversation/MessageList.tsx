@@ -177,6 +177,8 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   turns: Turn[];
   older: ConversationItem[];
   earlier: number | null;
+  /** The record as read; a failed read is the conversation control's to
+   *  say (controlState.ts, History unavailable). */
   live: { value: ConversationPage | null; error: string | null; refresh: () => void };
   partRef: (part: string) => (el: Element | null) => void;
   renderRow: (row: ConversationRow) => ReactNode;
@@ -210,10 +212,6 @@ export function MessageList({ turns, older, earlier, live, partRef, renderRow }:
   }
   const history = partRef("history");
   return <div className="conversation-thread">
-    {live.error && <div className="conversation-read-error" role="status">
-      <span>{t("main.conversation.historyUnavailable")}</span>
-      <button type="button" data-ui-action="refresh" onClick={live.refresh}>{t("main.conversation.retry")}</button>
-    </div>}
     <div className="conversation-history" role="log" aria-live="off"
       aria-label={t("main.conversation.messageHistory")} data-ui-action="scroll"
       ref={el => { scroll.current = el; history(el); }}>

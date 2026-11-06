@@ -86,6 +86,9 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__remember",
     "mcp__jarvis__recall",
     "mcp__jarvis__project_note",
+    "mcp__jarvis__project_notes",
+    "mcp__jarvis__edit_project_note",
+    "mcp__jarvis__remove_project_note",
     "mcp__jarvis__write_journal",
     # The folder catalog (server.py's folder tools): reads come back in an
     # untrusted block, and registering and removing are ACTING_TOOLS.
@@ -157,6 +160,7 @@ ALLOWED_TOOLS = [
     # acting change the Settings route also calls.
     "mcp__jarvis__voice_input_settings",
     "mcp__jarvis__set_voice_input_settings",
+    "mcp__jarvis__play_cue",
     # Skip the rest and Stop speaking: the page's Skip and Stop, both acting.
     "mcp__jarvis__skip_reading",
     "mcp__jarvis__stop_speaking",
@@ -316,6 +320,7 @@ class ClaudeSession:
         self._on_exit = on_exit
         self.claude = config.claude_path or shutil.which("claude") or "claude"
         self.proc: Optional[asyncio.subprocess.Process] = None
+        self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         # Text blocks of the turn in flight: an API error arrives as one.
@@ -347,7 +352,11 @@ class ClaudeSession:
     @property
     def alive(self) -> bool:
         proc = self.proc
-        return proc is not None and proc.returncode is None and proc.stdin is not None
+        # Killed is not alive, from the moment it is killed: the exit is
+        # only seen once asyncio reaps the child, and until then a brain
+        # that has given up on it would still read as running.
+        return (proc is not None and not self._killed and proc.returncode is None
+                and proc.stdin is not None)
 
     async def open(self, instructions: str) -> None:
         self.proc = await asyncio.create_subprocess_exec(
@@ -375,6 +384,7 @@ class ClaudeSession:
     def kill(self) -> None:
         if self.proc is None:
             return
+        self._killed = True
         try:
             self.proc.kill()
         except ProcessLookupError:

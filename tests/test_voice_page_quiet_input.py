@@ -52,7 +52,7 @@ async def _browser(p):
 
 
 async def _page(context, url, *, stop="keep", switch="stop", settings_status=200, script=None,
-                storage=None, view="?view=main"):
+                storage=None, view="?view=main", sounds=True, init=(), **settings):
     page = await context.new_page()
     # Routed before the fake transcription socket is installed: Playwright's
     # socket routing replaces window.WebSocket with its own relay, and routed
@@ -67,7 +67,10 @@ async def _page(context, url, *, stop="keep", switch="stop", settings_status=200
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.add_init_script(COUNT_MICROPHONES)
     await page.add_init_script(VISIBILITY)
-    posted = await route_settings(page, stop=stop, switch=switch, status=settings_status)
+    for extra in init:
+        await page.add_init_script(extra)
+    posted = await route_settings(page, stop=stop, switch=switch, status=settings_status,
+                                  sounds=sounds, **settings)
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
     await page.goto(url + view)
     page.posted, page.voice = posted, voice
@@ -437,7 +440,7 @@ async def test_mute_turns_what_was_said_into_an_unsent_draft_and_unmute_never_se
         # The server says what it gathered as his: the page keeps only that.
         page.voice.socket.send(json.dumps({"type": "turn", "state": "gathering", "turnId": 1,
                                            "text": "book a table"}))
-        await page.wait_for_selector("#voice-turn", timeout=5000)
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'turn-gathering'", timeout=5000)
         await page.evaluate("window.__hear('at', false)")
         await page.click("#btn-mute")
         await page.wait_for_function(

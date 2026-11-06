@@ -53,10 +53,11 @@ def test_activation_survives_a_sync_and_a_rename(wired):
     store.set_agent_active("s1", True)
 
     assert store.sync_agents({"s1": ("hammer", "idle")}) is False, "nothing changed"
-    store.sync_agents({"s1": ("hammer in Desktop", "idle")})
+    store.sync_agents({"s1": ("Hammer from Claude Code", "idle")})
 
     assert store.list_agents() == [
-        {"session_id": "s1", "name": "hammer in Desktop", "active": True, "state": "idle"}]
+        {"session_id": "s1", "name": "hammer", "active": True, "state": "idle"}], \
+        "the name it was given first is kept; activation survives"
 
 
 def test_an_ended_session_leaves_the_list(wired):
@@ -82,7 +83,7 @@ def test_a_resumed_session_gets_its_name_and_activation_back(wired):
 
     assert store.list_agents() == [
         {"session_id": "s1", "name": "Forge", "active": True, "state": "working"}]
-    assert store.official_names() == {"s1": "Forge"}
+    assert store.agent_names() == {"s1": "Forge"}
 
 
 def test_an_ended_session_is_forgotten_after_the_keep_period(wired):
@@ -95,7 +96,7 @@ def test_an_ended_session_is_forgotten_after_the_keep_period(wired):
     store.sync_agents({"s1": ("hammer", "idle")}, now=2000.0 + store.AGENT_ENDED_KEEP_SEC + 2)
 
     assert store.list_agents()[0]["name"] == "hammer"
-    assert store.official_names() == {}
+    assert store.agent_names() == {"s1": "hammer"}
 
 
 def test_the_running_set_leaves_out_ended_sessions_and_uses_agent_name(wired, monkeypatch):
@@ -125,7 +126,7 @@ def test_names_and_activations_survive_a_start_before_the_first_poll(wired, monk
 
     monkeypatch.setattr(server, "session_watcher", _Watcher([_session("s1", "hammer")]))
     server._sync_agents()
-    assert store.official_names() == {"s1": "Forge"}
+    assert store.agent_names() == {"s1": "Forge"}
     assert store.list_agents()[0]["active"] is True
 
 
@@ -217,11 +218,56 @@ def test_a_rename_is_the_official_name_and_the_sync_keeps_it(wired):
     store.sync_agents({"s1": ("hammer", "idle")})
     assert store.rename_agent("s1", "Forge")["name"] == "Forge"
 
-    store.sync_agents({"s1": ("hammer in Desktop", "working")})
+    store.sync_agents({"s1": ("Hammer from Claude Code", "working")})
 
     (agent,) = store.list_agents()
     assert agent["name"] == "Forge" and agent["state"] == "working"
-    assert store.official_names() == {"s1": "Forge"}
+    assert store.agent_names() == {"s1": "Forge"}
+
+
+# --- one name, for good --------------------------------------------------------
+
+def test_a_rename_survives_a_new_claude_code_title_a_resume_and_a_restart(wired):
+    """His rename is the agent's name from then on: a new Claude Code name,
+    the session stopping and resuming, and JARVIS restarting (a fresh
+    connection to the same database) never replace it."""
+    _server, store = wired
+    store.sync_agents({"s1": ("denice", "idle")})
+    store.rename_agent("s1", "Designer")
+
+    store.sync_agents({"s1": ("Renamed In Claude Code", "working")})  # new title
+    store.sync_agents({})                                             # stopped
+    store.sync_agents({"s1": ("denice", "idle")})                     # resumed
+    importlib.reload(store)                                           # restart
+    store.init_db()
+    store.sync_agents({"s1": ("denice", "idle")})
+
+    assert store.agent_names() == {"s1": "Designer"}
+    assert [a["name"] for a in store.list_agents()] == ["Designer"]
+
+
+def test_an_agent_never_named_keeps_the_name_it_was_first_given(wired):
+    _server, store = wired
+    store.sync_agents({"s1": ("Denice", "idle")})
+    store.sync_agents({"s1": ("denice", "working")})
+    store.sync_agents({})
+    store.sync_agents({"s1": ("something else", "idle")})
+    assert store.agent_names() == {"s1": "Denice"}
+
+
+@pytest.mark.parametrize("label", [
+    "the older denice", "the newer denice", "the denice that's working",
+    "the jarvis that hasn't started", "hammer, the memory tools one",
+    "the newest hammer", "hammer number 6"])
+def test_a_made_up_label_stored_before_is_replaced_by_the_plain_name(wired, label):
+    """Rows written before names were made one hold labels like "the older
+    denice": an agent he never named gets its plain name the next time it is
+    seen; one he named is never touched."""
+    _server, store = wired
+    store.sync_agents({"s1": (label, "idle"), "s2": ("x", "idle")})
+    store.rename_agent("s2", label + " too")
+    store.sync_agents({"s1": ("denice", "idle"), "s2": ("x", "idle")})
+    assert store.agent_names() == {"s1": "denice", "s2": label + " too"}
 
 
 def test_a_rename_to_another_agent_s_name_is_refused(wired):

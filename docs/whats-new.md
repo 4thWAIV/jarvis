@@ -21,6 +21,22 @@ The centre opens on Conversation. It combines earlier conversation with live spe
 
 The left column holds the orb, voice status, microphone controls and brain account usage. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
 
+## Nothing is sent until you say yes
+
+A message JARVIS reads back to you, to an agent or to a person, now goes only
+once you approve it: the first thing you say after hearing it read back in full
+must be a plain yes ("yes", "go ahead", "do it"), or you press Send on its box.
+A read-back you skipped or cut short, a yes said before the reading, or a yes
+after you said something else does not count, and a change to the message
+needs a new read-back. JARVIS enforces this itself; he cannot send in the same
+breath as the read-back.
+
+JARVIS now reads a message back as soon as he knows who it is for, without
+asking first, and the read-back opens by naming them ("To chitauri."). Your yes
+covers that recipient only: "send it to chitauri" approves it only when
+chitauri is who the read-back named, sending it anywhere else is refused, and
+changing who it is for needs a new read-back and a new yes.
+
 ## Settings in the centre
 
 Settings opens in the centre as a tab beside Conversation, from the ⋮ menu (Check for updates opens it at Updates), and no longer covers the orb or the side columns. Its sections are in the order you come to them: You, Voice and language, Brains, Team, Updates and Server, with a row of their names under the title to jump to each. Each row is a short label and its controls; a state is shown only when it needs your attention, such as a brain check that is failing or a server that is not answering. With no Fish Audio key, first-time setup still opens by itself and walks through Voice and language, then You. JARVIS can point at any Settings control when you ask where something is.

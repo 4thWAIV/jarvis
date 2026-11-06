@@ -94,6 +94,120 @@ def test_reading_an_unknown_project_note_returns_none(home):
     assert jm.read_project_note("nope") is None
 
 
+# --- Editing and removing project notes, on his word ----------------------
+
+def _three_notes():
+    for text in ("Uses WordPress.", "The 301 was fixed.", "Billing runs nightly."):
+        path = jm.write_project_note("chitauri", text)
+    return path
+
+
+def test_notes_are_read_numbered_with_their_stamps(home):
+    _three_notes()
+    notes = jm.project_notes("chitauri")
+    assert [(n.number, n.text) for n in notes] == [
+        (1, "Uses WordPress."), (2, "The 301 was fixed."),
+        (3, "Billing runs nightly.")]
+    import re
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", n.stamp)
+               for n in notes)
+
+
+def test_an_unknown_project_has_no_notes(home):
+    assert jm.project_notes("nope") == []
+
+
+def test_lines_that_are_not_notes_are_not_numbered_and_are_kept(home):
+    path = _three_notes()
+    path.write_text(path.read_text().replace(
+        "\n_", "\nA line he wrote by hand.\n_", 1))
+    assert [n.number for n in jm.project_notes("chitauri")] == [1, 2, 3]
+    jm.remove_project_note("chitauri", 2, "The 301 was fixed.")
+    assert "A line he wrote by hand." in path.read_text()
+
+
+def test_editing_a_note_keeps_its_stamp_and_changes_only_its_text(home):
+    path = _three_notes()
+    before = jm.project_notes("chitauri")
+    old = jm.edit_project_note("chitauri", 2, "The 301 was fixed.",
+                               "The 301 was fixed on the 2nd.")
+    after = jm.project_notes("chitauri")
+    assert old == before[1]
+    assert after[1].stamp == before[1].stamp
+    assert after[1].text == "The 301 was fixed on the 2nd."
+    assert after[0] == before[0] and after[2] == before[2]
+    assert path.read_text().startswith("# chitauri\n\n")
+
+
+def test_an_edit_is_flattened_to_one_line(home):
+    path = _three_notes()
+    lines_before = len(path.read_text().splitlines())
+    jm.edit_project_note("chitauri", 1, "Uses WordPress.",
+                         "Uses WordPress.\n\n## Not a note\nnor this")
+    assert len(path.read_text().splitlines()) == lines_before
+    assert jm.project_notes("chitauri")[0].text == \
+        "Uses WordPress. ## Not a note nor this"
+
+
+def test_an_edit_needs_text(home):
+    _three_notes()
+    with pytest.raises(ValueError):
+        jm.edit_project_note("chitauri", 1, "Uses WordPress.", "  \n ")
+
+
+def test_removing_a_note_keeps_the_header_and_the_others(home):
+    path = _three_notes()
+    removed = jm.remove_project_note("chitauri", 1, "Uses WordPress.")
+    assert removed.text == "Uses WordPress."
+    assert [n.text for n in jm.project_notes("chitauri")] == [
+        "The 301 was fixed.", "Billing runs nightly."]
+    assert path.read_text().startswith("# chitauri\n\n_")
+
+
+def test_a_stale_number_is_refused_and_changes_nothing(home):
+    path = _three_notes()
+    jm.remove_project_note("chitauri", 1, "Uses WordPress.")
+    before = path.read_bytes()
+    # Note 1 is now what was note 2.
+    with pytest.raises(jm.NoteChanged) as e:
+        jm.remove_project_note("chitauri", 1, "Uses WordPress.")
+    assert e.value.current == "The 301 was fixed."
+    with pytest.raises(jm.NoteChanged):
+        jm.edit_project_note("chitauri", 1, "Uses WordPress.", "new")
+    assert path.read_bytes() == before
+
+
+def test_a_missing_note_or_project_is_no_such_note(home):
+    _three_notes()
+    with pytest.raises(jm.NoSuchNote):
+        jm.remove_project_note("chitauri", 4, "anything")
+    with pytest.raises(jm.NoSuchNote):
+        jm.edit_project_note("nope", 1, "anything", "new")
+
+
+def test_a_change_is_written_through_one_rename(home, monkeypatch):
+    """Atomic: the file is replaced whole, never written in place, and a
+    failed write leaves the old file and no temporary behind."""
+    import os
+    path = _three_notes()
+    before = path.read_bytes()
+    replaced = []
+    real_replace = os.replace
+    monkeypatch.setattr(jm.os, "replace",
+                        lambda a, b: replaced.append((a, b)) or real_replace(a, b))
+    jm.edit_project_note("chitauri", 3, "Billing runs nightly.", "Billing runs hourly.")
+    assert len(replaced) == 1 and replaced[0][1] == path
+
+    def boom(a, b):
+        raise OSError("disk full")
+    monkeypatch.setattr(jm.os, "replace", boom)
+    after_edit = path.read_bytes()
+    with pytest.raises(OSError):
+        jm.remove_project_note("chitauri", 1, "Uses WordPress.")
+    assert path.read_bytes() == after_edit != before
+    assert sorted(p.name for p in path.parent.iterdir()) == ["chitauri.md"]
+
+
 def test_a_journal_entry_is_timestamped_and_labelled(home):
     p = jm.write_journal("Worked on chitauri. Tony wants Postgres.", reason="rotation")
 

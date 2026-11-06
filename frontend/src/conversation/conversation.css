@@ -40,47 +40,27 @@
 #conversation > .conversation-dock { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: visible; padding: 0 12px; }
 .conversation-dock > * { flex: none; box-sizing: border-box; width: 100%; max-width: 820px; margin-left: auto; margin-right: auto; }
 #conversation > .conversation-dock > .conversation-captures { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.conversation-captures > .capture-list { flex: 0 1 auto; min-height: 0; }
+/* Under the history the last box keeps clear of the composer; on Main it
+   sits just above the captions (style.css). */
+.conversation-captures > .capture-list { flex: 0 1 auto; min-height: 0; padding-bottom: 12px; }
 .conversation-captures:empty { display: none; }
-.chat-composer { box-sizing: border-box; position: relative; border: 1px solid var(--ui-edge); border-radius: 14px; background: var(--ui-surface); padding: 14px 16px 10px; box-shadow: 0 -8px 30px rgba(var(--ui-ground-rgb), .55); }
+.chat-composer { container-type: inline-size; container-name: composer; box-sizing: border-box; position: relative; border: 1px solid var(--ui-edge); border-radius: 14px; background: var(--ui-surface); padding: 14px 16px 10px; box-shadow: 0 -8px 30px rgba(var(--ui-ground-rgb), .55); }
 .chat-composer:focus-within { border-color: var(--ui-accent); box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), .13); }
-.chat-composer label { display: block; font-size: 11px; line-height: 16px; color: var(--ui-secondary); font-weight: 500; margin-bottom: 7px; }
 #conversation .hearing-input { box-sizing: border-box; display: block; height: 24px; min-height: 24px; max-height: min(180px, 25vh); width: 100%; margin: 0; border: none; outline: none; background: transparent; color: var(--ui-text); font-family: inherit; field-sizing: fixed; font-size: 14px; line-height: 24px; letter-spacing: 0; overflow-y: auto; scrollbar-width: thin; resize: none; padding: 0 2px 0 0; white-space: pre-wrap; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 #composer-help { color: var(--ui-muted); font-size: 10px; line-height: 1.5; }
 .composer-send { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; border: 1px solid rgba(var(--ui-accent-rgb), .35); border-radius: 8px; padding: 6px 12px; background: rgba(var(--ui-accent-rgb), .14); color: var(--ui-accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .composer-send:hover { background: rgba(var(--ui-accent-rgb), .22); }
 .composer-send:disabled { color: var(--ui-muted); background: var(--ui-raised); border-color: var(--ui-divider); cursor: default; }
-.composer-error, .conversation-read-error { color: var(--ui-secondary); font-size: 12px; line-height: 1.5; }
-.composer-error { margin: 8px 0; }
-.conversation-read-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--ui-divider); padding: 8px 12px; border-radius: 8px; background: var(--ui-surface); }
-.conversation-read-error button { color: var(--ui-accent); background: transparent; border: 0; cursor: pointer; }
-.chat-playback { display: flex; align-items: center; gap: 12px; box-sizing: border-box; padding: 11px 14px; margin-bottom: 10px; border: 1px solid var(--ui-divider); border-radius: 10px; background: var(--ui-surface); }
-.playback-label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.playback-label strong { color: var(--ui-text); font-size: 12px; line-height: 1.5; font-weight: 500; }
-.playback-label > span { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
-.chat-playback button { flex: 0 0 auto; font: inherit; font-size: 12px; color: var(--ui-accent); border: 1px solid var(--ui-divider); background: var(--ui-raised); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-.playback-indicator { display: flex; align-items: center; gap: 3px; height: 20px; color: var(--ui-accent); }
-.playback-indicator i { width: 3px; height: 10px; background: currentColor; border-radius: 2px; }
-.playback-indicator i:nth-child(2) { height: 18px; }
-.playback-indicator.playing i { animation: playback-pulse 1s ease-in-out infinite alternate; }
-.playback-indicator.playing i:nth-child(2) { animation-delay: -.4s; }
-.playback-indicator.waiting { opacity: .45; }
-@keyframes playback-pulse { to { transform: scaleY(.4); opacity: .6; } }
-.conversation-interim { box-sizing: border-box; padding: 8px 14px; margin-bottom: 8px; border-left: 2px solid var(--ui-accent); }
-.conversation-interim > span { color: var(--ui-muted); font-size: 10px; }
-.conversation-interim p { margin: 2px 0; max-height: 65px; overflow: auto; font-size: 13px; color: var(--ui-secondary); }
+.composer-error { color: var(--ui-secondary); font-size: 12px; line-height: 1.5; margin: 8px 0; }
 #conversation button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 @media (max-width: 1100px) {
   .chat-message { gap: 8px; }
   .conversation-messages { padding-left: 0; padding-right: 0; }
   .chat-avatar { width: 24px; height: 24px; flex-basis: 24px; }
   .chat-message-meta { gap: 6px; }
-  .chat-playback { flex-wrap: wrap; gap: 8px; }
-  .playback-label > span { display: none; }
   #composer-help { max-width: 160px; }
 }
-@media (prefers-reduced-motion: reduce) { .playback-indicator.playing i { animation: none; } }
 #conversation .reply-prose { white-space: normal; }
 .reply-prose p { margin: 0 0 12px; white-space: pre-wrap; }
 .reply-prose > :last-child { margin-bottom: 0; }
@@ -93,3 +73,124 @@
 .reply-prose pre code { background: none; padding: 0; }
 .reply-prose blockquote { color: var(--ui-secondary); border-left: 2px solid var(--ui-edge); padding-left: 14px; margin: 12px 0; }
 .reply-prose hr { border: 0; border-top: 1px solid var(--ui-divider); margin: 16px 0; }
+
+/* The conversation control: the message input's heading row
+   (ConversationControl.tsx), one grid in every state. Row one, the title
+   line: the light, the state's title and "Message JARVIS", all 12/16, so
+   both words start 15 px under the composer's outer top edge (1 px border
+   + 14 px padding). Row two: the detail, centred in a 32 px track, 12 px
+   under the title line, and the buttons at its right end; under 560 px
+   the buttons have a row of their own. No track depends on the state:
+   67 px with its rule when wide, 99 px when narrow, in every state. */
+.conversation-control { display: grid; position: relative;
+  grid-template-columns: 14px minmax(0, 1fr) 296px; grid-template-rows: 16px 32px;
+  grid-template-areas: "light title label" ". detail actions";
+  column-gap: 10px; row-gap: 6px;
+  padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--ui-edge); }
+@container composer (max-width: 559px) {
+  .conversation-control { grid-template-columns: 14px minmax(0, 1fr) auto;
+    grid-template-rows: 16px 12px 20px 6px 32px;
+    grid-template-areas: "light title label" ". . ." ". detail detail" ". . ." "actions actions actions";
+    column-gap: 8px; row-gap: 0; }
+}
+.control-title { grid-area: title; min-width: 0; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ui-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control-title-short { display: none; }
+@container composer (max-width: 559px) {
+  .control-title-long.has-short { display: none; }
+  .control-title-short { display: inline; }
+}
+.conversation-control .control-label { grid-area: label; justify-self: end; margin: 0; font-size: 12px; line-height: 16px;
+  font-weight: 500; color: var(--ui-secondary); white-space: nowrap; }
+.control-detail { grid-area: detail; align-self: center; min-width: 0; min-height: 20px; display: flex; align-items: baseline;
+  gap: 8px; font-size: 13px; line-height: 20px; color: var(--ui-secondary); white-space: nowrap; overflow: hidden; }
+.control-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.control-detail.quiet .control-note { color: var(--ui-muted); }
+.control-lead { flex: none; color: var(--ui-overlap); font-weight: 500; }
+/* His words keep their newest end in view: the start gives way to an
+   ellipsis. Earlier words still waiting are --ui-secondary, the words he
+   is saying now --ui-text. */
+.heard-words { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.heard-words > span { direction: ltr; unicode-bidi: isolate; }
+.control-words { flex: 1 1 0; min-width: 0; color: var(--ui-secondary); }
+/* His words not yet sent stay grey (Tim's choice); white is for words sent.
+   Earlier words still waiting are dimmer than the words he is saying now. */
+.control-words .earlier { color: var(--ui-secondary); opacity: .65; }
+.control-words .now { color: var(--ui-secondary); }
+.control-actions { grid-area: actions; justify-self: end; align-self: center; display: flex; gap: 8px; }
+#conversation .control-actions button { box-sizing: border-box; height: 32px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--ui-divider); background: var(--ui-raised); color: var(--ui-text); font: inherit; font-size: 12px;
+  line-height: 16px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+#conversation .control-actions button.primary { color: var(--ui-accent); border-color: rgba(var(--ui-accent-rgb), .45);
+  background: rgba(var(--ui-accent-rgb), .14); }
+#conversation .control-actions button:hover { border-color: var(--ui-edge); }
+#conversation .control-actions button.primary:hover { background: rgba(var(--ui-accent-rgb), .22); }
+#conversation .control-actions button:disabled { color: var(--ui-muted); cursor: default; }
+
+/* Two states at once, and an error: the same grid. The title in yellow
+   (red), and a 3 px bar in the composer's left padding from the title's
+   top to the detail's bottom, so "Message JARVIS" stays outside it and
+   nothing moves. An error's detail stays --ui-secondary: it reads as
+   text, not as an alarm. */
+.conversation-control.tone-overlap::before, .conversation-control.tone-error::before { content: ""; position: absolute;
+  left: -10px; top: 0; bottom: 18px; width: 3px; border-radius: 2px; background: var(--ui-overlap); pointer-events: none; }
+.conversation-control.tone-error::before { background: var(--ui-error); }
+.conversation-control.tone-overlap .control-title { color: var(--ui-overlap); }
+.conversation-control.tone-error .control-title { color: var(--ui-error); }
+@container composer (max-width: 559px) {
+  .conversation-control.tone-overlap::before, .conversation-control.tone-error::before { bottom: 50px; }
+  /* His words keep at least 40% of the line; the yellow part gives way first. */
+  .control-lead { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .control-words { min-width: 40%; }
+}
+
+/* The activity light: one 14 x 14 glyph of three bars, 8 / 14 / 8 tall. */
+.control-light { grid-area: light; align-self: center; width: 14px; height: 14px; box-sizing: border-box; display: flex;
+  align-items: center; justify-content: space-between; padding: 0 1px; }
+.control-light i { display: block; width: 3px; border-radius: 2px; background: currentColor; height: 8px; transform-origin: center; }
+.control-light i:nth-child(2) { height: 14px; }
+/* Nothing to show: dim, still, so the spot is always anchored. */
+.control-light[data-light="rest"] { color: var(--ui-muted); }
+.control-light[data-light="rest"] i { opacity: .3; }
+/* His voice: text colour. JARVIS: accent. Two states: yellow. A failure: red. */
+.control-light[data-light="hearing"] { color: var(--ui-text); }
+.control-light[data-light="hearing"] i { animation: control-bar .9s ease-in-out infinite alternate; }
+.control-light[data-light="hearing"] i:nth-child(2) { animation-delay: -.3s; }
+.control-light[data-light="hearing"] i:nth-child(3) { animation-delay: -.6s; }
+.control-light[data-light="held"] { color: var(--ui-text); }
+.control-light[data-light="held"] i { opacity: .55; animation: control-breathe 2.4s ease-in-out infinite; }
+/* Pause: one, two, three bars lit; the lit ones blink together. */
+.control-light[data-light="pause"] { color: var(--ui-text); }
+.control-light[data-light="pause"] i { opacity: .22; }
+.control-light[data-light="pause"][data-stage="1"] i:nth-child(-n+1),
+.control-light[data-light="pause"][data-stage="2"] i:nth-child(-n+2),
+.control-light[data-light="pause"][data-stage="3"] i:nth-child(-n+3) { opacity: 1; animation: control-blink 1s steps(1) infinite; }
+/* Stalled: all lit red, a slow blink: it needs him, it is not off. */
+.control-light[data-light="stalled"] { color: var(--ui-error); }
+.control-light[data-light="stalled"] i { opacity: 1; animation: control-blink 1.6s steps(1) infinite; }
+/* Failed, nothing under way: all three lit red, still. */
+.control-light[data-light="error"] { color: var(--ui-error); }
+.control-light[data-light="error"] i { opacity: 1; }
+/* Failed, and trying again by itself: one red bar lit at a time, left to
+   right, 0.5 s each. */
+.control-light[data-light="retrying"] { color: var(--ui-error); }
+.control-light[data-light="retrying"] i { opacity: .25; animation: control-sweep 1.5s steps(1) infinite; }
+.control-light[data-light="retrying"] i:nth-child(2) { animation-delay: -1s; }
+.control-light[data-light="retrying"] i:nth-child(3) { animation-delay: -.5s; }
+.control-light[data-light="thinking"] { color: var(--ui-accent); }
+.control-light[data-light="thinking"] i { opacity: .45; animation: control-blink-soft 1.6s ease-in-out infinite; }
+.control-light[data-light="thinking"] i:nth-child(2) { animation-delay: .2s; }
+.control-light[data-light="thinking"] i:nth-child(3) { animation-delay: .4s; }
+.control-light[data-light="speaking"] { color: var(--ui-accent); }
+.control-light[data-light="speaking"] i { animation: control-bar 1s ease-in-out infinite alternate; }
+.control-light[data-light="speaking"] i:nth-child(2) { animation-delay: -.4s; }
+.control-light[data-light="speaking"] i:nth-child(3) { animation-delay: -.7s; }
+.control-light[data-light="overlap"] { color: var(--ui-overlap); }
+.control-light[data-light="overlap"] i { animation: control-blink 1.2s steps(1) infinite; }
+.control-light[data-light="overlap"] i:nth-child(2) { animation-delay: -.6s; }
+@keyframes control-bar { to { transform: scaleY(.4); opacity: .6; } }
+@keyframes control-blink { 50% { opacity: .25; } }
+@keyframes control-blink-soft { 50% { opacity: .15; } }
+@keyframes control-breathe { 50% { opacity: .95; } }
+@keyframes control-sweep { 0% { opacity: 1; } 33.3% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .control-light i { animation: none !important; } }

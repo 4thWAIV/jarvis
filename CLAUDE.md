@@ -94,7 +94,8 @@ same rules.
 ## Spoken words
 Every matcher of what the user said against fixed words splits and folds it
 with `spoken_words.py`: the yes and no to clearing and compaction
-(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4), the clear
+(`server._rotation_answer`, `ROTATION_YES_MAX_WORDS` still 4) and the same
+yes to a read-back (`server._approve_on_his_yes`), the clear
 command, the cancel and replay words and echo rejection (`speech._tokens`),
 agent and people names (`agent_directory.spoken_key`, folded, and `_words`) and memory search and slugs
 (`jarvis_memory`). Its splitter keeps accented letters ("sí" is a word, not
@@ -108,6 +109,46 @@ never "para"; replay: repite, otra vez). Which list counts is
 only `language_setting` sets it (see "The language setting"). Every test
 starts in English (`conftest._english_until_a_test_chooses`) and switches
 with the `spanish` fixture.
+
+## Sending on his yes
+A capture (a message to a session, or the review of a message to a person)
+is sent only once he has approved exactly its text for exactly its
+recipient, and the brain's tool call alone never approves it
+(`transmission.accepted`, checked by `server._capture_to_send` for
+`steer_session` and `send_message`). The recipient is an identity, not a
+spoken name (`transmission.recipient`): the agent's session id, settled when
+`capture` is given `to` (`capture["to_session"]`), or the person's GitHub id
+from the reviewed revision (`capture["human"]`). A capture addressed to no
+one is neither read back nor accepted (`server._unaddressed`). Every
+read-back names who it is for: a session's opens with "To chitauri." (a
+`lead` chunk, heard as part of the reading, which the page does not light on
+the box; `captureLead` on its frame), and a person's text already opens "To
+<name>." (`messaging_ports.human_readback`). The brain reads a capture back
+as soon as it is addressed, without asking whether he wants it read back.
+Approved means one of two things. Either it was heard in full since its text
+or its recipient last changed (`read_capture` or the box's Read, played and
+not skipped or cut short; or Accept on screen), recording the recipient it
+named (`read_to`), and then the very next thing he said, spoken or typed,
+was a plain yes by the clear command's rule (`_rotation_answer`) or an
+explicit instruction to send (`server._send_instruction`: "send it", "send it
+to chitauri", "envíalo", at most `SEND_ANSWER_MAX_WORDS`, no word of refusal
+or delay; the phrases are each `Vocabulary`'s `send_phrases`), on its way
+to the brain as his own turn: every utterance closes the read-backs waiting
+for an answer (`server._take_read_back_answers`) and only that yes approves
+them (`server._approve_on_his_yes`), which tells the brain in a note. "Send
+it to <name>" approves a capture only when <name> resolves to exactly its
+recipient (`server._names_recipient`: the agent directory for a session,
+`message_approvals.github_ids_called` for a person); for any other it
+approves nothing and the note says why. A yes in the words that started the
+turn that read it back is no answer to it, and a yes taken by another
+question (clearing, compaction) approves nothing. Or he pressed Send on its
+box (`transmission.approve`). `steer_session` to any session other than the
+capture's recipient is refused, telling the brain to address it there and
+read it back naming the new recipient. Any change of its text or of its
+recipient, a new read-back, and a send of it that did not go (cancelled in
+the window, failed) each clear the approval, so it is read back and approved
+again. The refusal tells the brain to ask and wait for his yes, or to read it
+back again.
 
 ## Messages to sessions
 Every message JARVIS sends a session (`steer_session`) is one row of the
@@ -227,8 +268,8 @@ on. The old `human_switch` table is kept and nothing reads it. A JARVIS
 trusts the capabilities it read for `CAPABILITIES_TTL_SEC` (30 s). A message to a
 person goes the agents' way (`transmission.py`): drafted (the page or the
 brain's `draft_message`), reviewed on a capture of its own whose text is
-the read-back (`message_approvals.Reviews`), accepted with Send or after
-the read-back (`send_message`), staged and offered the cancel window; the
+the read-back (`message_approvals.Reviews`), accepted with Send or with
+his yes after the read-back (`send_message`; see "Sending on his yes"), staged and offered the cancel window; the
 hand-over is the owner's approval (`MessageApprovals.approve`). Nothing
 reaches the team server's send route except through `GuardedTransport`,
 which releases only the stored approved envelope of a send already on
@@ -876,7 +917,8 @@ SQLite, keyed by the signed-in member's GitHub id or `local`): "When I stop
 the microphone" (`keep` finishes only audio from before the stop, its words
 under the ordinary turn rules, never a new automatic send; `discard` throws
 away unfinished input) and "When I switch away from JARVIS" (`continue` a
-session he started, or `stop`); with them his patience (seconds). Defaults
+session he started, or `stop`); with them his four pause intervals (see
+below), whose total is his patience. Defaults
 are `keep` and `stop`, to be assessed. Until they are read Start listening
 is unavailable. `GET`/`POST /api/settings/voice-input` and the brain's
 `voice_input_settings` and acting `set_voice_input_settings` share
@@ -893,31 +935,98 @@ under a new epoch when the socket is back. The brain may only make input
 quieter: its acting `quiet_microphone` (muted or off) sends every page a
 `quiet` frame that it applies through `mic.chooseQuiet`, as his buttons do;
 there is no tool to unmute, turn on or start listening.
+A quiet tone marks listening really starting (the recogniser ready for a
+streaming microphone: Start, Unmute, Mic on, a resume or a retry that got
+through) and a falling one its stopping for any reason (his Mic off or
+Mute, leaving under Stop, `taken`, the voice socket or recogniser lost, a
+capture dropped): `voiceInput.ts`'s `onCapture`, once per change, played by
+the output's `AudioPlayer.cue` (`voice.ts`), never through the microphone's
+audio context, and dropped, never delayed, while audio is locked. His third
+setting, capture sounds (`sounds`, default on, in the same
+`voice_control.py` service, route and tools), is the master switch for
+every cue; the page shows the same either way. Beside it, per user in the
+same service: each of the six cues (`start`, `stop`, `heard`, and the pause
+cues `tentative`, `deciding`, `likely`) on or off with a tone from
+`voice_control.TONES` (notes in `voice.ts` `TONE_NOTES`, placeholders), one
+`volume`, and the pause's four `intervals`. The pause has four stages in
+one ordered list, `turn_controller.PAUSE_STAGES` (the pause cues, then
+`send`; mirrored by `voiceControl.ts` and imported by `jarvis_mcp`), each
+with its own interval in seconds measured from the stage before, the first
+from when his speech was last heard: to the "may be finished" cue, to the
+"Deciding" cue, to the "about to send" cue, to the send. Defaults 1.0,
+0.75, 0.75 and 0.5 (`turn_controller.INTERVAL_DEFAULTS`), each 0.25 to 5.
+One function, `turn_controller.pause_schedule`, turns them into each
+stage's time after he stops (their running sum; `voice_control.schedule_of`,
+and `schedule` on the route's answer, which the page shows and never works
+out itself), so every cue plays, in order, before the send, and none can
+come after a later one or after the send. His patience is the send's time,
+their total (3.0 s by default, `speech.END_OF_TURN_SEC`): shown, never set
+on its own. A cue that is off keeps its interval: the time passes, its
+stage still reaches the turn bar, no sound. Settings, Voice and language
+shows the four intervals in order, each with its own field, the time that
+stage comes after he stops, and a pause cue's tone and Test beside it, then
+his patience as a reading; each cue has a Test (`voiceStatus.cueTest`; the
+brain's acting `play_cue` sends the page of the turn a `cue_test` frame to
+the same call). The brain's `voice_input_settings` reads, and
+`set_voice_input_settings` takes, the four intervals. The pause cue in the
+middle is "Deciding" ("Decidiendo"), default tone `low`. The "speech heard"
+cue (`heard`, default tone `double`) plays once when he begins speaking:
+the turn controller's `on_heard` when a new turn starts gathering (the
+first word accepted as his) and when he resumes after a pause cue was given
+in this pause (the first word accepted as his after it, final or interim),
+never for echo, a stale epoch's or a typed word, and not again for each
+word after; the server sends only the page gathering it a `turn` frame with
+state `heard` and `sound` (as the pause cues', `server._cue_sounds_here`;
+on a resume only if that pause cue sounded too), and the page plays it only
+while listening, on the output, never into the microphone's graph. Migration 7 drops
+a patience saved on its own and the cues' earlier shares of it (`percent`,
+and before migration 6 `before`): those rows read with the default
+intervals, a total of 3.0 s, keeping each cue's tone and on or off. The
+pause is the turn controller's (see "Turn-taking").
 
 ## Turn-taking
 JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
 voice page gathers what he says into a turn with an id and a revision that
 every accepted word moves on; a final or an interim heard as speech starts
-the hold (`voice_control.patience`, default `speech.END_OF_TURN_SEC`) again,
+the hold (his patience, the total of his pause intervals, read from
+`voice_control.schedule_of` each time it starts; default
+`speech.END_OF_TURN_SEC`) again,
 and an interim not yet followed by its final keeps older finals back. At
 the deadline the commit is checked against the turn, revision and deadline
 it was scheduled for (a timer is never trusted to have been cancelled) and
 against coverage: the recogniser must have decoded every frame the page had
-sent when the hold began (`transcriber` `coverage_of`, read on the server).
-Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
-on its own; the page's bar (`VoiceTurnBar.tsx`) offers Retry (wait again),
+sent by the send moment (the deadline, or his Send now), and a frame whose
+interim is still held back to coalesce does not count until it has gone to
+the page (`transcriber` `coverage_of`, `Capture.frames_settled`, read on the
+server). A final or an interim heard as speech from that last stretch of
+audio moves the revision on, so nothing is sent and gathering goes on; with
+no words in it the send waits only for the recogniser to catch up, looked at
+every `COVERAGE_POLL_SEC` (0.02 s). Not covered within `COVERAGE_BOUND_SEC`, the turn is `stalled`: never sent
+on its own; the conversation control (`ConversationControl.tsx`) offers Retry (wait again),
 Send now (as heard) and Keep as draft (into the composer, unsent), and the
 brain's acting `voice_turn` calls the same `server._turn_action`. Send now
-is offered while a turn is gathered too (coverage still checked). The
+is offered while a turn is gathered too (it waits for coverage to the
+press, as at a deadline). The
 server tells the page what it has gathered (`turn` frames: `gathering` with
 its text, `commit-pending`, `stalled`, `committed`, `draft`, `idle`), so only
 words it accepted as his, never echo, become a draft if the socket drops.
 Speech after a commit and before its reply sounds stops that reply's
 reading (its text stays, nothing is undone) and starts the next turn. Typed
 Send is its own message; voice words being gathered go on as their own
-turn. A stop under Discard is `turn_discard`. Nothing JARVIS says starts
+turn. A stop under Discard is `turn_discard`. While he is quiet in a gathered turn the
+controller times the pause from one schedule (`schedule`, read each time
+the hold starts; `on_pause`): `tentative`, then `deciding`, then `likely`,
+each at its running time after he stopped, then the commit at their total,
+each cue checked when due against the turn, revision and deadline and that
+it is still gathering, so any accepted speech cancels them and starts again
+from the first interval, and each plays at most once per pause. The server sends them only to that
+page, as a `turn` frame with state `pause`, its `stage` (shown on the turn
+bar whether or not it sounds) and `sound` (his capture sounds and that cue on, and him
+engaged, never away); the page plays it only while listening, at once or
+never. Nothing JARVIS says starts
 while he has spoken within his patience, replies included (the scheduler's
-`end_of_turn` is the same value, never clamped shorter), and announcements
+`end_of_turn` is the same value, set when a page connects and again on
+every change of his settings, never clamped shorter), and announcements
 also wait for the floor (see "Attention").
 
 ## Playback and its outcomes
@@ -1036,16 +1145,23 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `frontend/src/mic.ts` — The quiet preference (read before anything
   starts), the input status and the voice input settings in force
 - `turn_controller.py` — One page's turns: patient, identity-checked,
-  covered commits; stalled turns and their three ways on (see
+  covered commits; stalled turns and their three ways on; the pause stages,
+  their default intervals and the one schedule function (see
   "Turn-taking")
 - `voice_control.py` / `frontend/src/voiceControl.ts` — His voice input
-  settings and patience, per user, with their route and the brain's tools;
+  settings and pause intervals (their total his patience), per user, with their route and the brain's tools;
   and the words the voice socket names (reply outcomes and failures, the
   playback frame)
 - `frontend/src/voiceSettings.ts` / `VoiceInputSettingsControl.tsx` — The
   settings read and changed on the page, and their Settings rows
-- `frontend/src/conversation/VoiceTurnBar.tsx` — What he said and has not
-  sent: Send now, and Retry, Send now and Keep as draft for a stalled turn
+- `frontend/src/conversation/ConversationControl.tsx` / `controlState.ts` —
+  The conversation control, the message input's heading row: one state
+  model (`controlView`, from voiceState, voiceTurn, the turns, voice input's
+  status and health, the socket and the history read) and one table of
+  every state's words, light and buttons; what he said and has not sent
+  (Send now; Retry, Send now and Keep as draft when stalled), JARVIS
+  thinking or speaking (Skip to end), two at once in yellow, and the
+  conversation's errors in red (see docs/conversation-ux.md)
 - `transcriber.py` — Local speech recognition: the model list (`MODELS`,
   English and Spanish Kroko, each with its digest) and where each lives, the
   sherpa-onnx engine, and the worker that owns it (one model loaded at a
@@ -1109,9 +1225,15 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `agent_directory.py` — The one way agents are listed and found: every
   tool that lists agents or takes an agent's name goes through it, matching
   names as they are said (`spoken_key`: hyphens and underscores are spaces).
-  An agent's name is the one set in JARVIS (`rename_agent`), else the one
-  the user set in Claude Code (`session_watch.agent_name`, which survives a
-  resume), else the derived voice name. A stopped session's agent is kept,
+  An agent has one name, the agents table's `name`
+  (`run_store.agent_names`), which the session snapshot goes by, so every
+  screen, record, read-back, tool result and lookup says it. It is given
+  once, when the agent is first seen (`session_watch.agent_name`: the name
+  the user set in Claude Code, else the project's; never a phrase made up to
+  tell two apart), and only the user's `rename_agent` changes it, for good.
+  Two agents may share a name: they are kept apart by session id, and a name
+  that fits both is asked about (`server._ask_which`: the name with a fact
+  beside it and the session id). A stopped session's agent is kept,
   ended, for `run_store.AGENT_ENDED_KEEP_SEC` (30 days), so resuming the same
   session brings back its name and activation (`run_store.sync_agents`)
 - `session_steer.py` — Sends a message into a running session's inbox socket;
@@ -1129,7 +1251,15 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `notifier.py` — macOS notification fallback when no browser tab is
   connected to speak through
 - `jarvis_memory.py` — Long-term memory: a folder of plain Markdown files the
-  user can read and edit directly, not a database
+  user can read and edit directly, not a database. A project note is one
+  stamped line in `projects/<project>.md`, appended by `project_note`; the
+  brain reads one project's notes numbered with `project_notes` and, only
+  when he asks, changes one with the acting `edit_project_note` (keeps its
+  stamp) or `remove_project_note`, each naming the note's number and its
+  current text and refused if the file no longer says it; the file is
+  rewritten through one rename and every line that is not a note, the
+  header included, is kept. Both are `MEMORY_WRITERS`, and every answer
+  gives the note's words inside the memory block
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
@@ -1389,7 +1519,8 @@ The voice page's browser tests (`tests/test_agents_list_fits.py`,
 `test_voice_page_captions.py`, `test_voice_page_mute.py`,
 `test_voice_page_rays.py`, `test_voice_page_folders.py`, `test_voice_page_story.py`,
 `test_voice_page_quiet_input.py`, `test_voice_page_turns.py`,
-`test_voice_page_playback.py`, `test_voice_page_updates.py`) are marked `page` and deselected too: they build
+`test_voice_page_playback.py`, `test_voice_page_updates.py`, `test_voice_page_agent_names.py`,
+`test_voice_page_capture_cues.py`) are marked `page` and deselected too: they build
 the page with `npx vite build` into a temporary folder and check it in
 headless Chromium on loopback, and their timing depends on how busy the
 machine is. Run them with `pytest -m page`; they skip themselves without

@@ -198,6 +198,10 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "fc653b8811eaeaa30a6d533736a271d2d2093c75479f0feae10857a2c09a8a1b",  # open_local_package: a package zip on this Mac
     "61fd76c4a1e3c52378319c7eb55225299109f802432e4e033ee92cdea2ab230d",  # UI navigation merged with story packages
     "f2bd49a89ca5afae1da33eea0e1a73619bfe2634af3396c2c57d73b0a20ffafd",  # a reply's cited files: set_cited_files
+    "e9b31060343f284a4d02870a22f7a0ab4a0ae35f709cbeddd5fa240c09d05e33",  # edit and remove project notes on his word
+    "2c16f743459089cbad3c0d7a412588125a21bdfb51d322bbfec8fd82d650fc19",  # a read-back sends only on his next-words yes
+    "b7bce00cdff6eb4514e03d4d18b7ce83baa05ac1d09cc90808a4c08b156591dd",  # project notes edit and the read-back yes gate together
+    "eb78a554d37262fba5681de97e38d3b548340455589c645174e33c006fc569bb",  # read back at once, naming who it is for
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

@@ -63,8 +63,9 @@ BOXES = """() => {
   return {history: text('.conversation-history .history-turn'),
           historyWho: [...document.querySelectorAll('.conversation-history .history-turn')]
             .map(e => e.classList.contains('jarvis') ? 'jarvis' : 'user'),
-          speaking: q('.chat-playback')?.textContent.trim() ?? '',
-          hearing: q('.conversation-interim p')?.textContent.trim() ?? ''};
+          speaking: ['speaking', 'thinking'].includes(q('#conversation-control')?.dataset.state)
+            ? q('#conversation-control').textContent.trim() : '',
+          hearing: q('#conversation-control[data-state="hearing"] .control-words')?.textContent.trim() ?? ''};
 }"""
 
 
@@ -121,13 +122,13 @@ async def test_final_spoken_turns_and_full_reply_share_one_timeline(page_url):
                    {"type":"status", "state":"speaking"},
                    {"type":"audio", "utt":1, "idx":0, "data":_silence_wav(1.2),
                     "text":"All six agents are idle, sir.", "kind":"reply"})
-        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         got = await page.evaluate(BOXES)
         assert got["history"] == ["how are the agents", "All six agents are idle, sir."]
         assert got["historyWho"] == ["user", "jarvis"]
         assert got["hearing"] == ""
         voice.send({"type":"status", "state":"idle"})
-        await page.wait_for_selector('.chat-playback', state='detached')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
         assert (await page.evaluate(BOXES))["history"] == got["history"]
         await browser.close()
 
@@ -439,7 +440,7 @@ async def test_text_only_reply_and_sent_draft_stay_visible_without_audio(page_ur
         # With no audio, completion of the reply itself must end thinking.
         voice.send({"type": "reply", "utt": 17, "text": "Text works. No audio needed.", "done": True})
         await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('No audio needed.')")
-        await page.wait_for_selector(".chat-playback", state="detached")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
         got = await page.evaluate(BOXES)
         assert got["history"] == ["Please reply in text.", "Text works. No audio needed."]
         assert got["hearing"] == "" and got["speaking"] == ""
@@ -457,6 +458,10 @@ async def test_disconnected_submission_preserves_draft_with_error(page_url):
         await asyncio.sleep(0.1)
         await editor.press("Enter")
         assert await editor.input_value() == "Keep this draft"
-        assert "has not been sent" in await page.get_by_role("alert").inner_text()
+        # Said in the conversation control: the title is the alert, the
+        # sentence its detail.
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'err-typed-refused'")
+        assert await page.get_by_role("alert").inner_text() == "Not connected"
+        assert "has not been sent" in await page.locator("#conversation-control .control-note").inner_text()
         assert not [m for m in voice.got if m.get("type") == "transcript"]
         await browser.close()

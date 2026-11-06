@@ -6,7 +6,8 @@ without waiting for the voice to read it. The orb, side panels, navigation, capt
 approval flow and both appearance themes remain available in their existing places.
 
 - JARVIS's words are in the accent blue and the user's sent words in the main
-  text colour (white); words still being heard, not yet sent, stay grey.
+  text colour (white); words still being heard are white too, in the
+  conversation control.
 - While a reply is read aloud, the word being said glows as it does in a capture
   read-back (`SpokenWords.tsx`, one highlighter driven by `wordClock.ts`). The
   whole reply is shown from the start; the glow follows the voice through it and
@@ -15,16 +16,41 @@ approval flow and both appearance themes remain available in their existing plac
 - Replies stay expanded and selectable. Headings, lists, emphasis and code use the
   dashboard’s existing text-node Markdown renderer. Source links retain their
   separate expandable Sources control.
-- The old fixed caption rectangle becomes a compact playback bar while JARVIS is
-  speaking. **Skip to end**, or **Escape**, stops that reply’s reading immediately;
-  the written response continues to completion. It does not cancel model generation.
-  Captures and other announcements retain the existing Stop/hush semantics.
+- The conversation control is the composer's heading row
+  (`ConversationControl.tsx`), one grid in every state, so it never changes
+  height (67 px with its rule when the composer is 560 px or wider, 99 px
+  below): an activity light, the state's title and "Message JARVIS" on the
+  first line, 15 px under the composer's top edge; the detail (his words
+  with their newest end in view, or JARVIS's or an error's sentence, one
+  line, whole in its tooltip) 12 px under it; and the buttons at the
+  detail's right end, or on a row of their own when narrow. Its states come
+  from one model (`controlState.ts`): words being heard ("You are saying"),
+  his turn not sent yet (gathering, the three pause stages, commit pending,
+  stalled), JARVIS thinking or speaking (**Skip to end**, or **Escape**,
+  stops that reply’s reading immediately; the written response continues to
+  completion, and model generation is not cancelled), and two at once,
+  called out in yellow ("Overlap: JARVIS is reading", "· your words are
+  waiting", then his words). Captures and other announcements retain the
+  existing Stop/hush semantics.
+- The conversation's failures are the control's too, in red (`--ui-error`):
+  a reply failed or cancelled and why, not all read aloud, Reconnecting
+  (with what the lost connection cut), a typed message refused while not
+  connected, his words not sent or not heard, the microphone missing,
+  blocked or taken by another page, no audio from the mic, History
+  unavailable (with Retry) and audio waiting for a click. The light is red
+  and still, or lit one bar at a time while JARVIS tries again by itself. A
+  live state keeps the control; an error shows only when it would otherwise
+  be empty. A one-off error stays until he speaks or sends again; a lasting
+  one stays while it holds and comes back after a live state. A typed send
+  refused wins over Reconnecting; of other errors at once, the newest shows.
+  History keeps its notes under the reply, and the health dot and
+  Diagnostics keep theirs.
 - The composer has a visible Send button. Enter sends; Shift+Enter inserts a line.
   IME composition does not submit. Long drafts scroll inside the editor, without
   covering the timeline or Send control.
 - Unsent drafts survive reloads and view changes in the same browser tab using
-  session storage. A disconnected submission retains its draft and explains why
-  it was not sent. Sending uses the existing WebSocket submission contract; this
+  session storage. A disconnected submission retains its draft, and the
+  conversation control says why it was not sent. Sending uses the existing WebSocket submission contract; this
   change does not add a durable server acknowledgment or an offline outbox.
 - The timeline follows the newest words, as a reply grows and as the bottom box
   changes. While a reply is read aloud, following keeps the word being read in
@@ -40,9 +66,9 @@ approval flow and both appearance themes remain available in their existing plac
   timeline; a scroll the page makes, or the content or the box changing size,
   never does. Scrolling back to the bottom, or **Jump to latest**, follows
   again. One hook in `MessageList.tsx` owns that decision.
-- The bottom box (captures, playback bar, the turn being heard, the composer) is
+- The bottom box (captures and the composer with its control) is
   as tall as what it holds and never scrolls as a whole; the timeline gives up
-  its height first, and a capture is never covered. History failures show Retry, and earlier-page failures can be
+  its height first, and a capture is never covered. History failures show Retry in the control, and earlier-page failures can be
   retried. Loaded records remain available when the server’s recent page rolls on.
 
 ## Review previews
@@ -56,8 +82,8 @@ Regenerate with `scripts/capture_docs.py --theme classic` or `--theme graphite`.
 
 ## Components and protocol
 
-`frontend/src/conversation/` contains Composer, ChatMessage, ReplyText, MessageList,
-PlaybackBar and RecordItem. ConversationView composes those with the existing
+`frontend/src/conversation/` contains Composer, ConversationControl (with its
+state model, controlState.ts), ChatMessage, ReplyText, MessageList and RecordItem. ConversationView composes those with the existing
 CaptureList. Styling is scoped to Conversation and uses the shared theme tokens.
 No component framework or new runtime dependency is added.
 

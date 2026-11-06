@@ -2,8 +2,9 @@
 outgoing human message passes.
 
 A message to a person goes the way a message to an agent goes
-(`transmission.py`): it is accepted (Accept or Send on its capture box, or
-its read-back heard in full), staged, held for the turn, offered the cancel
+(`transmission.py`): it is accepted (his Send on its capture box, or its
+read-back heard in full, or Accept, and then his plain yes as the very next
+thing he said; never the brain's call alone), staged, held for the turn, offered the cancel
 window and handed over. What differs is only who it is for, so this module
 is the human adapters and the guard behind them:
 
@@ -315,6 +316,23 @@ def people_called(said: str, people: list, names: Callable[[Any], tuple]) -> lis
             if key in {agent_directory.spoken_key(n or "") for n in names(p)} - {""}]
 
 
+ME_WORDS = ("me", "myself", "self")
+
+
+def github_ids_called(said: str, messaging: "HumanMessaging") -> list[int]:
+    """The GitHub id of everyone `said` names: the owner for Me, else each
+    person on the roster called that. Empty when messaging cannot say who
+    this JARVIS is."""
+    key = agent_directory.spoken_key(said)
+    who = messaging.identity() if key else None
+    if who is None:
+        return []
+    if key in ME_WORDS:
+        return [who.owner_github_id]
+    return [m.github_id for m in people_called(said, messaging.recipients(),
+                                                lambda m: (m.login, m.name))]
+
+
 def recipient_label(members: list[wire.TeamMember], github_id: int, owner_github_id: int) -> str:
     """How a recipient is named in the read-back: Me for the owner, else the
     roster's name or login."""
@@ -580,7 +598,7 @@ class MessagingTools:
         key = agent_directory.spoken_key(said)
         if not key:
             return None, "Say who it is for (or reply_to a message); nothing was drafted."
-        if key in ("me", "myself", "self"):
+        if key in ME_WORDS:
             return owner_github_id, ""
         members = self.messaging.recipients()
         found = people_called(said, members, lambda m: (m.login, m.name))
@@ -733,6 +751,6 @@ class MessagingTools:
         except ports.SendRefused:
             return "That message is past review; list its item to see where it stands."
         return (f"Capture {draft.capture_id} holds the message as it would go. Nothing is "
-                f"approved. Ask him whether he wants it read back; read_capture reads it. "
-                f"On his yes after hearing it, call send_message with capture "
+                f"approved. Read it back now with read_capture, without asking first; "
+                f"on his yes after hearing it, call send_message with capture "
                 f"{draft.capture_id}.")

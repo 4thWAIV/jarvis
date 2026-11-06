@@ -4,15 +4,22 @@ One fact per file so a single memory can be corrected or deleted by hand
 without disturbing the rest. `MEMORY.md` is the curated index the brain always
 sees; everything else is found by `recall`.
 
-Nothing here is ever destructive: files are created or replaced wholesale by
-their author, the index is appended to, and no function deletes anything. The
-user edits this folder directly, and losing their words would be worse than
-keeping a stale line.
+Files are created or replaced wholesale by their author and the index is
+appended to. The one exception is a project note, which can be edited or
+removed by number on the owner's word (`edit_project_note`,
+`remove_project_note`): each change names the note's current text and is
+refused if the file no longer says it, and everything else in the file is
+kept as it was. The user edits this folder directly, and losing their words
+would be worse than keeping a stale line.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
+import threading
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -302,6 +309,45 @@ def index_is_full() -> bool:
     return len(index_lines()) >= MEMORY_INDEX_MAX
 
 
+# One project note is one line: `_YYYY-MM-DD HH:MM_ — text`. Every other line
+# of the file (the `# project` header, anything the user wrote by hand) is not
+# a note, is never numbered and is kept exactly as it is by every change.
+_NOTE_LINE_RE = re.compile(
+    rf"_(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})_ — ({_ON_ONE_LINE}*)")
+
+# Appending and rewriting the same file from two tool calls at once would lose
+# whichever finished first; every project-note write holds this.
+_NOTES_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class ProjectNote:
+    number: int     # 1-based, in file order, counting notes only
+    stamp: str      # "YYYY-MM-DD HH:MM", as written
+    text: str
+
+
+class NoSuchNote(LookupError):
+    """The project has no notes, or no note with that number."""
+
+
+class NoteChanged(ValueError):
+    """The note at that number no longer says what the caller expected.
+
+    Numbers move when a note is removed, so a change by number alone could
+    land on a neighbour. The caller names the text it read; a mismatch
+    changes nothing and says what the note says now (`current`).
+    """
+
+    def __init__(self, current: str):
+        super().__init__("the note no longer says that")
+        self.current = current
+
+
+def _project_notes_path(project: str) -> Path:
+    return data_paths.projects_dir() / f"{slugify(one_line(project))}.md"
+
+
 def write_project_note(project: str, text: str) -> Path:
     """What JARVIS knows about one project, appended in order.
 
@@ -310,28 +356,120 @@ def write_project_note(project: str, text: str) -> Path:
 
     One note is one stamped LINE, so both values are flattened: a break in
     `text` writes further notes with no stamp on them, and a break in
-    `project` writes lines under the `# ` header. Nothing here is ever
-    deleted (see the module docstring), so a forged line, once written, is
-    permanent — the same reason `add_to_index` is strict.
+    `project` writes lines under the `# ` header. A note is edited or removed
+    only on the owner's word, by number with its current text named
+    (`edit_project_note`, `remove_project_note`), so a forged line stays
+    until he notices it — the same reason `add_to_index` is strict.
     """
     data_paths.ensure_memory_layout()
     project = one_line(project)
     text = one_line(text)
-    path = data_paths.projects_dir() / f"{slugify(project)}.md"
+    path = _project_notes_path(project)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if not path.exists():
-        path.write_text(f"# {project}\n\n")
-    with path.open("a") as fh:
-        fh.write(f"_{stamp}_ — {text}\n")
+    with _NOTES_LOCK:
+        if not path.exists():
+            path.write_text(f"# {project}\n\n")
+        with path.open("a") as fh:
+            fh.write(f"_{stamp}_ — {text}\n")
     return path
 
 
 def read_project_note(project: str) -> str | None:
-    path = data_paths.projects_dir() / f"{slugify(project)}.md"
+    path = _project_notes_path(project)
     try:
         return path.read_text()
     except OSError:
         return None
+
+
+def project_notes(project: str) -> list[ProjectNote]:
+    """One project's notes, numbered from 1 in file order.
+
+    Only stamped note lines are numbered; the header and any prose the user
+    added are not notes. No file is no notes.
+    """
+    text = read_project_note(project)
+    return [] if text is None else _numbered(text.splitlines())
+
+
+def _numbered(lines: list[str]) -> list[ProjectNote]:
+    notes = []
+    for line in lines:
+        m = _NOTE_LINE_RE.fullmatch(line)
+        if m:
+            notes.append(ProjectNote(len(notes) + 1, m.group(1), m.group(2)))
+    return notes
+
+
+def edit_project_note(project: str, number: int, expect: str,
+                      text: str) -> ProjectNote:
+    """Replace note `number`'s text with `text`, keeping its stamp.
+
+    Refused (`NoteChanged`) unless the note says `expect` now, so a stale
+    number never changes the wrong note. `text` is flattened to one line, as
+    `write_project_note` flattens it. Returns the note as it was.
+    """
+    text = one_line(text)
+    if not text:
+        raise ValueError("a note needs text")
+
+    def change(note: ProjectNote) -> str | None:
+        return f"_{note.stamp}_ — {text}"
+    return _change_project_note(project, number, expect, change)
+
+
+def remove_project_note(project: str, number: int, expect: str) -> ProjectNote:
+    """Remove note `number`, refused (`NoteChanged`) unless it says `expect`
+    now. The header and every other line stay. Returns the note removed."""
+    return _change_project_note(project, number, expect, lambda _note: None)
+
+
+def _change_project_note(project, number, expect, change) -> ProjectNote:
+    """The one read-check-rewrite both changes share: find note `number`,
+    check its text against `expect`, put `change(note)` in its place (None
+    removes it) and write the whole file back atomically."""
+    path = _project_notes_path(project)
+    with _NOTES_LOCK:
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            raise NoSuchNote(f"no notes for {project!r}") from None
+        seen = 0
+        for i, line in enumerate(lines):
+            m = _NOTE_LINE_RE.fullmatch(line)
+            if not m:
+                continue
+            seen += 1
+            if seen != number:
+                continue
+            note = ProjectNote(number, m.group(1), m.group(2))
+            if one_line(expect) != note.text:
+                raise NoteChanged(note.text)
+            replacement = change(note)
+            if replacement is None:
+                del lines[i]
+            else:
+                lines[i] = replacement
+            _replace_file(path, "\n".join(lines) + "\n")
+            return note
+        raise NoSuchNote(f"no note {number} for {project!r}")
+
+
+def _replace_file(path: Path, text: str) -> None:
+    """Write `text` to `path` through a temporary file in the same folder and
+    one rename, so a reader sees the old file or the new one, never half."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.",
+                               suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 _JOURNAL_STAMP_FMT = "%Y-%m-%d-%H%M%S-%f"   # fixed-width: lexicographic == chronological

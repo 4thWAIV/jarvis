@@ -54,7 +54,7 @@ def test_a_closed_socket_sends_nothing_it_was_gathering(client):
         ws.receive_json(); ws.receive_json()
         ws.send_json({"type": "transcript", "text": "half a", "isFinal": True,
                       "clientId": "page-a", "captureEpoch": 1})
-    time.sleep(2.0)                                 # longer than the hold
+    time.sleep(3.2)                                 # longer than the hold (3.0 s)
     assert server.brain_instance.turns == []
 
 
@@ -172,3 +172,215 @@ def test_the_brain_s_voice_turn_is_the_page_s_keep_as_draft(stalls):
                                                    {"action": "retry"})
         assert "Nothing was done" in c.portal.call(server.tool_voice_turn, {"action": "explode"})
     assert server.brain_instance.turns == []
+
+
+# ── the pause cues ───────────────────────────────────────────────────────
+
+def _quick_cues(cue="likely", **change):
+    """A quick pause: tentative after 0.3 s of quiet, deciding after 0.6 s,
+    likely-end after 0.9 s, the send at 1.2 s; with `change` made to
+    `cue`."""
+    from jarvis import voice_control
+    voice_control.change(intervals={stage: 0.3 for stage in voice_control.PAUSE_STAGES},
+                         **({"cues": {cue: change}} if change else {}))
+
+
+def _pauses(seen):
+    return [m for m in seen if m.get("type") == "turn" and m.get("state") == "pause"]
+
+
+def _typed_ping(ws, text="ping"):
+    ws.send_json({"type": "transcript", "text": text, "isFinal": True, "typed": True})
+    return _drain_until(ws, lambda m: m.get("text") == f"Echo: {text}.", limit=60)
+
+
+def test_the_pause_cues_go_to_the_page_gathering_the_turn_and_no_other(client):
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as a, c.websocket_connect("/ws/voice") as b:
+        for ws in (a, b):
+            ws.receive_json(); ws.receive_json()
+        a.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                     "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(a, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        pauses = _pauses(seen)
+        turn = seen[-1]["turnId"]
+        assert [(p["stage"], p["turnId"], p["text"], p["sound"]) for p in pauses] == [
+            ("tentative", turn, "book a table", True), ("deciding", turn, "book a table", True),
+            ("likely", turn, "book a table", True)]
+        assert _pauses(_typed_ping(b)) == [], "a cue reached a page whose turn it was not"
+    assert server.brain_instance.turns[0] == ("book a table", "user")
+
+
+@pytest.mark.parametrize("cue", ["deciding", "likely"])
+def test_a_cue_that_is_off_is_silent_and_keeps_its_place(client, cue):
+    """Off, its stage still comes in its place (its interval passes), with
+    no sound; the others sound in their order."""
+    c, server = client
+    _quick_cues(cue, on=False)
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        assert [(p["stage"], p["sound"]) for p in _pauses(seen)] == [
+            (stage, stage != cue) for stage in ("tentative", "deciding", "likely")]
+
+
+def test_no_cue_sounds_while_he_is_away(client, monkeypatch):
+    c, server = client
+    _quick_cues()
+    monkeypatch.setattr(server, "_availability", lambda: server.attention.AWAY)
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        assert [p["sound"] for p in _pauses(seen)] == [False, False, False]
+
+
+def test_no_cue_once_mute_or_mic_off_drops_the_turn(client):
+    """Mute (and a stop under Discard) sends turn_discard: the turn and its
+    cues are gone."""
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "book a", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        ws.send_json({"type": "turn_discard", "clientId": "page-a", "captureEpoch": 2})
+        import time
+        time.sleep(1.2)                              # past both cues' times
+        assert _pauses(_typed_ping(ws)) == []
+    assert server.brain_instance.turns == [("ping", "user")]
+
+
+def test_the_brain_s_play_cue_plays_on_his_page_only(client):
+    c, server = client
+    server.brain_instance.current_origin = "user"
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        from jarvis import ui_contract
+        ws.send_json({"type": "ui_hello", "protocol": ui_contract.load().version,
+                      "clientId": "page-a", "capabilities": [],
+                      "visible": True, "reducedMotion": False, "navigationRevision": 0,
+                      "layoutRevision": 0})
+        _drain_until(ws, lambda m: m.get("type") == "ui_welcome")
+        for cue, said_as in (("tentative", "tentative (he may be done)"),
+                             ("deciding", "deciding (whether he is done)")):
+            said = c.portal.call(server.tool_play_cue, {"cue": cue})
+            assert said.startswith(f"Played the {said_as} cue")
+            seen = _drain_until(ws, lambda m: m.get("type") == "cue_test", limit=10)
+            assert seen[-1] == {"type": "cue_test", "cue": cue}
+        assert "Nothing was played" in c.portal.call(server.tool_play_cue, {"cue": "siren"})
+
+
+def test_the_scheduler_waits_his_patience_the_total_of_the_intervals(client):
+    """Nothing JARVIS says starts while he has spoken within his patience:
+    the scheduler's wait is the intervals' total when a page connects, and
+    follows a change at once, as the hold does from the next pause."""
+    from jarvis import voice_control
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        assert server.speech.end_of_turn == voice_control.patience() == 3.0
+        voice_control.change(intervals={"send": 1.5})
+        assert server.speech.end_of_turn == 4.0
+        c.post(voice_control.PATH, json={"intervals": {"tentative": 0.5}})
+        assert server.speech.end_of_turn == 3.5
+        assert server._voice_turns[next(iter(server._voice_turns))]._schedule()[-1] == ("send", 3.5)
+
+
+
+# ── speech heard ─────────────────────────────────────────────────────────
+
+def _heard(seen):
+    return [m for m in seen if m.get("type") == "turn" and m.get("state") == "heard"]
+
+
+def test_speech_heard_goes_once_per_turn_to_the_page_gathering_it(client):
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as a, c.websocket_connect("/ws/voice") as b:
+        for ws in (a, b):
+            ws.receive_json(); ws.receive_json()
+        a.send_json({"type": "transcript", "text": "book a table", "isFinal": True,
+                     "clientId": "page-a", "captureEpoch": 1})
+        a.send_json({"type": "transcript", "text": "for two", "isFinal": True,
+                     "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(a, lambda m: m.get("type") == "turn" and m.get("state") == "committed",
+                            limit=40)
+        turn = seen[-1]["turnId"]
+        assert _heard(seen) == [{"type": "turn", "state": "heard", "turnId": turn, "sound": True}]
+        first = next(i for i, m in enumerate(seen) if m.get("state") == "heard")
+        assert first < next(i for i, m in enumerate(seen) if m.get("state") == "pause")
+        assert _heard(_typed_ping(b)) == [], "the cue reached a page whose turn it was not"
+        assert _heard(_typed_ping(a, "pong")) == [], "typed words are not speech heard"
+
+
+def test_speech_heard_is_silent_while_he_is_away_or_it_is_off(client, monkeypatch):
+    from jarvis import voice_control
+    c, server = client
+    _quick_cues()
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        monkeypatch.setattr(server, "_availability", lambda: server.attention.AWAY)
+        ws.send_json({"type": "transcript", "text": "one", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("state") == "committed", limit=40)
+        assert [m["sound"] for m in _heard(seen)] == [False]
+        monkeypatch.undo()
+        voice_control.change(cues={"heard": {"on": False}})
+        ws.send_json({"type": "transcript", "text": "two", "isFinal": True,
+                      "clientId": "page-a", "captureEpoch": 1})
+        seen = _drain_until(ws, lambda m: m.get("state") == "committed", limit=40)
+        assert [m["sound"] for m in _heard(seen)] == [False]
+        assert [p["sound"] for p in _pauses(seen)] == [True, True, True], "only it is off"
+
+
+def test_speech_heard_is_never_given_for_jarvis_s_own_voice(client):
+    """Words judged echo of JARVIS's reply are never gathered, so they never
+    start a turn: only his own next words do."""
+    c, server = client
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        ws.send_json({"type": "transcript", "text": "hello there", "isFinal": True})
+        first = _drain_until(ws, lambda m: m["type"] == "audio", limit=40)
+        ws.send_json({"type": "transcript", "text": "echo hello there", "isFinal": True})
+        ws.send_json({"type": "transcript", "text": "what is the weather like", "isFinal": True})
+        later = _drain_until(ws, lambda m: m["type"] == "audio" and m["text"] != "Echo: hello there.",
+                             limit=40)
+        heard = _heard(first) + _heard(later)
+        gathered = [m for m in first + later if m.get("state") == "gathering"]
+        assert len(heard) == 2 and all(m["text"] != "echo hello there" for m in gathered)
+        assert [t for t, _ in server.brain_instance.turns] == ["hello there", "what is the weather like"]
+
+
+
+def test_speech_heard_goes_again_when_he_resumes_after_a_pause_cue_sounded(client, monkeypatch):
+    """The first word after a pause cue: once per resume, and sounding only
+    when that pause cue sounded."""
+    import time
+    from jarvis import voice_control
+    c, server = client
+    _quick_cues()                                     # cues at 0.3, 0.6, 0.9; send at 1.2
+    with c.websocket_connect("/ws/voice") as ws:
+        ws.receive_json(); ws.receive_json()
+        say = lambda text: ws.send_json({"type": "transcript", "text": text, "isFinal": True,  # noqa: E731
+                                         "clientId": "page-a", "captureEpoch": 1})
+        say("book a table")
+        seen = _drain_until(ws, lambda m: m.get("stage") == "tentative", limit=20)
+        say("for two")
+        say("at eight")                                # a further word: no cue
+        seen += _drain_until(ws, lambda m: m.get("state") == "committed", limit=40)
+        assert [m["sound"] for m in _heard(seen)] == [True, True]
+        voice_control.change(cues={"tentative": {"on": False}})
+        say("and a cab")
+        seen = _drain_until(ws, lambda m: m.get("stage") == "tentative", limit=20)
+        say("too")                                     # after a silent pause cue
+        seen += _drain_until(ws, lambda m: m.get("state") == "committed", limit=40)
+        assert [m["sound"] for m in _heard(seen)] == [True, False]
+        time.sleep(0.1)

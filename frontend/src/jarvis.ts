@@ -22,12 +22,13 @@ import { chooseQuiet, inputStatus, micLevel, quiet, quietBy, startListening, voi
 import { loadVoiceInputSettings } from "./voiceSettings";
 import { CLIENT_ID } from "./uiClient";
 import { offerDraft } from "./conversation/Composer";
-import { sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
+import { audioNeedsClick } from "./conversation/controlState";
+import { cueTest, sendTyped, skipReading, stopSpeaking, turnAction, voiceState, voiceConnected, voiceTurn,
          conversationJump } from "./voiceStatus";
-import { PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type PlaybackReport,
-         type ReplyOutcome } from "./voiceControl";
+import { CUE_NAMES, HEARD, isPauseCue, PLAYBACK_FRAME, REPLY_FAILURES, REPLY_OUTCOMES, type CueName,
+         type PlaybackReport, type ReplyOutcome } from "./voiceControl";
 import { countVoiceMessage, notice } from "./voiceHealth";
-import { startLocale } from "./locale";
+import { startLocale, t } from "./locale";
 import { startSessionsSocket } from "./sessionsSocket";
 import { startUiClient } from "./uiClient";
 import { showPackage, storyCue, storyState, type PackageInfo, type StoryCue,
@@ -84,19 +85,56 @@ export function startJarvis(orb: Orb): void {
   // Voice input
   // ---------------------------------------------------------------------------
 
+  // ── the capture cues ──────────────────────────────────────────────────────
+  // Whether this page is listening now (the capture fact the start and
+  // stop cues follow): a pause cue plays only while it is, never while
+  // muted, off or stopped.
+  let capturing = false;
+  /** A cue, as his settings have it: silent with capture sounds or that
+   *  cue off. */
+  function playCue(name: CueName) {
+    const settings = voiceInputSettings.get();
+    if (settings?.sounds && settings.cues[name].on) {
+      audioPlayer.cue(settings.cues[name].tone, settings.volume);
+    }
+  }
+  /** Test: the cue once, its tone at the cue volume, on or off. His click
+   *  may unlock audio for it; the brain's request (play_cue) cannot. */
+  function testCue(name: CueName, clicked: boolean) {
+    const settings = voiceInputSettings.get();
+    if (settings) audioPlayer.cue(settings.cues[name].tone, settings.volume, clicked);
+  }
+  cueTest.current = (name) => testCue(name, true);
+
   // What the server has gathered from him and not yet committed as a turn
   // (its `turn` frames: only words it accepted as his, never echo). If the
   // voice socket drops it is not sent but kept as an unsent draft; a turn
   // the recogniser could not finish waits for his Retry, Send now or Keep
-  // as draft (VoiceTurnBar.tsx), and kept as a draft it comes back here.
+  // as draft (ConversationControl.tsx), and kept as a draft it comes back here.
   const unsentText = () => voiceTurn.get()?.text ?? "";
   const keepUnsent = (text: string) => { if (text.trim()) offerDraft(text); voiceTurn.set(null); };
   socket.onMessage((msg) => {
+    if (msg.type === "cue_test") {
+      if ((CUE_NAMES as readonly unknown[]).includes(msg.cue)) testCue(msg.cue as CueName, false);
+      return;
+    }
     if (msg.type !== "turn") return;
     const turnId = typeof msg.turnId === "number" ? msg.turnId : null;
     const text = String(msg.text ?? "");
     if (msg.state === "gathering" || msg.state === "commit-pending" || msg.state === "stalled") {
       voiceTurn.set({ state: msg.state, turnId, text });
+    } else if (msg.state === "pause") {
+      // A pause cue the server gave this page, for this turn: shown, and
+      // heard now or never (only while this page is listening).
+      if (!isPauseCue(msg.stage)) return;
+      const stage = msg.stage;
+      voiceTurn.set({ state: "gathering", turnId, text, pause: stage });
+      if (msg.sound === true && capturing) playCue(stage);
+    } else if (msg.state === "heard") {
+      // He began speaking (a new turn the server started gathering from
+      // this page's words, never echo): heard now or never, only while
+      // this page is listening. What is shown waits for `gathering`.
+      if (msg.sound === true && capturing) playCue(HEARD);
     } else if (msg.state === "draft") {
       keepUnsent(text);
     } else {
@@ -127,6 +165,10 @@ export function startJarvis(orb: Orb): void {
     },
     (text: string, captureEpoch: number) => {
       showHeard(text, false);
+      // He is talking again: the pause shown is over (the server, hearing
+      // the same, cancels its cues).
+      const turn = voiceTurn.get();
+      if (turn?.pause) voiceTurn.set({ state: turn.state, turnId: turn.turnId, text: turn.text });
       socket.send({ type: "interim", text, clientId: CLIENT_ID, captureEpoch });
     },
     (event: string) => {
@@ -165,8 +207,15 @@ export function startJarvis(orb: Orb): void {
         keepUnsent(unsentText());
         socket.send({ type: "turn_discard", clientId: CLIENT_ID, captureEpoch });
       },
+      // Listening really started or stopped: its quiet cue, through the
+      // same output as his speech, unless his capture sounds are off.
+      onCapture: (now: boolean) => {
+        capturing = now;
+        playCue(now ? "start" : "stop");
+      },
     }
   );
+
 
   // ── stopping him ──────────────────────────────────────────────────────────
   // Two different things, each a button and neither a spoken word (his voice
@@ -258,7 +307,9 @@ export function startJarvis(orb: Orb): void {
   // arrives, so the captions keep pace with the voice and the highlight is
   // on the sentence being heard. A sentence reading a capture back lights
   // the capture's box instead, and is not added to the captions.
-  const chunkText = new Map<string, { text: string; capture?: number }>();
+  // A read-back's opening line naming who it is for (`lead`) is heard as part
+  // of the reading but is not the box's text, so it lights no line.
+  const chunkText = new Map<string, { text: string; capture?: number; lead?: boolean }>();
   // A story beat's cue, by chunk (packages.ts): shown in the package's frame
   // as the beat's words START playing, and ended as its last words end.
   const chunkCue = new Map<string, StoryCue>();
@@ -279,7 +330,8 @@ export function startJarvis(orb: Orb): void {
     if (!chunk) return;
     if (chunk.capture !== undefined) {
       jarvisQuiet();
-      captureSpeaking(chunk.capture, chunk.text, seconds);
+      if (chunk.lead) captureQuiet();
+      else captureSpeaking(chunk.capture, chunk.text, seconds);
     } else {
       captureQuiet();
       jarvisSpeaking(utt, chunk.text, seconds, idx);
@@ -335,8 +387,13 @@ export function startJarvis(orb: Orb): void {
     jarvisPaused(); captureQuiet(); storyCue.set(null);
   });
 
+  // Shown in the conversation control until the browser lets it play.
   audioPlayer.onNeedsGesture(() => {
-    notice("Playback", "Click anywhere to enable audio.");
+    notice("Playback", t("main.conversation.clickToEnableAudio"));
+    const ctx = audioPlayer.getAnalyser().context;
+    if (ctx.state === "running") return;
+    audioNeedsClick.set(true);
+    ctx.addEventListener("statechange", () => { if (ctx.state === "running") audioNeedsClick.set(false); });
   });
 
   // ---------------------------------------------------------------------------
@@ -383,6 +440,7 @@ export function startJarvis(orb: Orb): void {
           chunkText.set(`${msg.utt}:${msg.idx}`, {
             text: String(msg.text),
             ...(typeof msg.capture === "number" ? { capture: msg.capture } : {}),
+            ...(msg.captureLead === true ? { lead: true } : {}),
           });
         }
         if (msg.cue && typeof msg.cue === "object") {

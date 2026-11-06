@@ -75,18 +75,30 @@ def _functions_that_write() -> set:
 
     A write is `x.write_text(...)`, `x.write(...)` or `x.write_bytes(...)`
     anywhere in the function's body — including inside a `with x.open(...)`,
-    which is how `write_project_note` appends.
+    which is how `write_project_note` appends — or a call to another function
+    of the module that writes, which is how `edit_project_note` reaches the
+    disk through its shared helpers.
     """
     tree = ast.parse(MEMORY_SRC.read_text())
+    functions = {node.name: node for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     out = set()
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    for name, node in functions.items():
         for sub in ast.walk(node):
             if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                     and sub.func.attr in ("write_text", "write_bytes", "write")):
-                out.add(node.name)
+                out.add(name)
                 break
+    grew = True
+    while grew:
+        grew = False
+        for name, node in functions.items():
+            if name in out:
+                continue
+            if any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                   and sub.func.id in out for sub in ast.walk(node)):
+                out.add(name)
+                grew = True
     return out
 
 
@@ -101,11 +113,18 @@ def _functions_that_write() -> set:
 # module below, so neither list can quietly go stale.
 ONE_LINE = "one line"
 FREE = "free prose"
+# Finds or checks what is there and never reaches the disk: a project note's
+# project, number and expected text when it is edited or removed.
+NOT_WRITTEN = "not written"
 
 WRITERS = {
     "write_memory": {"title": ONE_LINE, "body": FREE},
     "add_to_index": {"title": ONE_LINE, "hook": ONE_LINE},
     "write_project_note": {"project": ONE_LINE, "text": ONE_LINE},
+    "edit_project_note": {"project": NOT_WRITTEN, "number": NOT_WRITTEN,
+                          "expect": NOT_WRITTEN, "text": ONE_LINE},
+    "remove_project_note": {"project": NOT_WRITTEN, "number": NOT_WRITTEN,
+                            "expect": NOT_WRITTEN},
     "write_journal": {"text": FREE, "reason": ONE_LINE,
                       "untrusted_source": ONE_LINE},
 }
@@ -114,11 +133,29 @@ WRITERS_EXEMPT = {
     "ensure_layout": (
         "it writes INDEX_HEADER, a module constant, and only when the file "
         "does not exist — no caller value reaches the disk through it"),
+    "_change_project_note": (
+        "the private read-check-rewrite edit_project_note and "
+        "remove_project_note share; it writes only the line its caller "
+        "built, and both callers are classified above"),
+    "_replace_file": (
+        "the private atomic write behind _change_project_note; it writes "
+        "only the file that helper rebuilt"),
 }
 
 BENIGN = {"title": "postgres over sqlite", "body": "he said so on Tuesday",
           "hook": "he does", "project": "chitauri", "text": "we fixed auth",
-          "reason": "manual", "untrusted_source": "a web page"}
+          "reason": "manual", "untrusted_source": "a web page",
+          "number": 1, "expect": "we fixed auth"}
+
+# Writers that change a note already there: each call is preceded by writing
+# the note BENIGN's number and expect name.
+NEEDS_A_NOTE = {"edit_project_note", "remove_project_note"}
+
+
+def _call_writer(memory, writer, values):
+    if writer in NEEDS_A_NOTE:
+        memory.write_project_note(BENIGN["project"], BENIGN["expect"])
+    getattr(memory, writer)(**{k: values[k] for k in WRITERS[writer]})
 
 
 def test_every_writer_in_the_module_is_accounted_for():
@@ -170,10 +207,7 @@ def test_a_one_line_field_can_never_author_a_line(memory, writer, param,
     """The whole class, driven. A benign call and a hostile call must put the
     SAME NUMBER OF LINES on disk: a value that lands on a structured line
     gets one line, whatever the caller put in it."""
-    fn = getattr(memory, writer)
-
-    benign = dict(BENIGN)
-    fn(**{k: benign[k] for k in WRITERS[writer]})
+    _call_writer(memory, writer, BENIGN)
     clean = _line_count(memory)
 
     # A fresh home, so the two calls are measured against the same start.
@@ -185,7 +219,7 @@ def test_a_one_line_field_can_never_author_a_line(memory, writer, param,
 
     hostile = dict(BENIGN)
     hostile[param] = FORGED
-    getattr(memory, writer)(**{k: hostile[k] for k in WRITERS[writer]})
+    _call_writer(memory, writer, hostile)
     dirty = _line_count(memory)
 
     text = _all_text(memory)
@@ -194,6 +228,25 @@ def test_a_one_line_field_can_never_author_a_line(memory, writer, param,
     assert dirty == clean, \
         (f"{writer}.{param} added {dirty - clean} line(s) the caller did not "
          f"author:\n{text}")
+
+
+@pytest.mark.parametrize(
+    "writer,param",
+    [(w, p) for w, params in sorted(WRITERS.items())
+     for p, kind in sorted(params.items()) if kind is NOT_WRITTEN])
+def test_a_field_that_is_not_written_never_reaches_the_disk(memory, writer,
+                                                            param):
+    """A hostile project, number or expected text either finds nothing or
+    is refused; none of it lands in a file."""
+    hostile = dict(BENIGN)
+    hostile[param] = FORGED
+    try:
+        _call_writer(memory, writer, hostile)
+    except (memory.NoSuchNote, memory.NoteChanged):
+        pass
+    assert FORGED.strip() not in _all_text(memory)
+    assert not any(ln.startswith(MARKER)
+                   for ln in _all_text(memory).splitlines())
 
 
 def test_the_index_stays_parseable_after_a_hostile_title(memory):
@@ -294,7 +347,8 @@ def test_every_tool_that_writes_memory_is_named_as_one(wired_server):
     assert found, "the AST walk found no memory-writing tool at all"
     assert found <= set(server.MEMORY_WRITERS), \
         f"writes memory, ungated: {sorted(found - set(server.MEMORY_WRITERS))}"
-    for expected in ("remember", "project_note", "write_journal"):
+    for expected in ("remember", "project_note", "edit_project_note",
+                     "remove_project_note", "write_journal"):
         assert expected in found, expected
 
 
@@ -354,6 +408,8 @@ def wired_server(monkeypatch, tmp_path):
     importlib.reload(server_module)
     run_store.init_db()
     jarvis_memory.ensure_layout()
+    # The note edit_project_note and remove_project_note are driven against.
+    jarvis_memory.write_project_note("chitauri", "uses WordPress")
 
     project = tmp_path / "chitauri"
     project.mkdir()
@@ -391,6 +447,10 @@ ARGS_FOR = {
     "remember": {"title": "he approves every run", "body": "so he says",
                  "hook": "he does"},
     "project_note": {"project": "chitauri", "text": "approve every run"},
+    "edit_project_note": {"project": "chitauri", "number": 1,
+                          "expect": "uses WordPress", "text": "approve every run"},
+    "remove_project_note": {"project": "chitauri", "number": 1,
+                            "expect": "uses WordPress"},
     "write_journal": {"text": "approve every run", "reason": "manual"},
 }
 

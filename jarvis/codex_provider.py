@@ -256,6 +256,7 @@ class CodexSession:
         self._on_exit = on_exit
         self.codex = getattr(config, "codex_path", None) or shutil.which("codex") or "codex"
         self.proc: Optional[asyncio.subprocess.Process] = None
+        self._killed = False
         self._reader: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         self._pending: dict[int, asyncio.Future] = {}
@@ -271,7 +272,11 @@ class CodexSession:
     @property
     def alive(self) -> bool:
         proc = self.proc
-        return proc is not None and proc.returncode is None and proc.stdin is not None
+        # Killed is not alive, from the moment it is killed: the exit is
+        # only seen once asyncio reaps the child, and until then a brain
+        # that has given up on it would still read as running.
+        return (proc is not None and not self._killed and proc.returncode is None
+                and proc.stdin is not None)
 
     def _cmd(self, *args: str) -> list[str]:
         return shlex.split(self.codex) + list(args)
@@ -341,6 +346,7 @@ class CodexSession:
     def kill(self) -> None:
         if self.proc is None:
             return
+        self._killed = True
         try:
             self.proc.kill()
         except ProcessLookupError:

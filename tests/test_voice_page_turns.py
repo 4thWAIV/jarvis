@@ -71,7 +71,7 @@ async def test_a_committed_turn_leaves_no_draft_and_a_stalled_one_comes_back(pag
         assert await _until(page.voice.finals)
         page.voice.socket.send(json.dumps({"type": "turn", "state": "committed", "turnId": 1}))
         await page.wait_for_timeout(300)
-        assert await page.query_selector("#voice-turn") is None
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=5000)
         _turn(page, "stalled", 2, "transfer the")
         await page.wait_for_selector("#voice-turn-retry", timeout=5000)
         assert await page.evaluate(DRAFT) == "", "it waits for his choice"
@@ -81,7 +81,7 @@ async def test_a_committed_turn_leaves_no_draft_and_a_stalled_one_comes_back(pag
             assert await _until(lambda: _sent(page.voice, frame)), frame
         _turn(page, "draft", 2, "transfer the")
         await page.wait_for_function(f"{DRAFT} === 'transfer the'", timeout=5000)
-        assert await page.query_selector("#voice-turn") is None
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'", timeout=5000)
         await page.voice.socket.close()
         await page.wait_for_timeout(500)
         assert await page.evaluate(DRAFT) == "transfer the"

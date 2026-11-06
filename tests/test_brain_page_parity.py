@@ -135,7 +135,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
-            "update_jarvis", "reveal_attachment", "set_voice_input_settings",
+            "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
             "mark_updates_seen",
             "set_attention_settings")
@@ -173,6 +173,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("install_speech_model", {"language": "es"}),
     ("set_language", {"language": "es"}),
     ("set_voice_input_settings", {"stop": "discard"}),
+    ("play_cue", {"cue": "start"}),
     ("update_jarvis", {}),
     ("skip_reading", {}),
     ("stop_speaking", {}),
@@ -622,10 +623,39 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
     got = _call(wired, "set_voice_input_settings", stop="discard", switch="continue")
     assert got["ok"] and got["text"].startswith("Saved.")
     page = wired.client.get(voice_control.PATH).json()
-    assert page == {"stop": "discard", "switch": "continue", "saved": True, "patience": 1.5,
-                    "scope": "member"}
+    assert page == {"stop": "discard", "switch": "continue", "saved": True,
+                    "intervals": voice_control.INTERVAL_DEFAULTS,
+                    "schedule": {"tentative": 1.0, "deciding": 1.75, "likely": 2.5, "send": 3.0},
+                    "patience": 3.0, "sounds": True, "cues": voice_control.CUE_DEFAULTS,
+                    "volume": voice_control.VOLUME_DEFAULT, "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
+    assert "A quiet sound plays when listening starts" in _call(wired, "voice_input_settings")["text"]
+    off = _call(wired, "set_voice_input_settings", sounds=False)
+    assert off["ok"] and "No sound plays when listening starts or stops" in off["text"]
+    assert wired.client.get(voice_control.PATH).json() == {**page, "sounds": False}
+    page = wired.client.get(voice_control.PATH).json()
+    assert "Nothing was changed" in _call(wired, "set_voice_input_settings", sounds="loud")["text"]
+    cued = _call(wired, "set_voice_input_settings", volume=30,
+                 cues={"likely": {"tone": "low", "on": False}})
+    assert cued["ok"] and "Cue volume 30 percent" in cued["text"]
+    assert ("tentative (he may be done) cue (tone pulse) 1 s later, at 1 s; then deciding "
+            "(whether he is done) cue (tone low) 0.75 s later, at 1.75 s; then likely end (about "
+            "to send) cue (off, silent) 0.75 s later, at 2.5 s; then sent 0.5 s later, at 3 s"
+            ) in cued["text"]
+    assert "his turn is sent after 3 seconds of quiet" in cued["text"]
+    page = wired.client.get(voice_control.PATH).json()
+    assert (page["volume"], page["cues"]["likely"]) == (30, {"on": False, "tone": "low"})
+    bad = _call(wired, "set_voice_input_settings", intervals={"send": 6})
+    assert "Nothing was changed" in bad["text"] and "0.25 to 5 seconds" in bad["text"]
+    timed = _call(wired, "set_voice_input_settings", intervals={"tentative": 2, "send": 1})
+    assert timed["ok"] and "his turn is sent after 4.5 seconds of quiet" in timed["text"]
+    assert "then sent 1 s later, at 4.5 s" in timed["text"]
+    page = wired.client.get(voice_control.PATH).json()
+    assert page["intervals"] == {"tentative": 2.0, "deciding": 0.75, "likely": 0.75, "send": 1.0}
+    assert (page["schedule"]["likely"], page["patience"]) == (3.5, 4.5)
+    assert wired.server.speech is None or wired.server.speech.end_of_turn == 4.5
+    page = wired.client.get(voice_control.PATH).json()
     refused = _call(wired, "set_voice_input_settings", stop="forever")
     assert "Nothing was changed" in refused["text"]
     from jarvis import data_paths

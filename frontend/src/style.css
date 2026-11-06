@@ -224,8 +224,10 @@ html, body {
 }
 
 .capture-box {
+  flex: 0 0 auto;
+  box-sizing: border-box;
   position: relative;
-  padding: 10px 14px 8px;
+  padding: 10px 14px 12px;
   font-size: 14px;
   line-height: 20px;
   overflow-wrap: anywhere;
@@ -309,6 +311,7 @@ html, body {
 /* The texts cross: the old fades out over the new, and the box eases to the
    new height (CaptureBox.tsx sets it only while they cross). */
 .capture-body {
+  overflow: hidden;
   position: relative;
   transition: height 0.25s ease;
 }
@@ -3562,8 +3565,3 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
-
-/* What he said and has not sent (VoiceTurnBar.tsx): the playback bar's
-   look, marked when speech recognition could not finish it. */
-.chat-voice-turn .playback-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-voice-turn.stalled { border-color: var(--ui-warning, var(--ui-accent)); }

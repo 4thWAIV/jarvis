@@ -129,11 +129,12 @@ class Vocabulary:
     clear_command: str
     switch_command: str
     switch_to: str
+    send_phrases: tuple = ()
 
 
 def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
                 replay_phrases, replay_filler, clear_command,
-                switch_command, switch_to) -> Vocabulary:
+                switch_command, switch_to, send_phrases=()) -> Vocabulary:
     return Vocabulary(
         yes_words=frozenset(_key(w) for w in yes_words),
         yes_phrases=tuple(_key(p) for p in yes_phrases),
@@ -144,6 +145,7 @@ def _vocabulary(*, yes_words, yes_phrases, no_words, cancel_phrases,
         clear_command=_key(clear_command),
         switch_command=_key(switch_command),
         switch_to=switch_to,
+        send_phrases=tuple(_key(p) for p in send_phrases),
     )
 
 
@@ -175,6 +177,9 @@ _ENGLISH = _vocabulary(
     clear_command="start fresh",
     switch_command="switch to spanish",
     switch_to=SPANISH,
+    # Approving a read-back (`server._send_answer`): an explicit instruction
+    # to send is his yes, optionally naming where ("send it to chitauri").
+    send_phrases=("send it", "send that", "send them", "send this", "send", "go ahead and send"),
 )
 
 # Latin American Spanish (es-MX), as approved: "dale", not Spain's "vale".
@@ -194,6 +199,8 @@ _SPANISH = _vocabulary(
     # Heard only through the Spanish model, so the way back is Spanish words.
     switch_command="cambia a inglés",
     switch_to=ENGLISH,
+    send_phrases=("envíalo", "envíala", "envíalos", "mándalo", "mándala", "mándalos",
+                  "envía", "manda"),
 )
 
 VOCABULARIES = {ENGLISH: _ENGLISH, SPANISH: _SPANISH}

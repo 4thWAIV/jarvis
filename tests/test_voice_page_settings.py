@@ -214,7 +214,9 @@ async def _open_settings(page):
 # no reading). Found by the words on its row; null when the row has none.
 DOT = """(name) => {
   const rows = [...document.querySelectorAll('.settings-row, .settings-state, .check-row')];
-  const row = rows.find(r => r.textContent.includes(name));
+  // The row naming it that has a status dot: other rows (the capture
+  // cues' Test buttons) may share the word.
+  const row = rows.find(r => r.textContent.includes(name) && r.querySelector('.status-dot'));
   if (!row) return null;
   const dot = row.querySelector('.status-dot');
   if (!dot) return null;

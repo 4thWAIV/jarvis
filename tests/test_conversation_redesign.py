@@ -21,14 +21,14 @@ async def test_skip_cancels_reading_not_reply_and_ignores_late_audio(page_url):
                    {'type':'audio', 'utt':11, 'idx':0, 'text':'First part.',
                     'kind':'reply', 'data':_silence_wav(12)})
         await page.get_by_role('button', name='Skip to end').click()
-        await page.wait_for_function("document.querySelector('.chat-playback')?.textContent.includes('thinking')")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'thinking'")
         assert [m for m in voice.got if m.get('type') == 'skip_to_end'] == [{'type':'skip_to_end','utt':11}]
         voice.send({'type':'reading_skipped', 'utt':11},
                    {'type':'audio', 'utt':11, 'idx':1, 'text':'Late audio.',
                     'kind':'reply', 'data':_silence_wav(0.1)},
                    {'type':'reply','utt':11, 'text':'First part. Here is the complete ending.', 'done':True})
         await page.wait_for_function("document.querySelector('.history-turn.jarvis')?.textContent.includes('complete ending')")
-        await page.wait_for_selector('.chat-playback', state='detached')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
         await asyncio.sleep(.3)
         assert not [m for m in voice.got if m.get('type') == 'played' and m.get('utt') == 11]
         assert await page.locator('.chat-message.jarvis').count() == 1
@@ -36,9 +36,9 @@ async def test_skip_cancels_reading_not_reply_and_ignores_late_audio(page_url):
         voice.send({'type':'reply','utt':12,'text':'Another answer.', 'done':True},
                    {'type':'audio','utt':12,'idx':0,'text':'Another answer.',
                     'kind':'reply','data':_silence_wav(5)})
-        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         await page.keyboard.press('Escape')
-        await page.wait_for_selector('.chat-playback', state='detached')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
         assert [m for m in voice.got if m.get('type') == 'skip_to_end'][-1]['utt'] == 12
         assert await page.locator('.chat-message.jarvis').count() == 2
         await browser.close()
@@ -146,7 +146,7 @@ async def test_history_failure_is_visible_and_retry_recovers_without_losing_draf
     voice = _Voice()
     # The page also retries a failed read by itself (liveRead.ts, after 1 s,
     # 2 s, ...). Reads fail until Retry is pressed, so it is Retry that
-    # recovers, and the banner cannot go while the click is on its way.
+    # recovers, and the control's error cannot go while the click is on its way.
     async def read(route):
         if not await page.evaluate("window.__retried === true"):
             await route.fulfill(status=503, json={})
@@ -155,12 +155,13 @@ async def test_history_failure_is_visible_and_retry_recovers_without_losing_draf
         browser, page = await _open(p,page_url,voice)
         await page.route('**/api/conversation',read)
         voice.send({'type':'conversation'})
-        await page.wait_for_selector('.conversation-read-error')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'err-history-unavailable'")
+        assert await page.locator('.conversation-read-error').count() == 0
         await page.get_by_role('textbox',name='Message JARVIS').fill('Keep my draft')
         await page.evaluate("""() => document.addEventListener('click', (e) => {
-          if (e.target.closest('.conversation-read-error button')) window.__retried = true; }, true)""")
+          if (e.target.closest('#control-read-again')) window.__retried = true; }, true)""")
         await page.get_by_role('button',name='Retry',exact=True).click()
-        await page.wait_for_selector('.conversation-read-error',state='detached')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
         assert await page.get_by_role('textbox',name='Message JARVIS').input_value() == 'Keep my draft'
         assert await page.locator('.history-turn.jarvis').inner_text() == 'History recovered.'
         await browser.close()
@@ -184,7 +185,7 @@ async def test_backend_restart_can_reuse_utterance_after_skip_without_overwritin
         voice.send({'type':'reply','utt':1,'at':started+5,'text':'A new server reply.','done':True},
                    {'type':'audio','utt':1,'idx':0,'text':'A new server reply.', 'kind':'reply','data':_silence_wav(8)})
         await page.wait_for_function("document.querySelectorAll('.chat-message.jarvis').length === 2")
-        await page.wait_for_function("document.querySelector('.chat-playback')?.textContent.includes('speaking')")
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         assert 'first server reply' in await page.locator('.chat-message.jarvis').first.inner_text()
         assert 'new server reply' in await page.locator('.chat-message.jarvis').last.inner_text()
         await browser.close()
@@ -205,9 +206,9 @@ async def test_disconnected_partial_reply_is_marked_and_escape_skips_only_the_re
             await asyncio.sleep(.1)
         voice.send({'type':'audio','utt':2,'idx':0,'text':'Read the capture.', 'capture':5,
                     'kind':'reply','data':_silence_wav(8)})
-        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'speaking'")
         await page.keyboard.press('Escape')
-        await page.wait_for_selector('.chat-playback', state='detached')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state !== 'speaking'")
         # Escape is Skip the rest, for a read-back as for a reply: that one
         # reading only, never Stop speaking.
         assert [m for m in voice.got if m.get('type') == 'skip_to_end'] == [{'type':'skip_to_end','utt':2}]
@@ -268,7 +269,7 @@ async def _wheel(page, dy):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('theme', ['classic', 'graphite'])
-async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(page_url, theme):
+async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey_in_the_control(page_url, theme):
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, voice)
@@ -277,7 +278,7 @@ async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(p
                                                     _record_item(2, 'jarvis', '## Done\n\nAll is well, sir.')],
                                           'earlier': None})
         await page.evaluate("window.__hear('still being', false)")
-        await page.wait_for_selector('.conversation-interim p')
+        await page.wait_for_selector('#conversation-control[data-state="hearing"] .control-words')
         got = await page.evaluate("""() => {
           const colour = v => { const e = document.createElement('i'); e.style.color = `var(${v})`;
             document.body.append(e); const c = getComputedStyle(e).color; e.remove(); return c; };
@@ -286,10 +287,14 @@ async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey(p
                   jarvis: of('.chat-message.jarvis .chat-message-body .reply-prose p'),
                   heading: of('.chat-message.jarvis .reply-prose .md-h'),
                   sent: of('.chat-message.user .chat-message-body'),
-                  heard: of('.conversation-interim p')}; }""")
+                  heard: of('#conversation-control .control-words'),
+                  title: of('#conversation-control .control-title')}; }""")
         assert got['jarvis'] == got['heading'] == got['accent'], got
         assert got['sent'] == got['text'], got
-        assert got['heard'] == got['secondary'] and got['heard'] != got['text'], got
+        # His words being heard are grey until sent (Tim's choice), under a
+        # white title.
+        assert got['heard'] == got['secondary'], got
+        assert got['title'] == got['text'], got
         await browser.close()
 
 
@@ -367,8 +372,7 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
                    {'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
                     'text': 'Tell hammer to ship the folder catalog fix once the review passes, and post the notes.'},
                    {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'})
-        await page.wait_for_selector('#voice-turn')
-        await page.wait_for_selector('.chat-playback')
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'overlap-reading-waiting'")
         await asyncio.sleep(.6)
         assert await page.evaluate(GAP) < 2
         await page.evaluate("document.querySelector('.conversation-history').scrollTop = 200")
@@ -399,9 +403,13 @@ async def test_the_timeline_follows_until_he_scrolls_up_and_again_once_he_is_bac
         await page.locator('.chat-message .chat-copy').last.focus()
         await page.keyboard.press('PageUp')
         await page.wait_for_selector('.conversation-jump')
+        # How far PageUp moves depends on how tall the history is beside the
+        # bottom box; what matters is that it stays where his key left it.
+        left = await page.evaluate(TOP)
         voice.send({'type': 'reply', 'utt': 50, 'text': text * 9, 'done': True})
         await asyncio.sleep(.2)
-        assert await page.evaluate(GAP) > 50
+        assert abs(await page.evaluate(TOP) - left) < 2
+        assert await page.evaluate(GAP) > 0
         await page.get_by_role('button', name='Jump to latest').click()
         assert await page.evaluate(GAP) < 2
         voice.send({'type': 'reply', 'utt': 51, 'text': 'And one more.', 'done': True})
@@ -419,37 +427,60 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
         await page.set_viewport_size({'width': 1000, 'height': 720})
         await page.evaluate('(t) => document.documentElement.dataset.theme = t', theme)
         await _with_history(page, voice)
+        draft = '\n'.join(['A long draft line'] * 30)
+        await page.get_by_role('textbox', name='Message JARVIS').fill(draft)
         voice.send({'type': 'capture', 'id': 3, 'state': 'capturing', 'to': 'hammer',
                     'text': 'Tell hammer to ship the folder catalog fix once the review passes. ' * 2},
                    {'type': 'turn', 'state': 'stalled', 'turnId': 5, 'text': 'and then remind me about the'},
-                   {'type': 'reply', 'utt': 60, 'text': 'A long reply being read. ' * 120, 'done': True},
-                   {'type': 'audio', 'utt': 60, 'idx': 0, 'text': 'A long reply being read.', 'kind': 'reply',
-                    'data': _silence_wav(5)})
-        await page.wait_for_selector('.chat-playback')
-        await page.wait_for_selector('#voice-turn')
-        await page.get_by_role('textbox', name='Message JARVIS').fill('\n'.join(['A long draft line'] * 30))
+                   {'type': 'reply', 'utt': 60, 'text': 'A reply being prepared.', 'done': False},
+                   {'type': 'status', 'state': 'thinking'})
+        # Thinking with his stalled words: both at once, called out, with
+        # the stalled turn's three buttons, in the composer's heading row.
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'overlap-thinking-waiting'")
+        control = page.locator('.chat-composer #conversation-control')
+        assert await control.locator('.control-title').inner_text() == 'Overlap: JARVIS is thinking'
+        assert await control.locator('.control-lead').inner_text() == '· your words are waiting'
+        assert await control.locator('button').all_inner_texts() == ['Retry', 'Send now', 'Keep as draft']
+        assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
         await asyncio.sleep(.5)
         got = await page.evaluate("""() => {
           const r = s => document.querySelector(s).getBoundingClientRect();
           const dock = document.querySelector('.conversation-dock');
-          const field = document.querySelector('.hearing-input');
-          return {view: r('#conversation'), history: r('.conversation-history'), capture: r('#conversation .capture-box'),
-                  list: document.querySelector('#conversation .capture-list').scrollHeight
-                        - document.querySelector('#conversation .capture-list').clientHeight,
-                  playback: r('.chat-playback'), turn: r('#voice-turn'), composer: r('.chat-composer'),
-                  send: r('.composer-send'), dockScroll: dock.scrollHeight - dock.clientHeight,
-                  dockOverflow: getComputedStyle(dock).overflowY, dockTop: dock.scrollTop,
-                  fieldScroll: field.scrollHeight > field.clientHeight}; }""")
-        for part in ('capture', 'playback', 'turn', 'composer', 'send'):
-            assert got[part]['top'] >= got['view']['top'] and got[part]['bottom'] <= got['view']['bottom'] + 1, (part, got)
-        assert got['history']['bottom'] <= got['capture']['top'] + 1, got
-        assert got['capture']['bottom'] <= got['playback']['top'] <= got['turn']['top'] <= got['composer']['top'], got
-        assert got['composer']['bottom'] <= 720 and abs(got['composer']['bottom'] - got['view']['bottom']) < 2, got
-        assert got['list'] <= 1, 'the one capture is shown whole'
-        assert got['dockScroll'] <= 1 and got['dockOverflow'] == 'visible' and got['dockTop'] == 0, got
-        assert got['fieldScroll'], 'only the long draft scrolls, inside the editor'
-        assert got['history']['height'] >= 70, got
+          return {view:r('#conversation'), history:r('.conversation-history'), capture:r('#conversation .capture-box'),
+                  turn:r('#conversation-control'), composer:r('.chat-composer'),
+                  dockScroll:dock.scrollHeight-dock.clientHeight}; }""")
+        assert got['capture']['bottom'] + 10 <= got['composer']['top'], got
+        assert got['composer']['top'] <= got['turn']['top'] < got['turn']['bottom'] <= got['composer']['bottom'], got
+        assert got['dockScroll'] <= 1 and got['history']['height'] >= 70, got
+        # Rapid replacements must retain the action row's bottom inset.
+        for words in ['Short.', 'A longer replacement with several lines. ' * 15, 'Final words.']:
+            voice.send({'type':'capture','id':3,'state':'capturing','text':words})
+            await asyncio.sleep(.08)
+            assert await page.evaluate("""() => {
+              const box=document.querySelector('#conversation .capture-box');
+              const actions=box.querySelector('.capture-buttons');
+              return box.getBoundingClientRect().bottom-actions.getBoundingClientRect().bottom >= 11;
+            }""")
+        for stage in ['tentative', 'deciding', 'likely']:
+            voice.send({'type':'turn','state':'pause','stage':stage,'turnId':5,'text':'Ready when I finish speaking','sound':False})
+            await page.wait_for_function("stage => document.querySelector('#conversation-control').dataset.pause === stage", arg=stage)
+            assert await page.evaluate("document.querySelector('#conversation-control').dataset.state") == 'overlap-thinking-waiting'
+        await page.screenshot(path=f'/tmp/conversation-control-status-{theme}.png')
+        voice.send({'type':'turn','state':'committed','turnId':5})
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'thinking'")
+        assert await control.locator('.control-title').inner_text() == 'JARVIS is thinking'
+        assert await control.locator('.control-light[data-light="thinking"] i').count() == 3
+        await page.screenshot(path=f'/tmp/conversation-control-thinking-{theme}.png')
+        voice.send({'type':'reply','utt':60,'text':'A reply being prepared.','done':True})
+        await page.wait_for_function("document.querySelector('#conversation-control').dataset.state === 'empty'")
+        assert await control.locator('.control-label').inner_text() == 'Message JARVIS'
+        assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
+        await page.screenshot(path=f'/tmp/conversation-control-{theme}.png')
         await browser.close()
+
+
+# The composer's heading row, every state, overlap and error, at both
+# widths: tests/test_voice_page_conversation_control.py.
 
 
 # ── following the word being read through a reply taller than the box ─────

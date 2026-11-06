@@ -939,9 +939,9 @@ class SessionState:
     last_prompt: str | None = None
     last_text: str | None = None
     recent_tools: list[str] = field(default_factory=list)
-    # When the SESSION STARTED. Used for age ordering (`_name_by_age`'s
-    # "the newer hammer" / "the older hammer"). Do not use this for spoken
-    # elapsed time — see `since` below.
+    # When the SESSION STARTED: what tells two conversations of one name
+    # apart when he is asked which. Do not use this for spoken elapsed time
+    # — see `since` below.
     started: float | None = None
     # When the CURRENT STATE began. Used for spoken elapsed time ("hammer has
     # been waiting about an hour"). Measured on the live roster: the largest
@@ -1493,154 +1493,23 @@ def claude_activity(entries: list[RosterEntry], recap: Recap, agents_active: int
 
 
 def _assign_voice_names(sessions: list[SessionState]) -> None:
-    """Give every conversation a name a person can say and hear.
+    """Give every conversation its exact name: the one the user gave it in
+    Claude Code, else its project's (its folder's name). A name set in JARVIS
+    replaces it afterwards (`Snapshot.named`).
 
-    Collisions measured on the live machine: `hammer` had two conversations in
-    ONE directory (so the folder cannot disambiguate) and `chitauri` had three
-    across TWO directories (so the folder can). Roster suffixes like `-4b` are
-    never used: they are neither sayable nor hearable.
+    The name is never a phrase made up to tell conversations apart. It used
+    to be: two conversations in one project became "the newer denice" and
+    "the older denice", or "the denice that's working", and that phrase was
+    what JARVIS said, stored on each message, showed on the page and
+    matched against what he said. It changed with the state ("the older
+    denice" was written to a message whose reply came back from "the denice
+    that's working") and he never knew which agent was which. Two
+    conversations may now share a name; they are kept apart by session id,
+    and where he must choose JARVIS asks with the name and a fact said
+    beside it (`server._ask_which`), never by renaming either.
     """
-    by_project: dict[str, list[SessionState]] = {}
     for s in sessions:
-        by_project.setdefault(s.project, []).append(s)
-
-    for project, group in by_project.items():
-        if len(group) == 1:
-            group[0].voice_name = project
-            continue
-        by_parent: dict[str, list[SessionState]] = {}
-        for s in group:
-            by_parent.setdefault(Path(s.cwd).parent.name, []).append(s)
-        if len(by_parent) > 1:
-            # The parent folder tells them apart — "chitauri in Desktop" vs
-            # "chitauri in Projects". A folder may still hold several, so those
-            # get the same fallback chain applied on top.
-            for parent, sub in by_parent.items():
-                base = f"{project} in {parent}"
-                if len(sub) == 1:
-                    sub[0].voice_name = base
-                else:
-                    _name_group(sub, base)
-        else:
-            _name_group(group, project)
-
-
-def _name_group(group: list[SessionState], base: str) -> None:
-    """Name several conversations that share a `base` (project, or "project
-    in parent"). Tries, in order, the strongest distinguisher that actually
-    distinguishes them: what they are ABOUT, then what they are DOING, and
-    only as a last resort how OLD they are. Age was the original — and
-    weakest — rule; a user was told "the newer one" / "the older one" with no
-    hint of which conversation was which. Each rule applies to the WHOLE
-    group at once: a group is never named half by topic and half by state,
-    because that would make one half's names orphan the other half's
-    convention when the user answers back.
-    """
-    if _name_by_topic(group, base):
-        return
-    if _name_by_state(group, base):
-        return
-    _name_by_age(group, base)
-
-
-# Generic words that carry no topic of their own, stripped from a title
-# before a short phrase is pulled from what's left.
-_TITLE_STOPWORDS = frozenset({
-    "a", "an", "the", "and", "or", "to", "for", "of", "in", "on", "with",
-    "at", "by", "from", "is", "are", "this", "that", "it", "its", "your",
-    "my", "our",
-})
-
-
-def _topic_words(project: str) -> set[str]:
-    return {w for w in re.split(r"[^a-z0-9]+", project.lower()) if w}
-
-
-def _topic_phrase(title: str, project: str) -> str | None:
-    """A short (<=2 word), sayable phrase distilled from a conversation's
-    title: generic stopwords and the project's own name are stripped out,
-    and the last couple of remaining words are kept — the part of a title
-    that tends to carry what's actually distinct about it ("...architecture
-    and handoff" -> "architecture handoff"). None if nothing is left to
-    distinguish it by.
-    """
-    tokens = [w for w in re.split(r"[^a-z0-9]+", title.lower()) if w]
-    proj_words = _topic_words(project)
-    kept = [w for w in tokens if w not in _TITLE_STOPWORDS and w not in proj_words]
-    if not kept:
-        return None
-    return " ".join(kept[-2:])
-
-
-def _name_by_topic(group: list[SessionState], base: str) -> bool:
-    """Name every conversation in the group by what it's ABOUT.
-
-    Succeeds only when EVERY member has a non-empty title AND the phrases
-    pulled from those titles are pairwise distinct — a title missing on even
-    one member, or two titles boiling down to the same phrase, means topic
-    naming cannot tell the whole group apart, so nothing is assigned and the
-    caller falls through to the next rule for the group as a whole.
-    """
-    phrases: dict[str, str] = {}
-    for s in group:
-        title = (s.title or "").strip()
-        if not title:
-            return False
-        phrase = _topic_phrase(title, s.project)
-        if not phrase:
-            return False
-        phrases[s.session_id] = phrase
-    if len(set(phrases.values())) != len(phrases):
-        return False
-    for s in group:
-        s.voice_name = f"{base}, the {phrases[s.session_id]} one"
-    return True
-
-
-# Short, sayable phrases for what a conversation is doing right now, used
-# when topic naming can't tell a group apart (title missing or identical)
-# but their states differ.
-_STATE_PHRASES = {
-    NEEDS_YOU: "that needs you",
-    WORKING: "that's working",
-    IDLE: "that's idle",
-    BACKGROUND: "that's working in the background",
-    GONE: "that's finished",
-    FRESH: "that hasn't started",
-    UNKNOWN: "in an unclear state",
-}
-
-
-def _name_by_state(group: list[SessionState], base: str) -> bool:
-    """Name every conversation in the group by what it is DOING.
-
-    Succeeds only when every member's state is pairwise distinct — two
-    conversations both sitting idle are not told apart by state either, so
-    the caller falls through to age for the group as a whole.
-    """
-    states = [s.state for s in group]
-    if len(set(states)) != len(states):
-        return False
-    for s in group:
-        phrase = _STATE_PHRASES.get(s.state, "in an unclear state")
-        s.voice_name = f"the {base} {phrase}"
-    return True
-
-
-def _name_by_age(group: list[SessionState], base: str) -> None:
-    """Two conversations in one folder: 'the newer hammer' / 'the older hammer'.
-    Beyond two, fall back to ordinals, which are still sayable. The last
-    resort of the naming chain — it carries no information about what a
-    conversation IS, only how old it is."""
-    ordered = sorted(group, key=lambda s: s.started or 0.0, reverse=True)
-    if len(ordered) == 2:
-        ordered[0].voice_name = f"the newer {base}"
-        ordered[1].voice_name = f"the older {base}"
-        return
-    words = ("newest", "second", "third", "fourth", "fifth")
-    for i, s in enumerate(ordered):
-        s.voice_name = (f"the {words[i]} {base}" if i < len(words)
-                        else f"{base} number {i + 1}")
+        s.voice_name = s.given_name or s.project
 
 
 @dataclass
@@ -1658,11 +1527,8 @@ class Snapshot:
         For JARVIS's own `claude -p` runs, which register in the roster like
         anything else (measured 2026-09-04: `entrypoint: "sdk-cli"`,
         `kind: "interactive"`). Dropping the rows is not enough on its own,
-        because the two things computed ACROSS a project — the voice name and
-        the "main" badge — were computed with the runs still in. A user with
-        one conversation in a project a run had also touched was told about
-        "the newer" and "the older" one, and then only one of them survived
-        the filter.
+        because the "main" badge is computed ACROSS a project, with the runs
+        still in, so it is worked out again for what is left.
 
         The same snapshot object comes back when nothing is excluded, so the
         common case costs nothing.
@@ -1682,9 +1548,10 @@ class Snapshot:
         """This snapshot with each session in `official` (session id -> name)
         going by that name instead of the one `_assign_voice_names` derived.
 
-        The names the user has set are the official ones: the voice name is
-        what JARVIS says, what `resolve` matches and what the agents list
-        shows, so replacing it here makes all of them use the official name.
+        `official` is every agent's one name (run_store.agent_names): the
+        voice name is what JARVIS says, what the agent directory matches and
+        what every screen and record shows, so replacing it here makes all
+        of them use that one name.
         Sessions are copied, never changed in place: the watcher's own
         snapshot is shared."""
         if not official or not any(s.session_id in official for s in self.sessions):
@@ -1992,13 +1859,8 @@ class SessionWatcher:
                     snap.sessions.append(gone)
 
         # Every session PUBLISHED must have been through naming together.
-        # `build_snapshot()` already named the live sessions before any of
-        # them were known here; gone-cache entries retained above (or just
-        # created above) still carry the voice_name assigned in an EARLIER
-        # poll, computed without knowledge of whoever is live now. A session
-        # that returns from the gone-cache under a fresh session_id can
-        # therefore collide with a live conversation's name unless naming is
-        # redone across the full, final set.
+        # Every session in the published snapshot is named the same way,
+        # gone-cache entries included.
         _assign_voice_names(snap.sessions)
         # Same reason naming is redone here: a conversation carried forward
         # from the gone-cache was ranked against whoever was live in an
@@ -2239,11 +2101,12 @@ class SessionWatcher:
 
 def agent_name(s: SessionState) -> str:
     """The one place an agent's name comes from (the agents list, its page
-    control and JARVIS's agent tools all read it from here): the name the user
-    gave the session in Claude Code, which survives a resume, else the voice
-    name `_assign_voice_names` gives it. A name set in JARVIS (rename_agent)
-    wins over both."""
-    return s.given_name or s.voice_name
+    control and JARVIS's agent tools all read it from here): its voice name,
+    which is the name set in JARVIS (rename_agent, applied by
+    `Snapshot.named`), else the name the user gave the session in Claude Code,
+    which survives a resume, else its project's. Always the exact name, never
+    a phrase (`_assign_voice_names`)."""
+    return s.voice_name or s.given_name or s.project
 
 
 def message_to_dict(m) -> dict:

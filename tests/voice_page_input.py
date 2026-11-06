@@ -8,6 +8,8 @@ A test that hears speech clicks it, as a person would.
 
 import json
 
+from jarvis import voice_control
+
 LISTEN = "#btn-listen"
 SETTINGS_PATH = "**/api/settings/voice-input"
 
@@ -18,18 +20,31 @@ async def start_listening(page, timeout: float = 10000) -> None:
     await page.click(LISTEN)
 
 
-async def route_settings(page, stop="keep", switch="stop", status=200):
+async def route_settings(page, stop="keep", switch="stop", status=200, sounds=True, **more):
     """Answer the voice input settings with these (or fail with `status`),
-    and accept a change, answering what was saved. Returns the list of
-    changes the page posted."""
-    state = {"stop": stop, "switch": switch, "patience": 1.5, "saved": True, "scope": "local"}
+    the rest the defaults (`more` overrides any: cues, volume, intervals),
+    and accept a change, answering what was saved, its schedule and
+    patience worked out as the server does. Returns the list of changes
+    the page posted."""
+    state = {**voice_control.defaults(), "stop": stop, "switch": switch, "sounds": sounds,
+             "saved": True, **more}
+
+    def timed():
+        schedule = dict(voice_control.schedule_of(state))
+        state.update(schedule=schedule, patience=schedule["send"])
+    timed()
     posted: list[dict] = []
 
     async def handle(route):
         if route.request.method == "POST":
             change = json.loads(route.request.post_data or "{}")
             posted.append(change)
-            state.update({k: v for k, v in change.items() if k in ("stop", "switch", "patience")})
+            for name, choice in (change.get("cues") or {}).items():
+                state["cues"] = {**state["cues"], name: {**state["cues"][name], **choice}}
+            state["intervals"] = {**state["intervals"], **(change.get("intervals") or {})}
+            state.update({k: v for k, v in change.items()
+                          if k in ("stop", "switch", "sounds", "volume")})
+            timed()
         if status != 200:
             await route.fulfill(status=status, content_type="application/json",
                                 body=json.dumps({"code": "unreadable", "error": "no"}))

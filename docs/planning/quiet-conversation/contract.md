@@ -213,7 +213,7 @@ Replaces `_Utterance` (`server.py` 4944). One per voice client.
 |---|---|
 | accepted `final` (epoch current) | join `gathering`; `activityRevision`+1; new deadline |
 | accepted `interim` (speech, not echo) | `activityRevision`+1; extends the hold whether or not a final is buffered; an unfinished interim blocks commit of older finals |
-| hold deadline reached | `commit-pending`: recheck `turnId`, `activityRevision`, deadline, and capture coverage (`decodedSeq` ≥ the capture's `frameSeq` at hold start, bounded lag). Pass → commit. Not yet → wait to a bound, then `stalled` |
+| hold deadline reached | `commit-pending`: recheck `turnId`, `activityRevision`, deadline, and capture coverage (`decodedSeq` ≥ the capture's `frameSeq` at the deadline, bounded lag). Pass → commit. Not yet → wait to a bound, then `stalled` |
 | speech during `commit-pending` | back to `gathering`, same `turnId` |
 | speech after commit, before audio starts | playback permission revoked; continuation kept as the next input; the executed action is not undone or replayed |
 | typed Send | intentional completion of the typed text; pending voice words for this client stay a separate draft and are not merged silently |
