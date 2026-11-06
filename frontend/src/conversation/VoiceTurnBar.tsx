@@ -11,20 +11,22 @@
 
 import { useSyncExternalStore } from "react";
 import { useT } from "../locale";
-import { turnAction, voiceTurn } from "../voiceStatus";
+import { turnAction, voiceTurn, type VoiceTurn } from "../voiceStatus";
 
-export function VoiceTurnBar({ partRef }: { partRef: (el: Element | null) => void }) {
+export function voiceTurnLabel(turn: VoiceTurn) {
+  return turn.state === "stalled" ? "main.conversation.turnStalled"
+    : turn.pause ? (`main.conversation.turnPause.${turn.pause}` as const) : "main.conversation.turnGathering";
+}
+
+export function VoiceTurnBar({ partRef, labelInComposer = false }: { labelInComposer?: boolean; partRef: (el: Element | null) => void }) {
   const t = useT();
   const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
   if (!turn || !turn.text.trim()) return null;
   const stalled = turn.state === "stalled";
-  // A pause cue's stage is shown whether or not its sound plays.
-  const label = stalled ? "main.conversation.turnStalled"
-    : turn.pause ? (`main.conversation.turnPause.${turn.pause}` as const) : "main.conversation.turnGathering";
   return <div id="voice-turn" className={`chat-playback chat-voice-turn${stalled ? " stalled" : ""}`} role="group"
               ref={partRef} aria-label={t("main.conversation.turn")} data-pause={turn.pause ?? undefined}>
     <div className="playback-label" role="status">
-      <strong>{t(label)}</strong>
+      {!labelInComposer && <strong>{t(voiceTurnLabel(turn))}</strong>}
       <span>{turn.text}</span>
     </div>
     {stalled && <button type="button" id="voice-turn-retry" data-ui-action="domain"

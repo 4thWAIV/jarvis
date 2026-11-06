@@ -93,13 +93,3 @@
 .reply-prose pre code { background: none; padding: 0; }
 .reply-prose blockquote { color: var(--ui-secondary); border-left: 2px solid var(--ui-edge); padding-left: 14px; margin: 12px 0; }
 .reply-prose hr { border: 0; border-top: 1px solid var(--ui-divider); margin: 16px 0; }
-
-/* One stable message surface: listening, pause, thinking, reading, or typing. */
-.chat-composer { min-height: 116px; }
-.composer-status { display: flex; align-items: center; }
-.composer-status > .chat-playback,
-.composer-status > .conversation-interim { width: 100%; margin: 0; padding: 0; border: 0; background: transparent; }
-.composer-status .playback-label > span { display: block; white-space: pre-wrap; overflow-wrap: anywhere; max-height: min(180px, 25vh); overflow-y: auto; text-overflow: clip; }
-.composer-status .conversation-interim p { max-height: min(180px, 25vh); margin: 7px 0 0; }
-.composer-status .chat-playback { flex-wrap: wrap; }
-.composer-status .playback-label { flex-basis: 160px; }
