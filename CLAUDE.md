@@ -908,17 +908,27 @@ same service: each of the five cues (`start`, `stop`, and the pause cues
 `voice_control.PAUSE_CUES`, mirrored by `voiceControl.ts` and
 `jarvis_mcp._PAUSE_CUES`) on or off with a tone from `voice_control.TONES`
 (notes in `voice.ts` `TONE_NOTES`, placeholders), each pause cue's own
-`before` (seconds before the end of his turn; no shared spacing, so the
-gaps between the beeps are set apart), and one `volume`. Settings, Voice
+`percent` (its share of his patience, from when his speech was last heard;
+the send is at 100), and one `volume`. The pause cues that are on are
+ordered by construction: each at least `PERCENT_SPACING` (5) after the one
+before, within 5 to 95 (`voice_control.pause_cue_bounds`, mirrored by
+`voiceControl.pauseCueBounds`); a change that would cross them is refused,
+turning a cue on included, and Settings bounds each field by its
+neighbours that are on and keeps a typed value inside them. A cue that is
+off is not timed and does not constrain the others. So at any patience all
+three play, in order, before the send (defaults 40, 65, 85: at 1.5 s after
+0.6, 0.98 and 1.28 s). Settings, Voice
 and language shows each with a Test (`voiceStatus.cueTest`; the brain's
 acting `play_cue` sends the page of the turn a `cue_test` frame to the same
 call) and when it plays, and each pause cue's timing its gaps to the
 neighbouring beeps (`voice_control.pause_cue_gaps`, `voiceControl.pauseCueGaps`;
-the brain's settings read says the same). The pause cue in the middle is
-"Deciding" ("Decidiendo"), default tone `low`, 1.75 s before; a row saved
-before it existed reads with it (migration 5 puts it halfway between his
-tentative and likely-end timings only when 1.75 does not fit between them). The pause cues are the turn controller's (see
-"Turn-taking").
+the brain's settings read says the same), each row with its seconds at
+his patience. The pause cue in the middle is "Deciding" ("Decidiendo"),
+default tone `low`. Timings saved as seconds before the end of his turn
+(`before`, before migration 6) are dropped, since a lead in seconds means a
+different share at every patience: those cues read with the default
+shares, keeping their tone and on or off. The pause cues are the turn
+controller's (see "Turn-taking").
 
 ## Turn-taking
 JARVIS waits for Tim to finish. One `turn_controller.TurnController` per
@@ -942,14 +952,14 @@ Speech after a commit and before its reply sounds stops that reply's
 reading (its text stays, nothing is undone) and starts the next turn. Typed
 Send is its own message; voice words being gathered go on as their own
 turn. A stop under Discard is `turn_discard`. While he is quiet in a gathered turn the
-controller gives the pause cues from the same deadline (`pause_cues`,
-`on_pause`): `tentative` at patience minus its `before`, then `deciding`,
-then `likely` (each `before` must be larger than the next one's, refused
-otherwise; a cue not after he stopped is not scheduled), each checked when due against the turn, revision and deadline
+controller gives the pause cues that are on (`pause_cues`, `on_pause`),
+each at its share of the same hold the commit ends, from when it began:
+`tentative`, then `deciding`, then `likely`, then the commit, at any
+patience, each checked when due against the turn, revision and deadline
 and that it is still gathering, so any accepted speech cancels them and
 each plays at most once per pause. The server sends them only to that
 page, as a `turn` frame with state `pause`, its `stage` (shown on the turn
-bar either way) and `sound` (his capture sounds and that cue on, and him
+bar whether or not it sounds) and `sound` (his capture sounds on, and him
 engaged, never away); the page plays it only while listening, at once or
 never. Nothing JARVIS says starts
 while he has spoken within his patience, replies included (the scheduler's
