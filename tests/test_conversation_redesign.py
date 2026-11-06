@@ -269,7 +269,7 @@ async def _wheel(page, dy):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('theme', ['classic', 'graphite'])
-async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_his_white_in_the_control(page_url, theme):
+async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_grey_in_the_control(page_url, theme):
     voice = _Voice()
     async with async_api.async_playwright() as p:
         browser, page = await _open(p, page_url, voice)
@@ -291,9 +291,10 @@ async def test_jarvis_is_blue_tim_sent_is_white_and_words_still_heard_are_his_wh
                   title: of('#conversation-control .control-title')}; }""")
         assert got['jarvis'] == got['heading'] == got['accent'], got
         assert got['sent'] == got['text'], got
-        # His words being heard are in the control, in his own white, under
-        # their title (the approved design: --ui-text).
-        assert got['heard'] == got['text'] == got['title'], got
+        # His words being heard are grey until sent (Tim's choice), under a
+        # white title.
+        assert got['heard'] == got['secondary'], got
+        assert got['title'] == got['text'], got
         await browser.close()
 
 

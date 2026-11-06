@@ -110,9 +110,11 @@
    is saying now --ui-text. */
 .heard-words { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .heard-words > span { direction: ltr; unicode-bidi: isolate; }
-.control-words { flex: 1 1 0; min-width: 0; color: var(--ui-text); }
-.control-words .earlier { color: var(--ui-secondary); }
-.control-words .now { color: var(--ui-text); }
+.control-words { flex: 1 1 0; min-width: 0; color: var(--ui-secondary); }
+/* His words not yet sent stay grey (Tim's choice); white is for words sent.
+   Earlier words still waiting are dimmer than the words he is saying now. */
+.control-words .earlier { color: var(--ui-secondary); opacity: .65; }
+.control-words .now { color: var(--ui-secondary); }
 .control-actions { grid-area: actions; justify-self: end; align-self: center; display: flex; gap: 8px; }
 #conversation .control-actions button { box-sizing: border-box; height: 32px; padding: 0 14px; border-radius: 8px;
   border: 1px solid var(--ui-divider); background: var(--ui-raised); color: var(--ui-text); font: inherit; font-size: 12px;
