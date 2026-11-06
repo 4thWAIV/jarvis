@@ -117,3 +117,15 @@
 .composer-status button { box-sizing: border-box; height: var(--composer-heading-height); padding: 0 10px; white-space: nowrap; }
 .heard-words { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .heard-words > span { direction: ltr; unicode-bidi: isolate; }
+/* Two states at once (ConversationView.tsx, overlapOf): the row is marked
+   in yellow and names both in place of the shown state's title and words,
+   its buttons kept. Outline and background only, so the row keeps its
+   size. The line is clamped to one line rather than kept from wrapping, so
+   only its longest word counts in the row's minimum and the label keeps
+   its room. */
+.composer-heading.overlap .composer-status { border-radius: 6px; outline: 1px solid var(--ui-overlap); outline-offset: 3px; background: rgba(var(--ui-overlap-rgb), .1); }
+.composer-overlap { flex: 1 1 auto; min-width: 0; margin-right: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; color: var(--ui-overlap); font-size: 12px; line-height: 18px; font-weight: 500; }
+.composer-heading.overlap .composer-status > * .playback-label,
+.composer-heading.overlap .conversation-interim > :is(span, p) { display: none; }
+.composer-heading.overlap .composer-status > .chat-playback,
+.composer-heading.overlap .composer-status > .conversation-interim { flex: none; }

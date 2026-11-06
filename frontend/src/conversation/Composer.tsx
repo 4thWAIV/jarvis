@@ -23,7 +23,9 @@ export function HeardWords({ text }: { text: string }) {
   return <span className="heard-words"><span>{text}</span></span>;
 }
 
-export function Composer({ partRef, status }: { partRef: (el: Element | null) => void; status?: ReactNode }) {
+export function Composer({ partRef, status, overlap }: {
+  partRef: (el: Element | null) => void; status?: ReactNode; overlap?: string;
+}) {
   const t = useT();
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(readDraft);
@@ -56,8 +58,11 @@ export function Composer({ partRef, status }: { partRef: (el: Element | null) =>
     setDraft(""); keepDraft(""); setError(false); input.current?.focus();
   }
   return <form className="chat-composer" data-ui-action="domain" onSubmit={e => { e.preventDefault(); send(); }}>
-    <div className="composer-heading">
-      <div className="composer-status">{status}</div>
+    <div className={`composer-heading${overlap ? " overlap" : ""}`}>
+      <div className="composer-status">
+        {overlap && <strong className="composer-overlap" role="status" title={overlap}>{overlap}</strong>}
+        {status}
+      </div>
       <label htmlFor="conversation-draft">{t("main.conversation.messageJarvis")}</label>
     </div>
     <textarea id="conversation-draft" ref={el => { input.current = el; partRef(el); }}

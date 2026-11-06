@@ -133,19 +133,34 @@ const conversationRef = <K extends "conversation" | "conversationRecord" | "sour
 /** A part's callback ref, from a registered target (`useUiTarget`). */
 type PartRef = (part: string) => (el: Element | null) => void;
 
+// Two of the status control's states true at once, called out while Tim
+// decides which should win; the status shown, with its buttons, is the one
+// chosen below either way (unsent words, then words heard, then the reply).
+type OverlapPart = "Reading" | "Thinking" | "Waiting" | "Hearing" | "Earlier";
+function overlapOf(unsent: boolean, hearing: boolean, state: string): [OverlapPart, OverlapPart] | null {
+  if (state === "speaking" && unsent) return ["Reading", "Waiting"];
+  if (state === "speaking" && hearing) return ["Reading", "Hearing"];
+  if (hearing && unsent) return ["Hearing", "Earlier"];
+  if (state === "thinking" && unsent) return ["Thinking", "Waiting"];
+  return null;
+}
+
 export function ConversationView() {
   const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const hearing = [...turns].reverse().find(turn => turn.speaker === "user" && turn.open);
   const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
   const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
+  const unsent = Boolean(turn?.text.trim());
+  const pair = overlapOf(unsent, Boolean(hearing), state);
   const t = useT();
   const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
   return <section id="conversation" ref={ui.whole} aria-label={t("tabs.main.conversation")}>
     <History turns={turns.filter(turn => !turn.open)} partRef={ui.part} />
     <div className="conversation-dock">
       <div className="conversation-captures"><CaptureList view="main.conversation" /></div>
-      <Composer partRef={ui.part("input")} status={
-        turn?.text.trim() ? <VoiceTurnBar partRef={ui.part("turn")} />
+      <Composer partRef={ui.part("input")} overlap={pair ? t("main.conversation.overlap", {
+        first: t(`main.conversation.overlap${pair[0]}`), second: t(`main.conversation.overlap${pair[1]}`) }) : undefined} status={
+        unsent ? <VoiceTurnBar partRef={ui.part("turn")} />
         : hearing ? <div className="conversation-interim" role="status">
           <span>{t("main.conversation.hearing")}</span><p><HeardWords text={hearing.sentences.join(" ")} /></p>
         </div>

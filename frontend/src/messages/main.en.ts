@@ -109,6 +109,13 @@ export const mainEn = {
   "main.conversation.replyAbove": "Your reply will appear above",
   "main.conversation.skipTitle": "Skip the rest of this reading (Escape)",
   "main.conversation.skip": "Skip to end",
+  // Two states of the status control at once, called out (ConversationView.tsx).
+  "main.conversation.overlap": "Overlap: {first} · {second}",
+  "main.conversation.overlapReading": "JARVIS is reading",
+  "main.conversation.overlapThinking": "JARVIS is thinking",
+  "main.conversation.overlapWaiting": "your words are waiting",
+  "main.conversation.overlapHearing": "you are speaking",
+  "main.conversation.overlapEarlier": "your earlier words are waiting",
   // What a record is called when JARVIS points at it.
   "main.record.anAgent": "an agent",
   "main.record.messageTo": "Message to {agent}",

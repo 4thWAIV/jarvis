@@ -427,7 +427,9 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
                    {'type': 'reply', 'utt': 60, 'text': 'A reply being prepared.', 'done': False},
                    {'type': 'status', 'state': 'thinking'})
         await page.wait_for_selector('.composer-heading #voice-turn')
-        assert await page.locator('.composer-heading strong').inner_text() == 'Speech recognition could not finish this'
+        assert await page.locator('.composer-heading #voice-turn strong').text_content() == 'Speech recognition could not finish this'
+        # Thinking with his unsent words: both at once, called out.
+        assert await page.locator('.composer-overlap').inner_text() == 'Overlap: JARVIS is thinking · your words are waiting'
         assert await page.locator('.chat-composer .chat-playback').count() == 1
         assert await page.locator('.conversation-dock > .chat-playback').count() == 0
         assert await page.get_by_role('textbox', name='Message JARVIS').input_value() == draft
@@ -452,12 +454,12 @@ async def test_the_capture_box_and_the_bottom_box_stay_whole_and_the_bottom_box_
             }""")
         for stage, label in [('tentative', 'Finished? Not sent yet'), ('deciding', 'Deciding'), ('likely', 'Sending soon')]:
             voice.send({'type':'turn','state':'pause','stage':stage,'turnId':5,'text':'Ready when I finish speaking','sound':False})
-            await page.wait_for_function("label => document.querySelector('.composer-heading strong')?.textContent === label", arg=label)
+            await page.wait_for_function("label => document.querySelector('.composer-heading #voice-turn strong')?.textContent === label", arg=label)
             assert await page.locator('.composer-heading .chat-playback').count() == 1
         await page.screenshot(path=f'/tmp/conversation-control-status-{theme}.png')
         voice.send({'type':'turn','state':'committed','turnId':5})
         await page.wait_for_selector('#voice-turn', state='detached')
-        await page.wait_for_function("document.querySelector('.composer-heading strong')?.textContent === 'JARVIS is thinking'")
+        await page.wait_for_function("document.querySelector('.composer-heading .chat-playback strong')?.textContent === 'JARVIS is thinking'")
         assert await page.locator('.composer-heading .chat-playback').count() == 1
         assert await page.locator('.composer-heading .playback-indicator i').count() == 3
         await page.screenshot(path=f'/tmp/conversation-control-thinking-{theme}.png')
@@ -484,11 +486,11 @@ HEADING_STATES = {
                  {'type': 'status', 'state': 'thinking'}],
 }
 HEADING = """() => {
+  const colour = v => { const e = document.createElement('i'); e.style.color = `var(${v})`; document.body.append(e);
+    const c = getComputedStyle(e).color; e.remove(); return c; };
   const box = e => { const b = e.getBoundingClientRect(); return {left: b.left, right: b.right, top: b.top, bottom: b.bottom}; };
   const q = s => document.querySelector(s);
   const heading = q('.composer-heading'), label = q('.composer-heading > label'), style = getComputedStyle(heading);
-  const edge = document.createElement('i'); edge.style.color = 'var(--ui-edge)'; document.body.append(edge);
-  const edgeColour = getComputedStyle(edge).color; edge.remove();
   const words = q('.composer-heading .heard-words');
   let newest = null;
   if (words && words.clientWidth > 0) {
@@ -501,33 +503,45 @@ HEADING = """() => {
   return {conversation: box(q('#conversation')), heading: box(heading), content: parseFloat(style.height),
           history: box(q('.conversation-history')), field: box(q('.hearing-input')),
           label: {...box(label), whole: label.scrollWidth <= label.clientWidth, text: label.textContent},
-          line: [style.borderBottomWidth, style.borderBottomStyle, style.borderBottomColor, edgeColour],
+          line: [style.borderBottomWidth, style.borderBottomStyle, style.borderBottomColor, colour('--ui-edge')],
+          marked: heading.classList.contains('overlap'), yellow: colour('--ui-overlap'),
+          outline: getComputedStyle(q('.composer-status')).outlineColor,
+          overlap: q('.composer-overlap') && getComputedStyle(q('.composer-overlap')).color,
+          titles: [...heading.querySelectorAll('.composer-status strong, .conversation-interim > span')]
+            .filter(e => e.getClientRects().length).map(e => e.textContent),
           status: q('.composer-status').textContent, newest,
           buttons: [...heading.querySelectorAll('button')].map(b => ({...box(b), name: b.textContent,
                                                                    whole: b.scrollWidth <= b.clientWidth}))};
 }"""
 
 
-async def _heading_in(page_url, p, state, widths):
+HEADING_SHOWN = {'idle': None, 'hearing': '.conversation-interim', 'gathering': '#voice-turn',
+                 'stalled': '#voice-turn-retry', 'speaking': '.chat-playback button',
+                 'thinking': '.chat-playback .playback-indicator.waiting'}
+
+
+async def _heading_in(page_url, p, frames, shown, widths, shot=None):
+    """The heading row measured at each width once `frames` have arrived
+    and `shown` (a selector in the row) is there; `shot`, a screenshot's
+    path with {width} in it, for looking at it."""
     voice = _Voice()
     browser, page = await _open(p, page_url, voice)
-    for frame in HEADING_STATES[state]:
+    for frame in frames:
         if isinstance(frame, str):
             await page.evaluate('words => window.__hear(words, false)', frame)
         elif 'seconds' in frame:
             voice.send({k: v for k, v in frame.items() if k != 'seconds'} | {'data': _silence_wav(frame['seconds'])})
         else:
             voice.send(frame)
-    status = {'idle': None, 'hearing': '.conversation-interim', 'gathering': '#voice-turn',
-              'stalled': '#voice-turn-retry', 'speaking': '.chat-playback button',
-              'thinking': '.chat-playback .playback-indicator.waiting'}[state]
-    if status:
-        await page.wait_for_selector(f'.composer-status {status}')
+    if shown:
+        await page.wait_for_selector(f'.composer-heading {shown}')
     got = {}
     for width in widths:
         await page.set_viewport_size({'width': width, 'height': 760})
         await asyncio.sleep(.3)
         got[width] = await page.evaluate(HEADING)
+        if shot:
+            await page.screenshot(path=shot.format(width=width))
     await browser.close()
     return got
 
@@ -541,7 +555,8 @@ async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_th
     1000 px wide, and 686 px, where the conversation is 360 px wide."""
     wide, narrow = 1000, 686
     async with async_api.async_playwright() as p:
-        seen = {state: await _heading_in(page_url, p, state, (wide, narrow)) for state in HEADING_STATES}
+        seen = {state: await _heading_in(page_url, p, frames, HEADING_SHOWN[state], (wide, narrow))
+                for state, frames in HEADING_STATES.items()}
     assert abs(seen['idle'][narrow]['conversation']['right'] - seen['idle'][narrow]['conversation']['left'] - 360) < 2
     for state, widths in seen.items():
         for width, got in widths.items():
@@ -569,6 +584,38 @@ async def test_the_heading_row_keeps_its_place_and_height_in_every_state_with_th
             if state in ('hearing', 'gathering') or (state == 'stalled' and width == wide):
                 assert got['newest'] == {'shown': True, 'cut': True, 'text': HEARD.strip()}, where
     assert not seen['idle'][wide]['status'] and not seen['idle'][wide]['buttons']
+    assert not any(got['marked'] for widths in seen.values() for got in widths.values()), 'no state alone is an overlap'
+
+
+# Two states at once, called out in yellow while Tim decides which should
+# win; the state shown, with its buttons, is today's either way.
+OVERLAPS = {
+    'speaking with unsent words': (HEADING_STATES['speaking'] + HEADING_STATES['gathering'],
+                                   'Overlap: JARVIS is reading · your words are waiting', ['Send now']),
+    'speaking while hearing': (HEADING_STATES['speaking'] + HEADING_STATES['hearing'],
+                               'Overlap: JARVIS is reading · you are speaking', []),
+    'hearing with unsent words': (HEADING_STATES['gathering'] + HEADING_STATES['hearing'],
+                                  'Overlap: you are speaking · your earlier words are waiting', ['Send now']),
+    'thinking with unsent words': (HEADING_STATES['thinking'] + HEADING_STATES['gathering'],
+                                   'Overlap: JARVIS is thinking · your words are waiting', ['Send now']),
+}
+
+
+@pytest.mark.asyncio
+async def test_two_states_at_once_are_called_out_in_yellow_in_the_same_row(page_url):
+    wide = 1000
+    async with async_api.async_playwright() as p:
+        idle = (await _heading_in(page_url, p, [], None, (wide,)))[wide]
+        for name, (frames, words, buttons) in OVERLAPS.items():
+            got = (await _heading_in(page_url, p, frames, '.composer-overlap', (wide,)))[wide]
+            where = (name, got)
+            assert got['marked'] and got['titles'] == [words], where
+            assert got['overlap'] == got['yellow'] == got['outline'], where
+            assert [b['name'] for b in got['buttons']] == buttons and all(b['whole'] for b in got['buttons']), where
+            for part, edge in (('heading', 'top'), ('heading', 'bottom'), ('field', 'top'), ('history', 'bottom')):
+                assert abs(got[part][edge] - idle[part][edge]) < .5, (part, edge, where)
+            assert got['content'] == 28 and got['label']['whole'], where
+            assert abs(got['label']['right'] - got['heading']['right']) < 1, where
 
 
 # ── following the word being read through a reply taller than the box ─────
