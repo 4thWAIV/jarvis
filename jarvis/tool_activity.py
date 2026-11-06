@@ -41,7 +41,8 @@ CATEGORY_NAMES = (DATA, COMMUNICATION, EXECUTION, UI)
 # tests/test_tool_activity.py checks it against TOOL_SPECS and TOOL_HANDLERS.
 _BY_CATEGORY: dict[str, tuple[str, ...]] = {
     # Memory, files, folders, history, the web, the screen and JARVIS's own
-    # readings: what is read or written in place, with no one at the other end.
+    # readings, voice and settings: what is read or changed in place, with no
+    # one at the other end.
     DATA: (
         "recall", "remember", "project_note", "write_journal",
         "read_file", "search_repo", "repo_overview", "list_projects",
@@ -50,13 +51,14 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "list_folders", "find_folder", "browse_folder", "read_folder_file",
         "register_folder", "unregister_folder", "folder_detail",
         "change_folder", "folder_candidates", "change_folder_candidate",
-        "attachment_location", "make_attachment_local", "reveal_attachment",
+        "attachment_location", "make_attachment_local",
         "inspect_attachment", "list_bundle_members", "read_bundle_member",
-        "look_at_bundle_page", "attachment_readiness", "review_checklist",
-        "set_review_scope", "list_packages", "package_results",
+        "look_at_bundle_page", "list_packages", "package_results",
         "diagnostics", "usage_status", "connections", "speech_models",
         "voice_input_settings", "attention_updates", "mark_updates_seen",
-        "set_attention_settings",
+        "set_attention_settings", "update_status",
+        "skip_reading", "stop_speaking", "quiet_microphone", "voice_turn",
+        "set_language", "set_voice_input_settings",
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (
@@ -70,28 +72,28 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "draft_message", "attach_message_files", "request_message_review",
         "send_message", "set_message_task", "add_companion_files",
         "prepare_repair", "set_cited_files",
+        "attachment_readiness", "review_checklist", "set_review_scope",
         "people", "people_messages", "read_people_thread",
         "mark_people_message_read", "set_people_thread", "change_people_draft",
         "team_status", "find_github_user", "change_team_member", "team_network",
     ),
     # Work started, inspected or stopped: runs, builds, commands, packages,
-    # workflows, programs opened, JARVIS's own voice and version.
+    # workflows, programs opened, files revealed, JARVIS's own update.
     EXECUTION: (
         "spawn_run", "run_status", "cancel_run", "retry_run",
         "start_build", "build_status", "review_document", "approve_document",
         "run_command", "create_project",
         "open_in_browser", "open_in_terminal", "open_in_editor",
         "open_package", "open_local_package", "run_package_command",
-        "run_package_agent", "open_package_page", "tell_package_story",
+        "run_package_agent", "reveal_attachment",
         "workflow_status", "answer_workflow_decision", "dismiss_workflow",
-        "install_speech_model", "set_language", "set_voice_input_settings",
-        "skip_reading", "quiet_microphone", "voice_turn", "stop_speaking",
-        "update_status", "update_jarvis",
+        "install_speech_model", "update_jarvis",
     ),
     # The page shown or pointed at: the white attention path's tools.
     UI: (
         "ui_map", "ui_navigate", "ui_indicate", "ui_journey", "ui_clear",
         "show_on_screen", "show_bundle_member",
+        "open_package_page", "tell_package_story",
     ),
 }
 
