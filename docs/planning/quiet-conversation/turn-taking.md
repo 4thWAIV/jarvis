@@ -18,7 +18,7 @@ A cancellation race also exists in the simple hold timer: `_wait` schedules a ca
 
 Use a shared conversation-floor controller with persisted patience settings, then make both dispatch and audible output consult it. Do not replace ASR, speech output or the existing transmission approval flow.
 
-Trial defaults: tentative cue after 1.5 seconds of accepted-recognition inactivity; likely-end cue after 3 seconds; turn commit after 4 seconds. (As built, 2026-11-05: each pause cue is set in seconds before the commit at his patience, defaults 2.5 and 1.0, which give these timings at a patience of 4; see [completion-cues](backlog/completion-cues.md#pause-cue-timing).) The last interval is an extra opportunity to continue, not immediate permission to speak. These are starting values for a local listening trial, not measured optimal timings. Do not claim these occur exactly 1.5/3/4 seconds after acoustic silence; recognition finalization changes the observed timing. Compare with 3.5 seconds if four feels too slow.
+Trial defaults: tentative cue after 1.5 seconds of accepted-recognition inactivity; likely-end cue after 3 seconds; turn commit after 4 seconds. (As built, 2026-11-05: each pause cue is set in seconds before the commit at his patience, defaults 2.5 and 1.0, which give these timings at a patience of 4, with a third cue between them, Deciding, default 1.75, after 2.25 seconds; see [completion-cues](backlog/completion-cues.md#pause-cue-timing).) The last interval is an extra opportunity to continue, not immediate permission to speak. These are starting values for a local listening trial, not measured optimal timings. Do not claim these occur exactly 1.5/3/4 seconds after acoustic silence; recognition finalization changes the observed timing. Compare with 3.5 seconds if four feels too slow.
 
 The first code checkpoint can deliver the four-second shared hold, stale-callback protection and routine-notification suppression without audible cues. Add the two cues to that same local candidate after cancellation, audio ownership and echo behavior pass. Do not use `speech.say` to generate the tones or add two spoken prompts.
 
@@ -29,13 +29,14 @@ The first code checkpoint can deliver the four-second shared hold, stale-callbac
 | Idle/listening | No pending human utterance or reply | Eligible background digest only after its own quiet/cooldown policy |
 | Gathering | User owns the floor; finalized/interim segments belong to one utterance | No unsolicited speech |
 | Tentative end | First patience threshold reached, user still owns the floor | One optional soft cue plus existing orb/listening indication |
-| Likely end | Second threshold reached, user still owns the floor | Second optional soft cue; no digest or response playback |
+| Deciding | Middle threshold reached (added 2026-11-05), user still owns the floor | One optional soft cue of its own; no digest or response playback |
+| Likely end | Last threshold reached, user still owns the floor | Last optional soft cue; no digest or response playback |
 | Commit pending | Deadline reached; recognition and activity revision being checked | No speech until check succeeds |
 | Awaiting reply | One user turn dispatched | Only that reply/explicit requested readback may take the floor when still eligible |
 | Reply playing | Assistant has the floor while user may barge in | Current utterance only; queued events remain visual |
 | Away/unknown | User not available or availability not established | No ordinary speech or cue; persistent visual summary |
 
-Accepted speech at either cue stage immediately returns to gathering, cancels the cue/commit generation and extends the same buffered utterance. Merely reaching a likely-end threshold never dispatches an action. Do not speculate a model/tool turn at the first cue; resumed speech would otherwise arrive after an action has already started.
+Accepted speech at any cue stage immediately returns to gathering, cancels the cue/commit generation and extends the same buffered utterance. Merely reaching a likely-end threshold never dispatches an action. Do not speculate a model/tool turn at the first cue; resumed speech would otherwise arrive after an action has already started.
 
 An explicit typed submit is intentional completion and keeps its immediate behavior. A dedicated Send-now control may commit the current utterance without waiting; it must have a brain-callable equivalent under UI parity. Hush remains immediate. If a spoken wait phrase is accepted, keep gathering or explicitly hold; never auto-repeat a reminder each few seconds.
 

@@ -903,13 +903,21 @@ audio context, and dropped, never delayed, while audio is locked. His third
 setting, capture sounds (`sounds`, default on, in the same
 `voice_control.py` service, route and tools), is the master switch for
 every cue; the page shows the same either way. Beside it, per user in the
-same service: each of the four cues (`start`, `stop`, `tentative`,
-`likely`) on or off with a tone from `voice_control.TONES` (notes in
-`voice.ts` `TONE_NOTES`, placeholders), the two pause cues' `before`
-(seconds before the end of his turn), and one `volume`. Settings, Voice
+same service: each of the five cues (`start`, `stop`, and the pause cues
+`tentative`, `deciding`, `likely`, one list in play order,
+`voice_control.PAUSE_CUES`, mirrored by `voiceControl.ts` and
+`jarvis_mcp._PAUSE_CUES`) on or off with a tone from `voice_control.TONES`
+(notes in `voice.ts` `TONE_NOTES`, placeholders), each pause cue's own
+`before` (seconds before the end of his turn; no shared spacing, so the
+gaps between the beeps are set apart), and one `volume`. Settings, Voice
 and language shows each with a Test (`voiceStatus.cueTest`; the brain's
 acting `play_cue` sends the page of the turn a `cue_test` frame to the same
-call) and when it plays. The pause cues are the turn controller's (see
+call) and when it plays, and each pause cue's timing its gaps to the
+neighbouring beeps (`voice_control.pause_cue_gaps`, `voiceControl.pauseCueGaps`;
+the brain's settings read says the same). The pause cue in the middle is
+"Deciding" ("Decidiendo"), default tone `low`, 1.75 s before; a row saved
+before it existed reads with it (migration 5 puts it halfway between his
+tentative and likely-end timings only when 1.75 does not fit between them). The pause cues are the turn controller's (see
 "Turn-taking").
 
 ## Turn-taking
@@ -934,10 +942,10 @@ Speech after a commit and before its reply sounds stops that reply's
 reading (its text stays, nothing is undone) and starts the next turn. Typed
 Send is its own message; voice words being gathered go on as their own
 turn. A stop under Discard is `turn_discard`. While he is quiet in a gathered turn the
-controller gives two pause cues from the same deadline (`pause_cues`,
-`on_pause`): `tentative` at patience minus its `before`, then `likely`
-(`tentative.before` must be the larger; a cue not after he stopped is not
-scheduled), each checked when due against the turn, revision and deadline
+controller gives the pause cues from the same deadline (`pause_cues`,
+`on_pause`): `tentative` at patience minus its `before`, then `deciding`,
+then `likely` (each `before` must be larger than the next one's, refused
+otherwise; a cue not after he stopped is not scheduled), each checked when due against the turn, revision and deadline
 and that it is still gathering, so any accepted speech cancels them and
 each plays at most once per pause. The server sends them only to that
 page, as a `turn` frame with state `pause`, its `stage` (shown on the turn
