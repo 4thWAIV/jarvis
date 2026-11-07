@@ -7789,8 +7789,10 @@ def _story_said(told: "story_teller_module.Told") -> str:
         return ""
     total = len(t.story.slides)
     if t.state == story_teller_module.WAITING:
-        return (f"The story of {t.package.id} is waiting for his answer to question "
-                f"{t.question} on slide {t.slide} of {total}.")
+        # The question's id is the sender's words (story.json), walled.
+        return (f"The story of {t.package.id} is waiting for his answer on slide {t.slide} "
+                f"of {total}. The question's id, from the package:\n"
+                + _wrap_untrusted(_PACKAGE_WRAP_NAME, str(t.question or "")))
     if t.state == story_teller_module.PAUSED:
         return (f"The story of {t.package.id} is paused at slide {t.slide} of {total}: he "
                 f"spoke over it.")
@@ -7820,8 +7822,7 @@ async def _package_story(action: str, reference: str, slide: Optional[int] = Non
             return True, (f"The story of {e.package.id} is already stopped"
                           f"{' ' + e.by if e.by else ''}, at slide {e.slide} of "
                           f"{len(e.story.slides)}; nothing of it is being read.")
-        waited = (f" It was waiting for his answer to question {told.waiting}."
-                  if told.waiting else "")
+        waited = " It was waiting for his answer." if told.waiting else ""
         if by != "by voice":
             _notes_for_brain.append(f"Since your last turn he stopped the story of package "
                                     f"{told.package.id} {by}.{waited}")

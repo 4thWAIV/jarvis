@@ -244,12 +244,14 @@ def test_the_brain_hears_waiting_already_stopped_and_never_no_story(wired, deck,
     telling = story_teller.Telling(deck, story, 2, 1, False, state="waiting", question="tea")
     monkeypatch.setattr(teller, "telling", telling)
     got = _call(wired, "tell_package_story", package=deck.id, action="status")
-    assert f"The story of {deck.id} is waiting for his answer to question tea on slide 2 of 5" \
-        in got["text"]
+    head, _, block = got["text"].partition("\n")
+    assert head == f"The story of {deck.id} is waiting for his answer on slide 2 of 5. " \
+                   f"The question's id, from the package:"
+    assert 'untrusted="true"' in block and "tea" in block, "the sender's words, walled"
     monkeypatch.setattr(teller, "_speech", lambda: None)
     got = _call(wired, "tell_package_story", package=deck.id, action="stop")
     assert got["text"].startswith(f"Stopped the story of {deck.id}. It was waiting for his "
-                                  f"answer to question tea.")
+                                  f"answer.") and "tea" not in got["text"]
     got = _call(wired, "tell_package_story", package=deck.id, action="stop")
     assert f"The story of {deck.id} is already stopped by voice, at slide 2 of 5" in got["text"]
     assert "No story" not in got["text"]

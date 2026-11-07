@@ -645,26 +645,59 @@ EXEMPT = {
     "decision_package.deliver": (
         "it raises the receiving JARVIS's own refusal (`error` from "
         "/api/packages/local) to the command's runner; nothing reaches the brain"),
-    "decision_package.words_to_open": (
-        "it builds the sentence the command prints for its runner from the deck's "
-        "own title, which the author wrote; the brain never receives it"),
-    "decision_package.main": (
-        "the command line: it prints the checks, the package id and the --project "
-        "its runner gave to that runner's terminal, never to the brain"),
+    "decision_package.expand": (
+        "it fills in what the author's own content file left out (ids from its own "
+        "titles and names) for the command that runs it; nothing it builds reaches "
+        "the brain"),
+    "decision_package.too_many_words": (
+        "it lists the author's own slides and decisions over the word limits, by their "
+        "own ids and titles, for the agent that ran the command"),
+    "decision_package.unknown_keys": (
+        "it lists misspelt fields in the author's own content file, by its own decision "
+        "ids, for the agent that ran the command"),
     "decision_check.check": (
         "it records pass and fail lines naming the package id and the deck's own "
         "title for the command's printout; nothing reaches the brain"),
-    "decision_check._check_size": (
-        "it opens the package in the isolated JARVIS by the deck's own title and "
-        "records that tool's answer in the command's printout"),
-    "decision_check._check_story": (
-        "it records whether the story ended, by the story frames' fixed states, in "
-        "the command's printout"),
-    "decision_check._check_choose": (
-        "it records the deck's own first decision id in the command's printout"),
-    "decision_check._check_voice": (
-        "it records the deck's own decision id and option name in the command's "
-        "printout"),
+    "decision_check.open": (
+        "it opens the package in the isolated JARVIS by the deck's own title and records "
+        "that tool's answer in the command's printout, never the live brain's"),
+    "decision_check._check_first_time": (
+        "it records, in the command's printout, the deck's own decision ids and the "
+        "story frames' fixed states from the isolated JARVIS"),
+    "decision_check._check_stop": (
+        "it records, in the command's printout, the story frames' fixed states and the "
+        "isolated JARVIS's own tool answers"),
+    "decision_check._stopped_within": (
+        "it records, in the command's printout, whether the story frame said stopped "
+        "and the isolated JARVIS's status answer"),
+    "decision_check._check_resume": (
+        "it records, in the command's printout, the deck's own decision ids and the "
+        "isolated JARVIS's resume answer and story frames"),
+    "make_package.main": (
+        "the command line: it prints the checks, the package id and the --project, "
+        "--session and working folder its runner gave, to that runner's terminal"),
+    "make_package.words_to_open": (
+        "it builds the sentence the command prints from the deck's own title, which the "
+        "author wrote, for the command's runner and its message to Tim"),
+    "make_package.tell_tim": (
+        "it writes the session's message to Tim into data/messages, which JARVIS takes "
+        "as a session's message: the brain reads it only through session_messages and "
+        "read_session_message, in an untrusted block"),
+    # The page package's story (story_teller.py): the `state` they read is the
+    # teller's own fixed state (telling, waiting, paused, finished, stopped);
+    # the package id is JARVIS's own folder name (work_packages._label: the
+    # name cut to letters, digits, '.', '_' and '-'), as every package tool
+    # gives it; the question a story waits for is the sender's words and is
+    # given to the brain only walled.
+    "server._story_said": (
+        "it says the teller's own state, slide numbers and JARVIS's package id; the "
+        "question's id from story.json goes back only inside an untrusted block"),
+    "server._package_story": (
+        "it says what the teller did, by its fixed states, slide numbers, JARVIS's "
+        "package id and JARVIS's own words for who stopped it; no story text"),
+    "server._close_package_page": (
+        "its note names only the package id that matched the story being told, "
+        "JARVIS's own folder name, and says the story stopped; no package text"),
     "work_report._line": (
         "the work reporter's command line: it prints the item's state and who is on "
         "each piece to the agent that ran it, in its own terminal, never to the brain"),

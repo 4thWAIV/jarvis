@@ -260,9 +260,11 @@ class StoryTeller:
         when the slide began, or the story is stopped."""
         t.state, t.question = WAITING, slide.waits
         await self._announce(self._frame(t))
-        self._note(f"The story of package {t.package.id} is waiting for his answer to "
-                   f"question {slide.waits} (slide {t.slide} of {len(t.story.slides)}); "
-                   f"it goes on by itself once that is recorded.")
+        # The question's id is the sender's words: it reaches the brain only
+        # walled, through tell_package_story's status.
+        self._note(f"The story of package {t.package.id} is waiting for his answer on "
+                   f"slide {t.slide} of {len(t.story.slides)}; it goes on by itself once "
+                   f"that is recorded (tell_package_story status gives the question).")
         log.info("story of %s waits for %s", t.package.id, slide.waits)
         while not t.stopped:
             record = await asyncio.to_thread(read_answers, t.package, t.story)
