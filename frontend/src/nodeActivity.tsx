@@ -4,8 +4,7 @@
  *
  * Every look comes from the record, never from a clock of the page's own:
  *
- *   - working: in a working state (a work item or piece working or
- *     verifying, a workflow item running) and heard from within the quiet
+ *   - working: a workflow item running and heard from within the quiet
  *     window, i.e. its `quiet_at` (from the server) is still ahead. It
  *     moves: a slow glow travelling along its edge (style.css).
  *   - paused: in a working state but `quiet_at` has passed: dimmed, still,
@@ -13,6 +12,8 @@
  *   - blocked: still red. waiting: waiting on him, still amber. done: still,
  *     with a check.
  *
+ * Work items and pieces never derive generation from report freshness;
+ * their claimed working state is activity_unknown and verification is still.
  * Each new report on a node gives one brief flash the moment the page reads
  * it, after a `work` or `workflows` hint (`useArrivalFlash`): its heard time
  * later than both when its view began to show and the last one it flashed
@@ -44,7 +45,9 @@ export function activityOf(standing: Standing, quietAt: number | null, nowSec: n
 /** A work item's or piece's standing (work.ts states). */
 export function workStanding(state: string): Standing {
   switch (state) {
-    case "working": case "verifying": return "active";
+    // Work reports and verification are not generation telemetry. Even a
+    // stale server saying working must never produce a Working indicator.
+    case "working": case "verifying": case "activity_unknown": return null;
     case "blocked": return "blocked";
     case "waiting_on_tim": return "waiting";
     case "done": return "done";

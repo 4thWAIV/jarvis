@@ -192,11 +192,11 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.locator(row).wait_for(timeout=10000)
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.work-row')]
             .map(r => [r.dataset.workId, r.dataset.activity ?? null]))""")
-        assert looks == {"work-1": "working", "work-2": "paused", "work-3": "done",
+        assert looks == {"work-1": None, "work-2": None, "work-3": "done",
                          "work-4": "blocked", "work-5": "waiting"}, looks
-        assert await _animation(page, row, "::after") == "activity-travel"
+        assert await _animation(page, row, "::after") in ("none", None, "")
         assert await _animation(page, ".work-row[data-work-id=work-2]", "::after") in ("none", None, "")
-        await async_api.expect(page.locator(".work-row[data-work-id=work-2] .activity-paused")).to_have_text("Paused")
+        await async_api.expect(page.locator(".work-row[data-work-id=work-2] .activity-paused")).to_have_count(0)
         await async_api.expect(page.locator(".work-row[data-work-id=work-3] .activity-done")).to_have_text("✓")
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .activity-mark")).to_have_count(0)
         await _frames(page, ".work-panel .work-groups", "list")
@@ -208,14 +208,14 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.locator(piece.format("engine")).wait_for(timeout=10000)
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#work-detail .work-piece')]
             .map(p => [p.dataset.key, p.dataset.activity ?? null]))""")
-        assert looks == {"engine": "working", "docs": "paused", "review": "waiting", "ship": "blocked",
+        assert looks == {"engine": None, "docs": None, "review": "waiting", "ship": "blocked",
                          "spec": "done"}, looks
-        assert await _animation(page, piece.format("engine"), "::before") == "activity-edge"
-        await async_api.expect(page.locator(piece.format("docs") + " .activity-paused")).to_have_text("Paused")
+        assert await _animation(page, piece.format("engine"), "::before") in ("none", None, "")
+        await async_api.expect(page.locator(piece.format("docs") + " .activity-paused")).to_have_count(0)
         # The review waits for the working engine: its line flows.
         after = piece.format("review") + " .work-piece-after"
-        assert await page.locator(after).get_attribute("data-flow") == "on"
-        assert await _animation(page, after, None) == "activity-flow"
+        assert await page.locator(after).get_attribute("data-flow") is None
+        assert await _animation(page, after, None) in ("none", None, "")
         # Nothing flashed for what was already there.
         assert await page.evaluate("window.__flashes") == []
         await _frames(page, "#work-detail .work-pieces", "pieces")
@@ -242,10 +242,10 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
 
         # ── nothing more reported: it goes paused by itself, no hint ───
         await page.wait_for_function(
-            f"() => document.querySelector('{piece.format('engine')}').dataset.activity === 'paused'",
+            f"() => document.querySelector('{piece.format('engine')}').dataset.activity === undefined",
             timeout=10000)
         assert await page.locator(after).get_attribute("data-flow") is None
-        assert await page.locator(row).get_attribute("data-activity") == "paused"
+        assert await page.locator(row).get_attribute("data-activity") is None
 
         # ── Steady: the same looks, standing still, no flash ───────────
         work.engine_quiet = time.time() + 600
@@ -253,7 +253,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         await page.evaluate("document.documentElement.dataset.motion = 'steady'; window.__flashes = []")
         sessions.ws.send(json.dumps({"type": "work"}))
         await page.wait_for_function(
-            f"() => document.querySelector('{piece.format('engine')}').dataset.activity === 'working'",
+            f"() => document.querySelector('{piece.format('engine')}').dataset.activity === undefined",
             timeout=10000)
         await asyncio.sleep(0.3)
         assert await page.evaluate("window.__flashes") == []
@@ -267,7 +267,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         assert await _animation(page, row, "::after") == "none"
         assert await _animation(page, piece.format("engine"), "::before") == "none"
         await page.emulate_media(reduced_motion="no-preference")
-        assert await _animation(page, row, "::after") == "activity-travel"
+        assert await _animation(page, row, "::after") in ("none", None, "")
 
         # ── the Overview's latest update flashes for a report too ──────
         await page.click("#work-detail .work-tabs [role=tab][title=Overview]")

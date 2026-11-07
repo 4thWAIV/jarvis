@@ -101,6 +101,7 @@ export function WorkDetail({ id }: { id: string }) {
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
         {item && <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
           {STATE_WORDS[item.state]}</span>}
+          {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
@@ -376,6 +377,7 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
                                  ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
         </span>
         <span className={`work-state state-${piece.state}`} ref={ui.part("state")}>{STATE_WORDS[piece.state]}</span>
+        {piece.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
       </div>
       {piece.note && (
         <p className="work-piece-note" ref={ui.part("note")}>

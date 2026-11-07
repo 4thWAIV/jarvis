@@ -11019,6 +11019,8 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
     """One piece, in dependency order: who is on it, its latest note, the
     pieces it comes after (those not done yet named), and its evidence."""
     line = f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}"
+    if p.activity_reason:
+        line += f"; {p.activity_reason}"
     if p.note:
         line += f"; latest note: {p.note}"
     if p.after:
@@ -11093,6 +11095,7 @@ def _work_line(item) -> str:
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
             + (f" {named}" if (named := _work_projects(item)) else "")
             + _work_follow_up(item)
+            + (f" {item.activity_reason}" if item.activity_reason else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
 
@@ -11111,6 +11114,8 @@ def _work_detail(item) -> str:
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+    if item.activity_reason:
+        lines.append(item.activity_reason)
     if named := _work_projects(item):
         lines.insert(3, named)
     if item.approved_at is not None:

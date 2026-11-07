@@ -108,6 +108,8 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.project": "Proyecto: {names}",
   "right.work.decision": "Decisión: {question}",
   "right.work.state.planned": "Planeado",
+  "right.work.activityUnknownReason": "No se ha confirmado la generación actual de tokens para esta asignación de trabajo.",
+  "right.work.state.activity_unknown": "Actividad no confirmada",
   "right.work.state.working": "En curso",
   "right.work.state.verifying": "Lista para revisar",
   "right.work.state.waiting_on_tim": "Espera su respuesta",

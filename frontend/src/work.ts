@@ -23,7 +23,7 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "ready" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+export type WorkState = "planned" | "ready" | "activity_unknown" | "verifying" | "waiting_on_tim" | "blocked" | "done";
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -44,6 +44,7 @@ export interface WorkPiece {
   title: string;
   who: WorkWho;
   state: WorkState;
+  activity_reason?: string;
   /** The summary of the latest report about it. */
   note: string;
   note_at: number | null;
@@ -125,7 +126,8 @@ export interface WorkItem {
   /** What a stat of the source found when the record was read. */
   source: "present" | "missing" | "wrong_kind";
   state: WorkState;
-  /** Working, with nothing reported for a while: "no recent update". */
+  activity_reason?: string;
+  /** Verifying, with nothing reported for a while: "no recent update". */
   quiet: boolean;
   latest_update: string;
   /** The one useful update: an open decision's question first. */
@@ -214,18 +216,32 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "ready", "working", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "ready", "activity_unknown", "verifying", "waiting_on_tim", "blocked", "done"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
  *  the groups the Work tab heads them with. */
-export const workList = liveRead(() => getJson<WorkList>("/api/work"), [workChanged]);
+/** Fail closed while an older server is still serving legacy declared states. */
+export function safeWorkState(state: string): WorkState {
+  const allowed = ["planned", "ready", "verifying", "waiting_on_tim", "blocked", "done"];
+  return allowed.includes(state) ? state as WorkState : "activity_unknown";
+}
+export function safeWorkItem(item: WorkItem): WorkItem {
+  return {...item, state: safeWorkState(item.state),
+    pieces: item.pieces.map(p => ({...p, state: safeWorkState(p.state)}))};
+}
+export const workList = liveRead(async () => {
+  const result = await getJson<WorkList>("/api/work");
+  return {...result, items: result.items.map(safeWorkItem), history: (result.history ?? []).map(safeWorkItem)};
+}, [workChanged]);
 
 /** One item in full: with its latest events and the open packages sent for
  *  it (`make_package --work`), each with its questions. */
-export const getWorkItem = (id: string) =>
-  getJson<{ item: WorkItem; events: WorkEvent[]; packages: InboxDetail[] }>(
+export const getWorkItem = async (id: string) => {
+  const result = await getJson<{ item: WorkItem; events: WorkEvent[]; packages: InboxDetail[] }>(
     `/api/work/${encodeURIComponent(id)}`);
+  return {...result, item: safeWorkItem(result.item)};
+};
 
 /** One blocker in a line: what holds it, and the piece's or item's note. */
 export function blockerWords(item: WorkItem, b: WorkBlocker): string {

@@ -262,7 +262,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         before = work.lists
         sessions.ws.send(json.dumps({"type": "work"}))
         await page.wait_for_function(
-            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'working'",
+            "() => document.querySelector('.work-row[data-work-id=work-1]').dataset.state === 'activity_unknown'",
             timeout=10000)
         assert work.lists > before
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
@@ -274,7 +274,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         sessions.ws.send(json.dumps({"type": "work"}))
         await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-update")).to_have_text(
             "No recent update", timeout=10000)
-        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Working")
+        await async_api.expect(page.locator(".work-row[data-work-id=work-1] .work-state")).to_have_text("Activity unconfirmed")
 
         # History: opened, its item still opens in full.
         await page.click(".work-panel .work-history .workflows-done-toggle")

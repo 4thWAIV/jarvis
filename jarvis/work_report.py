@@ -20,8 +20,10 @@ workflow_report.py, whose standard-library client it uses.
     python work_report.py withdraw <id> <key> <reason>
     python work_report.py close <id> [<summary>]
 
-A state is planned, ready, working, verifying, waiting_on_tim, blocked or
-done.
+A reported state is planned, ready, working, verifying, waiting_on_tim or
+blocked (done is his approval). A working report is intent only: the public
+view reads activity_unknown until current token generation for the exact
+assignment can be confirmed.
 Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
 `tim`; a new piece needs one. A piece's summary is its latest note. An area
 groups items on the Work tab (an empty one goes back to the source's

@@ -80,7 +80,7 @@ def test_pieces_say_exactly_who_is_on_them(ws, folder):
         who={"kind": "agent", "ref": "s-1"}, state="working")
     item = _ev(ws, item, "piece", "Tim reviews it.", key="review", who={"kind": "tim"})
     assert [(p.key, p.who.kind, p.who.ref, p.state) for p in item.pieces] == [
-        ("engine", "agent", "s-1", "working"), ("review", "tim", None, "planned")]
+        ("engine", "agent", "s-1", "activity_unknown"), ("review", "tim", None, "planned")]
     item = _ev(ws, item, "piece", "Handed to a run.", key="engine", who={"kind": "run", "ref": "r-9"})
     assert item.pieces[0].who == ws.Who("run", "r-9") and item.pieces[0].title == "Wire the engine"
     with pytest.raises(ws.WorkRefused, match="says who"):
@@ -92,7 +92,7 @@ def test_pieces_say_exactly_who_is_on_them(ws, folder):
 def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
     item = ws.create("Speech migration", "folder", folder)
     item = _ev(ws, item, "update", "Engine wired.", state="working")
-    assert (item.state, item.headline) == ("working", "Engine wired.")
+    assert (item.state, item.headline) == ("activity_unknown", "Engine wired.")
     item = _ev(ws, item, "decision_needed", "Which engine is the default?", key="engine",
                options=["Kroko", "Apple"], recommendation="Kroko")
     assert item.state == "waiting_on_tim" and item.reported_state == "working"
@@ -100,7 +100,7 @@ def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
     item = _ev(ws, item, "update", "Tests running.")
     assert item.headline == "Which engine is the default?", "the decision keeps priority"
     item = _ev(ws, item, "decision_made", "He chose.", key="engine", answer="Kroko", where="voice")
-    assert (item.state, item.decisions, item.headline) == ("working", [], "He chose.")
+    assert (item.state, item.decisions, item.headline) == ("activity_unknown", [], "He chose.")
     with pytest.raises(ws.WorkRefused, match="No decision engine is open"):
         _ev(ws, item, "decision_made", "Again.", key="engine", answer="Apple")
     answered = ws.events(item.id, kinds={"decision_made"})
@@ -119,12 +119,13 @@ def test_the_latest_events_are_the_newest_however_long_the_log(ws, folder):
     assert newest[0].seq < newest[-1].seq
 
 
-def test_a_working_item_with_nothing_reported_reads_quiet(ws, folder, monkeypatch):
+def test_a_claimed_working_item_never_reads_as_live_activity(ws, folder, monkeypatch):
     item = _ev(ws, ws.create("Speech", "folder", folder), "update", "Go.", state="working")
     assert not item.quiet
     real = time.time
     monkeypatch.setattr(ws.time, "time", lambda: real() + ws.QUIET_AFTER_SEC + 1)
-    assert ws.get(item.id).quiet
+    assert ws.get(item.id).state == "activity_unknown"
+    assert not ws.get(item.id).quiet
 
 
 def test_the_list_puts_done_last_and_finds_by_title(ws, folder):
@@ -329,13 +330,62 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     _ev(ws, item, "piece", "Started.", key="engine", who={"kind": "tim"}, state="working")
     item = _ev(ws, item, "piece", "Planned.", key="docs", who={"kind": "tim"})
     engine, docs = (next(p for p in ws.get(item.id).pieces if p.key == k) for k in ("engine", "docs"))
-    assert engine.quiet_at == engine.note_at + ws.QUIET_AFTER_SEC
+    assert engine.quiet_at is None
+    assert engine.state == "activity_unknown"
     assert docs.quiet_at is None
     item = ws.get(item.id)
     assert item.state == "working", "a piece works, so the item does, whatever was reported"
     assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
     item = _ev(ws, item, "update", "Going.", state="working")
-    assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
+    assert item.quiet_at is None
+    assert item.state == "activity_unknown"
     _ev(ws, item, "piece", "In.", key="engine", state="verifying")
     item = _approve(ws, item)
     assert next(p for p in item.pieces if p.key == "engine").quiet_at is None
+
+
+@pytest.mark.parametrize("owner", ["agent", "run", "workflow", "tim"])
+def test_reporters_cannot_assert_generation_for_any_owner(ws, folder, monkeypatch, owner):
+    now = [1000.0]
+    monkeypatch.setattr(ws.time, "time", lambda: now[0])
+    item = ws.create("Claim", "folder", folder, state="working")
+    on = {"kind": owner, **({"ref": "shared-session"} if owner != "tim" else {})}
+    item = _ev(ws, item, "piece", "Claim", key="claimed", who=on, state="working")
+    for when in (1000.0, 1000.1, 1100.0, 2000.0):
+        now[0] = when
+        item = _ev(ws, item, "update", "Another heartbeat; still working", state="working")
+        assert item.state == "activity_unknown"
+        assert item.pieces[0].state == "activity_unknown"
+        assert item.activity_reason and item.pieces[0].activity_reason
+        assert item.quiet_at is None and item.pieces[0].quiet_at is None
+        assert ws.listing()[0].state != "working"
+        assert ws.find(item.id)[0].state != "working"
+    # A restart cannot turn a persisted claim into evidence.
+    importlib.reload(ws)
+    assert ws.get(item.id).state == "activity_unknown"
+
+
+def test_unrelated_session_activity_and_tools_cannot_promote_work(ws, folder):
+    from jarvis import brain_activity
+    one = ws.create("One", "folder", folder, state="working")
+    two = ws.create("Two", "folder", folder, state="working")
+    for item in (one, two):
+        _ev(ws, item, "piece", "Assigned", key="task",
+            who={"kind": "agent", "ref": "same-session"}, state="working")
+    # Even fresh streaming is not assignment bound; tools do not imply tokens.
+    for stage in ("started", "first_output", "streaming", "completed"):
+        brain_activity.note("turn", stage, session_id="same-session", id="other-turn")
+        for item in (one, two):
+            assert ws.get(item.id).state == "activity_unknown"
+    brain_activity.note("tool", "started", session_id="same-session", id="tool")
+    assert all(i.state != "working" for i in ws.listing())
+
+
+def test_legacy_database_claim_is_projected_and_history_is_preserved(ws, folder):
+    item = ws.create("Legacy", "folder", folder)
+    with ws._connect() as conn:
+        conn.execute("UPDATE work_items SET state='working' WHERE id=?", (item.id,))
+    loaded = ws.get(item.id)
+    assert loaded.state == "activity_unknown"
+    assert loaded.reported_state == "working"
+    assert "working" not in ws.PUBLIC_STATES

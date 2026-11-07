@@ -125,6 +125,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
           <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
             {STATE_WORDS[item.state]}</span>
+          {item.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         </span>
         {item.projects.length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>
