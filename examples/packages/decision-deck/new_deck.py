@@ -25,6 +25,9 @@ sys.path.insert(0, str(TEMPLATE.parent))
 import zip_package  # noqa: E402  (examples/packages/zip_package.py)
 
 FIXED = ["index.html", "deck.css", "deck.js", "SKILL.md", "scripts/decide.py"]
+# A presentation (a deck with no decisions) has nothing to answer, so it
+# carries neither the answering skill nor decide.py, and returns nothing.
+VOTING = ("SKILL.md", "scripts/decide.py")
 DATA_PREFIX = "window.DECK = "
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RETURNS = ["results/decisions.json", "results/decisions.md"]
@@ -93,7 +96,7 @@ def check_words(deck: dict) -> None:
         n = sum(block_words(b) for b in s.get("blocks", []))
         if n > SLIDE_WORDS:
             raise Bad(f"Slide {s.get('title')!r} has {n} words; at most {SLIDE_WORDS}. Split it in two.")
-    for d in deck["decisions"]:
+    for d in deck.get("decisions", []):
         parts = [("question", d.get("question")), ("reason", d.get("reason")), ("context", d.get("context"))]
         parts += [("says", o.get("says")) for o in d["options"]]
         for field, text in parts:
@@ -106,8 +109,8 @@ def check(deck: dict, source_dir: Path) -> None:
         if not str(deck.get(field) or "").strip():
             raise Bad(f"The deck has no {field}.")
     decisions = deck.get("decisions") or []
-    if not decisions:
-        raise Bad("The deck has no decisions.")
+    if not decisions and not [s for s in deck.get("slides", []) if "decision" not in s]:
+        raise Bad("The deck has neither decisions nor slides.")
     ids = [d.get("id", "") for d in decisions]
     for d in decisions:
         ident = d.get("id", "")
@@ -167,12 +170,12 @@ def order(deck: dict) -> list[dict]:
     decisions, then every decision not placed, then the answers slide."""
     placed = {s["decision"] for s in deck.get("slides", []) if "decision" in s}
     out = list(deck.get("slides", []))
-    out += [{"decision": d["id"]} for d in deck["decisions"] if d["id"] not in placed]
-    return out + [{"answers": True}]
+    out += [{"decision": d["id"]} for d in deck.get("decisions", []) if d["id"] not in placed]
+    return out + ([{"answers": True}] if deck.get("decisions") else [])
 
 
 def story(deck: dict) -> dict:
-    decisions = deck["decisions"]
+    decisions = deck.get("decisions", [])
     by_id = {d["id"]: d for d in decisions}
     slides = []
     for n, s in enumerate(order(deck), 1):
@@ -210,9 +213,9 @@ def story(deck: dict) -> dict:
 
 
 def manifest(deck: dict) -> dict:
+    voting = {"skill": "SKILL.md", "returns": RETURNS} if deck.get("decisions") else {"returns": []}
     return {"name": deck["name"], "version": deck["version"], "purpose": deck["purpose"],
-            "runs": "page", "entry": "index.html", "story": "story.json", "skill": "SKILL.md",
-            "returns": RETURNS}
+            "runs": "page", "entry": "index.html", "story": "story.json", **voting}
 
 
 def write(path: Path, text: str) -> None:
@@ -229,7 +232,7 @@ def build_deck(deck: dict, source_dir: Path, out: Path) -> Path:
     source = source_dir / "deck.json"
     check(deck, source_dir)
     out.mkdir(parents=True, exist_ok=True)
-    for name in FIXED:
+    for name in [f for f in FIXED if deck.get("decisions") or f not in VOTING]:
         if (TEMPLATE / name).resolve() != (out / name).resolve():
             (out / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(TEMPLATE / name, out / name)

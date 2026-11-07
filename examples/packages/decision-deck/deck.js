@@ -483,7 +483,8 @@
         slides.push({ el: contentSlide(s, n), title: s.short || s.title });
       }
     });
-    slides.push({ el: answersSlide(), title: "Your answers" });
+    // A presentation (no decisions) has nothing to answer: no answers slide.
+    if (DECISIONS.length) slides.push({ el: answersSlide(), title: "Your answers" });
     slides.forEach(function (s, i) {
       track.appendChild(s.el);
       var b = el("button", "jump" + (s.decision ? " decision" : ""), String(i + 1));
@@ -497,6 +498,7 @@
   }
 
   function render() {
+    if (!DECISIONS.length) return;          // a presentation records nothing
     var answered = 0;
     DECISIONS.forEach(function (d) {
       var e = record[d.id], v = views[d.id], row = answerRows[d.id], open = applies(d, record);
@@ -625,7 +627,7 @@
   render();
   shrinkPictures();
   window.addEventListener("load", shrinkPictures);   // once pictures have their sizes
-  loadRecorded().then(function (start) {
+  if (DECISIONS.length) loadRecorded().then(function (start) {
     if (start) { record = clean(start); render(); }
     say(inFrame ? (start ? "Read the answers recorded." : "Answers are saved in results.")
                 : "Outside JARVIS: nothing is saved.");

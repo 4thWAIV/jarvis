@@ -343,13 +343,14 @@ async def _check_size(browser, jarvis: Isolated, deck: dict, story: dict,
                 bad += 1
                 result.failures.append(f"{label} slide {n} ({slide_id}): {problem} [{shot}]")
         if not bad:
-            result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px, "
-                                 f"every vote row in view")
+            result.passed.append(f"{label}: all {len(slides)} slides fit, text 13 to 25 px"
+                                 + (", every vote row in view" if deck.get("decisions") else ""))
 
         await _fit_frame(page, iframe, frame_size)
         await _check_story(jarvis, inner, story, package_id, slides, stories, label, result)
-        await _check_choose(inner, deck, folder, label, shots, iframe, result)
-        await _check_voice(jarvis, inner, deck, package_id, label, shots, iframe, result)
+        if deck.get("decisions"):          # a presentation has nothing to answer
+            await _check_choose(inner, deck, folder, label, shots, iframe, result)
+            await _check_voice(jarvis, inner, deck, package_id, label, shots, iframe, result)
     finally:
         if result.failures:
             shot = shots / label / "last.png"
@@ -402,8 +403,12 @@ async def _check_story(jarvis, inner, story, package_id, slides, stories, label,
                   f"{label}: the story {'was ' + ended if ended else 'did not end'} within "
                   f"{STORY_SEC}s")
     shown = set(await inner.evaluate("() => window.__shown"))
-    missed = [s for s, decision in slides if decision and s not in shown]
-    result.expect(not missed, f"{label}: the story reached every decision slide",
+    # A presentation's story must reach every slide; a decision deck's,
+    # every decision slide.
+    voting = any(decision for _, decision in slides)
+    missed = [s for s, decision in slides if (decision or not voting) and s not in shown]
+    result.expect(not missed, f"{label}: the story reached every "
+                              f"{'decision slide' if voting else 'slide'}",
                   f"{label}: the story never brought up {', '.join(missed)}")
     rung = set(await inner.evaluate("() => window.__rings"))
     beats = [f"{n}.{b}" for n, s in enumerate(story["slides"], 1)
