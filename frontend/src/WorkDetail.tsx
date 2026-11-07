@@ -212,6 +212,15 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
         <span className={`work-source-${item.source}`}>{t(`main.work.found.${item.source}`)}</span>
         {item.area && <> · <span className="work-area">{t("main.work.area", { area: item.area })}</span></>}
       </p>
+      {item.projects.length > 0 && (
+        <p className="work-projects" ref={part("project")}>
+          {item.projects.map((p) => (
+            <button key={p.id} type="button" className="knowledge-open"
+                    {...bindingProps(bind("project.open", { projectId: p.id }))}>
+              {t("main.work.project", { name: p.name })}</button>
+          ))}
+        </p>
+      )}
       <section ref={part("who")}>
         <h3 className="work-section-head">{t("main.work.who")}</h3>
         {who.length === 0 ? <p className="workflow-empty">{t("main.work.noPieces")}</p>

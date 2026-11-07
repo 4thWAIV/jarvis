@@ -150,6 +150,8 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  /** His projects holding its source, worked out when read. */
+  projects: { id: string; name: string }[];
   follow_up: WorkFollowUp | null;
   /** Open decisions waiting on him while the item itself goes on. */
   also_waiting: number;

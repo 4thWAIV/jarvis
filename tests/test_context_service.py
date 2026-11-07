@@ -91,3 +91,29 @@ async def test_a_run_gets_its_projects_context_first_and_his_words_last(ready, m
     assert store.get_run(run_id)["context_sha256"] == hashlib.sha256(text.encode()).hexdigest()
     await server.tool_spawn_run({"project": "chitauri", "prompt": "again", "context": False})
     assert ex.spawned[1]["prompt"] == server.UNATTENDED_PREAMBLE + "again"
+
+
+def test_a_pack_from_project_records_names_the_work_projects_and_what_is_done():
+    """Design 8.1, tier 0 from the records: the work, its projects (primary
+    first) with summary, folders by name and part and the confirmed
+    accomplishments only, the projects' notes by their slug, and the topics
+    the records name."""
+    from jarvis import project_service, project_store
+    seed_world()
+    store = project_store.ProjectStore()
+    service = project_service.ProjectService(store, lambda: None)
+    main = store.create("local", "Chitauri", summary="The Parris Island Engine prototype")
+    side = store.create("local", "Cake")
+    store.propose_accomplishment(main.id, "Step checker merged", confirm=True)
+    store.propose_accomplishment(main.id, "Only proposed")
+    w = store.start_work("local", "Refusal list", projects=[main.id, side.id], outcome="no unsafe tools")
+
+    scope = service.brief(work=w.id)
+    p = cs.pack(purpose="add a refusal list", scope=scope)
+
+    assert "Work: Refusal list. Outcome: no unsafe tools" in p.text
+    assert p.text.index("Project: Chitauri") < p.text.index("Project: Cake")
+    assert "Done lately: Step checker merged" in p.text and "Only proposed" not in p.text
+    assert "The step checker runs against the tool registry." in p.text
+    assert "Parris Island Engine (planned, not implemented)" in p.text
+    assert "projects/chitauri.md" in p.sources
