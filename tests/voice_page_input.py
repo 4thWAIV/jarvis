@@ -3,7 +3,8 @@
 The page loads quiet: nothing is heard until Start listening is clicked on
 that page (voiceInput.ts), and the button waits for the voice input
 settings (conftest's page server answers them; a test may route its own).
-A test that hears speech clicks it, as a person would.
+A test that hears speech clicks it, as a person would. A test that scrolls
+the conversation history as he does waits for that scroll to end.
 """
 
 import json
@@ -18,6 +19,18 @@ async def start_listening(page, timeout: float = 10000) -> None:
     """Click Start listening once it is offered."""
     await page.wait_for_selector(f"{LISTEN}:not([disabled])", timeout=timeout)
     await page.click(LISTEN)
+
+
+async def his_scroll(page, act) -> None:
+    """Does what he does to scroll the conversation history (`act`: a wheel
+    or a key) and waits for that scroll to end. The wheel and the keys
+    scroll smoothly, so the history read part way through is not where he
+    left it."""
+    await page.evaluate("""() => { window.__scrollEnded = false;
+      document.querySelector('.conversation-history').addEventListener(
+        'scrollend', () => { window.__scrollEnded = true; }, {once: true}); }""")
+    await act()
+    await page.wait_for_function("window.__scrollEnded")
 
 
 async def route_settings(page, stop="keep", switch="stop", status=200, sounds=True, **more):
