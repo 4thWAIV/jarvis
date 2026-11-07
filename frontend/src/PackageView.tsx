@@ -37,12 +37,15 @@ export function PackageView({ info }: { info: PackageInfo }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [listening, setListening] = useState(false);
+  // Made for the wider layout, or its page asked for room: Take over is lit.
+  const [asked, setAsked] = useState(false);
+  const offered = info.layout === "wide" || asked;
   const ui = useUiTarget({ ref: { region: "main", view: "main.package", kind: "packageView", key: info.id },
                            label: info.name, socket: CENTRE_SOCKET });
   useEffect(() => {
     if (!frame.current) return undefined;
     return connectBridge(frame.current, info.id, {
-      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid,
+      onSaved: setSaid, onListening: setListening, onStoryMissing: setSaid, onLayoutRequest: () => setAsked(true),
     });
   }, [info.id]);
   return (
@@ -51,9 +54,10 @@ export function PackageView({ info }: { info: PackageInfo }) {
         <div className="package-head-words">
           <h2>{info.name}</h2>
           <p>{info.purpose}</p>
+          {offered && <p className="package-wide" role="status">{t("main.package.wide")}</p>}
         </div>
         <DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />
-        <TakeoverButton partRef={ui.part("takeover")} />
+        <TakeoverButton partRef={ui.part("takeover")} lit={offered} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>

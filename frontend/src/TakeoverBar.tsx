@@ -48,13 +48,15 @@ export function TakeoverBar({ name }: { name: string }) {
 
 /** Take over, beside × in a workflow's and a page package's head: runs
  *  `layout.takeover`, as Option+Shift+T and the brain's request do. Not
- *  drawn while something has taken over: Restore layout is in the bar. */
-export function TakeoverButton({ partRef }: { partRef: (el: Element | null) => void }) {
+ *  drawn while something has taken over: Restore layout is in the bar.
+ *  `lit` while it is offered: a package made for the wider layout, or one
+ *  whose page asked for room. */
+export function TakeoverButton({ partRef, lit = false }: { partRef: (el: Element | null) => void; lit?: boolean }) {
   const t = useT();
   const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
   if (takenOver) return null;
   return (
-    <button type="button" className="folder-button takeover-enter" title={t("main.takeover.enterTitle")}
+    <button type="button" className={`folder-button takeover-enter${lit ? " lit" : ""}`} title={t("main.takeover.enterTitle")}
             ref={partRef} {...bindingProps(bind("layout.takeover", {}))}>
       {t("main.takeover.enter")}
     </button>

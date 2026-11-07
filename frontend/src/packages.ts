@@ -55,6 +55,9 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
+  /** The room its page is made for: "wide" offers to take over the page.
+   *  Missing from an older JARVIS's frame: the centre. */
+  layout?: "centre" | "wide";
 }
 
 export interface StoryOutline {

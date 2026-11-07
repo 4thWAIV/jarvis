@@ -14,6 +14,10 @@
 //                 beat already playing is posted again
 //                 {jarvis: "package", type: "story.missing", beat, targets}
 //                 the selectors (targets or actions) that found nothing visible
+//                 {jarvis: "package", type: "layout.restore"} on Option+Shift+T
+//                 pressed inside the frame: keys pressed here never reach
+//                 JARVIS's page, so the restore key is passed on. Restore
+//                 only: a frame can never take over the page this way.
 //
 // An action is {show: selector} (scrolled into view) or {click: selector}
 // (clicked: a detail view's opener or its close button), run in order
@@ -194,5 +198,11 @@
     else if (m.type === "story.clear") clear();
   });
   window.addEventListener("resize", place);
+  window.addEventListener("keydown", function (event) {
+    if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "KeyT") {
+      event.preventDefault();
+      tell({ type: "layout.restore" });
+    }
+  });
   tell({ type: "story.ready" });
 })();

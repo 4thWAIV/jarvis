@@ -4154,6 +4154,12 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 /* Take over, beside × in a workflow's or a package's head; it takes the
    × 's place at the right end. */
 .takeover-enter { flex: none; margin-left: auto; white-space: nowrap; }
+.takeover-enter.lit {
+  color: var(--ui-accent);
+  border-color: rgba(var(--ui-accent-rgb), 0.6);
+  box-shadow: 0 0 10px rgba(var(--ui-accent-rgb), 0.5);
+}
+#package-view .package-wide { color: var(--ui-accent); }
 .takeover-enter + .workflow-close, .workflow-detail-dismiss + .takeover-enter { margin-left: 0; }
 
 /* The right panel folded to a rail of its six tab icons, each keeping its

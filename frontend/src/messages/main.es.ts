@@ -821,6 +821,7 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.takeover.restore": "Restaurar diseño",
   "main.takeover.restoreTitle": "Vuelva a mostrar las pestañas del centro y el panel derecho",
   "main.takeover.rail": "Pestañas del panel derecho",
+  "main.package.wide": "Hecho para la vista ampliada: Ampliar le da el centro y el lado derecho.",
   "main.package.listening": "Escuchando con el micrófono de JARVIS.",
   "main.package.saved": "Se guardó {name}.",
   "main.package.notSaved": "No se guardó.",

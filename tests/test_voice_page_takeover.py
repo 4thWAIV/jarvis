@@ -230,3 +230,89 @@ async def test_take_over_by_its_button_and_by_the_key_never_while_typing(page_ur
             await async_api.expect(bar).to_have_count(0)
         finally:
             await browser.close()
+
+
+ROOM_PAGE = """<!doctype html><html><body><h1 id="title">Room</h1>
+<script src="/api/packages/story.js"></script>
+<script>
+  window.__layouts = [];
+  addEventListener("message", (e) => { if (e.data && e.data.type === "layout") window.__layouts.push(e.data); });
+  window.ask = () => parent.postMessage({jarvis: "package", type: "layout.request"}, "*");
+</script></body></html>"""
+
+
+@pytest.fixture
+def room_app(monkeypatch, tmp_path):
+    """JARVIS's app over two page packages: one made for the centre, whose
+    page loads the story helper and keeps every `layout` it is told, and
+    one marked "wide"."""
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+    import importlib
+    from jarvis import data_paths, run_store, work_packages
+    importlib.reload(data_paths)
+    importlib.reload(run_store)
+    from jarvis import server
+    importlib.reload(server)
+    from tests.test_work_packages import MANIFEST, make_zip, write_zip
+    page = {**{k: v for k, v in MANIFEST.items() if k != "skill"}, "runs": "page", "entry": "index.html",
+            "returns": ["results/*"]}
+    plain, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"index.html": ROOM_PAGE}, {**page, "name": "room"}),
+                                              "room.zip"), "0a0b0c0d", clear_mark=lambda _f: None)
+    wide, _ = work_packages.unpack(write_zip(tmp_path, make_zip({"index.html": ROOM_PAGE},
+                                                                {**page, "name": "wide-room", "layout": "wide"}),
+                                             "wide.zip"), "1a1b1c1d", clear_mark=lambda _f: None)
+    from fastapi.testclient import TestClient
+    return TestClient(server.app), data_paths.ensure_tool_token(), plain, wide
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_inside(
+        page_playwright, page_url, room_app):
+    client, token, plain, wide = room_app
+    from jarvis import packages_api
+    async with page_playwright as p:
+        browser, page, voice = await _open(p, page_url, "1440", [("**/api/packages/**", _through(client, token))])
+        try:
+            voice.ws.send(json.dumps({"type": "package_page", "package": packages_api.describe(plain)}))
+            await page.frame_locator("#package-view iframe").locator("#title").wait_for()
+            inner = next(f for f in page.frames if f.url.endswith("/files/index.html"))
+            told = "() => window.__layouts.length ? window.__layouts[window.__layouts.length - 1] : null"
+            await inner.wait_for_function(f"({told})() !== null")
+            frame = await page.evaluate(RECT, "#package-view iframe")
+            last = await inner.evaluate(told)
+            assert last["mode"] == "normal"
+            assert abs(last["width"] - frame["width"]) <= 1 and abs(last["height"] - frame["height"]) <= 1, (last, frame)
+
+            # Not offered until the page asks; asking changes nothing by itself.
+            enter = page.locator("#package-view .takeover-enter")
+            assert "lit" not in (await enter.get_attribute("class"))
+            await inner.evaluate("window.ask()")
+            await async_api.expect(enter).to_have_class("folder-button takeover-enter lit")
+            await async_api.expect(page.locator("#package-view .package-wide")).to_be_visible()
+            assert await page.evaluate("document.documentElement.dataset.layout") == "normal"
+
+            await enter.click()
+            await inner.wait_for_function(f"({told})().mode === 'takeover'")
+            taken = await page.evaluate(RECT, "#package-view iframe")
+            last = await inner.evaluate(told)
+            assert abs(last["width"] - taken["width"]) <= 1 and last["width"] > frame["width"] + 150, (last, taken)
+            await _shot(page, "room-taken-over")
+
+            # Option+Shift+T inside the frame reaches JARVIS as restore, and only restore.
+            await page.frame_locator("#package-view iframe").locator("#title").click()
+            await page.keyboard.press("Alt+Shift+KeyT")
+            await async_api.expect(page.locator("#takeover-bar")).to_have_count(0)
+            await inner.wait_for_function(f"({told})().mode === 'normal'")
+            await page.frame_locator("#package-view iframe").locator("#title").click()
+            await page.keyboard.press("Alt+Shift+KeyT")
+            await page.wait_for_timeout(300)
+            assert await page.locator("#takeover-bar").count() == 0
+
+            # A package marked "wide" is offered from the start.
+            voice.ws.send(json.dumps({"type": "package_page", "package": packages_api.describe(wide)}))
+            await async_api.expect(page.locator(f"#package-view[data-package='{wide.id}'] .takeover-enter")) \
+                .to_have_class("folder-button takeover-enter lit")
+            await _shot(page, "wide-offered")
+        finally:
+            await browser.close()

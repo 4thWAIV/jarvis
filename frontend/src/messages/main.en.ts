@@ -862,6 +862,7 @@ export const mainEn = {
   "main.takeover.restore": "Restore layout",
   "main.takeover.restoreTitle": "Bring back the centre tabs and the right panel",
   "main.takeover.rail": "Right panel tabs",
+  "main.package.wide": "Made for the wider layout: Take over gives it the centre and the right side.",
   "main.package.listening": "Listening through JARVIS's microphone.",
   "main.package.saved": "Saved {name}.",
   "main.package.notSaved": "Not saved.",
