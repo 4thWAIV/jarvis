@@ -394,7 +394,7 @@ EXEMPT = {
         "it names his project records and their IDs inside the work tool's "
         "lines, which go to the brain only inside the work untrusted block "
         "(_work_line, _work_detail). Driven by tests/test_project_records.py"),
-    "server.pack_for_run": (
+    "server._run_pack": (
         "the run's context pack, built by context_service.pack with trust "
         "`own` only, from his project records and notes; it goes into the "
         "run's prompt inside the context markers, never a header line. Driven "

@@ -9328,13 +9328,8 @@ async def tool_spawn_run(args: dict) -> str:
     # skip permissions.
     context = ""
     if context_service.run_context_enabled() and args.get("context", True) is not False:
-        def pack_for_run() -> str:
-            scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
-                if binding and projects is not None else None
-            return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
-                                        search=knowledge_api.context_search(knowledge_calls)).text
         try:
-            context = await asyncio.to_thread(pack_for_run)
+            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
         except Exception:
             log.warning("the run's context pack could not be made", exc_info=True)
             context = ""
@@ -10032,17 +10027,19 @@ async def tool_knowledge_status(args: dict) -> str:
 
 
 async def tool_knowledge_search(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.search(
+    said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
         kinds=args.get("kinds"), limit=args.get("limit") or 10),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
+    return said
 
 
 async def tool_knowledge_entity(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.entity(
+    said = await _knowledge_tool(args, lambda: knowledge_api.entity(
         knowledge_calls, name=args.get("name"), key=args.get("key")),
         "Every match for that name and the first one's card, as JSON", "knowledge_entity", walled=True)
+    return said
 
 
 async def tool_knowledge_proposals(args: dict) -> str:
@@ -10148,10 +10145,11 @@ def _records_scope(args: dict) -> Optional[dict]:
 
 
 async def tool_work_context(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.work_context(
+    said = await _knowledge_tool(args, lambda: knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
         include_received=args.get("include_received") is True, scope=_records_scope(args)),
         "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+    return said
 
 
 # --- Projects, for the brain --------------------------------------------------
@@ -10208,72 +10206,84 @@ async def tool_projects(args: dict) -> str:
 
 
 async def tool_project_detail(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.detail(str(args.get("project") or "")),
+    said = await _project_tool(args, lambda s: s.detail(str(args.get("project") or "")),
                                "One project in full, as JSON", "project_detail", walled=True)
+    return said
+
+
+def _candidates_listing(s, refresh: bool, state: str) -> dict:
+    """The proposed projects, offered again first when `refresh`."""
+    if refresh:
+        _offer_project_candidates(s.refresh_candidates())
+    return s.candidates(state)
 
 
 async def tool_project_candidates(args: dict) -> str:
-    def work(s):
-        if args.get("refresh") is True:
-            found = s.refresh_candidates()
-            _offer_project_candidates(found)
-        return s.candidates(str(args.get("state") or "proposed"))
-    return await _project_tool(args, work, "The projects JARVIS proposes, as JSON",
-                               "project_candidates", walled=True)
+    said = await _project_tool(
+        args, lambda s: _candidates_listing(s, args.get("refresh") is True, str(args.get("state") or "proposed")),
+        "The projects JARVIS proposes, as JSON", "project_candidates", walled=True)
+    return said
 
 
 async def tool_project_history(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.history(str(args.get("project") or ""), before=args.get("before")),
+    said = await _project_tool(args, lambda s: s.history(str(args.get("project") or ""), before=args.get("before")),
                                "A project's history, newest first, as JSON", "project_history", walled=True)
+    return said
 
 
 async def tool_works(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.works(str(args.get("state") or "open"), args.get("project")),
+    said = await _project_tool(args, lambda s: s.works(str(args.get("state") or "open"), args.get("project")),
                                "Pieces of work, as JSON", "works", walled=True)
+    return said
 
 
 async def tool_work_detail(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.work_detail(str(args.get("work") or "")),
+    said = await _project_tool(args, lambda s: s.work_detail(str(args.get("work") or "")),
                                "One piece of work, as JSON", "work_detail", walled=True)
+    return said
 
 
 async def tool_change_project(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_project(
+    said = await _project_tool(args, lambda s: s.change_project(
         str(args.get("action") or ""), project=args.get("project"), name=args.get("name"),
         summary=args.get("summary"), lifecycle=args.get("lifecycle"), actor="voice"),
         "", "change_project", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_project_folder(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_project_folder(
+    said = await _project_tool(args, lambda s: s.change_project_folder(
         str(args.get("action") or ""), project=str(args.get("project") or ""),
         folder_id=str(args.get("folder_id") or ""), part=args.get("part"),
         index_scope=args.get("index_scope"), actor="voice"),
         "", "change_project_folder", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_project_candidate(args: dict) -> str:
-    def work(s):
-        return s.change_candidate(str(args.get("candidate") or ""), str(args.get("action") or ""),
-                                  name=args.get("name"), folders=args.get("folders"),
-                                  home=args.get("home"), into=args.get("into"), actor="voice")
-    return await _project_tool(args, work, "", "change_project_candidate", walled=False, actor_tool=True)
+    said = await _project_tool(args, lambda s: s.change_candidate(
+        str(args.get("candidate") or ""), str(args.get("action") or ""), name=args.get("name"),
+        folders=args.get("folders"), home=args.get("home"), into=args.get("into"), actor="voice"),
+        "", "change_project_candidate", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_work(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_work(
+    said = await _project_tool(args, lambda s: s.change_work(
         str(args.get("action") or ""), work=args.get("work"), title=args.get("title"),
         outcome=args.get("outcome"), projects=args.get("projects"), project=args.get("project"),
         folder_id=args.get("folder_id"), actor="voice"),
         "", "change_work", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_accomplishment(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_accomplishment(
+    said = await _project_tool(args, lambda s: s.change_accomplishment(
         str(args.get("action") or ""), project=args.get("project"), accomplishment=args.get("accomplishment"),
         title=args.get("title"), detail=str(args.get("detail") or ""), work=args.get("work"),
         evidence=args.get("evidence") or [], actor="voice"),
         "", "change_accomplishment", walled=False, actor_tool=True)
+    return said
 
 
 TOOL_HANDLERS.update({
@@ -13851,6 +13861,16 @@ async def api_cancel_run(run_id: str):
 
 
 RUN_STILL_ACTIVE = "Run is still active — cancel it first"
+
+
+def _run_pack(prompt: str, name: str, binding: Optional[dict]) -> str:
+    """The context pack a run is given (own words only, since runs skip
+    permissions): from its project records when it has them, else from its
+    legacy project name. It goes into the run's prompt, never to the brain."""
+    scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
+        if binding and projects is not None else None
+    return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
+                                search=knowledge_api.context_search(knowledge_calls)).text
 
 
 def _bound(binding: Optional[dict]) -> dict:
