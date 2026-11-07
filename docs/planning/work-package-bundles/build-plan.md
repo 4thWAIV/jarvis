@@ -284,6 +284,19 @@ and its deadline work the same whatever produces the rows.
   rankings.
 - Only chunk text is in the keyword index. Reason: text bodies belong to
   chunks only (I8); labels and properties are in the general index.
+- Vector rows are logged like any write, and each generation's rows are
+  two files the vector part writes itself (`.f32` and `.ids`), not
+  key-value segments; the store treats such a family as external. Reason:
+  the rows are stored once, in the form the scan maps.
+- A document whose embedded text changes has its rows deleted in the same
+  transaction and is embedded again in the background. Reason: a vector
+  never answers for text it was not made from.
+- A kind embeds at most one property. Reason: the per-space map then holds
+  one row per ordinal, 8 bytes, as the design's columnar rule asks.
+- A filter larger than `GATHER_MAX` (4,096) documents is applied as a
+  per-row mask built in Python; a smaller one gathers its rows and scores
+  only those. Reason: both are exact; the mask's cost is measured once real
+  vectors exist.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

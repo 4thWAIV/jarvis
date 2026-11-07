@@ -82,6 +82,32 @@ class DerivedPart(Protocol):
         dictionary, for one)."""
 
 
+class ExternalFamily(Protocol):
+    """A logged family whose generations are files a part writes itself
+    (vector rows), not key-value segments. Its manifest entries carry
+    `external: true` and the `files` they consist of."""
+    name: str
+    owns: dict[int, str]
+
+    def write_family(self, directory: Path, gen: int, family: int,
+                     versions: Iterator[Version]) -> list[dict]: ...
+
+    def compact_family(self, directory: Path, family: int, inputs: list[dict], out_gen: int,
+                       purge: set[bytes], drop_tombstones: bool) -> list[dict]: ...
+
+    def holds(self, directory: Path, entry: dict, keys: set[bytes]) -> bool: ...
+
+
+def entry_files(directory: Path, entry: dict) -> list[Path]:
+    if entry.get("external"):
+        return [directory / f for f in entry["files"]]
+    return [directory / "seg" / entry["file"]]
+
+
+def externals_of(parts: Iterable) -> dict[int, "ExternalFamily"]:
+    return {family: part for part in parts for family in getattr(part, "owns", {})}
+
+
 class Memtable:
     def __init__(self) -> None:
         self.versions: dict[int, dict[bytes, list[tuple[int, Optional[bytes]]]]] = {}
@@ -163,6 +189,7 @@ class Store:
         self.family_ext = dict(FAMILY_EXT)
         for part in self.parts:
             self.family_ext.update(part.families)
+        self.external = externals_of(self.parts)
         self.pool = pool or BlockPool()
         self.compact_in_child = compact_in_child
         self.state = "ok"
@@ -222,6 +249,8 @@ class Store:
         segments: dict[int, list[tuple[int, Segment]]] = {}
         try:
             for entry in self.manifest.segments:
+                if entry.get("external"):
+                    continue
                 seg = Segment(self.seg_dir / entry["file"], self.pool, expect_sha256=entry["sha256"])
                 segments.setdefault(int(entry["family"]), []).append((int(entry["gen"]), seg))
         except (OSError, SegmentCorrupt) as e:
@@ -413,12 +442,19 @@ class Store:
         return write_generation(self.seg_dir, gen, versions_of, families, self.parts, self.family_ext,
                                 lambda family: self.scan(family))
 
+    def external_entries(self, family: int) -> list[dict]:
+        with self._lock:
+            return [e for e in self.manifest.segments
+                    if e.get("external") and int(e["family"]) == family]
+
     def _announce(self, gen: int, replaced: list[int]) -> None:
         for listener in self.generation_listeners:
             listener(gen, replaced)
 
     def _add_segments(self, entries: list[dict]) -> None:
         for entry in entries:
+            if entry.get("external"):
+                continue
             seg = Segment(self.seg_dir / entry["file"], self.pool)
             self.segments.setdefault(int(entry["family"]), []).append((int(entry["gen"]), seg))
 
@@ -439,9 +475,14 @@ class Store:
                 tmp = self.snap_dir / f".{current.checkpoint_lsn}.partial"
                 shutil.rmtree(tmp, ignore_errors=True)
                 tmp.mkdir(mode=0o700)
-                for entry in current.segments:
+                # Vector rows stay out: they are the largest files and are
+                # always made again by embedding (section 7.7).
+                kept = [e for e in current.segments if not e.get("external")]
+                for entry in kept:
                     os.link(self.seg_dir / entry["file"], tmp / entry["file"])
-                mf.write_file(tmp / "MANIFEST", current)
+                mf.write_file(tmp / "MANIFEST", mf.Manifest(
+                    number=current.number, checkpoint_lsn=current.checkpoint_lsn,
+                    next_gen=current.next_gen, segments=kept, parts=current.parts))
                 os.replace(tmp, target)
         snaps = sorted((p for p in self.snap_dir.iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
         for old in snaps[:-SNAPSHOTS_KEPT]:
@@ -509,7 +550,8 @@ class Store:
                     self.segments[family] = still
                 self._add_segments(entries)
                 for entry in inputs:
-                    (self.seg_dir / entry["file"]).unlink(missing_ok=True)
+                    for path in entry_files(self.directory, entry):
+                        path.unlink(missing_ok=True)
                 if not self._pins:
                     self._close_retired()
             self._announce(out_gen, gens)
@@ -553,9 +595,15 @@ class Store:
             ops = [Op(family, key, None) for family, ks in keys.items() for key in sorted(ks)]
             self.commit(ops)
             self.flush()   # rotates the log and deletes every file below the checkpoint
-            holding = sorted({gen for family, ks in keys.items()
-                              for gen, seg in self.segments.get(family, [])
-                              if any(seg.might_have(k) and seg.versions(k) for k in ks)})
+            holding = {gen for family, ks in keys.items()
+                       for gen, seg in self.segments.get(family, [])
+                       if any(seg.might_have(k) and seg.versions(k) for k in ks)}
+            for family, ks in keys.items():
+                owner = self.external.get(family)
+                if owner is not None:
+                    holding |= {int(e["gen"]) for e in self.external_entries(family)
+                                if owner.holds(self.directory, e, ks)}
+            holding = sorted(holding)
             if holding:
                 # Every generation holding any version is merged, so the
                 # tombstones can go too.
@@ -626,9 +674,14 @@ def write_generation(seg_dir: Path, gen: int, versions_of: Callable[[int], Itera
         entries.append(entry)
         return entry
 
-    logged = [f for f in families if f in FAMILY_EXT]
-    for family in logged:
-        write(family, versions_of(family))
+    externals = externals_of(parts)
+    for family in families:
+        if family in FAMILY_EXT:
+            write(family, versions_of(family))
+        elif family in externals:
+            for entry in externals[family].write_family(seg_dir.parent, gen, family, versions_of(family)):
+                entry.update(gen=gen, family=family, external=True)
+                entries.append(entry)
     for part in parts:
         part.build(gen, lambda family: newest_only(versions_of(family)), write, read_family)
     return entries
@@ -643,9 +696,12 @@ def compact_plan(plan: dict, parts: Iterable[DerivedPart], family_ext: dict[int,
     seg_dir = directory / "seg"
     pool = BlockPool(8 << 20)
     by_family: dict[int, list[Segment]] = {}
+    external_inputs: dict[int, list[dict]] = {}
     for entry in plan["inputs"]:
         family = int(entry["family"])
-        if family in FAMILY_EXT:
+        if entry.get("external"):
+            external_inputs.setdefault(family, []).append(entry)
+        elif family in FAMILY_EXT:
             by_family.setdefault(family, []).append(Segment(seg_dir / entry["file"], pool))
     oldest_pin = int(plan["oldest_pin"])
     drop_tombstones = bool(plan["drop_tombstones"])
@@ -675,12 +731,22 @@ def compact_plan(plan: dict, parts: Iterable[DerivedPart], family_ext: dict[int,
     def read_family(family: int) -> Iterator[Version]:
         if family not in live:
             live[family] = [Segment(seg_dir / e["file"], pool) for e in plan.get("live", [])
-                            if int(e["family"]) == family]
+                            if int(e["family"]) == family and not e.get("external")]
         return (v for v in newest_only(merge([s.scan() for s in live[family]])) if v.value is not None)
 
     try:
-        return write_generation(seg_dir, int(plan["out_gen"]), kept, sorted(by_family), parts,
-                                family_ext, read_family)
+        out = write_generation(seg_dir, int(plan["out_gen"]), kept, sorted(by_family), parts,
+                               family_ext, read_family)
+        externals = externals_of(parts)
+        for family, entries in external_inputs.items():
+            owner = externals.get(family)
+            if owner is None:
+                continue
+            for entry in owner.compact_family(directory, family, entries, int(plan["out_gen"]),
+                                              purge.get(family, set()), drop_tombstones):
+                entry.update(gen=int(plan["out_gen"]), family=family, external=True)
+                out.append(entry)
+        return out
     finally:
         for group in (*by_family.values(), *live.values()):
             for seg in group:
@@ -694,7 +760,7 @@ def _snapshot_holds(snap: Path, keys: dict[int, set[bytes]], pool: BlockPool) ->
         return True
     for entry in found.segments:
         family = int(entry["family"])
-        if family not in keys:
+        if family not in keys or entry.get("external"):
             continue
         seg = Segment(snap / entry["file"], pool)
         try:

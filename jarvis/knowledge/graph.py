@@ -102,8 +102,8 @@ class Graph:
     def __init__(self, docs: DocumentStore) -> None:
         self.docs = docs
         self.store = docs.store
-        docs.reference_hook = self._reference_ops
-        docs.delete_hook = self._delete_ops
+        docs.put_hooks.append(self._reference_ops)
+        docs.delete_hooks.append(self._delete_ops)
         docs.forget_hooks.append(self._forget_keys)
 
     # -- writing ----------------------------------------------------------
@@ -118,7 +118,8 @@ class Graph:
             raise DocumentError(f"no document {key!r} for the edge")
         return found
 
-    def _reference_ops(self, raw: dict, stored: dict, pending: dict[str, Optional[dict]]) -> list[Op]:
+    def _reference_ops(self, raw: dict, stored: dict, ordinal: int,
+                       pending: dict[str, Optional[dict]]) -> list[Op]:
         """The record edges a document's reference properties make, and
         deletes for those an earlier version made and this one does not."""
         kind = kinds.kind_of(stored["_kind"])
@@ -142,7 +143,7 @@ class Graph:
                                           {"origin": "record", "weight": 1.0, "digest": stored["_hash"]}))
         return ops
 
-    def _delete_ops(self, key: bytes) -> list[Op]:
+    def _delete_ops(self, key: bytes, ordinal: Optional[int] = None) -> list[Op]:
         node = key.decode()
         ops: list[Op] = []
         for v in self.store.prefix(EDGES_OUT, key + SEP):

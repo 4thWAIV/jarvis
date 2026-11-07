@@ -252,8 +252,10 @@ class DocumentStore:
         self._pending: dict[bytes, int] = {}
         self.mem_index: dict[bytes, set[int]] = {}
         self._mem_entries: dict[int, list[bytes]] = {}
-        self.reference_hook: Optional[Callable[[dict, dict, dict], list[Op]]] = None
-        self.delete_hook: Optional[Callable[[bytes], list[Op]]] = None
+        # Parts add operations to a document's write: (raw, stored, ordinal,
+        # pending) -> ops for a put, (key, ordinal) -> ops for a delete.
+        self.put_hooks: list[Callable[[dict, dict, int, dict], list[Op]]] = []
+        self.delete_hooks: list[Callable[[bytes, Optional[int]], list[Op]]] = []
         self.forget_hooks: list[Callable[[set[bytes]], dict[int, set[bytes]]]] = []
         self._load()
         store.listeners.append(self._on_apply)
@@ -411,14 +413,15 @@ class DocumentStore:
                     self._pending[key] = o
                     reserved.append(key)
                 ops.append(Op(DOCS, key, encode_doc(o, doc)))
-                if self.reference_hook is not None:
-                    ops.extend(self.reference_hook(raw, doc, pending if pending is not None
-                                                   else pending_of(puts, deletes)))
+                for hook in self.put_hooks:
+                    ops.extend(hook(raw, doc, o, pending if pending is not None
+                                    else pending_of(puts, deletes)))
             for key_text in deletes:
                 key = key_text.encode()
                 ops.append(Op(DOCS, key, None))
-                if self.delete_hook is not None:
-                    ops.extend(self.delete_hook(key))
+                o = self._ord_from_store(key)
+                for hook in self.delete_hooks:
+                    ops.extend(hook(key, o))
             field_ops = [Op(FIELDS, p.encode(), FID.pack(f)) for p, f in new_fields.items()]
         return field_ops + ops, reserved
 

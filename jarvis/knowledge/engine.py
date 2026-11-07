@@ -54,6 +54,7 @@ class Engine:
         self.docs = None   # the document store over it
         self.graph = None  # the typed graph over the documents
         self.lexical = None  # the keyword index over chunk text
+        self.vectors = None  # the vector index and its embedding worker
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -85,6 +86,9 @@ class Engine:
         self.graph = Graph(self.docs)
         from jarvis.knowledge.lexical import Lexical
         self.lexical = Lexical(self.docs)
+        from jarvis.knowledge import embedder
+        from jarvis.knowledge.vectors import VectorIndex
+        self.vectors = VectorIndex(self.docs, embedder.current())
 
     compact_in_child = True
 
@@ -92,7 +96,10 @@ class Engine:
         store = self.store.health() if self.store is not None else {"state": "ok"}
         return {"state": store.get("state", "ok"), "pid": os.getpid(), "boot_id": self.boot_id,
                 "uptime_s": round(time.time() - self.started, 3), "pace": self.pace,
-                "store": store}
+                "store": store,
+                "documents": {"resident_bytes": self.docs.resident_bytes()} if self.docs else {},
+                "keyword": {"chunks": self.lexical.live} if self.lexical else {},
+                "vectors": self.vectors.health() if self.vectors else {}}
 
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
@@ -102,6 +109,8 @@ class Engine:
         self.pace = mode
         if self.store is not None:
             self.store.set_paused(mode == "hold")
+        if self.vectors is not None:
+            self.vectors.set_paused(mode == "hold")
 
     def transaction(self, body: dict) -> int:
         """One atomic write: documents put and deleted together; readers see
@@ -126,6 +135,8 @@ class Engine:
         self.store.maybe_flush()
         if self.pace == "free" and self.store.pick_tier():
             self.store.compact()
+        if self.pace == "free" and self.vectors is not None:
+            self.vectors.warm()
 
     def close(self) -> None:
         with self._close_lock:
@@ -142,6 +153,8 @@ class Engine:
 
     def _close_parts(self) -> None:
         """Flushes and closes the parts; each step adds its part here."""
+        if self.vectors is not None:
+            self.vectors.close()
         if self.store is not None:
             self.store.close()
 
@@ -149,7 +162,8 @@ class Engine:
 def _part_types() -> dict:
     from jarvis.knowledge.documents import IndexPart
     from jarvis.knowledge.lexical import LexicalPart
-    return {t.name: t for t in (IndexPart, LexicalPart)}
+    from jarvis.knowledge.vectors import VectorPart
+    return {t.name: t for t in (IndexPart, LexicalPart, VectorPart)}
 
 
 def default_parts() -> list:
