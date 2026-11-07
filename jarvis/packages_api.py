@@ -28,8 +28,10 @@ page (PackageView.tsx) makes the request.
   POST /api/packages/{id}/page              open it in every page's centre
   DELETE /api/packages/{id}/page            the page's ×: a page that connects
                                             from now on no longer shows it
-  POST /api/packages/{id}/story             {"action": "tell", "slide"?} or
-                                            {"action": "stop"}: its story
+  POST /api/packages/{id}/story             {"action": "tell", "slide"?},
+                                            {"action": "resume"}, {"action":
+                                            "stop"} or {"action": "status"}:
+                                            its story
   GET  /api/packages/story.js               the helper a story page loads
                                             (package_story.js, one copy),
                                             which points and highlights in
@@ -191,7 +193,8 @@ def mount(app: FastAPI,
 
     async def tell_story(package_id: str, request: Request,
                          body: dict = Body(default_factory=dict)):
-        if str(body.get("action") or "") != story_teller.STOP and not his_click(request):
+        if str(body.get("action") or "") not in (story_teller.STOP, story_teller.STATUS) \
+                and not his_click(request):
             return JSONResponse({"error": NOT_HIS_ACT}, status_code=403)
         slide = body.get("slide")
         if slide is not None and (not isinstance(slide, int) or isinstance(slide, bool)):

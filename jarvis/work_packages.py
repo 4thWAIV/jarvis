@@ -649,6 +649,21 @@ def save_result(package: Package, name: str, data: bytes) -> Path:
     return package.folder / RESULTS / Path(*parts)
 
 
+def read_result(package: Package, name: str) -> Optional[bytes]:
+    """results/<name> in the package's folder as it is now, reached without
+    following a link, or None when it is not there (or is over
+    RESULT_MAX_BYTES): what a story waits on (story_teller.py)."""
+    parts = result_name(name)
+    try:
+        with folder_readers.opened_dir(package.folder, Path(RESULTS, *parts[:-1])) as fd:
+            handle = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            with os.fdopen(handle, "rb") as f:
+                data = f.read(RESULT_MAX_BYTES + 1)
+    except (FolderError, OSError):
+        return None
+    return data if len(data) <= RESULT_MAX_BYTES else None
+
+
 # -- an agent package's run ---------------------------------------------------------------
 
 def agent_brief(package: Package) -> str:
