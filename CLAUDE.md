@@ -1504,6 +1504,40 @@ the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
 
+## Takeover mode
+A workflow (or subagent) or a page package shown in the centre can take
+over the page. It is route state, `uiNavigation.ts` `layout`: normal, or
+`{mode: "takeover", view, key, flyout, sheet}`, read-only outside the
+module, never stored (a reload starts normal). It holds only while
+`mainView` is that view and its slot holds that key (`detailSlot`'s third
+argument names a takeover slot's item): every command that changes either
+restores it in its own handler (`settleLayout`) and returns
+`layout.restored`, declared on every command that moves the centre view or
+a slot. The UI contract's layout family (`ui_contract/families/layout.json`)
+has `layout.takeover` (only the workflow or package shown), `layout.restore`,
+`layout.sheet` and `layout.flyout.close`, the views `main.takeover` (the
+bar) and `right.rail`, and the `takeoverBar` kind; the brain reaches them
+through `ui_navigate`, and Take over (`TakeoverBar.tsx` `TakeoverButton`,
+beside × in `WorkflowDetail.tsx` and `PackageView.tsx`) and Option+Shift+T
+(`takeoverKey.ts`, by `e.code`, never in an input, text area, select or
+editable text) run the same handlers. Taken over, `App.tsx` sets
+`data-layout="takeover"` on the root and every centre view's right edge,
+`--centre-right` in `style.css`, moves in to the rail; `RightPanel.tsx`
+draws `RightRail` (the six icons with their marks, keeping
+`#right-column`, so the rays and the pipeline's right rail follow it; an
+icon runs `right.tab.select`, which while taken over opens that tab over
+the takeover as the flyout); `CentreArea.tsx` draws `TakeoverBar` in place
+of the tabs and the notices: the name, the conversation's state from
+`controlState.ts` (`ControlSummary`), the notices (`CentreNotices inBar`),
+the read-back chip that opens the open captures as a sheet
+(`TakeoverSheet`, `CaptureList` in `main.takeover`), the microphone, its
+health dot and Stop (`MicPortal`'s `bar` place: moved, never copied) and
+Restore layout. A package's `layout` (`centre` or `wide`,
+`work_packages.LAYOUTS`) lights Take over; its frame is told `layout`
+{mode, width, height} and may send `layout.request` (offer only) or
+`layout.restore` (restore only, what `package_story.js` sends for the key
+pressed inside the frame).
+
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
 

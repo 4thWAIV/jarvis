@@ -2497,6 +2497,25 @@ export const UI_CONTRACT = {
       "family": "layout"
     },
     {
+      "id": "layout.sheet",
+      "label": "Show or hide the read-back's message boxes as a sheet over the takeover (the bar's read-back chip)",
+      "view": "main.takeover",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "layout"
+    },
+    {
       "id": "layout.flyout.close",
       "label": "Close the right panel's tab opened over the takeover from the rail",
       "view": "right.rail",
@@ -4122,6 +4141,15 @@ export const UI_CONTRACT = {
               "tab": "main"
             }
           }
+        },
+        {
+          "view": "main.takeover",
+          "reveal": {
+            "command": "layout.sheet",
+            "args": {
+              "shown": true
+            }
+          }
         }
       ],
       "family": "conversation"
@@ -4335,6 +4363,7 @@ export const UI_CONTRACT = {
       "parts": [
         "name",
         "state",
+        "readback",
         "restore"
       ],
       "presentations": [
@@ -4543,6 +4572,7 @@ export interface CommandArgs {
   "knowledge.seed.answer": { seedId: string; answer: "accept" | "decline"; };
   "layout.flyout.close": { };
   "layout.restore": { };
+  "layout.sheet": { shown: boolean; };
   "layout.takeover": { };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
   "menu.toggle": { open: boolean; };
