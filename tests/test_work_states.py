@@ -110,7 +110,7 @@ def test_paused_pieces_are_not_progress(wired, item, monkeypatch):
     _report(wired, item.id, "decision_withdrawn", "Not now.", auth=key, key="vectors-onnx")
     _report(wired, item.id, "decision_withdrawn", "Not now.", auth=key, key="switch-on")
     got = work_store.get(item.id)
-    assert got.state == "verifying", "nothing waits on him but his review"
+    assert (got.state, got.quiet) == ("working", True), "paused, not yet ready for his review"
 
 
 def test_paused_with_nothing_else_reads_working_but_quiet(wired, item, monkeypatch):
@@ -140,6 +140,45 @@ def test_approve_is_offered_only_when_it_can_be_given(wired, item, states, decis
     assert got["approvable"] is approvable
     r = wired.client.post(f"/api/work/{item.id}/review", headers=BROWSER, json={"action": "approve"})
     assert (r.status_code == 200) is approvable, r.text
+
+
+def test_a_paused_working_piece_never_reads_ready_for_review(wired, item, monkeypatch):
+    """Hand tracking: one piece in for review, one still working but paused.
+    The row said Ready for review while Approve was not offered."""
+    key = _key()
+    _piece(wired, item.id, "plan", auth=key, state="verifying")
+    _piece(wired, item.id, "build", auth=key, state="working")
+    later = time.time() + work_store.QUIET_AFTER_SEC + 60
+    monkeypatch.setattr(work_store.time, "time", lambda: later)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    assert (got["state"], got["quiet"], got["approvable"]) == ("working", True, False)
+
+
+ALL_STATES = ("planned", "ready", "working", "verifying", "waiting_on_tim", "blocked")
+
+
+@pytest.mark.parametrize("states", [(a, b) for a in ALL_STATES for b in ALL_STATES if a <= b])
+@pytest.mark.parametrize("paused", [False, True])
+def test_ready_for_review_always_means_approve_is_offered(wired, item, monkeypatch, states,
+                                                          paused):
+    """A list row and its header can never disagree: whatever the pieces,
+    an item reads ready for review exactly when Approve is offered (or a
+    piece can still be picked up, which Approve finishes too)."""
+    key = _key()
+    _report(wired, item.id, "decision_needed", "Which?", auth=key, key="which")
+    for n, state in enumerate(states):
+        until = {"waiting_on_tim": "decision:which", "blocked": "CI is down"}.get(state)
+        _piece(wired, item.id, f"p{n}", auth=key, state=state, **({"until": until} if until else {}))
+    if "waiting_on_tim" not in states:
+        _answer(wired, item.id, "which")
+    if paused:
+        later = time.time() + work_store.QUIET_AFTER_SEC + 60
+        monkeypatch.setattr(work_store.time, "time", lambda: later)
+    got = wired.client.get(f"/api/work/{item.id}").json()["item"]
+    if got["state"] == "verifying":
+        assert got["approvable"], (states, paused, got["state"])
+    if got["approvable"]:
+        assert got["state"] in ("verifying", "ready", "planned"), (states, paused, got["state"])
 
 
 def test_a_planned_piece_behind_a_waiting_one_cannot_go_on(wired, item):

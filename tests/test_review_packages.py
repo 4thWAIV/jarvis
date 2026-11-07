@@ -159,6 +159,7 @@ def test_any_other_package_question_does_on_the_page_and_the_server(wired, marks
     _sent(wired, tmp_path, item, also_ask=True)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
     assert got["approvable"] is False
+    assert got["state"] == "waiting_on_tim", "not ready for review while a question waits on him"
     assert wired.client.get("/api/work").json()["items"][0]["approvable"] is False
     assert "still asks him" in _review(wired, item.id, "approve", ok=False)["error"]
 
@@ -235,3 +236,20 @@ def test_a_package_he_set_aside_is_no_review(wired, marks, tmp_path, item):
 def test_the_server_applies_them_at_start(wired):
     import inspect
     assert "_apply_package_reviews" in inspect.getsource(wired.server.lifespan)
+
+
+def test_signing_off_unanswered_after_he_reviewed_it_another_way_says_nothing(
+        wired, marks, tmp_path, item):
+    """Takeover mode: approved in its header, then its review package signed
+    off unanswered (or swept at start): no "without a verdict" after it."""
+    from jarvis import package_inbox, work_api
+    inbox_id = _sent(wired, tmp_path, item)
+    _review(wired, item.id, "approve")
+    package_id = package_inbox.get(inbox_id).package_id
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(wired.server, "_review_from_package", lambda *a, **k: None)
+        wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
+    assert work_api.apply_package_reviews() == 0
+    got = work_store.get(item.id)
+    assert got.state == "done" and got.package_review is None
+    assert not [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]

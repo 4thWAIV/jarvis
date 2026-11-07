@@ -513,3 +513,41 @@ async def test_updates_says_up_to_date_and_what_stops_an_update(page_playwright,
             "Tracked files have been changed here. jarvis/server.py")
         assert await section.get_by_role("button", name="Install and restart").is_disabled()
         await browser.close()
+
+
+STEADY = "() => [document.documentElement.dataset.motion || null, localStorage.getItem('jarvis.motion')]"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_steady_holds_the_page_still_for_this_browser_and_the_brain_asks_the_same(
+        page_playwright, page_url):
+    from tests.test_voice_page_conversation import _Voice
+    server, voice = _Server(), _Voice()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        await server.install(page)
+        await page.route_web_socket("**/ws/voice", voice)
+        await page.goto(page_url)
+        assert await page.evaluate(STEADY) == [None, None]
+        await _open_settings(page)
+        steady = page.locator("#settings-steady")
+        await steady.check()
+        assert await page.evaluate(STEADY) == ["steady", "steady"]
+        # A reload keeps it: it is read before anything draws.
+        await page.reload()
+        await page.wait_for_function("document.documentElement.dataset.motion === 'steady'")
+        # The brain's set_motion: the page moves again, and Settings shows it.
+        for _ in range(100):
+            if voice.ws:
+                break
+            await page.wait_for_timeout(50)
+        voice.send({"type": "motion", "motion": "full"})
+        await page.wait_for_function("!document.documentElement.dataset.motion")
+        assert await page.evaluate(STEADY) == [None, None]
+        await _open_settings(page)
+        assert not await page.locator("#settings-steady").is_checked()
+        await browser.close()

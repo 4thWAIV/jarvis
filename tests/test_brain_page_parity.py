@@ -138,7 +138,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
-            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
+            "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone", "set_motion",
             "mute_speech", "turn_audio_off", "mark_updates_seen",
             "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
@@ -185,6 +185,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("stop_speaking", {}),
     ("voice_turn", {"action": "send_now"}),
     ("quiet_microphone", {"state": "muted"}),
+    ("set_motion", {"motion": "steady"}),
     ("mute_speech", {}),
     ("turn_audio_off", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
@@ -862,6 +863,25 @@ def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wi
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "quiet_microphone" in names
     assert not names & {"unmute", "start_listening", "microphone_on", "listen"}
+
+
+def test_set_motion_sends_every_page_steady_or_full_as_he_asks(wired, monkeypatch):
+    """Settings, You's Steady is this browser's (motion.ts); the brain asks
+    every open page to hold still or move again, and nothing else."""
+    sent = []
+
+    async def emit(frame):
+        sent.append(frame)
+
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", set())
+    assert "No JARVIS page is open" in _call(wired, "set_motion", motion="steady")["text"]
+    wired.server.voice_clients.add(object())
+    assert "Steady" in _call(wired, "set_motion", motion="steady")["text"]
+    assert "back" in _call(wired, "set_motion", motion="full")["text"]
+    assert "Nothing was changed" in _call(wired, "set_motion", motion="wobbly")["text"]
+    assert sent == [{"type": "motion", "motion": "steady"}, {"type": "motion", "motion": "full"}]
+    assert not _call(wired, "set_motion", origin="event", motion="steady")["ok"]
 
 
 # ── the speaker and the headset: speech mute and all audio off ─────────────

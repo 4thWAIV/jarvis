@@ -1206,9 +1206,10 @@ def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -
     QUIET_AFTER_SEC (a paused piece is not progress); else ready or planned
     while one can be picked up (a planned piece whose pieces before it are
     not done cannot); else waiting on him while a decision or a piece waits
-    on him; else ready for his review, blocked, or working but paused (its
-    `quiet` says so), in that order. With none, waiting on him while a
-    decision is open, else as reported."""
+    on him; else working but paused (its `quiet` says so), blocked, or ready
+    for his review, in that order. Ready for review only once he can approve
+    it (`approvable`): a list row and its header never disagree. With none,
+    waiting on him while a decision is open, else as reported."""
     if row["state"] == DONE:
         return DONE
     if not pieces:
@@ -1222,7 +1223,7 @@ def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -
         return PLANNED
     if WAITING in live or decisions:
         return WAITING
-    for state in (VERIFYING, BLOCKED, WORKING):
+    for state in (WORKING, BLOCKED, VERIFYING):
         if state in live:
             return state
     return PLANNED if live else VERIFYING
@@ -1499,6 +1500,16 @@ def reviewed(item_id: str, source: dict) -> bool:
             f"({','.join('?' * len(_REVIEW_ACTS))}) AND json_extract(detail, '$.source.package')=? "
             "AND json_extract(detail, '$.source.answered_at')=?",
             (item_id, *_REVIEW_ACTS, source["package"], source["answered_at"])).fetchone() is not None
+
+
+def reviewed_since(item_id: str, since: float) -> bool:
+    """Whether he has reviewed the item (approved it, said it is not done
+    yet or added work, anywhere) since `since`."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            f"SELECT 1 FROM work_events WHERE item_id=? AND kind IN "
+            f"({','.join('?' * len(REVIEW_KINDS))}) AND at>=?",
+            (item_id, *REVIEW_KINDS, since)).fetchone() is not None
 
 
 def _package_review(conn, item_id: str) -> "Optional[PackageReview]":

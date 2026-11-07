@@ -136,6 +136,10 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
     out["package_questions"] = waiting.get(item.id, 0)
     out["approvable"] = can_approve(item, waiting)
     out["projects"] = projects_for_path(item.source_path)
+    if out["state"] == work_store.VERIFYING and not out["approvable"]:
+        # Ready for review only when he can approve it: what keeps Approve
+        # back here is a package's question, which waits on him.
+        out["state"] = work_store.WAITING
     return out
 
 
@@ -234,7 +238,10 @@ def signed_off_review(entry, package) -> Optional[work_store.WorkItem]:
     if asked.answer and asked.answer.get("answer") in REVIEW_OPTIONS:
         return None            # already applied, or noted, when he gave it
     source = {"package": entry.id, "answered_at": ""}
-    if work_store.reviewed(entry.work_id, source):
+    if (work_store.reviewed(entry.work_id, source)
+            or work_store.reviewed_since(entry.work_id, entry.arrived_at)):
+        # Noted already, or he has reviewed the item another way since the
+        # package came: an unanswered sign-off then says nothing.
         return None
     return _note_review(entry.work_id, work_store.NO_VERDICT, source,
                         "Review closed without a verdict: he signed the package off unanswered.")

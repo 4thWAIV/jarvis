@@ -218,6 +218,8 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.you.name": "Nombre",
   "left.you.namePlaceholder": "Su nombre",
   "left.you.honorific": "Tratamiento",
+  "left.you.steady": "Quieto",
+  "left.you.steadyHint": "Quieto mantiene todo a la vista pero sin movimiento: ni brillo que recorre, ni flujo, ni destello. Para este navegador.",
   "left.you.honorific.sir": "Sir (en español, señor)",
   "left.you.honorific.maam": "Ma'am (en español, señora)",
   "left.you.honorific.senor": "Señor (también en inglés)",

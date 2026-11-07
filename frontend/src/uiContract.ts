@@ -2942,6 +2942,7 @@ export const UI_CONTRACT = {
         "name",
         "honorific",
         "saveYou",
+        "steady",
         "language",
         "spanishModel",
         "voiceInputStop",

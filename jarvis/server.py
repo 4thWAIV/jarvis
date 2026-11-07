@@ -10015,7 +10015,26 @@ async def tool_turn_audio_off(args: dict) -> str:
             "answers in text only. Only he can turn it back on, with the headset.")
 
 
+# Steady (Settings, You): this browser's motion preference (motion.ts). The
+# brain asks every open page to hold still or move again, only as he asks.
+MOTION_FRAME = "motion"
+MOTIONS = ("steady", "full")
+
+
+async def tool_set_motion(args: dict) -> str:
+    """Settings, You's Steady, by voice or typing, on every open page."""
+    chosen = args.get("motion")
+    if chosen not in MOTIONS:
+        return "Say which: steady or full. Nothing was changed."
+    if not voice_clients:
+        return "No JARVIS page is open, sir, so there is nothing to hold still."
+    await _voice_emit({"type": MOTION_FRAME, "motion": chosen})
+    return ("Steady on every open page, sir: everything holds still." if chosen == "steady"
+            else "Motion is back on every open page, sir.")
+
+
 TOOL_HANDLERS.update({
+    "set_motion": tool_set_motion,
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
     "voice_turn": tool_voice_turn,
@@ -10024,8 +10043,9 @@ TOOL_HANDLERS.update({
     "turn_audio_off": tool_turn_audio_off,
 })
 ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-                     "mute_speech", "turn_audio_off"})
+                     "mute_speech", "turn_audio_off", "set_motion"})
 TAINT_EXEMPT_TOOLS.update({
+    "set_motion": "it turns the page's motion steady or back; it reads nothing",
     "mute_speech": "it mutes JARVIS's speech; it reads nothing",
     "turn_audio_off": "it turns the microphone off and mutes JARVIS's speech; it reads nothing",
     "skip_reading": "it stops one reading aloud, it does not read",

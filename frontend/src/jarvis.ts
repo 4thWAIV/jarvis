@@ -7,6 +7,7 @@
  * screen, with the orb the page created.
  */
 
+import { setMotion } from "./motion";
 import type { Orb, OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
@@ -427,6 +428,9 @@ export function startJarvis(orb: Orb): void {
       // Only ever quieter: Muted never undoes Mic off.
       if (msg.state === "off") chooseQuiet("off");
       else if (msg.state === "muted" && quiet.get() === "none") chooseQuiet("muted");
+    } else if (type === "motion") {
+      // The brain's set_motion: Steady, or motion back, as he asked.
+      setMotion(msg.motion === "steady" ? "steady" : "full");
     } else if (type === "reading_skipped") {
       // Skipped here, or by the brain's skip_reading: the same either way.
       skipLocally(Number(msg.utt));
