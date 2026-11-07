@@ -150,6 +150,8 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  /** His projects holding its source, worked out when read. */
+  projects: { id: string; name: string }[];
   follow_up: WorkFollowUp | null;
   /** Open decisions waiting on him while the item itself goes on. */
   also_waiting: number;
@@ -157,6 +159,9 @@ export interface WorkItem {
   until: string[];
   /** When he approved it done (done is his alone to give). */
   approved_at: number | null;
+  /** Whether he can approve it now: no decision open, no piece waiting,
+   *  blocked or still working (work_store.approvable). */
+  approvable: boolean;
   /** His words when he said it is not done yet. */
   review_note: string;
   review_note_at: number | null;

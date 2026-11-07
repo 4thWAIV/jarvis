@@ -116,14 +116,20 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
               {...bindingProps(bind("work.open", { itemId: item.id }))}>
         <span className="work-row-title">
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
-          <ActivityMark activity={activity} target={ui.part("activity")} />
           {item.title}</span>
         <span className="work-row-pills">
+          {/* Beside the state, never in the title's room: a Paused mark there
+              once squeezed a long title down to its ellipsis. */}
+          <ActivityMark activity={activity} target={ui.part("activity")} />
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
           <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
             {STATE_WORDS[item.state]}</span>
         </span>
+        {item.projects.length > 0 && (
+          <span className="work-row-project" ref={ui.part("project")}>
+            {t("right.work.project", { names: item.projects.map((p) => p.name).join(", ") })}</span>
+        )}
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
           {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
           {deciding ? t("right.work.decision", { question: item.headline })

@@ -12,8 +12,14 @@ and cited, so he does not have to repeat it (design section 8).
   in place of the memory hits. Late or down, tier 0 is given and the pack
   says it is partial.
 
-Sections and their share of the budget: the project, its notes 25 percent;
-topics 15; open decisions 10 (only when other people's words are allowed);
+`scope` is the records the pack is about (`ProjectService.brief`): a piece
+of work's title and outcome, and its projects, primary first, each with its
+summary, folders by name and part (never a path), its last confirmed
+accomplishments and its notes. Without one, `project` is a legacy project
+name and only its notes are given.
+
+Sections and their share of the budget: the work 5 percent; the projects
+25; topics 15; open decisions 10 (only when other people's words are allowed);
 passages 40, at most `PER_DOCUMENT` from one document; sources 5. A topic
 whose status is planned is always said to be "planned, not implemented",
 keeping the rule that planned successor engines are never described as
@@ -38,7 +44,7 @@ RUN_BUDGET = 4000
 BRAIN_BUDGET = 2500
 RUN_DEADLINE_SEC = 0.5
 BRAIN_DEADLINE_SEC = 0.3
-SHARES = {"project": 0.25, "topics": 0.15, "decisions": 0.10, "passages": 0.40, "sources": 0.05}
+SHARES = {"work": 0.05, "project": 0.25, "topics": 0.15, "decisions": 0.10, "passages": 0.40, "sources": 0.05}
 PER_DOCUMENT = 3
 TOPIC_HOPS = 2
 STATUS_WORDS = {"planned": "planned, not implemented", "implemented": "implemented", "active": "active",
@@ -118,12 +124,39 @@ def touched_topics(texts: list[str]) -> list[knowledge_links.Topic]:
     return [all_topics[s] for s in ordered]
 
 
-def pack(*, purpose: str, project: Optional[str] = None, budget_chars: int = RUN_BUDGET,
+def _project_lines(name: str, notes: list, record: Optional[dict] = None) -> list[str]:
+    """One project in the pack: its name and summary, folders and recent
+    confirmed accomplishments when it is a record, then its notes, newest
+    first."""
+    head = f"Project: {name}"
+    if record and record.get("summary"):
+        head += f". {' '.join(record['summary'].split())}"
+    lines = [head]
+    if record and record.get("folders"):
+        lines.append("Folders: " + ", ".join(
+            f"{f['name'] or 'a folder no longer registered'} ({f['part']}{', home' if f.get('home') else ''})"
+            for f in record["folders"]))
+    if record and record.get("accomplishments"):
+        lines.append("Done lately: " + "; ".join(record["accomplishments"]))
+    lines += [f"- {n.stamp}: {n.text}" for n in reversed(notes)]
+    return lines
+
+
+def _notes(name: str) -> list:
+    try:
+        return jarvis_memory.project_notes(name)
+    except Exception:  # noqa: BLE001 - a missing notes file is no notes
+        return []
+
+
+def pack(*, purpose: str, project: Optional[str] = None, scope: Optional[dict] = None,
+         budget_chars: int = RUN_BUDGET,
          trust: str = "own", search: Optional[Callable[[str, bool, float], Optional[list[dict]]]] = None,
          deadline_s: float = RUN_DEADLINE_SEC,
          decisions: Optional[Callable[[str], list[str]]] = None) -> Pack:
-    """The pack for `purpose` (the prompt or question) in `project` (the
-    legacy project name until projects are records). `search(text, own_only,
+    """The pack for `purpose` (the prompt or question) about `scope` (the
+    project records, `ProjectService.brief`), else `project` (a legacy
+    project name). `search(text, own_only,
     deadline)` is the engine's search, or None; it returns None when late or
     down."""
     if trust not in ("own", "all"):
@@ -134,27 +167,36 @@ def pack(*, purpose: str, project: Optional[str] = None, budget_chars: int = RUN
     sections: dict = {}
     partial = False
 
+    work = (scope or {}).get("work")
+    sections["work"] = _cut([f"Work: {work['title']}" + (f". Outcome: {work['outcome']}" if work.get("outcome") else "")]
+                            if work else [], budget["work"])
+    records = (scope or {}).get("projects") or []
     project_lines: list[str] = []
-    notes = []
-    if project:
-        try:
-            notes = jarvis_memory.project_notes(project)
-        except Exception:  # noqa: BLE001 - a missing notes file is no notes
-            notes = []
-        project_lines.append(f"Project: {project}")
-        for n in reversed(notes):
-            project_lines.append(f"- {n.stamp}: {n.text}")
+    named: list[str] = []
+    notes: list = []
+    for record in records:
+        found = _notes(record["notes_slug"])
+        notes += found
+        named += [record["name"], record.get("summary") or ""] + list(record.get("aliases") or [])
+        project_lines += _project_lines(record["name"], found, record)
+        if found:
+            sources.append(f"projects/{jarvis_memory.slugify(record['notes_slug'])}.md")
+    if not records and project:
+        notes = _notes(project)
+        named.append(project)
+        project_lines = _project_lines(project, notes)
         if notes:
             sources.append(f"projects/{jarvis_memory.slugify(project)}.md")
     sections["project"] = _cut(project_lines, budget["project"])
 
-    topics = touched_topics([project or "", purpose] + [n.text for n in notes])
+    topics = touched_topics(named + [purpose] + [n.text for n in notes])
     sections["topics"] = _cut([_topic_line(t) for t in topics], budget["topics"])
     sources += [f"topics/{t.slug}.md" for t in topics[:len(sections["topics"])]]
 
     decision_lines: list[str] = []
-    if trust == "all" and project and decisions is not None:
-        decision_lines = [f"- {d}" for d in decisions(project)]
+    if trust == "all" and decisions is not None:
+        for name in ([r["name"] for r in records] or ([project] if project else [])):
+            decision_lines += [f"- {d}" for d in decisions(name)]
     sections["decisions"] = _cut(decision_lines, budget["decisions"])
 
     tier = 0
@@ -187,9 +229,9 @@ def pack(*, purpose: str, project: Optional[str] = None, budget_chars: int = RUN
     sections["sources"] = _cut([f"- {s}" for s in dict.fromkeys(sources)], budget["sources"])
 
     parts = [HEADER + (" (partial: the knowledge engine did not answer in time)" if partial else "") + ":"]
-    titles = {"project": "Project", "topics": "Topics", "decisions": "Open decisions",
+    titles = {"work": "Work", "project": "Projects" if len(records) > 1 else "Project", "topics": "Topics", "decisions": "Open decisions",
               "passages": "What JARVIS has read", "sources": "Sources"}
-    for key in ("project", "topics", "decisions", "passages", "sources"):
+    for key in ("work", "project", "topics", "decisions", "passages", "sources"):
         if sections[key]:
             parts.append(f"{titles[key]}:\n" + "\n".join(sections[key]))
     text = "\n\n".join(parts) if len(parts) > 1 else ""

@@ -10,12 +10,14 @@
  * selected folder or `main.tab.select` for the catalog, the same commands
  * the brain's requests run. The list (`foldersList`: its filter and Open
  * Folders) and each row (`folder`: row, name, availability) are targets the
- * brain can point at.
+ * brain can point at. Under them, his projects and the projects proposed
+ * from these folders (ProjectsSection.tsx).
  */
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { RIGHT_SOCKET, row } from "./uiRight";
 import { AvailabilityMark, RoleMark } from "./FolderMarks";
+import { ProjectsSection } from "./ProjectsSection";
 import { candidates, catalog, matches, nodeWords, selectedFolder, type Folder } from "./folders";
 import { useT } from "./locale";
 import { createStore } from "./store";
@@ -92,6 +94,7 @@ export function FoldersPanel() {
                                                  : bind("main.tab.select", { tab: "folders" }))}>
         {discovered ? t("right.folders.openDiscovered", { count: discovered }) : t("right.folders.open")}
       </button>
+      <ProjectsSection />
     </div>
   );
 }

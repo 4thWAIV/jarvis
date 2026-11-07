@@ -156,6 +156,9 @@ export const UI_CONTRACT = {
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
     "knowledgeSeed": "^[a-z0-9-]{1,40}$",
+    "project": "^[0-9a-f-]{36}$",
+    "projectCandidate": "^[0-9a-f-]{36}$",
+    "accomplishment": "^[0-9a-f-]{36}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
@@ -439,6 +442,14 @@ export const UI_CONTRACT = {
       "entity": "member"
     },
     {
+      "id": "main.project",
+      "region": "main",
+      "kind": "detail",
+      "label": "Project",
+      "tab": "project",
+      "entity": "project"
+    },
+    {
       "id": "main.knowledge",
       "region": "main",
       "kind": "detail",
@@ -539,7 +550,8 @@ export const UI_CONTRACT = {
             "package",
             "file",
             "settings",
-            "knowledge"
+            "knowledge",
+            "project"
           ]
         }
       },
@@ -2463,6 +2475,104 @@ export const UI_CONTRACT = {
       "family": "knowledge"
     },
     {
+      "id": "project.open",
+      "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
+      "view": "main.project",
+      "args": {
+        "projectId": {
+          "type": "key",
+          "entity": "project"
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "id": "project.close",
+      "label": "Close the project's detail",
+      "view": "main.project",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "id": "project.candidate.answer",
+      "label": "Accept a proposed project with the folders it lists, or ignore it; only his own hand answers it here",
+      "view": "right.folders",
+      "args": {
+        "candidateId": {
+          "type": "key",
+          "entity": "projectCandidate"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "ignore"
+          ]
+        }
+      },
+      "required": [
+        "candidateId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "projects"
+    },
+    {
+      "id": "project.accomplishment.answer",
+      "label": "Confirm or withdraw a proposed accomplishment; only his own hand answers it here",
+      "view": "main.project",
+      "args": {
+        "accomplishmentId": {
+          "type": "key",
+          "entity": "accomplishment"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "confirm",
+            "withdraw"
+          ]
+        }
+      },
+      "required": [
+        "accomplishmentId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "projects"
+    },
+    {
       "id": "layout.takeover",
       "label": "Let the workflow, work item or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
       "view": "main.takeover",
@@ -3567,6 +3677,7 @@ export const UI_CONTRACT = {
         "decisionCount",
         "blocker",
         "activity",
+        "project",
         "header",
         "takeover",
         "close",
@@ -3596,7 +3707,8 @@ export const UI_CONTRACT = {
             "mark",
             "decisionCount",
             "blocker",
-            "activity"
+            "activity",
+            "project"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -3615,6 +3727,7 @@ export const UI_CONTRACT = {
             "close",
             "banner",
             "source",
+            "project",
             "who",
             "pieces",
             "decisions",
@@ -4359,6 +4472,115 @@ export const UI_CONTRACT = {
       "family": "knowledge"
     },
     {
+      "kind": "projectsList",
+      "entity": null,
+      "label": "Projects",
+      "parts": [
+        "list",
+        "candidates"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "project",
+      "entity": "project",
+      "label": "Project",
+      "parts": [
+        "row",
+        "header",
+        "close",
+        "summary",
+        "folders",
+        "works",
+        "accomplishments",
+        "topics",
+        "agents"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "parts": [
+            "row"
+          ],
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        },
+        {
+          "view": "main.project",
+          "parts": [
+            "header",
+            "close",
+            "summary",
+            "folders",
+            "works",
+            "accomplishments",
+            "topics",
+            "agents"
+          ],
+          "reveal": {
+            "command": "project.open",
+            "args": {
+              "projectId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "projectCandidate",
+      "entity": "projectCandidate",
+      "label": "Proposed project",
+      "parts": [
+        "row",
+        "accept",
+        "ignore"
+      ],
+      "presentations": [
+        {
+          "view": "right.folders",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "folders"
+            }
+          }
+        }
+      ],
+      "family": "projects"
+    },
+    {
+      "kind": "accomplishment",
+      "entity": "accomplishment",
+      "label": "Accomplishment",
+      "parts": [
+        "row",
+        "confirm",
+        "withdraw"
+      ],
+      "presentations": [
+        {
+          "view": "main.project"
+        }
+      ],
+      "family": "projects"
+    },
+    {
       "kind": "takeoverBar",
       "entity": null,
       "label": "Takeover bar",
@@ -4432,6 +4654,10 @@ export const UI_CONTRACT = {
     {
       "family": "knowledge",
       "owner": "coverage-main"
+    },
+    {
+      "family": "projects",
+      "owner": "coverage-right"
     },
     {
       "family": "layout",
@@ -4576,12 +4802,16 @@ export interface CommandArgs {
   "layout.restore": { };
   "layout.sheet": { shown: boolean; };
   "layout.takeover": { };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
   "package.close": { };
   "package.open": { packageId: string; };
+  "project.accomplishment.answer": { accomplishmentId: string; answer: "confirm" | "withdraw"; };
+  "project.candidate.answer": { candidateId: string; answer: "accept" | "ignore"; };
+  "project.close": { };
+  "project.open": { projectId: string; };
   "queue.back": { };
   "queue.close": { };
   "queue.discard.ask": { open: boolean; };

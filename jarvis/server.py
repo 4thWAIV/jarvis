@@ -2471,6 +2471,17 @@ def _offer_project_candidates(found: list) -> None:
                 audible=False)
 
 
+def _projects_for_path(path: str) -> list[dict]:
+    """The Work tab's project chip: never fails an item's listing."""
+    if projects is None:
+        return []
+    try:
+        return projects.projects_for_path(path)
+    except Exception:  # noqa: BLE001 - a chip is not worth a listing
+        log.debug("projects for a work item could not be read", exc_info=True)
+        return []
+
+
 def start_projects() -> None:
     global projects
     from jarvis import project_service, project_store
@@ -2483,6 +2494,7 @@ def start_projects() -> None:
         projects = None
         return
     projects.answered = lambda cid: _attention_resolved("project_candidate", cid)
+    work_api.projects_for_path = _projects_for_path
 
     async def offer() -> None:
         try:
@@ -9318,21 +9330,35 @@ async def tool_spawn_run(args: dict) -> str:
         return "There was nothing to start."
     reference = str(args.get("project") or "").strip()
     in_folder = bool(str(args.get("folder_id") or "").strip())
-    if reference and in_folder:
-        return ("A project or a registered folder, sir, not both. "
+    by_record = bool(str(args.get("project_id") or "").strip() or str(args.get("work_id") or "").strip())
+    if reference and (in_folder or by_record):
+        return ("A project by name, or a registered folder or project record, sir, not both. "
                 "Which should it run in?")
-    if not (reference or in_folder):
+    if not (reference or in_folder or by_record):
         return "Which project should I start that in, sir?"
     model = _normalise_model(str(args.get("model") or ""))
 
-    # A registered folder is resolved by the folder service alone, so where
-    # a run may work is decided by the same checks as what may be read.
-    if in_folder:
+    # A project record or a piece of work is placed by the project service,
+    # a registered folder by the folder service alone, so where a run may
+    # work is decided by the same checks as what may be read.
+    binding: Optional[dict] = None
+    if by_record:
+        name, path, folder_id, binding, problem = await _record_work_target(args)
+    elif in_folder:
         name, path, folder_id, problem = await _folder_work_target(args)
     else:
         (name, path, problem), folder_id = _resolve_project_or_explain(reference), None
     if problem:
         return problem
+    # Started by folder or by name: its project is the one project holding
+    # that folder, never a guess between several (design 5.3).
+    if binding is None and projects is not None:
+        try:
+            held = await asyncio.to_thread(projects.project_holding, path)
+        except Exception:  # noqa: BLE001 - a run is not refused for its project's sake
+            log.debug("the run's project could not be worked out", exc_info=True)
+            held = None
+        binding = {"project_id": held, "work_id": None} if held else None
     redirect = _live_session_redirect(name, path, args, "spawn_run")
     if redirect:
         return redirect
@@ -9363,9 +9389,7 @@ async def tool_spawn_run(args: dict) -> str:
     context = ""
     if context_service.run_context_enabled() and args.get("context", True) is not False:
         try:
-            context = (await asyncio.to_thread(
-                lambda: context_service.pack(purpose=prompt, project=name, trust="own",
-                                             search=knowledge_api.context_search(knowledge_calls)))).text
+            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
         except Exception:
             log.warning("the run's context pack could not be made", exc_info=True)
             context = ""
@@ -9374,7 +9398,7 @@ async def tool_spawn_run(args: dict) -> str:
     try:
         run_id = await run_executor_instance.spawn(
             composed, name, path, "voice", resume_from=resume_from, model=model,
-            folder_id=folder_id)
+            folder_id=folder_id, **_bound(binding))
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
@@ -10049,10 +10073,7 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
     except knowledge_api.Unavailable as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
-        # The engine's refusal can name what the call was given (a key, a
-        # kind, a target), so it is walled like the answers.
-        return ("Nothing was done, sir. The knowledge engine's refusal, which may "
-                "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
+        return f"Nothing was done, sir: {e}"
     text = json.dumps(answer, ensure_ascii=False)
     if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text
@@ -10071,19 +10092,19 @@ async def tool_knowledge_status(args: dict) -> str:
 
 
 async def tool_knowledge_search(args: dict) -> str:
-    answer = await _knowledge_tool(args, lambda: knowledge_api.search(
+    said = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
         kinds=args.get("kinds"), limit=args.get("limit") or 10),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
-    return answer
+    return said
 
 
 async def tool_knowledge_entity(args: dict) -> str:
-    answer = await _knowledge_tool(args, lambda: knowledge_api.entity(
+    said = await _knowledge_tool(args, lambda: knowledge_api.entity(
         knowledge_calls, name=args.get("name"), key=args.get("key")),
         "Every match for that name and the first one's card, as JSON", "knowledge_entity", walled=True)
-    return answer
+    return said
 
 
 async def tool_knowledge_proposals(args: dict) -> str:
@@ -10165,11 +10186,35 @@ async def tool_change_knowledge_seed(args: dict) -> str:
     return answer
 
 
+def _records_scope(args: dict) -> Optional[dict]:
+    """The project records a context pack is about (`ProjectService.brief`):
+    the work or project named by ID, else the one project his `project`
+    name or alias resolves to, else None (a legacy name only). Off the event
+    loop; a named ID that is no record is refused."""
+    from jarvis.project_store import ProjectError
+    pid = str(args.get("project_id") or "").strip() or None
+    wid = str(args.get("work_id") or "").strip() or None
+    name = str(args.get("project") or "").strip() or None
+    if projects is None:
+        if pid or wid:
+            raise knowledge_api.Refused("project records are not running (the folder catalog is off)")
+        return None
+    try:
+        if pid or wid:
+            return projects.brief(project=pid, work=wid)
+        if name and len(projects.find(name)) == 1:
+            return projects.brief(project=name)
+    except ProjectError as e:
+        raise knowledge_api.Refused(str(e)) from None
+    return None
+
+
 async def tool_work_context(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.work_context(
+    said = await _knowledge_tool(args, lambda: knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
-        include_received=args.get("include_received") is True),
+        include_received=args.get("include_received") is True, scope=_records_scope(args)),
         "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+    return said
 
 
 # --- Projects, for the brain --------------------------------------------------
@@ -10226,72 +10271,84 @@ async def tool_projects(args: dict) -> str:
 
 
 async def tool_project_detail(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.detail(str(args.get("project") or "")),
+    said = await _project_tool(args, lambda s: s.detail(str(args.get("project") or "")),
                                "One project in full, as JSON", "project_detail", walled=True)
+    return said
+
+
+def _candidates_listing(s, refresh: bool, state: str) -> dict:
+    """The proposed projects, offered again first when `refresh`."""
+    if refresh:
+        _offer_project_candidates(s.refresh_candidates())
+    return s.candidates(state)
 
 
 async def tool_project_candidates(args: dict) -> str:
-    def work(s):
-        if args.get("refresh") is True:
-            found = s.refresh_candidates()
-            _offer_project_candidates(found)
-        return s.candidates(str(args.get("state") or "proposed"))
-    return await _project_tool(args, work, "The projects JARVIS proposes, as JSON",
-                               "project_candidates", walled=True)
+    said = await _project_tool(
+        args, lambda s: _candidates_listing(s, args.get("refresh") is True, str(args.get("state") or "proposed")),
+        "The projects JARVIS proposes, as JSON", "project_candidates", walled=True)
+    return said
 
 
 async def tool_project_history(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.history(str(args.get("project") or ""), before=args.get("before")),
+    said = await _project_tool(args, lambda s: s.history(str(args.get("project") or ""), before=args.get("before")),
                                "A project's history, newest first, as JSON", "project_history", walled=True)
+    return said
 
 
 async def tool_works(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.works(str(args.get("state") or "open"), args.get("project")),
+    said = await _project_tool(args, lambda s: s.works(str(args.get("state") or "open"), args.get("project")),
                                "Pieces of work, as JSON", "works", walled=True)
+    return said
 
 
 async def tool_work_detail(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.work_detail(str(args.get("work") or "")),
+    said = await _project_tool(args, lambda s: s.work_detail(str(args.get("work") or "")),
                                "One piece of work, as JSON", "work_detail", walled=True)
+    return said
 
 
 async def tool_change_project(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_project(
+    said = await _project_tool(args, lambda s: s.change_project(
         str(args.get("action") or ""), project=args.get("project"), name=args.get("name"),
         summary=args.get("summary"), lifecycle=args.get("lifecycle"), actor="voice"),
         "", "change_project", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_project_folder(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_project_folder(
+    said = await _project_tool(args, lambda s: s.change_project_folder(
         str(args.get("action") or ""), project=str(args.get("project") or ""),
         folder_id=str(args.get("folder_id") or ""), part=args.get("part"),
         index_scope=args.get("index_scope"), actor="voice"),
         "", "change_project_folder", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_project_candidate(args: dict) -> str:
-    def work(s):
-        return s.change_candidate(str(args.get("candidate") or ""), str(args.get("action") or ""),
-                                  name=args.get("name"), folders=args.get("folders"),
-                                  home=args.get("home"), into=args.get("into"), actor="voice")
-    return await _project_tool(args, work, "", "change_project_candidate", walled=False, actor_tool=True)
+    said = await _project_tool(args, lambda s: s.change_candidate(
+        str(args.get("candidate") or ""), str(args.get("action") or ""), name=args.get("name"),
+        folders=args.get("folders"), home=args.get("home"), into=args.get("into"), actor="voice"),
+        "", "change_project_candidate", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_work(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_work(
+    said = await _project_tool(args, lambda s: s.change_work(
         str(args.get("action") or ""), work=args.get("work"), title=args.get("title"),
         outcome=args.get("outcome"), projects=args.get("projects"), project=args.get("project"),
         folder_id=args.get("folder_id"), actor="voice"),
         "", "change_work", walled=False, actor_tool=True)
+    return said
 
 
 async def tool_change_accomplishment(args: dict) -> str:
-    return await _project_tool(args, lambda s: s.change_accomplishment(
+    said = await _project_tool(args, lambda s: s.change_accomplishment(
         str(args.get("action") or ""), project=args.get("project"), accomplishment=args.get("accomplishment"),
         title=args.get("title"), detail=str(args.get("detail") or ""), work=args.get("work"),
         evidence=args.get("evidence") or [], actor="voice"),
         "", "change_accomplishment", walled=False, actor_tool=True)
+    return said
 
 
 TOOL_HANDLERS.update({
@@ -10944,6 +11001,13 @@ def _work_follow_up(item) -> str:
             f"{f.key}" + (", no follow-up for over half an hour." if f.overdue else "."))
 
 
+def _work_projects(item) -> str:
+    """His projects holding its source, as the Work tab's row names them
+    (`work_api.projects_for_path`), or "" for none."""
+    found = work_api.projects_for_path(item.source_path)
+    return ("Projects: " + ", ".join(f"{p['name']} ({p['id']})" for p in found) + ".") if found else ""
+
+
 def _work_line(item) -> str:
     """One item on the list: its state, how many decisions wait on him, how
     many of its pieces are blocked or waiting on him, its one useful update,
@@ -10962,6 +11026,7 @@ def _work_line(item) -> str:
             f"{', no recent update' if item.quiet else ''}"
             + (", closed" if item.closed_at else "")
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
+            + (f" {named}" if (named := _work_projects(item)) else "")
             + _work_follow_up(item)
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
@@ -10981,6 +11046,8 @@ def _work_detail(item) -> str:
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+    if named := _work_projects(item):
+        lines.insert(3, named)
     if item.approved_at is not None:
         lines.append("He approved it done.")
     elif item.state == work_store.VERIFYING:
@@ -11087,11 +11154,14 @@ async def tool_answer_work_decision(args: dict) -> str:
     return "Recorded his answer, sir; the agent doing the work reads it from the record."
 
 
-_REVIEW_SAID = {
-    work_api.APPROVE: "Approved, sir: it is done.",
-    work_api.NOT_DONE: "Sent back to working with his note, sir; its agents are told.",
-    work_api.ADD_WORK: "Added as a new piece, sir; its agents are told.",
-}
+def _review_said(action: str) -> str:
+    """What JARVIS says once his review is recorded: fixed words for each
+    of the review's actions (work_api has already refused any other)."""
+    if action == work_api.APPROVE:
+        return "Approved, sir: it is done."
+    if action == work_api.NOT_DONE:
+        return "Sent back to working with his note, sir; its agents are told."
+    return "Added as a new piece, sir; its agents are told."
 
 
 async def tool_review_work(args: dict) -> str:
@@ -11106,7 +11176,7 @@ async def tool_review_work(args: dict) -> str:
     except work_store.WorkRefused as e:
         return f"Nothing was recorded, sir: {e}"
     _work_recorded(item, work_api.REVIEW_ACTIONS[action])
-    return _REVIEW_SAID[action]
+    return _review_said(action)
 
 
 TOOL_HANDLERS.update({
@@ -12772,6 +12842,34 @@ async def _folder_work_target(args: dict):
     return _said_name({"voice_name": f.display_name}, "that folder"), str(root), f.id, None
 
 
+async def _record_work_target(args: dict):
+    """(name, path, folder_id, binding, None) for a run started for a
+    project record or a piece of work, or (None, None, None, None, what to
+    say). Where is `ProjectService.run_location`'s (design 5.3): with a
+    work, a live folder of one of its projects or one of its own folders;
+    a project alone, its home folder; then the folder service's own
+    checks. The name is the project's (or the folder's) behind the
+    voice-name wall."""
+    from jarvis.project_store import ProjectError
+    if projects is None:
+        return None, None, None, None, "Project records are not running, sir (the folder catalog is off)."
+    pid = str(args.get("project_id") or "").strip() or None
+    wid = str(args.get("work_id") or "").strip() or None
+    fid = _folder_id(args) if str(args.get("folder_id") or "").strip() else None
+    if str(args.get("folder_id") or "").strip() and fid is None:
+        return None, None, None, None, "That is not a folder ID, sir; it comes from list_folders or find_folder."
+    try:
+        record, f, root = await asyncio.to_thread(
+            lambda: projects.run_location(project=pid, work=wid, folder_id=fid))
+    except ProjectError as e:
+        return None, None, None, None, f"Nothing was started, sir: {e}."
+    except FolderError as e:
+        return None, None, None, None, _folder_refusal(e)
+    label = record["display_name"] if record else f.display_name
+    binding = {"project_id": record["id"] if record else None, "work_id": wid}
+    return _said_name({"voice_name": label}, "that project"), str(root), f.id, binding, None
+
+
 async def tool_list_folders(args: dict) -> str:
     query = str(args.get("query") or "")
     got, said = await _folder_call(lambda s: s.list_folders(query=query))
@@ -13915,6 +14013,22 @@ async def api_cancel_run(run_id: str):
 RUN_STILL_ACTIVE = "Run is still active — cancel it first"
 
 
+def _run_pack(prompt: str, name: str, binding: Optional[dict]) -> str:
+    """The context pack a run is given (own words only, since runs skip
+    permissions): from its project records when it has them, else from its
+    legacy project name. It goes into the run's prompt, never to the brain."""
+    scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
+        if binding and projects is not None else None
+    return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
+                                search=knowledge_api.context_search(knowledge_calls)).text
+
+
+def _bound(binding: Optional[dict]) -> dict:
+    """A run's project and work as `spawn`'s keywords, only when there are
+    any, so a run with neither is spawned exactly as before."""
+    return {k: v for k, v in (binding or {}).items() if v}
+
+
 async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Optional[str]]:
     """Run a finished run's prompt again, resuming from it, for the page's
     retry route and the brain's `retry_run` alike: (the new run's id, None),
@@ -13925,15 +14039,24 @@ async def _retry_run(original: dict, origin: str) -> tuple[Optional[str], Option
         return None, RUN_STILL_ACTIVE
     # A run in a registered folder is checked again: the folder may have
     # been removed, moved or made unavailable since it ran.
+    # One started for a piece of work is placed again through the project
+    # service (still a folder of the work's?), which also checks the folder.
     path, folder_id = original["project_path"], original.get("folder_id")
-    if folder_id:
+    binding = {"project_id": original.get("project_id"), "work_id": original.get("work_id")}
+    if original.get("work_id"):
+        _name, path, folder_id, _again, problem = await _record_work_target(
+            {"project_id": original.get("project_id"), "work_id": original.get("work_id"),
+             "folder_id": folder_id})
+        if problem:
+            return None, problem
+    elif folder_id:
         _name, path, folder_id, problem = await _folder_work_target({"folder_id": folder_id})
         if problem:
             return None, problem
     new_id = await run_executor_instance.spawn(
         original["prompt"], original["project_name"], path, origin,
         resume_from=original["id"], folder_id=folder_id,
-        package_id=original.get("package_id"))
+        package_id=original.get("package_id"), **_bound(binding))
     return new_id, None
 
 

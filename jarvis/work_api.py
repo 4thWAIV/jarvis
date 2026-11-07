@@ -53,6 +53,10 @@ Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
 # The newest reports one item's detail shows.
 EVENTS_SHOWN = 50
 
+# The projects holding a path (`ProjectService.projects_for_path`), set by
+# the server once project records start; none until then.
+projects_for_path: Callable[[str], list[dict]] = lambda path: []
+
 
 class StartRequest(BaseModel):
     title: str
@@ -122,13 +126,15 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
               package_questions: Optional[dict[str, int]] = None) -> dict:
     """An item as the page shows it, with `package_questions`: how many
     questions the packages sent for it still wait on him for (package_inbox
-    rows' counts, `package_inbox.waiting_by_work`, read once per listing)."""
+    rows' counts, `package_inbox.waiting_by_work`, read once per listing),
+    and `projects`: the projects holding its source (`projects_for_path`)."""
     names = names or WhoNames()
     out = dataclasses.asdict(item)
     for piece, raw in zip(item.pieces, out["pieces"]):
         raw["who"]["name"] = names(piece.who)
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
     out["package_questions"] = waiting.get(item.id, 0)
+    out["projects"] = projects_for_path(item.source_path)
     return out
 
 

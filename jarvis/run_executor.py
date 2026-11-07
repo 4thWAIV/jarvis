@@ -325,10 +325,12 @@ class RunExecutor:
                     origin: str, resume_from: str | None = None,
                     timeout_sec: float = 0, model: str | None = None,
                     folder_id: str | None = None,
-                    package_id: str | None = None) -> str:
+                    package_id: str | None = None,
+                    project_id: str | None = None,
+                    work_id: str | None = None) -> str:
         run_id = await asyncio.to_thread(
             self._store.create_run, prompt, project_name, project_path,
-            origin, resume_from, folder_id, package_id)
+            origin, resume_from, folder_id, package_id, project_id, work_id)
         return await self.start_existing(run_id, prompt, project_path,
                                          resume_from, timeout_sec, model)
 

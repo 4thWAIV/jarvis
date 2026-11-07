@@ -296,3 +296,87 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
             "Speech migration", timeout=10000)
         assert errors == [], errors
         await browser.close()
+
+
+LONG = "Design Work ownership and packaged communications"
+
+
+def _review_item(item_id, state, approvable, quiet_at):
+    """An item as the review flow and the list draw it."""
+    return {**_item(deciding=False), "id": item_id, "title": LONG, "state": state,
+            "quiet_at": quiet_at, "blockers": [], "blocked_pieces": 0, "approvable": approvable,
+            "pieces": [_piece("design", "Design it", state, {"kind": "tim", "ref": None, "name": None},
+                              quiet_at=quiet_at)]}
+
+
+class _Review:
+    """Two items: one paused and ready for review (approvable), one still
+    working (not)."""
+
+    def __init__(self):
+        self.posted = []
+        self.items = {"work-r": _review_item("work-r", "verifying", True, 1_000_000.0),
+                      "work-w": _review_item("work-w", "working", False, 1_000_000.0)}
+
+    async def __call__(self, route):
+        request = route.request
+        path = request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+        if request.method == "POST":
+            self.posted.append((path, json.loads(request.post_data or "{}")))
+            await route.fulfill(json={"item": self.items["work-r"]})
+        elif path == "api/work":
+            await route.fulfill(json={"items": list(self.items.values()), "history": [],
+                                      "groups": [{"grouped_by": "area", "name": "Voice",
+                                                  "label": "Voice", "ids": list(self.items)}]})
+        else:
+            item = self.items[path.rsplit("/", 1)[1]]
+            await route.fulfill(json={"item": item, "events": [], "packages": []})
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_can_be(
+        page_playwright, page_url):
+    work = _Review()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+
+        await page.click(".right-tabs [role=tab][title=Work]")
+        for item_id in ("work-r", "work-w"):
+            row = page.locator(f".work-row[data-work-id={item_id}]")
+            await row.wait_for(timeout=10000)
+            # Paused, and "Ready for review" for one: the title still has its room.
+            await async_api.expect(row.locator(".activity-paused")).to_have_text("Paused")
+            sizes = await row.evaluate("""(r) => ({
+              title: r.querySelector('.work-row-title').getBoundingClientRect().width,
+              row: r.getBoundingClientRect().width,
+              pausedInTitle: !!r.querySelector('.work-row-title .activity-mark')})""")
+            assert not sizes["pausedInTitle"], sizes
+            assert sizes["title"] >= 0.8 * sizes["row"], sizes
+        await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-paused.png"))
+
+        # Still working: no Approve. Ready for review and nothing in the way: Approve.
+        await page.click(".work-row[data-work-id=work-w]")
+        await async_api.expect(page.locator("#work-detail .work-detail-name")).to_have_text(LONG, timeout=10000)
+        await page.locator("#work-detail .work-review").wait_for(timeout=5000)
+        await async_api.expect(page.locator("#work-detail .work-approve")).to_have_count(0)
+        await page.click(".work-row[data-work-id=work-r]")
+        approve = page.locator("#work-detail .work-approve")
+        await approve.wait_for(timeout=10000)
+        await approve.click()
+        await _posted(work, 1)
+        assert work.posted == [("api/work/work-r/review", {"action": "approve", "words": ""})]
+        assert errors == [], errors
+        await browser.close()

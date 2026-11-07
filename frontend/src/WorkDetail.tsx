@@ -169,14 +169,14 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
   return (
     <div className="work-review" ref={target}>
       {asking === null ? <>
-        {item.state !== "done" && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
-                onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
+        {item.approvable && <button type="button" className="settings-btn work-approve" data-ui-action="domain"
+                disabled={busy} onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("not_done")}>{t("main.work.review.notDone")}</button>
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("add_work")}>{t("main.work.review.addWork")}</button>
-      </> : <form onSubmit={(e) => { e.preventDefault(); if (words.trim()) act(asking, words); }}>
-        <input type="text" value={words} autoFocus aria-label={t(`main.work.review.${asking}`)}
+      </> : <form data-ui-action="domain" onSubmit={(e) => { e.preventDefault(); if (words.trim()) act(asking, words); }}>
+        <input data-ui-action="input" type="text" value={words} autoFocus aria-label={t(`main.work.review.${asking}`)}
                placeholder={t(`main.work.review.${asking}`)} onChange={(e) => setWords(e.target.value)} />
         <button type="submit" className="settings-btn" data-ui-action="domain"
                 disabled={busy || !words.trim()}>{t("main.work.review.send")}</button>
@@ -214,6 +214,15 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
         <span className={`work-source-${item.source}`}>{t(`main.work.found.${item.source}`)}</span>
         {item.area && <> · <span className="work-area">{t("main.work.area", { area: item.area })}</span></>}
       </p>
+      {item.projects.length > 0 && (
+        <p className="work-projects" ref={part("project")}>
+          {item.projects.map((p) => (
+            <button key={p.id} type="button" className="knowledge-open"
+                    {...bindingProps(bind("project.open", { projectId: p.id }))}>
+              {t("main.work.project", { name: p.name })}</button>
+          ))}
+        </p>
+      )}
       <section ref={part("who")}>
         <h3 className="work-section-head">{t("main.work.who")}</h3>
         {who.length === 0 ? <p className="workflow-empty">{t("main.work.noPieces")}</p>
