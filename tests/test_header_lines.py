@@ -354,11 +354,12 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
-    "server.report_queued": (
-        "a message waiting its turn is only progress (`_MESSAGE_PROGRESS`): "
-        "`_AgentDestination._attend` resolves the message's update and records "
-        "no words, so the name it is handed reaches no string. Pinned by "
-        "tests/test_agent_transmission_pins.py and test_speech_call_sites.py"),
+    "brain._turn_locked": (
+        "the `provider` it reads is the brain provider's own name (`claude` or "
+        "`codex`, `brain_provider.py`), passed to `brain_activity.feed."
+        "turn_started`, whose `record` refuses any field outside `FIELDS`; no "
+        "session's or person's words reach a string. Driven by "
+        "tests/test_brain_activity.py"),
     "server.tool_project_notes": (
         "the `text` and `stamp` it prints are a project note's, read from "
         "JARVIS's own projects folder, and every one goes back only inside the "
