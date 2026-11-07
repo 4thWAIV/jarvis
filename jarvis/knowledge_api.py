@@ -374,14 +374,15 @@ def _open_decisions(project: str) -> list[str]:
 
 
 def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
-                 include_received: bool = False,
+                 include_received: bool = False, scope: Optional[dict] = None,
                  budget: int = context_service.BRAIN_BUDGET) -> dict:
     """The pack the brain reads before starting or briefing work: the same
     one a run gets, at the brain's budget; with `include_received`, other
-    people's words too (walled by the caller)."""
+    people's words too (walled by the caller). `scope` is the project
+    records (`ProjectService.brief`); `project` a legacy name without one."""
     if not (purpose or "").strip():
         raise Refused("say what the work is")
-    found = context_service.pack(purpose=purpose, project=project or None, budget_chars=budget,
+    found = context_service.pack(purpose=purpose, project=project or None, scope=scope, budget_chars=budget,
                                  trust="all" if include_received else "own",
                                  search=context_search(ctx), deadline_s=context_service.BRAIN_DEADLINE_SEC,
                                  decisions=_open_decisions)

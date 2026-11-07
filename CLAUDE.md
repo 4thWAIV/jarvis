@@ -1131,6 +1131,35 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## Project records
+His projects are records of truth in JARVIS's database under their own
+schema (`project_schema`), with `project_store.py` the only writer, one
+transaction per change and a `project_events` line for each: projects
+(name, spoken key, notes slug, summary, lifecycle), the legacy names that
+resolve to one (`project_aliases`, `project_for_legacy`), the registered
+folders each is made of (`project_folders`: part, at most one home, what
+the knowledge engine may read), pieces of work spanning projects (`works`,
+one primary project), accomplishments (`proposed`, then `confirmed` or
+`withdrawn`; only confirmed ones count) and bindings. `project_seed.py`
+makes candidates, never projects: one per registered source folder, with
+the legacy project strings (runs, workflows, messages, session messages,
+memory slugs) as evidence; each is an attention item and becomes a project
+only on his Accept (the Folders tab's Projects, `ProjectsSection.tsx`) or
+his word (`change_project_candidate`). `project_service.py` is the one
+service the page's `/api/project-records*` and `/api/works*`
+(`projects_api.py`; the older `/api/projects` is unchanged) and the
+brain's project tools call; a change is a `projects` hint on
+`/ws/sessions`. The centre's Project view is `ProjectView.tsx`
+(`project.open`), and each Work tab item names the projects holding its
+source (`work_api.projects_for_path`, through `folder_for_cwd`).
+A run records `project_id` and `work_id`: `spawn_run` with `work_id` runs
+only in a folder of the work's projects or its own, with `project_id` alone
+in that project's home folder (`ProjectService.run_location`), and a run
+started by folder or name takes the one project holding its folder, never
+a guess between several; Retry places a work's run again the same way.
+The context pack (`context_service.pack`'s `scope`, from
+`ProjectService.brief`) and `work_context` are made from these records.
+
 ## The knowledge engine
 A document store, a typed graph, a keyword index and a vector index in a
 process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,

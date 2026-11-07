@@ -218,3 +218,21 @@ def test_candidates_and_works_through_both(served, tmp_path):
     assert acc["accomplishment"]["state"] == "confirmed"
     bad = w.client.post(f"/api/project-records/{pid}/accomplishments", json={"action": "nope"}, headers=ORIGIN)
     assert bad.status_code == 400
+
+
+# --- the Work tab's tie-in -------------------------------------------------------
+
+def test_a_work_items_source_names_the_projects_holding_it(stores, tmp_path, monkeypatch):
+    from jarvis import work_api, work_store
+    records, folders, service = stores
+    fid = register(folders, tmp_path / "repo", "Repo")
+    p = records.create("local", "Repo work")
+    records.link_folder(p.id, fid, home=True)
+    inside = tmp_path / "repo" / ".claude" / "worktrees" / "w1" / "pkg"
+    inside.mkdir(parents=True)
+    assert service.projects_for_path(str(inside)) == [{"id": p.id, "name": "Repo work"}]
+    assert service.projects_for_path(str(tmp_path / "elsewhere")) == []
+
+    monkeypatch.setattr(work_api, "projects_for_path", service.projects_for_path)
+    item = work_store.create("Ship it", "folder", str(inside))
+    assert work_api.item_json(item, package_questions={})["projects"] == [{"id": p.id, "name": "Repo work"}]

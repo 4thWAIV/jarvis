@@ -150,6 +150,8 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  /** His projects holding its source, worked out when read. */
+  projects: { id: string; name: string }[];
   follow_up: WorkFollowUp | null;
   /** What his latest act in a review package did, when that was his latest review. */
   package_review: WorkPackageReview | null;

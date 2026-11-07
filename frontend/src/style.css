@@ -4037,8 +4037,9 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .work-package { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 
 /* Knowledge (KnowledgeView.tsx): laid out as a subsystem's detail is, with
-   each passage marked as his words or someone else's. */
-#knowledge-view {
+   each passage marked as his words or someone else's. A project
+   (ProjectView.tsx) is laid out the same way. */
+#knowledge-view, #project-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: var(--centre-right);
@@ -4053,8 +4054,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   font-size: 13px;
   color: var(--ui-text);
 }
-#knowledge-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); }
-#knowledge-view h3 {
+#knowledge-view h2, #project-view h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--ui-text); }
+#knowledge-view h3, #project-view h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 1px;
   text-transform: uppercase; color: var(--ui-accent);
 }
@@ -4074,11 +4075,11 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .knowledge-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .knowledge-proposal { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .knowledge-proposal-words { flex: 1; min-width: 200px; }
-#knowledge-view button:not(.workflow-close) {
+#knowledge-view button:not(.workflow-close), #project-view button:not(.workflow-close):not(.knowledge-open) {
   background: transparent; border: 1px solid rgba(var(--ui-accent-rgb), 0.45); color: var(--ui-accent);
   border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer;
 }
-#knowledge-view button:not(.workflow-close):hover { background: rgba(var(--ui-accent-rgb), 0.12); }
+#knowledge-view button:not(.workflow-close):hover, #project-view button:not(.workflow-close):hover { background: rgba(var(--ui-accent-rgb), 0.12); }
 #knowledge-view button:disabled { opacity: 0.5; cursor: default; }
 .knowledge-open {
   background: transparent; border: 1px solid rgba(var(--ui-accent-rgb), 0.45); color: var(--ui-accent);
@@ -4086,6 +4087,14 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .knowledge-open:hover { background: rgba(var(--ui-accent-rgb), 0.12); }
 .knowledge-seed-topics { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* The Folders tab's Projects (ProjectsSection.tsx) and a work item's projects. */
+.projects-section { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.project-candidate { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 6px;
+  background: rgba(var(--ui-accent-rgb), 0.04); }
+.project-candidate-answers { display: flex; gap: 6px; }
+.work-row-project { display: block; font-size: 11px; color: var(--ui-secondary); }
+.work-projects { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
 
 /* ── Takeover (TakeoverBar.tsx, RightPanel.tsx's rail) ──────────────────
    While a workflow or a page package has taken over the page, every centre

@@ -41,16 +41,17 @@ class _Executor:
 
     async def spawn(self, prompt, project_name, project_path, origin,
                     resume_from=None, timeout_sec=0, model=None,
-                    folder_id=None, package_id=None):
+                    folder_id=None, package_id=None, project_id=None, work_id=None):
         if self.boom:
             raise RuntimeError("no slots")
         run_id = self.store.create_run(prompt, project_name, project_path,
-                                       origin, resume_from, folder_id)
+                                       origin, resume_from, folder_id, None, project_id, work_id)
         self.store.update_run(run_id, requested_model=model or self.model)
         self.spawned.append({"run_id": run_id, "prompt": prompt,
                              "project_name": project_name,
                              "project_path": project_path, "origin": origin,
-                             "model": model, "folder_id": folder_id})
+                             "model": model, "folder_id": folder_id,
+                             "project_id": project_id, "work_id": work_id})
         return run_id
 
 
@@ -521,3 +522,96 @@ async def test_with_the_catalog_off_a_folder_run_starts_nothing(ready, monkeypat
     out = await server.tool_spawn_run({"folder_id": "0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3",
                                        "prompt": "go"})
     assert out == server.FOLDERS_OFF and ex.spawned == []
+
+
+# --- For a project record or a piece of work (project_id, work_id) --------
+#
+# Where is the project service's (design 5.3): a work's run only in a folder
+# of its projects or its own, a project alone in its home folder; the run
+# records both in its own row.
+
+@pytest.fixture
+def records(folders, monkeypatch):
+    from jarvis import project_service, project_store
+    server, store, ex, svc, register, claude, mac = folders
+    service = project_service.ProjectService(project_store.ProjectStore(), lambda: svc)
+    monkeypatch.setattr(server, "projects", service)
+    return server, store, ex, service, register, mac
+
+
+@pytest.mark.asyncio
+async def test_a_project_alone_runs_in_its_home_folder(records):
+    import os
+    server, store, ex, service, register, mac = records
+    home, docs = register(mac / "steps"), register(mac / "steps-docs")
+    p = service.store.create("local", "Step Checker")
+    service.store.link_folder(p.id, docs["id"], part="docs")
+    service.store.link_folder(p.id, home["id"], home=True)
+
+    out = await server.tool_spawn_run({"project_id": p.id, "prompt": "add a test"})
+
+    assert len(ex.spawned) == 1, out
+    run = ex.spawned[0]
+    assert run["project_path"] == os.path.realpath(mac / "steps")
+    assert (run["project_id"], run["folder_id"]) == (p.id, home["id"])
+    assert store.get_run(run["run_id"])["project_id"] == p.id
+
+
+@pytest.mark.asyncio
+async def test_a_work_runs_only_in_its_projects_folders(records):
+    server, store, ex, service, register, mac = records
+    a, b, other = register(mac / "a"), register(mac / "b"), register(mac / "other")
+    pa = service.store.create("local", "Alpha")
+    pb = service.store.create("local", "Beta")
+    service.store.link_folder(pa.id, a["id"], home=True)
+    service.store.link_folder(pb.id, b["id"], home=True)
+    w = service.store.start_work("local", "Wire them", projects=[pa.id, pb.id])
+
+    out = await server.tool_spawn_run({"work_id": w.id, "folder_id": other["id"], "prompt": "go"})
+    assert "not one of the work's" in out and ex.spawned == []
+
+    await server.tool_spawn_run({"work_id": w.id, "folder_id": b["id"], "prompt": "go"})
+    run = ex.spawned[0]
+    assert (run["work_id"], run["project_id"], run["folder_id"]) == (w.id, pa.id, b["id"])
+    assert store.get_run(run["run_id"])["work_id"] == w.id
+
+
+@pytest.mark.asyncio
+async def test_a_folder_run_takes_the_one_project_holding_it(records):
+    server, _store, ex, service, register, mac = records
+    f = register(mac / "shared")
+    p = service.store.create("local", "Solo")
+    service.store.link_folder(p.id, f["id"], home=True)
+    await server.tool_spawn_run({"folder_id": f["id"], "prompt": "go"})
+    assert ex.spawned[0]["project_id"] == p.id
+
+    service.store.link_folder(service.store.create("local", "Second").id, f["id"])
+    await server.tool_spawn_run({"folder_id": f["id"], "prompt": "go again"})
+    assert ex.spawned[1]["project_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_project_name_with_a_record_starts_nothing(records):
+    server, _store, ex, service, _register, _mac = records
+    p = service.store.create("local", "Solo")
+    out = await server.tool_spawn_run({"project": "chitauri", "project_id": p.id, "prompt": "go"})
+    assert "not both" in out and ex.spawned == []
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_works_run_checks_its_folder_again(records):
+    server, store, ex, service, register, mac = records
+    a = register(mac / "a")
+    p = service.store.create("local", "Alpha")
+    service.store.link_folder(p.id, a["id"], home=True)
+    w = service.store.start_work("local", "Wire it", projects=[p.id])
+    await server.tool_spawn_run({"work_id": w.id, "prompt": "go"})
+    first = store.get_run(ex.spawned[0]["run_id"])
+    store.update_run(first["id"], status=store.RunStatus.SUCCEEDED)
+
+    new_id, problem = await server._retry_run(store.get_run(first["id"]), "voice")
+    assert problem is None and ex.spawned[1]["work_id"] == w.id and ex.spawned[1]["project_id"] == p.id
+
+    service.store.change_folder(p.id, a["id"], unlink=True)
+    new_id, problem = await server._retry_run(store.get_run(first["id"]), "voice")
+    assert new_id is None and problem and len(ex.spawned) == 2
