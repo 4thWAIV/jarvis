@@ -195,3 +195,18 @@ def test_index_choices_are_the_same_on_the_page_and_by_voice(knowing):
     assert said["forbidden"] == ["document|bytes,language"] and kl.index_choices()["forbidden"] == said["forbidden"]
     bad = w.client.post("/api/knowledge/indexes", json={"key": "nope", "choice": "pin"}, headers=ORIGIN)
     assert bad.status_code == 400
+
+
+def test_work_context_is_the_same_on_the_page_and_by_voice(knowing):
+    w, _, _ = knowing
+    page = w.client.post("/api/knowledge/context", json={"purpose": "the brain orbs", "project": "jarvis"},
+                         headers=ORIGIN).json()
+    assert page["tier"] == 1 and "orbs" in page["text"]
+    said = _call(w, "work_context", purpose="the brain orbs", project="jarvis")
+    head, _, block = said["text"].partition("\n")
+    assert 'untrusted="true"' in block
+    assert json.loads(block.split(">", 1)[1].rsplit("</session-output>", 1)[0].strip()) == page
+    assert "approves" not in page["text"]                     # his words only unless asked
+    wider = w.client.post("/api/knowledge/context",
+                          json={"purpose": "orbs report", "include_received": True}, headers=ORIGIN).json()
+    assert "orbs report" in wider["text"]

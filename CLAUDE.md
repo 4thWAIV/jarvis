@@ -1067,6 +1067,17 @@ conversation log, finished runs, workflow events and registered folders'
 Markdown (through `folder_service`, FILES reader only) and keeps each source's
 watermark in the engine. No embedder is wired until one is chosen
 (`knowledge/embedder.py`'s `RUNNER`). Diagnostics shows its row (`knowledge`).
+Topics are `brain_home()/topics/<slug>.md` and his index pins and forbids
+`brain_home()/knowledge.md`, both written only by `knowledge_links`; the
+engine's linker proposes links and the Denice seed (`knowledge_seeds.py`)
+proposes topics, each a silent attention item acted on only on his yes. The
+page's /api/knowledge routes (`knowledge_routes.py`, the Knowledge view) and
+the brain's knowledge tools call the same `knowledge_api` functions.
+`context_service.pack` is the context pack: tier 0 from notes and topics,
+tier 1 with the engine's search; `work_context` gives it to the brain
+(walled), and a run gets it, his own words only, ahead of the prompt when
+`JARVIS_RUN_CONTEXT` is on, kept in `run_context_dir()` with
+`runs.context_sha256`.
 Its process, crash and budget tests carry the `knowledge_engine` marker.
 
 ## Self-update
@@ -1816,6 +1827,8 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the folder catalog's routes and tools off; its records are kept
 - `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
   engine and its ingest (see "The knowledge engine")
+- `JARVIS_RUN_CONTEXT` (optional, default off) — `1` gives each spawned run
+  the context pack for its project (see "The knowledge engine")
 - `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
   — the engine's memory budget; it is restarted past 1.5 times it
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the

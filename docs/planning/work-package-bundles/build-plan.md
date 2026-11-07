@@ -372,6 +372,13 @@ and its deadline work the same whatever produces the rows.
 - The owner's pin and forbid for extra indexes are not built yet. Reason:
   they need a control on the Knowledge view; the guardrails bound the
   advisor meanwhile.
+- Until projects are records (phase 1), the context pack's scope is the
+  project name a run already carries, read through its project notes, and
+  topics are found by name or exact alias in it, its notes and the purpose.
+  Reason: the pack works today and takes project records in when they come.
+- The Denice seed reads JARVIS's own README and roadmap at the moment it is
+  offered and quotes them; a copy of JARVIS without them is offered no seed.
+  Reason: never paraphrase, and nothing personal in the seed.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -395,5 +402,8 @@ Steps 1 to 7 are built on this branch, each in its own commit, with the
 tests named in each step (`tests/test_knowledge_*.py`; the process, crash,
 child-process and budget tests carry `knowledge_engine`). Phase 4's rest is built: topics and the linker with its proposals, cards
 and HotCards, the brain's knowledge tools with their routes and the
-Knowledge view, and the index advisor. What remains of phase 4 is the
-owner's pin and forbid for extra indexes; phase 5 waits on the embedder.
+Knowledge view, and the index advisor. Phase 4 is complete with
+his pin and forbid for extra indexes; phase 2's context pack (tier 0 and
+tier 1, `work_context`, run context behind `JARVIS_RUN_CONTEXT`) and the
+Denice seed are built too, ahead of phase 1's project records. Phase 5 waits
+on the embedder.

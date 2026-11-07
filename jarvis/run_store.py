@@ -38,7 +38,7 @@ _UPDATABLE = frozenset({
     "status", "result_text", "summary", "error", "exit_code", "pid",
     "cost_usd", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_creation_tokens", "num_turns", "model", "requested_model",
-    "started_at", "ended_at", "project_path", "project_name", "is_error",
+    "started_at", "ended_at", "project_path", "project_name", "is_error", "context_sha256",
 })
 
 
@@ -110,6 +110,9 @@ def init_db() -> None:
                 -- The work package it carries out (work_packages), when the
                 -- brain started a package that runs as an agent.
                 package_id    TEXT,
+                -- The SHA-256 of the context pack it was given
+                -- (context_service.py), kept beside it in run_context_dir().
+                context_sha256 TEXT,
                 created_at    REAL NOT NULL,
                 started_at    REAL,
                 ended_at      REAL
@@ -221,6 +224,9 @@ def init_db() -> None:
             conn.commit()
         if "package_id" not in cols:
             conn.execute("ALTER TABLE runs ADD COLUMN package_id TEXT")
+            conn.commit()
+        if "context_sha256" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN context_sha256 TEXT")
             conn.commit()
         agent_cols = {r["name"] for r in conn.execute("PRAGMA table_info(agents)")}
         if "state" not in agent_cols:

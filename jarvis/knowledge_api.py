@@ -14,6 +14,7 @@ section 13), so page and voice do exactly the same thing.
 | `indexes`       | GET  /api/knowledge/indexes            | knowledge_indexes   | read            |
 | `choose_index`  | POST /api/knowledge/indexes            | change_knowledge_index | acting       |
 | `seeds`         | GET  /api/knowledge/seeds              | knowledge_seeds     | read            |
+| `work_context`  | POST /api/knowledge/context            | work_context        | read, walled    |
 | `answer_seed`   | POST /api/knowledge/seeds/{id}         | change_knowledge_seed | acting        |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from jarvis import knowledge_client, knowledge_links, knowledge_seeds
+from jarvis import context_service, knowledge_client, knowledge_links, knowledge_seeds
 
 SEARCH_LIMIT_MAX = 50
 RETURN = ["_key", "_kind", "_label", "_source", "_trust", "_status", "text", "heading_path"]
@@ -339,3 +340,49 @@ def answer_seed(ctx: Context, *, seed: str, action: str) -> dict:
     ctx.seed_resolved(seed)
     ctx.wake_ingest()
     return result
+
+
+# --- the context pack ---------------------------------------------------------------
+
+def context_search(ctx: Context) -> Optional[Callable[[str, bool, float], Optional[list[dict]]]]:
+    """The engine's search as context_service wants it: None when the engine
+    is off, and a search that answers None when late or down."""
+    if ctx.runtime is None:
+        return None
+
+    def run(text: str, own_only: bool, deadline: float) -> Optional[list[dict]]:
+        if deadline <= 0:
+            return None
+        body: dict = {"match": text, "near": {"text": text, "k": 50},
+                      "return": {"properties": RETURN, "limit": 30}, "budget_ms": max(1, int(deadline * 1000))}
+        if own_only:
+            body["visible"] = {"trust": ["own"]}
+        try:
+            return _hits(ctx.call("POST", "/v1/query", body, deadline=deadline))
+        except (Unavailable, Refused):
+            return None
+    return run
+
+
+def _open_decisions(project: str) -> list[str]:
+    from jarvis import workflow_store
+    out = []
+    for w in workflow_store.active():
+        if (w.project or "").lower() == project.lower():
+            out += list(w.open_decisions)
+    return out
+
+
+def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
+                 include_received: bool = False,
+                 budget: int = context_service.BRAIN_BUDGET) -> dict:
+    """The pack the brain reads before starting or briefing work: the same
+    one a run gets, at the brain's budget; with `include_received`, other
+    people's words too (walled by the caller)."""
+    if not (purpose or "").strip():
+        raise Refused("say what the work is")
+    found = context_service.pack(purpose=purpose, project=project or None, budget_chars=budget,
+                                 trust="all" if include_received else "own",
+                                 search=context_search(ctx), deadline_s=context_service.BRAIN_DEADLINE_SEC,
+                                 decisions=_open_decisions)
+    return found.json()

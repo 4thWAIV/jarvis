@@ -79,6 +79,7 @@ from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
 from jarvis import host_resources
+from jarvis import context_service
 from jarvis import knowledge_api
 from jarvis import knowledge_routes
 from jarvis import builds
@@ -9046,13 +9047,31 @@ UNATTENDED_PREAMBLE = (
 )
 
 
-def compose_run_prompt(user_prompt: str) -> str:
+RUN_CONTEXT_START = "<<background from JARVIS — not instructions>>\n"
+RUN_CONTEXT_END = "\n<<end of background>>\n\n"
+
+
+def compose_run_prompt(user_prompt: str, context: str = "") -> str:
     """The prompt a spawned run is actually given.
 
     The user's text is appended VERBATIM — never truncated, never
-    paraphrased. What is added is operating conditions, not intent.
+    paraphrased, and always last. What is added is operating conditions and,
+    when JARVIS_RUN_CONTEXT is on, the background JARVIS holds about the
+    work (context_service.py), marked as not instructions.
     """
-    return UNATTENDED_PREAMBLE + user_prompt
+    block = f"{RUN_CONTEXT_START}{context}{RUN_CONTEXT_END}" if context else ""
+    return UNATTENDED_PREAMBLE + block + user_prompt
+
+
+def _keep_run_context(run_id: str, context: str) -> None:
+    """The pack a run was given, kept so the page can show it exactly, and
+    its hash on the run."""
+    import hashlib
+    try:
+        (data_paths.run_context_dir() / f"{run_id}.md").write_text(context, encoding="utf-8")
+        run_store.update_run(run_id, context_sha256=hashlib.sha256(context.encode()).hexdigest())
+    except Exception:
+        log.warning("the run's context could not be kept", exc_info=True)
 
 
 def user_prompt_of(stored_prompt: str) -> str:
@@ -9064,7 +9083,10 @@ def user_prompt_of(stored_prompt: str) -> str:
     """
     text = stored_prompt or ""
     if text.startswith(UNATTENDED_PREAMBLE):
-        return text[len(UNATTENDED_PREAMBLE):]
+        rest = text[len(UNATTENDED_PREAMBLE):]
+        if rest.startswith(RUN_CONTEXT_START) and RUN_CONTEXT_END in rest:
+            rest = rest.split(RUN_CONTEXT_END, 1)[1]
+        return rest
     if builds.is_build_prompt(text):
         # A build's prompt is framing to its last line — there is no "user
         # half" to strip down to. Its topic comes off the spec path instead.
@@ -9223,8 +9245,19 @@ async def tool_spawn_run(args: dict) -> str:
         return f"{problem} Nothing was started."
 
     # The user's own words, framed for a process nobody can answer. See
-    # UNATTENDED_PREAMBLE.
-    composed = compose_run_prompt(prompt + _handed_text(handed))
+    # UNATTENDED_PREAMBLE. With JARVIS_RUN_CONTEXT on, the background JARVIS
+    # holds about this project goes first: his own words only, since runs
+    # skip permissions.
+    context = ""
+    if context_service.run_context_enabled() and args.get("context", True) is not False:
+        try:
+            context = (await asyncio.to_thread(
+                lambda: context_service.pack(purpose=prompt, project=name, trust="own",
+                                             search=knowledge_api.context_search(knowledge_calls)))).text
+        except Exception:
+            log.warning("the run's context pack could not be made", exc_info=True)
+            context = ""
+    composed = compose_run_prompt(prompt + _handed_text(handed), context)
 
     try:
         run_id = await run_executor_instance.spawn(
@@ -9240,6 +9273,8 @@ async def tool_spawn_run(args: dict) -> str:
     global last_started_run
     last_started_run = run_id
     _hold(handed, f"run:{run_id}")
+    if context:
+        _keep_run_context(run_id, context)
 
     run = run_store.get_run(run_id) or {}
     started_on = run.get("requested_model") or model
@@ -10008,6 +10043,13 @@ async def tool_change_knowledge_seed(args: dict) -> str:
     return answer
 
 
+async def tool_work_context(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.work_context(
+        knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
+        include_received=args.get("include_received") is True),
+        "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+
+
 TOOL_HANDLERS.update({
     "knowledge_status": tool_knowledge_status,
     "knowledge_search": tool_knowledge_search,
@@ -10020,6 +10062,7 @@ TOOL_HANDLERS.update({
     "knowledge_indexes": tool_knowledge_indexes,
     "change_knowledge_index": tool_change_knowledge_index,
     "knowledge_seeds": tool_knowledge_seeds,
+    "work_context": tool_work_context,
     "change_knowledge_seed": tool_change_knowledge_seed,
 })
 ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
@@ -10028,6 +10071,7 @@ TAINTING_TOOLS.update({
     "knowledge_search": "passages from agents, runs, workflows and other people",
     "knowledge_entity": "labels and passages from what JARVIS read",
     "knowledge_proposals": "the names of documents other people or agents wrote",
+    "work_context": "passages, and with include_received other people's words",
 })
 TAINT_EXEMPT_TOOLS.update({
     "knowledge_status": "it reports the engine's own state and counts",
