@@ -148,7 +148,7 @@ def entity(ctx: Context, *, name: Optional[str] = None, key: Optional[str] = Non
         try:
             card = ctx.call("GET", f"/v1/cards/{key}")
         except Refused:
-            raise Refused(f"nothing is known as {key}")
+            raise Refused("nothing is known by that key")
         return {"matches": [{"key": key, "kind": card.get("kind"), "label": card.get("label"), "how": "key"}],
                 "card": card}
     if not (name or "").strip():
