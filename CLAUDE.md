@@ -462,7 +462,14 @@ state. The beats are spoken as the sender's narration and never reach the
 brain; the tool gives back only the slides' titles, walled. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
-(a page with a story).
+(a page with a story). A decision package (a page package from the shared deck,
+`examples/packages/decision-deck/`, whose answers `scripts/decide.py` also
+records by voice) reaches him only through `python -m
+jarvis.decision_package <content.json>`: it validates the content, builds
+with the deck's own `new_deck.py`, checks it end to end in an isolated
+JARVIS (`decision_check.py`, `decision_check_server.py`) and only then
+unpacks it unshown into the live one (docs/work-packages.md, "Decision
+packages").
 
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read

@@ -36,13 +36,21 @@ def _reporter(script: str) -> str:
         data_paths.PACKAGE_DIR / script, "--cert", data_paths.CONFIG_DIR / "cert.pem"))
 
 
+def _decision_package() -> str:
+    """The decision package command, run from this checkout with the Python
+    this install runs on, quoted for a shell."""
+    return (f"cd {shlex.quote(str(data_paths.SOURCE_ROOT))} && "
+            f"{shlex.quote(sys.executable)} -m jarvis.decision_package")
+
+
 def render() -> str:
     """The skill with this install's folders filled in."""
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("{{needs_dir}}", str(data_paths.needs_dir()))
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
             .replace("{{workflow_report}}", _reporter("workflow_report.py"))
-            .replace("{{work_report}}", _reporter("work_report.py")))
+            .replace("{{work_report}}", _reporter("work_report.py"))
+            .replace("{{decision_package}}", _decision_package()))
 
 
 def targets() -> list[Path]:

@@ -263,10 +263,12 @@ JARVIS to send it to the person, giving its full path.
 
 A decision package asks the receiver a set of decisions and records the
 answers. Every one is built from one shared deck,
-`examples/packages/decision-deck/`, so they all look and work the same.
-Do not hand-build a deck; write the data and run the builder.
+`examples/packages/decision-deck/`, so they all look and work the same,
+and every one reaches the owner through one command,
+`python -m jarvis.decision_package` (below). Write the data and run the
+command; there is no other way to build or send one.
 
-Any choice put to the owner must be a decision slide in a package built
+Any choice put to the owner must be a decision slide in a package sent
 this way. A presentation that describes choices but has no decision slides
 gives him nothing to vote with, so it is never sent; the talk-to-jarvis
 skill tells every session the same.
@@ -274,8 +276,7 @@ skill tells every session the same.
 ### The data
 
 One JSON file holds the package fields, the slides and the decisions
-(`examples/packages/decision-deck/deck-data.js` is a working example, and
-can be given to the builder in place of a JSON file):
+(`examples/packages/decision-deck/deck-data.js` is a working example):
 
 | field | what it is |
 |---|---|
@@ -289,18 +290,63 @@ can be given to the builder in place of a JSON file):
 
 Pictures are paths inside the package, found beside the data file.
 
-### Building one
+### Sending one
+
+From the JARVIS checkout, with its own Python:
 
 ```bash
-python3 examples/packages/decision-deck/new_deck.py deck.json out/my-decisions
+.venv/bin/python -m jarvis.decision_package /full/path/content.json \
+    [--project <project>] [--session <session id>] [--out <folder>]
 ```
 
-It checks the data, copies the shared deck into the folder (`index.html`,
-`deck.css`, `deck.js`, `SKILL.md`, `scripts/decide.py`), writes
-`deck-data.js`, `story.json` and `package.json` from the data, copies the
-pictures, and zips the folder as `<name>-<version>.zip` beside it (a third
-argument names the zip). To change a built deck, edit its `deck-data.js`
-and run the builder on that file and its folder again.
+It does every step, and stops at the first that fails:
+
+1. **Checks the content**, and lists everything wrong with it at once:
+   every decision has a slug id, a question, at least two options with
+   slug ids (not `later`, `none` or `recommended`), names and words, a
+   recommendation that is one of them and a one-line reason; every child
+   question it opens is another decision; every picture is a PNG, JPEG,
+   GIF, WebP or SVG file beside the content; and no piece of text is
+   longer than the deck can show (`decision_package.CAPS`: a question 120
+   characters, a reason 160, an option's words 140, one line of a content
+   slide 280 and a whole content slide 700).
+2. **Builds** it with the shared deck's builder,
+   `examples/packages/decision-deck/new_deck.py`, called as it is, into the
+   folder (`--out`, else a new temporary one) as `<name>/` and
+   `<name>-<version>.zip`.
+3. **Checks it end to end in a real, isolated JARVIS**
+   (`jarvis/decision_check.py`): JARVIS's own server
+   (`jarvis/decision_check_server.py`) in a child process on a free port
+   above 19000, with its own temporary data folder and `.env` copy (its
+   Fish key replaced; the voice is a silent stand-in), the brain never
+   spawned, and the voice page built with vite into a temporary folder that
+   it serves. There it unpacks the zip through the same route delivery
+   uses, finds it with `list_packages` by its title's words and opens it
+   with `open_package_page` by its title, both through that JARVIS's
+   `/internal/tool`. Then, in a headless Chromium on the real sandboxed
+   package frame, sized to 809 × 589 and to 662 × 489:
+   - every slide fits: nothing outside its slide, nothing cut off or
+     scrolled, every word from 13 to 25 px;
+   - every decision slide has its vote row and Choose buttons in view;
+   - `tell_package_story` tells the story through JARVIS's speech path, and
+     it brings up every decision slide and points at every beat's targets;
+   - one Choose click saves its answer to `results/decisions.json`;
+   - one answer by voice (`run_package_command` running
+     `scripts/decide.py`) appears on its slide.
+
+   Every slide is photographed at both sizes, in `<folder>/check/`.
+4. **Delivers only if every check passed**: it unpacks the zip into the
+   live JARVIS, without showing it, through `POST
+   https://127.0.0.1:8340/api/packages/local` with the tool token, and
+   prints the package id and the words to open it ("Open the <title>
+   package."), which go in the session's message to the owner. On any
+   failure nothing is delivered; it prints what failed and the screenshots.
+   `<folder>/delivery.json` keeps the id, `--project`, `--session` and the
+   path of the answers, `results/decisions.json` in the package's folder.
+
+The checked page is never left running: the isolated JARVIS and the browser
+are stopped when the check ends. To change a deck, change the content and
+run the command again.
 
 ### What the receiver gets
 

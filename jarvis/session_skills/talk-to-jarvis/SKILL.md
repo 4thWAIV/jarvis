@@ -21,13 +21,13 @@ Keep it to ten items at most. Rewrite the whole file whenever your list changes,
 
 ## Choices for the user: a decision package
 
-Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package built with JARVIS's shared deck. Never hand-build a deck, and never send a presentation with choices in it but nothing to vote with. Write the deck's data (each decision's question, options, recommended option and one reason) and build it:
+Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package. There is one way to send one: write the deck's data in one JSON file (each decision's question, at least two options, the recommended option and its one-line reason, and any pictures as paths beside the file) and run
 
 ```
-python3 <JARVIS checkout>/examples/packages/decision-deck/new_deck.py deck.json <folder>
+{{decision_package}} /full/path/to/content.json --project <project> --session <your session id>
 ```
 
-It writes `<name>-<version>.zip` beside the folder. Every decision gets a slide the user votes on, by click or out loud through JARVIS, and the answers land in the package's `results/decisions.json`. The data format is in the JARVIS checkout's `docs/work-packages.md`, under "Decision packages".
+It checks the content and lists everything wrong with it, builds the package with JARVIS's shared deck, checks it end to end in an isolated JARVIS of its own (every slide fits at both screen sizes with readable text, every vote row is in view, the story reaches every decision, a click and a spoken answer are both recorded), and only then puts it in the user's JARVIS, unshown. It prints the package id and the words the user can say to open it; tell them both in your message. If anything fails, nothing is delivered: it prints what failed and the screenshots, and you fix the content and run it again. Never build, zip or deliver a deck any other way, and never send a presentation with choices in it but nothing to vote with. The answers land in the package's `results/decisions.json`, at the path the command prints. The data format is in the JARVIS checkout's `docs/work-packages.md`, under "Decision packages".
 
 ## Messages: what you have to tell them
 
