@@ -148,6 +148,56 @@ class KnowledgeRefused(RuntimeError):
         self.payload = payload
 
 
+# --- the cards JARVIS keeps in its own memory ------------------------------
+
+HOT_CARDS_MAX_BYTES = 2 << 20
+
+
+class HotCards:
+    """At most `HOT_CARDS_MAX_BYTES` of the engine's most important cards
+    (pinned topics first), held in the server's own memory, so the brain's
+    context path has them before any engine round trip (design 7.13).
+    Keyed by the engine's `engine_id`: a rebuilt engine's cards replace them
+    all, and a forget clears them."""
+
+    def __init__(self) -> None:
+        self.engine_id: Optional[str] = None
+        self.cards: dict[str, dict] = {}
+        self.bytes = 0
+        self.updated_at: Optional[float] = None
+
+    def update(self, engine_id: Optional[str], cards: list[dict]) -> None:
+        kept: dict[str, dict] = {}
+        used = 0
+        for card in cards:
+            size = len(json.dumps(card, ensure_ascii=False))
+            if used + size > HOT_CARDS_MAX_BYTES:
+                break
+            if isinstance(card, dict) and card.get("key"):
+                kept[card["key"]] = card
+                used += size
+        self.engine_id, self.cards, self.bytes = engine_id, kept, used
+        self.updated_at = time.time()
+
+    def clear(self) -> None:
+        self.cards, self.bytes = {}, 0
+
+    def get(self, key: str) -> Optional[dict]:
+        return self.cards.get(key)
+
+    def find(self, words: str) -> list[dict]:
+        """Cards whose label or an alias is these words, folded."""
+        from jarvis import spoken_words
+        want = " ".join(spoken_words.folded_words(words))
+        out = []
+        for card in self.cards.values():
+            names = [card.get("label") or ""] + [a for cls in (card.get("aliases") or {}).values()
+                                                  for a in (cls or [])]
+            if any(" ".join(spoken_words.folded_words(n)) == want for n in names):
+                out.append(card)
+        return out
+
+
 # --- physical footprint ---------------------------------------------------
 
 RUSAGE_INFO_V2 = 2

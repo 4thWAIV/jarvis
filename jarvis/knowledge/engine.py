@@ -18,6 +18,8 @@ from typing import Optional
 
 log = logging.getLogger("jarvis.knowledge.engine")
 
+CARDS_REFRESH_SEC = 600.0
+
 
 class EngineLocked(RuntimeError):
     """Another engine holds this directory's writer lock."""
@@ -56,6 +58,7 @@ class Engine:
         self.lexical = None  # the keyword index over chunk text
         self.vectors = None  # the vector index and its embedding worker
         self.linker = None   # mentions and proposals
+        self.cards = None    # entity cards and the resident tier
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -93,6 +96,10 @@ class Engine:
         from jarvis.knowledge.linker import Linker
         self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
         self._link_lock = threading.Lock()
+        from jarvis.knowledge.cards import Cards
+        self.cards = Cards(self)
+        self.cards.load_warm(self.directory / "cache.warm")
+        self._cards_refreshed = 0.0
 
     compact_in_child = True
 
@@ -103,7 +110,8 @@ class Engine:
                 "store": store,
                 "documents": {"resident_bytes": self.docs.resident_bytes()} if self.docs else {},
                 "keyword": {"chunks": self.lexical.live} if self.lexical else {},
-                "vectors": self.vectors.health() if self.vectors else {}}
+                "vectors": self.vectors.health() if self.vectors else {},
+                "cards": self.cards.health() if self.cards else {}}
 
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
@@ -160,6 +168,10 @@ class Engine:
             self.store.compact()
         if self.pace == "free" and self.vectors is not None:
             self.vectors.warm()
+        if self.pace == "free" and self.cards is not None and \
+                time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:
+            self._cards_refreshed = time.monotonic()
+            self.cards.refresh()
 
     def close(self) -> None:
         with self._close_lock:
@@ -176,6 +188,8 @@ class Engine:
 
     def _close_parts(self) -> None:
         """Flushes and closes the parts; each step adds its part here."""
+        if self.cards is not None:
+            self.cards.save_warm(self.directory / "cache.warm")
         if self.vectors is not None:
             self.vectors.close()
         if self.store is not None:

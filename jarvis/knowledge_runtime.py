@@ -226,6 +226,11 @@ class KnowledgeRuntime:
         # records each as an attention item and resolves it when it goes.
         self.proposal_listeners: list[Callable[[list[dict], list[str]], None]] = []
         self.proposals: dict[str, dict] = {}
+        self.hot = knowledge_client.HotCards()
+        # Told when what the engine holds has changed (a pass ended, the hot
+        # cards moved): the server sends the pages a `knowledge` hint.
+        self.change_listeners: list[Callable[[], None]] = []
+        self._seen_passes = 0
         self._sent: Optional[tuple[int, str]] = None     # (engine pid, mode) last told
         self.last_cpu: Optional[float] = None
 
@@ -243,9 +248,14 @@ class KnowledgeRuntime:
                 if time.monotonic() - last_tick >= knowledge_client.PING_EVERY_SEC:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(self.supervisor.tick)
-                if time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC and self.supervisor.pid():
+                passed = self.ingest.passes != self._seen_passes
+                if self.supervisor.pid() and (passed or time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC):
                     last_proposals = time.monotonic()
+                    self._seen_passes = self.ingest.passes
                     await self.look_proposals()
+                    await self.look_hot()
+                    if passed:
+                        self._changed()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - logged, looked at again next time
@@ -283,6 +293,24 @@ class KnowledgeRuntime:
             log.debug("could not read the proposals: %s", e)
             return
         self.take_proposals(found.get("proposals") or [])
+
+    async def look_hot(self) -> None:
+        try:
+            found = await asyncio.to_thread(self.supervisor.client.call, "GET", "/v1/hot", None, 2.0)
+        except (knowledge_client.EngineUnavailable, knowledge_client.KnowledgeRefused) as e:
+            log.debug("could not read the hot cards: %s", e)
+            return
+        before = self.hot.engine_id
+        self.hot.update(found.get("engine_id"), found.get("cards") or [])
+        if before is not None and before != self.hot.engine_id:
+            self._changed()
+
+    def _changed(self) -> None:
+        for listener in self.change_listeners:
+            try:
+                listener()
+            except Exception as e:  # noqa: BLE001
+                log.warning("knowledge change listener: %s", e)
 
     def take_proposals(self, proposals: list[dict]) -> None:
         now = {p["id"]: p for p in proposals if isinstance(p, dict) and p.get("id")}

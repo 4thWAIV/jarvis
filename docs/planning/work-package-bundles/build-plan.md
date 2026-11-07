@@ -350,6 +350,16 @@ and its deadline work the same whatever produces the rows.
   news.
 - Until projects exist (phase 1), topics link only to topics and documents.
   Reason: there is no project record to name.
+- Recency in the importance score is measured in transactions, not days:
+  how far a document's last version is behind the newest LSN, halved every
+  5,000. Reason: the engine keeps no clock of its own, and LSNs order every
+  change across a restart.
+- Use counts live in the engine's memory only and start again after a
+  restart. Reason: they are a hint, not truth (I1).
+- The resident tier holds cards, at most 2,000 and every pinned topic; a
+  write drops the cards it touches and they are made again when asked.
+  Reason: the two-hop walk already meets its budget through the block pool,
+  so resident adjacency waits for a measured need.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

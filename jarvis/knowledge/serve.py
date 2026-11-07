@@ -216,6 +216,29 @@ def _proposals(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"proposals": engine.linker.proposals, "last": engine.linker.last})
 
 
+@route("GET", "/v1/cards/{key:path}")
+@_guard
+def _card(engine: Engine, request: Request) -> Answer:
+    card = engine.cards.get(request.params["key"])
+    if card is None:
+        return Answer(404, {"error": "not_found"})
+    return Answer(200, card)
+
+
+@route("GET", "/v1/hot")
+def _hot(engine: Engine, request: Request) -> Answer:
+    return Answer(200, {"engine_id": engine.store.engine_id, "cards": engine.cards.hot()})
+
+
+@route("POST", "/v1/focus")
+@_guard
+def _focus(engine: Engine, request: Request) -> Answer:
+    key = (request.body or {}).get("key")
+    if not isinstance(key, str) or not key:
+        raise BadRequest("focus takes a key")
+    return Answer(200, engine.cards.focus(key))
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

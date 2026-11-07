@@ -2491,6 +2491,7 @@ def start_knowledge() -> None:
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
     knowledge.proposal_listeners.append(_on_knowledge_proposals)
+    knowledge.change_listeners.append(lambda: _send_to_session_clients({"type": "knowledge"}))
     _knowledge_task = _spawn(knowledge.run())
     log.info("knowledge engine: starting after startup settles")
 
