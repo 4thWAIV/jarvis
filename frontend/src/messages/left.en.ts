@@ -25,8 +25,6 @@ export const leftEn = {
   "left.mic.off": "Mic off",
   "left.mic.meter": "microphone input",
   "left.mic.mute": "Mute/Unmute",
-  "left.mic.turnOn": "Turn the microphone on",
-  "left.mic.turnOff": "Turn the microphone off",
   "left.mic.healthCause": "{state}: {cause}",
   "left.mic.mutedInactive": "Muted · microphone inactive",
   "left.mic.finishing": "Finishing",
@@ -47,6 +45,10 @@ export const leftEn = {
   "left.mic.state.busy": "Busy in another tab",
   "left.mic.state.interrupted": "Interrupted",
   "left.mic.state.unavailable": "Unavailable",
+  "left.audio.allOff": "Turn all audio off (microphone and JARVIS's speech)",
+  "left.audio.allOn": "Turn all audio on (microphone and JARVIS's speech)",
+  "left.audio.speaker.mute": "Mute JARVIS's speech: answers in text only",
+  "left.audio.speaker.unmute": "JARVIS's speech is muted: click to unmute",
 
   // What voice input says while it is not simply listening (voiceInput.ts).
   "left.input.asking": "Asking for the microphone…",

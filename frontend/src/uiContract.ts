@@ -3543,7 +3543,8 @@ export const UI_CONTRACT = {
         "health",
         "mute",
         "off",
-        "listen"
+        "listen",
+        "speaker"
       ],
       "presentations": [
         {

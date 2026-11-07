@@ -477,11 +477,16 @@ class SpeechScheduler:
                  stale_after: float = 60.0, echo_window: float = 6.0,
                  ack_timeout: float = 45.0,
                  transport_ready: Optional[Callable[[], bool]] = None,
+                 muted: Optional[Callable[[], bool]] = None,
                  clock: Callable[[], float] = time.monotonic):
         """`clock` drives scheduling decisions only; `wait_for` and
         `open_cancel_window` sleep in real time. `transport_ready` says whether
-        anyone can hear us."""
+        anyone can hear us. `muted` says whether his speech mute is on
+        (voice_control.speech_muted): an utterance begun while it is on is
+        skipped at birth, so nothing of it is synthesized or sent, and its
+        text is the reply's own, untouched."""
         self._clock = clock
+        self._muted = muted or (lambda: False)
         self.ack_timeout = ack_timeout             # a chunk unacked this long = the client is gone
         self._transport_ready = transport_ready or (lambda: True)
         self._synth = synthesize
@@ -596,6 +601,11 @@ class SpeechScheduler:
         self._next_id += 1
         self.utterances[u.id] = u
         self._evict_history()
+        if self._muted():
+            # His speech mute: said in text only. Skipped, never heard, so a
+            # read-back begun now approves nothing.
+            u.skipped = True
+            u.cancel()
         return u
 
     def _evict_history(self) -> None:
@@ -1223,6 +1233,9 @@ class SpeechScheduler:
                    cue: Optional[dict] = None, lead: bool = False) -> None:
         chunk = Chunk(text, capture=capture, cue=cue, lead=lead)
         utt.chunks.append(chunk)
+        if utt.cancelled:
+            chunk.outcome = Outcome.SKIPPED if utt.skipped else Outcome.INTERRUPTED
+            return
         chunk.synthesis = self._spawn(self._synthesize(utt, chunk))
 
     async def _synthesize(self, utt: Utterance, chunk: Chunk) -> None:

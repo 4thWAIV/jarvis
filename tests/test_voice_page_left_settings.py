@@ -172,7 +172,7 @@ LEFT_TARGETS = [
     # A page loads not listening: Start listening stands where the meter goes.
     # The microphone moved to the Conversation's message input, right of
     # Send; it is checked here with the left column's controls it left.
-    ({**MIC, "kind": "mic"}, [None, "listen", "mute", "off"]),
+    ({**MIC, "kind": "mic"}, [None, "listen", "mute", "off", "speaker"]),
     ({"kind": "teamServer"}, [None, "readiness", "server", "database", "lastWrite"]),
     ({"kind": "brainAccount", "key": "anthropic"}, [None, "name", "remaining", "pace", "reset"]),
 ]
@@ -250,7 +250,8 @@ async def test_in_spanish_the_left_column_reads_spanish_fits_and_every_target_is
                                      ["Last write", "Escritura"]], words
             assert "de la semana transcurrido" in words["role"], words
             assert (words["listen"], words["mute"], words["off"]) == (
-                "Empezar a escuchar", "Silenciar/Activar sonido", "Apagar el micrófono"), words
+                "Empezar a escuchar", "Silenciar/Activar sonido",
+                "Apagar todo el audio (micrófono y voz de JARVIS)"), words
             assert words["reminder"].startswith("Inicie sesión en el servidor de su equipo"), words
             assert words["reminderButtons"] == ["Iniciar sesión", "Más tarde"], words
             assert await page.locator(".weekly-days").text_content() in ("4,0 días", "4.0 días")
@@ -305,7 +306,7 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             assert (await _navigate(ui, "main.tab.select", {"tab": "folders"}))["status"] == "completed"
             corner = await _ask(ui, {"kind": "map", "view": "main.corner"})
             assert [t["ref"]["kind"] for t in corner["map"]["targets"]] == ["mic"]
-            for part in ("listen", "mute", "off"):
+            for part in ("listen", "mute", "off", "speaker"):
                 got = await _point(ui, {"region": "main", "view": "main.corner", "kind": "mic", "part": part})
                 assert got["status"] == "completed", (part, got)
             assert await page.locator("#mic-control").count() == 1

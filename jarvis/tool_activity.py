@@ -62,6 +62,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "voice_input_settings", "attention_updates", "mark_updates_seen",
         "set_attention_settings", "update_status",
         "skip_reading", "stop_speaking", "quiet_microphone", "voice_turn",
+        "mute_speech", "turn_audio_off",
         "set_language", "set_voice_input_settings", "play_cue",
     ),
     # Messages to and from agents and people, captures, and who they are.

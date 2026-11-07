@@ -105,6 +105,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__voice_input_settings,mcp__jarvis__set_voice_input_settings,mcp__jarvis__play_cue,"
         "mcp__jarvis__skip_reading,mcp__jarvis__stop_speaking,"
         "mcp__jarvis__voice_turn,mcp__jarvis__quiet_microphone,"
+        "mcp__jarvis__mute_speech,mcp__jarvis__turn_audio_off,"
         "mcp__jarvis__attention_updates,mcp__jarvis__mark_updates_seen,"
         "mcp__jarvis__set_attention_settings,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"

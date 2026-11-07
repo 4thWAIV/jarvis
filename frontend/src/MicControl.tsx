@@ -6,7 +6,8 @@
  * "Muted", "Muted · microphone inactive" or "Mic off" in its place while
  * nothing is sent, "Finishing" while the words from before a stop are
  * finished, and Start listening while this page is not listening), mute,
- * mic off; and, in its own kept slot left of Stop (MicHealth), the health
+ * mic off, drawn as the headset, the whole audio subsystem at a glance
+ * (AudioHeadset.tsx); the speaker, what JARVIS says (SpeakerButton.tsx); and, in its own kept slot left of Stop (MicHealth), the health
  * dot while voice input has a problem (loading, blocked, busy in
  * another tab, interrupted, unavailable, or the recogniser falling behind).
  * The words are in the dot's title and in the Diagnostics view's Messages,
@@ -28,6 +29,7 @@ import { createStore, type Store } from "./store";
 import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
+import { SpeakerButton } from "./SpeakerButton";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { causeSaid, health, type Cause } from "./voiceHealth";
@@ -221,6 +223,7 @@ function MicControl() {
       <MicLevel partRef={ui.part("meter")} listenRef={ui.part("listen")} />
       <MuteButton partRef={ui.part("mute")} />
       <MicOffButton partRef={ui.part("off")} />
+      <SpeakerButton partRef={ui.part("speaker")} />
     </div>
   </>);
 }

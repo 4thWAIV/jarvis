@@ -53,6 +53,15 @@ intervals, a total of 3.0 s, keeping each cue's tone and on or off.
 `volume` is one cue
 volume, VOLUME_MIN to VOLUME_MAX percent of a quiet ceiling the page sets.
 
+His speech mute (`speech_muted`, default off) is the speaker's: muted,
+JARVIS still answers in text but says nothing. The speech scheduler makes
+no audio for anything begun while it is on (`speech_muted`, read as each
+utterance starts, so nothing is synthesized), and turning it on stops what
+is sounding at once (the server's publish hook). The page's speaker
+toggles it, its headset turns it on with Mic off and off with Mic on, and
+the brain may only turn it on (`mute_speech`, `turn_audio_off`): unmuting is
+his act on the page.
+
 They are per user, on this JARVIS (the node's SQLite, its own schema
 version through run_store.migrate): the team member signed in, by GitHub
 id, or else this JARVIS's local owner. Never a team-wide choice. A user who
@@ -91,6 +100,8 @@ SWITCH_MODES = ("continue", "stop")
 # What a user who has chosen nothing gets. Provisional: the defaults are
 # assessed separately, during validation.
 DEFAULTS = {"stop": "keep", "switch": "stop", "sounds": True}
+# His speech mute until he chooses: speech on.
+SPEECH_MUTED_DEFAULT = False
 # The capture cues: the two that mark listening, the pause cues that mark
 # the stages of a pause in his turn (in the order they play), and the quiet
 # presets each may play. The pause cues, the pause stages (the pause cues,
@@ -189,6 +200,11 @@ _MIGRATIONS = {
                                           '$.deciding.percent', '$.likely.percent')
          WHERE json_valid(cue_settings) AND json_type(cue_settings) = 'object';
     """,
+    # His speech mute: NULL never chosen, the default (speech on).
+    8: """
+        ALTER TABLE voice_input_settings ADD COLUMN speech_muted INTEGER
+            CHECK (speech_muted IN (0, 1));
+    """,
 }
 
 Publish = Callable[[dict], None]
@@ -234,31 +250,32 @@ def _row(user: str) -> Optional[sqlite3.Row]:
         with closing(_connect()) as conn:
             return conn.execute(
                 "SELECT stop_mode, switch_mode, capture_sounds, cue_settings, cue_volume, "
-                "pause_intervals FROM voice_input_settings WHERE user_key = ?", (user,)).fetchone()
+                "pause_intervals, speech_muted FROM voice_input_settings WHERE user_key = ?",
+                (user,)).fetchone()
     except (sqlite3.Error, RuntimeError) as e:
         log.warning("voice input settings could not be read (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be read.") from e
 
 
 def _answer(user: str, stop: str, switch: str, saved: bool, intervals: dict, sounds: bool,
-            cues: dict, volume: int) -> dict:
+            cues: dict, volume: int, speech_muted: bool) -> dict:
     schedule = dict(pause_schedule(intervals))
     return {"stop": stop, "switch": switch, "saved": saved, "intervals": intervals,
             "schedule": schedule, "patience": schedule[PAUSE_STAGES[-1]],
-            "sounds": sounds, "cues": cues, "volume": volume,
+            "sounds": sounds, "cues": cues, "volume": volume, "speech_muted": speech_muted,
             "scope": "local" if user == LOCAL_OWNER else "member"}
 
 
 def defaults(user: str = LOCAL_OWNER) -> dict:
     """What `read` answers for a user who has chosen nothing."""
     return _answer(user, DEFAULTS["stop"], DEFAULTS["switch"], False, _intervals_in_force(None),
-                   DEFAULTS["sounds"], _cues_in_force(None), VOLUME_DEFAULT)
+                   DEFAULTS["sounds"], _cues_in_force(None), VOLUME_DEFAULT, SPEECH_MUTED_DEFAULT)
 
 
 def read(user: Optional[str] = None) -> dict:
     """The settings in force for `user` (the user now, by default):
     {stop, switch, intervals, schedule, patience, sounds, cues, volume,
-    saved, scope}: `schedule` is each pause stage's seconds after he
+    speech_muted, saved, scope}: `schedule` is each pause stage's seconds after he
     stopped, `patience` the send's. Raises Unreadable if the store cannot
     be read, and treats a saved row it does not understand as unreadable
     too. A saved interval, cue or volume that is not one JARVIS knows is
@@ -272,8 +289,9 @@ def read(user: Optional[str] = None) -> dict:
         raise Unreadable("Your saved voice input settings are not ones JARVIS knows.")
     sounds = DEFAULTS["sounds"] if row["capture_sounds"] is None else bool(row["capture_sounds"])
     volume = int(row["cue_volume"]) if _volume_ok(row["cue_volume"]) else VOLUME_DEFAULT
+    muted = SPEECH_MUTED_DEFAULT if row["speech_muted"] is None else bool(row["speech_muted"])
     return _answer(user, stop, switch, True, _intervals_in_force(_saved(row["pause_intervals"])),
-                   sounds, _cues_in_force(_saved_cues(row["cue_settings"])), volume)
+                   sounds, _cues_in_force(_saved_cues(row["cue_settings"])), volume, muted)
 
 
 def read_or_defaults(user: Optional[str] = None) -> dict:
@@ -283,6 +301,13 @@ def read_or_defaults(user: Optional[str] = None) -> dict:
         return read(user)
     except Unreadable:
         return defaults()
+
+
+def speech_muted(user: Optional[str] = None) -> bool:
+    """Whether his speech mute is on: for the speech path, which reads it as
+    each utterance starts and never stops for an unreadable store (speech
+    on, the default)."""
+    return bool(read_or_defaults(user)["speech_muted"])
 
 
 def _number(value: object) -> bool:
@@ -370,15 +395,18 @@ def cue_sounds(settings: dict, name: str) -> bool:
 
 
 def validate(stop: object = None, switch: object = None, intervals: object = None,
-             sounds: object = None, cues: object = None, volume: object = None
+             sounds: object = None, cues: object = None, volume: object = None,
+             speech_muted: object = None
              ) -> tuple[Optional[str], Optional[str], Optional[dict], Optional[bool],
-                        Optional[dict], Optional[int]]:
+                        Optional[dict], Optional[int], Optional[bool]]:
     """The change asked for, checked: each given value must be one of its
     setting's, and at least one must be given."""
-    if all(v is None for v in (stop, switch, intervals, sounds, cues, volume)):
+    if all(v is None for v in (stop, switch, intervals, sounds, cues, volume, speech_muted)):
         raise Invalid("nothing-to-change",
-                      "Say which setting to change: stop, switch, intervals, sounds, cues or "
-                      "volume.")
+                      "Say which setting to change: stop, switch, intervals, sounds, cues, "
+                      "volume or speech_muted.")
+    if speech_muted is not None and not isinstance(speech_muted, bool):
+        raise Invalid("invalid-speech-muted", "Speech is muted (true) or not (false).")
     if sounds is not None and not isinstance(sounds, bool):
         raise Invalid("invalid-sounds", "Capture sounds are on (true) or off (false).")
     if intervals is not None:
@@ -403,20 +431,21 @@ def validate(stop: object = None, switch: object = None, intervals: object = Non
             None if intervals is None else {k: round(float(v), 2)  # type: ignore[union-attr]
                                             for k, v in intervals.items()},  # type: ignore[union-attr]
             sounds, cues,  # type: ignore[return-value]
-            None if volume is None else int(round(volume)))  # type: ignore[arg-type]
+            None if volume is None else int(round(volume)),  # type: ignore[arg-type]
+            speech_muted)  # type: ignore[return-value]
 
 
 def change(stop: object = None, switch: object = None, intervals: object = None,
            sounds: object = None, cues: object = None, volume: object = None,
-           user: Optional[str] = None) -> dict:
+           speech_muted: object = None, user: Optional[str] = None) -> dict:
     """Save any of the settings for `user` and answer the settings now in
     force, as `read` gives them. Starts, stops, submits and discards
     nothing: they apply from the next stop or page switch (the cues and
     intervals from the next pause). A change to the cues or the intervals
     is merged into what he chose before; any intervals keep the stages in
     order, since each is measured from the stage before."""
-    stop, switch, intervals, sounds, cues, volume = validate(stop, switch, intervals, sounds,
-                                                             cues, volume)
+    stop, switch, intervals, sounds, cues, volume, speech_muted = validate(
+        stop, switch, intervals, sounds, cues, volume, speech_muted)
     user = user or user_key()
     now = read(user)
     row = _row(user)
@@ -429,13 +458,14 @@ def change(stop: object = None, switch: object = None, intervals: object = None,
            "intervals": json.dumps(waits, sort_keys=True) if intervals else None,
            "sounds": None if sounds is None else int(sounds),
            "cues": json.dumps(chosen, sort_keys=True) if cues else None,
-           "volume": volume}
+           "volume": volume,
+           "speech_muted": None if speech_muted is None else int(speech_muted)}
     try:
         with closing(_connect()) as conn, conn:
             conn.execute(
                 "INSERT INTO voice_input_settings (user_key, stop_mode, switch_mode, "
-                "pause_intervals, capture_sounds, cue_settings, cue_volume, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
+                "pause_intervals, capture_sounds, cue_settings, cue_volume, speech_muted, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_key) DO "
                 "UPDATE SET stop_mode = excluded.stop_mode, switch_mode = excluded.switch_mode, "
                 "pause_intervals = COALESCE(excluded.pause_intervals, "
                 "voice_input_settings.pause_intervals), "
@@ -443,15 +473,16 @@ def change(stop: object = None, switch: object = None, intervals: object = None,
                 "voice_input_settings.capture_sounds), "
                 "cue_settings = COALESCE(excluded.cue_settings, voice_input_settings.cue_settings), "
                 "cue_volume = COALESCE(excluded.cue_volume, voice_input_settings.cue_volume), "
+                "speech_muted = COALESCE(excluded.speech_muted, voice_input_settings.speech_muted), "
                 "updated_at = excluded.updated_at",
                 (user, new["stop"], new["switch"], new["intervals"], new["sounds"], new["cues"],
-                 new["volume"], time.time()))
+                 new["volume"], new["speech_muted"], time.time()))
     except sqlite3.Error as e:
         log.warning("voice input settings could not be saved (%s)", type(e).__name__)
         raise Unreadable("Your voice input settings could not be saved.") from e
     log.info("voice input settings for %s: stop=%s switch=%s intervals=%s sounds=%s cues=%s "
-             "volume=%s", user, new["stop"], new["switch"], new["intervals"], new["sounds"],
-             new["cues"], new["volume"])
+             "volume=%s speech_muted=%s", user, new["stop"], new["switch"], new["intervals"],
+             new["sounds"], new["cues"], new["volume"], new["speech_muted"])
     saved = read(user)
     if _publish is not None:
         _publish({"type": FRAME})
@@ -484,7 +515,8 @@ async def api_change(body: dict = Body(default_factory=dict)):
     try:
         return change(stop=body.get("stop"), switch=body.get("switch"),
                       intervals=body.get("intervals"), sounds=body.get("sounds"),
-                      cues=body.get("cues"), volume=body.get("volume"))
+                      cues=body.get("cues"), volume=body.get("volume"),
+                      speech_muted=body.get("speech_muted"))
     except Invalid as e:
         return JSONResponse(status_code=400, content=e.to_json())
     except Unreadable as e:

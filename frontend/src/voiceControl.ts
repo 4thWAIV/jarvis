@@ -79,6 +79,8 @@ export interface VoiceInputSettings {
   cues: CueSettings;
   /** The cue volume, in percent of the quiet ceiling. */
   volume: number;
+  /** His speech mute: JARVIS answers in text only (the speaker's toggle). */
+  speech_muted: boolean;
   /** Whether he chose them (false: the defaults, nothing saved yet). */
   saved: boolean;
   /** Whose they are: the team member signed in, or this JARVIS's owner. */
@@ -96,7 +98,8 @@ export function parseVoiceInputSettings(value: unknown): VoiceInputSettings | nu
   if (!cues || !intervals || !schedule || typeof v.volume !== "number" || !Number.isFinite(v.volume)) return null;
   return { stop: v.stop as StopMode, switch: v.switch as SwitchMode, intervals, schedule,
            patience: schedule.send,
-           sounds: v.sounds !== false, cues, volume: v.volume, saved: v.saved === true,
+           sounds: v.sounds !== false, cues, volume: v.volume, speech_muted: v.speech_muted === true,
+           saved: v.saved === true,
            scope: v.scope === "member" ? "member" : "local" };
 }
 

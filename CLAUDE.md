@@ -1041,7 +1041,9 @@ gathered as an unsent draft; that page, still open, resumes listening
 under a new epoch when the socket is back. The brain may only make input
 quieter: its acting `quiet_microphone` (muted or off) sends every page a
 `quiet` frame that it applies through `mic.chooseQuiet`, as his buttons do;
-there is no tool to unmute, turn on or start listening.
+there is no tool to unmute, turn on or start listening. The headset in the power
+button's place turns the whole audio system off and on (see "Playback and
+its outcomes").
 A quiet tone marks listening really starting (the recogniser ready for a
 streaming microphone: Start, Unmute, Mic on, a resume or a retry that got
 through) and a falling one its stopping for any reason (his Mic off or
@@ -1155,6 +1157,30 @@ why (`reason`, `voice_control.ReplyFailure`: `not_ready`, `down`,
 words in its language under the reply. No fault of the brain or of a turn
 is spoken. `voice_control.py` and `frontend/src/voiceControl.ts` hold the
 words both sides name.
+
+Three audio controls, each with its own job, in the microphone's control
+(`MicControl.tsx`, the message input and the centre's corner alike): Mute,
+unchanged (microphone processing only); the headset in the power button's
+place (`MicOffButton.tsx`, id `btn-mic-off`, target part `off`), which turns
+the whole audio system off (Mic off and his speech mute on) or back on (the
+microphone on and speech unmuted), drawn as the whole subsystem at a glance
+(`AudioHeadset.tsx`: the boom what JARVIS hears, the ear cups what it says,
+the power symbol when all is off; still, never animated); and the speaker
+at the end (`SpeakerButton.tsx`, part `speaker`), which mutes and unmutes
+speech, showing the mute and speaking, silent or stopped (for
+`STOPPED_SHOWN_MS` after Stop). Stop stays its own control. His speech mute
+is a voice input setting (`voice_control.py` `speech_muted`, per user,
+saved, published as `voice_input_settings` so every page and the brain
+agree): while it is on JARVIS answers in text only. The speech scheduler
+skips every utterance begun while it is on (`SpeechScheduler(muted=...)`,
+read as each starts), so nothing is synthesized or sent, and a muted
+read-back is not heard, so it approves nothing; turning it on stops what is
+sounding at once (the publish hook, `_stop_speaking`). The page's side is
+`audioState.ts` (`setSpeechMuted`, `setAllAudio`, the looks). The brain only
+makes them quieter: acting `mute_speech` (the same `voice_control.change`)
+and `turn_audio_off` (that, and the quiet frame's Mic off); unmuting and
+turning audio on are his clicks, and `set_voice_input_settings` does not
+take the mute.
 
 ## Speaking Spanish
 The language in force is `spoken_words.active_language()`, the one place it

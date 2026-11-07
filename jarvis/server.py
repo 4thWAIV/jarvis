@@ -1347,7 +1347,8 @@ async def start_brain_and_speech() -> None:
     global brain_instance, speech, _tts_client
     _tts_client = httpx.AsyncClient(timeout=15.0)
     speech = SpeechScheduler(lambda t: _synth_for_speech(t), _voice_emit, prepare=strip_markdown_for_tts,
-                             transport_ready=lambda: bool(voice_clients))
+                             transport_ready=lambda: bool(voice_clients),
+                             muted=voice_control.speech_muted)
     # Routine announcements wait while the floor is his or the brain's.
     speech.floor_held = conversation_floor.held
     await speech.start()
@@ -3104,8 +3105,14 @@ def _follow_patience() -> float:
 
 def _voice_input_settings_changed(frame: dict) -> None:
     """His voice input settings changed: JARVIS's own wait follows his new
-    patience at once, and every page reads them again."""
+    patience at once, his speech mute stops what is sounding at once, and
+    every page reads them again."""
     _follow_patience()
+    if speech is not None and speech.has_speech_in_flight() and voice_control.speech_muted():
+        try:
+            asyncio.get_running_loop().create_task(_stop_speaking("his speech mute"))
+        except RuntimeError:                # no loop: nothing can be sounding
+            pass
     _send_to_session_clients(frame)
 
 
@@ -8831,9 +8838,11 @@ def _voice_input_settings_said(settings: dict) -> str:
     sounds = ("A quiet sound plays when listening starts and when it stops. " if settings["sounds"]
               else "No sound plays when listening starts or stops. ")
     whose = "the team member signed in" if settings["scope"] == "member" else "this JARVIS's owner"
+    speaking = ("JARVIS's speech is muted: it answers in text only, and only he can unmute it. "
+                if settings["speech_muted"] else "JARVIS's speech is on. ")
     said = (f"When he stops the microphone, JARVIS will {stop}. When he switches away "
             f"from JARVIS, it will {switch}. {patience}{sounds}{_cues_said(settings)}"
-            f"These are {whose}'s settings")
+            f"{speaking}These are {whose}'s settings")
     return said + ("." if settings["saved"] else ", the defaults: he has not chosen yet.")
 
 
@@ -9014,14 +9023,53 @@ async def tool_quiet_microphone(args: dict) -> str:
             "Only he can unmute it.")
 
 
+def _mute_speech() -> str | None:
+    """His speech mute on, as the page's speaker and headset turn it on:
+    `voice_control.change`, whose publish stops what is sounding. The
+    refusal's words, or None once it is on."""
+    try:
+        voice_control.change(speech_muted=True)
+    except (voice_control.Invalid, voice_control.Unreadable) as e:
+        return f"Nothing was changed, sir: {getattr(e, 'message', None) or e}"
+    return None
+
+
+async def tool_mute_speech(args: dict) -> str:
+    """The page's speaker muting JARVIS's speech, by voice or typing. Only
+    ever quieter: unmuting is his own click on the speaker or the headset."""
+    refused = _mute_speech()
+    if refused:
+        return refused
+    return ("Muted JARVIS's speech, sir: it answers in text only from now on, and anything "
+            "sounding has stopped. Only he can unmute it, with the speaker or the headset.")
+
+
+async def tool_turn_audio_off(args: dict) -> str:
+    """The page's headset turning all audio off, by voice or typing: Mic off
+    on every open page (the quiet frame, as quiet_microphone sends) and his
+    speech mute on. Only he turns it back on, with the headset."""
+    refused = _mute_speech()
+    if refused:
+        return refused
+    if voice_clients:
+        await _voice_emit({"type": QUIET_FRAME, "state": "off"})
+    return ("Turned all audio off, sir: the microphone is off on every open page and JARVIS "
+            "answers in text only. Only he can turn it back on, with the headset.")
+
+
 TOOL_HANDLERS.update({
     "skip_reading": tool_skip_reading,
     "stop_speaking": tool_stop_speaking,
     "voice_turn": tool_voice_turn,
     "quiet_microphone": tool_quiet_microphone,
+    "mute_speech": tool_mute_speech,
+    "turn_audio_off": tool_turn_audio_off,
 })
-ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone"})
+ACTING_TOOLS.update({"skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
+                     "mute_speech", "turn_audio_off"})
 TAINT_EXEMPT_TOOLS.update({
+    "mute_speech": "it mutes JARVIS's speech; it reads nothing",
+    "turn_audio_off": "it turns the microphone off and mutes JARVIS's speech; it reads nothing",
     "skip_reading": "it stops one reading aloud, it does not read",
     "stop_speaking": "it stops all audio, it does not read",
     "voice_turn": "it sends, retries or keeps his own words; it reads nothing",

@@ -904,6 +904,34 @@ html, body {
   border-radius: 6px;
 }
 
+/* The headset, the whole audio subsystem, drawn on the power button (Mic off),
+   and the speaker, what JARVIS says, beside it (AudioHeadset.tsx,
+   SpeakerButton.tsx). Grey while idle; the theme's blue while hearing or
+   speaking; on red, as Mute's, while muted or off. The headset never moves:
+   each state is a still look. The speaker's waves pulse while speaking and
+   stand still under reduced motion. */
+.control-button.small.audio-headset:not(.muted),
+.control-button.small.audio-speaker { color: var(--ui-muted); }
+.audio-headset:not(.muted) .headset-band { stroke: var(--ui-secondary); }
+.audio-headset:not(.muted) .headset-boom.listening,
+.audio-headset:not(.muted) .headset-boom.starting { stroke: var(--ui-accent); }
+.audio-headset .headset-boom.listening circle { fill: var(--ui-accent); }
+.audio-headset.muted .headset-boom.listening circle { fill: currentColor; }
+.audio-headset .headset-cups.lit { stroke: var(--ui-accent); fill: var(--ui-accent); fill-opacity: 0.85; }
+.audio-headset .headset-stopped { stroke: var(--ui-muted); }
+.control-button.small.audio-speaker.speaking {
+  color: var(--ui-accent);
+  background: rgba(var(--ui-accent-rgb), 0.14);
+  border-color: rgba(var(--ui-accent-rgb), 0.35);
+}
+.audio-speaker.speaking .speaker-body { fill: var(--ui-accent); fill-opacity: 0.3; }
+@keyframes audio-pulse { 0%, 100% { opacity: 0.35; } 35% { opacity: 1; } }
+.audio-speaker .speaker-wave { animation: audio-pulse 1.2s ease-in-out infinite; }
+.audio-speaker .speaker-wave.second { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .audio-speaker .speaker-wave { animation: none; }
+}
+
 /* Muted is unmistakable: solid bright red, a white crossed-out microphone. */
 .control-button.small.muted,
 .control-button.small.muted:hover {

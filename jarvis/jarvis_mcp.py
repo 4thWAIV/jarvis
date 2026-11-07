@@ -2135,6 +2135,23 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "mute_speech",
+        "description": (
+            "Mute JARVIS's speech (the page's speaker), only when he asks: from now on JARVIS "
+            "answers in text only, and anything sounding stops at once. It can only make "
+            "JARVIS quieter: unmuting is his own click on the speaker or the headset, and "
+            "there is no tool for it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "turn_audio_off",
+        "description": (
+            "Turn all audio off (the page's headset), only when he asks: the microphone off "
+            "on every open page and JARVIS's speech muted. Turning audio back on is his own "
+            "click on the headset, and there is no tool for it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "voice_turn",
         "description": (
             "What he has said aloud and not yet sent (the page's Send now, Retry and Keep as "

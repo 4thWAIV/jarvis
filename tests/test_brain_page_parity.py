@@ -137,7 +137,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "dismiss_workflow", "retry_run", "install_speech_model", "set_language",
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
-            "mark_updates_seen",
+            "mute_speech", "turn_audio_off", "mark_updates_seen",
             "set_attention_settings", "answer_work_decision")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
@@ -179,6 +179,8 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("stop_speaking", {}),
     ("voice_turn", {"action": "send_now"}),
     ("quiet_microphone", {"state": "muted"}),
+    ("mute_speech", {}),
+    ("turn_audio_off", {}),
     ("make_attachment_local", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("reveal_attachment", {"message": str(UUID(int=1)), "attachment": str(UUID(int=2))}),
     ("tell_package_story", {"package": "x", "slide": 2}),
@@ -647,7 +649,8 @@ def test_voice_input_settings_read_and_change_through_the_route_s_service(wired)
                     "intervals": voice_control.INTERVAL_DEFAULTS,
                     "schedule": {"tentative": 1.0, "deciding": 1.75, "likely": 2.5, "send": 3.0},
                     "patience": 3.0, "sounds": True, "cues": voice_control.CUE_DEFAULTS,
-                    "volume": voice_control.VOLUME_DEFAULT, "scope": "member"}
+                    "volume": voice_control.VOLUME_DEFAULT, "speech_muted": False,
+                    "scope": "member"}
     assert voice_control.user_key() == f"github:{TIM}"
     assert "discard unfinished input" in _call(wired, "voice_input_settings")["text"]
     assert "A quiet sound plays when listening starts" in _call(wired, "voice_input_settings")["text"]
@@ -842,3 +845,60 @@ def test_quiet_microphone_sends_every_page_his_mute_or_off_and_nothing_louder(wi
     names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
     assert "quiet_microphone" in names
     assert not names & {"unmute", "start_listening", "microphone_on", "listen"}
+
+
+# ── the speaker and the headset: speech mute and all audio off ─────────────
+
+def test_mute_speech_and_turn_audio_off_save_the_route_s_setting_and_only_ever_quieten(wired, monkeypatch):
+    """mute_speech saves the speaker's setting through the route's
+    voice_control.change; turn_audio_off also sends every page Mic off, the
+    frame the page applies through the same chooseQuiet as the headset.
+    Neither has an opposite: unmuting and turning audio on are his clicks."""
+    from jarvis import jarvis_mcp, voice_control
+    sent = []
+
+    async def emit(frame):
+        sent.append(frame)
+
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", {object()})
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is False
+    assert _call(wired, "mute_speech")["ok"]
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    assert sent == []
+    voice_control.change(speech_muted=False)
+    assert _call(wired, "turn_audio_off")["ok"]
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    assert sent == [{"type": "quiet", "state": "off"}]
+    assert "speech is muted" in _call(wired, "voice_input_settings")["text"]
+    # set_voice_input_settings cannot unmute: it does not take the mute.
+    _call(wired, "set_voice_input_settings", speech_muted=False, stop="keep")
+    assert wired.client.get(voice_control.PATH).json()["speech_muted"] is True
+    names = {t["name"] for t in jarvis_mcp.TOOL_SPECS}
+    assert {"mute_speech", "turn_audio_off"} <= names
+    assert not names & {"unmute_speech", "turn_audio_on", "audio_on"}
+
+
+def test_muting_speech_stops_what_is_sounding_at_once(wired, monkeypatch):
+    """The setting's publish stops speech in flight (the same _stop_speaking
+    as Stop); unmuting stops nothing."""
+    import asyncio
+    from jarvis import voice_control
+    stopped = []
+
+    async def stop(by):
+        stopped.append(by)
+        return True
+
+    monkeypatch.setattr(wired.server, "speech", SimpleNamespace(has_speech_in_flight=lambda: True,
+                                                                end_of_turn=3.0))
+    monkeypatch.setattr(wired.server, "_stop_speaking", stop)
+
+    async def change(muted):
+        voice_control.change(speech_muted=muted)
+        await asyncio.sleep(0)
+
+    asyncio.run(change(False))
+    assert stopped == []
+    asyncio.run(change(True))
+    assert stopped == ["his speech mute"]

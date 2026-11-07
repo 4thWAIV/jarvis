@@ -42,7 +42,8 @@ class _Voice:
             self.ws.send(json.dumps(m))
 
 
-async def _open(p, url, voice=None):
+async def _open(p, url, voice=None, routes=None):
+    """`routes`: more of the page's requests answered here, by URL pattern."""
     try:
         browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
     except Exception as e:                              # pragma: no cover
@@ -51,6 +52,8 @@ async def _open(p, url, voice=None):
     await page.add_init_script(FAKE_TRANSCRIPTION)
     await page.route_web_socket("**/ws/voice", voice or _Voice())
     await page.route("**/api/conversation", lambda route: route.fulfill(json={"items": [], "earlier": None}))
+    for pattern, handler in (routes or {}).items():
+        await page.route(pattern, handler)
     await page.goto(url)
     await start_listening(page)
     await page.wait_for_function("window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)

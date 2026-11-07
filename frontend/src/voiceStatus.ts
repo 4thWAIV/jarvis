@@ -17,6 +17,19 @@ export const stopSpeaking = { current: () => {} };
 // Escape), never another reading, never the request. jarvis.ts puts its
 // handler here.
 export const skipReading = { current: () => {} };
+// Stopped: shown on the speaker and the headset for a moment after Stop
+// speaking (hush in jarvis.ts), until it passes or JARVIS speaks again.
+export const STOPPED_SHOWN_MS = 3000;
+export const speechStopped = createStore(false);
+let stoppedTimer: ReturnType<typeof setTimeout> | undefined;
+export function markSpeechStopped(): void {
+  clearTimeout(stoppedTimer);
+  speechStopped.set(true);
+  stoppedTimer = setTimeout(() => speechStopped.set(false), STOPPED_SHOWN_MS);
+}
+voiceState.subscribe(() => {
+  if (voiceState.get() === "speaking") { clearTimeout(stoppedTimer); speechStopped.set(false); }
+});
 // Sending what Tim typed into the white box instead of saying it; jarvis.ts
 // puts its handler here.
 export const sendTyped = { current: (_text: string): boolean => false };

@@ -168,6 +168,9 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__voice_turn",
     # Mute and Mic off, never their opposites: the brain only makes input quieter.
     "mcp__jarvis__quiet_microphone",
+    # Mute speech and all audio off, never their opposites: only ever quieter.
+    "mcp__jarvis__mute_speech",
+    "mcp__jarvis__turn_audio_off",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",
