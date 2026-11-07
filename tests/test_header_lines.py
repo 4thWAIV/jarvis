@@ -354,6 +354,11 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "knowledge_api.call": (
+        "it turns an engine refusal into knowledge_api.Refused; the engine's "
+        "`detail` is the engine's own wording about a request, and every route "
+        "and tool answers it as a refusal, never as a line JARVIS speaks as its "
+        "own. Driven by tests/test_knowledge_api.py"),
     "knowledge_ingest.replace_authored": (
         "it builds engine route paths from a topic's own key (`topic:<slug>`, "
         "a slug knowledge_links checks against [a-z0-9-]) and reads edges' "
