@@ -9893,6 +9893,20 @@ async def tool_reindex_knowledge(args: dict) -> str:
     return answer
 
 
+async def tool_knowledge_indexes(args: dict) -> str:
+    return await _knowledge_tool(args, lambda: knowledge_api.indexes(knowledge_calls),
+                                 "", "knowledge_indexes", walled=False)
+
+
+async def tool_change_knowledge_index(args: dict) -> str:
+    answer = await _knowledge_tool(args, lambda: knowledge_api.choose_index(
+        knowledge_calls, key=str(args.get("key") or ""), choice=str(args.get("choice") or "")),
+        "", "change_knowledge_index", walled=False)
+    if answer.startswith("{"):
+        _hint_knowledge()
+    return answer
+
+
 TOOL_HANDLERS.update({
     "knowledge_status": tool_knowledge_status,
     "knowledge_search": tool_knowledge_search,
@@ -9902,8 +9916,10 @@ TOOL_HANDLERS.update({
     "link_knowledge": tool_link_knowledge,
     "change_topic": tool_change_topic,
     "reindex_knowledge": tool_reindex_knowledge,
+    "knowledge_indexes": tool_knowledge_indexes,
+    "change_knowledge_index": tool_change_knowledge_index,
 })
-ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge"})
+ACTING_TOOLS.update({"link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index"})
 TAINTING_TOOLS.update({
     "knowledge_search": "passages from agents, runs, workflows and other people",
     "knowledge_entity": "labels and passages from what JARVIS read",
@@ -9915,6 +9931,8 @@ TAINT_EXEMPT_TOOLS.update({
     "link_knowledge": "it writes his own topic files on his word, it does not read",
     "change_topic": "it writes his own topic files on his word, it does not read",
     "reindex_knowledge": "it asks the engine to read again or forget, it does not read",
+    "knowledge_indexes": "index shapes are kinds and property names from JARVIS's own schema, never a value",
+    "change_knowledge_index": "it writes his own settings note on his word, it does not read",
 })
 
 

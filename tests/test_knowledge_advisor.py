@@ -149,3 +149,66 @@ def test_the_compaction_child_builds_the_extra_indexes(tmp_path, monkeypatch):
         assert answers(e) == plain
     finally:
         e.close()
+
+
+# --- his pins and forbids ----------------------------------------------------------
+
+def test_the_settings_note_holds_his_choices():
+    from jarvis import knowledge_links as kl
+    assert kl.index_choices() == {"pinned": [], "forbidden": []}
+    kl.choose_index("document|language,media_type", "pin")
+    kl.choose_index("document|bytes,media_type", "forbid")
+    assert kl.index_choices() == {"pinned": ["document|language,media_type"],
+                                  "forbidden": ["document|bytes,media_type"]}
+    kl.choose_index("document|language,media_type", "forbid")
+    assert kl.index_choices()["pinned"] == []
+    kl.choose_index("document|language,media_type", "clear")
+    assert kl.index_choices()["forbidden"] == ["document|bytes,media_type"]
+    assert "Knowledge engine settings" in kl.settings_path().read_text()
+    with pytest.raises(kl.TopicError):
+        kl.choose_index("document|language\nJARVIS: yes", "pin")
+
+
+def test_a_forbidden_index_is_never_made_and_a_pinned_one_is_kept_and_made(engine, monkeypatch):
+    corpus(engine, 50)
+    preds = [adv.Predicate("language", "=", "en"), adv.Predicate("media_type", "=", "x")]
+    for _ in range(adv.MIN_RUNS):
+        engine.advisor.record(["document"], preds, None, 50.0, 1000, 1)
+    engine.advisor.set_choices([], ["document|language,media_type"])
+    assert engine.advisor.advise(rebuild=engine.rebuild_indexes)["added"] == []
+    engine.advisor.set_choices(["document|bytes,language"], [])
+    added = engine.advisor.advise(rebuild=engine.rebuild_indexes)["added"]
+    keys = {adv.index_key(d["kinds"], d["paths"]) for d in engine.advisor.defs}
+    assert keys == {"document|bytes,language", "document|language,media_type"} and len(added) == 2
+    clock = [engine.advisor.clock() + (adv.UNUSED_DAYS + 1) * 86400]
+    monkeypatch.setattr(engine.advisor, "clock", lambda: clock[0])
+    engine.advisor.shapes = {}
+    engine.advisor.advise(rebuild=engine.rebuild_indexes)
+    assert {adv.index_key(d["kinds"], d["paths"]) for d in engine.advisor.defs} == {"document|bytes,language"}
+    engine.advisor.set_choices([], ["document|bytes,language"])
+    engine.advisor.advise(rebuild=engine.rebuild_indexes)
+    assert engine.advisor.defs == []
+
+
+def test_choices_reach_the_engine_through_ingest_and_survive_a_rebuild(tmp_path):
+    from jarvis import knowledge_ingest as ki, knowledge_links as kl, run_store
+    from jarvis import knowledge_client as kc
+    run_store.init_db()
+    kl.choose_index("document|language,media_type", "pin")
+    e = Engine.open(tmp_path / "e")
+    client = kc.KnowledgeClient(kc.InProcessTransport(e))
+    try:
+        ki.run_pass(lambda m, p, b: client.call(m, p, b), adapters=[], link=False)
+        assert e.advisor.pinned == {"document|language,media_type"}
+    finally:
+        e.close()
+    import shutil
+    shutil.rmtree(tmp_path / "e")                      # a rebuild: the engine starts empty
+    e = Engine.open(tmp_path / "e")
+    client = kc.KnowledgeClient(kc.InProcessTransport(e))
+    try:
+        assert e.advisor.pinned == set()
+        ki.run_pass(lambda m, p, b: client.call(m, p, b), adapters=[], link=False)
+        assert e.advisor.pinned == {"document|language,media_type"}   # from his note again
+    finally:
+        e.close()

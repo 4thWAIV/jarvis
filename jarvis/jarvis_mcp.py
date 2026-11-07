@@ -2263,6 +2263,24 @@ TOOL_SPECS = [
             "source": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "knowledge_indexes",
+        "description": (
+            "The extra indexes the knowledge engine made or would make to answer common "
+            "searches faster, each by the kinds and properties it serves, how often it was "
+            "used, and whether he pinned or forbade it."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "change_knowledge_index",
+        "description": (
+            "Only when he says so: pin an extra index (kept even when unused), forbid it "
+            "(never made), or clear his choice, by its key from knowledge_indexes. Written "
+            "to his knowledge settings note."),
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string"}, "choice": {"type": "string", "enum": ["pin", "forbid", "clear"]}},
+            "required": ["key", "choice"]},
+    },
+    {
         "name": "attention_updates",
         "description": (
             "What is waiting for him: the background updates (Review updates on the page) "

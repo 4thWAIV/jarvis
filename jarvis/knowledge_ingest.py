@@ -617,6 +617,11 @@ def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Option
         if budget.spent:
             stats.more = True
             break
+    try:
+        from jarvis import knowledge_links
+        call("POST", "/v1/indexes/choices", knowledge_links.index_choices())
+    except Exception as e:  # noqa: BLE001
+        stats.errors.append(f"index choices: {type(e).__name__}: {e}")
     if link:
         try:
             linked = call("POST", "/v1/link", {})

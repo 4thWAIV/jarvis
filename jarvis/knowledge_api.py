@@ -11,6 +11,8 @@ section 13), so page and voice do exactly the same thing.
 | `change_links`  | POST /api/knowledge/links              | link_knowledge      | acting          |
 | `change_topics` | POST /api/knowledge/topics             | change_topic        | acting          |
 | `maintain`      | POST /api/knowledge/maintenance        | reindex_knowledge   | acting          |
+| `indexes`       | GET  /api/knowledge/indexes            | knowledge_indexes   | read            |
+| `choose_index`  | POST /api/knowledge/indexes            | change_knowledge_index | acting       |
 
 Reads that go to the engine need it running (`JARVIS_KNOWLEDGE`); when it
 is off or down they refuse with `Unavailable`, and the brain answers from
@@ -269,3 +271,48 @@ def maintain(ctx: Context, *, action: str, source: Optional[str] = None) -> dict
             rt.hot.clear()
         return {"done": "forget", "source": source, "documents": report.get("documents", 0)}
     raise Refused("the action is refresh or forget")
+
+
+# --- his say over the extra indexes -------------------------------------------------
+
+def indexes(ctx: Context) -> dict:
+    """The extra indexes the advisor made and would make, each by its shape
+    (kinds and properties, never a value), with his pins and forbids. The
+    choices are read from his settings note, so they show with the engine
+    off too."""
+    choices = knowledge_links.index_choices()
+    try:
+        found = ctx.call("GET", "/v1/indexes")
+    except Unavailable:
+        found = {"indexes": [], "candidates": [], "engine": False}
+    pinned, forbidden = set(choices["pinned"]), set(choices["forbidden"])
+    rows = []
+    for d in found.get("indexes") or []:
+        rows.append({"key": d["key"], "kinds": d["kinds"], "paths": d["paths"], "uses": d.get("uses", 0),
+                     "state": "made", "pinned": d["key"] in pinned, "forbidden": d["key"] in forbidden})
+    made = {r["key"] for r in rows}
+    for c in found.get("candidates") or []:
+        if c["key"] not in made:
+            rows.append({"key": c["key"], "kinds": c["kinds"], "paths": c["paths"], "uses": 0,
+                         "state": "proposed", "pinned": c["key"] in pinned, "forbidden": c["key"] in forbidden})
+            made.add(c["key"])
+    for key in sorted((pinned | forbidden) - made):
+        k, _, p = key.partition("|")
+        rows.append({"key": key, "kinds": k.split(","), "paths": p.split(","), "uses": 0, "state": "chosen",
+                     "pinned": key in pinned, "forbidden": key in forbidden})
+    return {"indexes": rows, "pinned": sorted(pinned), "forbidden": sorted(forbidden),
+            "engine": found.get("engine", True)}
+
+
+def choose_index(ctx: Context, *, key: str, choice: str) -> dict:
+    """Pin, forbid or clear one extra index, on his word: written to his
+    settings note, then handed to the engine when it runs."""
+    try:
+        choices = knowledge_links.choose_index(key, choice)
+    except knowledge_links.TopicError as e:
+        raise Refused(str(e)) from e
+    try:
+        ctx.call("POST", "/v1/indexes/choices", choices)
+    except Unavailable:
+        pass                      # the next ingest pass hands them over
+    return {"done": choice, "key": key, **choices}

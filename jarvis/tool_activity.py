@@ -66,6 +66,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "set_language", "set_voice_input_settings", "play_cue",
         "knowledge_status", "knowledge_search", "knowledge_entity", "knowledge_proposals",
         "knowledge_topics", "link_knowledge", "change_topic", "reindex_knowledge",
+        "knowledge_indexes", "change_knowledge_index",
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (

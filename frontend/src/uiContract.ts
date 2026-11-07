@@ -154,7 +154,8 @@ export const UI_CONTRACT = {
     "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$",
-    "knowledgeProposal": "^[0-9a-f]{24}$"
+    "knowledgeProposal": "^[0-9a-f]{24}$",
+    "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
     "enum",
@@ -2300,6 +2301,34 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "knowledge"
+    },
+    {
+      "id": "knowledge.index.choose",
+      "label": "Pin an extra index so it is kept, forbid it so it is never made, or clear his choice; only his own hand chooses here",
+      "view": "main.knowledge",
+      "args": {
+        "indexKey": {
+          "type": "key",
+          "entity": "knowledgeIndex"
+        },
+        "choice": {
+          "type": "enum",
+          "values": [
+            "pin",
+            "forbid",
+            "clear"
+          ]
+        }
+      },
+      "required": [
+        "indexKey",
+        "choice"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
     }
   ],
   "kinds": [
@@ -4030,7 +4059,8 @@ export const UI_CONTRACT = {
         "search",
         "results",
         "proposals",
-        "topics"
+        "topics",
+        "indexes"
       ],
       "presentations": [
         {
@@ -4051,6 +4081,27 @@ export const UI_CONTRACT = {
         "row",
         "accept",
         "reject"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeIndex",
+      "entity": "knowledgeIndex",
+      "label": "Extra index",
+      "parts": [
+        "row",
+        "pin",
+        "forbid",
+        "clear"
       ],
       "presentations": [
         {
@@ -4251,6 +4302,7 @@ export interface CommandArgs {
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
   "knowledge.close": { };
+  "knowledge.index.choose": { indexKey: string; choice: "pin" | "forbid" | "clear"; };
   "knowledge.open": { };
   "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
   "knowledge.search": { query: string; };

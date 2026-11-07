@@ -82,6 +82,33 @@
         "human"
       ],
       "effects": []
+    },
+    {
+      "id": "knowledge.index.choose",
+      "label": "Pin an extra index so it is kept, forbid it so it is never made, or clear his choice; only his own hand chooses here",
+      "view": "main.knowledge",
+      "args": {
+        "indexKey": {
+          "type": "key",
+          "entity": "knowledgeIndex"
+        },
+        "choice": {
+          "type": "enum",
+          "values": [
+            "pin",
+            "forbid",
+            "clear"
+          ]
+        }
+      },
+      "required": [
+        "indexKey",
+        "choice"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": []
     }
   ],
   "kinds": [
@@ -96,7 +123,8 @@
         "search",
         "results",
         "proposals",
-        "topics"
+        "topics",
+        "indexes"
       ],
       "presentations": [
         {
@@ -116,6 +144,26 @@
         "row",
         "accept",
         "reject"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ]
+    },
+    {
+      "kind": "knowledgeIndex",
+      "entity": "knowledgeIndex",
+      "label": "Extra index",
+      "parts": [
+        "row",
+        "pin",
+        "forbid",
+        "clear"
       ],
       "presentations": [
         {

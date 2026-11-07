@@ -60,6 +60,16 @@ export interface Topic {
   relates_to: string[];
 }
 
+export interface ExtraIndex {
+  key: string;
+  kinds: string[];
+  paths: string[];
+  uses: number;
+  state: "made" | "proposed" | "chosen" | string;
+  pinned: boolean;
+  forbidden: boolean;
+}
+
 /** Moves on every "knowledge" hint on /ws/sessions. */
 export const knowledgeChanged = createStore(0);
 
@@ -84,6 +94,9 @@ export const proposals = liveRead(
   [knowledgeChanged]);
 export const topics = liveRead(
   () => getJson<{ topics: Topic[] }>("/api/knowledge/topics").then((b) => b.topics), [knowledgeChanged]);
+
+export const extraIndexes = liveRead(
+  () => getJson<{ indexes: ExtraIndex[] }>("/api/knowledge/indexes").then((b) => b.indexes), [knowledgeChanged]);
 
 /** The last search: its words, what came back, and why it failed. */
 export interface Search { query: string; hits: Hit[] | null; notes: string[]; error: string | null; busy: boolean }
@@ -150,5 +163,20 @@ registerCommand("knowledge.proposal.answer", {
     return await answerProposal(proposalId, answer)
       ? { status: "completed", effects: [] }
       : { status: "unavailable", effects: [], reason: answerError.get() ?? undefined };
+  },
+});
+
+registerCommand("knowledge.index.choose", {
+  availability: () => ({ available: true }),
+  async execute({ indexKey, choice }) {
+    try {
+      await postJson("/api/knowledge/indexes", { key: indexKey, choice });
+      answerError.set(null);
+      knowledgeChanged.set(knowledgeChanged.get() + 1);
+      return { status: "completed", effects: [] };
+    } catch (e) {
+      answerError.set((e as Error).message);
+      return { status: "unavailable", effects: [], reason: (e as Error).message };
+    }
   },
 });

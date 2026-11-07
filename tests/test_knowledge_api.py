@@ -176,3 +176,22 @@ def test_a_change_needs_the_page_or_the_token(wired, monkeypatch):  # noqa: F811
     r = wired.client.post("/api/knowledge/topics", json={"action": "create", "name": "X"},
                           headers={"Origin": "https://evil.example", "Host": "localhost:8340"})
     assert r.status_code in (401, 403)
+
+
+def test_index_choices_are_the_same_on_the_page_and_by_voice(knowing):
+    w, _, engine = knowing
+    from jarvis import knowledge_links as kl
+    r = w.client.post("/api/knowledge/indexes", json={"key": "document|language,media_type", "choice": "pin"},
+                      headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["pinned"] == ["document|language,media_type"]
+    assert engine.advisor.pinned == {"document|language,media_type"}
+    page = w.client.get("/api/knowledge/indexes", headers=ORIGIN).json()
+    assert json.loads(_call(w, "knowledge_indexes")["text"]) == page
+    row = next(x for x in page["indexes"] if x["key"] == "document|language,media_type")
+    assert row["pinned"] and row["state"] == "chosen"
+    refused = _call(w, "change_knowledge_index", origin="event", key="document|bytes,language", choice="forbid")
+    assert not refused["ok"]
+    said = json.loads(_call(w, "change_knowledge_index", key="document|bytes,language", choice="forbid")["text"])
+    assert said["forbidden"] == ["document|bytes,language"] and kl.index_choices()["forbidden"] == said["forbidden"]
+    bad = w.client.post("/api/knowledge/indexes", json={"key": "nope", "choice": "pin"}, headers=ORIGIN)
+    assert bad.status_code == 400

@@ -11,13 +11,15 @@
  * Accept or Reject here, or his word to the brain.
  *
  * Registered for pointing at: the view (header, close, status, search,
- * results, proposals, topics) and each proposal (row, accept, reject).
+ * results, proposals, topics, indexes), each proposal (row, accept,
+ * reject) and each extra index (row, pin, forbid, clear). His pins and
+ * forbids are kept in his settings note (knowledge.md).
  */
 
 import { useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import {
-  answerError, knowledgeStatus, proposals, search, topics, type Hit, type Proposal,
+  answerError, extraIndexes, knowledgeStatus, proposals, search, topics, type ExtraIndex, type Hit, type Proposal,
 } from "./knowledge";
 import { useT } from "./locale";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
@@ -48,6 +50,7 @@ export function KnowledgeView() {
       <SearchBox partRef={ui.part("search")} resultsRef={ui.part("results")} />
       <Proposals partRef={ui.part("proposals")} />
       <Topics partRef={ui.part("topics")} />
+      <Indexes partRef={ui.part("indexes")} />
     </div>
   );
 }
@@ -171,5 +174,57 @@ function Topics({ partRef }: { partRef: PartRef }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+const INDEX_STATE = {
+  made: "main.knowledge.index.made",
+  proposed: "main.knowledge.index.proposed",
+  chosen: "main.knowledge.index.chosen",
+} as const;
+
+function Indexes({ partRef }: { partRef: PartRef }) {
+  const t = useT();
+  const live = useSyncExternalStore(extraIndexes.subscribe, extraIndexes.get);
+  const list = live.value ?? [];
+  return (
+    <section aria-label={t("main.knowledge.indexesTitle")} ref={partRef}>
+      <h3>{t("main.knowledge.indexesTitle")}</h3>
+      <p className="knowledge-note">{t("main.knowledge.indexesNote")}</p>
+      {!live.error && !list.length && <p className="voice-empty">{t("main.knowledge.noIndexes")}</p>}
+      <ul className="knowledge-proposals">
+        {list.map((x) => <IndexRow key={x.key} x={x} />)}
+      </ul>
+    </section>
+  );
+}
+
+function IndexRow({ x }: { x: ExtraIndex }) {
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "main", view: "main.knowledge", kind: "knowledgeIndex", key: x.key },
+                           label: x.paths.join(", "), socket: CENTRE_SOCKET });
+  const state = INDEX_STATE[x.state as keyof typeof INDEX_STATE] ?? INDEX_STATE.chosen;
+  return (
+    <li className="knowledge-proposal" data-index={x.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <span className="knowledge-proposal-words">
+        {t("main.knowledge.index.serves", { kinds: x.kinds.join(", "), paths: x.paths.join(", ") })}
+        {" "}<span className="knowledge-status">{t(state)}</span>
+        {x.uses > 0 && <span className="knowledge-status"> {t("main.knowledge.index.uses", { count: x.uses })}</span>}
+        {x.pinned && <span className="knowledge-pinned"> {t("main.knowledge.index.pinned")}</span>}
+        {x.forbidden && <span className="knowledge-pinned"> {t("main.knowledge.index.forbidden")}</span>}
+      </span>
+      <button type="button" ref={ui.part("pin")} disabled={x.pinned}
+              {...bindingProps(bind("knowledge.index.choose", { indexKey: x.key, choice: "pin" }))}>
+        {t("main.knowledge.index.pin")}
+      </button>
+      <button type="button" ref={ui.part("forbid")} disabled={x.forbidden}
+              {...bindingProps(bind("knowledge.index.choose", { indexKey: x.key, choice: "forbid" }))}>
+        {t("main.knowledge.index.forbid")}
+      </button>
+      <button type="button" ref={ui.part("clear")} disabled={!x.pinned && !x.forbidden}
+              {...bindingProps(bind("knowledge.index.choose", { indexKey: x.key, choice: "clear" }))}>
+        {t("main.knowledge.index.clear")}
+      </button>
+    </li>
   );
 }

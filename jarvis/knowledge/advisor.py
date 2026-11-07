@@ -28,9 +28,12 @@ everywhere at once. Each generation's file records which definitions it
 holds, and an index is used only when every generation holds it; documents
 not yet flushed are always checked directly.
 
-The design gives the owner a say: pinning or forbidding an index from the
-Knowledge view, kept in Markdown. That control is not built yet; until it
-is, the advisor works within its guardrails alone.
+He has the last say: an index he pinned is kept even when unused (and made
+when it is not there yet), and one he forbade is never made and is dropped
+if it is. His choices live in Markdown (knowledge_links: knowledge.md), are
+handed to the engine by ingest on every pass and by the change itself
+(`set_choices`, kept in `xidx:choices`), and are read here by each
+index's key, `<kinds>|<properties>`, which a rebuild keeps.
 """
 from __future__ import annotations
 
@@ -49,6 +52,7 @@ from jarvis.knowledge.wal import Op
 XIDX = 12
 DEFS_KEY = b"xidx:defs"
 SHAPES_KEY = b"xidx:shapes"
+CHOICES_KEY = b"xidx:choices"
 SHAPES_MAX = 1000
 SHAPE_DAYS = 14
 DURATIONS_KEPT = 200
@@ -69,6 +73,15 @@ def _defs_from(versions: Iterable[Version]) -> list[dict]:
         if v.key == DEFS_KEY and v.value:
             return json.loads(v.value)
     return []
+
+
+def index_key(kinds_: list[str], paths: list[str]) -> str:
+    return ",".join(sorted(kinds_)) + "|" + ",".join(sorted(paths))
+
+
+def parse_index_key(key: str) -> tuple[list[str], list[str]]:
+    kinds_part, _, paths_part = key.partition("|")
+    return sorted(kinds_part.split(",")), sorted(paths_part.split(","))
 
 
 def single_values(doc: dict, path: str) -> Optional[list]:
@@ -141,6 +154,10 @@ class Advisor:
         self.shapes: dict[str, dict] = {}
         self.defs: list[dict] = _defs_from(self.store.prefix(META, DEFS_KEY))
         self._load_shapes()
+        raw = self.store.value(META, CHOICES_KEY)
+        chosen = json.loads(raw) if raw else {}
+        self.pinned: set[str] = set(chosen.get("pinned") or [])
+        self.forbidden: set[str] = set(chosen.get("forbidden") or [])
         self.last_advice: Optional[dict] = None
         self._advised_at = 0.0
         docs.extra_lookup = self.lookup
@@ -187,6 +204,19 @@ class Advisor:
                 ops.append(Op(META, DEFS_KEY, encoding.canonical(self.defs)))
         self.store.commit(ops)
 
+    def set_choices(self, pinned: Iterable[str], forbidden: Iterable[str]) -> bool:
+        """His pins and forbids, as the settings note holds them; True when
+        they changed (the next advice then applies them)."""
+        pinned, forbidden = set(pinned), set(forbidden)
+        with self._lock:
+            if pinned == self.pinned and forbidden == self.forbidden:
+                return False
+            self.pinned, self.forbidden = pinned, forbidden
+        self.store.commit([Op(META, CHOICES_KEY, encoding.canonical(
+            {"pinned": sorted(pinned), "forbidden": sorted(forbidden)}))])
+        self._advised_at = 0.0
+        return True
+
     # -- the advice --------------------------------------------------------------
     def _runs_last_day(self, s: dict) -> int:
         hour = int(self.clock() // 3600)
@@ -213,7 +243,7 @@ class Advisor:
             p95 = self._p95(s["ms"])
             if runs >= MIN_RUNS and p95 > MIN_P95_MS and ratio >= MIN_READ_RATIO:
                 out.append({"kinds": shape["kinds"], "paths": eq, "runs": runs, "p95_ms": p95,
-                            "read_per_returned": round(ratio, 1)})
+                            "read_per_returned": round(ratio, 1), "key": index_key(shape["kinds"], eq)})
         out.sort(key=lambda c: -(c["runs"] * c["p95_ms"]))
         return out
 
@@ -228,18 +258,27 @@ class Advisor:
         with self._lock:
             keep = []
             for d in self.defs:
-                if now - max(d.get("last_used") or 0, d["created"]) > UNUSED_DAYS * 86400:
+                key = index_key(d["kinds"], d["paths"])
+                unused = now - max(d.get("last_used") or 0, d["created"]) > UNUSED_DAYS * 86400
+                if key in self.forbidden or (unused and key not in self.pinned):
                     dropped.append(d)
                 else:
                     keep.append(d)
             self.defs = keep
             room = self._bytes() < BYTES_MAX
-            for c in self.candidates():
+            have = {index_key(d["kinds"], d["paths"]) for d in self.defs}
+            wanted = [{"kinds": k, "paths": p, "runs": 0, "p95_ms": 0.0, "read_per_returned": 0.0, "pinned": True}
+                      for k, p in (parse_index_key(x) for x in sorted(self.pinned - have - self.forbidden))]
+            for c in wanted + self.candidates():
+                if index_key(c["kinds"], c["paths"]) in self.forbidden:
+                    continue
                 if not room or len(self.defs) >= TOTAL_MAX:
                     break
                 if any(d["kinds"] == c["kinds"] and d["paths"] == c["paths"] for d in self.defs):
                     continue
                 if any(sum(1 for d in self.defs if k in d["kinds"]) >= PER_KIND_MAX for k in c["kinds"]):
+                    continue
+                if any(k not in kinds.KINDS for k in c["kinds"]):
                     continue
                 new_id = max([d["id"] for d in self.defs] + [0]) + 1
                 d = {"id": new_id, "kinds": c["kinds"], "paths": c["paths"], "created": now,
@@ -308,5 +347,10 @@ class Advisor:
         return None
 
     def health(self) -> dict:
-        return {"indexes": [{k: d.get(k) for k in ("id", "kinds", "paths", "uses", "why")} for d in self.defs],
+        def described(d: dict) -> dict:
+            key = index_key(d["kinds"], d["paths"])
+            return {**{k: d.get(k) for k in ("id", "kinds", "paths", "uses", "why")}, "key": key,
+                    "pinned": key in self.pinned, "forbidden": key in self.forbidden}
+        return {"indexes": [described(d) for d in self.defs],
+                "pinned": sorted(self.pinned), "forbidden": sorted(self.forbidden),
                 "shapes": len(self.shapes), "bytes": self._bytes(), "last_advice": self.last_advice}

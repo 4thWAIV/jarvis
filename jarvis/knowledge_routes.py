@@ -13,6 +13,8 @@ is followed by a `knowledge` hint on /ws/sessions (`on_change`).
   GET  /api/knowledge/topics         the topic files
   POST /api/knowledge/topics         {action: create|status|aliases|pin|unpin, ...}
   POST /api/knowledge/maintenance    {action: refresh|forget, source}
+  GET  /api/knowledge/indexes        the extra indexes, with his pins and forbids
+  POST /api/knowledge/indexes        {key, choice: pin|forbid|clear}
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ _SEARCH = {"text", "query_en", "include_untrusted", "kinds", "limit"}
 _LINKS = {"action", "topic", "kind", "target", "proposal"}
 _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
 _MAINTAIN = {"action", "source"}
+_INDEX = {"key", "choice"}
 
 
 def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
@@ -95,6 +98,18 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
             return bad()
         return await run(lambda: ka.maintain(ctx, **b), changes=True)
 
+    async def indexes():
+        return await run(lambda: ka.indexes(ctx))
+
+    async def choose_index(request: Request):
+        b = await fields(request, _INDEX)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.choose_index(ctx, key=str(b.get("key") or ""),
+                                                 choice=str(b.get("choice") or "")), changes=True)
+
+    app.add_api_route(f"{PREFIX}/indexes", indexes, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/indexes", choose_index, methods=["POST"])
     app.add_api_route(f"{PREFIX}/health", health, methods=["GET"])
     app.add_api_route(f"{PREFIX}/search", search, methods=["POST"])
     app.add_api_route(f"{PREFIX}/entity", entity, methods=["GET"])

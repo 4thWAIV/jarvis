@@ -248,6 +248,17 @@ def _resolve(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"matches": engine.resolve(name)})
 
 
+@route("POST", "/v1/indexes/choices")
+@_guard
+def _index_choices(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    pinned, forbidden = body.get("pinned") or [], body.get("forbidden") or []
+    if not all(isinstance(x, list) and all(isinstance(k, str) for k in x) for x in (pinned, forbidden)):
+        raise BadRequest("pinned and forbidden are lists of index keys")
+    changed = engine.advisor.set_choices(pinned, forbidden)
+    return Answer(200, {"changed": changed})
+
+
 @route("GET", "/v1/indexes")
 def _indexes(engine: Engine, request: Request) -> Answer:
     return Answer(200, {**engine.advisor.health(), "candidates": engine.advisor.candidates()})

@@ -368,3 +368,59 @@ def turn_down(slug: str, target: str) -> Topic:
             have.append(target)
         front["not_linked"] = have
     return _change(slug, change)
+
+
+# --- the engine's settings note: his say over its extra indexes ---------------------
+#
+# brain_home()/knowledge.md holds, in front matter, the extra indexes he
+# pinned (kept even when unused) and forbade (never made, dropped if there),
+# each by its shape's key, `<kinds>|<properties>` (advisor.index_key). They
+# are his choices, so they live here and a rebuild of the engine keeps them
+# (design 7.17.3); ingest hands them to the engine on every pass.
+
+INDEX_CHOICES = ("pin", "forbid", "clear")
+_INDEX_KEY = re.compile(r"[a-z_]+(,[a-z_]+)*\|[A-Za-z0-9_.\[\]]+(,[A-Za-z0-9_.\[\]]+)*")
+SETTINGS_BODY = ("# Knowledge engine settings\n\nThe extra indexes you pinned and forbade. "
+                 "JARVIS writes this file when you choose on the Knowledge view or say so; "
+                 "you may edit it too.\n")
+
+
+def settings_path() -> Path:
+    return data_paths.brain_home() / "knowledge.md"
+
+
+def check_index_key(key: str) -> str:
+    if not isinstance(key, str) or len(key) > 256 or not _INDEX_KEY.fullmatch(key):
+        raise TopicError(f"not an index: {key!r}")
+    return key
+
+
+def index_choices() -> dict:
+    text = _read_text(settings_path())
+    front, _ = parse(text or "")
+    def keys(name):
+        found = front.get(name) or []
+        return sorted({str(k) for k in found if isinstance(k, str) and _INDEX_KEY.fullmatch(str(k))}) \
+            if isinstance(found, list) else []
+    return {"pinned": keys("pinned_indexes"), "forbidden": keys("forbidden_indexes")}
+
+
+def choose_index(key: str, choice: str) -> dict:
+    """Pin, forbid or clear one index by its key; returns every choice."""
+    check_index_key(key)
+    if choice not in INDEX_CHOICES:
+        raise TopicError(f"the choice is {', '.join(INDEX_CHOICES)}")
+    with _LOCK:
+        path = settings_path()
+        text = _read_text(path)
+        front, body = parse(text or "")
+        pinned = [k for k in front.get("pinned_indexes") or [] if k != key]
+        forbidden = [k for k in front.get("forbidden_indexes") or [] if k != key]
+        if choice == "pin":
+            pinned.append(key)
+        elif choice == "forbid":
+            forbidden.append(key)
+        front["pinned_indexes"] = sorted(pinned)
+        front["forbidden_indexes"] = sorted(forbidden)
+        _write(path, render(front, body or SETTINGS_BODY), text)
+    return index_choices()
