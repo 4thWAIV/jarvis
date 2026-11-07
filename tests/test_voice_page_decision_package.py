@@ -84,3 +84,27 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert body == {"path": str(out / "lunch-decisions-1.0.0.zip")}
     assert data_paths.ensure_tool_token() not in said
     assert '"Open the Team lunch package."' in said
+
+
+def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, capsys):
+    from jarvis import make_package as mp
+    reason = dashboard_page.why_unavailable()
+    if reason:
+        pytest.skip(reason)
+    content = write(tmp_path / "in", json.loads(json.dumps(mp.PRESENTATION_EXAMPLE)))
+    out = tmp_path / "out"
+    code = mp.main([str(content), "--out", str(out), "--deliver-to", stand_in.url])
+    said = capsys.readouterr().out
+    if "Executable doesn't exist" in said:          # pragma: no cover
+        pytest.skip("no Playwright Chromium")
+    assert code == 0, said
+    for size in ("809x589", "662x489"):
+        for check in ("opened it by its title", "slides fit", "told to the end",
+                      "story reached every slide", "every beat pointed"):
+            assert any(f"ok: {size}: " in line and check in line
+                       for line in said.splitlines()), (size, check, said)
+        shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
+        assert shots == ["01-s1.png", "02-s2.png"]
+    assert "Choose" not in said and "spoken answer" not in said
+    [(path, _, body)] = stand_in.posts
+    assert body == {"path": str(out / "team-lunch-moved-1.0.0.zip")}
