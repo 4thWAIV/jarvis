@@ -74,11 +74,12 @@ await import("../frontend/src/captions.ts");
 const packages = await import("../frontend/src/packages.ts");
 const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
+await import("../frontend/src/knowledge.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
   for (let i = 0; i < 50; i++) {
-    if (workflows.workflows.get().value && subsystems.subsystems.get().value && work.workItems.get().value) return;
+    if (workflows.workflows.get().value && subsystems.subsystems.get().value && work.workList.get().value) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("fixtures never read");

@@ -9826,7 +9826,10 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
     except knowledge_api.Unavailable as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
-        return f"Nothing was done, sir: {e}"
+        # The engine's refusal can name what the call was given (a key, a
+        # kind, a target), so it is walled like the answers.
+        return ("Nothing was done, sir. The knowledge engine's refusal, which may "
+                "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
     text = json.dumps(answer, ensure_ascii=False)
     if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text
@@ -9845,17 +9848,19 @@ async def tool_knowledge_status(args: dict) -> str:
 
 
 async def tool_knowledge_search(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.search(
+    answer = await _knowledge_tool(args, lambda: knowledge_api.search(
         knowledge_calls, str(args.get("query") or ""), query_en=args.get("query_en"),
         include_untrusted=args.get("include_received", True) is not False,
         kinds=args.get("kinds"), limit=args.get("limit") or 10),
         "What JARVIS has read that matches, as JSON", "knowledge_search", walled=True)
+    return answer
 
 
 async def tool_knowledge_entity(args: dict) -> str:
-    return await _knowledge_tool(args, lambda: knowledge_api.entity(
+    answer = await _knowledge_tool(args, lambda: knowledge_api.entity(
         knowledge_calls, name=args.get("name"), key=args.get("key")),
         "Every match for that name and the first one's card, as JSON", "knowledge_entity", walled=True)
+    return answer
 
 
 async def tool_knowledge_proposals(args: dict) -> str:

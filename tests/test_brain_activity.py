@@ -125,9 +125,10 @@ def _turn_events(since, origin):
 async def test_a_turn_is_started_streams_and_completes(tmp_path):
     from jarvis import brain
     b = brain.Brain(_config(tmp_path))
+    before = brain_activity.feed.since()["seq"]
     await b.start()
     try:
-        assert [e["stage"] for e in _turn_events(0, "warmup")][-1] == "completed"
+        assert [e["stage"] for e in _turn_events(before, "warmup")][-1] == "completed"
         since = brain_activity.feed.since()["seq"]
         r = await b.turn(f"hello {SECRET}", origin="watcher")
         assert r.stop_reason == "result"
