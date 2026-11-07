@@ -61,7 +61,7 @@ def _item(deciding=True, quiet=False):
         blockers.insert(0, {"kind": "decision", "key": "engine", "title": DECISION["question"],
                             "text": "", "waits_for": []})
     return {
-        "id": "work-1", "title": "Speech migration", "source_kind": "folder",
+        "id": "work-1", "title": "Speech migration", "source_kind": "folder", "projects": [],
         "source_path": "/Users/someone/code/speech", "source": "present",
         "state": "waiting_on_tim" if deciding else "working", "reported_state": "working",
         "quiet": quiet, "latest_update": "Engine wired.",

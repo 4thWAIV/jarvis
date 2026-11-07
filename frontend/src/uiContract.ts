@@ -485,7 +485,7 @@ export const UI_CONTRACT = {
       "id": "main.takeover",
       "region": "main",
       "kind": "fixed",
-      "label": "Takeover bar (the item's name, the conversation's state, the notices, the microphone and Restore layout, in place of the centre tabs while a workflow or a page package has taken over)"
+      "label": "Takeover bar (the item's name, the conversation's state, the notices, the microphone and Restore layout, in place of the centre tabs while a workflow, a work item or a page package has taken over)"
     },
     {
       "id": "right.rail",
@@ -2574,7 +2574,7 @@ export const UI_CONTRACT = {
     },
     {
       "id": "layout.takeover",
-      "label": "Let the workflow or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
+      "label": "Let the workflow, work item or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
       "view": "main.takeover",
       "args": {},
       "required": [],
@@ -3680,6 +3680,7 @@ export const UI_CONTRACT = {
         "activity",
         "project",
         "header",
+        "takeover",
         "close",
         "banner",
         "source",
@@ -3723,6 +3724,7 @@ export const UI_CONTRACT = {
             "header",
             "state",
             "update",
+            "takeover",
             "close",
             "banner",
             "source",

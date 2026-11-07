@@ -10138,7 +10138,10 @@ async def _knowledge_tool(args: dict, work, what: str, tool: str, walled: bool) 
     except knowledge_api.Unavailable as e:
         return f"The knowledge engine cannot answer, sir: {e}. Answer from notes and memory instead."
     except knowledge_api.Refused as e:
-        return f"Nothing was done, sir: {e}"
+        # The engine's refusal can name what the call was given (a key, a
+        # kind, a target), so it is walled like the answers.
+        return ("Nothing was done, sir. The knowledge engine's refusal, which may "
+                "repeat what it was given:\n" + _wrap_untrusted(_KNOWLEDGE_WRAP_NAME, str(e)))
     text = json.dumps(answer, ensure_ascii=False)
     if not walled and len(text) <= REPLY_PAGE_CHARS:
         return text

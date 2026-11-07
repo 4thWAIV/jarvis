@@ -129,8 +129,16 @@ async def test_he_votes_in_the_frame_and_by_voice(page_playwright, page_url, dec
             await async_api.expect(frame.locator(".confirm")).to_be_visible()
             await frame.locator(".confirm .yes").click()
             await async_api.expect(frame.locator("#tally")).to_have_text("3 of 3 answered")
-            record = json.loads((package.folder / "results" / "decisions.json").read_text())
-            assert {k: v["answer"] for k, v in record.items()} == {
-                "kettle-kind": "tap", "tea-kinds": "selection", "selection-size": "three"}
+            # The tally moves before the save is back: wait for the record.
+            wanted = {"kettle-kind": "tap", "tea-kinds": "selection", "selection-size": "three"}
+            answers: dict = {}
+            for _ in range(80):
+                record = json.loads((package.folder / "results" / "decisions.json").read_text())
+                answers = {k: v["answer"] for k, v in record.items()}
+                if answers == wanted:
+                    break
+                await asyncio.sleep(0.1)
+            assert answers == wanted
+            await async_api.expect(frame.locator("#status")).to_have_text("Saved.")
         finally:
             await browser.close()

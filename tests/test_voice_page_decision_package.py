@@ -4,8 +4,8 @@ port above 19000, the voice page built by vite, a headless Chromium on its
 real package frame at both centre sizes, voting checked, and the story
 taken as a first-time user (waiting at each question, answered by click and
 by voice), stopped from the page and the brain's tool, and resumed. It then delivers to a stand-in JARVIS on loopback,
-never the live one, and the stand-in sees exactly one unpack, with the
-token, of the zip that was checked."""
+never the live one, and the stand-in sees exactly one delivery to its package inbox, with the
+token, of the bytes of the zip that was checked."""
 from __future__ import annotations
 
 import json
@@ -24,10 +24,11 @@ pytestmark = pytest.mark.page
 
 
 class _StandIn:
-    """POST /api/packages/local as JARVIS answers it, recorded."""
+    """POST /api/packages/inbox as JARVIS answers it, recorded: the zip's
+    bytes in, the package and its inbox row out (package_inbox_api.py)."""
 
     def __init__(self):
-        self.posts: list[tuple[str, str, dict]] = []
+        self.posts: list[tuple[str, str, bytes]] = []
         stand_in = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -35,10 +36,10 @@ class _StandIn:
                 pass
 
             def do_POST(self):                     # noqa: N802 (stdlib contract)
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                body = self.rfile.read(int(self.headers["Content-Length"]))
                 stand_in.posts.append((self.path, self.headers.get("Authorization", ""), body))
-                answer = json.dumps({"package": {"id": "team-lunch-local1"},
-                                     "unpacked": True}).encode()
+                answer = json.dumps({"package": {"id": "team-lunch-local1"}, "arrived": True,
+                                     "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(answer)))
@@ -88,14 +89,15 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert "list_packages found it by its title's words" in said
 
     [(path, authorization, body)] = stand_in.posts
-    assert path == "/api/packages/local"
+    assert path.partition("?")[0] == "/api/packages/inbox"
     assert authorization == f"Bearer {data_paths.ensure_tool_token()}"
-    assert body == {"path": str(out / "lunch-decisions-1.0.0.zip")}
+    assert body == (out / "lunch-decisions-1.0.0.zip").read_bytes()
     from jarvis import decision_stamp
     assert decision_stamp.problem(out / "lunch-decisions-1.0.0.zip",
                                   data_paths.ensure_tool_token()) is None, "stamped for it"
     assert data_paths.ensure_tool_token() not in said
-    assert '"Open the Team lunch package."' in said
+    assert "Arrived in Tim's package inbox as pkg-0123456789ab" in said
+    assert "Nothing is shown until he asks for it." in said
 
 
 def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, capsys):
@@ -123,4 +125,5 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
         assert not any(absent in line for line in lines if line.startswith("  ok: ")), \
             (absent, said)
     [(path, _, body)] = stand_in.posts
-    assert body == {"path": str(out / "team-lunch-moved-1.0.0.zip")}
+    assert path.partition("?")[0] == "/api/packages/inbox"
+    assert body == (out / "team-lunch-moved-1.0.0.zip").read_bytes()

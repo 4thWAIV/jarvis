@@ -50,6 +50,7 @@ import { PackageMark } from "./QueuePackages";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
+import { TakeoverButton } from "./TakeoverBar";
 import { answerWorkDecision, blockerWords, followUpWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
@@ -103,6 +104,7 @@ export function WorkDetail({ id }: { id: string }) {
           {STATE_WORDS[item.state]}</span>}
           {item?.state === "activity_unknown" && <small className="work-activity-reason">{t("right.work.activityUnknownReason")}</small>}
         {item?.history && <span className="work-history-pill">{t("main.work.inHistory")}</span>}
+        <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("work.close", {}))}>×</button>

@@ -292,7 +292,7 @@ export function whoWords(who: WorkWho): string {
 
 // ── the item open in the centre ──────────────────────────────────────────
 
-const slot = detailSlot<string>("work");
+const slot = detailSlot<string>("work", Object.is, (id) => id);
 
 export type WorkTab = CommandArgs["work.tab.select"]["tab"];
 export const WORK_TABS: readonly WorkTab[] = ["overview", "decisions", "blocking", "pieces", "reports"];

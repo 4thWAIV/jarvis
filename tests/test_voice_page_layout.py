@@ -42,6 +42,8 @@ LAYOUT = """() => {
           gapLeft: caption.left - left.right, gapRight: right.left - caption.right,
           leftBottom: left.bottom, panelBottom: panel.bottom,
           captionBottom: centre.getBoundingClientRect().bottom,
+          corner: parseFloat(getComputedStyle(document.documentElement)
+            .getPropertyValue('--centre-corner-height')) || 0,
           lastThing: Math.max(...[...document.querySelectorAll('.agents-view *')]
             .map(e => e.getBoundingClientRect().bottom))};
 }"""
@@ -71,10 +73,12 @@ async def test_the_footer_is_at_the_bottom_and_nothing_overlaps_it(page_playwrig
         # in the right panel's Agents tab, fills the panel to its bottom.
         # (The left column has room under the mic now: the agents moved.)
         assert abs(geo["leftBottom"] - geo["panelBottom"]) < 0.5, geo
-        # The Main view's stack ends level with them; the Conversation view's
-        # sits at the top, under the header.
+        # The Main view's stack ends level with them, less the microphone's
+        # corner it stops above (every view but Conversation); the
+        # Conversation view's sits at the top, under the header.
         if view:
-            assert abs(geo["captionBottom"] - geo["panelBottom"]) < 0.5, geo
+            assert geo["corner"] > 0, geo
+            assert abs(geo["captionBottom"] + geo["corner"] - geo["panelBottom"]) < 0.5, geo
         # As many whole rows as fit: what is left under the list is less
         # than another row (60px) and its gap.
         assert 0 <= geo["panelBottom"] - geo["lastThing"] < 68, geo

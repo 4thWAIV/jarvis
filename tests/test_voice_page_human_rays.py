@@ -20,7 +20,8 @@ import uuid
 import pytest
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
-pytestmark = pytest.mark.page
+# WebGL on: the rays run out of the main orb into each agent's, drawn with WebGL on.
+pytestmark = [pytest.mark.page, pytest.mark.webgl]
 
 from tests.test_agents_list_fits import async_api  # noqa: F401
 from tests.test_voice_page_rays import AGENTS, PRIMARY, SECOND, RAYS, _segments, _to
