@@ -275,6 +275,15 @@ and its deadline work the same whatever produces the rows.
   through the block pool; the two-hop walk measured 6.2 ms p95 on the
   synthetic corpus at a load of about 11. Reason: it already meets its
   10 ms budget, so resident adjacency can wait for importance scores.
+- A term's document frequency is read from its posting counts, which
+  count a superseded chunk until compaction merges it away. Reason: an
+  exact count at start would mean reading every chunk's text; the ranking is
+  exact after a compaction and over-counts only by unmerged updates.
+- Keyword search reads the newest state, not an older LSN. Reason: its
+  postings describe the newest chunks; an export reads documents, not
+  rankings.
+- Only chunk text is in the keyword index. Reason: text bodies belong to
+  chunks only (I8); labels and properties are in the general index.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

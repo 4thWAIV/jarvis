@@ -53,6 +53,7 @@ class Engine:
         self.store = None  # the storage core, opened by open()
         self.docs = None   # the document store over it
         self.graph = None  # the typed graph over the documents
+        self.lexical = None  # the keyword index over chunk text
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -82,6 +83,8 @@ class Engine:
         self.docs = DocumentStore(self.store)
         from jarvis.knowledge.graph import Graph
         self.graph = Graph(self.docs)
+        from jarvis.knowledge.lexical import Lexical
+        self.lexical = Lexical(self.docs)
 
     compact_in_child = True
 
@@ -145,7 +148,8 @@ class Engine:
 
 def _part_types() -> dict:
     from jarvis.knowledge.documents import IndexPart
-    return {t.name: t for t in (IndexPart,)}
+    from jarvis.knowledge.lexical import LexicalPart
+    return {t.name: t for t in (IndexPart, LexicalPart)}
 
 
 def default_parts() -> list:
