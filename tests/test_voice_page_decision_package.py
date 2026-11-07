@@ -110,13 +110,17 @@ def test_the_command_checks_a_presentation_without_votes(tmp_path, stand_in, cap
     if "Executable doesn't exist" in said:          # pragma: no cover
         pytest.skip("no Playwright Chromium")
     assert code == 0, said
+    lines = said.splitlines()
     for size in ("809x589", "662x489"):
-        for check in ("opened it by its title", "slides fit", "told to the end",
-                      "story reached every slide", "every beat pointed"):
-            assert any(f"ok: {size}: " in line and check in line
-                       for line in said.splitlines()), (size, check, said)
+        for check in ("opened it by its title", "the package frame is", "slides fit"):
+            assert any(f"ok: {size}: " in line and check in line for line in lines), \
+                (size, check, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
         assert shots == ["01-s1.png", "02-s2.png"]
-    assert "Choose" not in said and "spoken answer" not in said
+    for check in ("the story went on to its end", "every beat told pointed"):
+        assert any(line.startswith("  ok: ") and check in line for line in lines), (check, said)
+    for absent in ("vote control", "stop ", "resume", "waits at"):
+        assert not any(absent in line for line in lines if line.startswith("  ok: ")), \
+            (absent, said)
     [(path, _, body)] = stand_in.posts
     assert body == {"path": str(out / "team-lunch-moved-1.0.0.zip")}
