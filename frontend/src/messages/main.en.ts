@@ -976,6 +976,8 @@ export const mainEn = {
   "main.updates.event.work.decision_needed": "{name} needs your decision",
   "main.updates.event.work.blocked": "{name} is blocked",
   "main.updates.event.work.done": "{name} is done",
+  "main.updates.event.knowledge_proposal.about": "JARVIS proposes linking a document to {name}; it waits for your yes",
+  "main.updates.event.knowledge_proposal.same_as": "JARVIS proposes that {name} may be the same as another topic; it waits for your yes",
   "main.updates.event.communications.down": "Communications with the agents are down",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",
   "main.updates.event.brain.sign_in": "The brain's login has expired: run claude in a terminal and log in, then restart JARVIS",

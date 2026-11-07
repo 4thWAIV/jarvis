@@ -89,7 +89,7 @@ export async function setAway(away: boolean): Promise<void> {
 /** Who or what an item is about, as its source wrote it, or "". */
 export function itemName(item: AttentionItem): string {
   const u = item.untrusted;
-  return u.agent ?? u.sender ?? u.project ?? u.package ?? u.workflow ?? u.work ?? u.to ?? "";
+  return u.agent ?? u.sender ?? u.project ?? u.package ?? u.workflow ?? u.work ?? u.to ?? u.topic ?? "";
 }
 
 /** One item in words: its kind and event's catalog entry, with the name it

@@ -354,6 +354,19 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "knowledge_ingest.replace_authored": (
+        "it builds engine route paths from a topic's own key (`topic:<slug>`, "
+        "a slug knowledge_links checks against [a-z0-9-]) and reads edges' "
+        "kinds and keys back from the engine; nothing of anyone's words is "
+        "printed or spoken. Driven by tests/test_knowledge_links.py"),
+    "knowledge_links.change_topic": (
+        "it changes the owner's own topic front matter; the only text it builds "
+        "is a refusal naming the fixed status words and alias classes, never a "
+        "value a session wrote. Driven by tests/test_knowledge_links.py"),
+    "knowledge_links.status": (
+        "it returns a topic's status only when it is one of the fixed STATUSES "
+        "words, else `unknown`, read from the owner's own topic file. Driven by "
+        "tests/test_knowledge_links.py"),
     "knowledge_ingest.files": (
         "the labels it builds are the names of files in the brain's own note "
         "folders and paths in folders he registered, read through "

@@ -55,6 +55,7 @@ class Engine:
         self.graph = None  # the typed graph over the documents
         self.lexical = None  # the keyword index over chunk text
         self.vectors = None  # the vector index and its embedding worker
+        self.linker = None   # mentions and proposals
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -89,6 +90,9 @@ class Engine:
         from jarvis.knowledge import embedder
         from jarvis.knowledge.vectors import VectorIndex
         self.vectors = VectorIndex(self.docs, embedder.current())
+        from jarvis.knowledge.linker import Linker
+        self.linker = Linker(self.docs, self.graph, self.lexical, self.transaction)
+        self._link_lock = threading.Lock()
 
     compact_in_child = True
 
@@ -133,6 +137,11 @@ class Engine:
         mark_ops = [Op(META, ("wm:" + k).encode(), canonical(v)) for k, v in marks.items()]
         return self.docs.write(puts, deletes,
                                extra=lambda pending: self.graph.ops(edges, edge_deletes, pending) + mark_ops)
+
+    def link(self) -> dict:
+        """Run the linker over every topic; one run at a time."""
+        with self._link_lock:
+            return self.linker.run()
 
     def watermarks(self) -> dict:
         """Each ingest source's position, durable with the documents it

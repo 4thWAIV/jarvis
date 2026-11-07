@@ -2467,6 +2467,21 @@ def _knowledge_floor_busy() -> bool:
     return conversation_floor.state() != attention.FLOOR_IDLE
 
 
+def _on_knowledge_proposals(new: list, gone: list) -> None:
+    """Each proposal the linker makes is an attention item, shown and never
+    spoken, and never acted on: only his yes writes it (knowledge_links).
+    One that is gone (accepted, turned down, or no longer found) is
+    resolved."""
+    for p in new:
+        _attend("knowledge_proposal", p["id"], str(p.get("kind") or "about"),
+                facts={"kind": p.get("kind")},
+                untrusted={"topic": p.get("topic_name") or "", "document": p.get("label") or "",
+                           "other": p.get("other_name") or ""},
+                audible=False)
+    for pid in gone:
+        _attention_resolved("knowledge_proposal", pid)
+
+
 def start_knowledge() -> None:
     global knowledge, _knowledge_task
     from jarvis import knowledge_client, knowledge_runtime
@@ -2475,6 +2490,7 @@ def start_knowledge() -> None:
     knowledge = knowledge_runtime.KnowledgeRuntime(
         floor_busy=_knowledge_floor_busy,
         cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    knowledge.proposal_listeners.append(_on_knowledge_proposals)
     _knowledge_task = _spawn(knowledge.run())
     log.info("knowledge engine: starting after startup settles")
 

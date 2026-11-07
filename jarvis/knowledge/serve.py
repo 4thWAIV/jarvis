@@ -205,6 +205,17 @@ def _watermarks(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"watermarks": engine.watermarks()})
 
 
+@route("POST", "/v1/link")
+@_guard
+def _link(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.link())
+
+
+@route("GET", "/v1/proposals")
+def _proposals(engine: Engine, request: Request) -> Answer:
+    return Answer(200, {"proposals": engine.linker.proposals, "last": engine.linker.last})
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

@@ -45,7 +45,7 @@ SEARCH_BYTE_BUDGET = 256 * 1024 * 1024
 TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024    # a bigger one is not rendered
 LINE_CHARS = 500               # a long message is shown as lines this long
 
-NOTE_DIRS = ("journal", "memory", "projects")
+NOTE_DIRS = ("journal", "memory", "projects", "topics")
 NOTE_SUFFIX = ".md"
 TRANSCRIPT_LABEL = "transcript"
 

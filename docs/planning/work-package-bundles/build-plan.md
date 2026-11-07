@@ -335,6 +335,21 @@ and its deadline work the same whatever produces the rows.
 - A pass left behind by a server that went away is killed at the next
   start only when `ps` shows it is an ingest pass. Reason: a recorded pid
   may have been reused.
+- The linker runs after each ingest pass over every topic, finding its
+  candidate chunks through the keyword index, rather than on each chunk as
+  it is written. Reason: an alias change then relinks everything at once,
+  and the linker never reads every chunk.
+- Proposals are of two kinds, `about` (a document to a topic) and
+  `same_as` (two topics sharing a name or alias); an ambiguous alias alone
+  is evidence for an `about` proposal, not a proposal of its own. Accepting
+  writes `about_sources` or `same_as` in the topic's front matter; turning
+  one down writes `not_linked`. Reason: every accepted link is then one he
+  can read and edit, and chunk-level links would be noise in his files.
+- Proposals are attention items that are shown and never spoken, and are
+  resolved when they go away. Reason: they wait for his yes and are not
+  news.
+- Until projects exist (phase 1), topics link only to topics and documents.
+  Reason: there is no project record to name.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

@@ -177,6 +177,7 @@ class Stats:
     forgotten: int = 0
     bytes: int = 0
     more: bool = False
+    linked: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -245,6 +246,40 @@ class Writer:
                  if item.replace else [])
         self.call("POST", "/v1/txn", {"puts": puts, "deletes": stale, "watermarks": marks})
         self.stats.chunks += len(puts) - 1
+
+    def topic_keys(self) -> list[str]:
+        found = self.call("POST", "/v1/find", {"kinds": ["topic"], "limit": 200})["documents"]
+        return [d["_key"] for d in found]
+
+    def _exists(self, key: str) -> bool:
+        try:
+            self.call("GET", f"/v1/nodes/{quote(key, safe=':')}", None)
+            return True
+        except LookupError:
+            return False
+
+    def replace_authored(self, topic: str, want: list[dict]) -> None:
+        """The authored edges on `topic` become exactly `want`."""
+        # What this topic's own file asserts: its outgoing links, and the
+        # documents it names as about it. Links other topics' files make into
+        # it are theirs.
+        have = set()
+        for direction, kind in (("out", None), ("in", "about")):
+            q = f"/v1/edges/{quote(topic, safe=':')}?dir={direction}&limit=1000"
+            if kind:
+                q += f"&kind={kind}"
+            for e in self.call("GET", q, None)["edges"]:
+                if e.get("origin") == "authored":
+                    have.add((e["from"], e["kind"], e["to"]))
+        wanted = {}
+        for e in want:
+            needs = e.pop("_needs", None)
+            if needs is None or self._exists(needs):
+                wanted[(e["from"], e["kind"], e["to"])] = e
+        drop = [{"from": a, "kind": k, "to": b} for a, k, b in have - set(wanted)]
+        add = [e for key, e in wanted.items() if key not in have]
+        if drop or add:
+            self.call("POST", "/v1/txn", {"edges": add, "edge_deletes": drop})
 
     def forget(self, sources: list[str], marks: dict) -> None:
         if sources:
@@ -331,7 +366,7 @@ class Notes(Ledgered):
 
     def files(self):
         home = data_paths.brain_home()
-        for folder in ("memory", "journal", "projects", "topics"):
+        for folder in ("memory", "journal", "projects"):     # topics: the Topics adapter
             base = home / folder
             if not base.is_dir() or base.is_symlink():
                 continue
@@ -345,6 +380,51 @@ class Notes(Ledgered):
                 rel = f"{folder}/{path.name}"
                 yield (f"note:{rel}", lambda p=path: _read_note(p), info.st_size, info.st_mtime,
                        jref("note", folder, path.name), rel)
+
+
+class Topics(Adapter):
+    """Topic files (knowledge_links): each a topic document with its aliases
+    and status, its words as a document of chunks, and the links he asserted
+    as authored edges, replacing the ones an earlier version of the file
+    made. Topics are all put before any link, so a link may name a topic
+    later in the list; a link to a topic or document the engine does not
+    hold is left for the next pass."""
+    name = "topics"
+    EDGE = {"relates_to": "relates_to", "depends_on": "depends_on", "stage_of": "stage_of",
+            "precedes": "precedes", "same_as": "same_as"}
+
+    def run(self, writer: Writer, mark: dict, budget: Budget) -> bool:
+        from jarvis import knowledge_links
+        found = knowledge_links.topics()
+        digest = hashlib.sha256("\x00".join(t.text for t in found).encode()).hexdigest()
+        if mark.get("digest") == digest:
+            return False
+        budget.spend(sum(len(t.text) for t in found))
+        known = {t.slug for t in found}
+        puts = [{"_key": f"topic:{t.slug}", "_kind": "topic", "_label": t.name, "_status": t.status,
+                 "_source": jref("note", "topics", f"{t.slug}.md"), "_trust": "own",
+                 "pinned": t.pinned,
+                 "aliases": {"exact": t.aliases("exact"), "ambiguous": t.aliases("ambiguous")},
+                 "front": {"not_linked": t.links("not_linked")}} for t in found]
+        before = {d.removeprefix("topic:") for d in writer.topic_keys()}
+        gone = sorted(f"topic:{s}" for s in before - known)
+        writer.call("POST", "/v1/txn", {"puts": puts, "deletes": gone})
+        for t in found:
+            body = Item(jref("note", "topics", f"{t.slug}.md"), f"topics/{t.slug}.md", "own", t.body)
+            writer.put(body, {})
+            want = []
+            for field_name, kind in self.EDGE.items():
+                for target in t.links(field_name):
+                    if target in known and target != t.slug:
+                        want.append({"from": f"topic:{t.slug}", "kind": kind, "to": f"topic:{target}",
+                                     "origin": "authored"})
+            for source in t.links("about_sources"):
+                want.append({"from": doc_key(source), "kind": "about", "to": f"topic:{t.slug}",
+                             "origin": "authored", "_needs": doc_key(source)})
+            writer.replace_authored(f"topic:{t.slug}", want)
+        writer.call("POST", "/v1/txn", {"watermarks": {self.name: {"digest": digest}}})
+        writer.stats.documents += len(found)
+        return False
 
 
 class Folders(Ledgered):
@@ -518,11 +598,11 @@ class Workflows(Adapter):
         return False
 
 
-ADAPTERS: tuple[type[Adapter], ...] = (Notes, Conversation, Runs, Workflows, Folders)
+ADAPTERS: tuple[type[Adapter], ...] = (Notes, Topics, Conversation, Runs, Workflows, Folders)
 
 
 def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Optional[Budget] = None,
-             adapters: Optional[list[Adapter]] = None) -> Stats:
+             adapters: Optional[list[Adapter]] = None, link: bool = True) -> Stats:
     stats = Stats()
     writer = Writer(call, stats)
     budget = budget or Budget()
@@ -537,6 +617,12 @@ def run_pass(call: Callable[[str, str, Optional[dict]], dict], *, budget: Option
         if budget.spent:
             stats.more = True
             break
+    if link:
+        try:
+            linked = call("POST", "/v1/link", {})
+            stats.linked = linked.get("added", 0) + linked.get("removed", 0)
+        except Exception as e:  # noqa: BLE001
+            stats.errors.append(f"linker: {type(e).__name__}: {e}")
     return stats
 
 

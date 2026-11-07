@@ -41,6 +41,7 @@ log = logging.getLogger("jarvis.knowledge_runtime")
 START_AFTER_SEC = 10.0
 INGEST_EVERY_SEC = 600.0
 INGEST_AGAIN_SEC = 5.0
+PROPOSALS_EVERY_SEC = 60.0
 PACE_EVERY_SEC = 1.0
 CPU_HOLD_PERCENT = 70.0
 CPU_HOLD_MAX_SEC = 60.0
@@ -221,6 +222,10 @@ class KnowledgeRuntime:
         self.pace_listeners: list[Callable[[str], None]] = []
         self.ingest = IngestScheduler(self.supervisor)
         self.pace_listeners.append(self.ingest)
+        # Told (new, gone) when the linker's proposals change; the server
+        # records each as an attention item and resolves it when it goes.
+        self.proposal_listeners: list[Callable[[list[dict], list[str]], None]] = []
+        self.proposals: dict[str, dict] = {}
         self._sent: Optional[tuple[int, str]] = None     # (engine pid, mode) last told
         self.last_cpu: Optional[float] = None
 
@@ -231,12 +236,16 @@ class KnowledgeRuntime:
         await asyncio.to_thread(self.supervisor.start)
         self.started = True
         last_tick = time.monotonic()
+        last_proposals = 0.0
         while True:
             try:
                 await self.look_pace()
                 if time.monotonic() - last_tick >= knowledge_client.PING_EVERY_SEC:
                     last_tick = time.monotonic()
                     await asyncio.to_thread(self.supervisor.tick)
+                if time.monotonic() - last_proposals >= PROPOSALS_EVERY_SEC and self.supervisor.pid():
+                    last_proposals = time.monotonic()
+                    await self.look_proposals()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - logged, looked at again next time
@@ -266,6 +275,26 @@ class KnowledgeRuntime:
             except (knowledge_client.EngineUnavailable, knowledge_client.KnowledgeRefused) as e:
                 log.debug("could not tell the engine its pace: %s", e)
         return mode
+
+    async def look_proposals(self) -> None:
+        try:
+            found = await asyncio.to_thread(self.supervisor.client.call, "GET", "/v1/proposals")
+        except (knowledge_client.EngineUnavailable, knowledge_client.KnowledgeRefused) as e:
+            log.debug("could not read the proposals: %s", e)
+            return
+        self.take_proposals(found.get("proposals") or [])
+
+    def take_proposals(self, proposals: list[dict]) -> None:
+        now = {p["id"]: p for p in proposals if isinstance(p, dict) and p.get("id")}
+        new = [p for pid, p in now.items() if pid not in self.proposals]
+        gone = [pid for pid in self.proposals if pid not in now]
+        self.proposals = now
+        if new or gone:
+            for listener in self.proposal_listeners:
+                try:
+                    listener(new, gone)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("knowledge proposal listener: %s", e)
 
     async def stop(self) -> None:
         await asyncio.to_thread(self.ingest.stop)

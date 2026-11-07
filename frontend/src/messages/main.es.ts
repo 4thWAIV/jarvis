@@ -932,6 +932,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.updates.event.work.decision_needed": "{name} necesita su decisión",
   "main.updates.event.work.blocked": "{name} está bloqueado",
   "main.updates.event.work.done": "{name} está hecho",
+  "main.updates.event.knowledge_proposal.about": "JARVIS propone vincular un documento con {name}; espera su sí",
+  "main.updates.event.knowledge_proposal.same_as": "JARVIS propone que {name} puede ser el mismo tema que otro; espera su sí",
   "main.updates.event.communications.down": "Las comunicaciones con los agentes no funcionan",
   "main.updates.event.brain.down": "El cerebro no funciona; vea Diagnóstico",
   "main.updates.event.brain.sign_in": "La sesión del cerebro caducó: ejecute claude en una terminal e inicie sesión, luego reinicie JARVIS",
