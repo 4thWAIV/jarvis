@@ -30,6 +30,7 @@ import { signOff } from "./packageInbox";
 import { entryUrl, storyRunning, storyState, tellStory, type PackageInfo } from "./packages";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
+import { TakeoverButton } from "./TakeoverBar";
 
 export function PackageView({ info }: { info: PackageInfo }) {
   const t = useT();
@@ -52,6 +53,7 @@ export function PackageView({ info }: { info: PackageInfo }) {
           <p>{info.purpose}</p>
         </div>
         <DoneButton id={info.id} onSaid={setSaid} target={ui.part("done")} />
+        <TakeoverButton partRef={ui.part("takeover")} />
         <button type="button" className="workflow-close" title={t("main.common.close")}
                 aria-label={t("main.common.close")} ref={ui.part("close")}
                 {...bindingProps(bind("package.close", {}))}>×</button>

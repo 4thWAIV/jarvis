@@ -75,6 +75,7 @@ const packages = await import("../frontend/src/packages.ts");
 const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
 await import("../frontend/src/knowledge.ts");
+const takeoverKey = await import("../frontend/src/takeoverKey.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
@@ -600,6 +601,29 @@ await parity("takeover: the flyout closes, the takeover stays", [
   assert.deepEqual(nav.layout.get(), { mode: "normal" });
   await dispatch("package.close", {}, { actor: "human" });
   passed.push("takeover: a package, and another package restores it");
+}
+
+{
+  // Option+Shift+T, by the physical key: takes over what the centre shows,
+  // restores while taken over, and does nothing in a text field or with
+  // nothing to take over.
+  await reset();
+  const press = (over: Record<string, unknown> = {}) => takeoverKey.takeoverKeyCommand({
+    altKey: true, shiftKey: true, ctrlKey: false, metaKey: false, code: "KeyT",
+    target: { tagName: "DIV" } as unknown as EventTarget, ...over });
+  assert.equal(press(), null, "nothing to take over on Conversation");
+  await dispatch("workflow.open", { workflowId: "wf-1" }, { actor: "human" });
+  assert.equal(press(), "layout.takeover");
+  assert.equal(press({ target: { tagName: "TEXTAREA" } }), null);
+  assert.equal(press({ target: { tagName: "INPUT" } }), null);
+  assert.equal(press({ target: { tagName: "DIV", isContentEditable: true } }), null);
+  assert.equal(press({ shiftKey: false }), null);
+  assert.equal(press({ metaKey: true }), null);
+  assert.equal(press({ code: "KeyR" }), null);
+  await dispatch("layout.takeover", {}, { actor: "human" });
+  assert.equal(press(), "layout.restore");
+  assert.equal(press({ target: { tagName: "SELECT" } }), null);
+  passed.push("takeover key: toggles, never while typing");
 }
 
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so

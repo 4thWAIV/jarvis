@@ -3244,6 +3244,7 @@ export const UI_CONTRACT = {
         "state",
         "tasks",
         "header",
+        "takeover",
         "close",
         "dismiss",
         "tab.overview",
@@ -3277,6 +3278,7 @@ export const UI_CONTRACT = {
           "parts": [
             "header",
             "state",
+            "takeover",
             "close",
             "dismiss",
             "tab.overview",
@@ -3458,6 +3460,7 @@ export const UI_CONTRACT = {
         "row",
         "state",
         "header",
+        "takeover",
         "close",
         "transcript",
         "earlier"
@@ -3482,6 +3485,7 @@ export const UI_CONTRACT = {
             "row",
             "state",
             "header",
+            "takeover",
             "close",
             "transcript",
             "earlier"
@@ -4195,6 +4199,7 @@ export const UI_CONTRACT = {
         "header",
         "frame",
         "done",
+        "takeover",
         "close",
         "story",
         "tell",

@@ -4151,6 +4151,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .takeover-voice #stop-slot[data-shown="false"] { display: none; }
 .takeover-voice #hush { height: 28px; padding: 0 12px; font-size: 12px; letter-spacing: 0.1em; }
 .takeover-restore { flex: none; white-space: nowrap; }
+/* Take over, beside × in a workflow's or a package's head; it takes the
+   × 's place at the right end. */
+.takeover-enter { flex: none; margin-left: auto; white-space: nowrap; }
+.takeover-enter + .workflow-close, .workflow-detail-dismiss + .takeover-enter { margin-left: 0; }
 
 /* The right panel folded to a rail of its six tab icons, each keeping its
    mark; the tab an icon opens is drawn over the takeover beside it. */

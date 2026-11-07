@@ -18,10 +18,12 @@ import { OrbControl } from "./OrbControl";
 import { TeamServerTile } from "./TeamServerTile";
 import { startHumanActivity } from "./humanActivity";
 import { startJarvis } from "./jarvis";
+import { startTakeoverKey } from "./takeoverKey";
 import { layout } from "./uiNavigation";
 
 export function App() {
   useEffect(startHumanActivity, []);
+  useEffect(startTakeoverKey, []);
   useFirstRunSetup();
   // The page's arrangement, for the stylesheet: every centre view's right
   // edge moves to the rail while something has taken over (style.css).

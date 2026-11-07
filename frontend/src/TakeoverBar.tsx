@@ -18,7 +18,8 @@ import { CENTRE_SOCKET, readHistoryAgain, useControlView } from "./ConversationV
 import { ControlSummary } from "./conversation/ConversationControl";
 import { useT } from "./locale";
 import { MicHost } from "./MicControl";
-import { bind, bindingProps } from "./uiNavigation";
+import { bind, bindingProps, layout } from "./uiNavigation";
+import { useSyncExternalStore } from "react";
 import { useUiTarget } from "./uiRegistry";
 import "./conversation/conversation.css";
 
@@ -42,5 +43,20 @@ export function TakeoverBar({ name }: { name: string }) {
         {t("main.takeover.restore")}
       </button>
     </div>
+  );
+}
+
+/** Take over, beside × in a workflow's and a page package's head: runs
+ *  `layout.takeover`, as Option+Shift+T and the brain's request do. Not
+ *  drawn while something has taken over: Restore layout is in the bar. */
+export function TakeoverButton({ partRef }: { partRef: (el: Element | null) => void }) {
+  const t = useT();
+  const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
+  if (takenOver) return null;
+  return (
+    <button type="button" className="folder-button takeover-enter" title={t("main.takeover.enterTitle")}
+            ref={partRef} {...bindingProps(bind("layout.takeover", {}))}>
+      {t("main.takeover.enter")}
+    </button>
   );
 }

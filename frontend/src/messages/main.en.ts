@@ -857,6 +857,8 @@ export const mainEn = {
   // workflow or a page package has taken over the page, and the right rail
   // (RightPanel.tsx) the right panel folds to.
   "main.takeover.label": "Taken over",
+  "main.takeover.enter": "Take over",
+  "main.takeover.enterTitle": "Give this the centre and the right side (Option+Shift+T)",
   "main.takeover.restore": "Restore layout",
   "main.takeover.restoreTitle": "Bring back the centre tabs and the right panel",
   "main.takeover.rail": "Right panel tabs",

@@ -184,3 +184,49 @@ async def test_a_workflow_takes_over_and_another_view_or_closing_it_restores(pag
             assert (restore["status"], restore["reason"]) == ("unavailable", "no-entity"), restore
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_take_over_by_its_button_and_by_the_key_never_while_typing(page_url):
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url, "1440", [("**/api/workflows**", _Server())])
+        try:
+            bar = page.locator("#takeover-bar")
+            # On Conversation the key does nothing.
+            await page.keyboard.press("Alt+Shift+KeyT")
+            assert await page.evaluate("document.documentElement.dataset.layout") == "normal"
+
+            await page.click(".right-tabs [role=tab][title=Work]")
+            await page.locator(".workflow-row[data-workflow-id=wf-1]").click()
+            await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text("Speech migration")
+            button = page.locator("#workflow-detail .takeover-enter")
+            assert await button.get_attribute("data-ui-command") == "layout.takeover"
+            await button.click()
+            await async_api.expect(bar).to_be_visible()
+            # Taken over, Take over gives way to Restore layout in the bar.
+            await async_api.expect(button).to_have_count(0)
+            await _shot(page, "workflow-taken-over")
+            await page.click("#takeover-bar .takeover-restore")
+            await async_api.expect(bar).to_have_count(0)
+
+            # The key toggles it from anywhere but a text field.
+            await page.locator("#workflow-detail .workflow-detail-name").click()
+            await page.keyboard.press("Alt+Shift+KeyT")
+            await async_api.expect(bar).to_be_visible()
+            await page.keyboard.press("Alt+Shift+KeyT")
+            await async_api.expect(bar).to_have_count(0)
+            await page.evaluate("""() => { const f = document.createElement('input'); f.id = 'typing-here';
+                                           document.body.appendChild(f); f.focus(); }""")
+            await page.keyboard.press("Alt+Shift+KeyT")
+            await page.wait_for_timeout(300)
+            assert await bar.count() == 0
+
+            # The brain's request, then × on the item: the layout comes back with it.
+            await voice.navigate("layout.takeover", {})
+            await async_api.expect(bar).to_be_visible()
+            await page.evaluate("document.getElementById('typing-here').remove()")
+            closed = await voice.navigate("workflow.close", {})
+            assert "layout.restored" in closed["effects"], closed
+            await async_api.expect(bar).to_have_count(0)
+        finally:
+            await browser.close()

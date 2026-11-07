@@ -816,6 +816,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.queue.location.moved": "Ya no está en la carpeta de descargas",
   "main.queue.location.failed": "La descarga falló",
   "main.takeover.label": "Vista ampliada",
+  "main.takeover.enter": "Ampliar",
+  "main.takeover.enterTitle": "Dele a esto el centro y el lado derecho (Opción+Mayús+T)",
   "main.takeover.restore": "Restaurar diseño",
   "main.takeover.restoreTitle": "Vuelva a mostrar las pestañas del centro y el panel derecho",
   "main.takeover.rail": "Pestañas del panel derecho",
