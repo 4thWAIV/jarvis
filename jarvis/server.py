@@ -2470,6 +2470,17 @@ def _offer_project_candidates(found: list) -> None:
                 audible=False)
 
 
+def _projects_for_path(path: str) -> list[dict]:
+    """The Work tab's project chip: never fails an item's listing."""
+    if projects is None:
+        return []
+    try:
+        return projects.projects_for_path(path)
+    except Exception:  # noqa: BLE001 - a chip is not worth a listing
+        log.debug("projects for a work item could not be read", exc_info=True)
+        return []
+
+
 def start_projects() -> None:
     global projects
     from jarvis import project_service, project_store
@@ -2482,6 +2493,7 @@ def start_projects() -> None:
         projects = None
         return
     projects.answered = lambda cid: _attention_resolved("project_candidate", cid)
+    work_api.projects_for_path = _projects_for_path
 
     async def offer() -> None:
         try:
@@ -10831,6 +10843,13 @@ def _work_blocker(b) -> str:
                                              after=", ".join(b.waits_for))
 
 
+def _work_projects(item) -> str:
+    """His projects holding its source, as the Work tab's row names them
+    (`work_api.projects_for_path`), or "" for none."""
+    found = work_api.projects_for_path(item.source_path)
+    return ("Projects: " + ", ".join(f"{p['name']} ({p['id']})" for p in found) + ".") if found else ""
+
+
 def _work_line(item) -> str:
     """One item on the list: its state, how many decisions wait on him, how
     many of its pieces are blocked or waiting on him, its one useful update,
@@ -10845,6 +10864,7 @@ def _work_line(item) -> str:
     return (f"{item.id}: {item.title}. {item.state}{', no recent update' if item.quiet else ''}"
             + (", closed" if item.closed_at else "")
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
+            + (f" {named}" if (named := _work_projects(item)) else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
 
@@ -10860,6 +10880,7 @@ def _work_detail(item) -> str:
              + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
+             _work_projects(item) or "Projects: none holds its source.",
              f"Latest update: {item.latest_update}"]
     lines += [f"held up by {_work_blocker(b)}" for b in item.blockers]
     names = work_api.WhoNames()

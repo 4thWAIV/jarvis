@@ -124,7 +124,7 @@ export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Ob
 
 /** The close commands that take nothing and only let their slot go. */
 type PlainClose = "work.close" | "workflow.close" | "thread.close" | "voice.diagnostics.close" | "subsystem.close" | "network.close"
-  | "package.close" | "bundle.member.close" | "knowledge.close";
+  | "package.close" | "bundle.member.close" | "knowledge.close" | "project.close";
 
 /** A slot's close command: offered while the slot holds an item.
  *  `closed`, when given, is told the item it let go, whoever closed it. */

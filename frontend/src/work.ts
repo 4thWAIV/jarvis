@@ -127,6 +127,8 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  /** His projects holding its source, worked out when read. */
+  projects: { id: string; name: string }[];
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */

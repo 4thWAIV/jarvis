@@ -124,6 +124,10 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
           <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
             {STATE_WORDS[item.state]}</span>
         </span>
+        {item.projects.length > 0 && (
+          <span className="work-row-project" ref={ui.part("project")}>
+            {t("right.work.project", { names: item.projects.map((p) => p.name).join(", ") })}</span>
+        )}
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
           {deciding ? t("right.work.decision", { question: item.headline })
             : item.quiet ? t("right.work.quiet") : item.headline}</span>

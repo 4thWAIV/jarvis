@@ -171,6 +171,14 @@
       "entity": "member"
     },
     {
+      "id": "main.project",
+      "region": "main",
+      "kind": "detail",
+      "label": "Project",
+      "tab": "project",
+      "entity": "project"
+    },
+    {
       "id": "main.knowledge",
       "region": "main",
       "kind": "detail",
@@ -258,7 +266,8 @@
             "package",
             "file",
             "settings",
-            "knowledge"
+            "knowledge",
+            "project"
           ]
         }
       },

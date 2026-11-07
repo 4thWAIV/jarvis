@@ -108,6 +108,18 @@ class ProjectService:
                 out.append({"session_id": sid, "name": name})
         return out
 
+    def projects_for_path(self, path: str) -> list[dict]:
+        """His projects holding a path on this Mac: the registered folder
+        holding it (`folder_for_cwd`), then the projects that folder is in.
+        Worked out when asked, never stored."""
+        svc = self._folders()
+        folder = svc.folder_for_cwd(path) if svc is not None and path else None
+        if folder is None:
+            return []
+        owners = set(self.owners())
+        return [{"id": p.id, "name": p.display_name} for p in self.store.projects_of_folder(folder.id)
+                if p.owner_id in owners]
+
     def detail(self, reference: str) -> dict:
         p = self.resolve(reference)
         folders = [{**self._folder_facts(f.folder_id), "part": f.part, "is_home": f.is_home,
