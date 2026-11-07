@@ -9494,13 +9494,14 @@ def _workflow_recorded(w, event) -> None:
 async def _watch_workflow_silence() -> None:
     """Say once when a running workflow stops reporting. Never raises out."""
     async def look_for_quiet() -> None:
-        _attend_unfollowed(await asyncio.to_thread(work_store.listing))
         for w in await asyncio.to_thread(workflow_store.active):
             if w.state == workflow_store.SILENT and w.id not in _workflows_said_silent:
                 _workflows_said_silent.add(w.id)
                 _send_to_session_clients({"type": "workflows"})
                 _attend("workflow", w.id, "gone_quiet",
                         untrusted={"workflow": str(w.name or "")})
+        # And a Work answer of his nobody has acted on (work_store.FollowUp).
+        _attend_unfollowed(await asyncio.to_thread(work_store.listing))
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
@@ -10698,7 +10699,7 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
     if p.evidence:
         line += "; evidence: " + ", ".join(f"{e.kind} {e.value}" for e in p.evidence)
     if p.until:
-        line += f"; waits for his answer {p.until}, then {p.then or work_store.WORKING}"
+        line += f"; held by {', '.join(p.until)}, then {p.then or work_store.READY}"
     elif p.unlinked:
         line += "; waiting, no link to an answer"
     return line
@@ -10707,13 +10708,13 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
 # How each kind of blocker reads to the brain (work_store.BLOCKER_KINDS).
 _WORK_BLOCKER_SAID = {
     work_store.DECISION_BLOCKER: "his decision {key}: {title}",
-    work_store.ITEM_BLOCKED: "the item is blocked: {text}",
-    work_store.PIECE_BLOCKED: "piece {key} ({title}) is blocked: {text}",
-    work_store.PIECE_WAITING: "piece {key} ({title}) waits on him: {text}",
+    work_store.ITEM_BLOCKED: "the item is blocked{held}: {text}",
+    work_store.PIECE_BLOCKED: "piece {key} ({title}) is blocked{held}: {text}",
+    work_store.PIECE_WAITING: "piece {key} ({title}) waits on him{held}: {text}",
     work_store.PIECE_AFTER: "piece {key} ({title}) waits for {after}",
     work_store.NO_FOLLOW_UP: ("answered, no follow-up: he answered {key} ({title}) and "
                               "{text} has reported nothing since"),
-    work_store.ITEM_WAITING: "the item waits on him, with no decision open: {text}",
+    work_store.ITEM_WAITING: "the item waits on him{held}: {text}",
 }
 # Beside a wait on him with no link to an answer, open more than a day.
 _WORK_UNLINKED_SAID = " (waiting, no link to an answer)"
@@ -10721,7 +10722,8 @@ _WORK_UNLINKED_SAID = " (waiting, no link to an answer)"
 
 def _work_blocker(b) -> str:
     text = b.text or ("its asker" if b.kind == work_store.NO_FOLLOW_UP else "no note")
-    return (_WORK_BLOCKER_SAID[b.kind].format(key=b.key, title=b.title, text=text,
+    held = f" by {', '.join(b.waits_for)}" if b.waits_for else ""
+    return (_WORK_BLOCKER_SAID[b.kind].format(key=b.key, title=b.title, text=text, held=held,
                                               after=", ".join(b.waits_for))
             + (_WORK_UNLINKED_SAID if b.unlinked else ""))
 
@@ -10747,7 +10749,11 @@ def _work_line(item) -> str:
         (item.blocked_pieces, "piece blocked", "pieces blocked"),
         (item.waiting_pieces, "piece waiting on him", "pieces waiting on him")) if n]
     others = [b for b in item.blockers if b.kind != work_store.DECISION_BLOCKER]
-    return (f"{item.id}: {item.title}. {item.state}{', no recent update' if item.quiet else ''}"
+    also = (f", {_say_number(item.also_waiting)} decision"
+            f"{'s' if item.also_waiting != 1 else ''} also waiting on him"
+            if item.also_waiting else "")
+    return (f"{item.id}: {item.title}. {item.state}{also}"
+            f"{', no recent update' if item.quiet else ''}"
             + (", closed" if item.closed_at else "")
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
             + _work_follow_up(item)
@@ -10761,12 +10767,21 @@ def _work_detail(item) -> str:
     the package each asks him to look at) and answered ones, and the latest
     events. Untrusted."""
     lines = [f"{item.id}: {item.title}. State {item.state}"
+             + (f" ({item.also_waiting} open decision{'s' if item.also_waiting != 1 else ''} "
+                f"also waiting on him)" if item.also_waiting else "")
              + (", no recent update" if item.quiet else "")
              + (", closed" if item.closed_at else "")
              + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+    if item.approved_at is not None:
+        lines.append("He approved it done.")
+    elif item.state == work_store.VERIFYING:
+        lines.append("Ready for his review: approve it, say it is not done yet, or add work, "
+                     "only on his word (review_work).")
+    if item.review_note:
+        lines.append(f"Not done yet, he said: {item.review_note}")
     lines += [f"held up by {_work_blocker(b)}" for b in item.blockers]
     names = work_api.WhoNames()
     for p in item.pieces:
@@ -10866,12 +10881,36 @@ async def tool_answer_work_decision(args: dict) -> str:
     return "Recorded his answer, sir; the agent doing the work reads it from the record."
 
 
+_REVIEW_SAID = {
+    work_api.APPROVE: "Approved, sir: it is done.",
+    work_api.NOT_DONE: "Sent back to working with his note, sir; its agents are told.",
+    work_api.ADD_WORK: "Added as a new piece, sir; its agents are told.",
+}
+
+
+async def tool_review_work(args: dict) -> str:
+    """His review of a work item: approve, not done yet, or add work."""
+    item, problem = _work_or_explain(str(args.get("item") or "").strip())
+    if problem:
+        return problem
+    action = str(args.get("action") or "")
+    try:
+        item = await asyncio.to_thread(work_api.review, item.id, action,
+                                       str(args.get("words") or ""), "voice")
+    except work_store.WorkRefused as e:
+        return f"Nothing was recorded, sir: {e}"
+    _work_recorded(item, work_api.REVIEW_ACTIONS[action])
+    return _REVIEW_SAID[action]
+
+
 TOOL_HANDLERS.update({
     "work_status": tool_work_status,
     "answer_work_decision": tool_answer_work_decision,
+    "review_work": tool_review_work,
 })
 TAINTING_TOOLS["work_status"] = "a work item's reports, written by the agents doing it"
-ACTING_TOOLS.add("answer_work_decision")
+ACTING_TOOLS.update({"answer_work_decision", "review_work"})
+TAINT_EXEMPT_TOOLS["review_work"] = "it records his review of an item, it does not read"
 TAINT_EXEMPT_TOOLS["answer_work_decision"] = "it records his answer to a decision, it does not read"
 
 

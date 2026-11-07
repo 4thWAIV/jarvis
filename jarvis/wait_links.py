@@ -16,7 +16,7 @@ the page or by voice; a package's decision through its decide.py; signing a
 package off), the store that records the answer calls `settle` in the same
 transaction, and every open wait and waiting piece whose link it answers is
 ended there and then as his answer, with when and how (`wait_ended` in a
-workflow, a piece moved to its next state, working by default, on a Work
+workflow, a piece moved to its next state, ready by default, on a Work
 item). `sweep` does the same for a link already answered or signed off when
 it is found (at server start, and each time either record is read), so a
 wait never outlives his answer.
@@ -41,6 +41,9 @@ from typing import Callable, Optional
 log = logging.getLogger(__name__)
 
 DECISION, WORK, WORKFLOW, PACKAGE = "decision", "work", "workflow", "package"
+# How an answer came that is not his words: its package signed off, or the
+# decision withdrawn by the agent that asked it (which also releases a wait).
+SIGNED_OFF, WITHDRAWN = "signed_off", "withdrawn"
 KINDS = (DECISION, WORK, WORKFLOW, PACKAGE)
 
 # How long a wait with no link may stay open before it is flagged.
@@ -113,10 +116,19 @@ class Answer:
             return self.key is None or link.key == self.key
         return link.key == self.key
 
+    @property
+    def by(self) -> str:
+        """Whose act ended it: his (`user`), or the asker's withdrawal."""
+        return "asker" if self.how == WITHDRAWN else "user"
+
     def said(self) -> str:
-        """What he answered, in JARVIS's words, for the wait's end."""
+        """What ended it, in JARVIS's words."""
         if self.kind == PACKAGE and self.key is None:
             return "Tim signed off the package"
+        if self.how == WITHDRAWN:
+            return f"Its asker withdrew {self.key}"
+        if self.how == SIGNED_OFF:
+            return f"Tim signed off the package {self.key} names"
         return f"Tim answered {self.key}"
 
 

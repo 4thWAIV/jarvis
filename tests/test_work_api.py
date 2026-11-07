@@ -108,7 +108,8 @@ def test_a_decision_is_news_his_answer_resolves_it_and_only_he_answers(wired):
     assert r.status_code == 200 and r.json()["item"]["state"] == "planned"
     assert [i.state for i in store.items(("pending", "seen", "resolved"))] == ["resolved"]
     client.post(f"/api/work/{wid}/events", headers=key,
-                json={"kind": "update", "summary": "Blocked on CI.", "detail": {"state": "blocked"}})
+                json={"kind": "update", "summary": "Blocked on CI.",
+                      "detail": {"state": "blocked", "until": "CI is red"}})
     assert _events(store)[-1] == ("work", "blocked")
 
 
@@ -126,14 +127,13 @@ def test_news_is_resolved_once_it_is_no_longer_so_and_only_then(wired):
     def news():
         return store.get("work", wid)
 
-    report("update", "Blocked on CI.", state="blocked")
+    report("update", "Blocked on CI.", state="blocked", until="CI is red")
     assert (news().event, news().state) == ("blocked", "pending")
     report("update", "Still blocked.")
     assert news().state == "pending", "no state said: still blocked"
-    report("update", "CI is green.", state="working")
+    report("update", "CI is green.", state="working", cleared=True)
     assert news().state == "resolved", "no longer blocked"
 
-    report("update", "Shipped.", state="done")
     report("decision_needed", "Tag it?", key="tag")
     report("decision_needed", "Announce it?", key="announce")
     client.post(f"/api/work/{wid}/decisions/tag", json={"answer": "Yes"}, headers=ORIGIN)
@@ -141,7 +141,7 @@ def test_news_is_resolved_once_it_is_no_longer_so_and_only_then(wired):
     client.post(f"/api/work/{wid}/decisions/announce", json={"answer": "No"}, headers=ORIGIN)
     assert news().state == "resolved"
 
-    report("update", "Blocked again.", state="blocked")
+    report("update", "Blocked again.", state="blocked", until="the release branch")
     report("update", "Note.", state="blocked")
     assert news().state == "pending"
 
@@ -218,7 +218,7 @@ def test_the_reporter_starts_reports_and_reads_his_answer(wired, monkeypatch, ca
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "piece", wid, "copy", "Copy pass.",
                              "--who", "tim", "--state", "working"]) == 0
-    assert capsys.readouterr().out.strip() == f"{wid} planned (copy: tim)"
+    assert capsys.readouterr().out.strip() == f"{wid} working (copy: tim)"
     assert work_report.main(["work_report.py", "decision", wid, "tone", "Which tone?",
                              "--option", "dry", "--option", "warm"]) == 0
     capsys.readouterr()
@@ -256,7 +256,7 @@ def test_the_list_gives_its_groups_and_each_piece_everything_the_detail_shows(wi
         "title": "Rebrand", "area": "Brand", "source": {"kind": "folder", "path": folder}})
     wid = r.json()["id"]
     loose = _start(client, key, folder)
-    for detail in ({"key": "design", "who": {"kind": "tim"}, "state": "done"},
+    for detail in ({"key": "design", "who": {"kind": "tim"}, "state": "verifying"},
                    {"key": "logo", "who": {"kind": "tim"}, "worker": "logo build agent",
                     "after": ["design"], "evidence": ["abc1234", "https://x.example/pr/1"]}):
         r = client.post(f"/api/work/{wid}/events", headers=key,
@@ -270,7 +270,8 @@ def test_the_list_gives_its_groups_and_each_piece_everything_the_detail_shows(wi
         ("area", "Brand", [wid]), ("folder", "speech", [loose])]
     logo = next(i for i in body["items"] if i["id"] == wid)["pieces"][1]
     assert {k: logo[k] for k in ("note", "worker", "after", "waits_for", "evidence")} == {
-        "note": "logo reported.", "worker": "logo build agent", "after": ["design"], "waits_for": [],
+        "note": "logo reported.", "worker": "logo build agent", "after": ["design"],
+        "waits_for": ["design"],
         "evidence": [{"kind": "commit", "value": "abc1234"},
                      {"kind": "url", "value": "https://x.example/pr/1"}]}
 
@@ -279,7 +280,8 @@ def test_the_brain_reads_notes_workers_order_evidence_and_groups_walled(wired):
     server, _, _, folder = wired
     from jarvis import work_store as ws
     item = ws.create("Rebrand", "folder", folder, area=HOSTILE)
-    for detail in ({"key": "design", "who": {"kind": "tim"}, "state": "blocked"},
+    for detail in ({"key": "design", "who": {"kind": "tim"}, "state": "blocked",
+                    "until": "the font licence"},
                    {"key": "logo", "who": {"kind": "tim"}, "worker": HOSTILE, "after": ["design"],
                     "evidence": ["/tmp/logo.svg"]}):
         ws.record(ws.WorkEvent(item.id, "piece", f"{detail['key']}: {HOSTILE}", detail))
@@ -361,7 +363,8 @@ def test_the_list_keeps_history_apart_and_the_brain_reads_it_all(wired, monkeypa
     from jarvis import work_store as ws
     open_id, closed_id = _start(client, key, folder), _start(client, key, folder)
     for kind, summary, detail in (
-            ("piece", "Stuck.", {"key": "fonts", "who": {"kind": "tim"}, "state": "blocked"}),
+            ("piece", "Stuck.", {"key": "fonts", "who": {"kind": "tim"}, "state": "blocked",
+                                 "until": "the font licence"}),
             ("decision_needed", HOSTILE, {"key": "logo", "package": "logo-deck"}),
             ("decision_needed", "Tone?", {"key": "tone"})):
         assert client.post(f"/api/work/{open_id}/events", headers=key, json={

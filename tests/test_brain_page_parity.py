@@ -139,7 +139,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
             "mute_speech", "turn_audio_off", "mark_updates_seen",
-            "set_attention_settings", "answer_work_decision",
+            "set_attention_settings", "answer_work_decision", "review_work",
             "link_knowledge", "change_topic", "reindex_knowledge", "change_knowledge_index",
             "change_knowledge_seed")
 # Acting tools that give back somebody else's words (a received file's name).
@@ -192,6 +192,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("mark_updates_seen", {}),
     ("set_attention_settings", {"changes": {"away": True}}),
     ("answer_work_decision", {"item": "x", "answer": "yes"}),
+    ("review_work", {"item": "x", "action": "approve"}),
     ("link_knowledge", {"action": "reject", "proposal": "x"}),
     ("change_topic", {"action": "create", "name": "X"}),
     ("reindex_knowledge", {"action": "refresh"}),

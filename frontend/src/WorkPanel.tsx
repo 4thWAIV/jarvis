@@ -125,6 +125,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
             {STATE_WORDS[item.state]}</span>
         </span>
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
+          {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
           {deciding ? t("right.work.decision", { question: item.headline })
             : item.follow_up ? followUpWords(item.follow_up)
             : item.quiet ? t("right.work.quiet") : item.headline}</span>

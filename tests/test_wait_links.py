@@ -154,15 +154,15 @@ def _waiting_piece(w, item, until="decision:merge", then=None):
 
 def test_his_answer_on_the_page_moves_the_waiting_piece_on(wired, item):
     _waiting_piece(wired, item)
-    assert _piece(item.id)["land"].until == "decision:merge"
+    assert _piece(item.id)["land"].until == ["decision:merge"]
     r = wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
                           json={"answer": "Merge it"})
     assert r.status_code == 200, r.text
     land = _piece(item.id)["land"]
-    assert (land.state, land.until) == ("working", "")
-    moved = [e for e in work_store.events(item.id) if e.detail.get("wait_ended")]
-    assert moved[0].detail["wait_ended"]["how"] == "page"
-    assert moved[0].detail["wait_ended"]["by"] == "tim"
+    assert (land.state, land.until) == ("ready", [])
+    [moved] = [e for e in work_store.events(item.id) if e.detail.get("wait_ended")]
+    [ended] = moved.detail["wait_ended"]
+    assert (ended["how"], ended["by"], ended["link"]) == ("page", "user", "decision:merge")
 
 
 def test_his_answer_by_voice_moves_it_to_its_next_state(wired, item):
@@ -221,7 +221,7 @@ def test_signing_a_package_off_ends_every_wait_on_it(wired, shown, marks, tmp_pa
     package_id = package_inbox.get(inbox_id).package_id
     r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
     assert r.status_code == 200, r.text
-    assert _piece(item.id)["deck"].state == "working"
+    assert _piece(item.id)["deck"].state == "ready"
     assert workflow_store.snapshot(wid).open_waits == [], "by its name too"
     [ended] = _wait_ended(wid)
     assert ended.detail["how"] == "signed_off" and ended.detail["by"] == "user"
@@ -255,7 +255,7 @@ def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monke
             == "waiting_on_tim"
     moved = wait_links.sweep()
     assert moved.work == {item.id} and moved.workflows == {wid}
-    assert _piece(item.id)["land"].state == "working"
+    assert _piece(item.id)["land"].state == "ready"
     assert workflow_store.snapshot(wid).open_waits == []
 
 
@@ -268,7 +268,7 @@ def test_reading_the_record_sweeps_it(wired, item, monkeypatch):
                           json={"answer": "yes"})
     listed = wired.client.get("/api/work").json()["items"]
     [land] = [p for p in listed[0]["pieces"] if p["key"] == "land"]
-    assert land["state"] == "working"
+    assert land["state"] == "ready"
 
 
 def test_the_server_sweeps_at_start(wired):
@@ -278,32 +278,32 @@ def test_the_server_sweeps_at_start(wired):
 
 # -- answered decisions clear the item's waiting ------------------------------------
 
-def test_the_last_answer_moves_an_item_reported_waiting_to_working(wired, item):
+def test_an_item_with_no_pieces_waits_on_every_hold_it_names(wired, item):
     key = _key()
-    _report(wired, item.id, "update", "Over to Tim.", auth=key, state="waiting_on_tim")
     _report(wired, item.id, "decision_needed", "Build it?", auth=key, key="build")
     _report(wired, item.id, "decision_needed", "Ship it?", auth=key, key="ship")
+    _report(wired, item.id, "update", "Over to Tim.", auth=key, state="waiting_on_tim",
+            until=["decision:build", "decision:ship"])
     wired.client.post(f"/api/work/{item.id}/decisions/build", headers=BROWSER, json={"answer": "yes"})
-    assert work_store.get(item.id).state == "waiting_on_tim", "one decision is still open"
+    got = work_store.get(item.id)
+    assert (got.state, got.until) == ("waiting_on_tim", ["decision:ship"])
     wired.client.post(f"/api/work/{item.id}/decisions/ship", headers=BROWSER, json={"answer": "yes"})
     got = work_store.get(item.id)
-    assert (got.state, got.reported_state) == ("working", "working")
+    assert (got.state, got.reported_state, got.until) == ("ready", "ready", [])
 
 
-def test_an_old_item_left_waiting_after_his_answers_is_swept(wired, item):
-    key = _key()
-    _report(wired, item.id, "decision_needed", "Build it?", auth=key, key="build")
-    wired.client.post(f"/api/work/{item.id}/decisions/build", headers=BROWSER, json={"answer": "yes"})
-    # As recorded before: the item still said waiting, from before his answer.
-    _age("UPDATE work_items SET state='waiting_on_tim', waiting_since=0")
-    assert work_store.get(item.id).reported_state == "working"
+def _legacy(sql: str, *args) -> None:
+    """A row as it was recorded before holds were kept."""
+    _age(sql, *args)
 
 
 # -- flags -------------------------------------------------------------------------
 
 def test_a_waiting_piece_with_no_link_is_flagged_after_a_day(wired, item):
     _report(wired, item.id, "piece", "Waiting for his merge approval.", **{
-        "key": "land", "who": {"kind": "tim"}, "state": "waiting_on_tim"})
+        "key": "land", "who": {"kind": "tim"}})
+    _legacy("UPDATE work_pieces SET state='waiting_on_tim', until='', waiting_since=?",
+            time.time())
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "piece_waiting"]
     assert not b.unlinked
     _age("UPDATE work_pieces SET waiting_since=?", time.time() - DAY - 60)
@@ -321,7 +321,8 @@ def test_a_linked_piece_is_never_flagged(wired, item):
 
 
 def test_an_item_waiting_with_no_decision_is_a_blocker_flagged_after_a_day(wired, item):
-    _report(wired, item.id, "update", "Over to Tim.", state="waiting_on_tim")
+    _legacy("UPDATE work_items SET state='waiting_on_tim', until='', waiting_since=?",
+            time.time())
     [b] = [b for b in work_store.get(item.id).blockers if b.kind == "item_waiting"]
     assert not b.unlinked
     _age("UPDATE work_items SET waiting_since=?", time.time() - DAY - 60)
@@ -389,16 +390,17 @@ def test_a_working_piece_is_a_follow_up(wired, item):
     assert work_store.get(item.id).follow_up is None
 
 
-def test_every_piece_done_and_no_decision_open_reads_ready_to_close(wired, item):
+def test_every_piece_in_and_no_decision_open_reads_ready_for_his_review(wired, item):
     key = _key()
     _report(wired, item.id, "update", "Going.", auth=key, state="working")
     for k in ("a", "b"):
-        _report(wired, item.id, "piece", "Done.", auth=key, **{
-            "key": k, "who": {"kind": "tim"}, "state": "done"})
+        _report(wired, item.id, "piece", "In.", auth=key, **{
+            "key": k, "who": {"kind": "tim"}, "state": "verifying"})
     got = work_store.get(item.id)
-    assert (got.state, got.reported_state) == ("ready_to_close", "working")
+    assert (got.state, got.reported_state) == ("verifying", "working"), "not left as working"
     _report(wired, item.id, "decision_needed", "Close it?", auth=key, key="close")
-    assert work_store.get(item.id).state == "waiting_on_tim"
+    got = work_store.get(item.id)
+    assert (got.state, got.also_waiting) == ("verifying", 1), "the work is in; it also asks him"
 
 
 # -- his answer, written for the asker --------------------------------------------

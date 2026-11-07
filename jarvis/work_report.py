@@ -9,10 +9,10 @@ and finds JARVIS and trusts its certificate the same way as
 workflow_report.py, whose standard-library client it uses.
 
     python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>] [--area <area>]
-    python work_report.py update <id> <summary> [--state <state>] [--area <area>]
+    python work_report.py update <id> <summary> [--state <state>] [--area <area>] [--until <hold> ...] [--cleared]
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
-                          [--until <link>] [--then <state>]
+                          [--until <hold> ...] [--then <state>] [--cleared]
     python work_report.py decision <id> <key> <question> [--option <option> ...] [--recommendation <text>]
                           [--package <package id or name>]
     python work_report.py answer <id> <key>
@@ -20,18 +20,28 @@ workflow_report.py, whose standard-library client it uses.
     python work_report.py withdraw <id> <key> <reason>
     python work_report.py close <id> [<summary>]
 
-A state is planned, working, verifying, waiting_on_tim, blocked or done.
+A state is planned, ready, working, verifying, waiting_on_tim, blocked or
+done.
 Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
 `tim`; a new piece needs one. A piece's summary is its latest note. An area
 groups items on the Work tab (an empty one goes back to the source's
 folder); `--worker` is your own words for who did a piece, shown beside its
 owner; `--after` names the pieces it waits on (an empty value clears them);
-each `--evidence` is added to the piece's. A piece waiting on the user
-(`--state waiting_on_tim`) names what it waits for with `--until`:
-`decision:<key>` (a decision of this item), `work:<item id>:<key>`,
-`workflow:<workflow id>:<key>` or `package:<id or name>[:<decision id>]`;
-when he answers it, or signs the package off, JARVIS moves the piece on to
-`--then` (working by default) itself. A decision's `--package` names
+each `--evidence` is added to the piece's.
+
+A piece that waits on the user (`--state waiting_on_tim`) or is blocked
+(`--state blocked`) is held, and must name what holds it with `--until`
+(repeat it for several): `decision:<key>` (one of this item's open
+decisions), `work:<item id>:<key>`, `workflow:<workflow id>:<key>` or
+`package:<id or name>[:<decision id>]`; a blocker may instead be words.
+Once every one is answered (or its package signed off, or its decision
+withdrawn), JARVIS moves the piece on to `--then` (ready by default)
+itself. Nothing else moves a held piece on: a report that would is refused,
+naming what holds it, so work that can go on meanwhile is a piece of its
+own. A blocker given in words is cleared by reporting the piece's next
+state with `--cleared`. An item with pieces takes its state from them and
+is never reported waiting or blocked itself (an item with none follows the
+same rules as a piece). A decision's `--package` names
 a page package (by id or name) the user can open from the decision. `withdraw`
 takes back a decision you asked, with why (only its asker can; the user's
 answer is never yours to give). `close`
@@ -122,6 +132,8 @@ def main(argv: list[str]) -> int:
     update.add_argument("summary")
     update.add_argument("--state")
     update.add_argument("--area")
+    update.add_argument("--until", action="append")
+    update.add_argument("--cleared", action="store_true")
     piece = sub.add_parser("piece")
     piece.add_argument("id")
     piece.add_argument("key")
@@ -132,8 +144,9 @@ def main(argv: list[str]) -> int:
     piece.add_argument("--worker")
     piece.add_argument("--after")
     piece.add_argument("--evidence", action="append", default=[])
-    piece.add_argument("--until")
+    piece.add_argument("--until", action="append")
     piece.add_argument("--then")
+    piece.add_argument("--cleared", action="store_true")
     decision = sub.add_parser("decision")
     decision.add_argument("id")
     decision.add_argument("key")
@@ -192,6 +205,10 @@ def main(argv: list[str]) -> int:
                 detail["state"] = args.state
             if args.area is not None:
                 detail["area"] = args.area
+            if args.until:
+                detail["until"] = args.until
+            if args.cleared:
+                detail["cleared"] = True
         elif args.command == "close":
             kind, detail = "closed", {}
         elif args.command == "withdraw":
@@ -209,6 +226,8 @@ def main(argv: list[str]) -> int:
                 detail["after"] = [k.strip() for k in args.after.split(",") if k.strip()]
             if args.evidence:
                 detail["evidence"] = [_evidence(e) for e in args.evidence]
+            if args.cleared:
+                detail["cleared"] = True
         else:
             kind, detail = "decision_needed", {"key": args.key, "options": args.option}
             if args.recommendation:

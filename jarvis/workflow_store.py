@@ -528,7 +528,7 @@ def _end_wait(conn, wid: str, key: str, link, found: "wait_links.Answer", now: f
                  (wid, key))
     event = WorkflowEvent(wid, "wait_ended", None,
                           f"{found.said()} ({link}); the wait is over.",
-                          {"key": key, "link": str(link), "by": "user", "how": found.how,
+                          {"key": key, "link": str(link), "by": found.by, "how": found.how,
                            "answered_at": found.at})
     _insert_event(conn, event, now)
     _settle_state(conn, wid, event, now)

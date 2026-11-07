@@ -1514,7 +1514,12 @@ html, body {
 .work-state.state-waiting_on_tim { background: #fbbf24; color: var(--ui-on-signal); }
 .work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
 .work-state.state-done { background: rgba(52, 211, 153, 0.3); }
-.work-state.state-ready_to_close { background: rgba(52, 211, 153, 0.55); }
+.work-state.state-ready { background: rgba(96, 165, 250, 0.35); }
+.work-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; flex: none; }
+.work-review form { display: flex; gap: 6px; flex: 1; min-width: 0; }
+.work-review input { flex: 1; min-width: 0; }
+.work-approved { color: #34d399; }
+.work-review-note { color: #fbbf24; }
 
 /* One work item in the centre (WorkDetail.tsx), where the Conversation view
    sits: its head, then its source, update, decisions, pieces and reports,

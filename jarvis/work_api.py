@@ -9,6 +9,7 @@
   POST /api/work/{id}/events              one report: update, piece, decision_needed,
                                           decision_withdrawn (its asker only), closed
   POST /api/work/{id}/decisions/{key}     his answer, from the page
+  POST /api/work/{id}/review              his review: approve, not_done or add_work
   GET  /api/work/answers                  his answers to the calling access key's
                                           decisions (?since=<epoch seconds>)
 
@@ -68,6 +69,11 @@ class EventRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+class ReviewRequest(BaseModel):
+    action: str
+    words: str = ""
 
 
 # ── who, by name ────────────────────────────────────────────────────────
@@ -164,35 +170,84 @@ def answer_decision(item_id: str, key: str, answer: str, where: str) -> work_sto
 _PROJECT = re.compile(r"[^/\x00]{1,255}")
 
 
-def answer_path(item: work_store.WorkItem, key: str):
-    """Where his answer to `key` is written for its asker, or None when the
-    item's project has no name a folder can take."""
+def answer_path(item: work_store.WorkItem, name: str):
+    """Where his word `name` (a decision's key, or a review's) is written
+    for the item's agents, or None when the item's project has no name a
+    folder can take."""
     project = work_store.project_of(item)
     if not _PROJECT.fullmatch(project) or project in (".", ".."):
         return None
-    return data_paths.answers_dir() / project / f"{item.id}-{key}.md"
+    return data_paths.answers_dir() / project / f"{item.id}-{name}.md"
 
 
-def write_answer(item: work_store.WorkItem, key: str) -> None:
-    """His answer to `key`, written for the agent that asked it (one file,
-    replaced whole through a rename). Never raises: the record already has
-    the answer, which `work_report.py answer` reads."""
-    done = next((a for a in item.answered if a.key == key and a.where in ("page", "voice")), None)
-    path = answer_path(item, key)
-    if done is None or path is None:
+def _write_for_asker(item: work_store.WorkItem, name: str, head: str, lines: list[str],
+                     at: float, where: str) -> None:
+    """One file for the item's agents, replaced whole through a rename.
+    Never raises: the record already has it."""
+    path = answer_path(item, name)
+    if path is None:
         return
-    when = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(done.answered_at))
-    text = (f"# Tim answered {key} on {item.id}\n\n"
-            f"- Item: {item.id} ({item.title})\n- Decision: {key}\n- Question: {done.question}\n"
-            f"- His answer: {done.answer}\n- Answered: {when} ({done.where})\n")
+    when = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(at))
+    text = (f"# {head}\n\n- Item: {item.id} ({item.title})\n"
+            + "".join(f"- {line}\n" for line in lines) + f"- When: {when} ({where})\n")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         part = path.with_name(f".{path.name}.part")
         part.write_text(text, encoding="utf-8")
         os.replace(part, path)
     except OSError:
-        log.warning("work: the answer to %s/%s was not written for its asker", item.id, key,
-                    exc_info=True)
+        log.warning("work: %s/%s was not written for its asker", item.id, name, exc_info=True)
+
+
+def write_answer(item: work_store.WorkItem, key: str) -> None:
+    """His answer to `key`, written for the agent that asked it, which
+    `work_report.py answer` also reads from the record."""
+    done = next((a for a in item.answered if a.key == key and a.where in ("page", "voice")), None)
+    if done is not None:
+        _write_for_asker(item, key, f"Tim answered {key} on {item.id}",
+                         [f"Decision: {key}", f"Question: {done.question}",
+                          f"His answer: {done.answer}"], done.answered_at, done.where)
+
+
+# His review, as the page, his voice and the record name it.
+APPROVE, NOT_DONE, ADD_WORK = "approve", "not_done", "add_work"
+REVIEW_ACTIONS = {APPROVE: work_store.APPROVED, NOT_DONE: work_store.REVIEW_RETURNED,
+                  ADD_WORK: work_store.WORK_ADDED}
+
+
+def review(item_id: str, action: str, words: str, where: str) -> work_store.WorkItem:
+    """His review of an item, from the page and the brain's acting
+    `review_work` alike: approve it (done, his alone to give), say it is not
+    done yet (back to working, with his note), or add work (a new piece in
+    his words). A note or new work is written for the item's agents in
+    `answers_dir()/<project>/<item>-review-<when>.md`."""
+    kind = REVIEW_ACTIONS.get(action)
+    if kind is None:
+        raise work_store.WorkRefused("A review is approve, not_done or add_work.")
+    words = " ".join(str(words or "").split())
+    summary = {APPROVE: "He approved it: done.", NOT_DONE: f"Not done yet, he says: {words}",
+               ADD_WORK: f"He added work: {words}"}[action]
+    item = work_store.record(work_store.WorkEvent(item_id, kind, summary,
+                                                  {"words": words, "where": where}))
+    head, lines = {
+        APPROVE: (f"Tim approved {item.id}: it is done", []),
+        NOT_DONE: (f"Tim says {item.id} is not done yet",
+                   [f"His note: {words}", "It is back to working: address his note, then "
+                                         "report it verifying again."]),
+        ADD_WORK: (f"Tim added work to {item.id}",
+                   [f"His words: {words}", f"It is the new piece {_added_key(item_id)}: report "
+                                           f"it as you work on it."]),
+    }[action]
+    _write_for_asker(item, f"review-{int(time.time())}", head, lines, time.time(), where)
+    return item
+
+
+def _added_key(item_id: str) -> str:
+    """The key of the piece he added last."""
+    for e in reversed(work_store.latest(item_id, 10)):
+        if e.kind == work_store.WORK_ADDED:
+            return e.detail.get("key", "")
+    return ""
 
 
 def answers_json(asked_by: str, since: float) -> list[dict]:
@@ -270,8 +325,9 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
         one is its asker's alone, never his."""
-        if req.kind in (work_store.DECISION_MADE, work_store.DECISION_SIGNED_OFF):
-            return refused(ValueError("Only he answers a decision."))
+        if req.kind in work_store.HIS_KINDS:
+            return refused(ValueError("Only he answers a decision or reviews an item: done is "
+                                      "his to give. Report it verifying, with what to check."))
         by = asker(request.scope)
         if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:
             return refused(ValueError("Only the agent that asked a decision withdraws it; "
@@ -302,4 +358,14 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.DECISION_MADE, None)
+        return {"item": item_json(item)}
+
+    @app.post("/api/work/{item_id}/review")
+    async def review_item(item_id: str, req: ReviewRequest):
+        """His review of an item on the page: Approve, Not done yet, Add work."""
+        try:
+            item = await asyncio.to_thread(review, item_id, req.action, req.words, "page")
+        except work_store.WorkRefused as e:
+            return refused(e)
+        recorded(item, REVIEW_ACTIONS[req.action], None)
         return {"item": item_json(item)}

@@ -23,9 +23,7 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done"
-  /** Read time only: every piece done and no decision open. */
-  | "ready_to_close";
+export type WorkState = "planned" | "ready" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -58,9 +56,10 @@ export interface WorkPiece {
   /** While working or verifying, when it goes quiet with no further report
    *  (epoch seconds); null in any other state. */
   quiet_at: number | null;
-  /** Waiting on him: the answer it waits for (a link such as decision:<key>), or "". */
-  until: string;
-  /** The state it moves to on that answer; "" is working. */
+  /** Held (waiting on him or blocked): what holds it, each a link such as
+   *  decision:<key>, or a blocker's words. */
+  until: string[];
+  /** The state it moves to once nothing holds it; "" is ready. */
   then: string;
   waiting_since: number | null;
   /** Waiting on him with no link to an answer for over a day. */
@@ -152,6 +151,15 @@ export interface WorkItem {
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
   follow_up: WorkFollowUp | null;
+  /** Open decisions waiting on him while the item itself goes on. */
+  also_waiting: number;
+  /** An item with no pieces that is held: what holds it. */
+  until: string[];
+  /** When he approved it done (done is his alone to give). */
+  approved_at: number | null;
+  /** His words when he said it is not done yet. */
+  review_note: string;
+  review_note_at: number | null;
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */
@@ -199,7 +207,7 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "working", "verifying", "waiting_on_tim", "blocked", "done", "ready_to_close"],
+  ["planned", "ready", "working", "verifying", "waiting_on_tim", "blocked", "done"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
@@ -222,7 +230,8 @@ export function blockerWords(item: WorkItem, b: WorkBlocker): string {
     return t("main.work.blocker.no_follow_up", { title: b.title, asker: askerWords(b.text) });
   }
   const said = t(`main.work.blocker.${b.kind}`, { title: b.title });
-  const line = b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said;
+  const held = b.waits_for.length ? ` (${b.waits_for.join(", ")})` : "";
+  const line = (b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said) + held;
   return b.unlinked ? `${line} · ${t("main.work.unlinked")}` : line;
 }
 
@@ -333,6 +342,24 @@ registerCommand("work.open", {
 });
 
 registerClose("work.close", slot);
+
+export type ReviewAction = "approve" | "not_done" | "add_work";
+
+/** His review of an item (approve, not done yet, add work), the same call
+ *  as the brain's review_work. Resolves with the refusal's reason, or null. */
+export async function reviewWork(id: string, action: ReviewAction, words = ""): Promise<string | null> {
+  const res = await fetch(`/api/work/${encodeURIComponent(id)}/review`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, words }),
+  }).catch(() => null);
+  if (res?.ok) {
+    workChanged.set(workChanged.get() + 1);
+    return null;
+  }
+  if (!res) return t("right.workflows.noAnswer");
+  const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
+}
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
 export const answerWorkDecision = (id: string, key: string, answer: string) =>
