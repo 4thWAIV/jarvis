@@ -34,6 +34,14 @@ SOURCE_ROOT = PACKAGE_DIR.parent if CHECKOUT else PACKAGE_DIR
 FRONTEND_DIST = PACKAGE_DIR / "web"
 
 DEFAULT_DATA_DIR = CONFIG_DIR / "data"
+
+
+def env_file_path() -> Path:
+    """The .env JARVIS loads at startup and its settings read and write.
+    JARVIS_ENV_FILE exists so the test suite can neither read nor write the
+    developer's live .env — the same reasoning as JARVIS_DATA_DIR."""
+    override = os.getenv("JARVIS_ENV_FILE", "").strip()
+    return Path(override) if override else CONFIG_DIR / ".env"
 _DEFAULT = DEFAULT_DATA_DIR
 
 

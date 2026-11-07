@@ -54,11 +54,8 @@ def _parse_env_lines(text: str) -> list[tuple[str, str]]:
 
 
 def _env_file_path() -> Path:
-    # JARVIS_ENV_FILE exists so the test suite can neither read nor write the
-    # developer's live .env — the same reasoning as JARVIS_DATA_DIR. The boot
-    # loader below and the settings endpoints both go through here.
-    override = os.getenv("JARVIS_ENV_FILE", "").strip()
-    return Path(override) if override else data_paths.CONFIG_DIR / ".env"
+    # The boot loader below and the settings endpoints both go through here.
+    return data_paths.env_file_path()
 
 
 # Load .env file if present
