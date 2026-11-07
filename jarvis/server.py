@@ -9862,11 +9862,21 @@ async def tool_link_knowledge(args: dict) -> str:
     return answer
 
 
+def _topic_change_said(answer: dict) -> dict:
+    """What change_topic tells the brain: the topic's slug (checked to be
+    [a-z0-9-]) and its fixed status and pin words only. Its name and aliases
+    are not echoed, so nothing a session might have put in them reaches the
+    brain unwalled; knowledge_topics reads them."""
+    topic = answer.get("topic") or {}
+    return {"done": answer.get("done"), "topic": topic.get("slug"),
+            "status": topic.get("status"), "pinned": topic.get("pinned")}
+
+
 async def tool_change_topic(args: dict) -> str:
-    answer = await _knowledge_tool(args, lambda: knowledge_api.change_topics(
+    answer = await _knowledge_tool(args, lambda: _topic_change_said(knowledge_api.change_topics(
         knowledge_calls, action=str(args.get("action") or ""), topic=args.get("topic"),
         name=args.get("name"), status=args.get("status"), exact=args.get("exact"),
-        ambiguous=args.get("ambiguous"), remove_aliases=args.get("remove_aliases")),
+        ambiguous=args.get("ambiguous"), remove_aliases=args.get("remove_aliases"))),
         "", "change_topic", walled=False)
     if answer.startswith("{"):
         _hint_knowledge()

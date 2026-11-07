@@ -354,6 +354,12 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "server.tool_change_topic": (
+        "the `name`, `status` and aliases it passes are the brain's arguments, "
+        "written to his topic file; what it gives back is `_topic_change_said`: "
+        "the topic's slug, checked against [a-z0-9-], and its fixed status word "
+        "and pin flag, never a name or alias. Driven by "
+        "tests/test_knowledge_api.py"),
     "knowledge_api.call": (
         "it turns an engine refusal into knowledge_api.Refused; the engine's "
         "`detail` is the engine's own wording about a request, and every route "

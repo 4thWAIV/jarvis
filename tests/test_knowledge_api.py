@@ -141,7 +141,8 @@ def test_topics_change_the_same_way_from_both(knowing):
                                                      "status": "planned"}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["topic"]["slug"] == "bridge-engine"
     said = _call(w, "change_topic", action="pin", topic="bridge-engine")
-    assert said["ok"] and json.loads(said["text"])["topic"]["pinned"] is True
+    assert said["ok"] and json.loads(said["text"]) == {"done": "pin", "topic": "bridge-engine",
+                                                       "status": "planned", "pinned": True}
     linked = _call(w, "link_knowledge", action="link", topic="bridge-engine", kind="stage_of", target="denice")
     assert linked["ok"] and kl.read("bridge-engine").links("stage_of") == ["denice"]
     listed = w.client.get("/api/knowledge/topics", headers=ORIGIN).json()
