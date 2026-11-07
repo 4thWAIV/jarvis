@@ -404,6 +404,10 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
             _set_item(conn, wid, slug, outcome)
     elif kind in _OPENS:
         key = _open_key(event)
+        # An answered key is never asked again: its reporter reads the answer
+        # by key (`workflow_report.py answer`), so a new question needs a new key.
+        if kind == "decision_needed" and _answered(conn, wid, key):
+            raise WorkflowRefused(f"Decision {key} was already answered; ask with a new key.")
         conn.execute(
             "INSERT OR REPLACE INTO workflow_open (workflow_id, kind, key, summary, detail, "
             "opened_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -427,6 +431,13 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
         if outcome not in {s.value for s in FINISHED}:
             raise WorkflowRefused("A finished workflow succeeded, failed or was cancelled.")
         conn.execute("UPDATE workflows SET finished_at=? WHERE id=?", (now, wid))
+
+
+def _answered(conn, wid: str, key: str) -> bool:
+    """Whether a decision_made under `key` carried an answer."""
+    rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
+                        "AND kind='decision_made'", (wid,))
+    return any("answer" in e.detail and _open_key(e) == key for e in map(_event, rows))
 
 
 def _open_key(event: WorkflowEvent) -> str:
@@ -522,6 +533,11 @@ def recent(limit: int = 20) -> list[WorkflowSnapshot]:
         return [_snapshot(conn, r, now) for r in rows]
 
 
+def _event(row) -> WorkflowEvent:
+    return WorkflowEvent(row["workflow_id"], row["kind"], row["item"], row["summary"],
+                         json.loads(row["detail"]), row["at"], row["seq"])
+
+
 def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
            limit: int = 500) -> list[WorkflowEvent]:
     """The log, oldest first, from just after `after` (an event's seq)."""
@@ -533,9 +549,15 @@ def events(workflow_id: str, after: int = 0, kinds: set[str] | None = None,
     sql += " ORDER BY seq LIMIT ?"
     args.append(limit)
     with closing(_connect()) as conn:
-        return [WorkflowEvent(r["workflow_id"], r["kind"], r["item"], r["summary"],
-                              json.loads(r["detail"]), r["at"], r["seq"])
-                for r in conn.execute(sql, args)]
+        return [_event(r) for r in conn.execute(sql, args)]
+
+
+def latest(workflow_id: str, count: int) -> list[WorkflowEvent]:
+    """A workflow's newest `count` events, oldest of them first."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
+                            "ORDER BY seq DESC LIMIT ?", (workflow_id, count)).fetchall()
+    return [_event(r) for r in reversed(rows)]
 
 
 def find(reference: str) -> list[WorkflowSnapshot]:

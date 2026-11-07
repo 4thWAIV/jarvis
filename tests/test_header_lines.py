@@ -620,9 +620,6 @@ EXEMPT = {
     "workflow_store._apply": (
         "it writes the record and prints nothing but its refusals, whose only "
         "values are slugs it has already checked against `SLUG`"),
-    "workflow_store.events": (
-        "it reads the log back as records; every printer of them is "
-        "`_workflow_detail`, driven, inside an untrusted block"),
     "workflow_store.with_decisions": (
         "it adds workflow decisions to the needs boards, which are already "
         "another session's words: every reader of a board shows it inside an "

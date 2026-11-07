@@ -156,6 +156,26 @@ def test_the_log_reads_from_a_point_and_by_kind():
     assert [e.kind for e in ws.events(wid, kinds={"decision_needed"})] == ["decision_needed"]
 
 
+def test_an_answered_decision_key_is_never_asked_again():
+    wid = ws.start("Build", "hammer", [])
+    ws.record(_ev(wid, "decision_needed", "Which database?", key="db"))
+    ws.record(_ev(wid, "decision_made", "Settled.", key="db"))
+    ws.record(_ev(wid, "decision_needed", "Which database now?", key="db"))
+    ws.record(_ev(wid, "decision_made", "Answered.", key="db", answer="postgres"))
+    with pytest.raises(ws.WorkflowRefused,
+                       match="^Decision db was already answered; ask with a new key.$"):
+        ws.record(_ev(wid, "decision_needed", "Which cache?", key="db"))
+    assert ws.record(_ev(wid, "decision_needed", "Which cache?", key="cache")).open_decisions \
+        == ["cache"]
+
+
+def test_the_latest_events_are_the_newest_however_long_the_log():
+    wid = ws.start("Build", "hammer", [])
+    for n in range(510):
+        ws.record(_ev(wid, "note", f"Note {n}."))
+    assert [e.summary for e in ws.latest(wid, 3)] == ["Note 507.", "Note 508.", "Note 509."]
+
+
 def test_a_workflow_is_found_by_its_name_as_said():
     wid = ws.start("Speech-migration", "jarvis", [])
     assert [w.id for w in ws.find("speech migration")] == [wid]

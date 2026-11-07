@@ -8650,7 +8650,7 @@ def _workflow_detail(w) -> str:
                      + (f" Options: {options}." if options else "")
                      + (f" Recommended: {o.detail['recommendation']}."
                         if o.detail.get("recommendation") else ""))
-    for e in workflow_store.events(w.id)[-WORKFLOW_EVENTS_SHOWN:]:
+    for e in workflow_store.latest(w.id, WORKFLOW_EVENTS_SHOWN):
         lines.append(f"event {e.seq} {e.kind}{' ' + e.item if e.item else ''}: {e.summary}")
     return "\n".join(lines)
 
