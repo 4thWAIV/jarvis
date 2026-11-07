@@ -45,9 +45,10 @@ export type DetailTab = Exclude<MainTab, "conversation" | "folders" | "main">;
 export type TakeoverView = "workflow" | "package";
 
 /** The page's arrangement: normal, or one item taking over, with the right
- *  panel's tab opened over it from the rail (`flyout`) or not. */
+ *  panel's tab opened over it from the rail (`flyout`), or the read-back's
+ *  message boxes as a sheet (`sheet`), or neither: one at a time. */
 export type Layout = { mode: "normal" }
-  | { mode: "takeover"; view: TakeoverView; key: string; flyout: boolean };
+  | { mode: "takeover"; view: TakeoverView; key: string; flyout: boolean; sheet: boolean };
 
 /** A value to read and follow; only its owner can change it. */
 export interface ReadStore<T> {
@@ -276,7 +277,7 @@ registerCommand("right.tab.select", {
     right.set(tab);
     // Taken over, the rail has no panel: the tab opens over the takeover.
     const now = arrangement.get();
-    if (now.mode === "takeover" && !now.flyout) arrangement.set({ ...now, flyout: true });
+    if (now.mode === "takeover" && !now.flyout) arrangement.set({ ...now, flyout: true, sheet: false });
     if (tab === "agents" && agentsTabLit.get()) {   // its message is seen now
       agentsTabLit.set(false);
       return { status: "completed", effects: ["agents.tab-attention-cleared"] };
@@ -305,7 +306,7 @@ registerCommand("layout.takeover", {
     if (now.mode === "takeover" && now.view === shown.view && now.key === shown.key) {
       return { status: "completed", effects: [] };
     }
-    arrangement.set({ mode: "takeover", ...shown, flyout: false });
+    arrangement.set({ mode: "takeover", ...shown, flyout: false, sheet: false });
     return { status: "completed", effects: ["layout.taken-over"] };
   },
 });
@@ -316,6 +317,16 @@ registerCommand("layout.restore", {
   execute() {
     arrangement.set(NORMAL);
     return { status: "completed", effects: ["layout.restored"] };
+  },
+});
+
+registerCommand("layout.sheet", {
+  availability: () => arrangement.get().mode === "takeover" ? { available: true }
+    : { available: false, reason: "no-entity" },
+  execute({ shown }) {
+    const now = arrangement.get();
+    if (now.mode === "takeover") arrangement.set({ ...now, sheet: shown, flyout: shown ? false : now.flyout });
+    return { status: "completed", effects: [] };
   },
 });
 
