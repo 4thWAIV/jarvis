@@ -306,10 +306,10 @@ def short_name(text) -> str:
     return (out or _text(text)[:CAPS["short"]]).strip(" ,.;:?¿!¡")
 
 
-def _unique(base: str, taken: set[str]) -> str:
-    ident, n = base, 2
+def _unique(wanted: str, taken: set[str]) -> str:
+    ident, n = wanted, 2
     while ident in taken:
-        ident, n = f"{base}-{n}", n + 1
+        ident, n = f"{wanted}-{n}", n + 1
     taken.add(ident)
     return ident
 

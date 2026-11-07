@@ -276,6 +276,9 @@ SAMPLES = {
     "_UUID": "01a0ca40-0ae3-7452-893a-87da26c01453",
     "_FOLDER_ID_RE": "01a0ca40-0ae3-4452-893a-87da26c01453",
     "_ASKED_SHA": "39f2527",
+    "_COMMIT": "39f2527",
+    "_URL": "https://github.com/owner/name/pull/1",
+    "ANSWERS": "results/answers.json",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"

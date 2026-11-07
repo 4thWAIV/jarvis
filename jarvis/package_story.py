@@ -48,8 +48,8 @@ ACTIONS = ("show", "click")
 LANGUAGES = (spoken_words.ENGLISH, spoken_words.SPANISH)
 # A question's id, and where a story's answers are kept: one JSON file in
 # the package's results folder.
-QUESTION_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
-ANSWERS = re.compile(r"^results/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.json$")
+QUESTION_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,79}")
+ANSWERS = re.compile(r"results/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.json")
 # The helper the frame loads: one copy, jarvis/package_story.js, served at
 # this address by packages_api.py.
 HELPER_PATH = "/api/packages/story.js"
@@ -171,7 +171,7 @@ def _beat(raw, where: str) -> Beat:
 
 
 def _question(value, what: str) -> str:
-    if not isinstance(value, str) or not QUESTION_ID.match(value):
+    if not isinstance(value, str) or not QUESTION_ID.fullmatch(value):
         raise StoryError(f"{what} is not a question id (a-z, 0-9 and -).")
     return value
 
@@ -217,7 +217,7 @@ def parse(raw: bytes) -> Story:
             None if waits is None else _question(waits, f"{where}'s waits"),
             _asks_when(raw_slide.get("asks_when"), where)))
     answers = body.get("answers")
-    if answers is not None and (not isinstance(answers, str) or not ANSWERS.match(answers)):
+    if answers is not None and (not isinstance(answers, str) or not ANSWERS.fullmatch(answers)):
         raise StoryError("The story's answers is not results/<name>.json.")
     asked = [s.waits for s in slides if s.waits]
     if asked and answers is None:
