@@ -230,3 +230,51 @@ async def test_closing_its_page_stops_only_its_own_story(h, deck):
 def test_stop_words_are_a_whole_utterance(monkeypatch, text, language, stops):
     monkeypatch.setattr(spoken_words, "_active", language)
     assert story_teller.stop_words(text) is stops
+
+
+# -- the server: what the brain is told, and every Stop ---------------------------------
+
+from tests.test_brain_page_parity import _call, wired  # noqa: E402,F401  (the fixture)
+
+
+def test_the_brain_hears_waiting_already_stopped_and_never_no_story(wired, deck, monkeypatch):
+    server = wired.server
+    teller = server.story_teller
+    story = deck.story()
+    telling = story_teller.Telling(deck, story, 2, 1, False, state="waiting", question="tea")
+    monkeypatch.setattr(teller, "telling", telling)
+    got = _call(wired, "tell_package_story", package=deck.id, action="status")
+    assert f"The story of {deck.id} is waiting for his answer to question tea on slide 2 of 5" \
+        in got["text"]
+    monkeypatch.setattr(teller, "_speech", lambda: None)
+    got = _call(wired, "tell_package_story", package=deck.id, action="stop")
+    assert got["text"].startswith(f"Stopped the story of {deck.id}. It was waiting for his "
+                                  f"answer to question tea.")
+    got = _call(wired, "tell_package_story", package=deck.id, action="stop")
+    assert f"The story of {deck.id} is already stopped by voice, at slide 2 of 5" in got["text"]
+    assert "No story" not in got["text"]
+    got = _call(wired, "tell_package_story", package=deck.id, action="status")
+    assert got["text"].startswith("No story is running.")
+
+
+@pytest.mark.asyncio
+async def test_stop_speaking_and_his_stop_word_end_a_waiting_story(wired, deck, monkeypatch):
+    server = wired.server
+    stops: list[str] = []
+
+    class Speech:
+        is_speaking = False
+
+        async def barge_in(self, reason=""):
+            pass
+
+    async def stop(by="on the page"):
+        stops.append(by)
+        server.story_teller.telling = None
+        return story_teller.Told(deck, deck.story())
+    monkeypatch.setattr(server, "speech", Speech())
+    monkeypatch.setattr(server.story_teller, "telling", object())
+    monkeypatch.setattr(server.story_teller, "stop", stop)
+    assert await server._stop_speaking("the page") is True, "a waiting story counts as speaking"
+    assert stops == ["with Stop speaking (the page)"]
+    assert "his \"stop\"" not in " ".join(server._notes_for_brain)
