@@ -108,6 +108,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__attention_updates,mcp__jarvis__mark_updates_seen,"
         "mcp__jarvis__set_attention_settings,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
+        "mcp__jarvis__work_status,mcp__jarvis__answer_work_decision,"
         "mcp__jarvis__retry_run,"
         "mcp__jarvis__update_status,mcp__jarvis__update_jarvis,"
         "mcp__jarvis__ui_map,mcp__jarvis__ui_navigate,"
