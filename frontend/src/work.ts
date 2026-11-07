@@ -16,7 +16,7 @@
 import { getJson, postAnswer } from "./fetchJson";
 import type { InboxDetail } from "./packageInbox";
 import { liveRead } from "./liveRead";
-import { t, wordsOf } from "./locale";
+import { formatDateTime, t, wordsOf } from "./locale";
 import { createStore } from "./store";
 import type { CommandArgs } from "./uiContract";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
@@ -153,6 +153,8 @@ export interface WorkItem {
   /** His projects holding its source, worked out when read. */
   projects: { id: string; name: string }[];
   follow_up: WorkFollowUp | null;
+  /** What his latest act in a review package did, when that was his latest review. */
+  package_review: WorkPackageReview | null;
   /** Open decisions waiting on him while the item itself goes on. */
   also_waiting: number;
   /** An item with no pieces that is held: what holds it. */
@@ -246,6 +248,21 @@ export function askerWords(label: string): string {
 }
 
 /** An answered decision nobody has started on: "Answered — waiting for … to start". */
+/** What his latest act in a review package did to the item. */
+export interface WorkPackageReview {
+  outcome: "approved" | "review_returned" | "work_added" | "no_verdict" | "not_applied";
+  at: number;
+  /** Why it was not applied (not_applied), in JARVIS's words. */
+  why: string;
+  package: string;
+}
+
+/** "Approved by you in the package, 16:33", and the rest of them. */
+export function packageReviewWords(r: WorkPackageReview): string {
+  const time = formatDateTime(r.at * 1000, { hour: "2-digit", minute: "2-digit" });
+  return t(`main.work.packageReview.${r.outcome}`, { time, why: r.why });
+}
+
 export function followUpWords(f: WorkFollowUp): string {
   return t("right.work.followUp", { asker: askerWords(f.asker) });
 }

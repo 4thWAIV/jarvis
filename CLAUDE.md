@@ -324,13 +324,30 @@ His review is `work_api.review`, from the item's header on the page (`POST
 /api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
 yet, Add work) and the brain's acting `review_work` alike: `approved`
 (refused while a decision is open or a piece is held or still working,
-and offered on the page only while `approvable` says the same; the item and
+and offered on the page only while `approvable` says the same: an open
+question of a package sent for the item counts against it, except the
+item's own review question; the item and
 every piece done, `approved_at`; nothing a reporter sends moves it after),
 `review_returned` (his note kept as `review_note` and shown, the item and
 every verifying or done piece back to working) and `work_added` (a new
 `ready` piece in his words, on whoever last worked the item); the note and
 the added work are written for the item's agents to
-`answers_dir()/<project>/<item>-review-<time>.md`. Migration 5 links each
+`answers_dir()/<project>/<item>-review-<time>.md`. A review package (a package sent
+with `--work <item>` asking the well-known question `approve-item`, options
+`approve`, `not-done`, `add-work`) is his review: his answer to it, through
+its decide.py by voice or the Work tab, is `work_api.review_from_package`,
+called from `server._inbox_recount`, which records it through the same
+`work_api.review` (once per answer: `source` on the event,
+`work_store.reviewed`), with `where` "package". Every act of his in a
+review package shows on the item at once (`package_review`: "Approved by
+you in the package, 16:33" on its Overview, Decisions tab and list row): an
+answer that cannot be applied (Approve while a piece still works) is noted
+with why (`review_noted`, `not_applied`), and signing the package off with
+no answer notes "Review closed without a verdict" (`no_verdict`,
+`work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
+yet and Add work still beside it. Answers already on record are applied at
+server start (`work_api.apply_package_reviews`, once each; never from a
+package he set aside or that was replaced). Migration 5 links each
 held piece or item that named nothing to its item's one open decision, or,
 with none open, to the one he answered since it was held (released by the
 sweep), leaves any other unlinked (flagged), and moves every open item and

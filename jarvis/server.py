@@ -3163,6 +3163,8 @@ async def lifespan(application: FastAPI):
         log.warning("dispatch migration skipped", exc_info=True)
     run_store.sweep_stale_runs()
     run_store.sweep_staged_messages()
+    # Every review he made in a package before now is on its item.
+    await asyncio.to_thread(_apply_package_reviews)
     # Every wait still open on an answer he has already given ends now.
     await asyncio.to_thread(wait_links.sweep)
 
@@ -8234,7 +8236,38 @@ def _inbox_recount(package, how: str) -> list:
     for q in asked:
         if q.applies and q.answer:
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
+    for entry in package_inbox.for_package(package.id):
+        _review_from_package(entry, package)
     return moved
+
+
+def _review_from_package(entry, package, signed_off: bool = False):
+    """His act in a review package, on the item it was sent for at once:
+    his answer as his review (work_api.review_from_package, the same review
+    as the page's and review_work's), or, signed off, the review closed
+    without a verdict (work_api.signed_off_review). From any thread. The
+    item as it now is, or None when nothing changed. Never raises."""
+    try:
+        item = (work_api.signed_off_review if signed_off
+                else work_api.review_from_package)(entry, package)
+    except Exception:
+        log.warning("package inbox: %s's review was not read", entry.id, exc_info=True)
+        return None
+    if item is not None:
+        _hint_from_any_thread({"type": "work"})
+    return item
+
+
+def _apply_package_reviews() -> None:
+    """At start: every review act he made in a package before now, on its
+    item once (work_api.apply_package_reviews). Never raises."""
+    try:
+        moved = work_api.apply_package_reviews()
+    except Exception:
+        log.warning("package reviews were not applied at start", exc_info=True)
+        return
+    if moved:
+        log.info("package reviews: %d item(s) moved by answers already on record", moved)
 
 
 # --- What waits on his answer (wait_links.py) --------------------------------
@@ -8390,8 +8423,18 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
-    return entry, (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
-                   if entry.decisions_total else "Recorded.")
+    said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
+            if entry.decisions_total else "Recorded.")
+    if (question.id == work_api.REVIEW_QUESTION and entry.work_id
+            and chosen in work_api.REVIEW_OPTIONS):
+        # Recorded already in the recount: what it did is on the item.
+        item = await asyncio.to_thread(work_store.get, entry.work_id)
+        did = item.package_review if item else None
+        said += (f" It was not applied to {entry.work_id}: {did.why}"
+                 if did and did.outcome == work_store.NOT_APPLIED
+                 else f" It is his review of {entry.work_id}; the item is now {item.state}."
+                 if item else "")
+    return entry, said
 
 
 def _sign_off_text(entry, package) -> str:
@@ -8534,6 +8577,8 @@ async def _sign_off_package(reference: str, how: str):
     # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
     _inbox_sign_off_work(entry, package, how)
+    # A review package's item shows what his sign-off did, at once.
+    await asyncio.to_thread(_review_from_package, entry, package, True)
     to = agent_directory.names_by_session().get(entry.from_session) if entry.from_session else None
     capture = None
     if to:

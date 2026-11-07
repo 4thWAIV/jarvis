@@ -110,8 +110,15 @@ REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
 # WORK_ADDED adds a piece in his words.
 APPROVED, REVIEW_RETURNED, WORK_ADDED = "approved", "review_returned", "work_added"
 REVIEW_KINDS = (APPROVED, REVIEW_RETURNED, WORK_ADDED)
+# What his act in a review package came to when it changed nothing itself:
+# signed off with no verdict, or a verdict that could not be applied (why).
+# Recorded by the server, so the item always says what his act did.
+REVIEW_NOTED = "review_noted"
+NO_VERDICT, NOT_APPLIED = "no_verdict", "not_applied"
 # Everything only he does: never a reporter's to send.
-HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS
+HIS_KINDS = (DECISION_MADE, DECISION_SIGNED_OFF) + REVIEW_KINDS + (REVIEW_NOTED,)
+# His review acts, as the item shows the latest of them.
+_REVIEW_ACTS = REVIEW_KINDS + (REVIEW_NOTED,)
 CREATED = "created"
 
 # What an item is listed under: the area it was given, else its source folder.
@@ -371,6 +378,17 @@ class Blocker:
 
 
 @dataclass(frozen=True)
+class PackageReview:
+    """What his latest act in a review package did to the item: approved,
+    review_returned or work_added (his review, applied), no_verdict (signed
+    off with none), or not_applied (with why)."""
+    outcome: str
+    at: float
+    why: str
+    package: str
+
+
+@dataclass(frozen=True)
 class FollowUp:
     """He answered a decision and nothing has been reported since, with no
     piece working: waiting for the decision's asker to start."""
@@ -423,6 +441,7 @@ class WorkItem:
     # Read time only: as a piece's, from its latest report.
     quiet_at: Optional[float] = None
     follow_up: Optional[FollowUp] = None
+    package_review: Optional[PackageReview] = None
     # Open decisions that wait on him while the item itself goes on (its
     # state is not waiting on him): "Working — 2 decisions also wait on you".
     also_waiting: int = 0
@@ -778,6 +797,12 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         return _apply_piece(conn, item_id, summary, detail, now)
     if kind in REVIEW_KINDS:
         return _review(conn, item_id, kind, summary, detail, now)
+    if kind == REVIEW_NOTED:
+        outcome = detail.get("outcome")
+        if outcome not in (NO_VERDICT, NOT_APPLIED):
+            raise WorkRefused("A review noted is no_verdict or not_applied.")
+        return {"outcome": outcome, "why": _one_line(detail.get("why"), SUMMARY_MAX),
+                "where": "package", "source": _source(detail)}
     if kind == CLOSED:
         conn.execute("UPDATE work_items SET closed_at=? WHERE id=?", (now, item_id))
         return {}
@@ -861,8 +886,11 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
     ready for review back to working, his note kept on it), or add work (a
     new piece in his words, ready for its agent). Approving refuses while a
     decision of his is open or a piece is held."""
-    where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
+    # Where he gave it: the page, his voice, or a review package.
+    where = detail.get("where") if detail.get("where") in ("page", "voice", "package") else "page"
     kept: dict = {"by": "tim", "where": where}
+    if isinstance(detail.get("source"), dict):
+        kept["source"] = _source(detail)
     if kind == APPROVED:
         open_ones = [r["key"] for r in conn.execute(
             f"SELECT key FROM work_decisions WHERE item_id=? AND {_open()}", (item_id,))]
@@ -1159,7 +1187,7 @@ def _item(conn, row, now: float) -> WorkItem:
         pieces=pieces, decisions=decisions, answered=answered,
         blockers=_blockers(row, pieces, decisions, follow_up, now),
         quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]),
-        follow_up=follow_up,
+        follow_up=follow_up, package_review=_package_review(conn, item_id),
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
@@ -1452,6 +1480,39 @@ def sweep_waits() -> "wait_links.Settled":
         if moved:
             conn.commit()
     return wait_links.Settled(work=moved)
+
+
+def _source(detail: dict) -> dict:
+    """Which review package and which answer of his (when he gave it; "" for
+    a sign-off with no answer) an act came from."""
+    given = detail.get("source") if isinstance(detail.get("source"), dict) else {}
+    return {"package": str(given.get("package") or ""),
+            "answered_at": str(given.get("answered_at") or "")}
+
+
+def reviewed(item_id: str, source: dict) -> bool:
+    """Whether his act in a review package (`source`: the inbox id and when
+    he answered) is already on the item's record, applied or noted."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            f"SELECT 1 FROM work_events WHERE item_id=? AND kind IN "
+            f"({','.join('?' * len(_REVIEW_ACTS))}) AND json_extract(detail, '$.source.package')=? "
+            "AND json_extract(detail, '$.source.answered_at')=?",
+            (item_id, *_REVIEW_ACTS, source["package"], source["answered_at"])).fetchone() is not None
+
+
+def _package_review(conn, item_id: str) -> "Optional[PackageReview]":
+    """His latest review act, when it was in a review package: what it did."""
+    row = conn.execute(f"SELECT kind, detail, at FROM work_events WHERE item_id=? AND kind IN "
+                       f"({','.join('?' * len(_REVIEW_ACTS))}) ORDER BY seq DESC LIMIT 1",
+                       (item_id, *_REVIEW_ACTS)).fetchone()
+    if row is None:
+        return None
+    detail = json.loads(row["detail"])
+    if not (detail.get("source") or {}).get("package"):
+        return None
+    outcome = detail.get("outcome") if row["kind"] == REVIEW_NOTED else row["kind"]
+    return PackageReview(outcome, row["at"], detail.get("why", ""), detail["source"]["package"])
 
 
 @dataclass(frozen=True)

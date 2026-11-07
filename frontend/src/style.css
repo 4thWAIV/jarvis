@@ -1528,6 +1528,8 @@ html, body {
 .work-review form { display: flex; gap: 6px; flex: 1; min-width: 0; }
 .work-review input { flex: 1; min-width: 0; }
 .work-approved { color: #34d399; }
+.work-package-review { color: #fbbf24; }
+.work-package-review[data-outcome="approved"] { color: #34d399; }
 .work-review-note { color: #fbbf24; }
 
 /* One work item in the centre (WorkDetail.tsx), where the Conversation view
