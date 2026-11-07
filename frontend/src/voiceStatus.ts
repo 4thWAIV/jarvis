@@ -1,8 +1,8 @@
 /**
- * What JARVIS is doing, shared between jarvis.ts (which knows) and the
- * status control (StatusControl.tsx, which shows it). The store holds the
- * state alone; the status line's words are the control's, in the
- * interface's language, so a language change rewords it at once.
+ * What JARVIS is doing, shared between jarvis.ts (which knows) and what
+ * shows it: the Conversation's control row (ConversationView.tsx) and Stop
+ * (StopControl.tsx). The store holds the state alone; the words are theirs,
+ * in the interface's language, so a language change rewords them at once.
  */
 
 import type { OrbState } from "./orb";

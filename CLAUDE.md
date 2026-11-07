@@ -44,7 +44,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
-- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; voice status and brain usage are on the left, the microphone control at the lower right of the Conversation's message input; Folders, Agents, Queue, Workflows, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input; Folders, Agents, Queue, Workflows, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
 - **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model

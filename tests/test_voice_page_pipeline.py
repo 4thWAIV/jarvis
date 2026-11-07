@@ -584,7 +584,6 @@ async def test_a_phase_step_left_of_the_last_is_reached_over_the_stepper(page_ur
 # visibility no longer counting a holder as a cover: (the navigation that
 # shows it, the target).
 KEPT_ROOM = [
-    (None, {"region": "left", "view": "left.fixed", "kind": "status", "part": "text"}),
     (("right.tab.select", {"tab": "agents"}),
      {"region": "right", "view": "right.agents", "kind": "agentsList", "part": "next"}),
     (("main.tab.select", {"tab": "folders"}),
@@ -652,8 +651,6 @@ TOUR = [
     (("network.open", {"kind": "node", "nodeId": MINI_ID}), DETAIL_CPU, [f"main.network|node|{MINI_ID}"]),
     (None, {"region": "left", "view": "left.fixed", "kind": "teamServer", "part": "database"},
      ["left.fixed|teamServer|"]),
-    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"},
-     ["main.conversation|conversation|", "main.conversation|mic|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "phases"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowPhase", "key": "wf-1/mic-recorder"},
      [WORKFLOW_BOX, "main.workflow.view", "main.workflow.phases"]),
@@ -666,7 +663,10 @@ TOUR = [
      ["right.panel"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
-     [WORKFLOW_BOX, "main.workflow.view"]),
+     [WORKFLOW_BOX, "main.workflow.view"]),    # Last, once every workflow has been read: the Conversation view, which
+    # a workflow being opened would otherwise take the centre from.
+    (("main.tab.select", {"tab": "conversation"}), {"region": "main", "view": "main.conversation", "kind": "mic", "part": "mute"},
+     ["main.conversation|conversation|", "main.conversation|mic|"]),
 ]
 
 # Every control and line of text on show on the page but the target's own

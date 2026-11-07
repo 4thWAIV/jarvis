@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../locale";
 import { MicControl, MicHealth, MicTarget } from "../MicControl";
-import { StopControl } from "../StatusControl";
+import { StopControl } from "../StopControl";
 import { createStore } from "../store";
 import { sendTyped } from "../voiceStatus";
 import { clearTypedRefusal, refuseTyped } from "./controlState";

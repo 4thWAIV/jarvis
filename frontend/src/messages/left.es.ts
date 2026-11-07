@@ -9,8 +9,6 @@ export const leftEs: CatalogOf<typeof leftEn> = {
 
   "left.orb.brainLogo": "Cerebro {provider}",
 
-  "left.status.listening": "escuchando...",
-  "left.status.thinking": "pensando...",
   "left.status.stop": "Detener",
   "left.status.stopTitle": "Detener toda la voz ahora",
 

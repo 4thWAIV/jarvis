@@ -10,7 +10,7 @@
   /* Kept clear at each page edge: on the left for the rays (RayLane.tsx),
      mirrored on the right. */
   --ray-lane: 4vw;
-  /* The two side panels: the left column (orb, status, team server, brains) and the
+  /* The two side panels: the left column (orb, team server, brains) and the
      right-hand display. One width for both, the only place either width is
      set. It never grows past 230px and only shrinks, with the window, so the
      centre area (whose edges are --panel-edge) is never covered. */
@@ -64,7 +64,7 @@ html, body {
 }
 
 /* The upper left column: the orb, a fifth of the page wide and between a
-   third and a half of it high, with the status and mic controls below it.
+   third and a half of it high, with the team server's tile below it.
    The rest of the page is black. */
 /* The agents list is a tab of the right-hand panel (RightPanel.tsx). */
 /* Ending exactly where the right-hand panel does, --above-footer above the
@@ -164,29 +164,10 @@ html, body {
   pointer-events: auto;
 }
 
-/* The status line's height in every state, so nothing below moves. */
-#status-control {
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 #orb-canvas {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-#status-text {
-  color: var(--ui-accent);
-  font-size: 13px;
-  letter-spacing: 2px;
-  text-transform: lowercase;
-  font-weight: 300;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 10;
 }
 
 /* The footer spans the bottom of the page; what is in it keeps its place. */
@@ -1150,7 +1131,7 @@ html, body {
 }
 
 /* Stop — shown only while he is speaking, because that is the only moment it
-   means anything; left of Send in the message input (StatusControl.tsx). */
+   means anything; left of Send in the message input (StopControl.tsx). */
 #hush {
   height: 26px;
   padding: 0 22px;
@@ -2550,7 +2531,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 
 /* The Team Server tile: a server symbol and its readiness word in a 62px
    column, beside three rows each led by a status dot. Full width of the
-   left column, under the status control. */
+   left column, under the orb. */
 #team-server-tile .tile-body {
   grid-template-columns: 62px minmax(0, 1fr);
   gap: 8px;

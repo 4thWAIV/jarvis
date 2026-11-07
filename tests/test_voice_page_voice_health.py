@@ -133,8 +133,12 @@ async def test_text_that_was_written_under_the_orb_goes_to_messages(page_playwri
         ws.send(json.dumps({"type": "notice", "text": "Rotating my context; one moment."}))
         ws.send(json.dumps({"type": "text", "text": "A sentence I could not voice."}))
         await page.wait_for_timeout(300)
-        status = await page.evaluate("document.querySelector('#status-text')?.textContent ?? ''")
-        assert "Rotating" not in status and "voice" not in status
+        # Nothing in the left column, and the conversation control's words
+        # are its own state's, not the notice's.
+        left = await page.evaluate("document.querySelector('#left-column').textContent")
+        assert "Rotating" not in left and "could not voice" not in left
+        control = await page.evaluate("document.querySelector('#conversation-control').textContent")
+        assert "Rotating" not in control and "could not voice" not in control
         assert await page.query_selector("#error-text") is None
         await page.click(".voice-summary-open")
         await page.wait_for_selector("#voice-diagnostics")

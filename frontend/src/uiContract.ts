@@ -2276,36 +2276,6 @@ export const UI_CONTRACT = {
       "family": "left"
     },
     {
-      "kind": "status",
-      "entity": null,
-      "label": "Status",
-      "parts": [
-        "text",
-        "stop"
-      ],
-      "presentations": [
-        {
-          "view": "left.fixed",
-          "parts": [
-            "text"
-          ]
-        },
-        {
-          "view": "main.conversation",
-          "parts": [
-            "stop"
-          ],
-          "reveal": {
-            "command": "main.tab.select",
-            "args": {
-              "tab": "conversation"
-            }
-          }
-        }
-      ],
-      "family": "left"
-    },
-    {
       "kind": "brainAccount",
       "entity": "provider",
       "label": "Brain account",
@@ -3359,6 +3329,26 @@ export const UI_CONTRACT = {
         "speaking",
         "turn",
         "input"
+      ],
+      "presentations": [
+        {
+          "view": "main.conversation",
+          "reveal": {
+            "command": "main.tab.select",
+            "args": {
+              "tab": "conversation"
+            }
+          }
+        }
+      ],
+      "family": "conversation"
+    },
+    {
+      "kind": "status",
+      "entity": null,
+      "label": "Status",
+      "parts": [
+        "stop"
       ],
       "presentations": [
         {

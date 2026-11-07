@@ -1,6 +1,6 @@
 """The left column, the menu, Settings, the sign-in reminder and the footer
 as the brain sees and moves them (MenuControl.tsx, Settings.tsx,
-TeamSignInReminder.tsx, OrbControl.tsx, StatusControl.tsx, MicControl.tsx,
+TeamSignInReminder.tsx, OrbControl.tsx, MicControl.tsx,
 TeamServerTile.tsx, WeeklyUsage.tsx, Footer.tsx).
 
 Every object and meaningful part is a registered target the white signal
@@ -169,7 +169,6 @@ async def _marks(page, selector):
 
 LEFT_TARGETS = [
     ({"kind": "orb"}, [None, "canvas", "logo"]),
-    ({"kind": "status"}, [None]),
     # A page loads not listening: Start listening stands where the meter goes.
     # The microphone moved to the Conversation's message input, right of
     # Send; it is checked here with the left column's controls it left.
@@ -298,8 +297,7 @@ async def test_the_brain_can_find_every_left_target_and_its_commands_in_the_map(
             await page.wait_for_selector(".weekly-usage .weekly-figure")
             answer = await _ask(ui, {"kind": "map", "region": "left"})
             kinds = sorted({(t["ref"]["kind"], t["ref"].get("key")) for t in answer["map"]["targets"]})
-            assert kinds == [("brainAccount", "anthropic"), ("orb", None), ("status", None),
-                             ("teamServer", None)]
+            assert kinds == [("brainAccount", "anthropic"), ("orb", None), ("teamServer", None)]
             main = await _ask(ui, {"kind": "map", "view": "main.conversation"})
             assert "mic" in {t["ref"]["kind"] for t in main["map"]["targets"]}
             overlay = await _ask(ui, {"kind": "map", "region": "overlay"})

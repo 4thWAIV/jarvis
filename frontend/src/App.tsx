@@ -15,7 +15,6 @@ import { UiPipelineLayer } from "./UiPipelineLayer";
 import { RightPanel } from "./RightPanel";
 import { useFirstRunSetup } from "./Settings";
 import { OrbControl } from "./OrbControl";
-import { StatusControl } from "./StatusControl";
 import { TeamServerTile } from "./TeamServerTile";
 import { startHumanActivity } from "./humanActivity";
 import { startJarvis } from "./jarvis";
@@ -31,7 +30,6 @@ export function App() {
           tab of the right-hand display. */}
       <div id="left-column">
         <OrbControl onReady={startJarvis} />
-        <StatusControl />
         <TeamServerTile />
         <BrainUsage />
       </div>

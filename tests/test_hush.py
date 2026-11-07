@@ -48,7 +48,7 @@ def test_the_client_sends_a_key_press_not_a_word():
 def test_the_button_only_shows_while_he_is_speaking():
     """Stop is drawn left of Send only while he is speaking; otherwise its
     slot takes no room and it is no pointer target."""
-    control = (Path(__file__).parent.parent / "frontend/src/StatusControl.tsx").read_text()
+    control = (Path(__file__).parent.parent / "frontend/src/StopControl.tsx").read_text()
     assert '=== "speaking"' in control
     assert 'ref={speaking ? ui.part("stop") : undefined}' in control
     assert 'data-shown={speaking}' in control

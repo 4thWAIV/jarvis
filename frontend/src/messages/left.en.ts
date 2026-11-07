@@ -16,9 +16,7 @@ export const leftEn = {
 
   "left.orb.brainLogo": "{provider} brain",
 
-  // The status line under the orb (StatusControl.tsx).
-  "left.status.listening": "listening...",
-  "left.status.thinking": "thinking...",
+  // Stop, left of Send in the message input (StopControl.tsx).
   "left.status.stop": "Stop",
   "left.status.stopTitle": "Stop all speech now",
 
