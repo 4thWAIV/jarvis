@@ -176,7 +176,9 @@ export const UI_CONTRACT = {
     "settings.opened": "The Settings view opened.",
     "menu.opened": "The menu opened.",
     "list.paged": "A list loaded or showed another page.",
-    "list.filtered": "A list's filter changed."
+    "list.filtered": "A list's filter changed.",
+    "layout.taken-over": "The centre widened over the right panel, which folded to a rail; the takeover bar replaced the centre tabs.",
+    "layout.restored": "The normal layout came back: the centre tabs, the notices and the right panel."
   },
   "pipeline": {
     "source": "orb.source",
@@ -467,6 +469,18 @@ export const UI_CONTRACT = {
       "region": "footer",
       "kind": "fixed",
       "label": "Footer"
+    },
+    {
+      "id": "main.takeover",
+      "region": "main",
+      "kind": "fixed",
+      "label": "Takeover bar (the item's name, the conversation's state, the notices, the microphone and Restore layout, in place of the centre tabs while a workflow or a page package has taken over)"
+    },
+    {
+      "id": "right.rail",
+      "region": "right",
+      "kind": "fixed",
+      "label": "Right rail (the right panel folded to its six tab icons while taken over)"
     }
   ],
   "commands": [
@@ -539,6 +553,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "shell"
@@ -573,6 +590,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "network"
@@ -590,6 +610,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "network"
@@ -627,6 +650,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -644,6 +670,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -685,6 +714,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -717,6 +749,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -734,6 +769,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -761,6 +799,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -778,6 +819,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -795,6 +839,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -812,6 +859,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -842,6 +892,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -859,6 +912,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -895,6 +951,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -928,6 +987,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -954,6 +1016,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -983,6 +1048,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1003,6 +1071,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1027,6 +1098,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "navigation"
@@ -1101,6 +1175,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "settings"
@@ -1145,6 +1222,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "settings"
@@ -1321,6 +1401,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "queue"
@@ -1391,6 +1474,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "queue.draft-saved"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "queue"
@@ -2003,6 +2089,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2020,6 +2109,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2057,6 +2149,9 @@ export const UI_CONTRACT = {
         },
         {
           "effect": "centre.detail-replaced"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2074,6 +2169,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "packages"
@@ -2232,6 +2330,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.view-shown"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "knowledge"
@@ -2249,6 +2350,9 @@ export const UI_CONTRACT = {
       "effects": [
         {
           "effect": "centre.detail-closed"
+        },
+        {
+          "effect": "layout.restored"
         }
       ],
       "family": "knowledge"
@@ -2357,6 +2461,53 @@ export const UI_CONTRACT = {
       ],
       "effects": [],
       "family": "knowledge"
+    },
+    {
+      "id": "layout.takeover",
+      "label": "Let the workflow or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
+      "view": "main.takeover",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "layout.taken-over"
+        }
+      ],
+      "family": "layout"
+    },
+    {
+      "id": "layout.restore",
+      "label": "Restore the normal layout after a takeover",
+      "view": "main.takeover",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "layout.restored"
+        }
+      ],
+      "family": "layout"
+    },
+    {
+      "id": "layout.flyout.close",
+      "label": "Close the right panel's tab opened over the takeover from the rail",
+      "view": "right.rail",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "layout"
     }
   ],
   "kinds": [
@@ -3874,6 +4025,9 @@ export const UI_CONTRACT = {
               "tab": "conversation"
             }
           }
+        },
+        {
+          "view": "main.takeover"
         }
       ],
       "family": "conversation"
@@ -3902,6 +4056,9 @@ export const UI_CONTRACT = {
         },
         {
           "view": "main.corner"
+        },
+        {
+          "view": "main.takeover"
         }
       ],
       "family": "conversation"
@@ -4162,6 +4319,22 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "knowledge"
+    },
+    {
+      "kind": "takeoverBar",
+      "entity": null,
+      "label": "Takeover bar",
+      "parts": [
+        "name",
+        "state",
+        "restore"
+      ],
+      "presentations": [
+        {
+          "view": "main.takeover"
+        }
+      ],
+      "family": "layout"
     }
   ],
   "families": [
@@ -4220,6 +4393,10 @@ export const UI_CONTRACT = {
     {
       "family": "knowledge",
       "owner": "coverage-main"
+    },
+    {
+      "family": "layout",
+      "owner": "integrator"
     }
   ]
 } as const;
@@ -4356,6 +4533,9 @@ export interface CommandArgs {
   "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
   "knowledge.search": { query: string; };
   "knowledge.seed.answer": { seedId: string; answer: "accept" | "decline"; };
+  "layout.flyout.close": { };
+  "layout.restore": { };
+  "layout.takeover": { };
   "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };

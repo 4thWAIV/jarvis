@@ -20,6 +20,14 @@
  *     `runBinding`; `bindingProps` gives a button its handler and the
  *     `data-ui-command` / `data-ui-args` marks that say what it runs.
  *
+ *   - `layout` is the page's arrangement: normal, or one workflow or page
+ *     package taking over the centre and the right side (the right panel
+ *     folds to a rail of its tab icons, the takeover bar replaces the centre
+ *     tabs). It holds only while the centre shows that view and its slot
+ *     holds that item: every command that changes either restores the
+ *     normal layout in its own handler (`layout.restored`). A reload starts
+ *     normal, as the rest of the route state does.
+ *
  * Showing a view never moves keyboard focus, and nothing here reports
  * human activity: that comes from trusted input alone (humanActivity.ts).
  */
@@ -33,6 +41,13 @@ export type RightTab = CommandArgs["right.tab.select"]["tab"];
 export type MainTab = CommandArgs["main.tab.select"]["tab"];
 /** The centre's views that hold one item at a time. */
 export type DetailTab = Exclude<MainTab, "conversation" | "folders" | "main">;
+/** The details that can take over the page. */
+export type TakeoverView = "workflow" | "package";
+
+/** The page's arrangement: normal, or one item taking over, with the right
+ *  panel's tab opened over it from the rail (`flyout`) or not. */
+export type Layout = { mode: "normal" }
+  | { mode: "takeover"; view: TakeoverView; key: string; flyout: boolean };
 
 /** A value to read and follow; only its owner can change it. */
 export interface ReadStore<T> {
@@ -60,9 +75,38 @@ const main = createStore<MainTab>(firstMain());
 /** The centre's selected view. */
 export const mainView = readOnly(main);
 
+// ── the layout ──────────────────────────────────────────────────────────
+
+const NORMAL: Layout = { mode: "normal" };
+const arrangement = createStore<Layout>(NORMAL);
+/** Normal, or the item that has taken over the page. */
+export const layout = readOnly(arrangement);
+
 // ── the centre's detail slots ───────────────────────────────────────────
 
 const slots = new Map<DetailTab, ReadStore<unknown>>();
+/** How each detail that can take over names its item. */
+const takeoverKeys = new Map<DetailTab, (item: unknown) => string>();
+
+/** The key of the item the centre shows, when it is one that can take
+ *  over the page; else null. */
+function shownTakeover(): { view: TakeoverView; key: string } | null {
+  const view = main.get();
+  const keyOf = takeoverKeys.get(view as DetailTab);
+  const item = slots.get(view as DetailTab)?.get();
+  return keyOf && item != null ? { view: view as TakeoverView, key: keyOf(item) } : null;
+}
+
+/** Back to the normal layout when what took over is no longer shown: run
+ *  by every change of the centre's view or of a slot, after it. */
+function settleLayout(): Effects {
+  const now = arrangement.get();
+  if (now.mode === "normal") return [];
+  const shown = shownTakeover();
+  if (shown && shown.view === now.view && shown.key === now.key) return [];
+  arrangement.set(NORMAL);
+  return ["layout.restored"];
+}
 const open = createStore<ReadonlySet<MainTab>>(new Set(STATIC_MAIN));
 /** The centre views that can be shown now: the static ones, and each
  *  detail whose slot holds an item. */
@@ -90,11 +134,15 @@ export interface DetailSlot<T> {
 }
 
 /** One detail slot of the centre. `same` says when two items are one
- *  (the slot holds one item; another replaces it). */
-export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Object.is): DetailSlot<T> {
+ *  (the slot holds one item; another replaces it). A workflow's or a
+ *  package's slot also says how its item is named (`takeover`), so it can
+ *  take over the page. */
+export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Object.is,
+                              takeover?: (item: T) => string): DetailSlot<T> {
   if (slots.has(tab)) throw new Error(`ui: the ${tab} slot already exists`);
   const store = createStore<T | null>(null);
   slots.set(tab, store);
+  if (takeover) takeoverKeys.set(tab, takeover as (item: unknown) => string);
   store.subscribe(recountOpen);
   const release = (): void => {
     store.set(null);
@@ -109,15 +157,16 @@ export function detailSlot<T>(tab: DetailTab, same: (a: T, b: T) => boolean = Ob
       if (was !== null && !same(was, item)) effects.push("centre.detail-replaced");
       store.set(item);
       main.set(tab);
-      return effects;
+      return [...effects, ...settleLayout()];
     },
     close() {
       if (store.get() === null) return [];
       release();
-      return ["centre.detail-closed"];
+      return ["centre.detail-closed", ...settleLayout()];
     },
     adjust(item) {
       if (item === null) release(); else store.set(item);
+      settleLayout();
     },
   };
 }
@@ -144,7 +193,7 @@ export function registerClose<T>(id: PlainClose, slot: DetailSlot<T>, closed?: (
 export function showStatic(tab: (typeof STATIC_MAIN)[number]): Effects {
   if (main.get() === tab) return [];
   main.set(tab);
-  return ["centre.view-shown"];
+  return ["centre.view-shown", ...settleLayout()];
 }
 
 /** What an open command learned of an item this page has not listed. */
@@ -225,6 +274,9 @@ registerCommand("right.tab.select", {
   availability: () => ({ available: true }),
   execute({ tab }) {
     right.set(tab);
+    // Taken over, the rail has no panel: the tab opens over the takeover.
+    const now = arrangement.get();
+    if (now.mode === "takeover" && !now.flyout) arrangement.set({ ...now, flyout: true });
     if (tab === "agents" && agentsTabLit.get()) {   // its message is seen now
       agentsTabLit.set(false);
       return { status: "completed", effects: ["agents.tab-attention-cleared"] };
@@ -238,6 +290,43 @@ registerCommand("main.tab.select", {
   execute({ tab }) {
     const shown = main.get() !== tab;
     main.set(tab);
-    return { status: "completed", effects: shown ? ["centre.view-shown"] : [] };
+    return { status: "completed", effects: [...(shown ? ["centre.view-shown" as const] : []), ...settleLayout()] };
+  },
+});
+
+// ── the layout's commands ───────────────────────────────────────────────
+
+registerCommand("layout.takeover", {
+  // Only the workflow or page package the centre shows can take over.
+  availability: () => shownTakeover() ? { available: true } : { available: false, reason: "no-entity" },
+  execute() {
+    const shown = shownTakeover()!;
+    const now = arrangement.get();
+    if (now.mode === "takeover" && now.view === shown.view && now.key === shown.key) {
+      return { status: "completed", effects: [] };
+    }
+    arrangement.set({ mode: "takeover", ...shown, flyout: false });
+    return { status: "completed", effects: ["layout.taken-over"] };
+  },
+});
+
+registerCommand("layout.restore", {
+  availability: () => arrangement.get().mode === "takeover" ? { available: true }
+    : { available: false, reason: "no-entity" },
+  execute() {
+    arrangement.set(NORMAL);
+    return { status: "completed", effects: ["layout.restored"] };
+  },
+});
+
+registerCommand("layout.flyout.close", {
+  availability: () => {
+    const now = arrangement.get();
+    return now.mode === "takeover" && now.flyout ? { available: true } : { available: false, reason: "no-entity" };
+  },
+  execute() {
+    const now = arrangement.get();
+    if (now.mode === "takeover") arrangement.set({ ...now, flyout: false });
+    return { status: "completed", effects: [] };
   },
 });

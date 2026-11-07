@@ -5,7 +5,7 @@
  * human-activity collector (humanActivity.ts) runs for as long as it does.
  */
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { CentreArea } from "./CentreArea";
 import { Footer } from "./Footer";
 import { MenuControl } from "./MenuControl";
@@ -18,10 +18,15 @@ import { OrbControl } from "./OrbControl";
 import { TeamServerTile } from "./TeamServerTile";
 import { startHumanActivity } from "./humanActivity";
 import { startJarvis } from "./jarvis";
+import { layout } from "./uiNavigation";
 
 export function App() {
   useEffect(startHumanActivity, []);
   useFirstRunSetup();
+  // The page's arrangement, for the stylesheet: every centre view's right
+  // edge moves to the rail while something has taken over (style.css).
+  const arranged = useSyncExternalStore(layout.subscribe, layout.get).mode;
+  useLayoutEffect(() => { document.documentElement.dataset.layout = arranged; }, [arranged]);
   return (
     <>
       {/* The upper left: the orb, what he is doing, the team server's

@@ -15,6 +15,10 @@
  * by itself there; the updates chip's list opens only when clicked, over
  * the view.
  *
+ * While a workflow or a page package has taken over the page they are
+ * chips in the takeover bar (TakeoverBar.tsx, `inBar`), in its flow, and
+ * reserve nothing.
+ *
  * Which view is shown is the route state's (uiNavigation.ts `mainView`).
  */
 
@@ -27,13 +31,13 @@ import { mainView } from "./uiNavigation";
 // the chips and the last tab.
 const GAP_PX = 8;
 
-export function CentreNotices() {
+export function CentreNotices({ inBar = false }: { inBar?: boolean }) {
   const view = useSyncExternalStore(mainView.subscribe, mainView.get);
-  const compact = view !== "conversation";
+  const compact = inBar || view !== "conversation";
   const box = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = box.current;
-    if (!el) return;
+    if (!el || inBar) return;
     const root = document.documentElement.style;
     const fit = () => {
       if (compact) {
@@ -60,9 +64,9 @@ export function CentreNotices() {
       root.removeProperty("--centre-notice-height");
       root.removeProperty("--centre-chip-room");
     };
-  }, [compact]);
+  }, [compact, inBar]);
   return (
-    <div id="centre-notices" ref={box} className={compact ? "compact" : undefined}>
+    <div id="centre-notices" ref={box} className={inBar ? "compact in-bar" : compact ? "compact" : undefined}>
       <TeamSignInReminder compact={compact} />
       <UpdatesNotice compact={compact} />
     </div>

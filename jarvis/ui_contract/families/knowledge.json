@@ -17,7 +17,7 @@
         {
           "effect": "centre.view-shown"
         }
-      ]
+      , {"effect": "layout.restored"}]
     },
     {
       "id": "knowledge.close",
@@ -33,7 +33,7 @@
         {
           "effect": "centre.detail-closed"
         }
-      ]
+      , {"effect": "layout.restored"}]
     },
     {
       "id": "knowledge.search",

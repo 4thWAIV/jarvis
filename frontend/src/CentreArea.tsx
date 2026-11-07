@@ -48,6 +48,11 @@
  * Conversation stays on the page, hidden, while another of these is shown,
  * so going back finds it as it was left, scrolled where it was.
  *
+ * While a workflow or a page package has taken over the page
+ * (uiNavigation.ts `layout`), the takeover bar (TakeoverBar.tsx) stands in
+ * place of the tabs and the notices, holding them and the microphone, and
+ * every view widens over the right panel, which folds to a rail.
+ *
  * Above whichever view is shown, under the tabs, the sign-in reminder
  * (TeamSignInReminder.tsx, in the notice stack CentreNotices.tsx, with
  * updates waiting, UpdatesNotice.tsx) while this JARVIS is not signed in to a team
@@ -55,7 +60,7 @@
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { bind, mainView, type MainTab } from "./uiNavigation";
+import { bind, layout, mainView, type MainTab } from "./uiNavigation";
 import { AgentThread } from "./AgentThread";
 import { openThread } from "./conversation";
 import { CaptionBox } from "./CaptionBox";
@@ -66,7 +71,8 @@ import { TabRow, type Tab } from "./Tabs";
 import { WorkDetail } from "./WorkDetail";
 import { openWork, workList } from "./work";
 import { WorkflowDetail } from "./WorkflowDetail";
-import { openWorkflow, subagentOf } from "./workflows";
+import { openWorkflow, subagentOf, workflows } from "./workflows";
+import { TakeoverBar } from "./TakeoverBar";
 import { openDiagnostics } from "./voiceHealth";
 import { openSubsystem, subsystemName as nameOf } from "./subsystems";
 import { network, openNetwork } from "./network";
@@ -224,6 +230,8 @@ export function CentreArea() {
   const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
   const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
+  const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
+  const workflowList = useSyncExternalStore(workflows.subscribe, workflows.get).value;
   const t = useT();
   const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
@@ -261,11 +269,17 @@ export function CentreArea() {
   // Kept, hidden, under every view but Main (which is the centre as it was
   // before views, without it).
   const kept = view.id !== "main";
+  // The bar names what took over: a package or a subagent by its tab's
+  // title, a workflow by its own name.
+  const takeoverName = (view.id === WORKFLOW_VIEW.id && workflow
+    ? workflowList?.workflows.find((w) => w.id === workflow)?.name : undefined) ?? view.title;
   return (
     <>
-      <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
-              className="centre-tabs" words box="main.tabs" />
-      <CentreNotices />
+      {takenOver ? <TakeoverBar name={takeoverName} /> : <>
+        <TabRow tabs={views} selected={view.id} binding={(v) => bind("main.tab.select", { tab: v.id as MainTab })}
+                className="centre-tabs" words box="main.tabs" />
+        <CentreNotices />
+      </>}
       {kept && (
         <div className={`centre-kept${view.id === conversation.id ? "" : " hidden"}`}
              inert={view.id !== conversation.id}>
@@ -286,8 +300,9 @@ export function CentreArea() {
       )}
       {view.id !== conversation.id && view.id !== folders.id && view.id !== PACKAGE_VIEW.id
         && view.view()}
-      {/* The microphone: in the message input on Conversation, else here. */}
-      {view.id !== conversation.id && <MicCorner />}
+      {/* The microphone: in the message input on Conversation, in the bar
+          while taken over, else here. */}
+      {view.id !== conversation.id && !takenOver && <MicCorner />}
       <MicPortal />
     </>
   );

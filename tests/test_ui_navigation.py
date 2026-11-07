@@ -38,6 +38,12 @@ EXPECTED = {
     "reveal: a person's navigation cancels it", "reveal: nothing declared, nothing guessed",
     "no declared command without a handler",
     "package and received file: opened by their commands, closed back to Conversation",
+    "takeover: nothing to take over on Conversation",
+    "takeover: the workflow shown takes over, and again changes nothing", "takeover: taking over twice",
+    "takeover: restore", "takeover: another centre view restores it",
+    "takeover: another item in its slot restores it", "takeover: closing the item restores it",
+    "takeover: a right tab opens over it, and closes", "takeover: the flyout closes, the takeover stays",
+    "takeover: a package, and another package restores it",
 }
 
 

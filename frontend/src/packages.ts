@@ -102,7 +102,7 @@ export const storyState = createStore<StoryState | null>(null);
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
 
-const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id);
+const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id, (info) => info.id);
 /** The page package shown in the centre area, or none. Read-only: the
  *  controls run `package.open` and `package.close`. */
 export const openPackage = packageSlot.value;
