@@ -352,6 +352,49 @@ class _PageHandler(http.server.SimpleHTTPRequestHandler):
 # every shared browser launched afresh, so nothing it left behind reaches the
 # next one.
 
+# A page test's Chromium draws nothing in 3D unless the test is marked
+# `webgl`. Headless Chromium draws the orbs in software, 130-220 ms a frame on
+# the page's main thread, and everything else the page does waits behind those
+# frames: the page tests ran 41 minutes on CI with it on. Without WebGL the
+# orbs stand still (as on a Mac whose graphics have gone) and the page runs on.
+# Only the tests that look at the orbs' drawing, the rays or the graphics row
+# are marked `webgl` and get it. Every launch a page test makes takes these
+# arguments: the shared browser's (`page_playwright`) and Playwright's own
+# (`_page_tests_draw_no_3d` below).
+NO_3D_ARGS = ("--disable-webgl", "--disable-3d-apis")
+
+
+def wants_webgl(node) -> bool:
+    """Whether this test's Chromium draws in 3D: every test but a page test
+    not marked `webgl`."""
+    return node.get_closest_marker("page") is None or node.get_closest_marker("webgl") is not None
+
+
+def page_launch_args(args, webgl: bool) -> tuple:
+    """A page test's launch arguments: as given, plus NO_3D_ARGS unless it
+    draws in 3D."""
+    args = tuple(args or ())
+    return args if webgl else args + tuple(a for a in NO_3D_ARGS if a not in args)
+
+
+@pytest.fixture(autouse=True)
+def _page_tests_draw_no_3d(request, monkeypatch):
+    """A page test not marked `webgl` launches Chromium without WebGL, however
+    it launches it (`async_playwright()` directly, as many do)."""
+    if wants_webgl(request.node):
+        return
+    try:
+        from playwright.async_api import BrowserType
+    except ImportError:                     # the test skips itself without Playwright
+        return
+    launch = BrowserType.launch
+
+    async def without_3d(self, *a, args=None, **kw):
+        return await launch(self, *a, args=list(page_launch_args(args, False)), **kw)
+
+    monkeypatch.setattr(BrowserType, "launch", without_3d)
+
+
 _WEBGL = """() => { try { return !!document.createElement('canvas').getContext('webgl'); }
                     catch (e) { return false; } }"""
 _FAILED = pytest.StashKey[bool]()
@@ -444,8 +487,9 @@ class _PagePlaywright:
     """Playwright for one page test, in the shape the tests already drive:
     `async with page_playwright as p:` then `await p.chromium.launch(...)`."""
 
-    def __init__(self, shared: _SharedChromium):
+    def __init__(self, shared: _SharedChromium, webgl: bool):
         self._shared = shared
+        self._webgl = webgl
         self._borrowed: list[_BorrowedBrowser] = []
         self.chromium = self
 
@@ -459,7 +503,7 @@ class _PagePlaywright:
         assert headless, "the page tests run headless"
         assert asyncio.get_running_loop() is self._shared.loop, \
             'a test that takes page_playwright runs @pytest.mark.asyncio(loop_scope="session")'
-        args = tuple(args)
+        args = page_launch_args(args, self._webgl)
         borrowed = _BorrowedBrowser(self._shared, await self._shared.browser(args), args)
         self._borrowed.append(borrowed)
         return borrowed
@@ -482,7 +526,7 @@ async def _chromium_for_the_session():
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def page_playwright(request, _chromium_for_the_session):
-    playwright = _PagePlaywright(_chromium_for_the_session)
+    playwright = _PagePlaywright(_chromium_for_the_session, wants_webgl(request.node))
     yield playwright
     await playwright.close()
     if request.node.stash.get(_FAILED, False):

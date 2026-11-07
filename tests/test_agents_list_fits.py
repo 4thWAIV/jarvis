@@ -185,6 +185,7 @@ def _colourfulness(png: bytes) -> float:
     return best
 
 
+@pytest.mark.webgl    # the orbs' colour is drawn with WebGL
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a_gray_orb_is_drawn_without_colour_and_an_active_one_with_it(page_playwright, page_url):
     pytest.importorskip("PIL")
