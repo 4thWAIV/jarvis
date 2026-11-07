@@ -175,7 +175,7 @@ export const workflowsChanged = createStore(0);
 
 // ── The workflow (or subagent) open in the centre ────────────────────────
 
-const workflowSlot = detailSlot<string>("workflow");
+const workflowSlot = detailSlot<string>("workflow", Object.is, (key) => key);
 
 /** The workflow whose detail the centre area shows (or a subagent's key,
  *  `subagentOf`), or null. Writing it runs `workflow.open`,

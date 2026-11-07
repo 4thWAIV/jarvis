@@ -19,12 +19,10 @@ import { ACTIONS, GROUP_LABEL, type Action, type ControlView, type Group } from 
 
 type PartRef = (el: Element | null) => void;
 
-export function ConversationControl({ view, groupRef, readAgain }: {
-  view: ControlView; groupRef: (group: Group) => PartRef; readAgain: () => void;
-}) {
-  const t = useT();
-  const settings = useSyncExternalStore(voiceInputSettings.subscribe, voiceInputSettings.get);
-  const run: Record<Action, () => void> = {
+/** What each of the control's buttons calls: the same wherever the
+ *  state is shown (the message input, or the takeover bar). */
+function runs(readAgain: () => void): Record<Action, () => void> {
+  return {
     send: () => turnAction.current("send_now"),
     sendHeard: () => turnAction.current("send_now"),
     retry: () => turnAction.current("retry"),
@@ -34,6 +32,53 @@ export function ConversationControl({ view, groupRef, readAgain }: {
     startListening: () => startListening.current(),
     readAgain,
   };
+}
+
+/** The activity light, by the state's light and pause stage. */
+function ControlLight({ view }: { view: ControlView }) {
+  return <span className="control-light" data-light={view.light} data-stage={view.stage} aria-hidden="true"><i /><i /><i /></span>;
+}
+
+/** The state's buttons. `ids` gives each its id (the message input's own,
+ *  which only one place may carry). */
+function ControlActions({ view, readAgain, ids }: { view: ControlView; readAgain: () => void; ids: boolean }) {
+  const t = useT();
+  const settings = useSyncExternalStore(voiceInputSettings.subscribe, voiceInputSettings.get);
+  const run = runs(readAgain);
+  return <div className="control-actions">
+    {view.actions.map(action => {
+      const spec = ACTIONS[action];
+      const listen = spec.kind === "microphone";
+      return <button key={action} type="button" id={ids ? spec.id : undefined} data-control-action={action}
+                     data-ui-action={spec.kind}
+                     className={spec.primary ? "primary" : undefined} title={t(spec.title)}
+                     disabled={listen && !settings}
+                     onClick={e => { if (listen) e.stopPropagation(); run[action](); }}>
+        {t(spec.label)}{spec.more && <> <span aria-hidden="true">»</span></>}
+      </button>;
+    })}
+  </div>;
+}
+
+/** The conversation's state in one line, for the takeover bar: the light,
+ *  the state's short title and its buttons, from the same table. */
+export function ControlSummary({ view, readAgain, partRef }: {
+  view: ControlView; readAgain: () => void; partRef: PartRef;
+}) {
+  return <div className={`control-summary tone-${view.tone}`} data-state={view.id} ref={partRef}>
+    <ControlLight view={view} />
+    <span className="control-summary-title" role={view.title ? "status" : undefined}
+          title={[view.title, view.note].filter(Boolean).join(" ") || undefined}>
+      {view.short ?? view.title}
+    </span>
+    <ControlActions view={view} readAgain={readAgain} ids={false} />
+  </div>;
+}
+
+export function ConversationControl({ view, groupRef, readAgain }: {
+  view: ControlView; groupRef: (group: Group) => PartRef; readAgain: () => void;
+}) {
+  const t = useT();
   const both = view.heard !== undefined;
   const said = both ? `${view.words} ${view.heard}` : view.words;
   return <div id="conversation-control" className={`conversation-control tone-${view.tone}`}
@@ -41,7 +86,7 @@ export function ConversationControl({ view, groupRef, readAgain }: {
               role={view.group ? "group" : undefined}
               aria-label={view.group ? t(GROUP_LABEL[view.group]) : undefined}
               ref={view.group ? groupRef(view.group) : undefined}>
-    <span className="control-light" data-light={view.light} data-stage={view.stage} aria-hidden="true"><i /><i /><i /></span>
+    <ControlLight view={view} />
     <span className="control-title" title={view.title ?? undefined}
           role={view.title ? (view.tone === "error" && !view.words ? "alert" : "status") : undefined}>
       {view.title && <span className={`control-title-long${view.short ? " has-short" : ""}`}>{view.title}</span>}
@@ -56,17 +101,6 @@ export function ConversationControl({ view, groupRef, readAgain }: {
                     : view.words}</span>
       </span>}
     </span>
-    <div className="control-actions">
-      {view.actions.map(action => {
-        const spec = ACTIONS[action];
-        const listen = spec.kind === "microphone";
-        return <button key={action} type="button" id={spec.id} data-ui-action={spec.kind}
-                       className={spec.primary ? "primary" : undefined} title={t(spec.title)}
-                       disabled={listen && !settings}
-                       onClick={e => { if (listen) e.stopPropagation(); run[action](); }}>
-          {t(spec.label)}{spec.more && <> <span aria-hidden="true">»</span></>}
-        </button>;
-      })}
-    </div>
+    <ControlActions view={view} readAgain={readAgain} ids />
   </div>;
 }

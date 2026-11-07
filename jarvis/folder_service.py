@@ -404,6 +404,31 @@ class FolderService:
             raise FolderError("unsupported")
         return f, root
 
+    def folder_for_cwd(self, cwd: str) -> Optional[Folder]:
+        """The registered folder holding a working directory on this node:
+        the longest canonical location that contains it, a Claude Code
+        worktree (`<repo>/.claude/worktrees/<name>`) counting as its repo.
+        Worked out when asked, never stored (design 4.4)."""
+        try:
+            path = Path(os.path.realpath(cwd))
+        except (OSError, TypeError, ValueError):
+            return None
+        parts = path.parts
+        if ".claude" in parts:
+            i = parts.index(".claude")
+            if i + 1 < len(parts) and parts[i + 1] == "worktrees":
+                path = Path(*parts[:i])
+        best: Optional[Folder] = None
+        for f in self.store.list(limit=10_000):
+            loc = f.location
+            if loc.node_id != self.node_id() or not loc.canonical_path:
+                continue
+            root = Path(loc.canonical_path)
+            if path == root or root in path.parents:
+                if best is None or len(str(root)) > len(best.location.canonical_path):
+                    best = f
+        return best
+
     @staticmethod
     def _check_visible(policy: Policy, root: Path, rel: Path, is_dir: bool) -> None:
         """Every component of `rel` must be one the reader shows."""

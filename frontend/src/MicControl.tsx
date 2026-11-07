@@ -13,6 +13,10 @@
  * The words are in the dot's title and in the Diagnostics view's Messages,
  * which clicking the dot opens; nothing is written under the orb.
  *
+ * While a workflow or a page package has taken over the page, all of it,
+ * Stop included, is drawn in the takeover bar (TakeoverBar.tsx) instead:
+ * moved, never copied, so there is one of each wherever it is.
+ *
  * The dot runs the registered `voice.diagnostics.open`, as the brain's
  * request does. The whole control and its meter, dot, mute and off are a
  * target the brain can point at; mute and off stay his own switches, and
@@ -30,6 +34,7 @@ import { MicMeter } from "./MicMeter";
 import { MicOffButton } from "./MicOffButton";
 import { MuteButton } from "./MuteButton";
 import { SpeakerButton } from "./SpeakerButton";
+import { StopControl } from "./StopControl";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { causeSaid, health, type Cause } from "./voiceHealth";
@@ -120,15 +125,18 @@ function useMicTarget(): MicTarget {
   return ui;
 }
 
-/** Where the microphone is drawn: the message input's lower right while
+/** Where the microphone is drawn: the takeover bar while a workflow or a
+ *  page package has taken over, else the message input's lower right while
  *  the Conversation view is on screen, else the same corner of the centre
- *  area (MicCorner). Each place gives two hosts, one for the health dot and
- *  one for the rest. */
-type Place = "composer" | "corner";
-type Hosts = { health: Element | null; mic: Element | null };
+ *  area (MicCorner). Each place gives a host for the health dot and one for
+ *  the rest; the message input and the bar give one for Stop too. */
+type Place = "composer" | "corner" | "bar";
+type Hosts = { health: Element | null; stop: Element | null; mic: Element | null };
+const NO_HOSTS: Hosts = { health: null, stop: null, mic: null };
 const hosts: Record<Place, Store<Hosts>> = {
-  composer: createStore<Hosts>({ health: null, mic: null }),
-  corner: createStore<Hosts>({ health: null, mic: null }),
+  composer: createStore<Hosts>(NO_HOSTS),
+  corner: createStore<Hosts>(NO_HOSTS),
+  bar: createStore<Hosts>(NO_HOSTS),
 };
 // One callback per host, made once, so a re-render of what holds it never
 // hands React a new ref (which would clear and set the host, and move the
@@ -137,17 +145,18 @@ const setHost = (place: Place, which: keyof Hosts) => (el: Element | null) => {
   const now = hosts[place].get();
   if (now[which] !== el) hosts[place].set({ ...now, [which]: el });
 };
-const HOST_REFS = {
-  composer: { health: setHost("composer", "health"), mic: setHost("composer", "mic") },
-  corner: { health: setHost("corner", "health"), mic: setHost("corner", "mic") },
-};
+const refsOf = (place: Place): Record<keyof Hosts, (el: Element | null) => void> =>
+  ({ health: setHost(place, "health"), stop: setHost(place, "stop"), mic: setHost(place, "mic") });
+const HOST_REFS: Record<Place, Record<keyof Hosts, (el: Element | null) => void>> =
+  { composer: refsOf("composer"), corner: refsOf("corner"), bar: refsOf("bar") };
 const hostRef = (place: Place, which: keyof Hosts) => HOST_REFS[place][which];
-const VIEW: Record<Place, "main.conversation" | "main.corner"> = { composer: "main.conversation", corner: "main.corner" };
+type MicView = "main.conversation" | "main.corner" | "main.takeover";
+const VIEW: Record<Place, MicView> = { composer: "main.conversation", corner: "main.corner", bar: "main.takeover" };
 
-/** A host for the microphone's health dot or the rest of it in the
- *  message input; it takes no box of its own. */
-export function MicHost({ which }: { which: keyof Hosts }) {
-  return <span className="mic-host" ref={hostRef("composer", which)} />;
+/** A host for the microphone's health dot, Stop or the rest of it, in the
+ *  message input or the takeover bar; it takes no box of its own. */
+export function MicHost({ which, place = "composer" }: { which: keyof Hosts; place?: "composer" | "bar" }) {
+  return <span className="mic-host" ref={hostRef(place, which)} />;
 }
 
 // The corner box's distance from the footer's gap, and the gap kept between
@@ -180,24 +189,32 @@ export function MicCorner() {
     <span className="mic-host" ref={hostRef("corner", "mic")} /></div>;
 }
 
-/** The one microphone control and its one target, drawn into the corner
- *  while it is shown, else into the message input. */
+/** The one microphone control and its one target, drawn into the bar
+ *  while it is shown, else the corner while it is shown, else the message
+ *  input; and Stop, in the bar while it is shown, else the message input. */
 export function MicPortal() {
+  const bar = useSyncExternalStore(hosts.bar.subscribe, hosts.bar.get);
   const corner = useSyncExternalStore(hosts.corner.subscribe, hosts.corner.get);
   const composer = useSyncExternalStore(hosts.composer.subscribe, hosts.composer.get);
-  const place: Place = corner.health && corner.mic ? "corner" : "composer";
-  const at = place === "corner" ? corner : composer;
-  if (!at.health || !at.mic) return null;
-  return <MicTarget key={place} view={VIEW[place]}>
-    {createPortal(<MicHealth />, at.health)}
-    {createPortal(<MicControl />, at.mic)}
-  </MicTarget>;
+  const shown = (h: Hosts) => !!(h.health && h.mic);
+  const place: Place = shown(bar) ? "bar" : shown(corner) ? "corner" : "composer";
+  const at = { bar, corner, composer }[place];
+  const stopPlace: Place = bar.stop ? "bar" : "composer";
+  const stopAt = (stopPlace === "bar" ? bar : composer).stop;
+  return <>
+    {at.health && at.mic && <MicTarget key={place} view={VIEW[place]}>
+      {createPortal(<MicHealth />, at.health)}
+      {createPortal(<MicControl />, at.mic)}
+    </MicTarget>}
+    {stopAt && createPortal(<StopControl key={stopPlace} view={stopPlace === "bar" ? "main.takeover" : "main.conversation"} />,
+                            stopAt)}
+  </>;
 }
 
 /** The microphone's one target, shared by its two parts' places: the
  *  health dot (MicHealth), left of Stop, and the rest (MicControl), right
- *  of Send, or both in the centre's corner. */
-function MicTarget({ view, children }: { view: "main.conversation" | "main.corner"; children: ReactNode }) {
+ *  of Send, or both in the centre's corner or the takeover bar. */
+function MicTarget({ view, children }: { view: MicView; children: ReactNode }) {
   const t = useT();
   const ui = useUiTarget({ ref: { region: "main", view, kind: "mic" }, label: t("targets.microphone"),
                            socket: CENTRE_SOCKET });

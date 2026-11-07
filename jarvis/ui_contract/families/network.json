@@ -13,7 +13,7 @@
       },
       "required": ["kind"],
       "actors": ["human", "brain"],
-      "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}]
+      "effects": [{"effect": "centre.view-shown"}, {"effect": "centre.detail-replaced"}, {"effect": "layout.restored"}]
     },
     {
       "id": "network.close",
@@ -22,7 +22,7 @@
       "args": {},
       "required": [],
       "actors": ["human", "brain"],
-      "effects": [{"effect": "centre.detail-closed"}]
+      "effects": [{"effect": "centre.detail-closed"}, {"effect": "layout.restored"}]
     }
   ],
   "kinds": [

@@ -20,6 +20,12 @@
   /* The space between the caption box and each side panel; the same both
      sides, so the box sits centred between them. */
   --caption-gap: 12px;
+  /* The centre area's right edge, from the page's right: inside the right
+     panel, or, while a workflow or a page package has taken over the page,
+     inside the rail the panel folds to (uiNavigation.ts `layout`, set on
+     the root as data-layout by App.tsx). Every centre view uses it. */
+  --rail-width: 56px;
+  --centre-right: calc(var(--panel-edge) + var(--caption-gap));
   /* The centre area's header row of view tabs: where it sits, how tall it is. */
   --centre-header-top: 16px;
   --centre-header-height: 36px;
@@ -187,7 +193,7 @@ html, body {
 #centre-bottom {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
@@ -385,7 +391,7 @@ html, body {
   top: var(--centre-header-top);
   height: var(--centre-header-height);
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   padding-right: var(--centre-chip-room);
   box-sizing: border-box;
   display: flex;
@@ -412,7 +418,7 @@ html, body {
 #conversation {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: calc(var(--footer-height) + var(--above-footer));
   display: flex;
@@ -633,7 +639,7 @@ html, body {
 #settings-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -855,7 +861,7 @@ html, body {
 #health-slot { flex: none; width: 10px; height: 10px; display: flex; }
 #centre-mic {
   position: fixed;
-  right: calc(var(--panel-edge) + var(--caption-gap) + 12px);
+  right: calc(var(--centre-right) + 12px);
   bottom: calc(var(--footer-height) + var(--above-footer) + 6px);
   display: flex;
   align-items: center;
@@ -1527,7 +1533,7 @@ html, body {
 #work-detail {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -1826,7 +1832,7 @@ a.work-evidence-value { color: #7dd3fc; }
 #workflow-detail {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2159,7 +2165,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #agent-thread {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2289,7 +2295,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #subsystem-detail {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2334,7 +2340,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #package-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2367,7 +2373,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #bundle-member-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2525,7 +2531,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #voice-diagnostics {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -2935,7 +2941,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #network-detail {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -3000,7 +3006,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #centre-notices {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-notice-top);
   z-index: 10;
   display: flex;
@@ -3309,7 +3315,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #queue-item-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -3558,7 +3564,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 #folders-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: grid;
@@ -4029,7 +4035,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 #knowledge-view {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
-  right: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
   top: var(--centre-view-top);
   bottom: var(--centre-view-bottom);
   display: flex;
@@ -4074,3 +4080,121 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 .knowledge-open:hover { background: rgba(var(--ui-accent-rgb), 0.12); }
 .knowledge-seed-topics { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* ── Takeover (TakeoverBar.tsx, RightPanel.tsx's rail) ──────────────────
+   While a workflow or a page package has taken over the page, every centre
+   view's right edge moves in to the rail, and the bar, a little taller than
+   the tabs it stands in for, holds the microphone. */
+:root[data-layout="takeover"] {
+  --centre-right: calc(var(--ray-lane) + var(--rail-width) + var(--caption-gap));
+  --centre-header-height: 44px;
+}
+#takeover-bar {
+  position: fixed;
+  top: var(--centre-header-top);
+  height: var(--centre-header-height);
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: var(--centre-right);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 6px 0 14px;
+  border: 1px solid var(--ui-edge);
+  border-radius: 12px;
+  background: var(--ui-surface);
+  z-index: 30;
+}
+#takeover-bar .takeover-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 32%;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ui-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.control-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.control-summary .control-light { flex: none; }
+.control-summary-title {
+  min-width: 0;
+  font-weight: 600;
+  color: var(--ui-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.control-summary.tone-overlap .control-summary-title { color: var(--ui-overlap); }
+.control-summary.tone-error .control-summary-title { color: var(--ui-error); }
+.control-summary .control-actions { display: flex; gap: 6px; flex: none; }
+.control-summary .control-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.25);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.control-summary .control-actions button.primary { color: var(--ui-accent); border-color: rgba(var(--ui-accent-rgb), .45); }
+.control-summary .control-actions button:disabled { color: var(--ui-muted); cursor: default; }
+#centre-notices.compact.in-bar { position: static; flex: none; z-index: auto; }
+#centre-notices.in-bar:empty { display: none; }
+.takeover-voice { flex: none; display: flex; align-items: center; gap: 8px; }
+.takeover-voice #mic-control { flex-wrap: nowrap; padding-bottom: 0; }
+.takeover-voice #stop-slot { flex: none; display: flex; }
+.takeover-voice #stop-slot[data-shown="false"] { display: none; }
+.takeover-voice #hush { height: 28px; padding: 0 12px; font-size: 12px; letter-spacing: 0.1em; }
+.takeover-restore { flex: none; white-space: nowrap; }
+/* Take over, beside × in a workflow's or a package's head; it takes the
+   × 's place at the right end. */
+.takeover-enter { flex: none; margin-left: auto; white-space: nowrap; }
+.takeover-enter.lit {
+  color: var(--ui-accent);
+  border-color: rgba(var(--ui-accent-rgb), 0.6);
+  box-shadow: 0 0 10px rgba(var(--ui-accent-rgb), 0.5);
+}
+#package-view .package-wide { color: var(--ui-accent); }
+.takeover-enter + .workflow-close, .workflow-detail-dismiss + .takeover-enter { margin-left: 0; }
+
+/* The right panel folded to a rail of its six tab icons, each keeping its
+   mark; the tab an icon opens is drawn over the takeover beside it. */
+#right-column.rail {
+  width: var(--rail-width);
+  padding: 16px 0 var(--above-footer);
+  align-items: center;
+}
+.right-tabs.rail-tabs {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-right: 0;
+}
+.right-panel.rail-flyout {
+  position: fixed;
+  top: 16px;
+  bottom: calc(var(--footer-height) + var(--above-footer));
+  right: calc(var(--ray-lane) + var(--rail-width) + 8px);
+  width: var(--panel-width);
+  flex: none;
+  padding: 8px;
+  border: 1px solid var(--ui-edge);
+  border-radius: 12px;
+  background: var(--ui-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+}

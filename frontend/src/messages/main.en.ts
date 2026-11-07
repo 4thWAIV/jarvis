@@ -662,7 +662,7 @@ export const mainEn = {
   "main.knowledge.indexesTitle": "Extra indexes",
   "main.knowledge.indexesNote": "Made by JARVIS to answer common searches faster; they never change an answer. Pin one to keep it, forbid one to stop it.",
   "main.knowledge.noIndexes": "No extra indexes yet.",
-  "main.knowledge.index.serves": "{kinds}: {paths}",
+  "main.knowledge.index.serves": "For {kinds}: {paths}",
   "main.knowledge.index.made": "made",
   "main.knowledge.index.proposed": "would be made",
   "main.knowledge.index.chosen": "your choice only",
@@ -867,6 +867,16 @@ export const mainEn = {
   "main.queue.location.changed": "Changed since it was checked",
   "main.queue.location.moved": "No longer in the downloads folder",
   "main.queue.location.failed": "Download failed",
+  // The takeover bar (TakeoverBar.tsx), in place of the centre tabs while a
+  // workflow or a page package has taken over the page, and the right rail
+  // (RightPanel.tsx) the right panel folds to.
+  "main.takeover.label": "Taken over",
+  "main.takeover.enter": "Take over",
+  "main.takeover.enterTitle": "Give this the centre and the right side (Option+Shift+T)",
+  "main.takeover.restore": "Restore layout",
+  "main.takeover.restoreTitle": "Bring back the centre tabs and the right panel",
+  "main.takeover.rail": "Right panel tabs",
+  "main.package.wide": "Made for the wider layout: Take over gives it the centre and the right side.",
   "main.package.listening": "Listening through JARVIS's microphone.",
   "main.package.saved": "Saved {name}.",
   "main.package.notSaved": "Not saved.",
@@ -1047,6 +1057,7 @@ export const mainEn = {
   "main.updates.event.knowledge_proposal.about": "JARVIS proposes linking a document to {name}; it waits for your yes",
   "main.updates.event.knowledge_proposal.same_as": "JARVIS proposes that {name} may be the same as another topic; it waits for your yes",
   "main.updates.event.knowledge_seed.proposed": "JARVIS suggests creating the {name} topics; nothing is created without your yes",
+  "main.updates.event.project_candidate.proposed": "JARVIS proposes {name} as a project; nothing is made without your yes",
   "main.updates.event.communications.down": "Communications with the agents are down",
   "main.updates.event.brain.down": "The brain is down; see Diagnostics",
   "main.updates.event.brain.sign_in": "The brain's login has expired: run claude in a terminal and log in, then restart JARVIS",
