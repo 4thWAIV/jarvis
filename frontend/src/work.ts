@@ -45,6 +45,8 @@ export interface WorkPiece {
   who: WorkWho;
   state: WorkState;
   activity_reason?: string;
+  /** Claimed working with no report for a day: shown stalled. */
+  stalled?: boolean;
   /** The summary of the latest report about it. */
   note: string;
   note_at: number | null;
@@ -155,6 +157,10 @@ export interface WorkItem {
   /** His projects holding its source, worked out when read. */
   projects: { id: string; name: string }[];
   follow_up: WorkFollowUp | null;
+  /** Each act he is needed for, the first first (work_api.needs_of). */
+  needs_you?: WorkNeed[];
+  /** Needs nothing of him and nobody is moving it. */
+  stalled?: boolean;
   /** What his latest act in a review package did, when that was his latest review. */
   package_review: WorkPackageReview | null;
   /** Open decisions waiting on him while the item itself goes on. */
@@ -264,6 +270,21 @@ export function askerWords(label: string): string {
 }
 
 /** An answered decision nobody has started on: "Answered — waiting for … to start". */
+/** One act he is needed for on an item, and where to do it. */
+export interface WorkNeed {
+  kind: "decision" | "package" | "review_package" | "review" | "piece";
+  key?: string;
+  inbox?: string;
+  /** The question, the package's title or the piece's title (the agent's words). */
+  text?: string;
+  links?: string[];
+}
+
+/** A need in words: the act and the place, as the brain's work_status says it. */
+export function needWords(need: WorkNeed): string {
+  return t(`main.work.need.${need.kind}`, { text: need.text ?? "", links: (need.links ?? []).join(", ") });
+}
+
 /** What his latest act in a review package did to the item. */
 export interface WorkPackageReview {
   outcome: "approved" | "review_returned" | "work_added" | "no_verdict" | "not_applied";

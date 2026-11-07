@@ -17,11 +17,13 @@ the page is a word an agent typed into a state.
 | Blocked | Held by something that is not you (CI, a licence), named. | Red pill and red edge; Blocking names what holds it. |
 | Ready for review | The work is in and nothing stands in the way: yours to approve. | Purple "Ready for review" pill; **Approve** shows in the item's header. |
 | Done | You approved it. Only you can make anything done. | Green pill; "You approved it: done, *time*"; it moves to History after five minutes. |
+| Stalled | Nothing waits on you and nobody is moving it: no claim of work heard from in ten minutes. | Orange "Stalled" pill; "Stalled: nobody is working on this"; a silent update. A piece claimed working with no report for a day shows "Stalled" too. |
 
 Beside the state, the item also says:
 
 | Line | When | What he sees |
 |---|---|---|
+| Needs you | Anything waits on you. | At the top of the item, every act and its place, the first first ("Answer *question* on the Decisions tab" with Go there, "Open the *package* review package" with Open, "Approve, Not done yet or Add work in this item's header"); the first one in its list row as "You: …"; `work_status` says the same words. |
 | *N* decisions also wait on you | Work goes on while decisions are open. | Amber line under the title, on the row and the Overview. |
 | What your package answer did | His latest act was in a review package. | "Approved by you in the package, 16:33", "Not done yet, you said in the package, …", "Work added by you in the package, …", "Review closed without a verdict, …" or "Your answer in the package was not applied, …: why", on the row, Overview and Decisions tab. |
 | Answered, no follow-up | He answered and nothing was reported for 30 minutes. | Amber line on Blocking, naming the agent; a silent update for the agent. |
@@ -48,3 +50,5 @@ Beside the state, the item also says:
 | Answer a review package: not done / add work | Tim: package | Ready for review | Activity unconfirmed / Ready | "Not done yet, you said in the package…" / "Work added by you in the package…". |
 | Sign off a review package unanswered | Tim: Done on the package | Ready for review | unchanged | "Review closed without a verdict", with Approve, Not done yet and Add work beside it (said nothing if he reviewed it another way since). |
 | Restart JARVIS | — | any | answers already on record applied once | The items move as if he had just answered. |
+| Nobody reports for ten minutes | — (time passing) | Activity unconfirmed, Ready or Planned, nothing waiting on him | Stalled | Orange "Stalled: nobody is working on this"; a silent update. |
+| An agent reports again | Agent | Stalled | the state its report gives | The orange goes; the silent update is resolved. |

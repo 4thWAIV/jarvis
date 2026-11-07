@@ -253,3 +253,15 @@ def test_signing_off_unanswered_after_he_reviewed_it_another_way_says_nothing(
     got = work_store.get(item.id)
     assert got.state == "done" and got.package_review is None
     assert not [e for e in work_store.events(item.id) if e.kind == work_store.REVIEW_NOTED]
+
+
+def test_an_open_package_names_itself_as_where_he_is_needed(wired, marks, tmp_path, item):
+    inbox_id = _sent(wired, tmp_path, item)
+    needs = wired.client.get(f"/api/work/{item.id}").json()["item"]["needs_you"]
+    assert [(n["kind"], n.get("inbox")) for n in needs] == [("review_package", inbox_id),
+                                                            ("review", None)]
+    other = _sent(wired, tmp_path, item, also_ask=True)
+    needs = wired.client.get(f"/api/work/{item.id}").json()["item"]["needs_you"]
+    assert ("package", other) in [(n["kind"], n.get("inbox")) for n in needs]
+    said = _call(wired, "work_status", item=item.id)["text"]
+    assert "package and answer its questions" in said

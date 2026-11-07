@@ -32,7 +32,7 @@ import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
          workStanding } from "./nodeActivity";
-import { blockerWords, followUpWords, itemMark, packageReviewWords, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
+import { blockerWords, followUpWords, itemMark, needWords, packageReviewWords, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
          type WorkMark } from "./work";
 
 export function WorkPanel() {
@@ -123,9 +123,9 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
           <ActivityMark activity={activity} target={ui.part("activity")} />
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
-          <span className={`work-state state-${item.state}`} ref={ui.part("state")}
+          <span className={`work-state state-${item.stalled ? "stalled" : item.state}`} ref={ui.part("state")}
                 title={item.state === "activity_unknown" ? t("right.work.activityUnknownReason") : undefined}>
-            {STATE_WORDS[item.state]}</span>
+            {item.stalled ? t("right.work.state.stalled") : STATE_WORDS[item.state]}</span>
         </span>
         {(item.projects ?? []).length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>
@@ -134,6 +134,8 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
           {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
           {deciding ? t("right.work.decision", { question: item.headline })
+            : item.stalled ? t("right.work.stalled")
+            : (item.needs_you ?? []).length > 0 ? t("right.work.needsYou", { act: needWords(item.needs_you![0]) })
             : item.package_review && item.package_review.at >= item.updated_at
               ? packageReviewWords(item.package_review)
             : item.follow_up ? followUpWords(item.follow_up)

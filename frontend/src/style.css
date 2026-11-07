@@ -1524,6 +1524,10 @@ html, body {
 .work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
 .work-state.state-done { background: rgba(52, 211, 153, 0.3); }
 .work-state.state-ready { background: rgba(96, 165, 250, 0.35); }
+.work-state.state-stalled { background: #f97316; color: var(--ui-on-signal); }
+.work-stalled { color: #fb923c; }
+.work-needs { border-left: 3px solid #fbbf24; padding: 4px 8px; margin: 4px 0; flex: none; }
+.work-needs ol { margin: 4px 0 0; padding-left: 18px; }
 .work-review { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; flex: none; }
 .work-review form { display: flex; gap: 6px; flex: 1; min-width: 0; }
 .work-review input { flex: 1; min-width: 0; }
