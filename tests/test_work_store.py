@@ -32,6 +32,20 @@ def _ev(ws, item, kind, summary, **detail):
     return ws.record(ws.WorkEvent(item.id, kind, summary, detail))
 
 
+def _approve(ws, item):
+    """His approval: the only way anything is done."""
+    return ws.record(ws.WorkEvent(item.id, ws.APPROVED, "He approved it.", {"where": "page"}))
+
+
+def _piece_done(ws, item, key):
+    """A piece done, as only his approval makes one."""
+    from jarvis import run_store
+    with run_store._connect() as conn:
+        conn.execute("UPDATE work_pieces SET state='done' WHERE item_id=? AND key=?", (item.id, key))
+        conn.commit()
+    return ws.get(item.id)
+
+
 def test_an_item_starts_on_a_folder_or_zip_that_is_there(ws, folder, tmp_path):
     item = ws.create("Speech migration", "folder", folder)
     assert (item.state, item.source, item.source_path) == ("planned", "present", folder)
@@ -116,7 +130,7 @@ def test_a_working_item_with_nothing_reported_reads_quiet(ws, folder, monkeypatc
 def test_the_list_puts_done_last_and_finds_by_title(ws, folder):
     a = ws.create("Speech migration", "folder", folder)
     b = ws.create("Rebrand", "folder", folder)
-    _ev(ws, b, "update", "Shipped.", state="done")
+    _approve(ws, b)
     assert [i.title for i in ws.listing()] == ["Speech migration", "Rebrand"]
     assert [i.id for i in ws.find("speech-migration")] == [a.id]
     assert [i.id for i in ws.find(b.id)] == [b.id]
@@ -177,7 +191,7 @@ def test_a_piece_waits_on_pieces_it_names_and_the_order_follows(ws, folder):
     assert [p.key for p in item.pieces] == ["design", "build", "ship"]
     assert {p.key: p.waits_for for p in item.pieces} == {
         "design": [], "build": ["design"], "ship": ["build", "design"]}
-    item = _ev(ws, item, "piece", "Designed.", key="design", state="done")
+    item = _piece_done(ws, item, "design")
     assert {p.key: p.waits_for for p in item.pieces}["ship"] == ["build"]
     for after, why in ((["design", "ship"], "come after itself"),
                        (["nothing"], "no piece nothing"), (["Bad Key"], "lowercase")):
@@ -222,8 +236,10 @@ def test_items_group_by_area_else_by_source_folder(ws, folder, tmp_path):
 def test_blocked_and_waiting_pieces_are_counted_on_the_item(ws, folder):
     item = ws.create("Rebrand", "folder", folder)
     tim = {"kind": "tim"}
-    _ev(ws, item, "piece", "Stuck.", key="a", who=tim, state="blocked")
-    _ev(ws, item, "piece", "Asks him.", key="b", who=tim, state="waiting_on_tim")
+    _ev(ws, item, "decision_needed", "Which?", key="which")
+    _ev(ws, item, "piece", "Stuck.", key="a", who=tim, state="blocked", until="CI is down")
+    _ev(ws, item, "piece", "Asks him.", key="b", who=tim, state="waiting_on_tim",
+        until="decision:which")
     item = _ev(ws, item, "piece", "Fine.", key="c", who=tim, state="working")
     assert (item.blocked_pieces, item.waiting_pieces) == (1, 1)
 
@@ -248,21 +264,28 @@ def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, t
 def test_blockers_list_decisions_then_the_item_then_pieces(ws, folder):
     item = ws.create("Rebrand", "folder", folder)
     tim = {"kind": "tim"}
-    _ev(ws, item, "piece", "Design.", key="design", who=tim, state="working")
-    _ev(ws, item, "piece", "Asks him.", key="copy", who=tim, state="waiting_on_tim")
-    _ev(ws, item, "piece", "Stuck on fonts.", key="fonts", who=tim, state="blocked")
-    _ev(ws, item, "piece", "After design.", key="build", who=tim, after=["design"])
     _ev(ws, item, "decision_needed", "Which logo?", key="logo", options=["A", "B"], package="logo-deck")
-    item = _ev(ws, item, "update", "CI is red.", state="blocked")
+    _ev(ws, item, "piece", "Design.", key="design", who=tim, state="working")
+    _ev(ws, item, "piece", "Asks him.", key="copy", who=tim, state="waiting_on_tim",
+        until="decision:logo")
+    _ev(ws, item, "piece", "Stuck on fonts.", key="fonts", who=tim, state="blocked",
+        until="the font licence")
+    item = _ev(ws, item, "piece", "After design.", key="build", who=tim, after=["design"])
+    with pytest.raises(ws.WorkRefused, match="worked out from its pieces"):
+        _ev(ws, item, "update", "CI is red.", state="blocked")
     assert [(b.kind, b.key) for b in item.blockers] == [
-        ("decision", "logo"), ("blocked", ""), ("piece_blocked", "fonts"),
+        ("decision", "logo"), ("piece_blocked", "fonts"),
         ("piece_waiting", "copy"), ("piece_after", "build")]
-    assert item.blockers[2].text == "Stuck on fonts." and item.blockers[4].waits_for == ["design"]
+    assert item.blockers[1].text == "Stuck on fonts." and item.blockers[3].waits_for == ["design"]
+    assert item.blockers[1].waits_for == ["the font licence"]
+    assert item.blockers[2].waits_for == ["decision:logo"]
     assert item.decisions[0].package == "logo-deck"
     with pytest.raises(ws.WorkRefused, match="package is named"):
         _ev(ws, item, "decision_needed", "Bad?", key="bad", package="no spaces allowed")
-    item = _ev(ws, item, "update", "Done.", state="done")
-    assert item.blockers == []
+    with pytest.raises(ws.WorkRefused, match="Done is Tim's to give"):
+        _ev(ws, item, "update", "Done.", state="done")
+    with pytest.raises(ws.WorkRefused, match="still open"):
+        _approve(ws, item)
 
 
 def test_answered_and_withdrawn_decisions_are_kept_newest_first(ws, folder):
@@ -287,7 +310,7 @@ def test_done_items_linger_then_move_to_history_and_closed_ones_at_once(ws, fold
     a = ws.create("Shipped", "folder", folder)
     b = ws.create("Dropped", "folder", folder)
     c = ws.create("Going", "folder", folder)
-    _ev(ws, a, "update", "Shipped.", state="done")
+    _approve(ws, a)
     b = _ev(ws, b, "closed", "No longer wanted.")
     assert b.history and b.closed_at and b.blockers == []
     assert [i.id for i in ws.listing()] == [c.id, a.id]
@@ -309,8 +332,9 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     assert engine.quiet_at == engine.note_at + ws.QUIET_AFTER_SEC
     assert docs.quiet_at is None
     item = ws.get(item.id)
-    assert item.quiet_at is None   # the item itself is planned
+    assert item.state == "working", "a piece works, so the item does, whatever was reported"
+    assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
     item = _ev(ws, item, "update", "Going.", state="working")
     assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
-    item = _ev(ws, item, "piece", "In.", key="engine", state="done")
+    item = _approve(ws, item)
     assert next(p for p in item.pieces if p.key == "engine").quiet_at is None

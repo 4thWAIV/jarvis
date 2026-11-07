@@ -99,7 +99,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "open_package", "open_local_package", "run_package_command",
         "run_package_agent", "reveal_attachment",
         "workflow_status", "answer_workflow_decision", "dismiss_workflow",
-        "work_status", "answer_work_decision",
+        "work_status", "answer_work_decision", "review_work",
         "package_inbox", "open_inbox_package", "answer_package_decision",
         "sign_off_package", "close_inbox_package",
         "install_speech_model", "update_jarvis",

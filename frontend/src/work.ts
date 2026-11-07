@@ -23,7 +23,7 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+export type WorkState = "planned" | "ready" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -56,6 +56,14 @@ export interface WorkPiece {
   /** While working or verifying, when it goes quiet with no further report
    *  (epoch seconds); null in any other state. */
   quiet_at: number | null;
+  /** Held (waiting on him or blocked): what holds it, each a link such as
+   *  decision:<key>, or a blocker's words. */
+  until: string[];
+  /** The state it moves to once nothing holds it; "" is ready. */
+  then: string;
+  waiting_since: number | null;
+  /** Waiting on him with no link to an answer for over a day. */
+  unlinked: boolean;
 }
 
 export interface WorkDecision {
@@ -80,7 +88,8 @@ export interface WorkAnswered {
   package: string;
 }
 
-export type BlockerKind = "decision" | "blocked" | "piece_blocked" | "piece_waiting" | "piece_after";
+export type BlockerKind = "decision" | "no_follow_up" | "blocked" | "item_waiting" | "piece_blocked"
+  | "piece_waiting" | "piece_after";
 
 /** One thing holding the item up, in the order the server lists them: his
  *  decisions, the item itself blocked, blocked pieces, pieces waiting on
@@ -92,6 +101,20 @@ export interface WorkBlocker {
   title: string;
   text: string;
   waits_for: string[];
+  /** A wait on him with no link to an answer, open for over a day. */
+  unlinked: boolean;
+}
+
+/** He answered a decision and nothing has been reported since, with no
+ *  piece working: waiting for its asker to start. */
+export interface WorkFollowUp {
+  key: string;
+  question: string;
+  /** The asker's access-key label, or "" when unknown. */
+  asker: string;
+  answered_at: number;
+  /** Half an hour gone with no report: "answered, no follow-up". */
+  overdue: boolean;
 }
 
 export interface WorkItem {
@@ -127,6 +150,16 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  follow_up: WorkFollowUp | null;
+  /** Open decisions waiting on him while the item itself goes on. */
+  also_waiting: number;
+  /** An item with no pieces that is held: what holds it. */
+  until: string[];
+  /** When he approved it done (done is his alone to give). */
+  approved_at: number | null;
+  /** His words when he said it is not done yet. */
+  review_note: string;
+  review_note_at: number | null;
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */
@@ -174,7 +207,7 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "working", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "ready", "working", "verifying", "waiting_on_tim", "blocked", "done"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
@@ -193,8 +226,23 @@ export function blockerWords(item: WorkItem, b: WorkBlocker): string {
   if (b.kind === "piece_after") {
     return t("main.work.blocker.piece_after", { title: b.title, pieces: b.waits_for.map(titleOf).join(", ") });
   }
+  if (b.kind === "no_follow_up") {
+    return t("main.work.blocker.no_follow_up", { title: b.title, asker: askerWords(b.text) });
+  }
   const said = t(`main.work.blocker.${b.kind}`, { title: b.title });
-  return b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said;
+  const held = b.waits_for.length ? ` (${b.waits_for.join(", ")})` : "";
+  const line = (b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said) + held;
+  return b.unlinked ? `${line} · ${t("main.work.unlinked")}` : line;
+}
+
+/** Who asked a decision: its access key's label, or "the agent that asked". */
+export function askerWords(label: string): string {
+  return label || t("main.work.askerUnknown");
+}
+
+/** An answered decision nobody has started on: "Answered — waiting for … to start". */
+export function followUpWords(f: WorkFollowUp): string {
+  return t("right.work.followUp", { asker: askerWords(f.asker) });
 }
 
 /** Who is on a piece, in words: an agent's, run's or workflow's one name,
@@ -294,6 +342,24 @@ registerCommand("work.open", {
 });
 
 registerClose("work.close", slot);
+
+export type ReviewAction = "approve" | "not_done" | "add_work";
+
+/** His review of an item (approve, not done yet, add work), the same call
+ *  as the brain's review_work. Resolves with the refusal's reason, or null. */
+export async function reviewWork(id: string, action: ReviewAction, words = ""): Promise<string | null> {
+  const res = await fetch(`/api/work/${encodeURIComponent(id)}/review`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, words }),
+  }).catch(() => null);
+  if (res?.ok) {
+    workChanged.set(workChanged.get() + 1);
+    return null;
+  }
+  if (!res) return t("right.workflows.noAnswer");
+  const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+  return body.error || body.detail || t("right.workflows.refused", { status: String(res.status) });
+}
 
 /** Answer an open decision. Resolves with the refusal's reason, or null. */
 export const answerWorkDecision = (id: string, key: string, answer: string) =>

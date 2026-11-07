@@ -2436,6 +2436,26 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "review_work",
+        "description": (
+            "His review of a work item, only when he gives it, the Work view's Approve, Not "
+            "done yet and Add work: `approve` makes it done (done is his alone to give; "
+            "refused while a decision of his is open or a piece waits); `not_done` sends it "
+            "back to working with his note in `words`; `add_work` adds a new piece in his "
+            "`words`. Its agents are told."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Its title as he said it, or its id."},
+                "action": {"type": "string", "enum": ["approve", "not_done", "add_work"]},
+                "words": {"type": "string",
+                          "description": "His note (not_done) or the work to add (add_work), "
+                                         "in his words."},
+            },
+            "required": ["item", "action"],
+        },
+    },
+    {
         "name": "package_inbox",
         "description": (
             "The packages agents have sent him, waiting in his package inbox (the Queue tab's "

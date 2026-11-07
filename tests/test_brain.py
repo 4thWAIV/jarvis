@@ -121,7 +121,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__attention_updates,mcp__jarvis__mark_updates_seen,"
         "mcp__jarvis__set_attention_settings,"
         "mcp__jarvis__answer_workflow_decision,mcp__jarvis__dismiss_workflow,"
-        "mcp__jarvis__work_status,mcp__jarvis__answer_work_decision,"
+        "mcp__jarvis__work_status,mcp__jarvis__answer_work_decision,mcp__jarvis__review_work,"
         "mcp__jarvis__package_inbox,mcp__jarvis__open_inbox_package,"
         "mcp__jarvis__answer_package_decision,mcp__jarvis__sign_off_package,"
         "mcp__jarvis__close_inbox_package,"

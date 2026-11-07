@@ -32,7 +32,7 @@ import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
          workStanding } from "./nodeActivity";
-import { blockerWords, itemMark, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
+import { blockerWords, followUpWords, itemMark, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
          type WorkMark } from "./work";
 
 export function WorkPanel() {
@@ -125,7 +125,9 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
             {STATE_WORDS[item.state]}</span>
         </span>
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
+          {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
           {deciding ? t("right.work.decision", { question: item.headline })
+            : item.follow_up ? followUpWords(item.follow_up)
             : item.quiet ? t("right.work.quiet") : item.headline}</span>
         {holding.length > 0 && (
           <span className="work-blocker-line" data-kind={holding[0].kind} ref={ui.part("blocker")}>

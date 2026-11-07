@@ -231,12 +231,30 @@ and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
+Nothing waits on him once he has answered (`wait_links.py`). A
+`wait_started` names what will answer it with `--until` (`detail.until`,
+kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
+first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
+signs it off) or `package:<id>:<decision>`; anything else stays words. His
+answer by any route (the workflow's or a Work item's decision, page or
+voice; a package decision through its decide.py, `_inbox_recount`; his
+finishing with a package) ends every wait linked to it in the same
+transaction as the answer (`wait_links.settle`, called by the store's own
+writer; a package's, recorded by its own script, in a transaction of its
+own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
+`answered_at`), the workflow's state settled again. Only the server's answer
+routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
+answer already given ends at once, and `wait_links.sweep` ends any left open
+at server start and on every read of either record. A wait with no link
+open over `wait_links.UNLINKED_AFTER_SEC` (a day) reads as `unlinked`, shown
+"waiting, no link to an answer" on its card. The package inbox's own wait is
+linked to its package.
 
 ## The Work tracker
 The right panel's Work tab (the tab that was Workflows, id still
 `workflows`) lists each piece of work in progress: its title, its state
-(`planned`, `working`, `verifying`, `waiting_on_tim`, `blocked`, `done`;
-`verifying` is between working and done) and one useful update, an open
+(`planned`, `ready`, `working`, `verifying`, `waiting_on_tim`, `blocked`,
+`done`; `verifying` is between working and done, "Ready for review") and one useful update, an open
 decision's question first (Planning's Work view at 52a1837, bare minimum).
 Items are listed under their group (`work_store.grouped`, the API's
 `groups`): the optional `area` an item is given (`start --area`, `update
@@ -277,7 +295,59 @@ answered ones (`answered`, `where` = `withdrawn`). An item closed
 reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
 minutes) moves to History: `GET /api/work`'s `history`, newest first, under
 the list's History toggle (`work.showHistory`), each still opening in full;
-`work_status` with `history` lists them and finds one by id or title. The Workflows view stays below the list, under its
+`work_status` with `history` lists them and finds one by id or title.
+The record is authoritative: a state is never taken from a report's
+words. A piece that waits on him or is blocked is held (`work_store.HELD`)
+and is reported so only naming what holds it, `--until` (repeatable; kept
+as a JSON list): wait_links links (its own `decision:<key>` must be one of
+the item's open decisions; `work:`, `workflow:`, `package:` as a workflow
+wait's) or, for a blocker only, words. No report moves a held piece on
+(`work_store._move`, refused naming what holds it, "report work that can
+go on meanwhile as a piece of its own"): only his answer to every link, by
+any route, in the same transaction (`work_store.end_waits`, also on a
+decision's sign-off or its asker withdrawing it), which moves it to its
+`--then` (`ready` by default: nothing holds it, its agent has yet to pick
+it up), recorded as `wait_ended` with by, how and when; a blocker in words
+is cleared by its reporter's `--cleared`. The sweep releases holds already
+answered. An item with pieces is never reported held (it is the piece that
+waits), and its state is worked out from them (`work_store._computed`):
+working (or ready for review, ready, planned) while any piece can go on,
+waiting on him only when none can and a piece or decision waits on him,
+blocked when only blocked pieces are left; open decisions still show
+(banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
+on you"). An item with no pieces follows the piece rules itself. Done is
+his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
+his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
+His review is `work_api.review`, from the item's header on the page (`POST
+/api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
+yet, Add work) and the brain's acting `review_work` alike: `approved`
+(refused while a decision is open or a piece is held; the item and every
+piece done, `approved_at`; nothing a reporter sends moves it after),
+`review_returned` (his note kept as `review_note` and shown, the item and
+every verifying or done piece back to working) and `work_added` (a new
+`ready` piece in his words, on whoever last worked the item); the note and
+the added work are written for the item's agents to
+`answers_dir()/<project>/<item>-review-<time>.md`. Migration 5 links each
+held piece or item that named nothing to its item's one open decision, or,
+with none open, to the one he answered since it was held (released by the
+sweep), leaves any other unlinked (flagged), and moves every open item and
+piece reported done without his approval to verifying, "Not approved by
+Tim". After his latest answer with no report since (`reported_at`, set by
+reporter kinds only) and no piece working, `follow_up` says "Answered —
+waiting for <asker> to start" (the asker's access-key label), and after
+`FOLLOW_UP_AFTER_SEC` (30 minutes) Blocking lists `no_follow_up`
+("answered, no follow-up") and the server's quiet watch records a silent
+`work_follow_up` attention item naming the asker (`_attend_unfollowed`),
+resolved by the next report. Blocking also lists `item_waiting` (an item
+with no pieces reported waiting on something other than its own
+decisions), what holds each held piece, and a held piece or item that
+names nothing (only from before) over a day as `unlinked`, "waiting, no
+link to an answer". Every answer of his is written for its asker to
+`data_paths.answers_dir()/<project>/<item>-<key>.md`
+(`work_api.write_answer`; the project is the source folder's last name;
+outbound only, nothing watches it), and `work_report.py answers --since
+<time>` (`GET /api/work/answers`, in the `work` key category) lists every
+answer to the calling key's own decisions. The Workflows view stays below the list, under its
 own heading. The record is `work_store.py` (schema `work_schema`, through
 `run_store.migrate`): `work_events` is append-only and the truth;
 `work_items`, `work_pieces` and `work_decisions` are updated in the same
@@ -286,7 +356,8 @@ ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
 `workflow:<id>` or `tim`), and a reported who must be a record JARVIS has.
-An open decision reads as waiting on Tim and a working or verifying item
+An open decision reads as waiting on Tim only while nothing else can go on
+(see above), and a working or verifying item
 silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
 with `work_report.py` and an access key in the `work` category (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
@@ -305,8 +376,8 @@ centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
 the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
-their evidence. The page changes nothing but his answers, so there is no
-other acting tool.
+their evidence. The page changes nothing but his answers and his review,
+so the only other acting tool is `review_work`.
 Each Work row and piece, and each phase and task of a workflow's detail,
 shows its live activity from the record (`nodeActivity.tsx`): working (a
 working or verifying piece or item, a running workflow item, whose
@@ -1603,6 +1674,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `data/messages/<project>/` (see "Messages from sessions")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `wait_links.py` — What a wait on him waits for (its link), which answer
+  ends it, settling in the answer's transaction, and the sweep (see "The
+  workflow monitor" and "The Work tracker")
 - `work_store.py` / `work_api.py` / `work_report.py` — The Work tracker's
   record, its routes and shared calls, and the command agents report with
   (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and

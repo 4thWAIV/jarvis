@@ -48,7 +48,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from jarvis import decision_stamp, run_store, work_packages
+from jarvis import decision_stamp, run_store, wait_links, work_packages
 from jarvis.work_packages import Package, PackageError
 
 ARRIVED, OPENED, ANSWERING, ANSWERED, CLOSED = (
@@ -573,9 +573,31 @@ def signed_off(inbox_id: str, capture_id: Optional[int], how: str,
         entry = _one(conn, inbox_id)
         if not entry.is_open:
             raise InboxRefused(f"{entry.id} is already closed ({entry.closed_why}).")
-        return _change(conn, entry, "signed_off", how, now, state=CLOSED, closed_at=now,
-                       closed_why=SIGNED_OFF, signed_off_at=now, capture_id=capture_id,
-                       return_asked_at=now)
+        entry = _change(conn, entry, "signed_off", how, now, state=CLOSED, closed_at=now,
+                        closed_why=SIGNED_OFF, signed_off_at=now, capture_id=capture_id,
+                        return_asked_at=now)
+        # Everything waiting on the package ends with his sign-off, in this
+        # transaction (wait_links).
+        moved = wait_links.settle(conn, wait_links.answer(
+            wait_links.PACKAGE, _refs(conn, entry.package_id), None, SIGNED_OFF, now), now)
+    wait_links.tell(moved)
+    return entry
+
+
+def _refs(conn, package_id: str) -> set:
+    """Every name a wait may give the package by: its id, and each of its
+    rows' inbox id, name and name-version."""
+    found = {package_id}
+    for r in conn.execute("SELECT id, name, version FROM package_inbox WHERE package_id=?",
+                          (package_id,)):
+        found |= {r["id"], r["name"], f"{r['name']}-{r['version']}"}
+    return found
+
+
+def refs(package_id: str) -> set:
+    """The names a wait may give a package by (`_refs`)."""
+    with closing(_connect()) as conn:
+        return _refs(conn, package_id)
 
 
 def adopt(package: Package, sha256: str, how: str) -> Entry:
