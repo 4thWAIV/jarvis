@@ -249,6 +249,22 @@ and its deadline work the same whatever produces the rows.
   process this server did not start.
 - Forget overrides pins: every version of a forgotten key goes, even one a
   read has pinned. Reason: content that must go cannot wait for a reader.
+- The structural indexes (kind, owner, namespace, trust, source) are the
+  general index's entries on the system properties, which every kind
+  indexes even when it opts out of the rest. Reason: one posting format and
+  one planner serve both.
+- String values fold accents but keep case, as `spoken_words.fold` does.
+  Reason: keys, paths and names differ by case; accents are what speech
+  loses.
+- The planner decodes only the smallest posting list and checks every other
+  condition on the documents it names. Reason: a large list is never
+  decoded, and every answer is checked against the document anyway.
+- A read at an older LSN checks every document as it was rather than using
+  the index, which describes the newest documents. Reason: such reads are
+  rare (exports) and must be exact.
+- The compaction plan names the parts it builds, and the child builds
+  exactly those. Reason: the child must make the same files the engine
+  would.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

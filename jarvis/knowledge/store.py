@@ -74,9 +74,12 @@ class DerivedPart(Protocol):
     families: dict[int, str]           # derived family code -> file extension
 
     def build(self, gen: int, newest: Callable[[int], Iterator[Version]],
-              write: Callable[[int, Iterable[Version]], dict]) -> None:
+              write: Callable[[int, Iterable[Version]], dict],
+              read_family: Callable[[int], Iterator[Version]]) -> None:
         """Write this generation's derived segments from the newest version
-        of every key in it (`newest(family)`), each through `write`."""
+        of every key in it (`newest(family)`), each through `write`;
+        `read_family` reads a logged family's whole live content (the field
+        dictionary, for one)."""
 
 
 class Memtable:
@@ -176,6 +179,7 @@ class Store:
         self.segments: dict[int, list[tuple[int, Segment]]] = {}
         self.applied_lsn = 0
         self.listeners: list[Callable[[int, list[Op]], None]] = []
+        self.generation_listeners: list[Callable[[int, list[int]], None]] = []
         self.child: Optional[subprocess.Popen] = None
         self.paused = False
         self.engine_id = mf.ensure_format(directory)
@@ -399,13 +403,19 @@ class Store:
                 self._add_segments(entries)
                 self.frozen.remove(frozen)
             self.wal.delete_below(checkpoint)
+            self._announce(gen, [])
             self.stats.flushes += 1
             self.stats.last_flush = time.time()
             return gen
 
     def _write_generation(self, gen: int, versions_of: Callable[[int], Iterator[Version]],
                           families: Iterable[int]) -> list[dict]:
-        return write_generation(self.seg_dir, gen, versions_of, families, self.parts, self.family_ext)
+        return write_generation(self.seg_dir, gen, versions_of, families, self.parts, self.family_ext,
+                                lambda family: self.scan(family))
+
+    def _announce(self, gen: int, replaced: list[int]) -> None:
+        for listener in self.generation_listeners:
+            listener(gen, replaced)
 
     def _add_segments(self, entries: list[dict]) -> None:
         for entry in entries:
@@ -475,6 +485,8 @@ class Store:
                 self.manifest.next_gen += 1
                 oldest_gen = min(self.manifest.generations())
                 plan = {"directory": str(self.directory), "inputs": inputs, "out_gen": out_gen,
+                        "live": list(self.manifest.segments),
+                        "parts": [part.name for part in self.parts],
                         "oldest_pin": self.oldest_pin(),
                         "drop_tombstones": oldest_gen in gens,
                         "purge": {str(f): sorted(k.hex() for k in keys) for f, keys in (purge or {}).items()}}
@@ -500,6 +512,7 @@ class Store:
                     (self.seg_dir / entry["file"]).unlink(missing_ok=True)
                 if not self._pins:
                     self._close_retired()
+            self._announce(out_gen, gens)
             self.stats.compactions += 1
             self.stats.last_compaction = time.time()
             return out_gen
@@ -601,7 +614,8 @@ def segment_name(gen: int, ext: str) -> str:
 
 def write_generation(seg_dir: Path, gen: int, versions_of: Callable[[int], Iterator[Version]],
                      families: Iterable[int], parts: Iterable[DerivedPart],
-                     family_ext: dict[int, str]) -> list[dict]:
+                     family_ext: dict[int, str],
+                     read_family: Callable[[int], Iterator[Version]]) -> list[dict]:
     """Write one generation: a segment per logged family, then each part's
     derived segments from the newest versions."""
     entries: list[dict] = []
@@ -616,7 +630,7 @@ def write_generation(seg_dir: Path, gen: int, versions_of: Callable[[int], Itera
     for family in logged:
         write(family, versions_of(family))
     for part in parts:
-        part.build(gen, lambda family: newest_only(versions_of(family)), write)
+        part.build(gen, lambda family: newest_only(versions_of(family)), write, read_family)
     return entries
 
 
@@ -656,10 +670,19 @@ def compact_plan(plan: dict, parts: Iterable[DerivedPart], family_ext: dict[int,
                 continue
             yield v
 
+    live: dict[int, list[Segment]] = {}
+
+    def read_family(family: int) -> Iterator[Version]:
+        if family not in live:
+            live[family] = [Segment(seg_dir / e["file"], pool) for e in plan.get("live", [])
+                            if int(e["family"]) == family]
+        return (v for v in newest_only(merge([s.scan() for s in live[family]])) if v.value is not None)
+
     try:
-        return write_generation(seg_dir, int(plan["out_gen"]), kept, sorted(by_family), parts, family_ext)
+        return write_generation(seg_dir, int(plan["out_gen"]), kept, sorted(by_family), parts,
+                                family_ext, read_family)
     finally:
-        for group in by_family.values():
+        for group in (*by_family.values(), *live.values()):
             for seg in group:
                 seg.close()
 
@@ -690,12 +713,12 @@ def run_compaction_child(plan_path: Path, result_path: Path) -> int:
                        getattr(os, "PRIO_DARWIN_BG", 19))
     except (OSError, AttributeError):
         pass
-    from jarvis.knowledge.engine import default_parts
-    parts = default_parts()
+    from jarvis.knowledge.engine import parts_named
+    plan = json.loads(plan_path.read_text())
+    parts = parts_named(plan.get("parts", []))
     family_ext = dict(FAMILY_EXT)
     for part in parts:
         family_ext.update(part.families)
-    plan = json.loads(plan_path.read_text())
     entries = compact_plan(plan, parts, family_ext)
     result_path.write_text(json.dumps(entries))
     return 0

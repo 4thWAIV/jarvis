@@ -51,6 +51,7 @@ class Engine:
         self._closed = False
         self._close_lock = threading.Lock()
         self.store = None  # the storage core, opened by open()
+        self.docs = None   # the document store over it
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -73,9 +74,11 @@ class Engine:
     def _open_parts(self) -> None:
         """Opens the storage core and the parts over it; each step of the
         build adds its part here."""
+        from jarvis.knowledge.documents import DocumentStore
         from jarvis.knowledge.store import Store
         self.store = Store(self.directory, parts=default_parts(),
                            compact_in_child=self.compact_in_child)
+        self.docs = DocumentStore(self.store)
 
     compact_in_child = True
 
@@ -93,6 +96,17 @@ class Engine:
         self.pace = mode
         if self.store is not None:
             self.store.set_paused(mode == "hold")
+
+    def transaction(self, body: dict) -> int:
+        """One atomic write: documents put and deleted together; readers see
+        all of it or none (section 7.17.4)."""
+        from jarvis.knowledge.documents import DocumentError
+        puts, deletes = body.get("puts") or [], body.get("deletes") or []
+        if not isinstance(puts, list) or not isinstance(deletes, list):
+            raise DocumentError("puts and deletes are lists")
+        if not all(isinstance(k, str) for k in deletes):
+            raise DocumentError("deletes are keys")
+        return self.docs.write(puts, deletes)
 
     def maintain(self) -> None:
         """One maintenance step, run by the engine's own timer while the
@@ -122,10 +136,21 @@ class Engine:
             self.store.close()
 
 
+def _part_types() -> dict:
+    from jarvis.knowledge.documents import IndexPart
+    return {t.name: t for t in (IndexPart,)}
+
+
 def default_parts() -> list:
-    """The derived parts every store is built with, in the engine and in
-    the compaction child alike."""
-    return []
+    """The derived parts every engine store is built with."""
+    return [t() for t in _part_types().values()]
+
+
+def parts_named(names: list[str]) -> list:
+    """The parts a compaction plan names, so the child builds exactly what
+    the store that planned it builds."""
+    types = _part_types()
+    return [types[n]() for n in names]
 
 
 def open_engine(directory: Optional[Path] = None) -> Engine:

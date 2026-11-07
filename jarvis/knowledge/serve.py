@@ -118,6 +118,71 @@ def _compact(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"generation": gen})
 
 
+def _at(request: Request) -> Optional[int]:
+    raw = request.query.get("at") if request.query.get("at") is not None else (request.body or {}).get("at")
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise BadRequest("at is an LSN")
+
+
+def _guard(fn):
+    """Document and schema errors are the caller's: answered 400."""
+    from jarvis.knowledge.documents import DocumentError
+    from jarvis.knowledge.store import StoreReadOnly
+
+    def wrapped(engine: Engine, request: Request) -> Answer:
+        try:
+            return fn(engine, request)
+        except DocumentError as e:
+            raise BadRequest(str(e))
+        except StoreReadOnly as e:
+            return Answer(503, {"error": "read_only", "detail": str(e)})
+    return wrapped
+
+
+@route("POST", "/v1/txn")
+@_guard
+def _txn(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    lsn = engine.transaction(body)
+    return Answer(200, {"lsn": lsn})
+
+
+@route("GET", "/v1/nodes/{key:path}")
+@_guard
+def _node(engine: Engine, request: Request) -> Answer:
+    doc = engine.docs.get(request.params["key"], _at(request))
+    if doc is None:
+        return Answer(404, {"error": "not_found"})
+    return Answer(200, doc)
+
+
+@route("POST", "/v1/find")
+@_guard
+def _find(engine: Engine, request: Request) -> Answer:
+    body = request.body or {}
+    order = body.get("order")
+    limit = int(body.get("limit") or 200)
+    if not 0 < limit <= 200:
+        raise BadRequest("limit is 1 to 200")
+    docs = engine.docs.find(kinds_=body.get("kinds"), where=body.get("where") or [],
+                            at=_at(request), limit=limit,
+                            order=(order[0], order[1]) if order else None)
+    return Answer(200, {"documents": docs})
+
+
+@route("POST", "/v1/forget")
+@_guard
+def _forget(engine: Engine, request: Request) -> Answer:
+    sources = (request.body or {}).get("refs") or []
+    if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+        raise BadRequest("refs is a list of source references")
+    return Answer(200, engine.docs.forget_sources(sources))
+
+
 class _HTTPHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "jarvis-knowledge"
