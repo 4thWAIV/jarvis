@@ -11045,8 +11045,9 @@ def _work_detail(item) -> str:
              + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
-             _work_projects(item) or "Projects: none holds its source.",
              f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+    if named := _work_projects(item):
+        lines.insert(3, named)
     if item.approved_at is not None:
         lines.append("He approved it done.")
     elif item.state == work_store.VERIFYING:
@@ -11153,11 +11154,14 @@ async def tool_answer_work_decision(args: dict) -> str:
     return "Recorded his answer, sir; the agent doing the work reads it from the record."
 
 
-_REVIEW_SAID = {
-    work_api.APPROVE: "Approved, sir: it is done.",
-    work_api.NOT_DONE: "Sent back to working with his note, sir; its agents are told.",
-    work_api.ADD_WORK: "Added as a new piece, sir; its agents are told.",
-}
+def _review_said(action: str) -> str:
+    """What JARVIS says once his review is recorded: fixed words for each
+    of the review's actions (work_api has already refused any other)."""
+    if action == work_api.APPROVE:
+        return "Approved, sir: it is done."
+    if action == work_api.NOT_DONE:
+        return "Sent back to working with his note, sir; its agents are told."
+    return "Added as a new piece, sir; its agents are told."
 
 
 async def tool_review_work(args: dict) -> str:
@@ -11172,7 +11176,7 @@ async def tool_review_work(args: dict) -> str:
     except work_store.WorkRefused as e:
         return f"Nothing was recorded, sir: {e}"
     _work_recorded(item, work_api.REVIEW_ACTIONS[action])
-    return _REVIEW_SAID[action]
+    return _review_said(action)
 
 
 TOOL_HANDLERS.update({
