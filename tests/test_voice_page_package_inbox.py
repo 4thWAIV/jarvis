@@ -3,7 +3,9 @@ the way make_package sends it (POST /api/packages/inbox, for a work item,
 from a session) shows nowhere on arrival; it is listed at the top of the
 Queue tab and as one reduced line in Updates waiting; his Open shows it in
 the centre; and the work item's Decisions tab asks its questions, an
-answer there landing in the package's own record.
+answer there landing in the package's own record; and Done in the view's
+head signs it off: the view closes, the row goes to Closed, and a capture
+of his answers waits to be read back.
 
 Headless Chromium on the built page. Every /api/packages, /api/attention
 and /api/work request is answered by JARVIS's real app (TestClient) over a
@@ -81,7 +83,7 @@ async def _shot(page, name: str) -> None:
 async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click(
         page_playwright, page_url, jarvis_app, monkeypatch):
     server, client, data, item = jarvis_app
-    from jarvis import package_inbox, work_packages
+    from jarvis import package_inbox, work_packages, work_store
 
     async with page_playwright as p:
         try:
@@ -159,4 +161,27 @@ async def test_a_package_arrives_unshown_and_is_opened_and_answered_on_his_click
         found = work_packages.find(entry.package_id)
         assert '"kettle-kind"' in (found.folder / "results" / "decisions.json").read_text()
         await _shot(page, "4-answered-on-the-work-item")
+
+        # Done: on its Queue row, and in the head of its view, outside the
+        # frame. Signed off from the view: the view closes, the row goes to
+        # Closed, and a capture of his answers waits to be read back.
+        await page.click(".right-tabs [aria-label='Queue']")
+        await async_api.expect(row.get_by_role("button", name="Done")).to_be_visible()
+        await row.get_by_role("button", name="Open").click()
+        done = page.locator("#package-view .package-head .package-done")
+        await async_api.expect(done).to_be_visible()
+        assert await page.locator("#package-view iframe .package-done").count() == 0
+        await _shot(page, "5-done-in-the-view-head")
+        await done.click()
+        await async_api.expect(page.locator("#package-view")).to_have_count(0)
+        await async_api.expect(row).to_have_count(0)
+        await async_api.expect(page.locator(".queue-packages .queue-history-toggle")) \
+            .to_contain_text("Closed (1)")
+        entry = package_inbox.get(inbox_id)
+        assert (entry.closed_why, bool(entry.signed_off_at)) == (package_inbox.SIGNED_OFF, True)
+        capture = next(c for c in server._captures.values() if c.get("to_session") == "sess-1")
+        assert "kettle-kind: electric" in capture["text"] and "tea-kinds: not answered" in capture["text"]
+        assert not [d for d in work_store.get(item.id).decisions], "its work item is told"
+        await page.wait_for_timeout(500)
+        await _shot(page, "6-signed-off")
         await browser.close()

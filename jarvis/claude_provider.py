@@ -184,6 +184,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__change_knowledge_index",
     "mcp__jarvis__knowledge_seeds",
     "mcp__jarvis__change_knowledge_seed",
+    "mcp__jarvis__work_context",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",
@@ -198,7 +199,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__package_inbox",
     "mcp__jarvis__open_inbox_package",
     "mcp__jarvis__answer_package_decision",
-    "mcp__jarvis__return_package_answers",
+    "mcp__jarvis__sign_off_package",
     "mcp__jarvis__close_inbox_package",
     "mcp__jarvis__retry_run",
     # Self-update (self_update.py): the Updates section's check, and its

@@ -200,6 +200,15 @@ def answers_json(asked_by: str, since: float) -> list[dict]:
     return [dataclasses.asdict(a) for a in work_store.answers_for(asked_by, since)]
 
 
+def signed_off_without_answer(item_id: str, key: str) -> work_store.WorkItem:
+    """He signed off the package this decision names without answering its
+    matching question: the decision is closed, and on record as closed that
+    way, never as an answer of his (`work_report.py answer` says so)."""
+    return work_store.record(work_store.WorkEvent(
+        item_id, work_store.DECISION_SIGNED_OFF,
+        f"Closed {key}: he signed off its package without an answer", {"key": key}))
+
+
 def mount(app: FastAPI, recorded: Recorded) -> None:
     def refused(e: Exception) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=409)
@@ -261,7 +270,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         """One report from the agent doing the work. Answering a decision
         is his alone (the page, his voice), never a reporter's; withdrawing
         one is its asker's alone, never his."""
-        if req.kind == work_store.DECISION_MADE:
+        if req.kind in (work_store.DECISION_MADE, work_store.DECISION_SIGNED_OFF):
             return refused(ValueError("Only he answers a decision."))
         by = asker(request.scope)
         if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:

@@ -160,6 +160,12 @@ function unpackedElsewhere(info: PackageInfo): Said {
                           { id: info.id }) };
 }
 
+/** The server's `package_closed` frame: he signed it off, so every page
+ *  showing it closes it. */
+export function packageClosed(id: string): void {
+  if (openPackage.get()?.id === id) void dispatch("package.close", {}, { actor: "brain" });
+}
+
 /** The server's `package_page` frame: show it, unless it is already
  *  showing. */
 export function showPackage(info: PackageInfo): void {

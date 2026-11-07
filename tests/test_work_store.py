@@ -91,7 +91,7 @@ def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
         _ev(ws, item, "decision_made", "Again.", key="engine", answer="Apple")
     answered = ws.events(item.id, kinds={"decision_made"})
     assert answered[-1].detail == {"key": "engine", "answer": "Kroko", "where": "voice"}
-    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn; ask with a new key"):
+    with pytest.raises(ws.WorkRefused, match="already answered or closed; ask with a new key"):
         _ev(ws, item, "decision_needed", "Which voice?", key="engine", options=["Fish"])
     assert ws.get(item.id).decisions == [], "an answered key is never re-opened"
 
@@ -279,7 +279,7 @@ def test_answered_and_withdrawn_decisions_are_kept_newest_first(ws, folder):
         ("colour", "withdrawn", "Asked before he saw the designs."), ("tone", "page", "dry")]
     with pytest.raises(ws.WorkRefused, match="No decision colour is open"):
         _ev(ws, item, "decision_made", "Late.", key="colour", answer="blue")
-    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn"):
+    with pytest.raises(ws.WorkRefused, match="already answered or closed"):
         _ev(ws, item, "decision_needed", "Colour again?", key="colour")
 
 

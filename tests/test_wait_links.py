@@ -13,10 +13,11 @@ import time
 
 import pytest
 
-from jarvis import access_keys, attention_store, run_store, wait_links, workflow_store, work_store
+from jarvis import (access_keys, attention_store, package_inbox, run_store, wait_links,
+                    workflow_store, work_store)
 from tests.test_brain_page_parity import _call, wired  # noqa: F401  (the fixture)
-from tests.test_package_inbox import (BROWSER, INBOX, answer_all, deck_zip,  # noqa: F401
-                                      marks, opened_deck, shown)
+from tests.test_package_inbox import (BROWSER, deck_zip, marks,  # noqa: F401
+                                      opened_deck, shown)
 
 DAY = wait_links.UNLINKED_AFTER_SEC
 
@@ -178,7 +179,9 @@ def test_a_piece_waits_only_on_a_decision_its_item_asked(wired, item):
     assert r.status_code == 409 and "asked no decision" in r.json()["error"]
 
 
-def test_a_workflow_wait_on_a_work_decision_ends_when_he_answers_there(wired, item):
+def test_a_workflow_wait_on_a_work_decision_ends_when_he_answers_there(wired, item, monkeypatch):
+    # The write is on a worker thread; its hint goes to the pages from any thread.
+    monkeypatch.setattr(wired.server, "_hint_from_any_thread", wired.hints.append)
     _report(wired, item.id, "decision_needed", "Merge?", key="merge")
     wid = workflow_store.start("Diagnostics work", "jarvis", [])
     workflow_store.record(workflow_store.WorkflowEvent(
@@ -203,16 +206,34 @@ def test_an_answer_through_decide_py_ends_a_wait_on_that_decision(wired, shown, 
     assert workflow_store.snapshot(wid).open_waits == []
 
 
-def test_finishing_with_a_package_ends_every_wait_on_it(wired, shown, marks, tmp_path, item):
+def test_signing_a_package_off_ends_every_wait_on_it(wired, shown, marks, tmp_path, item):
     inbox_id = opened_deck(wired, tmp_path, session="gone")
     _report(wired, item.id, "piece", "Waiting on the deck.", **{
         "key": "deck", "who": {"kind": "tim"}, "state": "waiting_on_tim",
         "until": f"package:{inbox_id}"})
-    answer_all(wired, inbox_id)
+    wid = workflow_store.start("Tea service", "tea", [])
+    workflow_store.record(workflow_store.WorkflowEvent(
+        wid, "wait_started", None, "Waiting on the deck.",
+        {"key": "deck", "until": "package:decision-deck-example"}))
+    _call(wired, "answer_package_decision", package=inbox_id, decision="kettle-kind",
+          option="recommended")
     assert _piece(item.id)["deck"].state == "waiting_on_tim", "a decision is not the package"
-    r = wired.client.post(f"{INBOX}/{inbox_id}/return", headers=BROWSER)
+    package_id = package_inbox.get(inbox_id).package_id
+    r = wired.client.post(f"/api/packages/{package_id}/signoff", headers=BROWSER)
     assert r.status_code == 200, r.text
     assert _piece(item.id)["deck"].state == "working"
+    assert workflow_store.snapshot(wid).open_waits == [], "by its name too"
+    [ended] = _wait_ended(wid)
+    assert ended.detail["how"] == "signed_off" and ended.detail["by"] == "user"
+
+
+def test_a_package_s_own_workflow_wait_ends_with_his_sign_off(wired, shown, marks, tmp_path):
+    wid = workflow_store.start("Tea service", "tea", [])
+    inbox_id = opened_deck(wired, tmp_path, workflow=wid)
+    assert workflow_store.snapshot(wid).open[0].detail["link"] == f"package:{inbox_id}"
+    _call(wired, "sign_off_package", package=inbox_id)
+    assert workflow_store.snapshot(wid).open_waits == []
+    assert any(e.detail.get("by") == "user" for e in _wait_ended(wid))
 
 
 # -- the sweep --------------------------------------------------------------------
@@ -221,13 +242,14 @@ def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monke
     _waiting_piece(wired, item, until=f"work:{item.id}:merge")
     wid = _waiting_workflow("merge")
     # Recorded as it was before links ended anything: his answer, and both waits left open.
-    monkeypatch.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
-    wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
-                      json={"answer": "yes"})
-    workflow_store.record(workflow_store.WorkflowEvent(wid, "decision_made", None, "Answered.",
-                                                       {"key": "merge", "answer": "yes",
-                                                        "by": "user"}))
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
+        m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
+        wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
+                          json={"answer": "yes"})
+        workflow_store.record(workflow_store.WorkflowEvent(
+            wid, "decision_made", None, "Answered.", {"key": "merge", "answer": "yes",
+                                                       "by": "user"}))
     with run_store._connect() as conn:
         assert conn.execute("SELECT state FROM work_pieces WHERE key='land'").fetchone()[0] \
             == "waiting_on_tim"
@@ -239,10 +261,11 @@ def test_a_wait_left_open_on_an_answer_already_given_is_swept(wired, item, monke
 
 def test_reading_the_record_sweeps_it(wired, item, monkeypatch):
     _waiting_piece(wired, item)
-    monkeypatch.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
-    wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
-                      json={"answer": "yes"})
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(wait_links, "settle", lambda conn, found, now: wait_links.Settled())
+        m.setattr(wait_links, "sweep", lambda: wait_links.Settled())
+        wired.client.post(f"/api/work/{item.id}/decisions/merge", headers=BROWSER,
+                          json={"answer": "yes"})
     listed = wired.client.get("/api/work").json()["items"]
     [land] = [p for p in listed[0]["pieces"] if p["key"] == "land"]
     assert land["state"] == "working"
@@ -325,6 +348,7 @@ def test_an_answer_nobody_has_started_on_says_who_it_waits_for(wired, item):
     got = work_store.get(item.id)
     assert got.follow_up.asker == "takeover-agent" and not got.follow_up.overdue
     assert not any(b.kind == "no_follow_up" for b in got.blockers)
+    _age("UPDATE work_items SET reported_at=?", time.time() - 40 * 60)
     _age("UPDATE work_decisions SET answered_at=?", time.time() - 31 * 60)
     got = work_store.get(item.id)
     [b] = [b for b in got.blockers if b.kind == "no_follow_up"]
@@ -343,13 +367,14 @@ def test_no_follow_up_is_a_silent_attention_item_for_the_asker(wired, item):
         _report(wired, item.id, "decision_needed", "Build it?", auth=key, key="build")
         wired.client.post(f"/api/work/{item.id}/decisions/build", headers=BROWSER,
                           json={"answer": "Build it"})
+        _age("UPDATE work_items SET reported_at=?", time.time() - 40 * 60)
         _age("UPDATE work_decisions SET answered_at=?", time.time() - 31 * 60)
         wired.server._attend_unfollowed(work_store.listing())
-        news = record.get("work", item.id)
+        news = record.get("work_follow_up", item.id)
         assert news.event == "no_follow_up" and news.untrusted["agent"] == "takeover-agent"
         assert not news.audible
         _report(wired, item.id, "update", "Building.", auth=key, state="working")
-        assert record.get("work", item.id).state == attention_store.RESOLVED
+        assert record.get("work_follow_up", item.id).state == attention_store.RESOLVED
     finally:
         wired.server.attention_record = None
 

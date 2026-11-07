@@ -222,6 +222,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "5b8ad413d1332d4272e2557bb1b3dcda5304c18dac1987d24c9eddc65ada3c4e",  # as shipped in 453b4ae8 (the Work tracker)
     "c03992b7460ed11182fcc60f28bed34130af9d6b5ea8ee151dd96163a16cc147",  # as shipped in d2f6c50 (the package inbox)
     "8c45e249c1257825d490bfda155f182e3f01af3c15c509fb5e3e132e1686d90a",  # the knowledge tools
+    "46dc64cf8fa4935662462dbc78a2743ba4355b2c6e3767eb2945cd4999a6fa26",  # work_context before starting work
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -532,6 +533,15 @@ def bundle_cache_dir() -> Path:
     renders, listings), one folder per server and owner (bundle_cache.py).
     Never an original. Not created here: the cache creates it owner-only."""
     return data_dir() / "bundle-cache"
+
+
+def run_context_dir() -> Path:
+    """The context pack each run was given (context_service.py), one
+    `<run id>.md` each, so the page can show exactly what it received;
+    nothing is written into the run's own folder."""
+    path = data_dir() / "run-context"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def packages_dir() -> Path:

@@ -247,92 +247,130 @@ def test_the_frame_s_save_is_counted_too(wired, shown, marks, tmp_path):
     assert package_inbox.get(inbox_id).decisions_answered == 1
 
 
-def answer_all(w, inbox_id: str) -> None:
-    for _ in range(4):
-        entry = package_inbox.get(inbox_id)
-        if entry.state == package_inbox.ANSWERED:
-            return
-        package = work_packages.find(entry.package_id)
-        q = next(q for q in package_inbox.questions(package) if q.applies and not q.answer)
-        _call(w, "answer_package_decision", package=inbox_id, decision=q.id,
-              option="recommended")
-    assert package_inbox.get(inbox_id).state == package_inbox.ANSWERED
+# -- signing off -------------------------------------------------------------------------
+
+def signoff(w, package_id: str, headers=BROWSER):
+    return w.client.post(f"/api/packages/{package_id}/signoff", headers=headers)
 
 
-# -- moving it forward ---------------------------------------------------------------------
-
-def test_answers_go_back_only_once_every_one_is_answered(wired, shown, marks, tmp_path):
-    inbox_id = opened_deck(wired, tmp_path)
-    said = _call(wired, "return_package_answers", package=inbox_id)["text"]
-    assert "still wait on him" in said and said.endswith("Nothing was sent.")
-
-
-def test_answers_go_back_to_the_workflow_and_as_a_capture_for_the_session(
-        wired, shown, marks, tmp_path, monkeypatch):
-    wid = workflow_store.start("Tea service", "tea", [])
+@pytest.fixture
+def chitauri(wired, monkeypatch):
     monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
                         lambda: {"sess-1": "chitauri"})
+
+
+def test_sign_off_sends_what_he_answered_and_notes_what_he_did_not(
+        wired, shown, marks, record, tmp_path, chitauri):
+    wid = workflow_store.start("Tea service", "tea", [])
     inbox_id = opened_deck(wired, tmp_path, session="sess-1", workflow=wid)
     assert workflow_store.snapshot(wid).open_waits == [inbox_id]
-    answer_all(wired, inbox_id)
-    said = _call(wired, "return_package_answers", package=inbox_id)["text"]
-    assert "holds the answers for chitauri" in said and "read_capture" in said
+    _call(wired, "answer_package_decision", package=inbox_id, decision="kettle-kind",
+          option="recommended", words="the fast one")
+    shown.clear()
+    said = _call(wired, "sign_off_package", package="the tea one")["text"]
+    assert said.startswith("Signed off. Capture") and "chitauri" in said and "read_capture" in said
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
-    assert capture["text"].startswith("Tim's answers to your package decision-deck-example")
-    assert "kettle-kind: electric" in capture["text"] and "decisions.json" in capture["text"]
-    assert "Office tea" not in capture["text"] and "An electric kettle" not in capture["text"], \
+    text = capture["text"]
+    assert text.startswith("Tim has signed off your package decision-deck-example")
+    assert "kettle-kind: electric (his words: the fast one)" in text
+    assert "tea-kinds: not answered" in text and "decisions.json" in text
+    assert "Office tea" not in text and "An electric kettle" not in text, \
         "read back aloud: ids and his words only, never the sender's titles or option names"
     assert not capture.get("approved"), "it goes only on his yes"
+    entry = package_inbox.get(inbox_id)
+    assert (entry.state, entry.closed_why) == (package_inbox.CLOSED, package_inbox.SIGNED_OFF)
+    assert entry.signed_off_at and entry.capture_id == capture["id"]
+    assert record.get("package", inbox_id).state == attention_store.RESOLVED
+    assert {"type": "package_closed", "package": entry.package_id} in shown
     snap = workflow_store.snapshot(wid)
     assert not (snap.open_waits or snap.open_decisions), "nothing is left open on the workflow"
-    answered = [e for e in workflow_store.events(wid) if e.kind == "decision_made"]
-    assert {e.detail["key"] for e in answered} >= {"kettle-kind", "tea-kinds"}
-    entry = package_inbox.get(inbox_id)
-    assert entry.state == package_inbox.ANSWERED and entry.capture_id == capture["id"]
+    made = {e.detail["key"]: e.detail["answer"] for e in workflow_store.events(wid)
+            if e.kind == "decision_made"}
+    assert set(made) == {"kettle-kind"}, "only what he answered"
 
-    # The message goes (on his yes) and the session answers it.
-    message = run_store.create_message("sess-1", "anthropic", "chitauri", "tea",
-                                       capture["text"], capture_id=capture["id"],
+    # The message goes (on his yes): the record follows it.
+    message = run_store.create_message("sess-1", "anthropic", "chitauri", "tea", text,
+                                       capture_id=capture["id"],
                                        status=run_store.MessageStatus.SENT)
     wired.server._follow_inbox_messages()
-    entry = package_inbox.get(inbox_id)
-    assert entry.state == package_inbox.RETURNED and entry.message_id == message
-    run_store.update_message(message, status=run_store.MessageStatus.ANSWERED,
-                             answered_at=time.time(), reply="Thanks")
-    wired.server._follow_inbox_messages()
-    entry = package_inbox.get(inbox_id)
-    assert (entry.state, entry.closed_why) == (package_inbox.CLOSED, package_inbox.DONE)
+    assert package_inbox.get(inbox_id).message_id == message
 
 
-def test_a_message_before_he_asked_is_not_taken_for_the_answers(wired, shown, marks, tmp_path,
-                                                                monkeypatch):
-    monkeypatch.setattr(wired.server.agent_directory, "names_by_session",
-                        lambda: {"sess-1": "chitauri"})
+def test_a_message_before_he_signed_off_is_not_taken_for_his(wired, shown, marks, tmp_path,
+                                                             chitauri):
     inbox_id = opened_deck(wired, tmp_path, session="sess-1")
-    answer_all(wired, inbox_id)
     early = run_store.create_message("sess-1", "anthropic", "chitauri", "tea", "older",
                                      capture_id=1, status=run_store.MessageStatus.SENT)
     with __import__("sqlite3").connect(data_paths.db_path()) as conn:
         conn.execute("UPDATE messages SET staged_at=? WHERE id=?", (time.time() - 3600, early))
-    _call(wired, "return_package_answers", package=inbox_id)
+    _call(wired, "sign_off_package", package=inbox_id)
     wired.server._follow_inbox_messages()
     assert package_inbox.get(inbox_id).message_id is None
 
 
-def test_a_sender_that_is_gone_gets_no_message_and_it_is_returned(wired, shown, marks, tmp_path):
+def test_a_sender_that_is_gone_gets_no_message(wired, shown, marks, tmp_path):
     inbox_id = opened_deck(wired, tmp_path, session="gone")
-    answer_all(wired, inbox_id)
-    r = wired.client.post(f"{INBOX}/{inbox_id}/return", headers=BROWSER)
+    r = signoff(wired, package_inbox.get(inbox_id).package_id)
     assert r.status_code == 200 and "not running" in r.json()["said"]
-    assert package_inbox.get(inbox_id).state == package_inbox.RETURNED
+    assert package_inbox.get(inbox_id).closed_why == package_inbox.SIGNED_OFF
 
 
-def test_a_page_with_no_questions_goes_back_once_he_has_finished(wired, shown, marks):
-    inbox_id = send(wired, page_zip(), session="gone").json()["inbox"]["id"]
-    assert "not been opened" in _call(wired, "return_package_answers", package=inbox_id)["text"]
-    wired.client.post(f"{INBOX}/{inbox_id}/open", headers=BROWSER)
-    _call(wired, "return_package_answers", package=inbox_id)
-    assert package_inbox.get(inbox_id).state == package_inbox.RETURNED
+def test_a_presentation_tells_its_sender_it_was_reviewed(wired, shown, marks, chitauri):
+    got = send(wired, page_zip(), session="sess-1").json()
+    signoff(wired, got["package"]["id"])
+    capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
+    assert capture["text"].startswith("Tim has reviewed your package notes-page")
+    assert "signed it off" in capture["text"]
+
+
+def test_sign_off_needs_his_click_or_his_turn(wired, shown, marks):
+    package_id = send(wired, page_zip()).json()["package"]["id"]
+    assert signoff(wired, package_id, headers={}).status_code == 403
+    refused = _call(wired, "sign_off_package", origin="event", package=package_id)
+    assert not refused["ok"] and package_inbox.listing()[0].is_open
+
+
+def test_a_package_from_outside_the_inbox_is_signed_off_the_same_way(
+        wired, shown, marks, tmp_path):
+    archive = write_zip(tmp_path, page_zip(), "old.zip")
+    package, _ = work_packages.unpack(archive, "ab12cd34")
+    assert package_inbox.listing() == []
+    r = signoff(wired, package.id)
+    assert r.status_code == 200, r.text
+    [entry] = package_inbox.listing(closed=True)
+    assert (entry.package_id, entry.closed_why) == (package.id, package_inbox.SIGNED_OFF)
+    assert entry.opened_at and entry.from_session == ""
+    assert "no sender is on record" in r.json()["said"]
+    assert {"type": "package_closed", "package": package.id} in shown
+
+
+def test_a_work_decision_naming_the_package_gets_his_answer_or_is_closed_without_one(
+        wired, shown, marks, tmp_path):
+    folder = tmp_path / "work"
+    folder.mkdir()
+    item = work_store.create("Tea service", "folder", str(folder))
+    inbox_id = opened_deck(wired, tmp_path, work=item.id)
+    package_id = package_inbox.get(inbox_id).package_id
+    for key in ("kettle-kind", "tea-kinds"):
+        work_store.record(work_store.WorkEvent(item.id, "decision_needed", f"Decide {key}",
+                                               {"key": key, "package": "decision-deck-example"}))
+    _call(wired, "answer_package_decision", package=inbox_id, decision="kettle-kind",
+          option="tap")
+    signoff(wired, package_id)
+    item = work_store.get(item.id)
+    assert not item.decisions
+    closed = {a.key: (a.where, a.answer) for a in item.answered}
+    assert closed["kettle-kind"] == ("page", "A hot water tap"), "his answer, as he gave it"
+    assert closed["tea-kinds"] == (work_store.SIGNED_OFF, ""), "closed, never answered for him"
+    assert item.latest_update == f"He signed off the package {package_id}."
+    kinds = [e.kind for e in work_store.events(item.id)]
+    assert "decision_signed_off" in kinds
+    said = _call(wired, "work_status", item=item.id)["text"]
+    assert "without answering it; it has no answer of his" in said
+    r = wired.client.post(f"/api/work/{item.id}/events", headers=token(),
+                          json={"kind": "decision_signed_off", "summary": "x",
+                                "detail": {"key": "kettle-kind"}})
+    assert r.status_code == 409, "never a reporter's to send"
 
 
 def test_close_dismisses_an_open_one_and_ends_its_workflow_s_wait(
@@ -374,7 +412,7 @@ def test_a_package_for_a_work_item_shows_its_questions_there(wired, shown, marks
 # -- parity --------------------------------------------------------------------------------
 
 READS = ("package_inbox",)
-ACTS = ("open_inbox_package", "answer_package_decision", "return_package_answers",
+ACTS = ("open_inbox_package", "answer_package_decision", "sign_off_package",
         "close_inbox_package")
 
 

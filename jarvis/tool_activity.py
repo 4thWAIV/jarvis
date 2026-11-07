@@ -67,6 +67,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "knowledge_status", "knowledge_search", "knowledge_entity", "knowledge_proposals",
         "knowledge_topics", "link_knowledge", "change_topic", "reindex_knowledge",
         "knowledge_indexes", "change_knowledge_index", "knowledge_seeds", "change_knowledge_seed",
+        "work_context",
     ),
     # Messages to and from agents and people, captures, and who they are.
     COMMUNICATION: (
@@ -97,7 +98,7 @@ _BY_CATEGORY: dict[str, tuple[str, ...]] = {
         "workflow_status", "answer_workflow_decision", "dismiss_workflow",
         "work_status", "answer_work_decision",
         "package_inbox", "open_inbox_package", "answer_package_decision",
-        "return_package_answers", "close_inbox_package",
+        "sign_off_package", "close_inbox_package",
         "install_speech_model", "update_jarvis",
     ),
     # The page shown or pointed at: the white attention path's tools.
