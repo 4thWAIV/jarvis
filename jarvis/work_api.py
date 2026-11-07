@@ -442,11 +442,13 @@ def review(item_id: str, action: str, words: str, where: str,
         raise work_store.WorkRefused(
             f"A package sent for it still asks him {waiting} question(s): answer them before "
             f"approving it.")
-    summary = {APPROVE: "He approved it: done.", NOT_DONE: f"Not done yet, he says: {words}",
+    # His note is kept as the item's review note and shown once, beside
+    # this summary, never twice.
+    summary = {APPROVE: "He approved it: done.", NOT_DONE: "Sent back: not done yet.",
                ADD_WORK: f"He added work: {words}"}[action]
     if in_package:
         summary = {APPROVE: "Approved by him in the package: done.",
-                   NOT_DONE: f"Not done yet, he said in the package: {words}",
+                   NOT_DONE: "Sent back in the package: not done yet.",
                    ADD_WORK: f"Work added by him in the package: {words}"}[action]
     detail = {"words": words, "where": where}
     if source:

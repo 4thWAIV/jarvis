@@ -338,8 +338,9 @@ his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
 His review is `work_api.review`, from the item's header on the page (`POST
 /api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
 yet, Add work) and the brain's acting `review_work` alike: `approved`
-(refused while a decision is open or a piece is held or still working,
-and offered on the page only while `approvable` says the same: an open
+(only once the item is ready for review, as docs/work-states.md says;
+refused while a decision is open or a piece is held or still working, and
+offered on the page only while `approvable` says the same: an open
 question of a package sent for the item counts against it, except the
 item's own review question; the item and
 every piece done, `approved_at`; nothing a reporter sends moves it after),
@@ -357,7 +358,9 @@ called from `server._inbox_recount`, which records it through the same
 review package shows on the item at once (`package_review`: "Approved by
 you in the package, 16:33" on its Overview, Decisions tab and list row): an
 answer that cannot be applied (Approve while a piece still works) is noted
-with why (`review_noted`, `not_applied`), and signing the package off with
+with why, shown in his own terms, never the agent's refusal
+(`review_noted`, `not_applied`, `work_store.said_to_tim`), and an item he
+has approved done never shows "without a verdict" (`_shown_review`), and signing the package off with
 no answer notes "Review closed without a verdict" (`no_verdict`,
 `work_api.signed_off_review`, from `_sign_off_package`), Approve, Not done
 yet and Add work still beside it. Answers already on record are applied at

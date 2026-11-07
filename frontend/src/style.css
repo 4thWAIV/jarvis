@@ -397,7 +397,13 @@ html, body {
   display: flex;
   gap: 6px;
   z-index: 10;
+  min-width: 0;
+  overflow: hidden;
 }
+/* A long name (a work item's title) gives way inside the tab row, never
+   under the updates count or the right-hand tabs. */
+.centre-tabs .word-tab { flex: 0 1 auto; min-width: 5em; max-width: 28em; overflow: hidden;
+                         text-overflow: ellipsis; }
 /* A tab named in words: as wide as its word, in capitals like the page's
    other headers. Two classes, so it outranks .control-button's icon size. */
 .control-button.word-tab {

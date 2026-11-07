@@ -63,15 +63,15 @@ def test_a_work_key_tracks_and_reports_and_opens_nothing_else(wired):
                     json={"kind": "update", "summary": "Engine wired.", "detail": {"state": "working"}})
     assert r.status_code == 200 and r.json()["item"]["headline"] == "Engine wired."
     assert r.json()["item"]["state"] == "activity_unknown"
-    assert "not confirmed" in r.json()["item"]["activity_reason"]
+    assert "cannot see that work" in r.json()["item"]["activity_reason"]
     detail = client.get(f"/api/work/{wid}", headers=key).json()["item"]
     assert detail["state"] == "activity_unknown"
     listed = client.get("/api/work", headers=key).json()["items"]
     assert next(x for x in listed if x["id"] == wid)["state"] == "activity_unknown"
     from jarvis import work_store
     item = work_store.get(wid)
-    assert "not confirmed" in server._work_line(item)
-    assert "not confirmed" in server._work_detail(item)
+    assert "cannot see that work" in server._work_line(item)
+    assert "cannot see that work" in server._work_detail(item)
     for path in ("/api/restart", "/api/workflows", f"/api/work/{wid}/decisions/x"):
         assert client.post(path, json={}, headers=key).status_code == 403, path
     assert client.post("/api/work", json={"title": "x", "source": {}},

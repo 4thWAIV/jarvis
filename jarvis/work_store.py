@@ -85,7 +85,8 @@ ACTIVE = (VERIFYING,)
 # supplies exact assignment-bound, current token-generation evidence. Fail closed.
 ACTIVITY_UNKNOWN = "activity_unknown"
 PUBLIC_STATES = (PLANNED, READY, ACTIVITY_UNKNOWN, VERIFYING, WAITING, BLOCKED, DONE)
-ACTIVITY_REASON = "Current token generation for this Work assignment is not confirmed."
+ACTIVITY_REASON = ("The agent says it is working on this; JARVIS cannot see that work "
+                   "happening, so it does not say it is.")
 
 
 def public_state(reported: str) -> str:
@@ -932,6 +933,10 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
         if going is not None:
             raise WorkRefused(f"Piece {going['key']} is still working: approve it once its "
                               f"agent reports it ready for review.")
+        row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+        if _item(conn, row, now).state != VERIFYING:
+            raise WorkRefused("It is not ready for review yet: approve it once its agent "
+                              "reports it ready for review (verifying).")
         conn.execute("UPDATE work_pieces SET state=?, until='', then_state='', waiting_since=NULL "
                      "WHERE item_id=? AND state<>?", (DONE, item_id, DONE))
         conn.execute("UPDATE work_items SET state=?, approved_at=?, until='', then_state='', "
@@ -1215,11 +1220,11 @@ def _item(conn, row, now: float) -> WorkItem:
         pieces=pieces, decisions=decisions, answered=answered,
         blockers=_blockers(row, pieces, decisions, follow_up, now),
         quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]),
-        follow_up=follow_up, package_review=_package_review(conn, item_id),
+        follow_up=follow_up, package_review=_shown_review(row, _package_review(conn, item_id)),
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
-        approvable=approvable(row, pieces, decisions),
+        approvable=approvable(row, state, pieces, decisions),
         review_note_at=row["review_note_at"],
         activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "",
         unmoved=(not any(_moving(p, now) for p in pieces)
@@ -1270,10 +1275,11 @@ def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -
     return PLANNED if live else VERIFYING
 
 
-def approvable(row, pieces: list[Piece], decisions: list[Decision]) -> bool:
-    """Whether he can approve it done now: not done or closed, no decision
-    open, and no piece waiting on him, blocked or still working."""
-    return (row["state"] != DONE and row["closed_at"] is None and not decisions
+def approvable(row, state: str, pieces: list[Piece], decisions: list[Decision]) -> bool:
+    """Whether he can approve it done now: only once it is ready for his
+    review (`state`, worked out), not closed, no decision open, and no piece
+    waiting on him, blocked or still claimed working (docs/work-states.md)."""
+    return (state == VERIFYING and row["closed_at"] is None and not decisions
             and row["state"] not in HELD
             and not any(p.state in HELD + (ACTIVITY_UNKNOWN,) for p in pieces))
 
@@ -1564,7 +1570,41 @@ def _package_review(conn, item_id: str) -> "Optional[PackageReview]":
     if not (detail.get("source") or {}).get("package"):
         return None
     outcome = detail.get("outcome") if row["kind"] == REVIEW_NOTED else row["kind"]
-    return PackageReview(outcome, row["at"], detail.get("why", ""), detail["source"]["package"])
+    return PackageReview(outcome, row["at"], said_to_tim(detail.get("why", "")),
+                         detail["source"]["package"])
+
+
+def _shown_review(row, review: "Optional[PackageReview]") -> "Optional[PackageReview]":
+    """What the item shows of his package act: never "without a verdict" on
+    an item he has approved done."""
+    if review is not None and review.outcome == NO_VERDICT and row["state"] == DONE:
+        return None
+    return review
+
+
+# Why an answer of his in a package could not be applied, in his own terms:
+# the refusals are worded for the reporting agents, never shown to him as
+# they are (a refusal's start, then what he reads).
+_SAID_TO_TIM = (
+    ("Say it in his words", "you gave no words with it"),
+    ("Decision ", "a decision of yours on it is still open"),
+    ("It is not ready for review", "it is not ready for your review yet"),
+    ("A package sent for it still asks", "another package for it still asks you something"),
+    ("He approved this done", "it is already done"),
+)
+
+
+def said_to_tim(why: str) -> str:
+    """A refusal, as Tim reads why his answer was not applied."""
+    text = str(why or "")
+    if text.startswith("Piece "):
+        if " is still working" in text:
+            return "a piece of it is still being worked on"
+        return "a piece of it is still waiting or blocked"
+    for start, said in _SAID_TO_TIM:
+        if text.startswith(start):
+            return said
+    return "it could not be applied" if text else ""
 
 
 @dataclass(frozen=True)
