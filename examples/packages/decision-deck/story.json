@@ -1,0 +1,126 @@
+{
+ "title": "Office tea: decisions",
+ "language": "en",
+ "slides": [
+  {
+   "title": "Three decisions on the office tea service",
+   "target": "#s1",
+   "beats": [
+    {
+     "say": "This is an example deck. It asks three decisions, and the third is asked only after one answer to the second.",
+     "actions": [
+      {
+       "click": "#go-1"
+      }
+     ],
+     "targets": [
+      "#s1 h2"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Heating a litre of water",
+   "target": "#s2",
+   "beats": [
+    {
+     "say": "Heating a litre of water",
+     "actions": [
+      {
+       "click": "#go-2"
+      }
+     ],
+     "targets": [
+      "#s2 h2"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Kettle",
+   "target": "#d-kettle-kind",
+   "beats": [
+    {
+     "say": "Decision 1 of 3: What heats the water?",
+     "actions": [
+      {
+       "click": "#go-3"
+      }
+     ],
+     "targets": [
+      "#d-kettle-kind .question"
+     ]
+    },
+    {
+     "say": "I recommend An electric kettle. There is a socket and no plumber booked, and it is quick enough.",
+     "targets": [
+      "#opt-kettle-kind-electric"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Teas",
+   "target": "#d-tea-kinds",
+   "beats": [
+    {
+     "say": "Decision 2 of 3: One house blend, or a small selection?",
+     "actions": [
+      {
+       "click": "#go-4"
+      }
+     ],
+     "targets": [
+      "#d-tea-kinds .question"
+     ]
+    },
+    {
+     "say": "I recommend A small selection. People's tastes differ, and the shelf is already there.",
+     "targets": [
+      "#opt-tea-kinds-selection"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "How many",
+   "target": "#d-selection-size",
+   "beats": [
+    {
+     "say": "Decision 3 of 3: How many teas in the selection?",
+     "actions": [
+      {
+       "click": "#go-5"
+      }
+     ],
+     "targets": [
+      "#d-selection-size .question"
+     ]
+    },
+    {
+     "say": "I recommend Three. Three covers every taste anyone has asked for.",
+     "targets": [
+      "#opt-selection-size-three"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Your answers",
+   "target": "#answers",
+   "beats": [
+    {
+     "say": "Your answers are recorded here. You can change any of them, or approve every recommended option at once.",
+     "actions": [
+      {
+       "click": "#go-6"
+      }
+     ],
+     "targets": [
+      "#answer-list"
+     ]
+    }
+   ]
+  }
+ ]
+}

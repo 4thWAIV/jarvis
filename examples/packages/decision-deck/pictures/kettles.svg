@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="200" viewBox="0 0 420 200" role="img" aria-label="Three ways to heat water: an electric kettle, a stovetop kettle and a hot water tap, with minutes to a litre at the boil">
+  <rect width="420" height="200" rx="10" fill="#121a24"/>
+  <g font-family="-apple-system, Segoe UI, sans-serif" font-size="15" fill="#e6edf5" text-anchor="middle">
+    <rect x="34" y="40" width="80" height="80" rx="14" fill="#38bdf8"/>
+    <text x="74" y="150">Electric</text><text x="74" y="172" fill="#a3b1c2">3 minutes</text>
+    <ellipse cx="210" cy="90" rx="50" ry="34" fill="#fbbf24"/>
+    <text x="210" y="150">Stovetop</text><text x="210" y="172" fill="#a3b1c2">6 minutes</text>
+    <rect x="330" y="36" width="20" height="70" fill="#34d399"/><rect x="330" y="36" width="56" height="16" fill="#34d399"/>
+    <text x="346" y="150">Tap</text><text x="346" y="172" fill="#a3b1c2">at once</text>
+  </g>
+</svg>

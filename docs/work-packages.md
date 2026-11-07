@@ -254,10 +254,91 @@ Zip the package's folder with `package.json` at the root (a zip of the folder it
 python3 examples/packages/zip_package.py examples/packages/spanish-speech-test
 ```
 
-It writes `spanish-speech-test-1.0.0.zip`, leaving out `results/`, `model/`
-and `.DS_Store`, after checking that the file the package's `runs` needs,
+It writes `spanish-speech-test-1.0.0.zip`, leaving out `results/`, `model/`,
+`new_deck.py` and `.DS_Store`, after checking that the file the package's `runs` needs,
 and its story if it names one, is there. Attach it to a message: pick it on the Queue page, or tell
 JARVIS to send it to the person, giving its full path.
+
+## Decision packages
+
+A decision package asks the receiver a set of decisions and records the
+answers. Every one is built from one shared deck,
+`examples/packages/decision-deck/`, so they all look and work the same.
+Do not hand-build a deck; write the data and run the builder.
+
+### The data
+
+One JSON file holds the package fields, the slides and the decisions
+(`examples/packages/decision-deck/deck-data.js` is a working example, and
+can be given to the builder in place of a JSON file):
+
+| field | what it is |
+|---|---|
+| `name`, `version`, `purpose` | The package.json fields of the same names. |
+| `title` | The deck's title, and the heading of `results/decisions.md`. |
+| `language` | The story's language, `en` (the default) or `es`. |
+| `slides` | The slides before the decisions, in order. Each has a `title`, and optionally an `id` (for story targets), a `kicker`, a `short` name for the jump strip, `say` (its story line) or its own `beats` (a story slide's beats; the builder adds the click that brings the slide up), and `blocks`. An entry `{"decision": "<id>"}` places that decision's slide there; decisions not placed follow the slides. The "Your answers" slide is always last. |
+| `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text", "id"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows", "rowIds", "rowHeads"}}`, or `{"picture": path, "alt", "caption"}` / `{"pictures": [{"src", "alt", "caption", "id"}]}`. Any block may have an `id`. Text may use `**bold**` and `` `code` ``. |
+| `decisions` | The decisions, in order. Each has an `id` (a slug: a-z, 0-9 and `-`), a `short` name, the `question`, its `options`, the `recommended` option's id and the one `reason` for it, and optionally `context` (a line of words) and a `picture` (shown beside the options), and `say` (its story line in place of the recommendation). |
+| `options` | Each has an `id` (a slug; not `later`, `none` or `recommended`), a `name`, what it `says`, optionally a `picture`, and optionally `opens`: the ids of child questions asked only when this option is chosen. A child has one parent. |
+
+Pictures are paths inside the package, found beside the data file.
+
+### Building one
+
+```bash
+python3 examples/packages/decision-deck/new_deck.py deck.json out/my-decisions
+```
+
+It checks the data, copies the shared deck into the folder (`index.html`,
+`deck.css`, `deck.js`, `SKILL.md`, `scripts/decide.py`), writes
+`deck-data.js`, `story.json` and `package.json` from the data, copies the
+pictures, and zips the folder as `<name>-<version>.zip` beside it (a third
+argument names the zip). To change a built deck, edit its `deck-data.js`
+and run the builder on that file and its folder again.
+
+### What the receiver gets
+
+The deck draws on a fixed 880 × 640 canvas scaled to fit the frame, so a
+decision slide shows its question, the recommendation and its reason, each
+option with its Choose button, Decide later, None of these, a words box and
+the recorded answer without scrolling, at both centre frame sizes (809 ×
+589 in a 1440 × 900 window, 662 × 489 in a 1280 × 800 one). A picture
+gives up height until the slide fits. Previous and Next, the arrow keys, a
+jump strip that marks answered decisions, and "n of N" move between
+slides; the current slide is kept in memory only. The last slide, "Your
+answers", lists every decision with its recorded answer, changed in place,
+and Approve all recommended, which asks once and then records the
+recommended option for every decision with no answer yet. Nothing is ever
+pre-selected.
+
+The answers go to `results/decisions.json`, `results/decisions.md` and
+`results/decisions.js` (the same record as a script, which is how the frame
+reads its own file). Each record is
+`{"<decision>": {"answer": "<option id>" | "later" | "none", "at", "choice", "note", "recommended"}}`.
+
+### Answers by voice
+
+The package carries `SKILL.md` for JARVIS, and JARVIS's own instructions
+say the same: when the person answers out loud, JARVIS runs, with
+`run_package_command` on the package,
+
+```bash
+"$JARVIS_PYTHON" scripts/decide.py <decision> <option> [his words]
+"$JARVIS_PYTHON" scripts/decide.py all-recommended
+"$JARVIS_PYTHON" scripts/decide.py show [<decision>]
+```
+
+`<option>` is an option's id, its letter, `recommended`, `later` or `none`.
+`decide.py` writes the same three files, byte for byte as the page writes
+them, and the page reads `results/decisions.js` again every three seconds,
+so a spoken answer appears on screen.
+
+A page package's skill reaches the brain only when the brain opens the
+package itself (`open_package` or `open_local_package` return it). A deck
+opened from the page, by the Queue's or the Folders view's Open package,
+reaches the brain only through its instructions above, which do not depend
+on the skill.
 
 ## The example: spanish-speech-test
 

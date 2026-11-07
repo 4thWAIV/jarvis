@@ -5,8 +5,9 @@
 
 package.json goes at the zip's root, as JARVIS requires, and every other
 file beside it with its permissions, so its scripts stay executable. What a
-run of the package makes (results/, model/) and macOS's .DS_Store are left
-out. OUT.zip defaults to <name>-<version>.zip in the current folder.
+run of the package makes (results/, model/), the decision deck's builder
+(new_deck.py) and macOS's .DS_Store are left out. OUT.zip defaults to
+<name>-<version>.zip in the current folder.
 docs/work-packages.md has the format.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-LEFT_OUT = {"results", "model", "__pycache__", ".DS_Store"}
+LEFT_OUT = {"results", "model", "__pycache__", ".DS_Store", "new_deck.py"}
 # How a package runs and the file each way needs: jarvis/work_packages.py's
 # MODES, copied so this runs on any python3 without JARVIS's dependencies
 # (tests/test_package_modes.py checks the two agree).

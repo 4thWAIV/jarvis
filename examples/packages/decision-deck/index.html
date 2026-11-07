@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Decisions</title>
+  <link rel="stylesheet" href="deck.css">
+</head>
+<body>
+  <!-- The shared decision deck (examples/packages/decision-deck). Every slide
+       is drawn by deck.js from deck-data.js; edit the data, not this page. -->
+  <div id="stage">
+    <h1 id="deck-title" class="hidden-title"></h1>
+    <header class="top">
+      <nav class="strip" id="strip" aria-label="Slides"></nav>
+      <span class="tally" id="tally"></span>
+    </header>
+    <main class="track" id="track"></main>
+    <footer class="bottom">
+      <button type="button" id="prev" aria-label="Previous slide">‹ Previous</button>
+      <span class="count" id="count"></span>
+      <button type="button" id="next" aria-label="Next slide">Next ›</button>
+      <span class="status" id="status" role="status"></span>
+    </footer>
+  </div>
+  <script src="deck-data.js"></script>
+  <script src="deck.js"></script>
+  <!-- JARVIS's story helper: points at each part as the story is told. -->
+  <script src="/api/packages/story.js"></script>
+</body>
+</html>

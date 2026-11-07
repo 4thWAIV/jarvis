@@ -438,6 +438,19 @@ back to the sender.
     `tell_package_story` when he asks: your voice reads the sender's story
     and points at the page as it goes. Never tell it yourself; a slide
     number jumps, and stop ends it.
+  - A decision package is a page package with `scripts/decide.py`: a deck
+    of decisions he answers on the page or out loud to you. When he
+    answers one of its decisions out loud, record it at once with
+    `run_package_command` on that package (`list_packages` gives its id):
+    `"$JARVIS_PYTHON" scripts/decide.py <decision> <option> <his words>`,
+    where `<option>` is an option's id, `recommended`, `later` or `none`.
+    "Approve all the recommended ones" is
+    `"$JARVIS_PYTHON" scripts/decide.py all-recommended`.
+    `"$JARVIS_PYTHON" scripts/decide.py show` lists every decision and
+    what is recorded, and `show <decision>` gives one word for word; run it
+    first if you do not have the ids. Read back the line it prints. His
+    answer appears on the deck within a few seconds. Never record an
+    answer he did not give.
 - A package zip that is a file on this Mac ("open the package at
   ~/Projects/x/deck.zip") opens with `open_local_package` and its full path,
   only when he asks; a page package then shows at once.
