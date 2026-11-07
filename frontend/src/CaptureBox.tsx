@@ -25,8 +25,9 @@ import { useUiTarget } from "./uiRegistry";
 
 const FADE_MS = 250;
 
-/** The centre views the capture boxes are drawn in. */
-type CaptureView = "main.conversation" | "main.main";
+/** The centre views the capture boxes are drawn in: Conversation, Main,
+ *  and the takeover's read-back sheet (TakeoverBar.tsx). */
+type CaptureView = "main.conversation" | "main.main" | "main.takeover";
 
 /** Every open capture, in the order they opened, in `view` (the Main view
  *  unless said). Each box is registered there as a `capture` target. */

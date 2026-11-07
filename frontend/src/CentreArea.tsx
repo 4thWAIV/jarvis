@@ -72,7 +72,7 @@ import { WorkDetail } from "./WorkDetail";
 import { openWork, workList } from "./work";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf, workflows } from "./workflows";
-import { TakeoverBar } from "./TakeoverBar";
+import { TakeoverBar, TakeoverSheet } from "./TakeoverBar";
 import { openDiagnostics } from "./voiceHealth";
 import { openSubsystem, subsystemName as nameOf } from "./subsystems";
 import { network, openNetwork } from "./network";
@@ -316,6 +316,7 @@ export function CentreArea() {
       {/* The microphone: in the message input on Conversation, in the bar
           while taken over, else here. */}
       {view.id !== conversation.id && !takenOver && <MicCorner />}
+      {takenOver && <TakeoverSheet />}
       <MicPortal />
     </>
   );

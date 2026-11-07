@@ -311,9 +311,11 @@ it up), recorded as `wait_ended` with by, how and when; a blocker in words
 is cleared by its reporter's `--cleared`. The sweep releases holds already
 answered. An item with pieces is never reported held (it is the piece that
 waits), and its state is worked out from them (`work_store._computed`):
-working (or ready for review, ready, planned) while any piece can go on,
-waiting on him only when none can and a piece or decision waits on him,
-blocked when only blocked pieces are left; open decisions still show
+working only while a piece is working and has reported within
+`QUIET_AFTER_SEC` (`_moving`: a paused piece is not progress, so it never
+hides what waits on him), else ready or planned while a piece can be picked
+up, else waiting on him while a decision or piece waits on him, else ready
+for review, blocked, or working but paused (`quiet`), in that order; open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
@@ -321,8 +323,9 @@ his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
 His review is `work_api.review`, from the item's header on the page (`POST
 /api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
 yet, Add work) and the brain's acting `review_work` alike: `approved`
-(refused while a decision is open or a piece is held; the item and every
-piece done, `approved_at`; nothing a reporter sends moves it after),
+(refused while a decision is open or a piece is held or still working,
+and offered on the page only while `approvable` says the same; the item and
+every piece done, `approved_at`; nothing a reporter sends moves it after),
 `review_returned` (his note kept as `review_note` and shown, the item and
 every verifying or done piece back to working) and `work_added` (a new
 `ready` piece in his words, on whoever last worked the item); the note and
@@ -1529,6 +1532,40 @@ that list counting as the default, sir, so nothing typed into .env reaches
 the prompt. `brain.address_rule` adds a launch-prompt line only when
 the address is not plain "sir", so the English prompt is unchanged by
 default; the confirmations use it too.
+
+## Takeover mode
+A workflow (or subagent) or a page package shown in the centre can take
+over the page. It is route state, `uiNavigation.ts` `layout`: normal, or
+`{mode: "takeover", view, key, flyout, sheet}`, read-only outside the
+module, never stored (a reload starts normal). It holds only while
+`mainView` is that view and its slot holds that key (`detailSlot`'s third
+argument names a takeover slot's item): every command that changes either
+restores it in its own handler (`settleLayout`) and returns
+`layout.restored`, declared on every command that moves the centre view or
+a slot. The UI contract's layout family (`ui_contract/families/layout.json`)
+has `layout.takeover` (only the workflow or package shown), `layout.restore`,
+`layout.sheet` and `layout.flyout.close`, the views `main.takeover` (the
+bar) and `right.rail`, and the `takeoverBar` kind; the brain reaches them
+through `ui_navigate`, and Take over (`TakeoverBar.tsx` `TakeoverButton`,
+beside × in `WorkflowDetail.tsx` and `PackageView.tsx`) and Option+Shift+T
+(`takeoverKey.ts`, by `e.code`, never in an input, text area, select or
+editable text) run the same handlers. Taken over, `App.tsx` sets
+`data-layout="takeover"` on the root and every centre view's right edge,
+`--centre-right` in `style.css`, moves in to the rail; `RightPanel.tsx`
+draws `RightRail` (the six icons with their marks, keeping
+`#right-column`, so the rays and the pipeline's right rail follow it; an
+icon runs `right.tab.select`, which while taken over opens that tab over
+the takeover as the flyout); `CentreArea.tsx` draws `TakeoverBar` in place
+of the tabs and the notices: the name, the conversation's state from
+`controlState.ts` (`ControlSummary`), the notices (`CentreNotices inBar`),
+the read-back chip that opens the open captures as a sheet
+(`TakeoverSheet`, `CaptureList` in `main.takeover`), the microphone, its
+health dot and Stop (`MicPortal`'s `bar` place: moved, never copied) and
+Restore layout. A package's `layout` (`centre` or `wide`,
+`work_packages.LAYOUTS`) lights Take over; its frame is told `layout`
+{mode, width, height} and may send `layout.request` (offer only) or
+`layout.restore` (restore only, what `package_story.js` sends for the key
+pressed inside the frame).
 
 ## The Run Pipeline
 Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:

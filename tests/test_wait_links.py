@@ -400,7 +400,7 @@ def test_every_piece_in_and_no_decision_open_reads_ready_for_his_review(wired, i
     assert (got.state, got.reported_state) == ("verifying", "working"), "not left as working"
     _report(wired, item.id, "decision_needed", "Close it?", auth=key, key="close")
     got = work_store.get(item.id)
-    assert (got.state, got.also_waiting) == ("verifying", 1), "the work is in; it also asks him"
+    assert got.state == "waiting_on_tim", "the work is in, and it asks him something first"
 
 
 # -- his answer, written for the asker --------------------------------------------

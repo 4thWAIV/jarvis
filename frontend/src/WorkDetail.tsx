@@ -167,14 +167,14 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
   return (
     <div className="work-review" ref={target}>
       {asking === null ? <>
-        {item.state !== "done" && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
-                onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
+        {item.approvable && <button type="button" className="settings-btn work-approve" data-ui-action="domain"
+                disabled={busy} onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("not_done")}>{t("main.work.review.notDone")}</button>
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("add_work")}>{t("main.work.review.addWork")}</button>
-      </> : <form onSubmit={(e) => { e.preventDefault(); if (words.trim()) act(asking, words); }}>
-        <input type="text" value={words} autoFocus aria-label={t(`main.work.review.${asking}`)}
+      </> : <form data-ui-action="domain" onSubmit={(e) => { e.preventDefault(); if (words.trim()) act(asking, words); }}>
+        <input data-ui-action="input" type="text" value={words} autoFocus aria-label={t(`main.work.review.${asking}`)}
                placeholder={t(`main.work.review.${asking}`)} onChange={(e) => setWords(e.target.value)} />
         <button type="submit" className="settings-btn" data-ui-action="domain"
                 disabled={busy || !words.trim()}>{t("main.work.review.send")}</button>

@@ -532,7 +532,7 @@ function registerFolderRow(el: unknown) {
 
 // ── takeover ────────────────────────────────────────────────────────────
 
-const TAKEN = (key: string, view = "workflow") => ({ mode: "takeover", view, key, flyout: false });
+const TAKEN = (key: string, view = "workflow") => ({ mode: "takeover", view, key, flyout: false, sheet: false });
 
 await parity("takeover: nothing to take over on Conversation", [["layout.takeover", {}]], ({ outcome, state }) => {
   assert.deepEqual(outcome, { status: "unavailable", effects: [], reason: "no-entity" });
@@ -595,6 +595,18 @@ await parity("takeover: the flyout closes, the takeover stays", [
 ], ({ outcome, state }) => {
   assert.deepEqual(outcome, { status: "completed", effects: [] });
   assert.deepEqual(state.layout, TAKEN("wf-1"));
+});
+
+await parity("takeover: the read-back sheet opens in the flyout's place", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["right.tab.select", { tab: "queue" }],
+  ["layout.sheet", { shown: true }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: [] });
+  assert.deepEqual(state.layout, { ...TAKEN("wf-1"), sheet: true });
+});
+
+await parity("takeover: no sheet without a takeover", [["layout.sheet", { shown: true }]], ({ outcome }) => {
+  assert.deepEqual(outcome, { status: "unavailable", effects: [], reason: "no-entity" });
 });
 
 {

@@ -9,10 +9,17 @@
  * never copied), and Restore layout, which runs `layout.restore`, as the
  * brain's request does.
  *
+ * While a message is being read back for his yes, a chip names who it is
+ * for (`layout.sheet`); it opens the message boxes as a sheet over the
+ * takeover's right side (TakeoverSheet), with their Accept and Send. His
+ * spoken yes approves it as it always does; the layout stays.
+ *
  * Registered for pointing at as `takeoverBar` (its name, its state and
  * Restore layout).
  */
 
+import { captures, reading } from "./capture";
+import { CaptureList } from "./CaptureBox";
 import { CentreNotices } from "./CentreNotices";
 import { CENTRE_SOCKET, readHistoryAgain, useControlView } from "./ConversationView";
 import { ControlSummary } from "./conversation/ConversationControl";
@@ -32,6 +39,7 @@ export function TakeoverBar({ name }: { name: string }) {
     <div id="takeover-bar" role="toolbar" aria-label={t("main.takeover.label")} ref={ui.whole}>
       <h2 className="takeover-name" title={name} ref={ui.part("name")}>{name}</h2>
       <ControlSummary view={view} readAgain={readHistoryAgain} partRef={ui.part("state")} />
+      <ReadbackChip partRef={ui.part("readback")} />
       <CentreNotices inBar />
       <div className="takeover-voice">
         <MicHost place="bar" which="health" />
@@ -60,5 +68,41 @@ export function TakeoverButton({ partRef, lit = false }: { partRef: (el: Element
             ref={partRef} {...bindingProps(bind("layout.takeover", {}))}>
       {t("main.takeover.enter")}
     </button>
+  );
+}
+
+/** The chip for the message boxes open for his yes: who the first is for,
+ *  or how many there are; lit while one is being read back. */
+function ReadbackChip({ partRef }: { partRef: (el: Element | null) => void }) {
+  const t = useT();
+  const open = useSyncExternalStore(captures.subscribe, captures.get);
+  const now = useSyncExternalStore(reading.subscribe, reading.get);
+  const arranged = useSyncExternalStore(layout.subscribe, layout.get);
+  if (!open.length) return null;
+  const sheet = arranged.mode === "takeover" && arranged.sheet;
+  const first = open[0];
+  const label = open.length > 1 ? t("main.takeover.readbacks", { count: String(open.length) })
+    : first.to ? t("main.capture.messageTo", { to: first.to }) : t("main.capture.numbered", { id: String(first.id) });
+  return (
+    <button type="button" className={`readback-chip${now ? " reading" : ""}${sheet ? " open" : ""}`}
+            aria-expanded={sheet} title={t("main.takeover.readbackTitle")} ref={partRef}
+            {...bindingProps(bind("layout.sheet", { shown: !sheet }))}>
+      {label}
+    </button>
+  );
+}
+
+/** The read-back's message boxes over the takeover's right side, while the
+ *  chip has opened them and any is open. Each box is registered here as a
+ *  `capture` target in main.takeover. */
+export function TakeoverSheet() {
+  const t = useT();
+  const open = useSyncExternalStore(captures.subscribe, captures.get);
+  const arranged = useSyncExternalStore(layout.subscribe, layout.get);
+  if (arranged.mode !== "takeover" || !arranged.sheet || !open.length) return null;
+  return (
+    <div id="takeover-sheet" role="region" aria-label={t("main.takeover.sheet")}>
+      <CaptureList view="main.takeover" />
+    </div>
   );
 }

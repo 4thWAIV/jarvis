@@ -59,8 +59,9 @@ async def _open(p, page_url, size, routes=()):
     page = await browser.new_page(viewport={"width": width, "height": height})
     await page.add_init_script(FAKE_TRANSCRIPTION)
     voice = _Voice()
+    voice.sessions = _Sessions()
     await page.route_web_socket("**/ws/voice", voice)
-    await page.route_web_socket("**/ws/sessions", _Sessions())
+    await page.route_web_socket("**/ws/sessions", voice.sessions)
     for pattern, handler in routes:
         await page.route(pattern, handler)
     await page.goto(page_url)
@@ -89,9 +90,9 @@ async def test_a_package_takes_over_the_page_and_the_layout_comes_back(page_play
                 .to_have_attribute("aria-selected", "true")
             await page.frame_locator("#package-view iframe").locator("h1").wait_for()
             # Listening, so the corner holds the live meter.
-            await start_listening(page)
-            await page.wait_for_selector("#centre-mic #mic-meter, #centre-mic .mic-meter, #centre-mic canvas",
-                                         timeout=10000)
+            # (Generous waits: the recogniser's start is slow on a busy machine.)
+            await start_listening(page, timeout=20000)
+            await page.wait_for_selector("#centre-mic #mic-meter", timeout=20000)
             normal = await page.evaluate(RECT, "#package-view iframe")
             corner = await page.evaluate(RECT, "#centre-mic")
             # The microphone corner covers no part of the frame.
@@ -314,5 +315,70 @@ async def test_a_package_page_is_told_its_room_asks_for_more_and_restores_from_i
             await async_api.expect(page.locator(f"#package-view[data-package='{wide.id}'] .takeover-enter")) \
                 .to_have_class("folder-button takeover-enter lit")
             await _shot(page, "wide-offered")
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_while_taken_over_updates_and_a_read_back_keep_the_layout_and_a_reload_is_normal(page_url):
+    from tests.test_voice_page_updates import _Attention, _item
+    record = _Attention([_item(1, "run", "failed", project="jarvis")])
+    sent = []
+
+    async def capture_action(route):
+        sent.append(route.request.url.rsplit("/api/capture/", 1)[1])
+        await route.fulfill(status=200, content_type="application/json", body="{}")
+
+    async with async_api.async_playwright() as p:
+        browser, page, voice = await _open(p, page_url, "1440", [("**/api/workflows**", _Server()),
+                                                                 ("**/api/capture/**", capture_action),
+                                                                 *record.routes()])
+        try:
+            await voice.navigate("workflow.open", {"workflowId": "wf-1"})
+            await async_api.expect(page.locator("#workflow-detail .workflow-detail-name")).to_have_text("Speech migration")
+            await voice.navigate("layout.takeover", {})
+            bar = page.locator("#takeover-bar")
+            await async_api.expect(bar).to_be_visible()
+
+            # An attention item moves the updates chip in the bar; nothing else moves.
+            chip = bar.locator("#updates-notice")
+            await async_api.expect(chip).to_contain_text("1")
+            record.items.append(_item(2, "run", "succeeded", project="jarvis"))
+            voice.sessions.ws.send(json.dumps({"type": "attention"}))
+            await async_api.expect(chip).to_contain_text("2")
+            assert await page.evaluate("document.documentElement.dataset.layout") == "takeover"
+
+            # A read-back: a chip naming who it is for, its box as a sheet, the layout kept.
+            voice.ws.send(json.dumps({"type": "capture", "id": 9, "state": "reading",
+                                      "text": "Deploy at noon.", "to": "chitauri"}))
+            readback = bar.locator(".readback-chip")
+            await async_api.expect(readback).to_have_text("Message to chitauri")
+            assert await page.locator("#takeover-sheet").count() == 0
+            await readback.click()
+            sheet = page.locator("#takeover-sheet")
+            await async_api.expect(sheet.locator(".capture-box")).to_be_visible()
+            await async_api.expect(sheet).to_contain_text("Deploy at noon.")
+            assert await page.evaluate("document.documentElement.dataset.layout") == "takeover"
+            await _shot(page, "readback-sheet")
+            # Send on the sheet is the box's own Send.
+            await sheet.locator(".capture-send").click()
+            for _ in range(50):
+                if sent:
+                    break
+                await page.wait_for_timeout(50)
+            assert sent == ["9/send"]
+            await readback.click()
+            await async_api.expect(sheet).to_have_count(0)
+
+            # A ray to a right tab ends at its icon on the rail.
+            assert await page.evaluate("""() => !!document.querySelector('.right-tabs [data-ui-tab="queue"]')
+                                                  ?.closest('#right-column.rail')""")
+
+            # A reload comes back in the normal layout.
+            await page.reload()
+            await page.wait_for_selector(".right-tabs [role=tab]")
+            await async_api.expect(page.locator(".centre-tabs")).to_be_visible()
+            assert await page.locator("#takeover-bar").count() == 0
+            assert await page.evaluate("document.documentElement.dataset.layout") == "normal"
         finally:
             await browser.close()

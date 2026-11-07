@@ -429,6 +429,7 @@ class WorkItem:
     # An item with no pieces that is held: what holds it, as a piece's.
     until: list[str] = field(default_factory=list)
     approved_at: Optional[float] = None    # when he approved it done (his act alone)
+    approvable: bool = False               # he can approve it now (`approvable`)
     review_note: str = ""                  # his words when he said it is not done yet
     review_note_at: Optional[float] = None
 
@@ -872,6 +873,11 @@ def _review(conn, item_id: str, kind: str, words: str, detail: dict, now: float)
                             "state IN (?, ?)", (item_id, *HELD)).fetchone()
         if held is not None:
             raise _held_refusal(f"Piece {held['key']}", held["state"], holds_of(held["until"]))
+        going = conn.execute("SELECT key FROM work_pieces WHERE item_id=? AND state=?",
+                             (item_id, WORKING)).fetchone()
+        if going is not None:
+            raise WorkRefused(f"Piece {going['key']} is still working: approve it once its "
+                              f"agent reports it ready for review.")
         conn.execute("UPDATE work_pieces SET state=?, until='', then_state='', waiting_since=NULL "
                      "WHERE item_id=? AND state<>?", (DONE, item_id, DONE))
         conn.execute("UPDATE work_items SET state=?, approved_at=?, until='', then_state='', "
@@ -1133,14 +1139,15 @@ def _item(conn, row, now: float) -> WorkItem:
                                       "NOT NULL) ORDER BY COALESCE(answered_at, withdrawn_at, "
                                       "signed_off_at) DESC LIMIT ?", (item_id, ANSWERED_SHOWN))]
     reported = row["state"]
-    state = _computed(row, pieces, decisions)
+    state = _computed(row, pieces, decisions, now)
     area = row["area"]
     follow_up = _follow_up(conn, row, pieces, decisions, now)
     return WorkItem(
         id=item_id, title=row["title"], source_kind=row["source_kind"],
         source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
         state=state, reported_state=reported,
-        quiet=state in ACTIVE and now > quiet_at(state, row["updated_at"]),
+        quiet=state in ACTIVE and (now > quiet_at(state, row["updated_at"]) or (
+            state == WORKING and bool(pieces) and not any(_moving(p, now) for p in pieces))),
         latest_update=row["latest_update"],
         headline=decisions[0].question if state == WAITING and decisions else row["latest_update"],
         revision=row["revision"], created_at=row["created_at"], updated_at=row["updated_at"],
@@ -1156,32 +1163,49 @@ def _item(conn, row, now: float) -> WorkItem:
         also_waiting=len(decisions) if state not in (WAITING, DONE) else 0,
         until=holds_of(row["until"]) if not pieces else [],
         approved_at=row["approved_at"], review_note=row["review_note"],
+        approvable=approvable(row, pieces, decisions),
         review_note_at=row["review_note_at"])
 
 
-def _computed(row, pieces: list[Piece], decisions: list[Decision]) -> str:
-    """The item's state, from the record: reported done is done; with
-    pieces, working (or verifying) while any piece is, then ready or planned
-    while one can go on (a planned piece whose pieces before it are not done
-    cannot), waiting on him only when nothing can go on and a piece or a
-    decision waits on him, blocked when only blocked pieces are left, and
-    ready for his review once every piece is; with none, waiting on him
-    while a decision is open, else as reported."""
+def _moving(piece: Piece, now: float) -> bool:
+    """A piece going on now: working, and heard from within QUIET_AFTER_SEC."""
+    return piece.state == WORKING and piece.quiet_at is not None and now <= piece.quiet_at
+
+
+def _computed(row, pieces: list[Piece], decisions: list[Decision], now: float) -> str:
+    """The item's state, from the record. Reported done is done. With
+    pieces: working only while a piece is working and has reported within
+    QUIET_AFTER_SEC (a paused piece is not progress); else ready or planned
+    while one can be picked up (a planned piece whose pieces before it are
+    not done cannot); else waiting on him while a decision or a piece waits
+    on him; else ready for his review, blocked, or working but paused (its
+    `quiet` says so), in that order. With none, waiting on him while a
+    decision is open, else as reported."""
     if row["state"] == DONE:
         return DONE
     if not pieces:
         return WAITING if decisions else row["state"]
     live = {p.state for p in pieces if p.state != DONE}
-    for state in (WORKING, VERIFYING, READY):
-        if state in live:
-            return state
+    if any(_moving(p, now) for p in pieces):
+        return WORKING
+    if READY in live:
+        return READY
     if any(p.state == PLANNED and not p.waits_for for p in pieces):
         return PLANNED
     if WAITING in live or decisions:
         return WAITING
-    if BLOCKED in live:
-        return BLOCKED
+    for state in (VERIFYING, BLOCKED, WORKING):
+        if state in live:
+            return state
     return PLANNED if live else VERIFYING
+
+
+def approvable(row, pieces: list[Piece], decisions: list[Decision]) -> bool:
+    """Whether he can approve it done now: not done or closed, no decision
+    open, and no piece waiting on him, blocked or still working."""
+    return (row["state"] != DONE and row["closed_at"] is None and not decisions
+            and row["state"] not in HELD
+            and not any(p.state in HELD + (WORKING,) for p in pieces))
 
 
 def asker_label(asked_by: str) -> str:
