@@ -462,14 +462,17 @@ state. The beats are spoken as the sender's narration and never reach the
 brain; the tool gives back only the slides' titles, walled. The
 examples are `examples/packages/spanish-speech-test/` (conversation),
 `text-stats-agent/` (agent), `mic-check-page/` (page) and `story-deck/`
-(a page with a story). A decision package (a page package from the shared deck,
-`examples/packages/decision-deck/`, whose answers `scripts/decide.py` also
-records by voice) reaches him only through `python -m
-jarvis.decision_package <content.json>`: it validates the content, builds
-with the deck's own `new_deck.py`, checks it end to end in an isolated
-JARVIS (`decision_check.py`, `decision_check_server.py`) and only then
-unpacks it unshown into the live one (docs/work-packages.md, "Decision
-packages").
+(a page with a story). Every package an agent sends Tim is made with
+one command, `python -m jarvis.make_package <content.json | folder>`
+(`make_package.py`), and `docs/making-a-package.md` is the only place
+that says how: a deck's content (decision package, or a presentation when
+it has no decisions; `decision_package.py` reads, expands and checks it,
+the shared deck's `new_deck.py` builds it, `decision_check.py` and
+`decision_check_server.py` check it end to end in an isolated JARVIS) or a
+hand-made package's folder (only `purpose` given; read back through
+`work_packages.recognise`), delivered unshown through `POST
+/api/packages/local` with a message to Tim. `python -m
+jarvis.decision_package` is the same command's old name.
 
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
@@ -1470,6 +1473,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   running a step, its results, and which files the brain may attach; the
   three ways a package runs, an agent package's brief, and a page package's
   files and saved results (see "Work packages")
+- `make_package.py` — The one command an agent makes and sends a package
+  with (see `docs/making-a-package.md`); `decision_package.py` reads,
+  expands, checks, builds and delivers a deck's content
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper

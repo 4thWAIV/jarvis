@@ -14,6 +14,9 @@ A package runs one of three ways, its `runs`:
 - `page`: the package's own HTML page opens in the centre of JARVIS's page,
   where the person uses it.
 
+To make one and send it, see [Making a package](making-a-package.md): one
+command for every kind. This page is the format and the receiver's side.
+
 The team is a few trusted people on a closed network, so there is no sandbox.
 Each step needs the receiver's spoken go-ahead in that turn, and the results go
 back through the usual draft, review and approval.
@@ -246,133 +249,14 @@ The brain's tools:
 persona (`jarvis/jarvis_home/CLAUDE.md`, "Packages") tells the brain to offer
 to open a .zip, run it the way it runs, and reply with the results.
 
-## Sending one
+## Decks: decision packages and presentations
 
-Zip the package's folder with `package.json` at the root (a zip of the folder itself, with `package.json` one folder down, opens too):
-
-```bash
-python3 examples/packages/zip_package.py examples/packages/spanish-speech-test
-```
-
-It writes `spanish-speech-test-1.0.0.zip`, leaving out `results/`, `model/`,
-`new_deck.py` and `.DS_Store`, after checking that the file the package's `runs` needs,
-and its story if it names one, is there. Attach it to a message: pick it on the Queue page, or tell
-JARVIS to send it to the person, giving its full path.
-
-## Decision packages
-
-A decision package asks the receiver a set of decisions and records the
-answers. Every one is built from one shared deck,
-`examples/packages/decision-deck/`, so they all look and work the same,
-and every one reaches the owner through one command,
-`python -m jarvis.decision_package` (below). Write the data and run the
-command; there is no other way to build or send one.
-
-Any choice put to the owner must be a decision slide in a package sent
-this way. A presentation that describes choices but has no decision slides
-gives him nothing to vote with, so it is never sent; the talk-to-jarvis
-skill tells every session the same.
-
-### The data
-
-One JSON file holds the package fields, the slides and the decisions
-(`examples/packages/decision-deck/deck-data.js` is a working example):
-
-| field | what it is |
-|---|---|
-| `name`, `version`, `purpose` | The package.json fields of the same names. |
-| `title` | The deck's title, and the heading of `results/decisions.md`. |
-| `language` | The story's language, `en` (the default) or `es`. |
-| `slides` | The slides before the decisions, in order. Each has a `title`, and optionally an `id` (for story targets), a `kicker`, a `short` name for the jump strip, `say` (its story line) or its own `beats` (a story slide's beats; the builder adds the click that brings the slide up), and `blocks`. An entry `{"decision": "<id>"}` places that decision's slide there; decisions not placed follow the slides. The "Your answers" slide is always last. |
-| `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text", "id"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows", "rowIds", "rowHeads"}}`, or `{"picture": path, "alt", "caption"}` / `{"pictures": [{"src", "alt", "caption", "id"}]}`. Any block may have an `id`. Text may use `**bold**` and `` `code` ``. |
-| `decisions` | The decisions, in order. Each has an `id` (a slug: a-z, 0-9 and `-`), a `short` name, the `question`, its `options`, the `recommended` option's id and the one `reason` for it, and optionally `context` (a line of words), a `picture` (shown beside the options), a `compare` picture (shown large above the options, or beside them), and `say` (its story line in place of the recommendation). |
-| `options` | Each has an `id` (a slug; not `later`, `none` or `recommended`), a `name`, what it `says`, optionally a `picture`, and optionally `opens`: the ids of child questions asked only when this option is chosen. A child has one parent. |
-
-Pictures are paths inside the package, found beside the data file.
-
-No slide is a wall of text: the builder refuses a slide with more than 60
-words of body text (split it in two), and a decision whose question is
-over 30 words or whose reason, context or any option's words are over 40.
-
-### The short form
-
-An agent need only supply the substance: the `title`, and for each decision
-its `question`, `options` (each a `name` and what it `says`), the
-`recommended` option and the `reason`. The command works out the rest
-(`decision_package.expand`), and a field given is never replaced, so a
-full-form deck passes through unchanged:
-
-- `name` from the title, `version` `1.0.0`, `purpose` from the title;
-- a decision's `id` from its `short` or question, its `short` from the
-  question; an option's `id` from its name;
-- the recommendation: write the option's id or name in `recommended`, or put
-  `"recommended": true` on exactly one option;
-- `opens` and a slide's `decision` may name a decision by its id, `short` or
-  question.
-
-A field the deck does not know (`recomended`, `sais`) is refused by name with
-the field it was probably meant to be, since the deck would silently ignore
-it. `python -m jarvis.decision_package --example` prints a minimal content
-file, and `--check-only` validates a file and stops, with nothing built,
-checked in a browser or delivered.
-
-### Sending one
-
-From the JARVIS checkout, with its own Python:
-
-```bash
-.venv/bin/python -m jarvis.decision_package /full/path/content.json \
-    [--project <project>] [--session <session id>] [--out <folder>]
-```
-
-It does every step, and stops at the first that fails:
-
-1. **Checks the content**, and lists everything wrong with it at once:
-   every decision has a slug id, a question, at least two options with
-   slug ids (not `later`, `none` or `recommended`), names and words, a
-   recommendation that is one of them and a one-line reason; every child
-   question it opens is another decision; every picture is a PNG, JPEG,
-   GIF, WebP or SVG file beside the content; and no piece of text is
-   longer than the deck can show (`decision_package.CAPS`: a question 120
-   characters, a reason 160, an option's words 140, one line of a content
-   slide 280 and a whole content slide 700).
-2. **Builds** it with the shared deck's builder,
-   `examples/packages/decision-deck/new_deck.py`, called as it is, into the
-   folder (`--out`, else a new temporary one) as `<name>/` and
-   `<name>-<version>.zip`.
-3. **Checks it end to end in a real, isolated JARVIS**
-   (`jarvis/decision_check.py`): JARVIS's own server
-   (`jarvis/decision_check_server.py`) in a child process on a free port
-   above 19000, with its own temporary data folder and `.env` copy (its
-   Fish key replaced; the voice is a silent stand-in), the brain never
-   spawned, and the voice page built with vite into a temporary folder that
-   it serves. There it unpacks the zip through the same route delivery
-   uses, finds it with `list_packages` by its title's words and opens it
-   with `open_package_page` by its title, both through that JARVIS's
-   `/internal/tool`. Then, in a headless Chromium on the real sandboxed
-   package frame, sized to 809 × 589 and to 662 × 489:
-   - every slide fits: nothing outside its slide, nothing cut off or
-     scrolled, every word from 13 to 25 px;
-   - every decision slide has its vote row and Choose buttons in view;
-   - `tell_package_story` tells the story through JARVIS's speech path, and
-     it brings up every decision slide and points at every beat's targets;
-   - one Choose click saves its answer to `results/decisions.json`;
-   - one answer by voice (`run_package_command` running
-     `scripts/decide.py`) appears on its slide.
-
-   Every slide is photographed at both sizes, in `<folder>/check/`.
-4. **Delivers only if every check passed**: it unpacks the zip into the
-   live JARVIS, without showing it, through `POST
-   https://127.0.0.1:8340/api/packages/local` with the tool token, and
-   prints the package id and the words to open it ("Open the <title>
-   package."), which go in the session's message to the owner. On any
-   failure nothing is delivered; it prints what failed and the screenshots.
-   `<folder>/delivery.json` keeps the id, `--project`, `--session` and the
-   path of the answers, `results/decisions.json` in the package's folder.
-
-The checked page is never left running: the isolated JARVIS and the browser
-are stopped when the check ends. To change a deck, change the content and
-run the command again.
+Decision packages and presentations are page packages built from one
+shared deck, `examples/packages/decision-deck/`, so they all look and work
+the same. A decision package asks the receiver a set of decisions and
+records the answers; a presentation has slides only, told in JARVIS's
+voice, with nothing to answer, no "Your answers" slide and nothing
+returned.
 
 ### What the receiver gets
 

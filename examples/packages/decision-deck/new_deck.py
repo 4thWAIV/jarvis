@@ -4,8 +4,10 @@
     python3 examples/packages/decision-deck/new_deck.py DECK.json OUT_FOLDER [OUT.zip]
 
 DECK.json is the deck: its package fields, slides and decisions (the format
-is in docs/work-packages.md, "Decision packages"; this folder's deck-data.js
-is an example, and may be given in its place). OUT_FOLDER gets the shared
+is in docs/making-a-package.md, whose command, python -m jarvis.make_package,
+is the one way a deck is made and sent; this folder's deck-data.js is an
+example, and may be given in its place). A deck with no decisions is a
+presentation. OUT_FOLDER gets the shared
 deck's own files (index.html, deck.css, deck.js, SKILL.md,
 scripts/decide.py) copied from this folder, then deck-data.js, story.json
 and package.json made from the data, and every picture the data names,

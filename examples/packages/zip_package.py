@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Zip a work package's folder so it can be sent in a message.
+"""Zip a work package's folder: the zip step python -m jarvis.make_package
+and the deck's builder share. To make and send a package, use that command
+(docs/making-a-package.md), never this alone.
 
     python3 examples/packages/zip_package.py examples/packages/spanish-speech-test [OUT.zip]
 
