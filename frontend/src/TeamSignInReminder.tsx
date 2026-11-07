@@ -13,8 +13,9 @@
  * for good.
  *
  * It sits in the centre's notice stack (CentreNotices.tsx), which keeps
- * every centre view below it, so it covers nothing, the conversation's
- * input included.
+ * the conversation below it, so it covers nothing, its input included. On
+ * every other view (`compact`) it is one small chip in the tab row instead,
+ * "Not signed in" with the same Sign in and Later, and reserves no height.
  *
  * Later is the registered command `reminder.later`, the same for his click
  * and the brain's request; Sign in stays the browser approval flow and is
@@ -45,7 +46,7 @@ registerCommand("reminder.later", {
   },
 });
 
-export function TeamSignInReminder() {
+export function TeamSignInReminder({ compact = false }: { compact?: boolean }) {
   const t = useT();
   const live = useSyncExternalStore(network.subscribe, network.get);
   const hidden = useSyncExternalStore(later.subscribe, later.get);
@@ -66,6 +67,20 @@ export function TeamSignInReminder() {
     } catch (e) { setProblem(refusalSaid(e)); }
     setBusy(false);
   };
+  if (compact) {
+    return (
+      <div id="team-reminder" className="centre-chip" role="status" ref={ui.whole} title={t("left.reminder.text")}>
+        <ServerIcon />
+        <p ref={ui.part("text")}>{t("left.reminder.chip")}</p>
+        <button type="button" className="settings-btn primary" disabled={busy} data-ui-action="sign-in"
+                ref={ui.part("signIn")} onClick={start}>
+          {t("left.reminder.signIn")}</button>
+        <button type="button" className="settings-btn" ref={ui.part("later")}
+                {...bindingProps(bind("reminder.later", {}))}>{t("left.reminder.later")}</button>
+        {problem && <SaidText said={problem} as="span" className="team-reminder-problem" />}
+      </div>
+    );
+  }
   return (
     <div id="team-reminder" role="status" ref={ui.whole}>
       <ServerIcon />

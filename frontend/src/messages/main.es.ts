@@ -824,6 +824,8 @@ export const mainEs: CatalogOf<typeof mainEn> = {
   "main.messaging.error.transport": "El servidor del equipo no respondió.",
   "main.updates.count": { one: "{count} novedad pendiente", other: "{count} novedades pendientes" },
   "main.updates.held": "Las novedades habladas están en pausa",
+  "main.updates.chip": { one: "{count} novedad", other: "{count} novedades" },
+  "main.updates.chipHeld": "Novedades en pausa",
   "main.updates.review": "Revisar novedades",
   "main.updates.hide": "Ocultar novedades",
   "main.updates.markAllSeen": "Marcar todas como vistas",

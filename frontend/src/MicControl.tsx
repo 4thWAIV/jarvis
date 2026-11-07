@@ -19,7 +19,7 @@
  * waits until his voice input settings have been read.
  */
 
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { codeWords, saidShown, useT, type Translate } from "./locale";
@@ -148,10 +148,33 @@ export function MicHost({ which }: { which: keyof Hosts }) {
   return <span className="mic-host" ref={hostRef("composer", which)} />;
 }
 
+// The corner box's distance from the footer's gap, and the gap kept between
+// it and the view above (style.css #centre-mic).
+const CORNER_GAPS_PX = 12;
+
 /** The centre area's lower-right corner, holding the microphone while the
- *  message input is not on screen (any centre view but Conversation). */
+ *  message input is not on screen (any centre view but Conversation). It
+ *  sets --centre-corner-height to the room it takes, so every centre view
+ *  stops above it and it covers nothing. */
 export function MicCorner() {
-  return <div id="centre-mic"><span className="mic-host" ref={hostRef("corner", "health")} />
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const root = document.documentElement.style;
+    const fit = () => {
+      if (el.offsetHeight > 0) root.setProperty("--centre-corner-height", `${el.offsetHeight + CORNER_GAPS_PX}px`);
+      else root.removeProperty("--centre-corner-height");
+    };
+    fit();
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    return () => {
+      watch.disconnect();
+      root.removeProperty("--centre-corner-height");
+    };
+  }, []);
+  return <div id="centre-mic" ref={box}><span className="mic-host" ref={hostRef("corner", "health")} />
     <span className="mic-host" ref={hostRef("corner", "mic")} /></div>;
 }
 

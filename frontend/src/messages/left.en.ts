@@ -176,6 +176,7 @@ export const leftEn = {
   "left.reminder.text": "Sign in to your team server: messages between people and the Network view need it",
   "left.reminder.signIn": "Sign in",
   "left.reminder.later": "Later",
+  "left.reminder.chip": "Not signed in",
 
   // Settings (Settings.tsx): its sections, by their registered id.
   "left.settings.save": "Save",

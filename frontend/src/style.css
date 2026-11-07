@@ -29,6 +29,15 @@
   --centre-notice-top: calc(var(--centre-header-top) + var(--centre-header-height) + 10px);
   --centre-notice-height: 0px;
   --centre-view-top: calc(var(--centre-notice-top) + var(--centre-notice-height));
+  /* On every view but Conversation the notices are chips at the right end
+     of the tab row instead (CentreNotices.tsx sets this to their width), and
+     the tabs keep that room clear; nothing moves the view down. */
+  --centre-chip-room: 0px;
+  /* While the microphone is in the centre's lower-right corner (every view
+     but Conversation, #centre-mic) every centre view stops above it:
+     MicCorner sets this to the corner box's height and its gaps. */
+  --centre-corner-height: 0px;
+  --centre-view-bottom: calc(var(--footer-height) + var(--above-footer) + var(--centre-corner-height));
   /* The footer's height. Everything else on the page stops above it, so it
      always runs the full width of the page beneath them. */
   --footer-height: 40px;
@@ -179,7 +188,7 @@ html, body {
   position: fixed;
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -377,6 +386,8 @@ html, body {
   height: var(--centre-header-height);
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
+  padding-right: var(--centre-chip-room);
+  box-sizing: border-box;
   display: flex;
   gap: 6px;
   z-index: 10;
@@ -624,7 +635,7 @@ html, body {
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1600,7 +1611,7 @@ html, body {
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1933,7 +1944,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2063,7 +2074,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2108,7 +2119,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2141,7 +2152,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2299,7 +2310,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2709,7 +2720,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2820,6 +2831,93 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
 }
 #updates-notice .updates-list li { display: flex; align-items: center; gap: 8px; }
 #updates-notice .updates-words { flex: 1; overflow-wrap: anywhere; }
+
+/* On a reading view (every view but Conversation) the notices are chips at
+   the right end of the tab row: about 24px tall, reserving no height, and
+   the tabs keep their width clear (--centre-chip-room). */
+#centre-notices.compact {
+  left: auto;
+  top: calc(var(--centre-header-top) + (var(--centre-header-height) - 32px) / 2);
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  z-index: 30;
+}
+/* The chip is the 24px pill drawn by ::before; the clear 8px band above it,
+   inside the target's own box, is the lane a pointer's leaf runs along to
+   reach a part beside another in the pill's one row (uiPipeline.ts). */
+#centre-notices.compact .centre-chip {
+  position: relative;
+  flex-wrap: nowrap;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 8px 2px 0;
+  gap: 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  white-space: nowrap;
+}
+#centre-notices.compact .centre-chip::before {
+  content: "";
+  position: absolute;
+  inset: 8px 0 0 0;
+  z-index: -1;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-surface) 90%, #fbbf24);
+}
+#centre-notices.compact #updates-notice.centre-chip::before {
+  border-color: rgba(94, 234, 212, 0.3);
+  background: color-mix(in srgb, var(--ui-surface) 92%, #5eead4);
+}
+#centre-notices.compact #team-reminder svg { width: 14px; height: 14px; }
+#centre-notices.compact .centre-chip > svg { margin-left: 6px; }
+#centre-notices.compact .centre-chip > span:not(.team-reminder-problem),
+#centre-notices.compact .centre-chip > p { flex: none; margin: 0; line-height: 22px; padding: 0 4px; }
+.centre-chip-button {
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  cursor: pointer;
+}
+.centre-chip-button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.centre-chip-button:disabled { opacity: 0.5; cursor: default; }
+#centre-notices.compact .centre-chip .settings-btn { height: 20px; padding: 0 8px; font-size: 11px; }
+#centre-notices.compact .team-reminder-problem {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  max-width: 320px;
+  white-space: normal;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ui-surface);
+}
+/* The chip's list: a small dropdown over the view, under the chip, opened
+   only by a click and closed by Escape, a click outside or the chip again. */
+#updates-notice .updates-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(420px, calc(100vw - 2 * (var(--panel-edge) + var(--caption-gap))));
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  white-space: normal;
+}
+#updates-notice .updates-dropdown .updates-list { max-height: none; flex: 1 1 auto; min-height: 0; }
+#updates-notice .updates-dropdown-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
 @media (prefers-reduced-motion: reduce) {
   .compact-tile { transition: none; }
@@ -2996,7 +3094,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3245,7 +3343,7 @@ button.record-agent:hover, button.record-agent:focus-visible { text-decoration-c
   left: calc(var(--panel-edge) + var(--caption-gap));
   right: calc(var(--panel-edge) + var(--caption-gap));
   top: var(--centre-view-top);
-  bottom: calc(var(--footer-height) + var(--above-footer));
+  bottom: var(--centre-view-bottom);
   display: grid;
   grid-template-columns: minmax(240px, 2fr) minmax(0, 3fr);
   gap: 14px;

@@ -160,6 +160,7 @@ export const leftEs: CatalogOf<typeof leftEn> = {
   "left.reminder.text": "Inicie sesión en el servidor de su equipo: los mensajes entre personas y la vista de Red lo necesitan",
   "left.reminder.signIn": "Iniciar sesión",
   "left.reminder.later": "Más tarde",
+  "left.reminder.chip": "Sin sesión",
 
   "left.settings.save": "Guardar",
   "left.settings.close": "Cerrar",

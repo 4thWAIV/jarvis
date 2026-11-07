@@ -868,6 +868,8 @@ export const mainEn = {
   // as its source wrote it.
   "main.updates.count": { one: "{count} update waiting", other: "{count} updates waiting" },
   "main.updates.held": "Spoken updates are held",
+  "main.updates.chip": { one: "{count} update", other: "{count} updates" },
+  "main.updates.chipHeld": "Updates held",
   "main.updates.review": "Review updates",
   "main.updates.hide": "Hide updates",
   "main.updates.markAllSeen": "Mark all seen",
