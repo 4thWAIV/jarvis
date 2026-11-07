@@ -116,7 +116,7 @@ export const rightEn = {
   "right.work.project": "Project: {names}",
   "right.work.decision": "Decision: {question}",
   "right.work.state.planned": "Planned",
-  "right.work.activityUnknownReason": "Current token generation for this Work assignment is not confirmed.",
+  "right.work.activityUnknownReason": "The agent says it is working on this; JARVIS cannot see that work happening, so it does not say it is.",
   "right.work.state.activity_unknown": "Activity unconfirmed",
   "right.work.state.working": "Working",
   "right.work.state.verifying": "Ready for review",

@@ -376,6 +376,12 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         await page.click(".work-row[data-work-id=work-r]")
         approve = page.locator("#work-detail .work-approve")
         await approve.wait_for(timeout=10000)
+        # A long title in the centre's tab gives way inside the tab row.
+        tabs = await page.evaluate("""() => {
+          const row = document.querySelector('.centre-tabs').getBoundingClientRect();
+          return [...document.querySelectorAll('.centre-tabs .word-tab')].map(
+            t => t.getBoundingClientRect().right <= row.right + 1)}""")
+        assert all(tabs), tabs
         await approve.click()
         await _posted(work, 1)
         assert work.posted == [("api/work/work-r/review", {"action": "approve", "words": ""})]

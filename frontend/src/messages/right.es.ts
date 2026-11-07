@@ -108,7 +108,7 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.project": "Proyecto: {names}",
   "right.work.decision": "Decisión: {question}",
   "right.work.state.planned": "Planeado",
-  "right.work.activityUnknownReason": "No se ha confirmado la generación actual de tokens para esta asignación de trabajo.",
+  "right.work.activityUnknownReason": "El agente dice que está trabajando en esto; JARVIS no puede ver ese trabajo, así que no lo afirma.",
   "right.work.state.activity_unknown": "Actividad no confirmada",
   "right.work.state.working": "En curso",
   "right.work.state.verifying": "Lista para revisar",

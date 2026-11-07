@@ -124,7 +124,9 @@ def test_paused_with_nothing_else_reads_working_but_quiet(wired, item, monkeypat
 
 @pytest.mark.parametrize("states,decision,approvable", [
     ({"a": "verifying"}, False, True),
-    ({"a": "verifying", "b": "ready"}, False, True),
+    ({"a": "verifying", "b": "ready"}, False, False),
+    ({"a": "ready"}, False, False),
+    ({"a": "planned"}, False, False),
     ({"a": "verifying"}, True, False),
     ({"a": "verifying", "b": "working"}, False, False),
     ({"a": "verifying", "b": "blocked"}, False, False),
@@ -178,7 +180,7 @@ def test_ready_for_review_always_means_approve_is_offered(wired, item, monkeypat
     if got["state"] == "verifying":
         assert got["approvable"], (states, paused, got["state"])
     if got["approvable"]:
-        assert got["state"] in ("verifying", "ready", "planned"), (states, paused, got["state"])
+        assert got["state"] == "verifying", (states, paused, got["state"])
 
 
 def test_a_planned_piece_behind_a_waiting_one_cannot_go_on(wired, item):

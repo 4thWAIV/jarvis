@@ -33,7 +33,10 @@ def _ev(ws, item, kind, summary, **detail):
 
 
 def _approve(ws, item):
-    """His approval: the only way anything is done."""
+    """His approval, the only way anything is done, of an item ready for
+    his review (one with no pieces is reported so first)."""
+    if not ws.get(item.id).pieces:
+        ws.record(ws.WorkEvent(item.id, "update", "In for review.", {"state": "verifying"}))
     return ws.record(ws.WorkEvent(item.id, ws.APPROVED, "He approved it.", {"where": "page"}))
 
 
@@ -339,6 +342,7 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     assert item.quiet_at is None
     assert item.state == "activity_unknown"
     _ev(ws, item, "piece", "In.", key="engine", state="verifying")
+    _ev(ws, item, "piece", "In.", key="docs", state="verifying")
     item = _approve(ws, item)
     assert next(p for p in item.pieces if p.key == "engine").quiet_at is None
 
