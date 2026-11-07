@@ -44,7 +44,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
 - **Backend**: FastAPI + Python, packaged under `jarvis/`; `python -m jarvis` starts the service. Python module names below refer to files in that package. A checkout keeps configuration and data at the repository root; an installed copy uses `~/Library/Application Support/JARVIS`.
-- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input (on every other centre view the one microphone control and health dot sit in the centre area's lower-right corner, `MicControl.tsx` `MicCorner`, contract view `main.corner`); Folders, Agents, Queue, Workflows, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
+- **Frontend**: React + TypeScript + Vite. Conversation and detailed agent, workflow and diagnostic views occupy the centre; the team server's health and brain usage are on the left, the microphone control, Stop and the voice health dot at the lower right of the Conversation's message input (on every other centre view the one microphone control and health dot sit in the centre area's lower-right corner, `MicControl.tsx` `MicCorner`, contract view `main.corner`); Folders, Agents, Queue, Work, Network and Diagnostics are on the right, as six labelled tabs in two rows. The Three.js orb is one control within that workspace.
 - **Communication**: REST and WebSockets. Recognition receives binary PCM; voice output uses JSON with base64 MP3 chunks.
 - **AI**: conversational sessions use `brain_provider.py`, with Claude Code and Codex implementations. Development runs use their own Claude execution path.
 - **TTS**: Fish Audio with JARVIS voice model
@@ -69,7 +69,7 @@ this presents as "the UI is up but nothing works" rather than as an error.
   and then needs `JARVIS_ALLOWED_ORIGINS`.
   An agent the user lets do one kind of thing carries an access key
   instead of the token (`access_keys.py`): it opens only the routes of its
-  categories (`captures`, `agents`, `runs`, `workflows`, `watch`), never the voice
+  categories (`captures`, `agents`, `runs`, `workflows`, `work`, `watch`), never the voice
   socket, settings or `/internal/tool`. `python -m jarvis.access_keys create
   <label> <category>...` prints the key once; only its digest is stored.
 
@@ -226,6 +226,31 @@ and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
+
+## The Work tracker
+The right panel's Work tab (the tab that was Workflows, id still
+`workflows`) lists each piece of work in progress: its title, its state
+(`planned`, `working`, `waiting_on_tim`, `blocked`, `done`) and one useful
+update, an open decision's question first (Planning's Work view at
+52a1837, bare minimum). The Workflows view stays below the list, under its
+own heading. The record is `work_store.py` (schema `work_schema`, through
+`run_store.migrate`): `work_events` is append-only and the truth;
+`work_items`, `work_pieces` and `work_decisions` are updated in the same
+transaction by `create` and `record`, the only writers. An item wraps a
+ZIP work package or a folder on this Mac, checked by a stat and never
+opened or run; each piece names exactly who is on it (`agent:<session id>`
+shown by its one name from the agent directory, `run:<id>`,
+`workflow:<id>` or `tim`), and a reported who must be a record JARVIS has.
+An open decision reads as waiting on Tim and a working item silent for
+`QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
+with `work_report.py` and an access key in the `work` category (the
+talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
+every change is a `work` hint on `/ws/sessions`, after the write; a
+decision, blocked and done are attention items. A row opens the item in the
+centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
+`work.close`) and the list stays in view. His answer is
+`work_api.answer_decision`, from the page and the brain's acting
+`answer_work_decision` alike; `work_status` reads the record, walled.
 
 ## The team server
 `team_server/` is a separate service, not part of the JARVIS package: its own
@@ -1308,6 +1333,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `data/messages/<project>/` (see "Messages from sessions")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `work_store.py` / `work_api.py` / `work_report.py` — The Work tracker's
+  record, its routes and shared calls, and the command agents report with
+  (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and
+  `WorkDetail.tsx` are the page's side
 - `access_keys.py` — Access keys by category, for agents the user lets
   reach some of JARVIS's routes without the tool token
 - `session_skill.py` — Installs the talk-to-jarvis skill that tells sessions

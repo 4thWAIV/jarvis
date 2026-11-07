@@ -2215,6 +2215,36 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "work_status",
+        "description": (
+            "The Work list, from its one durable record: with no item, every work item "
+            "(its state and one useful update, an open decision first); with one, its "
+            "source (a zip or folder on this Mac), its pieces and exactly who is on each "
+            "(an agent, a run, a workflow, or him), its open decisions and latest events. "
+            "The ONLY correct way to answer what work is in progress and who is doing it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"item": {"type": "string",
+                                    "description": "Its title as he said it, or its id."}},
+        },
+    },
+    {
+        "name": "answer_work_decision",
+        "description": (
+            "Record his answer to a work item's open decision, only when he gives it: the "
+            "agent doing the work reads it from the record. `decision` is the key "
+            "work_status shows; omit it when there is only one open."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Its title as he said it, or its id."},
+                "decision": {"type": "string"},
+                "answer": {"type": "string", "description": "His answer, in his words."},
+            },
+            "required": ["item", "answer"],
+        },
+    },
+    {
         "name": "retry_run",
         "description": (
             "Run a finished run's own instruction again, picking up where it left off — the "

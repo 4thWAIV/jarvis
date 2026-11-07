@@ -9,7 +9,7 @@ export const shellEn = {
   "tabs.right.folders": "Folders",
   "tabs.right.agents": "Agents",
   "tabs.right.queue": "Queue",
-  "tabs.right.workflows": "Workflows",
+  "tabs.right.workflows": "Work",
   "tabs.right.network": "Network",
   "tabs.right.diagnostics": "Diagnostics",
 
@@ -27,6 +27,7 @@ export const shellEn = {
   "tabs.main.package": "Work package",
   "tabs.main.file": "File",
   "tabs.main.settings": "Settings",
+  "tabs.main.work": "Work item",
   "tabs.main.workflow": "Workflow",
   "tabs.main.subagent": "Subagent",
 

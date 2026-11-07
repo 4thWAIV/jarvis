@@ -79,6 +79,8 @@
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
+    "workItem": "^[A-Za-z0-9._-]{1,128}$",
+    "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
   "argumentTypes": ["enum", "string", "integer", "boolean", "key"],
@@ -128,6 +130,7 @@
     "families/agents.json",
     "families/queue.json",
     "families/workflows.json",
+    "families/work.json",
     "families/diagnostics.json",
     "families/folders.json",
     "families/conversation.json",

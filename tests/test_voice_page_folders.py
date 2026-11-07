@@ -106,7 +106,7 @@ async def test_six_labelled_tabs_in_two_rows(page_playwright, page_url):
         tabs = await page.evaluate("""() => [...document.querySelectorAll('.right-tabs [role=tab]')]
             .map(t => ({label: t.getAttribute('aria-label'), text: t.textContent.trim(),
                         top: Math.round(t.getBoundingClientRect().top)}))""")
-        assert [t["label"] for t in tabs] == ["Folders", "Agents", "Queue", "Workflows", "Network",
+        assert [t["label"] for t in tabs] == ["Folders", "Agents", "Queue", "Work", "Network",
                                               "Diagnostics"]
         assert all(t["text"] == t["label"] for t in tabs), tabs
         tops = sorted({t["top"] for t in tabs})

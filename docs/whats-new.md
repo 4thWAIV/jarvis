@@ -19,7 +19,11 @@ settings or anyone else's appearance.
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.
 
-The left column holds the orb, the team server's health and brain account usage. The microphone controls (Start listening, Mute, Mic off) sit at the lower right of the Conversation's message box, right of Send, with Stop and the voice health dot to Send's left (on any other centre view the microphone controls stay in the same lower-right corner); what JARVIS is doing (thinking, speaking) is the row above the message box. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
+The left column holds the orb, the team server's health and brain account usage. The microphone controls (Start listening, Mute, Mic off) sit at the lower right of the Conversation's message box, right of Send, with Stop and the voice health dot to Send's left (on any other centre view the microphone controls stay in the same lower-right corner); what JARVIS is doing (thinking, speaking) is the row above the message box. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Work, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
+
+## Work: who is doing each piece
+
+The tab that was Workflows is now Work. Each item of work in progress shows its title, its state and one useful update, with an open decision first. An item wraps a ZIP work package or a folder on this Mac; JARVIS only checks that it is there and never opens or runs it. Selecting an item opens it in the centre, with the list still in view: its source, its latest update, its decisions to answer, and its pieces, each naming exactly who is on it (an agent by its name, a run, a workflow, or you). Close goes back to Conversation. Agents report to it with `work_report.py` and an access key in the `work` category, and you can ask JARVIS what is in progress or answer a decision by voice. The Workflows list is still there, under the Work list.
 
 ## Nothing is sent until you say yes
 

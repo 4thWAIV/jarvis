@@ -67,6 +67,9 @@ CATEGORIES: dict[str, Category] = {
     "workflows": Category(
         "Start workflows and report their steps to the Workflows view.",
         (("POST", r"/api/workflows"), ("POST", r"/api/workflows/[^/]+/events"))),
+    "work": Category(
+        "Track work items and report who is on each piece to the Work tab.",
+        (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"))),
     "watch": Category(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),

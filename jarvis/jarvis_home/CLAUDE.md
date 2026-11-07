@@ -176,6 +176,9 @@ capabilities.
   is waiting on, what decision it needs) is answered from `workflow_status`
   every time, never from memory: it reads the one record the workflow
   reports to, so it is right after any restart.
+- What work is in progress and who is doing each piece of it (the Work
+  tab) is answered from `work_status` every time. When he answers one of a
+  work item's decisions, record it with `answer_work_decision`.
 - Earlier conversation is on record: what he said, what you said, every
   message to and from an agent with its status, and each answer.
   `conversation_history` recalls it, all of it or one agent's thread, so

@@ -54,6 +54,9 @@ const subsystem = (id: string) => ({ id, name: id, state: "ok", summary: "", che
 answers.set("/api/diagnostics/subsystems", { status: 200, body: {
   now: 1, subsystems: [subsystem("communications"), subsystem("voice_input"), subsystem("brain")] } });
 answers.set("/api/folders/f-1", { status: 200, body: { folder: { id: "f-1" } } });
+const workItem = (id: string) => ({ id, title: id, state: "working", pieces: [], decisions: [] });
+answers.set("/api/work", { status: 200, body: { items: [workItem("work-1")] } });
+answers.set("/api/work/work-3", { status: 200, body: { item: workItem("work-3"), events: [] } });
 
 // ── the modules, once the globals are there ─────────────────────────────
 
@@ -70,11 +73,12 @@ await import("../frontend/src/uiRight.ts");
 await import("../frontend/src/captions.ts");
 const packages = await import("../frontend/src/packages.ts");
 const bundles = await import("../frontend/src/bundles.ts");
+const work = await import("../frontend/src/work.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
   for (let i = 0; i < 50; i++) {
-    if (workflows.workflows.get().value && subsystems.subsystems.get().value) return;
+    if (workflows.workflows.get().value && subsystems.subsystems.get().value && work.workItems.get().value) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("fixtures never read");
@@ -89,6 +93,7 @@ const state = () => ({
   main: nav.mainView.get(),
   open: [...nav.openDetails.get()].sort(),
   workflow: workflows.openWorkflow.get(),
+  work: work.openWork.get(),
   thread: conversation.openThread.get(),
   diagnostics: voice.openDiagnostics.get(),
   subsystem: subsystems.openSubsystem.get(),
@@ -97,7 +102,7 @@ const state = () => ({
 
 /** Back to the page as it opens: every detail closed, Conversation and Agents. */
 async function reset() {
-  for (const close of ["workflow.close", "thread.close", "voice.diagnostics.close", "subsystem.close",
+  for (const close of ["work.close", "workflow.close", "thread.close", "voice.diagnostics.close", "subsystem.close",
                        "folders.close"] as const) {
     await dispatch(close, {}, { actor: "human" });
   }
@@ -195,6 +200,37 @@ await parity("close while another view is shown keeps that view", [
 ], ({ state }) => {
   assert.equal(state.main, "folders");
   assert.equal(state.workflow, null);
+});
+
+await parity("work item opens in the centre with the Work list in view", [
+  ["right.tab.select", { tab: "workflows" }], ["work.open", { itemId: "work-1" }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.view-shown"] });
+  assert.equal(state.main, "work");
+  assert.equal(state.work, "work-1");
+  assert.equal(state.right, "workflows", "the Work list stays in view");
+});
+
+await parity("unlisted work item read first, then replaces", [
+  ["work.open", { itemId: "work-1" }], ["work.open", { itemId: "work-3" }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.detail-replaced"] });
+  assert.equal(state.work, "work-3");
+});
+
+await parity("gone work item refused", [
+  ["work.open", { itemId: "work-2" }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "unavailable", effects: [], reason: "entity-gone" });
+  assert.equal(state.work, null);
+});
+
+await parity("work close goes back to Conversation", [
+  ["work.open", { itemId: "work-1" }], ["work.close", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.detail-closed"] });
+  assert.equal(state.main, "conversation");
+  assert.ok(!state.open.includes("work"));
 });
 
 await parity("close with nothing open refused", [["workflow.close", {}]], ({ outcome }) => {

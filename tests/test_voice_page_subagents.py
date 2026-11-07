@@ -141,7 +141,7 @@ async def _open(p, url):
 async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcript(page_playwright, page_url):
     async with page_playwright as p:
         browser, page, api = await _open(p, page_url)
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         row = page.locator(".subagent-row[data-subagent-key='agent:s2/b1']")
         await row.wait_for(timeout=10000)
         got = await page.evaluate("""() => {
@@ -183,7 +183,7 @@ async def test_a_lone_subagent_has_a_row_like_a_workflow_and_opens_its_transcrip
 async def test_a_workflows_subagents_are_listed_in_it_and_their_transcripts_shown(page_playwright, page_url):
     async with page_playwright as p:
         browser, page, api = await _open(p, page_url)
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.click(".workflow-row[data-workflow-id=wf-1]")
         await page.wait_for_selector("#workflow-detail .workflow-subagent")
         listed = await page.evaluate("""() => [...document.querySelectorAll('.workflow-subagent')].map(

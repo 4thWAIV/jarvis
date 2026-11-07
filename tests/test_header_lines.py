@@ -627,6 +627,20 @@ EXEMPT = {
         "it adds workflow decisions to the needs boards, which are already "
         "another session's words: every reader of a board shows it inside an "
         "untrusted block (`session_needs` through `_one_page`)"),
+    "work_store._apply": (
+        "it writes the Work record and prints nothing but its refusals, whose only "
+        "values are keys it has already checked against `SLUG` and fixed states"),
+    "work_store._apply_piece": (
+        "it writes a piece into the Work record and prints nothing but its refusals, "
+        "whose only values are the checked key, a fixed state or a fixed who kind"),
+    "work_store.events": (
+        "it reads the Work log back as records; every printer of them is "
+        "`_work_detail`, driven, inside an untrusted block"),
+    "work_report._line": (
+        "the work reporter's command line: it prints the item's state and who is on "
+        "each piece to the agent that ran it, in its own terminal, never to the brain"),
+    "work_report.main": (
+        "the same command line: what it prints goes to the agent that ran it"),
     "workflow_report._post": (
         "the reporter's command line: it prints JARVIS's refusal to the session "
         "running the workflow, in that session's own terminal, never to the brain"),
@@ -1521,6 +1535,25 @@ DRIVERS["server.tool_conversation_history"] = _drive_conversation_history
 for _name in ("server.tool_workflow_status", "server._workflow_line", "server._workflow_said",
               "server._workflow_detail", "server._workflow_attended"):
     DRIVERS[_name] = _drive_workflow_status
+
+
+def _drive_work_status(server, session, monkeypatch, tmp_path_factory=None):
+    """A work item whose title, update, piece and decision are the payload."""
+    import tempfile
+    from jarvis import work_store as ws
+    folder = tempfile.mkdtemp(prefix="work-")
+    item = ws.create(f"Build {HOSTILE}", "folder", folder)
+    ws.record(ws.WorkEvent(item.id, "piece", HOSTILE, {"key": "p1", "title": HOSTILE,
+                                                        "who": {"kind": "agent", "ref": "s-x"}}))
+    ws.record(ws.WorkEvent(item.id, "decision_needed", HOSTILE,
+                           {"key": "d1", "options": [HOSTILE], "recommendation": HOSTILE}))
+    ws.record(ws.WorkEvent(item.id, "update", HOSTILE, {}))
+    return [server.tool_work_status({}), server.tool_work_status({"item": item.id}),
+            server.tool_work_status({"item": "nothing like it"})]
+
+
+for _name in ("server.tool_work_status", "server._work_detail"):
+    DRIVERS[_name] = _drive_work_status
 DRIVERS["server._watch_workflow_silence"] = _drive_workflow_silence
 DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
 

@@ -67,6 +67,20 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.queue.send.failed": "No enviado",
   "right.queue.send.cancelled": "Cancelado",
   "right.queue.send.superseded": "Reemplazado",
+
+  // La pestaña Trabajo (WorkPanel.tsx) y las palabras que le da work.ts.
+  "right.work.title": "Trabajo",
+  "right.work.none": "No hay nada en la lista de Trabajo",
+  "right.work.readFailed": "No se pudo leer la lista de Trabajo ({error}); reintentando.",
+  "right.work.workflows": "Flujos",
+  "right.work.quiet": "Sin noticias recientes",
+  "right.work.decision": "Decisión: {question}",
+  "right.work.state.planned": "Planeado",
+  "right.work.state.working": "En curso",
+  "right.work.state.waiting_on_tim": "Espera su respuesta",
+  "right.work.state.blocked": "Bloqueado",
+  "right.work.state.done": "Hecho",
+
   "right.workflows.readFailed": "No se pudieron leer los flujos ({error}); reintentando.",
   "right.workflows.none": "Sin flujos",
   "right.workflows.done": "Terminados ({count})",

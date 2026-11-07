@@ -30,14 +30,19 @@ MISSING = "missing"
 OUT_OF_DATE = "out_of_date"
 
 
+def _reporter(script: str) -> str:
+    """A reporting command with this install's certificate, quoted for a shell."""
+    return " ".join(shlex.quote(str(p)) for p in (
+        data_paths.PACKAGE_DIR / script, "--cert", data_paths.CONFIG_DIR / "cert.pem"))
+
+
 def render() -> str:
     """The skill with this install's folders filled in."""
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("{{needs_dir}}", str(data_paths.needs_dir()))
             .replace("{{messages_dir}}", str(data_paths.session_messages_dir()))
-            .replace("{{workflow_report}}", " ".join(shlex.quote(str(p)) for p in (
-                data_paths.PACKAGE_DIR / "workflow_report.py", "--cert",
-                data_paths.CONFIG_DIR / "cert.pem"))))
+            .replace("{{workflow_report}}", _reporter("workflow_report.py"))
+            .replace("{{work_report}}", _reporter("work_report.py")))
 
 
 def targets() -> list[Path]:

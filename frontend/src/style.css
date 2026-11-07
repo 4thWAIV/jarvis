@@ -1399,6 +1399,100 @@ html, body {
 }
 .settings-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* The Work tab of the right panel (WorkPanel.tsx): a row per work item, its
+   title, state and one useful update, then the Workflows view under its own
+   heading. The whole tab scrolls as one. */
+.right-view.work-panel { height: 100%; overflow-y: auto; overflow-x: hidden; gap: 10px; }
+.work-panel .workflows-view { height: auto; overflow: visible; padding: 0; }
+.work-section-head {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-secondary);
+}
+.work-list { list-style: none; display: flex; flex-direction: column; gap: var(--agent-gap, 6px); }
+.work-row {
+  --wk: 125, 211, 252;       /* light blue: the colour of a work item */
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title state" "update update";
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: var(--ui-text);
+  background: rgba(var(--wk), 0.05);
+  border: 1px solid rgba(var(--wk), 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.work-row:hover { background: rgba(var(--wk), 0.12); }
+.work-row.selected { border-color: rgba(var(--wk), 0.9); box-shadow: 0 0 0 1px rgba(var(--wk), 0.4); }
+.work-row-title { grid-area: title; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-row .work-state { grid-area: state; }
+.work-update { grid-area: update; color: var(--ui-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-update.deciding { color: #fbbf24; }
+.work-state {
+  align-self: center;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--ui-text);
+  background: var(--ui-raised);
+}
+.work-state.state-working { background: rgba(125, 211, 252, 0.25); }
+.work-state.state-waiting_on_tim { background: #fbbf24; color: var(--ui-on-signal); }
+.work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
+.work-state.state-done { background: rgba(52, 211, 153, 0.3); }
+
+/* One work item in the centre (WorkDetail.tsx), where the Conversation view
+   sits: its head, then its source, update, decisions, pieces and reports,
+   scrolling. */
+#work-detail {
+  position: fixed;
+  left: calc(var(--panel-edge) + var(--caption-gap));
+  right: calc(var(--panel-edge) + var(--caption-gap));
+  top: var(--centre-view-top);
+  bottom: var(--centre-view-bottom);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+  font-size: 13px;
+  color: var(--ui-text);
+  text-align: left;
+}
+.work-detail-head { flex: none; display: flex; align-items: center; gap: 12px; }
+.work-detail-name { font-size: 20px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.work-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  border-radius: 10px;
+}
+.work-source, .work-latest { margin: 0; }
+.work-path { overflow-wrap: anywhere; }
+.work-source-missing, .work-source-wrong_kind { color: #fca5a5; }
+.work-source-present { color: var(--ui-secondary); }
+.work-quiet { color: #a78bfa; }
+.work-pieces, .work-events { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 6px 0 0; }
+.work-piece { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.work-piece-title { overflow-wrap: anywhere; }
+.work-piece-who { color: var(--ui-secondary); }
+.work-event-at { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
+
 /* The Workflows view of the right panel (WorkflowsView.tsx): one compact row
    per workflow, boxed like an agent's row. */
 /* A summary only, at the panel's fixed width: nothing in it may push the

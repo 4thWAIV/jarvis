@@ -6,6 +6,7 @@
  *   - "agents" and "snapshot" (every (re)connect): the agents list reads
  *     /api/agents again (`agentsChanged`);
  *   - "workflows": the workflow views read again (workflows.ts);
+ *   - "work": the Work tab and the open work item read again (work.ts);
  *   - "voice": the voice record's views read again (voiceHealth.ts);
  *   - "subsystems": a subsystem's state moved; the Diagnostics tab's list
  *     reads again (subsystems.ts), which also hears whether this socket is
@@ -43,6 +44,7 @@ import { messagesChanged } from "./queue";
 import { sessionsConnected, subsystemsChanged } from "./subsystems";
 import { presentHumanTransfer } from "./transfers";
 import { countSessionMessage, voiceChanged } from "./voiceHealth";
+import { workChanged } from "./work";
 import { workflowsChanged } from "./workflows";
 import { createSocket } from "./ws";
 import { VOICE_INPUT_SETTINGS_FRAME } from "./voiceControl";
@@ -65,6 +67,7 @@ export function startSessionsSocket(): void {
     if (msg.type === "subsystems" || snapshot) bump(subsystemsChanged);
     // A (re)connect may have missed a workflows hint, so it reads again too.
     if (msg.type === "workflows" || snapshot) bump(workflowsChanged);
+    if (msg.type === "work" || snapshot) bump(workChanged);
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);

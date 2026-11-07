@@ -92,7 +92,7 @@ async def test_a_workflow_row_opens_its_detail_and_a_decision_is_answered(page_p
         await page.route("**/api/workflows**", server)
         await page.goto(page_url)
 
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         row = page.locator(".workflow-row[data-workflow-id=wf-1]")
         await row.wait_for(timeout=10000)
         text = await row.text_content()
@@ -186,7 +186,7 @@ async def test_the_transcript_tab_shows_each_kind_of_entry_and_loads_earlier(pag
         await page.route("**/api/sessions/*/transcript**", session_transcript)
         await page.goto(page_url)
 
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.click(".workflow-row[data-workflow-id=wf-1]")
         await page.click(".workflow-tabs [role=tab][title=Transcript]")
         await page.wait_for_selector(".transcript-entry.role-result")
@@ -268,7 +268,7 @@ async def test_a_finished_workflow_lingers_is_dismissed_and_is_listed_as_done(pa
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", api)
         await page.goto(page_url)
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
 
         main = ".workflows-list:not(.done) .workflow-row"
         await page.wait_for_selector(f"{main}[data-workflow-id=wf-a]")
@@ -318,7 +318,7 @@ async def test_both_sidebars_match_never_grow_and_never_cover_the_centre(page_pl
         await page.route_web_socket("**/ws/sessions", sessions)
         await page.route("**/api/workflows**", server)
         await page.goto(page_url)
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.wait_for_selector(".workflow-row")
         got = await page.evaluate("""() => {
           const r = s => document.querySelector(s).getBoundingClientRect();

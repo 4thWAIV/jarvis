@@ -55,8 +55,9 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, typ
 import { CENTRE_SOCKET, earlierPages } from "./ConversationView";
 import { agentStateWords } from "./conversation";
 import { useLiveRead } from "./liveRead";
-import { codeWords, formatDateTime, SaidText, t as tNow, useT, type Said } from "./locale";
+import { codeWords, formatDateTime, t as tNow, useT } from "./locale";
 import { createStore } from "./store";
+import { DecisionCard } from "./DecisionCard";
 import { TabRow, type Tab } from "./Tabs";
 import type { CommandArgs, TargetRef } from "./uiContract";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
@@ -519,54 +520,15 @@ function Decisions({ w }: { w: Workflow }) {
   );
 }
 
-/** One decision. Answering it is his own act (or the brain's acting
- *  `answer_workflow_decision` on his word), never navigation: the brain
- *  can point at its options and answer box, not press them. */
+/** One decision, drawn by the shared card (DecisionCard.tsx). */
 function Decision({ id, decision: o }: { id: string; decision: OpenItem }) {
   const t = useT();
-  const [text, setText] = useState("");
-  const [refused, setRefused] = useState<Said | null>(null);
-  const [sending, setSending] = useState(false);
   const ui = useDetailTarget("workflowDecision", `${id}/${o.key}`, t("main.workflow.open.decision"));
   const options = Array.isArray(o.detail.options) ? o.detail.options.map(String) : [];
   const recommended = typeof o.detail.recommendation === "string" ? o.detail.recommendation : null;
-  // A recommendation may say why after the option's own words.
-  const isRecommended = (option: string) =>
-    !!recommended && (recommended === option || recommended.startsWith(option));
-  const answer = (value: string) => {
-    if (!value.trim() || sending) return;
-    setSending(true);
-    setRefused(null);
-    // The refusal is the server's own words, shown as they came.
-    answerDecision(id, o.key, value.trim()).then((why) => {
-      setSending(false);
-      setRefused(why ? { original: why } : null);
-      if (!why) setText("");
-    }, (e: Error) => { setSending(false); setRefused({ original: e.message }); });
-  };
-  return (
-    <li className="workflow-decision" data-key={o.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-      <OpenIcon kind="decision" />
-      <p className="workflow-decision-question">{o.summary}</p>
-      {recommended && <p className="workflow-recommended">★ {recommended}</p>}
-      {options.length > 0 && (
-        <div className="workflow-options" ref={ui.part("options")}>
-          {options.map((option) => (
-            <button data-ui-action="domain" key={option} type="button" disabled={sending}
-                    className={`workflow-option${isRecommended(option) ? " recommended" : ""}`}
-                    onClick={() => answer(option)}>{option}</button>
-          ))}
-        </div>
-      )}
-      <div className="workflow-answer" ref={ui.part("answer")}>
-        <input data-ui-action="input" type="text" value={text} placeholder={t("main.workflow.anotherAnswer")}
-               onChange={(e) => setText(e.target.value)}
-               onKeyDown={(e) => { if (e.key === "Enter") answer(text); }} />
-        <button data-ui-action="domain" type="button" disabled={sending || !text.trim()} onClick={() => answer(text)}>{t("main.workflow.answer")}</button>
-      </div>
-      {refused && <SaidText said={refused} as="p" className="read-failure workflow-refused" />}
-    </li>
-  );
+  return <DecisionCard question={o.summary} options={options} recommendation={recommended} ui={ui}
+                       dataKey={o.key} icon={<OpenIcon kind="decision" />}
+                       answer={(value) => answerDecision(id, o.key, value)} />;
 }
 
 function Transcript({ id }: { id: string }) {

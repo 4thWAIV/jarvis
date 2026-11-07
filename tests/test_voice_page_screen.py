@@ -94,7 +94,7 @@ async def test_the_right_panel_holds_folders_agents_queue_workflows_network_and_
         await page.wait_for_selector(".right-tabs .right-tab")
         titles = await page.evaluate(
             "() => [...document.querySelectorAll('.right-tabs .right-tab')].map(t => t.title)")
-        assert titles == ["Folders", "Agents", "Queue", "Workflows", "Network", "Diagnostics"]
+        assert titles == ["Folders", "Agents", "Queue", "Work", "Network", "Diagnostics"]
         await browser.close()
 
 

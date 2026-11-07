@@ -214,7 +214,7 @@ async def test_with_webgl_switched_off_the_agent_and_workflow_orbs_are_still_lis
     async with page_playwright as p:
         browser, page, voice = await _open_with(p, page_url, ["--disable-webgl", "--disable-3d-apis"])
         await page.wait_for_selector(".agents-list li .agent-orb", timeout=10000)
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19] .workflow-orb canvas")
         assert (await page.evaluate(CONTEXTS))["held"] == 0
         assert voice.ws is not None, "the voice page started without the orbs"
@@ -298,7 +298,7 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwri
         assert await agent_orbs.count() >= 5, await agent_orbs.count()
         assert await _drawn(agent_orbs.nth(1)) > 30, "an agent's orb is not drawn"
 
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19]", timeout=10000)
         await page.click(".workflow-row[data-workflow-id=wf-0]")
         head = ".workflow-detail-head .workflow-orb canvas"
@@ -312,7 +312,7 @@ async def test_many_agent_and_workflow_orbs_hold_two_webgl_contexts(page_playwri
         for _ in range(3):
             await page.click(".right-tabs [aria-label='Agents']")
             await page.wait_for_selector(".agents-list li .agent-orb")
-            await page.click(".right-tabs [role=tab][title=Workflows]")
+            await page.click(".right-tabs [role=tab][title=Work]")
             await page.wait_for_selector(".workflow-row[data-workflow-id=wf-19]")
         await page.wait_for_timeout(300)
 
@@ -330,7 +330,7 @@ async def test_losing_the_small_orbs_context_is_shown_until_it_comes_back(page_p
         browser, page = await _open_with_orbs(p, page_url)
         # A workflow's detail in the centre keeps a small orb on the page
         # whichever tab the right panel shows.
-        await page.click(".right-tabs [role=tab][title=Workflows]")
+        await page.click(".right-tabs [role=tab][title=Work]")
         await page.click(".workflow-row[data-workflow-id=wf-0]")
         orb = page.locator("#workflow-detail .workflow-detail-head .workflow-orb canvas")
         await orb.wait_for()

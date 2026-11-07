@@ -11,6 +11,9 @@
  *   - Main: the centre as it was before views (the capture boxes above the
  *     four-line captions), unchanged. Hidden from the header for now; the
  *     page opens on it at `?view=main`, so it keeps working and stays tested.
+ *   - A work item (WorkDetail.tsx), named by its title: offered while one
+ *     is open, which clicking its row in the Work tab does; the Work list
+ *     stays in view, and closing it goes back to Conversation.
  *   - Workflow (WorkflowDetail.tsx): one workflow in full. Offered only while
  *     one is open, which clicking its row in the Workflows view does; it is
  *     selected then, and closing it goes back to Conversation. A subagent's
@@ -60,6 +63,8 @@ import { CaptureList } from "./CaptureBox";
 import { ConversationView } from "./ConversationView";
 import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
+import { WorkDetail } from "./WorkDetail";
+import { openWork, workItems } from "./work";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
@@ -175,6 +180,12 @@ const SETTINGS_VIEW: MainTabView = {
   view: () => <SettingsView />,
 };
 
+const WORK_VIEW: MainTabView = {
+  id: "work",
+  icon: null,
+  view: () => null,
+};
+
 const WORKFLOW_VIEW: MainTabView = {
   id: "workflow",
   icon: null,
@@ -188,6 +199,8 @@ const WORKFLOW_VIEW: MainTabView = {
 export function CentreArea() {
   const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
+  const work = useSyncExternalStore(openWork.subscribe, openWork.get);
+  const workTitle = useSyncExternalStore(workItems.subscribe, workItems.get).value?.find((i) => i.id === work)?.title;
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);
@@ -222,6 +235,8 @@ export function CentreArea() {
                       view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
                                                     member={fileOpen} /> }] : []),
     ...(settings ? [titled(SETTINGS_VIEW)] : []),
+    ...(work ? [{ ...WORK_VIEW, title: workTitle ?? t("tabs.main.work"),
+                  view: () => <WorkDetail key={work} id={work} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),
                       view: () => <WorkflowDetail key={workflow} id={workflow} /> }] : []),
   ];

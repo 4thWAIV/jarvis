@@ -76,6 +76,19 @@ export const rightEn = {
   "right.queue.send.failed": "Not sent",
   "right.queue.send.cancelled": "Cancelled",
   "right.queue.send.superseded": "Replaced",
+  // The Work tab (WorkPanel.tsx) and the words work.ts gives it.
+  "right.work.title": "Work",
+  "right.work.none": "Nothing on the Work list",
+  "right.work.readFailed": "Couldn't read the Work list ({error}); trying again.",
+  "right.work.workflows": "Workflows",
+  "right.work.quiet": "No recent update",
+  "right.work.decision": "Decision: {question}",
+  "right.work.state.planned": "Planned",
+  "right.work.state.working": "Working",
+  "right.work.state.waiting_on_tim": "Waiting on you",
+  "right.work.state.blocked": "Blocked",
+  "right.work.state.done": "Done",
+
   // The Workflows tab (WorkflowsView.tsx) and the words workflows.ts gives it.
   "right.workflows.readFailed": "Couldn't read the workflows ({error}); trying again.",
   "right.workflows.none": "No workflows",

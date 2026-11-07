@@ -98,6 +98,7 @@ from jarvis import session_needs
 from jarvis import agent_directory
 from jarvis import conversation_log
 from jarvis import workflow_store
+from jarvis import work_api, work_store
 from jarvis import run_store
 from jarvis import session_steer
 from jarvis import transmission
@@ -9527,6 +9528,126 @@ TAINT_EXEMPT_TOOLS.update({
     "answer_workflow_decision": "it records his answer to a decision, it does not read",
     "dismiss_workflow": "it takes a finished workflow off the list, it does not read",
 })
+
+
+# --- The Work tracker (work_store.py, work_api.py) --------------------------
+#
+# Each piece of work in progress, on a zip or a folder, and exactly who is
+# on each of its pieces. Agents report to it as they do to the workflow
+# monitor; the Work tab and `work_status` read the same record, and his
+# answer to a decision goes through `work_api.answer_decision` from the page
+# and the brain alike. Every committed change is a `work` hint, written
+# after the record.
+
+_WORK_WRAP_NAME = "work"
+WORK_EVENTS_SHOWN = 12
+# What of a report is news to him: an attention item, never spoken here.
+_WORK_NEWS_STATES = {work_store.BLOCKED: "blocked", work_store.DONE: "done"}
+
+
+def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
+    """After every change: the pages read the record again; a decision
+    needed, or a report that the item is blocked or done, is an attention
+    item, and his answer resolves it once nothing else is waiting on him."""
+    _send_to_session_clients({"type": "work"})
+    said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
+    if kind == work_store.DECISION_NEEDED:
+        _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
+    elif said_state in _WORK_NEWS_STATES:
+        _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})
+    elif kind == work_store.DECISION_MADE and item.state != work_store.WAITING:
+        _attention_resolved("work", item.id)
+
+
+work_api.mount(app, _work_recorded)
+
+
+def _work_who(piece) -> str:
+    if piece.who.kind == work_store.TIM:
+        return "him"
+    name = work_api.who_name(piece.who)
+    return f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
+
+
+def _work_detail(item) -> str:
+    """What the agents reporting it wrote: its title, source, pieces and who
+    is on each, open decisions and the latest events. Untrusted."""
+    lines = [f"{item.id}: {item.title}. State {item.state}"
+             + (", no recent update" if item.quiet else "") + ".",
+             f"Source: {item.source_kind} {item.source_path} ({item.source}).",
+             f"Latest update: {item.latest_update}"]
+    for p in item.pieces:
+        lines.append(f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p)}")
+    for d in item.decisions:
+        lines.append(f"open decision {d.key}: {d.question}"
+                     + (f" Options: {d.options}." if d.options else "")
+                     + (f" Recommended: {d.recommendation}." if d.recommendation else ""))
+    for e in work_store.events(item.id)[-WORK_EVENTS_SHOWN:]:
+        lines.append(f"event {e.seq} {e.kind}: {e.summary}")
+    return "\n".join(lines)
+
+
+def _work_or_explain(reference: str):
+    """(the one item `reference` means, None) or (None, what to say)."""
+    found = work_store.find(reference)
+    if not found:
+        return None, "No work item goes by that name; work_status with no item lists them."
+    if len(found) > 1:
+        return None, (f"That could be any of {_say_number(len(found))} work items, sir; "
+                      "work_status with no item lists them by id.")
+    return found[0], None
+
+
+def tool_work_status(args: dict) -> str:
+    """Every work item, or one in full, from the Work tracker's record."""
+    reference = str(args.get("item") or "").strip()
+    if reference:
+        item, problem = _work_or_explain(reference)
+        if problem:
+            return problem
+        return (f"One work item, {item.state}.\n"
+                + _wrap_untrusted(_WORK_WRAP_NAME, _work_detail(item)))
+    items = work_store.listing()
+    if not items:
+        return "Nothing is on the Work list, sir."
+    n = len(items)
+    waiting = sum(i.state == work_store.WAITING for i in items)
+    lines = [f"{i.id}: {i.title}. {i.state}{', no recent update' if i.quiet else ''}. "
+             f"{i.headline}" for i in items]
+    return (f"{_say_number(n).capitalize()} work item{'s' if n != 1 else ''}"
+            + (f", {_say_number(waiting)} waiting on his decision" if waiting else "") + ".\n"
+            + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
+
+
+async def tool_answer_work_decision(args: dict) -> str:
+    """Record his answer to one of a work item's open decisions."""
+    item, problem = _work_or_explain(str(args.get("item") or "").strip())
+    if problem:
+        return problem
+    keys = [d.key for d in item.decisions]
+    if not keys:
+        return "That work item has no open decision, sir."
+    asked = str(args.get("decision") or "").strip()
+    key = asked if asked in keys else (keys[0] if not asked and len(keys) == 1 else None)
+    if key is None:
+        return (f"That is not one of its open decisions, sir; work_status with item {item.id} "
+                "lists them.")
+    try:
+        item = await asyncio.to_thread(work_api.answer_decision, item.id, key,
+                                       args.get("answer"), "voice")
+    except work_store.WorkRefused as e:
+        return f"Nothing was recorded, sir: {e}"
+    _work_recorded(item, work_store.DECISION_MADE)
+    return "Recorded his answer, sir; the agent doing the work reads it from the record."
+
+
+TOOL_HANDLERS.update({
+    "work_status": tool_work_status,
+    "answer_work_decision": tool_answer_work_decision,
+})
+TAINTING_TOOLS["work_status"] = "a work item's reports, written by the agents doing it"
+ACTING_TOOLS.add("answer_work_decision")
+TAINT_EXEMPT_TOOLS["answer_work_decision"] = "it records his answer to a decision, it does not read"
 
 
 # --- The agents list, for the brain ----------------------------------------

@@ -1,7 +1,8 @@
 /**
  * The right-hand display, mirroring the left column: six labelled tabs
  * along the top in two rows of three, one per thing Tim can see (Folders,
- * Agents, Queue; Workflows, Network, Diagnostics), and the view for the
+ * Agents, Queue; Work, Network, Diagnostics; Work is the tab that was
+ * Workflows, and keeps the Workflows view under its list), and the view for the
  * selected one below. Agents is selected to begin with.
  */
 
@@ -20,7 +21,7 @@ import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
 import { useUiBox } from "./uiRegistry";
 import { VoiceSummary } from "./VoiceSummary";
-import { WorkflowsView } from "./WorkflowsView";
+import { WorkPanel } from "./WorkPanel";
 
 /** One row per subsystem (SubsystemList.tsx), then voice health in more
  *  detail (VoiceSummary.tsx). The brains' account boxes are in the left
@@ -88,7 +89,7 @@ const TABS: RightTabView[] = [
         <path d="M9 6.5h3v12H9M12 12.5h3" />
       </svg>
     ),
-    view: () => <WorkflowsView />,
+    view: () => <WorkPanel />,
   },
   {
     id: "network",

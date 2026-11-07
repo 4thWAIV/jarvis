@@ -173,6 +173,10 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__set_attention_settings",
     "mcp__jarvis__answer_workflow_decision",
     "mcp__jarvis__dismiss_workflow",
+    # The Work tracker (work_store.py): its record, walled, and his answer
+    # to a decision as an ACTING_TOOL.
+    "mcp__jarvis__work_status",
+    "mcp__jarvis__answer_work_decision",
     "mcp__jarvis__retry_run",
     # Self-update (self_update.py): the Updates section's check, and its
     # Update and restart as an ACTING_TOOL.

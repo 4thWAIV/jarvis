@@ -39,7 +39,7 @@
       "id": "right.workflows",
       "region": "right",
       "kind": "tab",
-      "label": "Workflows",
+      "label": "Work",
       "tab": "workflows"
     },
     {
@@ -97,6 +97,14 @@
       "label": "Main",
       "tab": "main",
       "hidden": true
+    },
+    {
+      "id": "main.work",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work item",
+      "tab": "work",
+      "entity": "workItem"
     },
     {
       "id": "main.workflow",
@@ -234,6 +242,7 @@
             "folders",
             "main",
             "workflow",
+            "work",
             "thread",
             "diagnostics",
             "subsystem",

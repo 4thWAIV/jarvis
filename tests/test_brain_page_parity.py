@@ -130,7 +130,7 @@ def _walled(text: str) -> None:
 
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
-             "update_status", "attachment_location", "attention_updates")
+             "update_status", "attachment_location", "attention_updates", "work_status")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",
@@ -138,7 +138,7 @@ NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread
             "update_jarvis", "reveal_attachment", "set_voice_input_settings", "play_cue",
             "skip_reading", "stop_speaking", "voice_turn", "quiet_microphone",
             "mark_updates_seen",
-            "set_attention_settings")
+            "set_attention_settings", "answer_work_decision")
 # Acting tools that give back somebody else's words (a received file's name).
 NEW_TAINTING_ACTS = ("make_attachment_local", "tell_package_story", "open_local_package")
 # Reads with JARVIS's own words only: granted and handled, and exempt from taint.
@@ -185,6 +185,7 @@ def test_every_new_tool_is_defined_handled_granted_and_decided(wired):
     ("open_local_package", {"path": "/tmp/x.zip"}),
     ("mark_updates_seen", {}),
     ("set_attention_settings", {"changes": {"away": True}}),
+    ("answer_work_decision", {"item": "x", "answer": "yes"}),
 ])
 def test_every_acting_tool_acts_only_on_his_own_turn(wired, tool, args):
     """An announcement's turn, or a stranger's words, cannot change anything."""
@@ -456,6 +457,25 @@ def test_answer_workflow_decision_is_recorded_as_his_by_voice(wired):
     assert [(e.summary, e.detail["answer"], e.detail["by"]) for e in made] == [
         ("Answered by voice: engine.", "kroko", "user")]
     assert ws.snapshot(wid).open == []
+
+
+def test_answer_work_decision_is_the_work_detail_s_answer(wired):
+    """The Work detail's answer and the brain's tool are one call
+    (work_api.answer_decision), recorded as his by voice; the record's words
+    come back walled."""
+    from jarvis import work_store as ws
+    folder = wired.tmp / "speech"
+    folder.mkdir()
+    item = ws.create("Speech migration", "folder", str(folder))
+    ws.record(ws.WorkEvent(item.id, "decision_needed", HOSTILE, {"key": "engine"}))
+    read = _call(wired, "work_status")
+    assert read["ok"] and "Matt" not in read["text"].partition("\n")[0]
+    assert read["text"].count("</session-output>") == 1
+    got = _call(wired, "answer_work_decision", item="speech migration", answer="kroko")
+    assert got["ok"] and got["text"].startswith("Recorded his answer")
+    made = ws.events(item.id, kinds={"decision_made"})[-1].detail
+    assert made == {"key": "engine", "answer": "kroko", "where": "voice"}
+    assert {"type": "work"} in wired.hints
 
 
 def test_dismiss_workflow_is_the_page_s_dismiss(wired):

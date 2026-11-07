@@ -43,3 +43,17 @@ python3 {{workflow_report}} answer <id> <slug>
 ```
 
 `start` prints the workflow's id. The kinds are `phase_added` (a phase not given at `start`, added after the others), `phase_started`, `phase_finished`, `task_added`, `task_started`, `task_progress`, `task_finished`, `wait_started`, `wait_ended`, `decision_needed`, `decision_made`, `blocker_raised`, `blocker_cleared`, `agent_attached`, `note` and `workflow_finished` (with `--outcome succeeded`, `failed` or `cancelled`). Every event's summary is one plain sentence. Report at least every few minutes: a workflow that reports nothing for ten minutes shows as gone quiet. `answer` prints the user's answer to a decision once they have given it and exits 3 until then.
+
+## Work items: who is doing each piece
+
+When you take on a piece of work that lives in a ZIP work package or a folder on this Mac, track it on JARVIS's Work tab, so the user sees its state and exactly who is on each part of it. This needs an access key in the `work` category in `JARVIS_ACCESS_KEY`; the user makes one with `python -m jarvis.access_keys create <label> work`.
+
+```
+python3 {{work_report}} start "<title>" --folder <path>        (or --zip <path>)
+python3 {{work_report}} piece <id> <key> "<one sentence>" --title "<title>" --who agent:<your session id> --state working
+python3 {{work_report}} update <id> "<one sentence>" --state working
+python3 {{work_report}} decision <id> <key> "<the question>" --option "<a>" --option "<b>" --recommendation "<your pick>"
+python3 {{work_report}} answer <id> <key>
+```
+
+`start` prints the item's id; the path must be a zip or folder that is there now, and JARVIS never opens or runs it. A state is `planned`, `working`, `waiting_on_tim`, `blocked` or `done`. Who is on a piece is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or `tim`, and must be one JARVIS knows. Every summary is one plain sentence, and the latest one is what the Work tab shows. `answer` prints the user's answer once they have given it and exits 3 until then.

@@ -1,0 +1,20 @@
+{
+  "family": "work",
+  "owner": "coverage-main",
+  "views": [],
+  "commands": [],
+  "kinds": [
+    {"kind": "workList", "entity": null, "label": "Work list", "parts": ["list"],
+     "presentations": [{"view": "right.workflows", "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}}]},
+    {"kind": "workItem", "entity": "workItem", "label": "Work item",
+     "parts": ["row", "state", "update", "header", "close", "source", "pieces", "decisions"],
+     "presentations": [{"view": "right.workflows", "parts": ["row", "state", "update"],
+                        "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}},
+                       {"view": "main.work", "parts": ["header", "state", "update", "close", "source", "pieces", "decisions"],
+                        "reveal": {"command": "work.open", "args": {"itemId": "$key"}}}]},
+    {"kind": "workPiece", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work piece",
+     "parts": ["row", "who", "state"], "presentations": [{"view": "main.work"}]},
+    {"kind": "workDecision", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work decision",
+     "parts": ["row", "options", "answer"], "presentations": [{"view": "main.work"}]}
+  ]
+}

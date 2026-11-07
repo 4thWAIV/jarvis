@@ -148,6 +148,8 @@ export const UI_CONTRACT = {
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
+    "workItem": "^[A-Za-z0-9._-]{1,128}$",
+    "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
   "argumentTypes": [
@@ -297,7 +299,7 @@ export const UI_CONTRACT = {
       "id": "right.workflows",
       "region": "right",
       "kind": "tab",
-      "label": "Workflows",
+      "label": "Work",
       "tab": "workflows"
     },
     {
@@ -355,6 +357,14 @@ export const UI_CONTRACT = {
       "label": "Main",
       "tab": "main",
       "hidden": true
+    },
+    {
+      "id": "main.work",
+      "region": "main",
+      "kind": "detail",
+      "label": "Work item",
+      "tab": "work",
+      "entity": "workItem"
     },
     {
       "id": "main.workflow",
@@ -493,6 +503,7 @@ export const UI_CONTRACT = {
             "folders",
             "main",
             "workflow",
+            "work",
             "thread",
             "diagnostics",
             "subsystem",
@@ -568,6 +579,50 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "network"
+    },
+    {
+      "id": "work.open",
+      "label": "Open one work item's detail in the centre; the Work list stays in view",
+      "view": "main.work",
+      "args": {
+        "itemId": {
+          "type": "key",
+          "entity": "workItem"
+        }
+      },
+      "required": [
+        "itemId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ],
+      "family": "navigation"
+    },
+    {
+      "id": "work.close",
+      "label": "Close the work item's detail",
+      "view": "main.work",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "navigation"
     },
     {
       "id": "workflow.open",
@@ -3038,6 +3093,116 @@ export const UI_CONTRACT = {
       "family": "workflows"
     },
     {
+      "kind": "workList",
+      "entity": null,
+      "label": "Work list",
+      "parts": [
+        "list"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workItem",
+      "entity": "workItem",
+      "label": "Work item",
+      "parts": [
+        "row",
+        "state",
+        "update",
+        "header",
+        "close",
+        "source",
+        "pieces",
+        "decisions"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "parts": [
+            "row",
+            "state",
+            "update"
+          ],
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        },
+        {
+          "view": "main.work",
+          "parts": [
+            "header",
+            "state",
+            "update",
+            "close",
+            "source",
+            "pieces",
+            "decisions"
+          ],
+          "reveal": {
+            "command": "work.open",
+            "args": {
+              "itemId": "$key"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workPiece",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workPart"
+      ],
+      "label": "Work piece",
+      "parts": [
+        "row",
+        "who",
+        "state"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workDecision",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workPart"
+      ],
+      "label": "Work decision",
+      "parts": [
+        "row",
+        "options",
+        "answer"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
       "kind": "subsystem",
       "entity": "subsystem",
       "label": "Subsystem",
@@ -3600,6 +3765,10 @@ export const UI_CONTRACT = {
       "owner": "coverage-main"
     },
     {
+      "family": "work",
+      "owner": "coverage-main"
+    },
+    {
       "family": "diagnostics",
       "owner": "coverage-right"
     },
@@ -3744,7 +3913,7 @@ export interface CommandArgs {
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -3780,6 +3949,8 @@ export interface CommandArgs {
   "voice.quiet": { quiet: boolean; };
   "voice.range": { range: "15m" | "1h" | "1d"; };
   "voice.zoom": { at?: number; };
+  "work.close": { };
+  "work.open": { itemId: string; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };
