@@ -1,0 +1,226 @@
+"""The engine's loopback HTTP API (design sections 7.2, 7.3 and 7.12).
+
+The standard library's `ThreadingHTTPServer` on 127.0.0.1 at a port the
+kernel chooses: a small, auditable surface with a fast start and no FastAPI
+import. Every request passes `auth.check` first.
+
+Routes are one table, `ROUTES`, and `dispatch` is the one way into them, so
+the in-process test transport (`knowledge_client.InProcessTransport`) runs
+exactly what the HTTP handler runs, minus the gate.
+
+`run()` is `python -m jarvis.knowledge serve`: lower its priority, open the
+engine (taking the writer lock), listen, write the address record, and exit
+cleanly when its stdin pipe closes, which is how the server that started it
+ends it, even across the server's own `os.execv`.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import signal
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Callable, NamedTuple, Optional
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from jarvis.knowledge import address as engine_address
+from jarvis.knowledge import auth
+from jarvis.knowledge.engine import Engine, EngineLocked, open_engine
+
+log = logging.getLogger("jarvis.knowledge.serve")
+
+BODY_MAX_BYTES = 64 << 20
+ENGINE_NICE = 10
+
+
+class Request(NamedTuple):
+    params: dict
+    query: dict
+    body: Any
+
+
+class Answer(NamedTuple):
+    status: int
+    payload: Any
+
+
+class BadRequest(ValueError):
+    """A request the route cannot take; answered 400 with its words."""
+
+
+Handler = Callable[[Engine, Request], Answer]
+ROUTES: list[tuple[str, re.Pattern, Handler]] = []
+
+
+def route(method: str, template: str) -> Callable[[Handler], Handler]:
+    """Register a handler for `template`, where `{name}` matches one path
+    segment and `{name:path}` the rest of the path."""
+    pattern = re.sub(r"\{(\w+):path\}", r"(?P<\1>.+)", template)
+    pattern = re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", pattern)
+    compiled = re.compile(f"^{pattern}$")
+
+    def register(fn: Handler) -> Handler:
+        ROUTES.append((method, compiled, fn))
+        return fn
+    return register
+
+
+def dispatch(engine: Engine, method: str, target: str, body: Any = None) -> Answer:
+    parts = urlsplit(target)
+    path = parts.path
+    known_path = False
+    for m, pattern, fn in ROUTES:
+        found = pattern.match(path)
+        if not found:
+            continue
+        known_path = True
+        if m != method:
+            continue
+        params = {k: unquote(v) for k, v in found.groupdict().items()}
+        query = {k: v[-1] for k, v in parse_qs(parts.query).items()}
+        try:
+            return fn(engine, Request(params, query, body))
+        except BadRequest as e:
+            return Answer(400, {"error": "bad_request", "detail": str(e)})
+    if known_path:
+        return Answer(405, {"error": "method_not_allowed"})
+    return Answer(404, {"error": "not_found"})
+
+
+@route("GET", "/v1/health")
+def _health(engine: Engine, request: Request) -> Answer:
+    return Answer(200, engine.health())
+
+
+@route("POST", "/v1/pace")
+def _pace(engine: Engine, request: Request) -> Answer:
+    mode = (request.body or {}).get("mode")
+    try:
+        engine.set_pace(mode)
+    except ValueError as e:
+        raise BadRequest(str(e))
+    return Answer(200, {"pace": engine.pace})
+
+
+class _HTTPHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "jarvis-knowledge"
+    sys_version = ""
+
+    def log_message(self, fmt: str, *args) -> None:
+        log.debug("%s " + fmt, self.address_string(), *args)
+
+    def _send(self, status: int, payload: Any) -> None:
+        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _handle(self, method: str) -> None:
+        server: EngineHTTPServer = self.server  # type: ignore[assignment]
+        refusal = auth.check(self.headers, server.server_address[1], server.token)
+        if refusal is not None:
+            self.close_connection = True
+            self._send(refusal.status, {"error": refusal.code})
+            return
+        body = None
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > BODY_MAX_BYTES:
+            self.close_connection = True
+            self._send(413, {"error": "too_large"})
+            return
+        if length:
+            try:
+                body = json.loads(self.rfile.read(length))
+            except ValueError:
+                self._send(400, {"error": "bad_json"})
+                return
+        try:
+            answer = dispatch(server.engine, method, self.path, body)
+        except Exception:
+            log.exception("knowledge route %s %s failed", method, self.path)
+            answer = Answer(500, {"error": "internal"})
+        self._send(answer.status, answer.payload)
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._handle("GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle("POST")
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._handle("DELETE")
+
+
+class EngineHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = False
+
+    def __init__(self, engine: Engine, token: str, host: str = "127.0.0.1", port: int = 0) -> None:
+        self.engine = engine
+        self.token = token
+        super().__init__((host, port), _HTTPHandler)
+
+
+def _lower_priority() -> None:
+    """Below the voice path, never above it (I4)."""
+    try:
+        os.nice(ENGINE_NICE)
+    except OSError as e:
+        log.warning("could not lower the engine's priority (%s)", e)
+
+
+def _watch_stdin(on_close: Callable[[], None]) -> threading.Thread:
+    """End the engine when the pipe from the server that started it closes."""
+    def watch() -> None:
+        try:
+            while sys.stdin.buffer.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        log.info("stdin closed: the server that started this engine is gone")
+        on_close()
+    thread = threading.Thread(target=watch, name="knowledge-stdin", daemon=True)
+    thread.start()
+    return thread
+
+
+def run(*, watch_stdin: bool = True) -> int:
+    from jarvis import data_paths
+    _lower_priority()
+    try:
+        engine = open_engine()
+    except EngineLocked as e:
+        log.error("%s", e)
+        print(str(e), file=sys.stderr)
+        return 3
+    token = data_paths.ensure_knowledge_token()
+    server = EngineHTTPServer(engine, token)
+    host, port = server.server_address[:2]
+    stopping = threading.Event()
+
+    def stop() -> None:
+        if not stopping.is_set():
+            stopping.set()
+            threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, lambda *_: stop())
+    signal.signal(signal.SIGINT, lambda *_: stop())
+    if watch_stdin:
+        _watch_stdin(stop)
+    engine_address.record(engine_address.EngineAddress(
+        scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id))
+    log.info("knowledge engine listening on %s:%s (pid %s)", host, port, os.getpid())
+    try:
+        server.serve_forever(poll_interval=0.2)
+    finally:
+        server.server_close()
+        engine_address.forget(engine.boot_id)
+        engine.close()
+    return 0

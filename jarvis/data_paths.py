@@ -618,9 +618,14 @@ def ensure_tool_token() -> str:
     being quietly replaced: it is somebody else's file, and deleting it is
     not ours to do.
     """
+    return _ensure_token(tool_token_path())
+
+
+def _ensure_token(path: Path) -> str:
+    """The one safe way to make or adopt a secret token file at `path`
+    (ensure_tool_token's rules, shared with ensure_knowledge_token)."""
     import secrets
     import stat as _stat
-    path = tool_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     token = secrets.token_urlsafe(32)
@@ -654,3 +659,27 @@ def ensure_tool_token() -> str:
         return token
     finally:
         os.close(fd)
+
+
+def knowledge_dir() -> Path:
+    """The knowledge engine's own directory (jarvis/knowledge). It holds only
+    derived state, so deleting it costs a rebuild, never data."""
+    return data_dir() / "knowledge"
+
+
+def knowledge_address_path() -> Path:
+    """Where the running knowledge engine says it can be reached: scheme,
+    host, port, pid and boot ID, 0600 (jarvis/knowledge/address.py)."""
+    return data_dir() / "knowledge-address.json"
+
+
+def knowledge_token_path() -> Path:
+    """The knowledge engine's bearer token, separate from the tool token so
+    leaking one opens nothing of the other. Only the server holds it."""
+    return data_dir() / "knowledge-token"
+
+
+def ensure_knowledge_token() -> str:
+    """Create the knowledge engine's token if absent and return it, under
+    exactly ensure_tool_token's rules."""
+    return _ensure_token(knowledge_token_path())
