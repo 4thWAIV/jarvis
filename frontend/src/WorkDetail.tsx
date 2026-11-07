@@ -18,6 +18,11 @@
  *     a link, a commit or path as text to copy);
  *   - its latest reports, newest last.
  *
+ * Each piece shows its live activity (nodeActivity.tsx): a travelling glow
+ * along its edge while it is working and reporting, "Paused" once quiet, a
+ * check once done, one flash for each report on it, and its "waits for"
+ * line flowing while a piece it waits for is working.
+ *
  * Everything here was written by the agents reporting the item, and is
  * drawn as plain text.
  */
@@ -31,7 +36,9 @@ import { formatDateTime, useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { answerWorkDecision, getWorkItem, pieceMark, STATE_WORDS, whoWords, workChanged,
-         type WorkDecision, type WorkEvidence, type WorkItem } from "./work";
+         type WorkDecision, type WorkEvidence, type WorkItem, type WorkPiece } from "./work";
+import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+         workStanding, type Activity } from "./nodeActivity";
 import { WorkMarkDot } from "./WorkPanel";
 
 function useWorkTarget(kind: "workItem" | "workPiece" | "workDecision", key: string, label: string) {
@@ -44,7 +51,13 @@ export function WorkDetail({ id }: { id: string }) {
   const item = live.value?.item;
   const events = live.value?.events ?? [];
   const ui = useWorkTarget("workItem", id, item?.title ?? t("tabs.main.work"));
+  const since = useShownSince(id);
+  // Every piece's look from one clock, so a line knows whether the piece it
+  // waits for is working.
+  const now = useActivityClock(item?.pieces.map((p) => p.quiet_at) ?? []);
+  const looks = new Map((item?.pieces ?? []).map((p) => [p.key, pieceActivity(p, now)]));
   return (
+    <ShownSince.Provider value={since}>
     <div id="work-detail" ref={ui.whole}>
       <div className="work-detail-head" ref={ui.part("header")}>
         <span className="work-detail-name">{item?.title ?? t("tabs.main.work")}</span>
@@ -62,10 +75,7 @@ export function WorkDetail({ id }: { id: string }) {
             <code className="work-path">{item.source_path}</code>{" "}
             <span className={`work-source-${item.source}`}>{t(`main.work.found.${item.source}`)}</span>
           </p>
-          <p className="work-latest" ref={ui.part("update")}>
-            {item.quiet && <span className="work-quiet">{t("right.work.quiet")} · </span>}
-            {item.latest_update}
-          </p>
+          <LatestUpdate item={item} target={ui.part("update")} />
           <section ref={ui.part("decisions")}>
             <h3 className="work-section-head">{t("main.work.decisions")}</h3>
             {item.decisions.length === 0
@@ -79,7 +89,8 @@ export function WorkDetail({ id }: { id: string }) {
             {item.pieces.length === 0
               ? <p className="workflow-empty">{t("main.work.noPieces")}</p>
               : <ol className="work-pieces">
-                  {item.pieces.map((p, step) => <Piece key={p.key} item={item} pieceKey={p.key} step={step + 1} />)}
+                  {item.pieces.map((p, step) => <Piece key={p.key} item={item} pieceKey={p.key} step={step + 1}
+                                                      looks={looks} />)}
                 </ol>}
           </section>
           <section>
@@ -97,22 +108,44 @@ export function WorkDetail({ id }: { id: string }) {
         </div>
       )}
     </div>
+    </ShownSince.Provider>
   );
 }
 
-function Piece({ item, pieceKey, step }: { item: WorkItem; pieceKey: string; step: number }) {
+/** The item's latest update, flashed once for each report that arrives. */
+function LatestUpdate({ item, target }: { item: WorkItem; target: (el: HTMLElement | null) => void }) {
+  const t = useT();
+  const arrived = useArrivalFlash(item.updated_at);
+  return (
+    <p className="work-latest" ref={(el) => { target(el); arrived(el); }}>
+      {item.quiet && <span className="work-quiet">{t("right.work.quiet")} · </span>}
+      {item.latest_update}
+    </p>
+  );
+}
+
+const pieceActivity = (p: WorkPiece, now: number) => activityOf(workStanding(p.state), p.quiet_at, now);
+
+function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: string; step: number;
+                                                 looks: Map<string, Activity | null> }) {
   const t = useT();
   const piece = item.pieces.find((p) => p.key === pieceKey)!;
   const ui = useWorkTarget("workPiece", `${item.id}/${piece.key}`, piece.title);
   const mark = pieceMark(piece);
+  const activity = looks.get(piece.key) ?? null;
+  const arrived = useArrivalFlash(piece.note_at);
+  // The line to the pieces it waits for flows while one of them is working.
+  const flowing = piece.waits_for.some((k) => looks.get(k) === "working");
   const titleOf = (key: string) => item.pieces.find((p) => p.key === key)?.title ?? key;
   return (
     <li className="work-piece" data-key={piece.key} data-mark={mark ?? undefined}
-        ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+        data-activity={activity ?? undefined}
+        ref={(el) => { ui.whole(el); ui.part("row")(el); arrived(el); }}>
       <div className="work-piece-head">
         <span className="work-piece-step">{step}.</span>
         <span className="work-piece-title">
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
+          <ActivityMark activity={activity} target={ui.part("activity")} />
           {piece.title}</span>
         <span className="work-piece-who" data-who={piece.who.kind} ref={ui.part("who")}>
           {whoWords(piece.who)}
@@ -130,7 +163,8 @@ function Piece({ item, pieceKey, step }: { item: WorkItem; pieceKey: string; ste
         </p>
       )}
       {piece.after.length > 0 && (
-        <p className={`work-piece-after${piece.waits_for.length ? " waiting" : ""}`} ref={ui.part("after")}>
+        <p className={`work-piece-after${piece.waits_for.length ? " waiting" : ""}`}
+           data-flow={flowing ? "on" : undefined} ref={ui.part("after")}>
           {piece.waits_for.length
             ? t("main.work.waitsFor", { pieces: piece.waits_for.map(titleOf).join(", ") })
             : t("main.work.afterDone", { pieces: piece.after.map(titleOf).join(", ") })}

@@ -279,6 +279,22 @@ the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
 their evidence. The page changes nothing but his answers, so there is no
 other acting tool.
+Each Work row and piece, and each phase and task of a workflow's detail,
+shows its live activity from the record (`nodeActivity.tsx`): working (a
+working or verifying piece or item, a running workflow item, whose
+read-time `quiet_at` is still ahead: `work_store.quiet_at` from its latest
+note or update, `QUIET_AFTER_SEC`; a workflow item's from its latest event,
+`heard_at`, `SILENT_AFTER_SEC`) has a glow travelling along its edge; past
+`quiet_at` it is paused, dimmed and still and marked "Paused"; blocked is
+still red, waiting on him still amber (a running workflow item while its
+workflow needs him), done still with a check. Each report that arrives
+while a view shows a node, read after a `work` or `workflows` hint, flashes
+it once (`useArrivalFlash`, against when that view began to show); a
+piece's "waits for" line flows while a piece it waits for is working. The
+page's one timer is for the soonest `quiet_at` ahead, so nothing redraws
+while nothing works. Reduced motion and Steady (`data-motion="steady"` on
+the document, which no setting sets yet) keep the looks and drop the
+motion and the flash.
 
 ## The team server
 `team_server/` is a separate service, not part of the JARVIS package: its own

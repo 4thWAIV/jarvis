@@ -243,3 +243,18 @@ def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, t
     piece = ws.get("w1").pieces[0]
     assert (piece.note, piece.note_at, piece.worker, piece.after, piece.evidence) == (
         "second", 6.0, "", [], [])
+
+
+def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, folder):
+    item = ws.create("Speech", "folder", folder)
+    _ev(ws, item, "piece", "Started.", key="engine", who={"kind": "tim"}, state="working")
+    item = _ev(ws, item, "piece", "Planned.", key="docs", who={"kind": "tim"})
+    engine, docs = (next(p for p in ws.get(item.id).pieces if p.key == k) for k in ("engine", "docs"))
+    assert engine.quiet_at == engine.note_at + ws.QUIET_AFTER_SEC
+    assert docs.quiet_at is None
+    item = ws.get(item.id)
+    assert item.quiet_at is None   # the item itself is planned
+    item = _ev(ws, item, "update", "Going.", state="working")
+    assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
+    item = _ev(ws, item, "piece", "In.", key="engine", state="done")
+    assert next(p for p in item.pieces if p.key == "engine").quiet_at is None

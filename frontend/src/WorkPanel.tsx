@@ -9,6 +9,9 @@
  * carries a mark: a red or amber edge and dot, and a line counting its
  * blocked and waiting pieces. Clicking a row opens the item in the centre
  * area (WorkDetail.tsx) through `work.open`, and the list stays in view.
+ * Each row shows its live activity (nodeActivity.tsx): a travelling glow
+ * while it is working and reporting, "Paused" once it has gone quiet, a
+ * check once done, and one flash for each report that arrives.
  *
  * Below it, under its own heading, the Workflows view as it was
  * (WorkflowsView.tsx), so the workflow monitor stays reachable while the
@@ -21,6 +24,8 @@ import { useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
+import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
+         workStanding } from "./nodeActivity";
 import { itemMark, openWork, STATE_WORDS, workList, type WorkGroup, type WorkItem, type WorkMark } from "./work";
 
 export function WorkPanel() {
@@ -31,7 +36,9 @@ export function WorkPanel() {
                            label: t("right.work.title"), socket: RIGHT_SOCKET });
   const items = new Map((live.value?.items ?? []).map((i) => [i.id, i]));
   const groups = live.value?.groups ?? [];
+  const since = useShownSince();
   return (
+    <ShownSince.Provider value={since}>
     <div className="right-view work-panel">
       <section className="work-section" aria-label={t("right.work.title")}>
         {live.error && <p className="read-failure">{t("right.work.readFailed", { error: live.error })}</p>}
@@ -46,6 +53,7 @@ export function WorkPanel() {
       <h3 className="work-section-head">{t("right.work.workflows")}</h3>
       <WorkflowsView />
     </div>
+    </ShownSince.Provider>
   );
 }
 
@@ -72,6 +80,8 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
                            label: item.title, socket: RIGHT_SOCKET });
   const deciding = item.decisions.length > 0 && item.state === "waiting_on_tim";
   const mark = itemMark(item);
+  const activity = activityOf(workStanding(item.state), item.quiet_at, useActivityClock([item.quiet_at]));
+  const arrived = useArrivalFlash(item.updated_at);
   const counts = [
     item.blocked_pieces > 0 ? t("right.work.piecesBlocked", { count: item.blocked_pieces }) : null,
     item.waiting_pieces > 0 ? t("right.work.piecesWaiting", { count: item.waiting_pieces }) : null,
@@ -79,10 +89,12 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
   return (
     <li>
       <button type="button" className={`work-row${selected ? " selected" : ""}`} data-work-id={item.id}
-              data-state={item.state} data-mark={mark ?? undefined} title={item.title} ref={row(ui)}
+              data-state={item.state} data-mark={mark ?? undefined} data-activity={activity ?? undefined}
+              title={item.title} ref={(el) => { row(ui)(el); arrived(el); }}
               {...bindingProps(bind("work.open", { itemId: item.id }))}>
         <span className="work-row-title">
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
+          <ActivityMark activity={activity} target={ui.part("activity")} />
           {item.title}</span>
         <span className={`work-state state-${item.state}`} ref={ui.part("state")}>
           {STATE_WORDS[item.state]}</span>

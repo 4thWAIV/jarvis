@@ -248,3 +248,20 @@ def test_a_column_another_connection_added_first_is_not_an_error(monkeypatch):
     ws._connect().close()
     monkeypatch.setattr(run_store, "_connect", real)
     assert ws.start("Rebrand", "denice", ["copy"])
+
+
+def test_each_item_says_when_it_was_last_heard_from_and_when_a_running_one_goes_quiet():
+    wid = ws.start("Build", "hammer", ["plan", "build"])
+    ws.record(_ev(wid, "phase_started", item="plan"))
+    ws.record(_ev(wid, "task_added", item="write-spec", title="Write the spec", phase="plan"))
+    ws.record(_ev(wid, "task_started", item="write-spec"))
+    w = ws.record(_ev(wid, "task_progress", item="write-spec", done=1, total=3))
+    items = {i.slug: i for i in w.items}
+    last = max(e.at for e in ws.events(wid) if e.item == "write-spec")
+    assert items["write-spec"].heard_at == last
+    assert items["write-spec"].quiet_at == last + ws.SILENT_AFTER_SEC
+    # A phase is heard from through its tasks too.
+    assert items["plan"].heard_at == last
+    assert items["build"].heard_at is None and items["build"].quiet_at is None
+    w = ws.record(_ev(wid, "task_finished", item="write-spec"))
+    assert next(i for i in w.items if i.slug == "write-spec").quiet_at is None

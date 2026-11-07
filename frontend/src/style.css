@@ -3828,3 +3828,109 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
+
+/* ── Live activity on work nodes (nodeActivity.tsx) ────────────────────
+   data-activity on a Work row, a Work piece, a workflow phase, task card or
+   progress row: working (a glow travelling slowly along its edge), paused
+   (dimmed and still, marked "Paused"), blocked (still red), waiting (still
+   amber), done (still, a check). Every look comes from the record. The
+   motion runs only on working nodes and the "waits for" line of a piece
+   whose piece is working; reduced motion and Steady keep the look still. */
+@property --activity-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes activity-travel { to { --activity-angle: 360deg; } }
+@keyframes activity-edge { from { background-position: 0 -40px; } to { background-position: 0 calc(100% + 40px); } }
+@keyframes activity-flow { to { background-position: 0 24px; } }
+:root {
+  --activity-travel: activity-travel 4s linear infinite;
+  --activity-edge: activity-edge 2.8s linear infinite;
+  --activity-flow: activity-flow 1.6s linear infinite;
+}
+
+.work-row, .task-card, .progress-row, .work-piece { position: relative; }
+.work-row { --activity-rgb: 125, 211, 252; }
+.task-card, .progress-row, .phase-step { --activity-rgb: 251, 113, 133; }
+.work-piece { --activity-rgb: 125, 211, 252; }
+
+/* working: a bright arc travelling round the box's edge */
+.work-row[data-activity="working"]::after,
+.task-card[data-activity="working"]::after,
+.progress-row[data-activity="working"]::after,
+.phase-step[data-activity="working"] .phase-step-dot::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(from var(--activity-angle),
+    rgba(var(--activity-rgb), 0) 0deg, rgba(var(--activity-rgb), 0) 250deg,
+    rgba(var(--activity-rgb), 0.95) 330deg, rgba(var(--activity-rgb), 0) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: var(--activity-travel);
+  pointer-events: none;
+}
+.phase-step[data-activity="working"] .phase-step-dot::after { inset: -4px; }
+.progress-row { border-radius: 6px; }
+.work-row[data-activity="working"],
+.task-card[data-activity="working"],
+.progress-row[data-activity="working"] { box-shadow: 0 0 10px rgba(var(--activity-rgb), 0.18); }
+
+/* a piece has only its left edge: a glow travels down it */
+.work-piece[data-activity="working"] { border-left-color: rgba(var(--activity-rgb), 0.35); }
+.work-piece[data-activity="working"]::before {
+  content: "";
+  position: absolute;
+  left: -2px; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(to bottom, rgba(var(--activity-rgb), 0), rgba(var(--activity-rgb), 1),
+                              rgba(var(--activity-rgb), 0)) no-repeat;
+  background-size: 2px 40px;
+  animation: var(--activity-edge);
+  pointer-events: none;
+}
+
+/* paused: working, but nothing reported within the quiet window */
+[data-activity="paused"] { opacity: 0.6; filter: saturate(0.35); }
+.phase-step[data-activity="paused"] .phase-step-dot { border-style: dashed; box-shadow: none; }
+.work-piece[data-activity="paused"] { border-left: 2px dashed rgba(148, 163, 184, 0.7); }
+.activity-mark { display: inline-block; margin-right: 6px; vertical-align: baseline; }
+.activity-paused {
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+  border: 1px solid rgba(203, 213, 225, 0.6);
+  border-radius: 4px;
+}
+.activity-paused::before { content: "❚❚"; margin-right: 4px; font-size: 8px; letter-spacing: -1px; }
+.phase-step .activity-paused { margin-right: 0; }
+
+/* blocked and waiting on him: still, red and amber */
+.work-row[data-activity="blocked"], .task-card[data-activity="blocked"],
+.progress-row[data-activity="blocked"] { border-color: #ef4444; background-color: rgba(239, 68, 68, 0.08); }
+.work-row[data-activity="waiting"], .task-card[data-activity="waiting"],
+.progress-row[data-activity="waiting"] { border-color: #fbbf24; background-color: rgba(251, 191, 36, 0.08); }
+.work-piece[data-activity="blocked"] { background: linear-gradient(to right, rgba(239, 68, 68, 0.1), transparent 60%); }
+.work-piece[data-activity="waiting"] { background: linear-gradient(to right, rgba(251, 191, 36, 0.1), transparent 60%); }
+.phase-step[data-activity="blocked"] .phase-step-dot { border-color: #ef4444; color: #fecaca; }
+.phase-step[data-activity="waiting"] .phase-step-dot { border-color: #fbbf24; color: #fde68a; box-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+
+/* done: still, with a check */
+.activity-done { color: #4ade80; font-weight: 700; }
+
+/* the "waits for" line flows while a piece it waits for is working */
+.work-piece-after[data-flow="on"] {
+  padding-left: 10px;
+  background: repeating-linear-gradient(to bottom, rgba(125, 211, 252, 0.9) 0 6px, transparent 6px 12px)
+              left top / 2px 100% no-repeat;
+  animation: var(--activity-flow);
+}
+
+/* reduced motion and Steady: the same colours and marks, standing still */
+@media (prefers-reduced-motion: reduce) {
+  :root { --activity-travel: none; --activity-edge: none; --activity-flow: none; }
+}
+:root[data-motion="steady"] { --activity-travel: none; --activity-edge: none; --activity-flow: none; }

@@ -2915,7 +2915,8 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "state",
-        "progress"
+        "progress",
+        "activity"
       ],
       "presentations": [
         {
@@ -2935,7 +2936,8 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "state",
-        "progress"
+        "progress",
+        "activity"
       ],
       "presentations": [
         {
@@ -3143,6 +3145,7 @@ export const UI_CONTRACT = {
         "update",
         "mark",
         "marks",
+        "activity",
         "header",
         "close",
         "source",
@@ -3157,7 +3160,8 @@ export const UI_CONTRACT = {
             "state",
             "update",
             "mark",
-            "marks"
+            "marks",
+            "activity"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -3201,6 +3205,7 @@ export const UI_CONTRACT = {
         "worker",
         "state",
         "mark",
+        "activity",
         "note",
         "after",
         "evidence"
