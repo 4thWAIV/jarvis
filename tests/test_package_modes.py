@@ -478,3 +478,58 @@ def test_a_page_that_connects_later_is_shown_the_package_until_it_is_closed(
     r = wired.client.delete(f"/api/packages/{described['id']}/page", headers=BROWSER)
     assert r.status_code == 204
     assert frame not in wired.server._opening_frames()
+
+
+# -- the guard: a package reaches his screen only on his own act -------------------------
+
+def _token():
+    return {"Authorization": f"Bearer {data_paths.ensure_tool_token()}"}
+
+
+def test_a_tool_token_caller_unpacks_a_local_page_package_but_never_shows_it(
+        wired, shown, tmp_path, marks):
+    """A caller on the tool token is not acting for him: the zip is unpacked
+    and recorded, the page told to read its packages again, and nothing is
+    put on his screen or held for a page that connects later."""
+    from jarvis import packages_api
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)},
+                          headers=_token())
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["unpacked"] is True and got["problem"] == packages_api.NOT_HIS_ACT
+    assert work_packages.find(got["package"]["id"]).manifest.runs == "page"
+    assert shown == [] and wired.server._package_shown is None
+    assert not [f for f in wired.server._opening_frames() if f.get("type") == "package_page"]
+    assert wired.hints == [{"type": "packages"}]
+    r = wired.client.post("/api/packages/local", json={"path": str(archive)},
+                          headers=BROWSER)
+    assert r.json()["problem"] is None and len(shown) == 1, "his own click still shows it"
+
+
+def test_a_tool_token_caller_may_not_open_a_page_or_tell_its_story(wired, shown, page):
+    from jarvis import packages_api
+    r = wired.client.post(f"/api/packages/{page.id}/page", headers=_token())
+    assert r.status_code == 403 and r.json()["error"] == packages_api.NOT_HIS_ACT
+    for body in ({"action": "tell"}, {}, {"action": "tell", "slide": 1}):
+        r = wired.client.post(f"/api/packages/{page.id}/story", json=body, headers=_token())
+        assert r.status_code == 403 and r.json()["error"] == packages_api.NOT_HIS_ACT
+    assert shown == [] and wired.server._package_shown is None
+    r = wired.client.post(f"/api/packages/{page.id}/story", json={"action": "stop"},
+                          headers=_token())
+    assert r.status_code != 403, "stopping a story shows nothing, so anyone may"
+    r = wired.client.post(f"/api/packages/{page.id}/page", headers=BROWSER)
+    assert r.status_code == 200 and len(shown) == 1, "his own click still shows it"
+
+
+def test_the_brain_shows_a_local_page_package_only_on_his_turn(wired, shown, tmp_path, marks):
+    folder = tmp_path / "Projects"
+    folder.mkdir()
+    archive = write_zip(folder, make_zip({"web/index.html": "x"}, PAGE), "check.zip")
+    refused = _call(wired, "open_local_package", origin="event", path=str(archive))
+    assert not refused["ok"] and "not_allowed_from_event" in refused["text"]
+    assert shown == [] and work_packages.every() == []
+    text = _call(wired, "open_local_package", path=str(archive))["text"]
+    assert "It is open in the centre of his screen" in text and len(shown) == 1

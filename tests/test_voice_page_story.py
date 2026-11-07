@@ -287,7 +287,7 @@ async def test_a_zip_on_this_mac_opens_stays_open_on_reload_and_tells_its_story(
                 "window.__transcribers.some((t) => t.readyState === 1)", timeout=10000)
             await voice.speech.start()
             opened, _, problem = await server._open_local_package(
-                str(tmp_path / "story-deck.zip"))
+                str(tmp_path / "story-deck.zip"), True)
             assert opened.id == package.id and problem == ""
             frame = page.frame_locator("#package-view iframe")
             title = frame.locator("h2").first

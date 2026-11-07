@@ -366,7 +366,15 @@ a .zip's preview (`POST /api/packages/local`). The path is read by
 followed, a received file's size limit), copied privately and unpacked by
 `work_packages.unpack_held` exactly as a received zip (recorded under
 `local<sha>` in place of an attachment id), and a page package is shown at
-once. The page package shown is held by the server (`_package_shown`) and
+once when he asked. A package reaches his screen only on his own act: his
+click on a page JARVIS serves (`packages_api.his_click`: admitted by its
+`Origin`, `web_auth.BY_ORIGIN`) or a brain tool on a turn he drove (the
+ACTING_TOOLS). A caller on the tool token or an access key may unpack a
+package but never show it: `POST /api/packages/local` unpacks and answers
+`packages_api.NOT_HIS_ACT` as its `problem` (`_open_local_package(path,
+show)`), and `POST /api/packages/<id>/page` and a story told (`POST
+/api/packages/<id>/story`, any action but stop) are refused with 403.
+The page package shown is held by the server (`_package_shown`) and
 sent to every page that connects, so a reload keeps it; its × (`DELETE
 /api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.

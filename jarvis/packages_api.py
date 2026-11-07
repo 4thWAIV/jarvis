@@ -45,12 +45,26 @@ from typing import Awaitable, Callable, Optional
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from jarvis import data_paths, package_story, work_packages
+from jarvis import data_paths, package_story, story_teller, web_auth, work_packages
 from jarvis.web_auth import PACKAGE_PAGE_MARK, PACKAGE_PAGE_PREFIX
 from jarvis.work_packages import Package, PackageError
 
 RECEIVED_PATH = "/api/packages/received"
 LOCAL_PATH = "/api/packages/local"
+# A package reaches his screen only on his own act: his click on a page
+# JARVIS serves (admitted by its Origin), or a brain tool on a turn he
+# drove (ACTING_TOOLS). A caller on the tool token or an access key may
+# unpack a package but never show it.
+NOT_HIS_ACT = ("Not shown: a package is shown only on his own act, his click on the page "
+               "or asking JARVIS.")
+
+
+def his_click(request: Request) -> bool:
+    """The request came from a page JARVIS serves, so from his click; not
+    from a caller on the tool token or an access key."""
+    return request.scope.get(web_auth.ADMITTED) == web_auth.BY_ORIGIN
+
+
 _TEXT_TYPES = ("text/", "application/javascript", "application/json", "image/svg+xml")
 
 
@@ -98,15 +112,17 @@ def mount(app: FastAPI,
           story: Callable[[str, str, Optional[int]], Awaitable[tuple[bool, str]]],
           open_received: Callable[[uuid.UUID, uuid.UUID],
                                   Awaitable[tuple[Package | None, bool, str]]],
-          open_local: Callable[[str], Awaitable[tuple[Package | None, bool, str]]],
+          open_local: Callable[[str, bool], Awaitable[tuple[Package | None, bool, str]]],
           close_page: Callable[[str], Awaitable[None]]) -> None:
     """`open_page(reference)` opens a page package in every page's centre
     area: (the package, "") or (None, why not). `story(action, reference,
     slide)` tells or stops its story: (done, what was done or why not).
     `open_received(message_id, attachment_id)` unpacks a received zip:
-    (the package, unpacked now, "") or (None, False, why not). `open_local(path)`
-    unpacks a zip on this Mac and shows a page one: (the package, unpacked
-    now, "" or why it is not shown) or (None, False, why not).
+    (the package, unpacked now, "") or (None, False, why not). `open_local(path, show)`
+    unpacks a zip on this Mac and, when `show`, shows a page one: (the
+    package, unpacked now, "" or why it is not shown) or (None, False, why
+    not). Showing (`open_page`, a story told, `open_local`'s show) is only
+    ever asked for on his click (`his_click`).
     `close_page(reference)` forgets the package a newly connected page shows."""
 
     async def list_packages():
@@ -137,7 +153,9 @@ def mount(app: FastAPI,
             return _refused(e, 400)
         return {"saved": saved.relative_to(package.folder).as_posix(), "bytes": len(data)}
 
-    async def open_package_page(package_id: str):
+    async def open_package_page(package_id: str, request: Request):
+        if not his_click(request):
+            return JSONResponse({"error": NOT_HIS_ACT}, status_code=403)
         package, problem = await open_page(package_id)
         if package is None:
             return JSONResponse({"error": problem}, status_code=404)
@@ -155,8 +173,9 @@ def mount(app: FastAPI,
             return JSONResponse({"error": problem}, status_code=409)
         return {"package": describe(package), "unpacked": fresh}
 
-    async def open_local_package(body: dict = Body(default_factory=dict)):
-        package, fresh, problem = await open_local(str(body.get("path") or ""))
+    async def open_local_package(request: Request, body: dict = Body(default_factory=dict)):
+        package, fresh, problem = await open_local(str(body.get("path") or ""),
+                                                   his_click(request))
         if package is None:
             return JSONResponse({"error": problem}, status_code=409)
         return {"package": describe(package), "unpacked": fresh, "problem": problem or None}
@@ -170,7 +189,10 @@ def mount(app: FastAPI,
                         media_type=media_type(HELPER_FILE.name),
                         headers={"Cache-Control": "no-store"})
 
-    async def tell_story(package_id: str, body: dict = Body(default_factory=dict)):
+    async def tell_story(package_id: str, request: Request,
+                         body: dict = Body(default_factory=dict)):
+        if str(body.get("action") or "") != story_teller.STOP and not his_click(request):
+            return JSONResponse({"error": NOT_HIS_ACT}, status_code=403)
         slide = body.get("slide")
         if slide is not None and (not isinstance(slide, int) or isinstance(slide, bool)):
             return JSONResponse({"error": "slide is a number, from 1."}, status_code=400)

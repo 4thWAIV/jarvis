@@ -7509,15 +7509,19 @@ def _package_opened(package: "work_packages.Package", fresh: bool, what_next: st
             f"package.json:\n{package.manifest.as_json()}{files}")
 
 
-async def _open_local_package(path: str) -> tuple[Optional["work_packages.Package"], bool, str]:
+async def _open_local_package(path: str, show: bool
+                              ) -> tuple[Optional["work_packages.Package"], bool, str]:
     """Open a package zip that is a file on this Mac: the brain's
     `open_local_package` and the page's Open package in the Folders view
     alike. The path is read by the folder catalog's ordinary-file rule
     (draft_files.Source: no link followed, keys, credentials and JARVIS's
     own data refused, a received file's size limit), unpacked exactly as a
     received zip, and a page package is then shown in the centre
-    (`_open_package_page`). (the package, unpacked now, "" or why it is not
-    shown) or (None, False, why not)."""
+    (`_open_package_page`) only when `show`: on his own act, his click on
+    the page (`packages_api.his_click`) or the brain's acting tool on his
+    turn; a caller on the tool token or an access key only unpacks it.
+    (the package, unpacked now, "" or why it is not shown) or (None, False,
+    why not)."""
     try:
         source = await asyncio.to_thread(draft_files.Source.open, path, "open")
     except draft_files.NotAttached as e:
@@ -7532,6 +7536,8 @@ async def _open_local_package(path: str) -> tuple[Optional["work_packages.Packag
         _send_to_session_clients({"type": "packages"})
     if package.manifest.runs != work_packages.PAGE:
         return package, fresh, ""
+    if not show:
+        return package, fresh, packages_api.NOT_HIS_ACT
     _, problem = await _open_package_page(package.id)
     return package, fresh, problem
 
@@ -7539,7 +7545,8 @@ async def _open_local_package(path: str) -> tuple[Optional["work_packages.Packag
 async def tool_open_local_package(args: dict) -> str:
     """Open a package zip on this Mac, by its path: unpacked, and a page
     package shown in the centre."""
-    package, fresh, problem = await _open_local_package(str(args.get("path") or ""))
+    # An acting tool: it runs only on a turn he drove, so this is his act.
+    package, fresh, problem = await _open_local_package(str(args.get("path") or ""), True)
     if package is None:
         return f"{problem} Nothing was opened."
     if package.manifest.runs == work_packages.PAGE:
@@ -7669,7 +7676,9 @@ async def tool_run_package_agent(args: dict) -> str:
 async def _open_package_page(reference: str
                              ) -> tuple[Optional["work_packages.Package"], str]:
     """Open a page package in the centre area of every page open: the
-    brain's `open_package_page` and the page's own route alike.
+    brain's `open_package_page` and the page's own route alike. Called only
+    on his own act (the page's routes check `packages_api.his_click`; the
+    brain's tools are ACTING_TOOLS), never for a tool-token caller.
     (the package, "") or (None, why not)."""
     try:
         package = await asyncio.to_thread(work_packages.find, reference, work_packages.PAGE)
