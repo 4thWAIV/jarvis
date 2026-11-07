@@ -18,11 +18,18 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--no-stdin-watch", action="store_true",
                        help="do not exit when stdin closes (for running by hand)")
     sub.add_parser("rebuild", help="drop the derived state; ingest makes it again")
+    compact = sub.add_parser("compact", help="the compaction child (run by the engine)")
+    compact.add_argument("plan")
+    compact.add_argument("result")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     if args.command == "serve":
         from jarvis.knowledge import serve as engine_serve
         return engine_serve.run(watch_stdin=not args.no_stdin_watch)
+    if args.command == "compact":
+        from pathlib import Path
+        from jarvis.knowledge.store import run_compaction_child
+        return run_compaction_child(Path(args.plan), Path(args.result))
     if args.command == "rebuild":
         from jarvis import data_paths
         from jarvis.knowledge.engine import EngineLocked, lock_is_free

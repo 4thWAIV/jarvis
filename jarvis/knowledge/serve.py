@@ -105,6 +105,19 @@ def _pace(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"pace": engine.pace})
 
 
+@route("POST", "/v1/snapshot")
+def _snapshot(engine: Engine, request: Request) -> Answer:
+    path = engine.store.snapshot()
+    return Answer(200, {"snapshot": path.name})
+
+
+@route("POST", "/v1/compact")
+def _compact(engine: Engine, request: Request) -> Answer:
+    engine.store.flush()
+    gen = engine.store.compact((request.body or {}).get("generations"))
+    return Answer(200, {"generation": gen})
+
+
 class _HTTPHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "jarvis-knowledge"
@@ -191,6 +204,21 @@ def _watch_stdin(on_close: Callable[[], None]) -> threading.Thread:
     return thread
 
 
+MAINTAIN_EVERY_SEC = 5.0
+
+
+def _maintenance(engine: Engine, stopping: threading.Event) -> threading.Thread:
+    def loop() -> None:
+        while not stopping.wait(MAINTAIN_EVERY_SEC):
+            try:
+                engine.maintain()
+            except Exception:
+                log.exception("knowledge maintenance failed")
+    thread = threading.Thread(target=loop, name="knowledge-maintain", daemon=True)
+    thread.start()
+    return thread
+
+
 def run(*, watch_stdin: bool = True) -> int:
     from jarvis import data_paths
     _lower_priority()
@@ -214,6 +242,7 @@ def run(*, watch_stdin: bool = True) -> int:
     signal.signal(signal.SIGINT, lambda *_: stop())
     if watch_stdin:
         _watch_stdin(stop)
+    _maintenance(engine, stopping)
     engine_address.record(engine_address.EngineAddress(
         scheme="http", host=host, port=port, pid=os.getpid(), boot_id=engine.boot_id))
     log.info("knowledge engine listening on %s:%s (pid %s)", host, port, os.getpid())

@@ -238,6 +238,17 @@ and its deadline work the same whatever produces the rows.
   yes.
 - The Spanish stop words live in the keyword index module beside
   `jarvis_memory`'s English ones. Reason: they are used nowhere else.
+- Only open reads pin versions in the live segment set; a snapshot keeps
+  its versions in its own hard-linked files. Reason: no snapshot can hold
+  compaction back, and nothing a snapshot holds is lost.
+- One LSN names one transaction, and every record in it carries that LSN.
+  Reason: a read at an LSN then sees whole transactions without a second
+  number.
+- The supervisor decides whether an earlier engine is still there by the
+  writer lock, not by a health call. Reason: the token is never sent to a
+  process this server did not start.
+- Forget overrides pins: every version of a forgotten key goes, even one a
+  read has pinned. Reason: content that must go cannot wait for a reader.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 

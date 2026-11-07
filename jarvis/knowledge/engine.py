@@ -73,15 +73,35 @@ class Engine:
     def _open_parts(self) -> None:
         """Opens the storage core and the parts over it; each step of the
         build adds its part here."""
+        from jarvis.knowledge.store import Store
+        self.store = Store(self.directory, parts=default_parts(),
+                           compact_in_child=self.compact_in_child)
+
+    compact_in_child = True
 
     def health(self) -> dict:
-        return {"state": "ok", "pid": os.getpid(), "boot_id": self.boot_id,
-                "uptime_s": round(time.time() - self.started, 3), "pace": self.pace}
+        store = self.store.health() if self.store is not None else {"state": "ok"}
+        return {"state": store.get("state", "ok"), "pid": os.getpid(), "boot_id": self.boot_id,
+                "uptime_s": round(time.time() - self.started, 3), "pace": self.pace,
+                "store": store}
 
     def set_pace(self, mode: str) -> None:
+        """`hold` while hearing needs the machine (I4): the compaction child
+        is stopped and no maintenance starts; `free` continues it."""
         if mode not in ("hold", "free"):
             raise ValueError("pace is hold or free")
         self.pace = mode
+        if self.store is not None:
+            self.store.set_paused(mode == "hold")
+
+    def maintain(self) -> None:
+        """One maintenance step, run by the engine's own timer while the
+        floor is free: flush on the time rule, then compact a full tier."""
+        if self.pace == "hold" or self.store is None or not self.store.writable:
+            return
+        self.store.maybe_flush()
+        if self.pace == "free" and self.store.pick_tier():
+            self.store.compact()
 
     def close(self) -> None:
         with self._close_lock:
@@ -98,6 +118,14 @@ class Engine:
 
     def _close_parts(self) -> None:
         """Flushes and closes the parts; each step adds its part here."""
+        if self.store is not None:
+            self.store.close()
+
+
+def default_parts() -> list:
+    """The derived parts every store is built with, in the engine and in
+    the compaction child alike."""
+    return []
 
 
 def open_engine(directory: Optional[Path] = None) -> Engine:
