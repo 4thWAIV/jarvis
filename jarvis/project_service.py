@@ -124,6 +124,11 @@ class ProjectService:
         return [{"id": p.id, "name": p.display_name} for p in self.store.projects_of_folder(folder.id)
                 if p.owner_id in owners]
 
+    def folder_paths(self, project_id: str) -> list[str]:
+        """Where its folders are on this Mac now, home first."""
+        return [p for p in (self._folder_facts(f.folder_id).get("path")
+                            for f in self.store.folders_of(project_id)) if p]
+
     def project_holding(self, path: str) -> Optional[str]:
         """The one project holding a path, for a run started there by
         folder or legacy name; None when none or several hold it (several

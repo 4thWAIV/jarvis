@@ -14184,7 +14184,7 @@ def _project_views() -> list[projects_view.ProjectView]:
     conversations here any more than anywhere else that lists them."""
     sessions = _snapshot_or_empty().sessions
     runs = run_store.list_runs(limit=_PROJECTS_VIEW_RUN_LOOKBACK)
-    return projects_view.build_project_views(sessions, runs)
+    return projects_view.build_project_views(sessions, runs, projects=projects)
 
 
 @app.get("/api/projects/view")
@@ -14210,7 +14210,8 @@ async def api_project_view_detail(name: str):
     bounded repo walk and a plan-file read, both off the event loop — and so
     is the `_project_views()` read that picks which project to walk."""
     views = await asyncio.to_thread(_project_views)
-    match = next((v for v in views if v.name == name), None)
+    match = next((v for v in views if v.project_id == name), None) \
+        or next((v for v in views if v.name == name), None)
     if match is None:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     repo, build = await asyncio.to_thread(
