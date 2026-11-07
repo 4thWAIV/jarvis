@@ -16,6 +16,8 @@ Run it with JARVIS's own Python. The talk-to-jarvis skill gives the exact comman
 | Know something (an update, a presentation) | One JSON file with only `slides` | A presentation: the same slides, told in JARVIS's voice, with nothing to answer |
 | Use a page of your own, have an agent do work, or follow steps with JARVIS | A folder | A page, agent or conversation package |
 
+Only real product choices go to Tim, and he chooses by looking: every option is a picture of what he would see. Decide technical details (flags, labels, limits, thresholds, internal behaviour) yourself and never put them in a package.
+
 ## A deck: one JSON file
 
 Start from an example:
@@ -49,8 +51,8 @@ A presentation is the same file with `slides` and no `decisions`. A decision pac
 | `language` | `en` (the default) or `es`, the language its story is told in. |
 | `slides` | The slides, in order. Each has a `title`, `say` (what JARVIS says over it; without it JARVIS says only the title), and `blocks`. Optional: `short` (its name on the slide strip), `id`, `kicker`, and `beats` in place of `say` (several lines, each pointing at a part of the slide; see "Telling a page's story" in [work packages](work-packages.md)). `{"decision": "<question, short name or id>"}` places that decision's slide there. |
 | `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows"}}`, `{"picture": path, "alt", "caption"}` or `{"pictures": [{"src", "alt", "caption"}]}`. Text may use `**bold**` and `` `code` ``. |
-| `decisions` | Each has its `question`, at least two `options`, which one is recommended, and the one-line `reason`. Optional: `context` (a line of background), `picture` (beside the options), `compare` (a large picture comparing the options), `say` (said in place of the recommendation), `short`. |
-| `options` | Each has a `name` and what it `says`. Optional: `picture`, `"recommended": true` (on exactly one, or name the option in the decision's `recommended`), and `opens`: the questions asked only when this option is chosen. |
+| `decisions` | Each has its `question`, at least two `options`, which one is recommended, and the one-line `reason`. Optional: `context` (a line of background), `picture` (beside the options), `compare` (a large picture comparing the options), `say` (said in place of the recommendation), `short`, and, rarely, `text_only`: why its options cannot be pictured, in at least five words. |
+| `options` | Each has a `name`, what it `says` and a `picture` of what he would see (required unless the decision is `text_only`). Optional: `"recommended": true` (on exactly one, or name the option in the decision's `recommended`), and `opens`: the questions asked only when this option is chosen. |
 
 Pictures are PNG, JPEG, GIF, WebP or SVG files, given as paths beside the JSON file.
 
@@ -72,7 +74,7 @@ Worked out for you: `name` (from the folder's name), `version`, `runs` (from whi
 
 1. Checks the content and lists everything to change at once. `--check-only` stops here.
 2. Builds and zips it. A deck is built by the shared deck, `examples/packages/decision-deck/`.
-3. Checks it again. A deck is opened in an isolated JARVIS of its own, never Tim's: found and opened by its title, every slide fitting at both screen sizes with readable text, its story told to the end, and for a decision package each vote row in view, a Choose saved and a spoken answer shown. Every slide is photographed. A folder's zip is read the way Tim's JARVIS will read it.
-4. Only if everything passed, puts it in Tim's JARVIS without showing it, and sends him a message naming it and the words that open it.
+3. Checks it again. A deck is opened in an isolated JARVIS of its own, never Tim's: found and opened by its title, every slide fitting at both screen sizes with readable text, and its story told to the end. For a decision package it also checks that every vote control is visible and large enough, that the story waits at each question until it is answered (by a Choose click and by voice in turn), that Stop ends it within a second from the page and from JARVIS, and that it resumes at the first unanswered question. Every slide and step is photographed. A folder's zip is read the way Tim's JARVIS will read it.
+4. Only if everything passed, puts it in Tim's JARVIS without showing it (a decision package stamped as checked first, since his JARVIS opens no other), and sends him a message naming it and the words that open it.
 
 It prints the package id. A decision package's answers are recorded in its `results/decisions.json`, at the path it prints and in `delivery.json` in its output folder. If anything fails nothing is delivered: fix what it says and run it again.

@@ -32,7 +32,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis import data_paths, decision_package as dp
+from jarvis import data_paths, decision_package as dp, decision_stamp
 
 # The file each way of running needs, by its usual name: a folder holding
 # exactly one of them runs that way.
@@ -198,6 +198,10 @@ def make_folder(folder: Path, out: Path) -> Made:
         raise dp.Refused([f"JARVIS would refuse the zip: {e}"])
     if recognised.manifest is None:
         raise dp.Refused([f"JARVIS would not open it as a package: {recognised.reason}"])
+    if decision_stamp.is_decision_package(archive):
+        raise dp.Refused([f"{folder} is a decision deck ({', '.join(decision_stamp.MARKS)}). "
+                          f"A deck is made from its content file, never from a folder: give "
+                          f"the command the deck's JSON."])
     title = manifest["name"].replace("-", " ")
     return Made(archive, title, f"{manifest['runs']} package", None)
 
@@ -308,7 +312,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         return 1
 
     try:
-        delivered = dp.deliver(made.archive, args.deliver_to, data_paths.ensure_tool_token())
+        token = data_paths.ensure_tool_token()
+        if made.deck is not None and made.deck.get("decisions"):
+            # The files checked, stamped for the live JARVIS, which unpacks a
+            # decision package only with its own stamp (decision_stamp.py).
+            decision_stamp.stamp(made.archive, made.archive, token)
+        delivered = dp.deliver(made.archive, args.deliver_to, token)
     except OSError as e:
         print(f"Not delivered: {e}")
         return 1

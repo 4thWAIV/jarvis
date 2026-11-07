@@ -197,3 +197,25 @@ def test_every_hand_made_example_passes_as_it_is(tmp_path, example):
 def test_the_old_command_name_is_the_same_command(tmp_path, capsys):
     assert dp.main([str(write(tmp_path, presentation())), "--check-only"]) == 0
     assert "a presentation" in capsys.readouterr().out
+
+
+def test_a_decision_package_is_stamped_for_the_live_jarvis_a_presentation_is_not(
+        tmp_path, monkeypatch):
+    from jarvis import decision_stamp
+    monkeypatch.setattr(dp, "post", _Delivery())
+    passing_check(monkeypatch)
+    token = data_paths.ensure_tool_token()
+    for name, deck in (("d", small_deck()), ("p", presentation())):
+        out = tmp_path / name / "out"
+        assert mp.main([str(write(tmp_path / name, deck)), "--out", str(out),
+                        "--deliver-to", "http://127.0.0.1:19999"]) == 0
+        [archive] = out.glob("*.zip")
+        names = zipfile.ZipFile(archive).namelist()
+        assert (decision_stamp.STAMP in names) == (name == "d")
+        assert decision_stamp.problem(archive, token) is None
+
+
+def test_a_deck_given_as_a_folder_is_refused(tmp_path):
+    with pytest.raises(dp.Refused) as refused:
+        mp.make_folder(EXAMPLES / "decision-deck", tmp_path)
+    assert "made from its content file" in " ".join(refused.value.problems)

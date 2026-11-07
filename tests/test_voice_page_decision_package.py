@@ -1,8 +1,9 @@
 """The decision package command's whole check, on a small deck, in a real
 isolated JARVIS (jarvis/decision_check.py): its own server process on a free
 port above 19000, the voice page built by vite, a headless Chromium on its
-real package frame at both centre sizes, the story told, a Choose saved and
-an answer by voice shown. It then delivers to a stand-in JARVIS on loopback,
+real package frame at both centre sizes, voting checked, and the story
+taken as a first-time user (waiting at each question, answered by click and
+by voice), stopped from the page and the brain's tool, and resumed. It then delivers to a stand-in JARVIS on loopback,
 never the live one, and the stand-in sees exactly one unpack, with the
 token, of the zip that was checked."""
 from __future__ import annotations
@@ -69,19 +70,30 @@ def test_the_command_checks_a_deck_in_a_real_jarvis_then_delivers(tmp_path, stan
     assert code == 0, said
 
     for size in ("809x589", "662x489"):
-        for check in ("the package frame is", "slides fit", "story reached every decision",
-                      "every beat pointed", "Choose saved where", "spoken answer appeared"):
+        for check in ("the package frame is", "slides fit", "every vote control is visible"):
             assert any(f"ok: {size}: " in line and check in line
                        for line in said.splitlines()), (size, check, said)
         shots = sorted(p.name for p in (out / "check" / size).glob("*.png"))
-        assert shots == ["01-s1.png", "02-d-where.png", "03-d-when.png", "04-answers.png",
-                         "choose.png", "voice.png"]
+        assert shots == ["01-s1.png", "02-d-where.png", "03-d-when.png", "04-answers.png"]
+    for check in ("first time: the story waits at where", "first time: the story waits at when",
+                  "first time: every question answered, in order (where, when)",
+                  "stop by the page during narration: stopped within 1s",
+                  "stop by the page while waiting: stopped within 1s",
+                  "stop by the brain's tool during narration: stopped within 1s",
+                  "stop by the brain's tool while waiting: stopped within 1s",
+                  "stop again: the brain is told it is already stopped",
+                  "resume: picked up at slide 3"):
+        assert any(f"ok: {check}" in line for line in said.splitlines()), (check, said)
+    assert list((out / "check" / "flow").glob("*waiting-where.png"))
     assert "list_packages found it by its title's words" in said
 
     [(path, authorization, body)] = stand_in.posts
     assert path == "/api/packages/local"
     assert authorization == f"Bearer {data_paths.ensure_tool_token()}"
     assert body == {"path": str(out / "lunch-decisions-1.0.0.zip")}
+    from jarvis import decision_stamp
+    assert decision_stamp.problem(out / "lunch-decisions-1.0.0.zip",
+                                  data_paths.ensure_tool_token()) is None, "stamped for it"
     assert data_paths.ensure_tool_token() not in said
     assert '"Open the Team lunch package."' in said
 

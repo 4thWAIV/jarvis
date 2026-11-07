@@ -103,6 +103,7 @@ from jarvis import message_approvals
 from jarvis import messaging_api, messaging_ports, messaging_wire
 from jarvis import messaging_runtime
 from jarvis import attachment_locations, draft_files, packages_api, work_packages
+from jarvis import decision_stamp
 from jarvis import story_teller as story_teller_module
 from jarvis.story_teller import StoryTeller
 from jarvis import bundle_api
@@ -7573,7 +7574,10 @@ async def _open_local_package(path: str, show: bool
     except draft_files.NotAttached as e:
         return None, False, str(e)
     try:
-        package, fresh = await work_packages.unpack_held(source.chunks())
+        # A decision package only with its check's stamp (decision_stamp.py).
+        token = data_paths.ensure_tool_token()
+        package, fresh = await work_packages.unpack_held(
+            source.chunks(), lambda zip_path: decision_stamp.problem(zip_path, token))
     except (draft_files.NotAttached, work_packages.PackageError, OSError) as e:
         return None, False, str(e)
     finally:

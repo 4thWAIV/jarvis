@@ -47,6 +47,10 @@ CAPS = {
     "slide": 700,         # every word on one content slide
 }
 
+# A decision whose options are not pictured says why in at least this many
+# words ("text_only"); it should be rare.
+TEXT_ONLY_WORDS = 5
+
 IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 
 
@@ -183,6 +187,19 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
         if d.get("recommended") not in oids:
             problems.append(f"{where}: its recommendation {d.get('recommended')!r} is not one "
                             f"of its options.")
+        # Tim chooses by looking: every option is a picture of what it
+        # would look like. Rarely a choice cannot be pictured; it then says
+        # so, and why, as text_only.
+        unpictured = [o.get("id") for o in options if isinstance(o, dict) and not o.get("picture")]
+        reason = d.get("text_only")
+        if unpictured and not (isinstance(reason, str) and len(reason.split()) >= TEXT_ONLY_WORDS):
+            problems.append(
+                f"{where}: option{'s' if len(unpictured) > 1 else ''} "
+                f"{', '.join(map(str, unpictured))} {'have' if len(unpictured) > 1 else 'has'} "
+                f"no picture. Every option needs a picture of what he would see; only a "
+                f"choice that truly cannot be pictured may say so with \"text_only\": "
+                f"\"<why, in at least {TEXT_ONLY_WORDS} words>\". Only real product choices "
+                f"go to Tim: decide technical details yourself.")
 
     for n, s in enumerate(deck.get("slides") or [], 1):
         if not isinstance(s, dict):
@@ -264,7 +281,7 @@ KEYS = {
     "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions"),
     "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
     "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
-                 "picture", "compare", "say"),
+                 "picture", "compare", "say", "text_only"),
     "option": ("id", "name", "says", "picture", "opens", "recommended"),
 }
 
@@ -395,8 +412,9 @@ EXAMPLE = {
     "decisions": [
         {"question": "Where do we eat on Friday?",
          "options": [{"name": "In the office", "says": "Food is brought in.",
-                      "recommended": True},
-                     {"name": "A restaurant", "says": "A short walk away."}],
+                      "picture": "pictures/office.png", "recommended": True},
+                     {"name": "A restaurant", "says": "A short walk away.",
+                      "picture": "pictures/restaurant.png"}],
          "reason": "Nobody has to book a table."},
     ],
 }
