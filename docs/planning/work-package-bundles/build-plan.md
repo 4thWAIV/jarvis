@@ -297,6 +297,16 @@ and its deadline work the same whatever produces the rows.
   per-row mask built in Python; a smaller one gathers its rows and scores
   only those. Reason: both are exact; the mask's cost is measured once real
   vectors exist.
+- A query with `at` may use only `from` and `walk`; `match` and `near`
+  read the newest state. Reason: rankings are built over the newest
+  postings and rows, and an older read must be exact.
+- A `where` clause naming more than 20,000 documents is checked on the
+  ranked candidates instead of being turned into a filter. Reason: building
+  a filter that large costs more than checking the 200 candidates.
+- The open-files test allows the code, system libraries, mapped
+  libraries and a library's own anonymous temporary files beside the
+  engine's directory. Reason: those are what loading Python and Accelerate
+  opens; none of them is the user's data.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -304,3 +314,12 @@ and its deadline work the same whatever produces the rows.
 
 Each step is committed once its tests pass, in the order above. Only the
 targeted tests are run locally; CI runs the suite.
+
+## Progress
+
+Steps 1 to 7 are built on this branch, each in its own commit, with the
+tests named in each step (`tests/test_knowledge_*.py`; the process, crash,
+child-process and budget tests carry `knowledge_engine`). What comes next is
+phase 4's remainder: wiring the supervisor into the server with the pace
+following the conversation floor, the ingest adapters in their child, and
+the Knowledge row in Diagnostics.

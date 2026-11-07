@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -350,3 +351,38 @@ def test_end_previous_engine_ends_one_that_keeps_the_lock():
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+@pytest.mark.knowledge_engine
+def test_the_engine_opens_no_file_outside_its_own_directory(tmp_path):
+    """I2: besides the code and system libraries it loads, every file the
+    running engine holds open is inside its own directory."""
+    import shutil
+    if shutil.which("lsof") is None:
+        pytest.skip("no lsof")
+    repo = Path(__file__).resolve().parents[1]
+    proc = subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
+                            stdin=subprocess.PIPE, cwd=repo)
+    try:
+        assert _wait(lambda: (a := engine_address.running()) is not None and a.pid == proc.pid)
+        client = kc.KnowledgeClient(kc.HTTPTransport(lambda: proc.pid))
+        client.call("POST", "/v1/txn", {"puts": [{"_key": "chunk:1", "_kind": "chunk", "text": "hello"}]})
+        client.call("POST", "/v1/snapshot", {})
+        listed = subprocess.run(["lsof", "-Fn", "-p", str(proc.pid)], capture_output=True, text=True).stdout
+        paths = [line[1:] for line in listed.splitlines() if line.startswith("n/")]
+        own = str(data_paths.knowledge_dir().resolve())
+        allowed = ("/System/", "/usr/lib/", "/usr/share/", "/Library/Preferences/", "/private/var/db/",
+                   "/dev/", os.path.realpath(sys.base_prefix), os.path.realpath(sys.prefix), str(repo))
+        strays = [p for p in paths
+                  if not (os.path.realpath(p).startswith(own)
+                          or p.endswith((".dylib", ".so"))          # libraries the loader mapped
+                          # anonymous temporary files a library makes for itself
+                          # (libffi's closure pages under ctypes), never user data
+                          or (os.path.realpath(p).startswith(os.path.realpath(tempfile.gettempdir()))
+                              and os.path.basename(p).startswith("tmp"))
+                          or any(os.path.realpath(p).startswith(a) or p.startswith(a) for a in allowed))]
+        assert strays == [], strays
+        assert any(os.path.realpath(p).startswith(own) for p in paths)
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=20)

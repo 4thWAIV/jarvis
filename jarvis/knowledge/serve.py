@@ -186,6 +186,20 @@ def _walk(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.graph.walk(request.body or {}))
 
 
+@route("POST", "/v1/query")
+@_guard
+def _query(engine: Engine, request: Request) -> Answer:
+    from jarvis.knowledge import query
+    return Answer(200, query.run(engine, request.body or {}))
+
+
+@route("POST", "/v1/search")
+@_guard
+def _search(engine: Engine, request: Request) -> Answer:
+    from jarvis.knowledge import query
+    return Answer(200, query.search(engine, request.body or {}))
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

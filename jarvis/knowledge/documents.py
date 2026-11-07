@@ -502,6 +502,16 @@ class DocumentStore:
     def candidates(self, preds: list[Predicate], kind_names: Optional[list[str]]) -> Optional[set[int]]:
         """Probe and intersect: the smallest usable posting set, or None
         when no predicate can use the index."""
+        best = self._smallest(preds, kind_names)
+        return None if best is None else best[1]()
+
+    def estimate(self, preds: list[Predicate], kind_names: Optional[list[str]]) -> int:
+        """How many documents the smallest usable list names (no decoding),
+        or every live document when no condition can use the index."""
+        best = self._smallest(preds, kind_names)
+        return best[0] if best is not None else sum(1 for _ in self.columns.live())
+
+    def _smallest(self, preds: list[Predicate], kind_names: Optional[list[str]]):
         best = None
         for pred in preds:
             if not self._usable(pred, kind_names):
@@ -510,14 +520,14 @@ class DocumentStore:
             if fid is None:
                 if pred.op in ("!=",) or (pred.op == "exists" and pred.value is False):
                     continue
-                return set()          # nobody has ever had this property
+                return (0, set)       # nobody has ever had this property
             ranges = pred.ranges(fid, self._is_date(pred, kind_names))
             if ranges is None:
                 continue
             estimate, build = self._range_sources(ranges)
             if best is None or estimate < best[0]:
                 best = (estimate, build)
-        return None if best is None else best[1]()
+        return best
 
     def find(self, *, kinds_: Optional[list[str]] = None, where: Iterable = (),
              at: Optional[int] = None, limit: int = 200, order: Optional[tuple[str, str]] = None,
