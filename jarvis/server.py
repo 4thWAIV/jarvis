@@ -8254,19 +8254,20 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
 
 
 def _inbox_answers_text(entry, package) -> str:
-    """The message that carries his answers back to the sending session:
-    each answer, and where the package's full record is."""
-    head = f"Tim's answers to your package {entry.name} {entry.version} ({entry.id}):"
+    """The message that carries his answers back to the sending session,
+    read back to him before it goes: JARVIS's own words, the package's
+    folder name, each decision's and answer's id (package_inbox.ID) and his
+    own words, and where the package's full record is. No title, question
+    or option name: those are the sender's words."""
+    head = f"Tim's answers to your package {package.id} ({entry.id}):"
     if entry.is_decisions:
-        lines = [head] + [f"- {q.id}: {q.answered_words() or 'not answered'}"
+        lines = [head] + [f"- {q.id}: {q.answered_id() or 'not answered'}"
                           for q in package_inbox.questions(package) if q.applies]
         lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
                      f" (and {package_inbox.SUMMARY} beside it).")
     else:
-        lines = [f"Tim has finished with your package {entry.name} {entry.version} ({entry.id})."]
-        results = package.results()
-        if results:
-            lines.append("What it saved: " + ", ".join(str(p) for p in results))
+        lines = [f"Tim has finished with your package {package.id} ({entry.id}). Anything it "
+                 f"saved is in {package.folder / work_packages.RESULTS}."]
     return "\n".join(lines)[:CAPTURE_MAX_CHARS]
 
 

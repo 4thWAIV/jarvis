@@ -279,7 +279,9 @@ def test_answers_go_back_to_the_workflow_and_as_a_capture_for_the_session(
     assert "holds the answers for chitauri" in said and "read_capture" in said
     capture = next(c for c in wired.server._captures.values() if c.get("to_session") == "sess-1")
     assert capture["text"].startswith("Tim's answers to your package decision-deck-example")
-    assert "kettle-kind:" in capture["text"] and "decisions.json" in capture["text"]
+    assert "kettle-kind: electric" in capture["text"] and "decisions.json" in capture["text"]
+    assert "Office tea" not in capture["text"] and "An electric kettle" not in capture["text"], \
+        "read back aloud: ids and his words only, never the sender's titles or option names"
     assert not capture.get("approved"), "it goes only on his yes"
     snap = workflow_store.snapshot(wid)
     assert not (snap.open_waits or snap.open_decisions), "nothing is left open on the workflow"
