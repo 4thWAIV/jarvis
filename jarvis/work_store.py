@@ -1215,16 +1215,10 @@ def _item(conn, row, now: float) -> WorkItem:
 
 
 def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
-    """Nothing heard for QUIET_AFTER_SEC: ready for review and silent, or a
-    working claim (activity_unknown) whose pieces (or the item itself, with
-    none) have not reported within it: paused."""
-    if state == VERIFYING:
-        return now > quiet_at(state, row["updated_at"])
-    if state == ACTIVITY_UNKNOWN:
-        if pieces:
-            return not any(_moving(p, now) for p in pieces)
-        return now - row["updated_at"] > QUIET_AFTER_SEC
-    return False
+    """Ready for review with nothing heard for QUIET_AFTER_SEC. A working
+    claim (activity_unknown) is never "quiet": a claim was never activity
+    to fall silent from."""
+    return state == VERIFYING and now > quiet_at(state, row["updated_at"])
 
 
 def _moving(piece: Piece, now: float) -> bool:
