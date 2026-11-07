@@ -171,21 +171,88 @@ def can_approve(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = N
     return other_package_questions(item.id) == 0
 
 
-def review_from_package(entry, package, where: str) -> Optional[work_store.WorkItem]:
+# Where a review given in a package is recorded as given.
+IN_A_PACKAGE = "package"
+
+
+def _review_asked(package):
+    """A review package's `approve-item`, or None when it asks none."""
+    return next((q for q in package_inbox.questions(package)
+                 if q.id == REVIEW_QUESTION and q.applies), None)
+
+
+def review_from_package(entry, package) -> Optional[work_store.WorkItem]:
     """His answer to a review package's `approve-item`, as his review of
-    the item it was sent for, recorded once per answer. None when it has
-    none to give, or it is already on the record. Raises WorkRefused."""
-    if not entry.work_id:
-        return None
-    asked = next((q for q in package_inbox.questions(package)
-                  if q.id == REVIEW_QUESTION and q.applies and q.answer), None)
-    action = REVIEW_OPTIONS.get(asked.answer.get("answer")) if asked else None
+    the item it was sent for (`where` IN_A_PACKAGE), at once and once per
+    answer. When it cannot be applied (Approve while a piece still works,
+    say), that is recorded on the item with why, so his act always shows.
+    None when there is no answer to give, or it is already on the record."""
+    asked = _review_asked(package) if entry.work_id else None
+    action = REVIEW_OPTIONS.get(asked.answer.get("answer")) if asked and asked.answer else None
     if action is None:
         return None
     source = {"package": entry.id, "answered_at": str(asked.answer.get("at") or "")}
     if work_store.reviewed(entry.work_id, source):
         return None
-    return review(entry.work_id, action, asked.answer.get("note") or "", where, source)
+    try:
+        return review(entry.work_id, action, asked.answer.get("note") or "", IN_A_PACKAGE,
+                      source)
+    except work_store.WorkRefused as e:
+        return _note_review(entry.work_id, work_store.NOT_APPLIED, source,
+                            f"His {asked.answer.get('answer')} in the package was not applied: {e}",
+                            str(e))
+
+
+def _note_review(item_id: str, outcome: str, source: dict, summary: str,
+                 why: str = "") -> Optional[work_store.WorkItem]:
+    """What his act in a review package came to when it changed nothing
+    itself, on the item's record. None for a closed item."""
+    try:
+        return work_store.record(work_store.WorkEvent(
+            item_id, work_store.REVIEW_NOTED, summary,
+            {"outcome": outcome, "why": why, "source": source}))
+    except work_store.WorkRefused:
+        return None
+
+
+def signed_off_review(entry, package) -> Optional[work_store.WorkItem]:
+    """He signed off a review package: an answer on record is his review
+    (`review_from_package`); with none (or Decide later, None of these), the
+    item says the review closed without a verdict. Once per package."""
+    if not entry.work_id or _review_asked(package) is None:
+        return None
+    done = review_from_package(entry, package)
+    if done is not None:
+        return done
+    asked = _review_asked(package)
+    if asked.answer and asked.answer.get("answer") in REVIEW_OPTIONS:
+        return None            # already applied, or noted, when he gave it
+    source = {"package": entry.id, "answered_at": ""}
+    if work_store.reviewed(entry.work_id, source):
+        return None
+    return _note_review(entry.work_id, work_store.NO_VERDICT, source,
+                        "Review closed without a verdict: he signed the package off unanswered.")
+
+
+def apply_package_reviews() -> int:
+    """Every review he has already given in a package sent for an item,
+    open or signed off (never one he set aside or that was replaced), on
+    the record once (at server start: answers given before the link went
+    live, or while JARVIS was down). How many items it moved."""
+    moved = 0
+    for entry in package_inbox.listing() + package_inbox.listing(closed=True):
+        set_aside = (entry.state == package_inbox.CLOSED
+                     and entry.closed_why != package_inbox.SIGNED_OFF)
+        if not entry.work_id or set_aside:
+            continue
+        try:
+            package = work_packages.find(entry.package_id)
+        except work_packages.PackageError:
+            continue
+        signed = entry.closed_why == package_inbox.SIGNED_OFF
+        if (signed_off_review if signed else review_from_package)(entry, package) is not None:
+            moved += 1
+    return moved
 
 
 def packages_json(item_id: str) -> list[dict]:
@@ -284,12 +351,17 @@ def review(item_id: str, action: str, words: str, where: str,
     if kind is None:
         raise work_store.WorkRefused("A review is approve, not_done or add_work.")
     words = " ".join(str(words or "").split())
+    in_package = where == IN_A_PACKAGE
     if action == APPROVE and (waiting := other_package_questions(item_id)):
         raise work_store.WorkRefused(
             f"A package sent for it still asks him {waiting} question(s): answer them before "
             f"approving it.")
     summary = {APPROVE: "He approved it: done.", NOT_DONE: f"Not done yet, he says: {words}",
                ADD_WORK: f"He added work: {words}"}[action]
+    if in_package:
+        summary = {APPROVE: "Approved by him in the package: done.",
+                   NOT_DONE: f"Not done yet, he said in the package: {words}",
+                   ADD_WORK: f"Work added by him in the package: {words}"}[action]
     detail = {"words": words, "where": where}
     if source:
         detail["source"] = source

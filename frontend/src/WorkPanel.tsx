@@ -32,7 +32,7 @@ import { useUiTarget } from "./uiRegistry";
 import { WorkflowsView } from "./WorkflowsView";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
          workStanding } from "./nodeActivity";
-import { blockerWords, followUpWords, itemMark, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
+import { blockerWords, followUpWords, itemMark, packageReviewWords, openWork, showHistory, STATE_WORDS, workList, type WorkGroup, type WorkItem,
          type WorkMark } from "./work";
 
 export function WorkPanel() {
@@ -129,6 +129,8 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
         <span className={`work-update${deciding ? " deciding" : ""}`} ref={ui.part("update")}>
           {(item.also_waiting ?? 0) > 0 && <>{t("right.work.alsoWaiting", { count: item.also_waiting })} · </>}
           {deciding ? t("right.work.decision", { question: item.headline })
+            : item.package_review && item.package_review.at >= item.updated_at
+              ? packageReviewWords(item.package_review)
             : item.follow_up ? followUpWords(item.follow_up)
             : item.quiet ? t("right.work.quiet") : item.headline}</span>
         {holding.length > 0 && (

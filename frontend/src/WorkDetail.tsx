@@ -50,7 +50,7 @@ import { PackageMark } from "./QueuePackages";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { answerWorkDecision, blockerWords, followUpWords, reviewWork, type ReviewAction, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { answerWorkDecision, blockerWords, followUpWords, packageReviewWords, reviewWork, type ReviewAction, type WorkPackageReview, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -186,6 +186,12 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
   );
 }
 
+/** What his act in a review package did, with when: on the Overview and
+ *  the Decisions tab alike, so every act of his shows a change. */
+function PackageReviewLine({ review }: { review: WorkPackageReview }) {
+  return <p className="work-package-review" data-outcome={review.outcome}>{packageReviewWords(review)}</p>;
+}
+
 /** Its state, latest update, source and area, and who is on it. */
 function Overview({ item, part }: { item: WorkItem; part: Part }) {
   const t = useT();
@@ -198,6 +204,7 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
     <>
       {item.approved_at ? <p className="work-approved">
         {t("main.work.review.approved", { when: formatDateTime(item.approved_at * 1000, { dateStyle: "medium", timeStyle: "short" }) })}</p> : null}
+      {item.package_review && <PackageReviewLine review={item.package_review} />}
       {item.review_note && <p className="work-review-note">
         {t("main.work.review.note", { note: item.review_note })}</p>}
       <p className="work-latest" ref={(el) => { part("update")(el); arrived(el); }}>
@@ -227,6 +234,7 @@ function Decisions({ item, packages, part }: { item: WorkItem; packages: InboxDe
   const t = useT();
   return (
     <>
+      {item.package_review && <PackageReviewLine review={item.package_review} />}
       <section ref={part("decisions")}>
         <h3 className="work-section-head">{t("main.work.decisions")}</h3>
         {item.decisions.length === 0 && packages.length === 0
