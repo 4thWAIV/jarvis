@@ -458,11 +458,16 @@ back to the sender.
 - A package zip that is a file on this Mac ("open the package at
   ~/Projects/x/deck.zip") opens with `open_local_package` and its full path,
   only when he asks; a page package then shows at once.
+- A page package is opened only with `open_package_page`, never through
+  Folders, a file or a bundle viewer, `show_on_screen` or a browser: those
+  show its page without its scripts, so nothing on it works.
 - `list_packages` shows what is unpacked here, newest first, a page at a time.
   When he asks to see or open a package by what it is about ("open the globe
   numbers package"), call `list_packages` with those words as `name`, then
   open the newest one that fits by its id: a page package with
-  `open_package_page` at once, since his asking is the go-ahead. Ask which only
+  `open_package_page` at once, since his asking is the go-ahead.
+  `open_package_page` also takes his words as `package` and opens the one
+  they fit, or names the ones they fit. Ask which only
   when two different packages fit equally; never say you cannot open one
   without having tried.
 - At the end, call `package_results`, then `draft_message` with `reply_to` the

@@ -1712,8 +1712,9 @@ TOOL_SPECS = [
             "type": "object",
             "properties": {"package": {"type": "string",
                                        "description": "The package's id, its name and version "
-                                                      "(\"denice-pulses-1.0.1\"), or its name "
-                                                      "for the highest version of that name."}},
+                                                      "(\"denice-pulses-1.0.1\"), its name, or the "
+                                                      "words he called it (\"globe numbers\"): "
+                                                      "the highest version of what fits."}},
             "required": ["package"],
         },
     },

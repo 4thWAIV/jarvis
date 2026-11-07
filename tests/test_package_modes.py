@@ -592,3 +592,10 @@ def test_he_names_a_package_and_the_brain_opens_its_newest_version(wired, tmp_pa
     assert [m["package"]["id"] for m in sent] == [newer.id]
     assert work_packages.find(older.id) == older
     assert work_packages.find("denice-globe-numbers-1.0.0") == older
+    # His own words, not a name: the one they fit, or the ones they fit named.
+    assert work_packages.find("the globe numbers") == newer
+    with pytest.raises(work_packages.PackageError, match="More than one package fits"):
+        work_packages.find("design study")
+    sent.clear()
+    got = _call(wired, "open_package_page", package="globe numbers")
+    assert got["ok"] and [m["package"]["id"] for m in sent] == [newer.id]

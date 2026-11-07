@@ -456,23 +456,44 @@ def every() -> list[Package]:
 
 def find(reference: str, runs: Optional[str] = None) -> Package:
     """A package by its folder name (its id), by its name and version
-    ("denice-pulses-1.0.1"), or by its own name: the highest version of that
-    name here, the one unpacked last among equal versions. With `runs`, only
-    one that runs that way."""
+    ("denice-pulses-1.0.1"), by its own name, or else by the words he called
+    it ("globe numbers", `matching`): the highest version of that name here,
+    the one unpacked last among equal versions; words that fit several
+    packages name each one's id instead. With `runs`, only one that runs
+    that way."""
     reference = str(reference or "").strip()
     packages = every()
     found = [p for p in packages if p.id == reference]
     named = ([p for p in packages if f"{p.manifest.name}-{p.manifest.version}" == reference]
              or [p for p in packages if p.manifest.name == reference])
+    if not found and not named and reference:
+        # Not an exact name: the packages his words fit best, if they are
+        # all versions of one package.
+        fits = matching(reference)
+        if len({p.manifest.name for p in fits}) > 1:
+            raise PackageError(f"More than one package fits {reference!r}: "
+                               f"{', '.join(_newest_of_each(fits))}. Ask him which.")
+        named = fits
     if not found and named:
         # every() is newest first, and max keeps the first of equals.
         found = [max(named, key=lambda p: version_key(p.manifest.version))]
     if not found:
-        raise PackageError(f"There is no package {reference!r} here; list_packages with the "
-                           f"words it is called finds its id.")
+        raise PackageError(f"There is no package {reference!r} here; list_packages lists "
+                           f"them.")
     if runs and found[0].manifest.runs != runs:
         raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, not as {runs}.")
     return found[0]
+
+
+def _newest_of_each(packages: list[Package]) -> list[str]:
+    """The id of each name's highest version, in the order the names come."""
+    best: dict[str, Package] = {}
+    for p in packages:
+        if (p.manifest.name not in best
+                or version_key(p.manifest.version) > version_key(best[p.manifest.name]
+                                                                 .manifest.version)):
+            best[p.manifest.name] = p
+    return [p.id for p in best.values()]
 
 
 def version_key(version: str) -> tuple:
