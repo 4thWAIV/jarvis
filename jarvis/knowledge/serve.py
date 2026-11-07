@@ -200,6 +200,11 @@ def _search(engine: Engine, request: Request) -> Answer:
     return Answer(200, query.search(engine, request.body or {}))
 
 
+@route("GET", "/v1/watermarks")
+def _watermarks(engine: Engine, request: Request) -> Answer:
+    return Answer(200, {"watermarks": engine.watermarks()})
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

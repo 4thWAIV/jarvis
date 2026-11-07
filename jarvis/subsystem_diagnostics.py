@@ -199,6 +199,12 @@ SAID: dict[str, str | dict[str, str]] = {
     "knowledgeHeld": "Paused while the conversation needs the machine",
     "knowledgeHeldCpu": "Paused: the processor is busy ({percent} percent)",
     "knowledgeFree": "Free to work",
+    "knowledgeIngestNotYet": "No pass yet",
+    "knowledgeIngestOk": {"one": "Last pass {age} ago: {count} document read",
+                          "other": "Last pass {age} ago: {count} documents read"},
+    "knowledgeIngestMore": "Last pass {age} ago; more is left to read",
+    "knowledgeIngestFailed": "The last pass failed: {error}",
+    "knowledgeIngestRunning": "Reading now",
     "knowledgeNoEmbedder": "No embedder chosen; search uses words and the graph",
     "knowledgeEmbedding": {"one": "Embedding with {embedder}; {count} waiting",
                            "other": "Embedding with {embedder}; {count} waiting"},
@@ -235,6 +241,7 @@ NAMES: dict[str, str] = {
     "knowledge": "Knowledge engine",
     "knowledgePace": "Pace",
     "knowledgeEmbedder": "Embedder",
+    "knowledgeIngest": "Ingest",
     "watcher": "Session watcher",
     "outgoing": "Messages to agents",
     "queued": "Queued messages",
@@ -741,6 +748,20 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
         checks.append(check("pace", "knowledgePace", OK, line))
     else:
         checks.append(check("pace", "knowledgePace", OK, say("knowledgeFree")))
+    ingest = health.get("ingest")
+    if ingest is not None:
+        last = ingest.get("last_finished_at")
+        if ingest.get("running"):
+            line = (OK, say("knowledgeIngestRunning"))
+        elif ingest.get("error"):
+            line = (DEGRADED, say("knowledgeIngestFailed", error=ingest["error"]))
+        elif last is None:
+            line = (UNKNOWN, say("knowledgeIngestNotYet"))
+        elif ingest.get("more"):
+            line = (OK, say("knowledgeIngestMore", age=age(now - last)))
+        else:
+            line = (OK, say("knowledgeIngestOk", count=ingest.get("documents", 0), age=age(now - last)))
+        checks.append(check("ingest", "knowledgeIngest", *line))
     vectors = engine.get("vectors") or {}
     if engine:
         if vectors.get("embedder"):
@@ -750,7 +771,9 @@ def knowledge(health: Optional[dict], now: float) -> Subsystem:
         else:
             checks.append(check("embedder", "knowledgeEmbedder", IDLE, say("knowledgeNoEmbedder")))
     s = from_checks("knowledge", checks, shown[1])
-    s.state = shown[0]          # the process decides; the pace and embedder only inform
+    s.state = shown[0]          # the process decides; the others inform
+    if s.state == OK and any(c.state == DEGRADED for c in checks):
+        s.state = DEGRADED      # a failing ingest is worth seeing
     return s
 
 

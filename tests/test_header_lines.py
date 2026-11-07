@@ -354,6 +354,18 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "knowledge_ingest.files": (
+        "the labels it builds are the names of files in the brain's own note "
+        "folders and paths in folders he registered, read through "
+        "folder_service under the FILES reader; they go only into the "
+        "engine's derived documents, whose hits carry their trust, and the "
+        "server never speaks them. Driven by tests/test_knowledge_ingest.py"),
+    "knowledge_ingest.run": (
+        "the foreign text it reads (an agent's run summary and result, a "
+        "session's workflow events, an agent's conversation items) goes only "
+        "into chunk documents marked untrusted; the labels it builds carry "
+        "only a run's or workflow's id and a date. Driven by "
+        "tests/test_knowledge_ingest.py"),
     "knowledge_client._schedule_restart": (
         "the `reason` it logs and keeps is the supervisor's own wording around "
         "the engine child's exit code or footprint, numbers from its own "

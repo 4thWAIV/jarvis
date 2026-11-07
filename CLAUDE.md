@@ -979,6 +979,26 @@ committed change is a `folders` hint on `/ws/sessions`. The page's side is `fold
 centre and `FoldersPanel.tsx` on the right. `JARVIS_FOLDERS=0` switches the
 routes and tools off and keeps the records.
 
+## The knowledge engine
+A document store, a typed graph, a keyword index and a vector index in a
+process of its own, `python -m jarvis.knowledge serve` (`jarvis/knowledge/`,
+which imports nothing from `server.py`); the design is
+`docs/planning/work-package-bundles/design.md` and the build order
+`build-plan.md` beside it. It holds nothing that cannot be rebuilt from
+JARVIS's records, notes and folders, and `python -m jarvis.knowledge rebuild`
+drops it. Off unless `JARVIS_KNOWLEDGE` is on: then `knowledge_runtime.py`
+starts it after startup settles through `knowledge_client.Supervisor`
+(loopback only, its own token, `knowledge-address.json`, restarts after 1, 5
+and 30 s, down after three in ten minutes) and paces it every second: hold
+while the conversation floor is not idle or the CPU is over 70 percent. Ingest
+is a child of its own, `python -m jarvis.knowledge_ingest`, one pass at a time,
+stopped and continued with the pace; it reads the brain's notes, the
+conversation log, finished runs, workflow events and registered folders'
+Markdown (through `folder_service`, FILES reader only) and keeps each source's
+watermark in the engine. No embedder is wired until one is chosen
+(`knowledge/embedder.py`'s `RUNNER`). Diagnostics shows its row (`knowledge`).
+Its process, crash and budget tests carry the `knowledge_engine` marker.
+
 ## Self-update
 A checkout whose `origin` is on github.com updates itself from GitHub through
 one service, `self_update.py`. A version is a pull request merged to main:
@@ -1720,6 +1740,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 
 - `JARVIS_FOLDERS` (optional, default on) — `0`/`false`/`no`/`off` switches
   the folder catalog's routes and tools off; its records are kept
+- `JARVIS_KNOWLEDGE` (optional, default off) — `1` starts the knowledge
+  engine and its ingest (see "The knowledge engine")
+- `JARVIS_KNOWLEDGE_MEMORY_MB` (optional, default 384, or 256 under 16 GB)
+  — the engine's memory budget; it is restarted past 1.5 times it
 - `JARVIS_FOLDER_DISCOVERY` (optional, default on) — `0` stops only the
   background discovery and availability look (every test sets this)
 

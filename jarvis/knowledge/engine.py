@@ -124,8 +124,22 @@ class Engine:
         edges, edge_deletes = body.get("edges") or [], body.get("edge_deletes") or []
         if not isinstance(edges, list) or not isinstance(edge_deletes, list):
             raise DocumentError("edges and edge_deletes are lists")
+        marks = body.get("watermarks") or {}
+        if not isinstance(marks, dict) or not all(isinstance(k, str) and k for k in marks):
+            raise DocumentError("watermarks are an object keyed by source")
+        from jarvis.knowledge.encoding import canonical
+        from jarvis.knowledge.store import META
+        from jarvis.knowledge.wal import Op
+        mark_ops = [Op(META, ("wm:" + k).encode(), canonical(v)) for k, v in marks.items()]
         return self.docs.write(puts, deletes,
-                               extra=lambda pending: self.graph.ops(edges, edge_deletes, pending))
+                               extra=lambda pending: self.graph.ops(edges, edge_deletes, pending) + mark_ops)
+
+    def watermarks(self) -> dict:
+        """Each ingest source's position, durable with the documents it
+        produced, so a pass after any downtime catches up exactly."""
+        import json
+        from jarvis.knowledge.store import META
+        return {v.key.decode()[3:]: json.loads(v.value) for v in self.store.prefix(META, b"wm:")}
 
     def maintain(self) -> None:
         """One maintenance step, run by the engine's own timer while the

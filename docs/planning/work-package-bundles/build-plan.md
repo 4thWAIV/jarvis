@@ -316,6 +316,25 @@ and its deadline work the same whatever produces the rows.
 - The Knowledge row is shown while the engine is switched off, as idle and
   "Switched off". Reason: Diagnostics lists every part of JARVIS, and the
   design names this row's idle state.
+- Ingest watermarks are kept in the engine as their own logged family and
+  written in the same transaction as the documents they describe, rather
+  than in the manifest. Reason: a crash then keeps both or neither, and the
+  manifest changes only at a flush.
+- Messages to and from sessions are read from the conversation log, which
+  already holds them, not a second time from their tables. Reason: one
+  passage per message.
+- Each conversation item is its own chunk of a per-day document, not one
+  chunk per exchange. Reason: his turn and JARVIS's may differ in trust.
+- Until projects with an index scope exist (phase 1), every registered
+  folder read under the FILES reader is ingested by the design's Markdown
+  rule. Reason: the engine is off by default, and the rule already keeps
+  source code and history folders out.
+- Passes run every ten minutes and five seconds after one that left more;
+  hints only bring the next pass forward. Reason: the floor decides when,
+  and a timer is enough until the brain's tools ask for freshness.
+- A pass left behind by a server that went away is killed at the next
+  start only when `ps` shows it is an ingest pass. Reason: a recorded pid
+  may have been reused.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -326,6 +345,11 @@ targeted tests are run locally; CI runs the suite.
 
 ## Progress
 
+Phase 4's second step is built: ingest in its own child, one pass at a
+time, paced with the floor, from the notes, the conversation log, finished
+runs, workflow events and registered folders' Markdown, with watermarks kept
+in the engine and the pass shown on the Knowledge row.
+
 Phase 4's first step is built too: the server starts the engine after
 startup settles (only with `JARVIS_KNOWLEDGE` on), paces it by the floor and
 the CPU, and Diagnostics has its Knowledge row.
@@ -333,6 +357,6 @@ the CPU, and Diagnostics has its Knowledge row.
 Steps 1 to 7 are built on this branch, each in its own commit, with the
 tests named in each step (`tests/test_knowledge_*.py`; the process, crash,
 child-process and budget tests carry `knowledge_engine`). What comes next is
-phase 4's remainder: wiring the supervisor into the server with the pace
-following the conversation floor, the ingest adapters in their child, and
-the Knowledge row in Diagnostics.
+the rest of phase 4: the linker (alias edges and proposals), cards and
+importance with the cache tiers, `HotCards`, the query shape log and the
+index advisor, and the brain's knowledge tools with their page.

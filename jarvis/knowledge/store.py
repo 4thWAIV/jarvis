@@ -54,7 +54,8 @@ DOCS = 1
 FIELDS = 2
 EDGES_OUT = 3
 EDGES_IN = 4
-FAMILY_EXT = {DOCS: "docs", FIELDS: "dict", EDGES_OUT: "eout", EDGES_IN: "ein"}
+META = 6          # ingest watermarks, written with the documents they describe
+FAMILY_EXT = {DOCS: "docs", FIELDS: "dict", EDGES_OUT: "eout", EDGES_IN: "ein", META: "meta"}
 
 MEMTABLE_MAX_BYTES = 32 << 20
 FLUSH_AFTER_SEC = 60.0
