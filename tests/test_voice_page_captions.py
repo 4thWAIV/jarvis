@@ -169,13 +169,17 @@ async def test_always_four_lines_left_aligned_between_the_side_columns(page_play
           const left = document.getElementById('left-column').getBoundingClientRect();
                     return {left: b.left, rightGap: innerWidth - b.right, column: left.right,
                   bottom: b.bottom, columnBottom: left.bottom, align: sc.textAlign,
+                  corner: parseFloat(getComputedStyle(document.documentElement)
+                    .getPropertyValue('--centre-corner-height')) || 0,
                   lines: scroll.clientHeight / parseFloat(sc.lineHeight)};
         }""")
         # Centred between the two side panels, the same gap to each.
         assert box["left"] > box["column"], box
         assert abs((box["left"] - box["column"]) - (box["rightGap"] - box["column"])) < 0.5, box
-        # The bottom of the centre stack, level with the side panels.
-        assert abs(box["bottom"] - box["columnBottom"]) < 0.5, box
+        # The bottom of the centre stack, level with the side panels less the
+        # microphone's corner, which every view but Conversation stops above.
+        assert box["corner"] > 0, box
+        assert abs(box["bottom"] + box["corner"] - box["columnBottom"]) < 0.5, box
         assert box["lines"] == 4, box                     # exactly four, even empty
         assert box["align"] in ("left", "start"), box
         await browser.close()

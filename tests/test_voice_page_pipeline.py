@@ -661,7 +661,9 @@ TOUR = [
      ["main.folders|foldersList|", "main.folders.tabs"]),
     (("right.tab.select", {"tab": "workflows"}),
      {"region": "right", "view": "right.workflows", "kind": "workflow", "key": "wf-1", "part": "row"},
-     ["right.panel"]),
+     # The Workflows list sits under the Work list in that tab (WorkPanel.tsx),
+     # so the route crosses into it too.
+     ["right.panel", "right.workflows|workflowsList|"]),
     (("workflow.open", {"workflowId": "wf-1", "tab": "tasks"}),
      {"region": "main", "view": "main.workflow", "kind": "workflowTask", "key": "wf-1/import", "part": "row"},
      [WORKFLOW_BOX, "main.workflow.view"]),    # Last, once every workflow has been read: the Conversation view, which
