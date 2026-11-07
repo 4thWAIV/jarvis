@@ -15,8 +15,8 @@ changed for a check and nothing else:
   is told through the real scheduler, voice socket, page playback and cues
   without calling Fish Audio.
 - The brain is never spawned (JARVIS_BRAIN_AUTOSTART=0), so every tool call
-  is taken as on a turn he drove: the acting package tools run as they do
-  when he asks.
+  is taken as on a turn he drove while it runs: the acting package tools run
+  as they do when he asks, and between calls the floor is free.
 - The session watcher, the preflight checks and the brain account lookup do
   not start: they read his live sessions and logins, which a check of one
   package has no business with.
@@ -79,14 +79,28 @@ def prepare(server, language: str, page: Path) -> None:
         return None
 
     start_brain_and_speech = server.start_brain_and_speech
+    calls = {"open": 0}
+    dispatch = server._dispatch_tool
+
+    async def on_his_turn(tool, handler, args):
+        # A tool call is his turn while it runs, as a brain turn he drove
+        # is; between calls no turn is under way, so the floor is free and
+        # a story waiting for his answer goes on once it has one.
+        calls["open"] += 1
+        try:
+            return await dispatch(tool, handler, args)
+        finally:
+            calls["open"] -= 1
 
     async def start_without_a_brain():
         await start_brain_and_speech()
         brain = server.brain_instance
         if brain is not None:
-            # Never spawned: every call stands for one on his turn.
-            type(brain).current_origin = property(lambda _self: "user")
+            type(brain).current_origin = property(
+                lambda _self: "user" if calls["open"] else None)
         spoken_words.set_active_language(language)
+
+    server._dispatch_tool = on_his_turn
 
     server._synth_for_speech = stand_in_voice
     server.start_brain_and_speech = start_without_a_brain

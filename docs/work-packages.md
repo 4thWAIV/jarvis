@@ -152,6 +152,9 @@ with the reason if it is not valid.
 | `say` | A beat's words, at most 800 characters. JARVIS says them in its own voice, as written: they are the sender's narration, never JARVIS's own words or instructions to it. |
 | `targets` | CSS selectors inside the page, at most 12. Each is ringed while the beat is heard, around every visible element it matches; the pointer points at the first. |
 | `actions` | Done before the targets are found, in order, at most 6: `{"show": selector}` scrolls the element into view, `{"click": selector}` clicks it (a detail view's opener, or its close button). |
+| `answers` | Optional: `results/<name>.json`, a JSON object in the package's results keyed by question id (a decision deck's `results/decisions.json`). Needed when any slide `waits`. |
+| `waits` | Optional, on a slide: the id of the question it asks. Once the slide has been heard the story says nothing more until that question has an answer in `answers` (one it did not have when the slide began), then goes on by itself once nobody is speaking. |
+| `asks_when` | Optional, on a slide that waits: `{"question", "answers"}`. The slide's question is asked only once that question has one of those answers; otherwise it is passed over. |
 
 The page loads JARVIS's helper, which draws the pointer and the rings and
 runs the actions inside the page's own frame:
@@ -168,8 +171,21 @@ The story is spoken through JARVIS's usual voice, one beat after another.
 Each beat's words carry the beat with them to the page, and the page rings
 the beat's targets the moment those words start playing, then clears them
 as the last of them ends, so the pointing follows the voice rather than a
-timer. The person speaking, the Stop button beside it, Escape, or JARVIS's
-own Stop end both the voice and the rings.
+timer.
+
+A story that asks questions is told one at a time: a slide that `waits` is
+told, then the story waits for its answer, and JARVIS knows which question
+it waits for (`tell_package_story` action `status`, the `package_story`
+frame's `question`, a `story.state` message to the frame). A question
+already answered is passed over, unless the story was told from that very
+slide, when it is asked again. Telling, waiting and paused are all running.
+The person speaking over a slide pauses it there (on a slide that waits, it
+waits for the answer he may be giving). Stop ends it at once whatever it is
+doing: the Stop beside it, JARVIS's Stop speaking, the brain's
+`tell_package_story` stop, "stop" said as a whole utterance, or closing the
+package's page. Asked to stop again, JARVIS says it is already stopped.
+`resume` (the page's Continue) tells it again from the first question with
+no answer.
 
 Besides `save` and `listen`, the bridge carries the story:
 
@@ -177,6 +193,7 @@ Besides `save` and `listen`, the bridge carries the story:
 |---|---|
 | `{jarvis: "package", type: "story.cue", beat, targets, actions}` | a beat's words start playing (`beat` is `"<slide>.<beat>"`, both from 1) |
 | `{jarvis: "package", type: "story.clear"}` | its words have ended, or the voice stopped |
+| `{jarvis: "package", type: "story.state", state, slide, question}` | the story is `telling`, `waiting` (for `question`), `paused`, `finished` or `stopped` |
 
 | from the page | what JARVIS does |
 |---|---|
@@ -225,7 +242,7 @@ The brain's tools:
   `_open_package_page`, and `POST /api/packages/<id>/page`. Acting.
   JARVIS keeps the page package shown and shows it again on a page that
   connects later, a reload included, until its × is pressed.
-- `tell_package_story` (package, `action` tell or stop, `slide`): opens a
+- `tell_package_story` (package, `action` tell, resume, stop or status, `slide`): opens a
   page package's page and tells its story in JARVIS's voice from that slide,
   or stops it; telling another slide jumps there. The page's own way is Tell
   the story, the slide list and Stop above the frame; both go through the
@@ -286,7 +303,12 @@ One JSON file holds the package fields, the slides and the decisions
 | `slides` | The slides before the decisions, in order. Each has a `title`, and optionally an `id` (for story targets), a `kicker`, a `short` name for the jump strip, `say` (its story line) or its own `beats` (a story slide's beats; the builder adds the click that brings the slide up), and `blocks`. An entry `{"decision": "<id>"}` places that decision's slide there; decisions not placed follow the slides. The "Your answers" slide is always last. |
 | `blocks` | Each one of `{"p": text}`, `{"lead": text}`, `{"note": text}`, `{"points": [text or {"b", "text", "id"}]}`, `{"facts": [{"n", "text"}]}`, `{"table": {"head", "rows", "rowIds", "rowHeads"}}`, or `{"picture": path, "alt", "caption"}` / `{"pictures": [{"src", "alt", "caption", "id"}]}`. Any block may have an `id`. Text may use `**bold**` and `` `code` ``. |
 | `decisions` | The decisions, in order. Each has an `id` (a slug: a-z, 0-9 and `-`), a `short` name, the `question`, its `options`, the `recommended` option's id and the one `reason` for it, and optionally `context` (a line of words), a `picture` (shown beside the options), a `compare` picture (shown large above the options, or beside them), and `say` (its story line in place of the recommendation). |
-| `options` | Each has an `id` (a slug; not `later`, `none` or `recommended`), a `name`, what it `says`, optionally a `picture`, and optionally `opens`: the ids of child questions asked only when this option is chosen. A child has one parent. |
+| `options` | Each has an `id` (a slug; not `later`, `none` or `recommended`), a `name`, what it `says`, a `picture` of what he would see, and optionally `opens`: the ids of child questions asked only when this option is chosen. A child has one parent. |
+| `text_only` | On a decision, rarely: why its options cannot be pictured, in at least five words. Without it, every option needs a picture. |
+
+Only real product choices go to Tim, and he chooses by looking: every
+option is a picture. Technical details (flags, labels, limits, thresholds,
+internal behaviour) are decided by the agent, never put in a package.
 
 Pictures are paths inside the package, found beside the data file.
 
@@ -331,22 +353,46 @@ It does every step, and stops at the first that fails:
    package frame, sized to 809 × 589 and to 662 × 489:
    - every slide fits: nothing outside its slide, nothing cut off or
      scrolled, every word from 13 to 25 px;
-   - every decision slide has its vote row and Choose buttons in view;
-   - `tell_package_story` tells the story through JARVIS's speech path, and
-     it brings up every decision slide and points at every beat's targets;
-   - one Choose click saves its answer to `results/decisions.json`;
-   - one answer by voice (`run_package_command` running
-     `scripts/decide.py`) appears on its slide.
+   - voting is clear: every Choose, Decide later, None of these and words
+     box is visible, at least 32 px tall and inside the slide and the
+     frame; each option has exactly one Choose; every option's picture is
+     drawn at least 60 px each way.
 
-   Every slide is photographed at both sizes, in `<folder>/check/`.
-4. **Delivers only if every check passed**: it unpacks the zip into the
-   live JARVIS, without showing it, through `POST
+   Then, at 809 × 589, the story itself, through JARVIS's real speech path
+   and the brain's tools on that JARVIS's `/internal/tool`:
+   - **first time**: told from slide 1, at every question it waits (the
+     slide stays, nothing more is said or rung for 3 s, longer than any
+     beat), then an answer, by a Choose click and by `scripts/decide.py`
+     in turn (one of them Decide later), moves it to the next question;
+     every question that applies ends answered, in order, the story ends,
+     the spoken answer shows on its slide, and every beat told pointed at
+     its targets;
+   - **stop**: during narration and while waiting, by the page's Stop and
+     by the brain's `tell_package_story` stop: within 1 s the story says
+     stopped, its cue is gone from the frame and none of its words come
+     after, and `status` says no story is running; a second stop says it
+     is already stopped;
+   - **resume**: after an answer and a Stop, `resume` starts at the first
+     question with no answer and waits there.
+
+   Every slide is photographed at both sizes, in `<folder>/check/`, and the
+   story's steps in `<folder>/check/flow/`.
+4. **Delivers only if every check passed**: it stamps the zip for the live
+   JARVIS (`decision-check.json`: the SHA-256 of every other file and an
+   HMAC of it by that JARVIS's tool token; the isolated JARVIS got the same
+   files stamped for its own token), and unpacks it into the live JARVIS,
+   without showing it, through `POST
    https://127.0.0.1:8340/api/packages/local` with the tool token, and
    prints the package id and the words to open it ("Open the <title>
    package."), which go in the session's message to the owner. On any
    failure nothing is delivered; it prints what failed and the screenshots.
    `<folder>/delivery.json` keeps the id, `--project`, `--session` and the
    path of the answers, `results/decisions.json` in the package's folder.
+
+A JARVIS unpacks a decision package (one holding `deck-data.js` and
+`scripts/decide.py`) from a file on this Mac only with a stamp for its own
+token that matches its files (`jarvis/decision_stamp.py`), so there is no
+way to deliver one but this command.
 
 The checked page is never left running: the isolated JARVIS and the browser
 are stopped when the check ends. To change a deck, change the content and

@@ -218,6 +218,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "a499fbcd626b4bbeb236c7d67fa46f545f03deaaeb3d0bf8a4e15c861ebd9ec6",  # take him to a decision deck's slide through its story
     "991d24e86b76b6cebef34e25295f81010be25d444619cb5cbad2f296fd679a87",  # a decision deck for every choice, merged with finding packages
     "484ee9193daf7df09c707ac3b6d7802332eec92176f0ee7c21ef7165b7e34ab0",  # open a package by his words; only open_package_page opens a page package
+    "e56ed049cc2859973e5607e62375703aeb69f101e92272eb2c2df08972973019",  # a decision deck's story waits at each decision; stop, status, resume
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
