@@ -151,6 +151,33 @@ class Engine:
         with self._link_lock:
             return self.linker.run()
 
+    RESOLVE_KINDS = ("topic", "project", "work", "folder", "person", "agent", "workflow", "document")
+
+    def resolve(self, name: str, limit: int = 20) -> list[dict]:
+        """Every typed match for words (design 7.12): a topic by its name or
+        an alias (exact or ambiguous, said which), and any other kind by its
+        label, each labelled by kind so meanings stay apart."""
+        from jarvis import spoken_words
+        want = " ".join(spoken_words.folded_words(name or ""))
+        if not want:
+            return []
+        out: list[dict] = []
+        for topic in self.docs.find(kinds_=["topic"], limit=1 << 30):
+            aliases = topic.get("aliases") or {}
+            for how, names in (("name", [topic.get("_label") or ""]), ("exact alias", aliases.get("exact") or []),
+                               ("ambiguous alias", aliases.get("ambiguous") or [])):
+                if any(" ".join(spoken_words.folded_words(str(n))) == want for n in names):
+                    out.append({"key": topic["_key"], "kind": "topic", "label": topic.get("_label"),
+                                "status": topic.get("_status"), "how": how, "trust": topic.get("_trust")})
+                    break
+        variants = list(dict.fromkeys([name, name.strip(), name.lower(), name.title(), name.capitalize()]))
+        for kind in self.RESOLVE_KINDS[1:]:
+            for d in self.docs.find(kinds_=[kind], where=[["_label", "in", variants]], limit=limit):
+                if " ".join(spoken_words.folded_words(d.get("_label") or "")) == want:
+                    out.append({"key": d["_key"], "kind": kind, "label": d.get("_label"),
+                                "status": d.get("_status"), "how": "name", "trust": d.get("_trust")})
+        return out[:limit]
+
     def watermarks(self) -> dict:
         """Each ingest source's position, durable with the documents it
         produced, so a pass after any downtime catches up exactly."""

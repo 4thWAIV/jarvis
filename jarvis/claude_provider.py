@@ -171,6 +171,15 @@ ALLOWED_TOOLS = [
     # Mute speech and all audio off, never their opposites: only ever quieter.
     "mcp__jarvis__mute_speech",
     "mcp__jarvis__turn_audio_off",
+    # The knowledge engine (knowledge_api.py): reads walled, changes acting.
+    "mcp__jarvis__knowledge_status",
+    "mcp__jarvis__knowledge_search",
+    "mcp__jarvis__knowledge_entity",
+    "mcp__jarvis__knowledge_proposals",
+    "mcp__jarvis__knowledge_topics",
+    "mcp__jarvis__link_knowledge",
+    "mcp__jarvis__change_topic",
+    "mcp__jarvis__reindex_knowledge",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",

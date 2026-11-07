@@ -239,6 +239,15 @@ def _focus(engine: Engine, request: Request) -> Answer:
     return Answer(200, engine.cards.focus(key))
 
 
+@route("POST", "/v1/resolve")
+@_guard
+def _resolve(engine: Engine, request: Request) -> Answer:
+    name = (request.body or {}).get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise BadRequest("resolve takes a name")
+    return Answer(200, {"matches": engine.resolve(name)})
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:
