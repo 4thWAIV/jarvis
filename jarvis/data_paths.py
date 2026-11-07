@@ -223,6 +223,8 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "c03992b7460ed11182fcc60f28bed34130af9d6b5ea8ee151dd96163a16cc147",  # as shipped in d2f6c50 (the package inbox)
     "8c45e249c1257825d490bfda155f182e3f01af3c15c509fb5e3e132e1686d90a",  # the knowledge tools
     "46dc64cf8fa4935662462dbc78a2743ba4355b2c6e3767eb2945cd4999a6fa26",  # work_context before starting work
+    "360ce430dd09dd4502b68c87674dceb1e705b7ea1d173e63c8639ef65980a5a9",  # as shipped in f637d6b (package sign-off)
+    "5a696e511ab8a0d915b569a22ec764e5ffe6ff6653d92d69c29957a799708f88",  # project records, merged with it
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
