@@ -37,6 +37,7 @@ import json
 import logging
 import struct
 import threading
+import time
 from array import array
 from typing import Any, Callable, Iterable, Iterator, Optional
 
@@ -257,6 +258,11 @@ class DocumentStore:
         self.put_hooks: list[Callable[[dict, dict, int, dict], list[Op]]] = []
         self.delete_hooks: list[Callable[[bytes, Optional[int]], list[Op]]] = []
         self.forget_hooks: list[Callable[[set[bytes]], dict[int, set[bytes]]]] = []
+        # The index advisor: offered first to answer a set of conditions from
+        # an extra index, and told the shape of every query (never its values).
+        self.extra_lookup: Optional[Callable[[list, Optional[list[str]]], Optional[tuple]]] = None
+        self.shape_hook: Optional[Callable[..., None]] = None
+        self.last_read = 0
         self._load()
         store.listeners.append(self._on_apply)
         store.generation_listeners.append(self._on_generation)
@@ -513,6 +519,8 @@ class DocumentStore:
 
     def _smallest(self, preds: list[Predicate], kind_names: Optional[list[str]]):
         best = None
+        if self.extra_lookup is not None:
+            best = self.extra_lookup(preds, kind_names)
         for pred in preds:
             if not self._usable(pred, kind_names):
                 continue
@@ -540,8 +548,13 @@ class DocumentStore:
                 kinds.kind_of(k)
             preds.append(Predicate("_kind", "in", list(kinds_)))
         out = []
+        started = time.perf_counter()
+        self.last_read = 0
         for doc in self._matching(preds, kinds_, at, within):
             out.append(doc)
+        if self.shape_hook is not None:
+            self.shape_hook(kinds_, preds, order, (time.perf_counter() - started) * 1000.0,
+                            self.last_read, len(out))
         if order:
             path, direction = order
             out.sort(key=lambda d: _sort_key(d, path), reverse=(direction == "desc"))
@@ -567,6 +580,7 @@ class DocumentStore:
             if within is not None:
                 found = within if found is None else (found & within)
             ordinals = sorted(found) if found is not None else list(self.columns.live())
+            self.last_read = len(ordinals)
             for o in ordinals:
                 doc = self.by_ordinal(o, lsn)
                 if doc is not None and all(p.matches(doc, dates[id(p)]) for p in preds):

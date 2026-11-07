@@ -360,6 +360,18 @@ and its deadline work the same whatever produces the rows.
   write drops the cards it touches and they are made again when asked.
   Reason: the two-hop walk already meets its budget through the block pool,
   so resident adjacency waits for a measured need.
+- Extra index definitions and the query shapes are kept in the engine's own
+  logged family, not the manifest. Reason: the compaction child reads them
+  like any data, and they survive a crash with the documents.
+- Only composite equality indexes are made so far; tuple, range and spatial
+  indexes wait for a query shape that needs them. Reason: the shapes the
+  ingest and the brain's tools run today are equality filters.
+- A new definition is built by compacting every generation at once, and an
+  index is used only when every generation holds it. Reason: a partly built
+  index would miss documents.
+- The owner's pin and forbid for extra indexes are not built yet. Reason:
+  they need a control on the Knowledge view; the guardrails bound the
+  advisor meanwhile.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -381,7 +393,7 @@ the CPU, and Diagnostics has its Knowledge row.
 
 Steps 1 to 7 are built on this branch, each in its own commit, with the
 tests named in each step (`tests/test_knowledge_*.py`; the process, crash,
-child-process and budget tests carry `knowledge_engine`). What comes next is
-the rest of phase 4: the linker (alias edges and proposals), cards and
-importance with the cache tiers, `HotCards`, the query shape log and the
-index advisor, and the brain's knowledge tools with their page.
+child-process and budget tests carry `knowledge_engine`). Phase 4's rest is built: topics and the linker with its proposals, cards
+and HotCards, the brain's knowledge tools with their routes and the
+Knowledge view, and the index advisor. What remains of phase 4 is the
+owner's pin and forbid for extra indexes; phase 5 waits on the embedder.

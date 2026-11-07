@@ -248,6 +248,11 @@ def _resolve(engine: Engine, request: Request) -> Answer:
     return Answer(200, {"matches": engine.resolve(name)})
 
 
+@route("GET", "/v1/indexes")
+def _indexes(engine: Engine, request: Request) -> Answer:
+    return Answer(200, {**engine.advisor.health(), "candidates": engine.advisor.candidates()})
+
+
 @route("POST", "/v1/find")
 @_guard
 def _find(engine: Engine, request: Request) -> Answer:

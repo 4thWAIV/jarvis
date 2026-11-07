@@ -59,6 +59,7 @@ class Engine:
         self.vectors = None  # the vector index and its embedding worker
         self.linker = None   # mentions and proposals
         self.cards = None    # entity cards and the resident tier
+        self.advisor = None  # query shapes and the extra indexes
 
     @classmethod
     def open(cls, directory: Path) -> "Engine":
@@ -100,6 +101,8 @@ class Engine:
         self.cards = Cards(self)
         self.cards.load_warm(self.directory / "cache.warm")
         self._cards_refreshed = 0.0
+        from jarvis.knowledge.advisor import Advisor
+        self.advisor = Advisor(self.docs)
 
     compact_in_child = True
 
@@ -111,7 +114,8 @@ class Engine:
                 "documents": {"resident_bytes": self.docs.resident_bytes()} if self.docs else {},
                 "keyword": {"chunks": self.lexical.live} if self.lexical else {},
                 "vectors": self.vectors.health() if self.vectors else {},
-                "cards": self.cards.health() if self.cards else {}}
+                "cards": self.cards.health() if self.cards else {},
+                "advisor": self.advisor.health() if self.advisor else {}}
 
     def set_pace(self, mode: str) -> None:
         """`hold` while hearing needs the machine (I4): the compaction child
@@ -199,6 +203,17 @@ class Engine:
                 time.monotonic() - self._cards_refreshed >= CARDS_REFRESH_SEC:
             self._cards_refreshed = time.monotonic()
             self.cards.refresh()
+        if self.pace == "free" and self.advisor is not None and self.advisor.due():
+            self.advisor.save()
+            self.advisor.advise(rebuild=self.rebuild_indexes)
+
+    def rebuild_indexes(self) -> None:
+        """Every generation made again in one, so a new extra index is held
+        everywhere (and a dropped one nowhere)."""
+        self.store.flush()
+        gens = self.store.manifest.generations()
+        if gens:
+            self.store.compact(gens)
 
     def close(self) -> None:
         with self._close_lock:
@@ -217,6 +232,11 @@ class Engine:
         """Flushes and closes the parts; each step adds its part here."""
         if self.cards is not None:
             self.cards.save_warm(self.directory / "cache.warm")
+        if self.advisor is not None and self.store is not None and self.store.writable:
+            try:
+                self.advisor.save()
+            except Exception:
+                log.warning("could not save the query shapes", exc_info=True)
         if self.vectors is not None:
             self.vectors.close()
         if self.store is not None:
@@ -227,7 +247,8 @@ def _part_types() -> dict:
     from jarvis.knowledge.documents import IndexPart
     from jarvis.knowledge.lexical import LexicalPart
     from jarvis.knowledge.vectors import VectorPart
-    return {t.name: t for t in (IndexPart, LexicalPart, VectorPart)}
+    from jarvis.knowledge.advisor import ExtraIndexPart
+    return {t.name: t for t in (IndexPart, LexicalPart, VectorPart, ExtraIndexPart)}
 
 
 def default_parts() -> list:
