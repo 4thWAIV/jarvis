@@ -32,6 +32,13 @@ export const rightEn = {
   "right.projects.fromNames": "From names JARVIS already uses",
   "right.projects.accept": "Accept",
   "right.projects.ignore": "Ignore",
+  "right.projects.show.projects": "Projects",
+  "right.projects.show.folders": "Folders",
+  "right.projects.independent": "Independent folders",
+  "right.projects.noIndependent": "Every registered folder is in a project.",
+  "right.projects.waiting": "Waiting for you",
+  "right.projects.agentsNow": { one: "{count} agent working in it now", other: "{count} agents working in it now" },
+  "right.projects.toConfirm": { one: "{count} to confirm", other: "{count} to confirm" },
   "right.folders.openDiscovered": { one: "Open Folders · {count} discovered", other: "Open Folders · {count} discovered" },
 
   // The Agents tab (AgentsControl.tsx).

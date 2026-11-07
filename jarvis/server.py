@@ -3285,7 +3285,9 @@ messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame
 human_activity.mount(app)
 attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
-projects_api.mount(app, lambda: projects, on_change=_hint_projects)
+projects_api.mount(app, lambda: projects, on_change=_hint_projects,
+                   context=lambda svc, work_id: _work_context(svc, work_id),
+                   start_run=lambda work_id, prompt, folder_id: _start_work_run(work_id, prompt, folder_id))
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -9324,6 +9326,35 @@ def _last_run_to_resume(project_name: str, project_path: str) -> dict | None:
     return None
 
 
+async def _spawn_placed(prompt: str, name: str, path: str, folder_id: Optional[str],
+                        binding: Optional[dict], origin: str, *, model: Optional[str] = None,
+                        resume_from: Optional[str] = None, with_context: bool = True) -> str:
+    """Start a run already placed (where, and for which project and work):
+    the brain's spawn_run and the Work view's Start an agent here alike.
+    The user's own words, framed for a process nobody can answer (see
+    UNATTENDED_PREAMBLE); with JARVIS_RUN_CONTEXT on, the background JARVIS
+    holds about this work goes first, his own words only, since runs skip
+    permissions. Raises when the executor refuses."""
+    context = ""
+    if context_service.run_context_enabled() and with_context:
+        try:
+            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
+        except Exception:
+            log.warning("the run's context pack could not be made", exc_info=True)
+            context = ""
+    run_id = await run_executor_instance.spawn(
+        compose_run_prompt(prompt, context), name, path, origin, resume_from=resume_from,
+        model=model, folder_id=folder_id, **_bound(binding))
+    # "cancel that" and "how's it going" have to work: nobody can say a UUID
+    # out loud, so the run JARVIS just started is remembered as the referent
+    # for a back-reference. Same idea as `last_mentioned_session`.
+    global last_started_run
+    last_started_run = run_id
+    if context:
+        _keep_run_context(run_id, context)
+    return run_id
+
+
 async def tool_spawn_run(args: dict) -> str:
     """Start NEW work, rather than steering work already running.
 
@@ -9396,35 +9427,14 @@ async def tool_spawn_run(args: dict) -> str:
     if problem:
         return f"{problem} Nothing was started."
 
-    # The user's own words, framed for a process nobody can answer. See
-    # UNATTENDED_PREAMBLE. With JARVIS_RUN_CONTEXT on, the background JARVIS
-    # holds about this project goes first: his own words only, since runs
-    # skip permissions.
-    context = ""
-    if context_service.run_context_enabled() and args.get("context", True) is not False:
-        try:
-            context = await asyncio.to_thread(_run_pack, prompt, name, binding)
-        except Exception:
-            log.warning("the run's context pack could not be made", exc_info=True)
-            context = ""
-    composed = compose_run_prompt(prompt + _handed_text(handed), context)
-
     try:
-        run_id = await run_executor_instance.spawn(
-            composed, name, path, "voice", resume_from=resume_from, model=model,
-            folder_id=folder_id, **_bound(binding))
+        run_id = await _spawn_placed(prompt + _handed_text(handed), name, path, folder_id, binding,
+                                     "voice", model=model, resume_from=resume_from,
+                                     with_context=args.get("context", True) is not False)
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
-
-    # "cancel that" and "how's it going" have to work: nobody can say a UUID
-    # out loud, so the run JARVIS just started is remembered as the referent
-    # for a back-reference. Same idea as `last_mentioned_session`.
-    global last_started_run
-    last_started_run = run_id
     _hold(handed, f"run:{run_id}")
-    if context:
-        _keep_run_context(run_id, context)
 
     run = run_store.get_run(run_id) or {}
     started_on = run.get("requested_model") or model
@@ -10223,11 +10233,21 @@ def _records_scope(args: dict) -> Optional[dict]:
     return None
 
 
-async def tool_work_context(args: dict) -> str:
-    said = await _knowledge_tool(args, lambda: knowledge_api.work_context(
+def _work_context_answer(args: dict) -> dict:
+    """work_context: the brain's pack, or with `as_run` exactly what a run
+    is given (the Work view's preview)."""
+    if args.get("as_run") is True:
+        return knowledge_api.run_pack(knowledge_calls, purpose=str(args.get("purpose") or ""),
+                                      project=args.get("project"), scope=_records_scope(args))
+    return knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
-        include_received=args.get("include_received") is True, scope=_records_scope(args)),
-        "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
+        include_received=args.get("include_received") is True, scope=_records_scope(args))
+
+
+async def tool_work_context(args: dict) -> str:
+    said = await _knowledge_tool(args, lambda: _work_context_answer(args),
+                                 "What JARVIS already holds about this work, as JSON", "work_context",
+                                 walled=True)
     return said
 
 
@@ -14033,8 +14053,35 @@ def _run_pack(prompt: str, name: str, binding: Optional[dict]) -> str:
     legacy project name. It goes into the run's prompt, never to the brain."""
     scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
         if binding and projects is not None else None
-    return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
-                                search=knowledge_api.context_search(knowledge_calls)).text
+    return knowledge_api.run_pack(knowledge_calls, purpose=prompt, project=name, scope=scope)["text"]
+
+
+async def _start_work_run(work_id: str, prompt: str, folder_id: Optional[str]) -> dict:
+    """The Work view's Start an agent here: placed by the project service
+    exactly as spawn_run's work_id is (only in the work's folders), then
+    started through `_spawn_placed`. His click is the gate."""
+    from jarvis.project_store import ProjectError
+    words = " ".join(str(prompt or "").split())
+    if not words:
+        raise ProjectError("invalid_request", "say what the agent should do")
+    if run_executor_instance is None:
+        raise ProjectError("not_allowed", "runs cannot start just now")
+    name, path, placed, binding, problem = await _record_work_target(
+        {"work_id": work_id, "folder_id": folder_id or ""})
+    if problem:
+        raise ProjectError("not_allowed", problem)
+    run_id = await _spawn_placed(str(prompt).strip(), name, path, placed, binding, "api")
+    return {"run_id": run_id}
+
+
+def _work_context(service, work_id: str) -> dict:
+    """The Work view's preview: the pack a run started for this work gets,
+    exactly (`knowledge_api.run_pack`), for its title and outcome."""
+    brief = service.brief(work=work_id)
+    work = brief["work"] or {}
+    purpose = " ".join(x for x in (work.get("title"), work.get("outcome")) if x)
+    return {**knowledge_api.run_pack(knowledge_calls, purpose=purpose, scope=brief),
+            "enabled": context_service.run_context_enabled()}
 
 
 def _bound(binding: Optional[dict]) -> dict:

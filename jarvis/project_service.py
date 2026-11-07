@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
-from jarvis import project_seed, run_store
+from jarvis import project_seed, run_store, workspace_ref
 from jarvis.agent_directory import spoken_key
 from jarvis.project_store import ProjectError, ProjectStore
 
@@ -62,16 +62,26 @@ class ProjectService:
                 "availability": f.location.availability, "path": f.location.canonical_path,
                 "local": f.location.node_id == svc.node_id()}
 
-    def _summary_row(self, p) -> dict:
+    def _summary_row(self, p, live: Optional[list] = None) -> dict:
+        """A project as a list shows it: its folders, home, open work, how
+        many agents work in its folders now and how many accomplishments
+        wait for his Confirm."""
         folders = self.store.folders_of(p.id)
         home = next((f for f in folders if f.is_home), None)
+        paths = [self._folder_facts(f.folder_id).get("path") for f in folders]
         return {**p.json(), "folders": len(folders),
                 "home": self._folder_facts(home.folder_id) if home else None,
-                "open_works": len(self.store.works(self.owners(), state="open", project_id=p.id))}
+                "open_works": len(self.store.works(self.owners(), state="open", project_id=p.id)),
+                "agents_now": len(self.agents_in(paths, live)),
+                "to_confirm": len(self.store.accomplishments(p.id, states=("proposed",)))}
 
     def list_projects(self, include_archived: bool = False) -> dict:
-        return {"projects": [self._summary_row(p) for p in
+        """His projects, and which registered folders are in one, so a list
+        can show the rest as independent."""
+        live = list(self.live_sessions() or ())
+        return {"projects": [self._summary_row(p, live) for p in
                              self.store.projects(self.owners(), include_archived=include_archived)],
+                "linked_folders": sorted(self.store.linked_folder_ids()),
                 "owner": self.owner()}
 
     def find(self, name: str) -> list[dict]:
@@ -99,9 +109,9 @@ class ProjectService:
             raise ProjectError("not_found", "no project goes by that name")
         raise ProjectError("invalid_request", "more than one project goes by that name; give its ID")
 
-    def agents_in(self, folder_paths: list[str]) -> list[dict]:
+    def agents_in(self, folder_paths: list[str], live: Optional[list] = None) -> list[dict]:
         out = []
-        for s in self.live_sessions() or ():
+        for s in (self.live_sessions() or ()) if live is None else live:
             cwd = getattr(s, "cwd", None) if not isinstance(s, dict) else s.get("cwd")
             name = getattr(s, "name", None) if not isinstance(s, dict) else s.get("name")
             sid = getattr(s, "session_id", None) if not isinstance(s, dict) else s.get("session_id")
@@ -208,10 +218,28 @@ class ProjectService:
         return {"works": [w.json() for w in self.store.works(self.owners(), state=state, project_id=pid)]}
 
     def work_detail(self, work_id: str) -> dict:
+        """A piece of work in full: its projects (one primary), its own
+        folders, the folders an agent may start in for it (`run_location`'s
+        rule: its projects' folders and its own), its runs and what is bound
+        to it (workflows, packages), each by reference."""
         w = self.store.work(work_id)
+        allowed = list(dict.fromkeys([f.folder_id for x in w.projects
+                                      for f in self.store.folders_of(x["project_id"])] + list(w.folders)))
+        bound = []
+        for b in self.store.bound_to(work_id=w.id):
+            try:
+                r = workspace_ref.parse(b["subject"])
+            except workspace_ref.RefError:
+                continue
+            bound.append({"kind": r.kind.value, "id": r.id, "how": b["how"], "bound_at": b["bound_at"]})
         return {"work": w.json(),
                 "projects": [{**self.store.require(x["project_id"]).json(), "role": x["role"]} for x in w.projects],
-                "folders": [self._folder_facts(f) for f in w.folders]}
+                "folders": [self._folder_facts(f) for f in w.folders],
+                "run_folders": [self._folder_facts(f) for f in allowed],
+                "runs": [{"id": r["id"], "status": r["status"], "created_at": r["created_at"],
+                          "folder_id": r.get("folder_id")}
+                         for r in run_store.list_runs(work_id=w.id, limit=RUNS_SHOWN)],
+                "bound": bound}
 
     # -- changing ------------------------------------------------------------------
     def change_project(self, action: str, *, project: Optional[str] = None, name: Optional[str] = None,

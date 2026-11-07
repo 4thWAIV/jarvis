@@ -90,6 +90,7 @@
     "project": "^[0-9a-f-]{36}$",
     "projectCandidate": "^[0-9a-f-]{36}$",
     "accomplishment": "^[0-9a-f-]{36}$",
+    "workRecord": "^[0-9a-f-]{36}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": ["enum", "string", "integer", "boolean", "key"],

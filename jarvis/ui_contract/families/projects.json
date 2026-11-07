@@ -4,6 +4,32 @@
   "views": [],
   "commands": [
     {
+      "id": "folders.panel.show",
+      "label": "Show the Projects and folders tab as projects (with the independent folders and proposals) or as the plain folder list",
+      "view": "right.folders",
+      "args": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "projects",
+            "folders"
+          ]
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ]
+    },
+    {
       "id": "project.open",
       "label": "Open one project in the centre: its summary, folders, open work, accomplishments and the topics it touches",
       "view": "main.project",
@@ -96,6 +122,48 @@
         "human"
       ],
       "effects": []
+    },
+    {
+      "id": "workRecord.open",
+      "label": "Open one piece of work in the centre: its outcome, projects, folders, runs and the context a run for it is given",
+      "view": "main.workRecord",
+      "args": {
+        "workRecordId": {
+          "type": "key",
+          "entity": "workRecord"
+        }
+      },
+      "required": [
+        "workRecordId"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        },
+        {
+          "effect": "centre.detail-replaced"
+        }
+      ]
+    },
+    {
+      "id": "workRecord.close",
+      "label": "Close the piece of work's detail",
+      "view": "main.workRecord",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ]
     }
   ],
   "kinds": [
@@ -105,6 +173,7 @@
       "label": "Projects",
       "parts": [
         "list",
+        "independent",
         "candidates"
       ],
       "presentations": [
@@ -201,6 +270,33 @@
       "presentations": [
         {
           "view": "main.project"
+        }
+      ]
+    },
+    {
+      "kind": "workRecord",
+      "entity": "workRecord",
+      "label": "Piece of work",
+      "parts": [
+        "header",
+        "close",
+        "outcome",
+        "projects",
+        "folders",
+        "start",
+        "runs",
+        "bound",
+        "context"
+      ],
+      "presentations": [
+        {
+          "view": "main.workRecord",
+          "reveal": {
+            "command": "workRecord.open",
+            "args": {
+              "workRecordId": "$key"
+            }
+          }
         }
       ]
     }

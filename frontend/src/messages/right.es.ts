@@ -25,6 +25,13 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.projects.fromNames": "De nombres que JARVIS ya usa",
   "right.projects.accept": "Aceptar",
   "right.projects.ignore": "Ignorar",
+  "right.projects.show.projects": "Proyectos",
+  "right.projects.show.folders": "Carpetas",
+  "right.projects.independent": "Carpetas independientes",
+  "right.projects.noIndependent": "Cada carpeta registrada está en un proyecto.",
+  "right.projects.waiting": "Esperando su respuesta",
+  "right.projects.agentsNow": { one: "{count} agente trabajando ahora", other: "{count} agentes trabajando ahora" },
+  "right.projects.toConfirm": { one: "{count} por confirmar", other: "{count} por confirmar" },
   "right.folders.openDiscovered": { one: "Abrir Carpetas · {count} descubierta", other: "Abrir Carpetas · {count} descubiertas" },
 
   "right.agents.show": "Mostrar agentes",

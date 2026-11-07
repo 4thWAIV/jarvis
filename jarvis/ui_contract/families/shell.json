@@ -171,6 +171,14 @@
       "entity": "member"
     },
     {
+      "id": "main.workRecord",
+      "region": "main",
+      "kind": "detail",
+      "label": "A piece of work (one intent across projects)",
+      "tab": "workRecord",
+      "entity": "workRecord"
+    },
+    {
       "id": "main.project",
       "region": "main",
       "kind": "detail",
@@ -267,7 +275,8 @@
             "file",
             "settings",
             "knowledge",
-            "project"
+            "project",
+            "workRecord"
           ]
         }
       },

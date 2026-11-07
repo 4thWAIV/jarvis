@@ -236,3 +236,43 @@ def test_a_work_items_source_names_the_projects_holding_it(stores, tmp_path, mon
     monkeypatch.setattr(work_api, "projects_for_path", service.projects_for_path)
     item = work_store.create("Ship it", "folder", str(inside))
     assert work_api.item_json(item, package_questions={})["projects"] == [{"id": p.id, "name": "Repo work"}]
+
+
+# --- the Work view ----------------------------------------------------------------
+
+def test_the_work_view_reads_and_starts_through_the_same_calls_as_the_brain(served, tmp_path, monkeypatch):
+    w, folders, service = served
+    home = register(folders, tmp_path / "w" / "home", "home")
+    elsewhere = register(folders, tmp_path / "w" / "elsewhere", "elsewhere")
+    p = service.store.create("local", "Wiring")
+    service.store.link_folder(p.id, home, home=True)
+    work = service.store.start_work("local", "Wire the cues", projects=[p.id], outcome="cues sound")
+
+    detail = w.client.get(f"/api/works/{work.id}", headers=ORIGIN).json()
+    assert [f["folder_id"] for f in detail["run_folders"]] == [home]
+    assert detail["runs"] == [] and detail["bound"] == []
+    assert joined(w, "work_detail", work=work.id) == detail
+
+    page_pack = w.client.get(f"/api/works/{work.id}/context", headers=ORIGIN).json()
+    assert "Work: Wire the cues. Outcome: cues sound" in page_pack["text"]
+    brain = json.loads(_call(w, "work_context", purpose="Wire the cues cues sound", work_id=work.id,
+                             as_run=True)["text"].split(">", 1)[1].rsplit("</session-output>", 1)[0])
+    assert brain["text"] == page_pack["text"]
+
+    started = []
+
+    class _Executor:
+        async def spawn(self, prompt, name, path, origin, resume_from=None, model=None,
+                        folder_id=None, package_id=None, project_id=None, work_id=None):
+            started.append({"path": path, "folder_id": folder_id, "project_id": project_id,
+                            "work_id": work_id, "origin": origin})
+            return "run-1"
+    monkeypatch.setattr(w.server, "run_executor_instance", _Executor())
+    refused = w.client.post(f"/api/works/{work.id}/runs", json={"prompt": "go", "folder_id": elsewhere},
+                            headers=ORIGIN)
+    assert refused.status_code == 400 and started == []
+    ok = w.client.post(f"/api/works/{work.id}/runs", json={"prompt": "wire them"}, headers=ORIGIN)
+    assert ok.json() == {"run_id": "run-1"}
+    assert started == [{"path": str((tmp_path / "w" / "home").resolve()), "folder_id": home,
+                        "project_id": p.id, "work_id": work.id, "origin": "api"}]
+    assert w.client.post(f"/api/works/{work.id}/runs", json={"prompt": " "}, headers=ORIGIN).status_code == 400

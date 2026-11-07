@@ -375,6 +375,15 @@ def _open_decisions(project: str) -> list[str]:
     return out
 
 
+def run_pack(ctx: Context, *, purpose: str, project: Optional[str] = None,
+             scope: Optional[dict] = None) -> dict:
+    """The pack a run is given, exactly: his own words only, at the run's
+    budget and deadline. A run's prompt, the Work view's preview and
+    work_context's `as_run` all read this one."""
+    return context_service.pack(purpose=purpose, project=project or None, scope=scope, trust="own",
+                                search=context_search(ctx)).json()
+
+
 def work_context(ctx: Context, *, purpose: str, project: Optional[str] = None,
                  include_received: bool = False, scope: Optional[dict] = None,
                  budget: int = context_service.BRAIN_BUDGET) -> dict:

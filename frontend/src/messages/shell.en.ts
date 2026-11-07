@@ -6,7 +6,7 @@
 
 export const shellEn = {
   // The right panel's tabs (RightPanel.tsx), by their registered tab id.
-  "tabs.right.folders": "Folders",
+  "tabs.right.folders": "Projects and folders",
   "tabs.right.agents": "Agents",
   "tabs.right.queue": "Queue",
   "tabs.right.workflows": "Work",
@@ -23,6 +23,7 @@ export const shellEn = {
   "tabs.main.subsystem": "Subsystem",
   "tabs.main.knowledge": "Knowledge",
   "tabs.main.project": "Project",
+  "tabs.main.workRecord": "Piece of work",
   "tabs.main.network": "Instance",
   "tabs.main.teamServer": "Team server",
   "tabs.main.queue": "Message",
