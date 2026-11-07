@@ -437,6 +437,8 @@ work, and Planning folds `/api/works` into it. Routine choices made for it:
   silent.
 - The tab opens on Projects; the folder search and Open Folders are on the
   Folders side of the switch.
+- The tab keeps its short label, Folders: six labelled tabs fit in two rows
+  only with short words, and the switch inside says Projects and Folders.
 - spawn_run's start (context pack, compose, spawn, keep the pack) is one
   function, `server._spawn_placed`, and a run's pack is
   `knowledge_api.run_pack`.

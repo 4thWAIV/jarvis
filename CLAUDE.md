@@ -1183,7 +1183,8 @@ started by folder or name takes the one project holding its folder, never
 a guess between several; Retry places a work's run again the same way.
 The context pack (`context_service.pack`'s `scope`, from
 `ProjectService.brief`) and `work_context` are made from these records.
-The Folders tab is "Projects and folders": its switch
+The Folders tab (its label kept short so six tabs fit two rows) holds
+projects and folders: its switch
 (`folders.panel.show`) shows projects first (lifecycle, open work, a dot
 while an agent works in one of its folders, accomplishments to confirm),
 then the independent folders (in no project), then the proposals waiting
