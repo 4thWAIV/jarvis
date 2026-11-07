@@ -131,7 +131,7 @@ def _walled(text: str) -> None:
 NEW_READS = ("team_status", "find_github_user", "team_network", "people", "people_messages",
              "read_people_thread", "diagnostics", "folder_detail", "folder_candidates",
              "update_status", "attachment_location", "attention_updates", "work_status",
-             "knowledge_search", "knowledge_entity", "knowledge_proposals")
+             "knowledge_search", "knowledge_entity", "knowledge_proposals", "work_context")
 NEW_ACTS = ("change_team_member", "mark_people_message_read", "set_people_thread",
             "change_people_draft",
             "change_folder", "change_folder_candidate", "answer_workflow_decision",

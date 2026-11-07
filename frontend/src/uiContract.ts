@@ -3089,7 +3089,7 @@ export const UI_CONTRACT = {
         "title",
         "progress",
         "open",
-        "return",
+        "done",
         "close"
       ],
       "presentations": [
@@ -4194,6 +4194,7 @@ export const UI_CONTRACT = {
       "parts": [
         "header",
         "frame",
+        "done",
         "close",
         "story",
         "tell",

@@ -354,6 +354,21 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "context_service.pack": (
+        "with trust `own` (the default, and all a run ever gets) it builds the "
+        "pack from his project notes, his topic files and passages the engine "
+        "marks own, leaving out every untrusted one; only `all`, which the "
+        "brain's work_context asks for, adds other people's words and open "
+        "decisions, and that tool walls the whole pack. Driven by "
+        "tests/test_context_service.py"),
+    "knowledge_routes.mount": (
+        "its routes pass the page's own request fields to knowledge_api and "
+        "answer the page with JSON, which the page shows as text; nothing is "
+        "spoken or put in a header line. Driven by tests/test_knowledge_api.py"),
+    "server.tool_work_context": (
+        "it gives the brain the pack as JSON inside one untrusted block "
+        "(`_knowledge_tool` with walled=True), a page at a time; the header "
+        "line is JARVIS's own fixed words. Driven by tests/test_knowledge_api.py"),
     "knowledge_seeds.answer": (
         "the seed's names, statuses, aliases and bodies are quotations from "
         "JARVIS's own README and roadmap (knowledge_seeds.denice), written to "
@@ -373,14 +388,6 @@ EXEMPT = {
     # purpose and questions are another agent's words; what reaches the
     # brain of them is driven above (_drive_package_inbox). These read a
     # row's `state` or `title` but say none of a package's words:
-    "package_inbox._not_now": (
-        "it names the row by its inbox id (JARVIS's own `pkg-<hex>`) and its "
-        "closed_why, one of the fixed CLOSED_WHY words; no title or sender"),
-    "package_inbox.check_return": (
-        "its refusals are the inbox id, a count and fixed words (via _not_now); "
-        "it compares `state` against the fixed STATES"),
-    "package_inbox.close": (
-        "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.opened": (
         "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.arrive": (
@@ -421,11 +428,11 @@ EXEMPT = {
         "the summary with the package's title goes into the workflow record, "
         "whose readers wall every summary as the reporters' words "
         "(workflow_status, driven); nothing is returned"),
-    "server._return_package_answers": (
-        "its sentences are JARVIS's own with the inbox id and the agent's "
-        "name through _plain_name; the capture it opens holds only the "
-        "package's folder name, slug ids and his own words "
-        "(_inbox_answers_text), never a title, question or option name"),
+    "server._sign_off_package": (
+        "its sentences are JARVIS's own with a capture number, the agent's name "
+        "through _plain_name and fixed words; the capture it opens holds only the "
+        "package's folder name, slug ids and his own words (_sign_off_text), "
+        "never a title, question or option name"),
     "knowledge_api.call": (
         "it turns an engine refusal into knowledge_api.Refused; the engine's "
         "`detail` is the engine's own wording about a request, and every route "
@@ -1948,6 +1955,7 @@ ALT_RUN = {
     "requested_model": "opus",
     "folder_id": "33333333-3333-4333-8333-333333333333",
     "package_id": "text-stats-agent-1.0.0-ab12cd34",
+    "context_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 }
 
 

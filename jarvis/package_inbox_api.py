@@ -15,12 +15,16 @@ server's one function for it, which the brain's tool calls too.
                                      {"decision", "option", "words"?}: his
                                      answer, recorded by the package's own
                                      scripts/decide.py
-  POST /api/packages/inbox/{id}/return
-                                     send his answers back: the workflow's
-                                     decisions, and a message to the sending
-                                     session that goes only on his yes
   POST /api/packages/inbox/{id}/close
-                                     dismiss it, or close it once returned
+                                     dismiss it: set aside, nothing sent back
+  POST /api/packages/{package_id}/signoff
+                                     his Done, on the package's view and its
+                                     Queue row: signed off, for any package
+                                     unpacked here (in the inbox or not); his
+                                     answers go back (the workflow's
+                                     decisions, and a message to the sending
+                                     session that goes only on his yes), its
+                                     Work item learns it, and it is closed
 
 Every route but the first needs the page's own origin or the tool token
 (web_auth.py); Open needs his click (packages_api.his_click), as every way
@@ -40,6 +44,7 @@ from jarvis.package_inbox import Entry, Sender
 from jarvis.work_packages import Package, PackageError
 
 INBOX_PATH = "/api/packages/inbox"
+SIGN_OFF_PATH = "/api/packages/{package_id}/signoff"
 # The most a package zip may be: a received file's limit.
 MAX_BYTES = messaging_wire.FILE_MAX_BYTES
 
@@ -54,7 +59,7 @@ class Calls:
         package_inbox.Arrival], Optional[Package], str]]]
     open: Callable[[str, str], Awaitable[tuple[Optional[Entry], Optional[Package], str]]]
     answer: Callable[[str, str, str, str, str], Awaitable[Outcome]]
-    give_back: Callable[[str, str], Awaitable[Outcome]]
+    sign_off: Callable[[str, str], Awaitable[Outcome]]
     close: Callable[[str, str], Awaitable[Outcome]]
 
 
@@ -137,8 +142,8 @@ def mount(app: FastAPI, calls: Calls) -> None:
             return _refused(problem)
         return {"inbox": entry_json(entry), "said": problem}
 
-    async def give_back(inbox_id: str):
-        entry, said = await calls.give_back(inbox_id, package_inbox.ON_THE_PAGE)
+    async def sign_off(package_id: str):
+        entry, said = await calls.sign_off(package_id, package_inbox.ON_THE_PAGE)
         if entry is None:
             return _refused(said)
         return {"inbox": entry_json(entry), "said": said}
@@ -154,5 +159,5 @@ def mount(app: FastAPI, calls: Calls) -> None:
     app.add_api_route(INBOX_PATH + "/{inbox_id}", one, methods=["GET"])
     app.add_api_route(INBOX_PATH + "/{inbox_id}/open", open_one, methods=["POST"])
     app.add_api_route(INBOX_PATH + "/{inbox_id}/answer", answer, methods=["POST"])
-    app.add_api_route(INBOX_PATH + "/{inbox_id}/return", give_back, methods=["POST"])
+    app.add_api_route(SIGN_OFF_PATH, sign_off, methods=["POST"])
     app.add_api_route(INBOX_PATH + "/{inbox_id}/close", close, methods=["POST"])

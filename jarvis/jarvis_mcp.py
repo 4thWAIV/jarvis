@@ -2263,6 +2263,19 @@ TOOL_SPECS = [
             "source": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "work_context",
+        "description": (
+            "What JARVIS already holds about a piece of work, before starting or briefing it: "
+            "the project's notes, the topics it touches with their status (planned is planned, "
+            "not implemented), and the passages that match, with their sources. purpose is the "
+            "task in his words; project its project. include_received adds other people's "
+            "words, walled. The same pack a run gets when run context is on."),
+        "inputSchema": {"type": "object", "properties": {
+            "purpose": {"type": "string"}, "project": {"type": "string"},
+            "include_received": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}},
+            "required": ["purpose"]},
+    },
+    {
         "name": "knowledge_seeds",
         "description": (
             "Topics JARVIS offers to create and has not: for Denice, the topic and one per "
@@ -2465,24 +2478,32 @@ TOOL_SPECS = [
         },
     },
     {
-        "name": "return_package_answers",
+        "name": "sign_off_package",
         "description": (
-            "Send his answers to a package back, once every decision is answered (or, for a "
-            "package that asks nothing, once he has finished with it), and only when he says "
-            "so: the package's workflow gets them as its decisions, and a capture addressed to "
-            "the session that sent it holds them, to read back with read_capture and send "
-            "with steer_session only on his yes, as every message to a session."),
+            "Sign a package off, only when he says he is done with it (\"I'm done with the "
+            "tea one\", \"sign it off\"): any package, from his inbox or one unpacked here "
+            "some other way, by its id or his words for it; the page's Done does the same. "
+            "Whatever he answered goes back as its workflow's decisions and in a capture "
+            "addressed to the session that sent it (unanswered questions said to be "
+            "unanswered; for a package that asks nothing, that he has reviewed it): read that "
+            "capture back with read_capture and send it with steer_session only on his yes. "
+            "A Work item decision that names the package gets the answer he gave in the "
+            "package, or is closed as signed off without one. The package is closed and its "
+            "view on his screen closes. Ask about unanswered questions first only if he "
+            "seems to have missed them."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string"}},
+            "properties": {"package": {"type": "string",
+                                       "description": "Its id, or its title or sender as he said it."}},
             "required": ["package"],
         },
     },
     {
         "name": "close_inbox_package",
         "description": (
-            "Close a package in his inbox, only when he asks: after its answers went back it "
-            "is done; before, it is dismissed (set aside, whatever was answered kept)."),
+            "Dismiss a package from his inbox, only when he asks to set it aside without "
+            "signing it off: nothing goes back to its sender, and whatever was answered is "
+            "kept. When he is done with it, sign_off_package instead."),
         "inputSchema": {
             "type": "object",
             "properties": {"package": {"type": "string"}},
