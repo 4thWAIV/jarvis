@@ -1655,9 +1655,20 @@ TOOL_SPECS = [
     },
     {
         "name": "list_packages",
-        "description": "The work packages opened on this JARVIS: each one's id, name, "
-                       "version, purpose and folder.",
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": (
+            "The work packages unpacked on this JARVIS, newest first: each one's id, name, "
+            "version, how it runs and purpose, a page at a time. With `name`, only those "
+            "whose id, name and purpose share the most of those words: pass the words he "
+            "called it by (\"globe numbers\") to find the id of a package he asks for."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The words he called the package by; leave out to "
+                                        "list every package."},
+                "page": {"type": "integer", "description": "Which page, from 1."},
+            },
+        },
     },
     {
         "name": "run_package_command",
@@ -1693,12 +1704,16 @@ TOOL_SPECS = [
     {
         "name": "open_package_page",
         "description": (
-            "Show an open package whose package.json runs it as a page in the centre of his "
-            "screen, only on his go-ahead. He uses it there; what it saves goes in its "
-            "results folder, for package_results once he says he has finished."),
+            "Show an unpacked package whose package.json runs it as a page in the centre of "
+            "his screen, when he asks to see or open it: his asking is the go-ahead. He uses "
+            "it there; what it saves goes in its results folder, for package_results once he "
+            "says he has finished."),
         "inputSchema": {
             "type": "object",
-            "properties": {"package": {"type": "string", "description": "The package's id."}},
+            "properties": {"package": {"type": "string",
+                                       "description": "The package's id, its name and version "
+                                                      "(\"denice-pulses-1.0.1\"), or its name "
+                                                      "for the highest version of that name."}},
             "required": ["package"],
         },
     },

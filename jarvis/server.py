@@ -7633,17 +7633,22 @@ def _package_or_problem(args: dict, runs: Optional[str] = None
 
 
 def tool_list_packages(args: dict) -> str:
-    """The packages received and unpacked here."""
-    packages = work_packages.every()
+    """The packages unpacked here, newest first, a page at a time, or only
+    those whose id, name or purpose has the words he called one by."""
+    words = str(args.get("name") or "").strip()
+    packages = work_packages.matching(words)
     if not packages:
-        return "No packages have been opened here, sir."
+        return ("No packages have been opened here, sir." if not words else
+                "No package here is called that; list_packages without a name lists them all.")
     lines = [f"{p.id}: {p.manifest.name} {p.manifest.version}, runs as {p.manifest.runs}"
-             f"{', with a story' if p.manifest.story else ''}, "
-             f"{p.manifest.purpose} ({p.folder})" for p in packages]
-    return (f"{len(lines)} package{'s' if len(lines) != 1 else ''} unpacked here; "
+             f"{', with a story' if p.manifest.story else ''}, {p.manifest.purpose}"
+             for p in packages]
+    what = (f"{len(lines)} package{'s' if len(lines) != 1 else ''} "
+            f"{'unpacked here' if not words else 'here have those words'}, newest first; "
             f"run_package_command, run_package_agent, open_package_page and package_results "
-            f"take the id.\n"
-            + _wrap_untrusted(_PACKAGE_WRAP_NAME, "\n".join(lines)))
+            f"take the id")
+    head, chunk = _paged("\n".join(lines), _page_arg(args), what, "list_packages")
+    return head if chunk is None else head + "\n" + _wrap_untrusted(_PACKAGE_WRAP_NAME, chunk)
 
 
 async def tool_run_package_command(args: dict) -> str:

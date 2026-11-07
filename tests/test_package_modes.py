@@ -533,3 +533,62 @@ def test_the_brain_shows_a_local_page_package_only_on_his_turn(wired, shown, tmp
     assert shown == [] and work_packages.every() == []
     text = _call(wired, "open_local_package", path=str(archive))["text"]
     assert "It is open in the centre of his screen" in text and len(shown) == 1
+
+
+# -- finding the package he asks for -------------------------------------------------------
+
+def _many_pages(tmp_path):
+    """Twenty-five page packages with purposes as long as tonight's live ones,
+    then two versions of the one he asks for, the newer unpacked last."""
+    def page_package(name, version, purpose, suffix, when):
+        manifest = {**PAGE, "name": name, "version": version, "purpose": purpose}
+        package, _ = work_packages.unpack(
+            write_zip(tmp_path, make_zip({"web/index.html": "x"}, manifest), f"{suffix}.zip"),
+            suffix)
+        os.utime(package.folder, (when, when))
+        return package
+    for i in range(25):
+        page_package(f"design-study-{i}", "1.0.0",
+                     "Show the design and plan for letting a workflow's detail or a page "
+                     "package take over the centre and the right side of the page, and "
+                     f"record the owner's answer to each of its ten decisions ({i}).",
+                     f"study{i:02d}", 1_000_000 + i)
+    older = page_package("denice-globe-numbers", "1.0.0", "The brain globe numbers, before "
+                         "and after: lower and larger.", "globe100", 2_000_000)
+    newer = page_package("denice-globe-numbers", "1.0.1", "The brain globe numbers, before "
+                         "and after: lower and larger.", "globe101", 2_000_001)
+    return older, newer
+
+
+def test_every_package_here_can_be_listed_and_none_is_cut_off(wired, tmp_path, marks):
+    # Tonight list_packages cut its block at 1,200 characters: 25 packages
+    # unpacked, four shown, the rest "… (truncated)", and no way to the rest.
+    _many_pages(tmp_path)
+    first = _call(wired, "list_packages")["text"]
+    assert first.startswith("27 packages unpacked here, newest first")
+    assert "page 1 of " in first and "(truncated)" not in first
+    pages = int(first.split("page 1 of ")[1].split(" ")[0])
+    listed = first + "".join(_call(wired, "list_packages", page=n)["text"]
+                             for n in range(2, pages + 1))
+    assert "(truncated)" not in listed
+    assert all(p.id in listed for p in work_packages.every())
+
+
+def test_he_names_a_package_and_the_brain_opens_its_newest_version(wired, tmp_path, marks,
+                                                                   monkeypatch):
+    older, newer = _many_pages(tmp_path)
+    found = _call(wired, "list_packages", name="the globe numbers package")["text"]
+    assert found.startswith("2 packages here have those words, newest first")
+    assert found.index(newer.id) < found.index(older.id) and "design-study" not in found
+    assert "No package here" in _call(wired, "list_packages", name="spaceship")["text"]
+    sent = []
+
+    async def emit(message):
+        sent.append(message)
+    monkeypatch.setattr(wired.server, "_voice_emit", emit)
+    monkeypatch.setattr(wired.server, "voice_clients", {object()})
+    got = _call(wired, "open_package_page", package="denice-globe-numbers")
+    assert got["ok"] and got["text"].startswith(f"{newer.id} is open in the centre")
+    assert [m["package"]["id"] for m in sent] == [newer.id]
+    assert work_packages.find(older.id) == older
+    assert work_packages.find("denice-globe-numbers-1.0.0") == older

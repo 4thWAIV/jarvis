@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator, Callable, Optional
 
-from jarvis import bundle_archive, data_paths, folder_readers, package_story
+from jarvis import bundle_archive, data_paths, folder_readers, package_story, spoken_words
 from jarvis.folder_contract import FolderError
 from jarvis.messaging_files import QUARANTINE_ATTRIBUTE
 
@@ -455,21 +455,45 @@ def every() -> list[Package]:
 
 
 def find(reference: str, runs: Optional[str] = None) -> Package:
-    """A package by its folder name (its id), or by its own name when only
-    one package here has it; with `runs`, only one that runs that way."""
+    """A package by its folder name (its id), by its name and version
+    ("denice-pulses-1.0.1"), or by its own name: the highest version of that
+    name here, the one unpacked last among equal versions. With `runs`, only
+    one that runs that way."""
     reference = str(reference or "").strip()
     packages = every()
-    found = ([p for p in packages if p.id == reference]
+    found = [p for p in packages if p.id == reference]
+    named = ([p for p in packages if f"{p.manifest.name}-{p.manifest.version}" == reference]
              or [p for p in packages if p.manifest.name == reference])
-    if len(found) == 1:
-        if runs and found[0].manifest.runs != runs:
-            raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, "
-                               f"not as {runs}.")
-        return found[0]
-    ids = ", ".join(p.id for p in (found or packages)) or "none"
-    if found:
-        raise PackageError(f"More than one package is called {reference}: {ids}. Use its id.")
-    raise PackageError(f"There is no package {reference!r} here. Packages here: {ids}.")
+    if not found and named:
+        # every() is newest first, and max keeps the first of equals.
+        found = [max(named, key=lambda p: version_key(p.manifest.version))]
+    if not found:
+        raise PackageError(f"There is no package {reference!r} here; list_packages with the "
+                           f"words it is called finds its id.")
+    if runs and found[0].manifest.runs != runs:
+        raise PackageError(f"{found[0].id} runs as {found[0].manifest.runs}, not as {runs}.")
+    return found[0]
+
+
+def version_key(version: str) -> tuple:
+    """A version compared part by part, numbers as numbers: 1.0.10 after 1.0.9."""
+    return tuple((int(part), "") if part.isdigit() else (-1, part)
+                 for part in re.split(r"[.+-]", version))
+
+
+def matching(words: str) -> list[Package]:
+    """The packages here, newest first, whose id, name and purpose share the
+    most of `words`, folded as they are said ("the globe numbers package"),
+    so a word no package has ("package") counts against none; every package
+    when `words` has none, and none when no package shares any."""
+    packages = every()
+    wanted = set(spoken_words.folded_words(words))
+    if not wanted:
+        return packages
+    shared = {p.id: len(wanted & set(spoken_words.folded_words(
+        f"{p.id} {p.manifest.name} {p.manifest.purpose}"))) for p in packages}
+    best = max(shared.values(), default=0)
+    return [p for p in packages if best and shared[p.id] == best]
 
 
 # -- running a step -------------------------------------------------------------------

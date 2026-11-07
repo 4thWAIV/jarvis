@@ -202,6 +202,9 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "2c16f743459089cbad3c0d7a412588125a21bdfb51d322bbfec8fd82d650fc19",  # a read-back sends only on his next-words yes
     "b7bce00cdff6eb4514e03d4d18b7ce83baa05ac1d09cc90808a4c08b156591dd",  # project notes edit and the read-back yes gate together
     "eb78a554d37262fba5681de97e38d3b548340455589c645174e33c006fc569bb",  # read back at once, naming who it is for
+    "444eea964bae36c9a187d9544a774d843f064f48aa59daabea70ca9ed7a140b8",  # queued updates dropped (c80a33b)
+    "4fdf13c5eda9e7d4b417fa0a287c15fc80981f55d1376c4def12678486c37996",  # the Work tracker (7e868d8)
+    "6d7eacda76c7a7c64b0ee245635fbaddc8a30eafaa15b290143ca5410ba7b190",  # find a package by the words he calls it
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

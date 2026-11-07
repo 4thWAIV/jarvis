@@ -410,7 +410,11 @@ The page package shown is held by the server (`_package_shown`) and
 sent to every page that connects, so a reload keeps it; its × (`DELETE
 /api/packages/<id>/page`) forgets it. `run_package_command` runs one shell step in the folder with a
 10-minute timeout, or in a Terminal window through `actions.open_terminal`.
-`list_packages` and `package_results` read what is there. Results go back
+`list_packages` and `package_results` read what is there: `list_packages`
+pages every package here, newest first, and with `name` keeps those sharing
+the most of the words he called one by (`work_packages.matching`); a
+package's name in place of its id is its highest version, and its name and
+version ("denice-pulses-1.0.1") that version (`work_packages.find`). Results go back
 through `draft_message`'s `files`, which attaches each file with the page's
 own snapshot step (`FileSnapshots.add_to_draft`), so review and approval are
 unchanged. A package runs one of three ways, package.json's `runs`
