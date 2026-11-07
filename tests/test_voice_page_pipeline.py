@@ -29,7 +29,8 @@ from tests.test_voice_page_network import MINI_ID, SIGNED_OUT, _Sessions, _Team
 from tests.test_voice_page_workflows import _finished, _workflow
 
 # A browser page test: run with `pytest -m page` (see pytest.ini).
-pytestmark = pytest.mark.page
+# WebGL on: white attention leaves the orb along its pipeline, drawn with WebGL on.
+pytestmark = [pytest.mark.page, pytest.mark.webgl]
 
 TILE_CPU = {"region": "right", "view": "right.network", "kind": "node", "key": MINI_ID, "part": "cpu"}
 DETAIL_CPU = {"region": "main", "view": "main.network", "kind": "node", "key": MINI_ID, "part": "cpu"}

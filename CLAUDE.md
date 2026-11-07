@@ -1854,7 +1854,9 @@ Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
 
-Every CI run uploads a `test-timing` artifact (14 days, failed runs too): both pytest steps' junit XML (`unit.xml`, `page.xml`), the runner's size, and its load sampled every 30 s through the page step; the steps' logs carry `--durations` and a timed bare vite build and Chromium launch.
+CI runs the suite and the page tests as two jobs side by side (`test` and `page` in `ci.yml`); the workflow run, which self-update reads, passes only when both do. Each uploads its timing (14 days, failed runs too): `test-timing` (`unit.xml`, the runner's size) and `test-timing-page` (`page.xml`, the runner's size and its load sampled every 30 s through the page step); the steps' logs carry `--durations`, and the page job's a timed bare vite build and Chromium launch.
+
+A page test's Chromium has WebGL and 3D off (`conftest.NO_3D_ARGS`, applied to every launch a page test makes): headless Chromium draws the orbs in software on the page's main thread and everything else waits behind it. A test that looks at the orbs' drawing, the rays or the graphics row is marked `webgl` and keeps it.
 
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
