@@ -196,7 +196,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__package_inbox",
     "mcp__jarvis__open_inbox_package",
     "mcp__jarvis__answer_package_decision",
-    "mcp__jarvis__return_package_answers",
+    "mcp__jarvis__sign_off_package",
     "mcp__jarvis__close_inbox_package",
     "mcp__jarvis__retry_run",
     # Self-update (self_update.py): the Updates section's check, and its

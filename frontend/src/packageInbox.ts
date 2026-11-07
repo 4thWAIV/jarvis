@@ -12,8 +12,11 @@
  *   Open        → `_open_inbox_package` (his click: the route checks it);
  *                 a page package then shows in the centre (`package.open`)
  *   an answer   → `_answer_inbox_decision` (the package's own decide.py)
- *   Send answers→ `_return_package_answers`: a capture to the session that
- *                 sent it, read back and sent only on his yes or Send
+ *   Done        → `_sign_off_package`, for every package (the view's head
+ *                 and the Queue row): his answers, or that he reviewed it,
+ *                 to the session that sent it as a capture read back and
+ *                 sent only on his yes or Send; its Work item told; closed,
+ *                 and its view closed on every page
  *   Dismiss     → `_close_inbox_package`
  *
  * Everything a package says (its title, its questions, its sender's name)
@@ -25,7 +28,7 @@ import { t, type Said } from "./locale";
 import { packagesChanged, showOpenedPackage, type PackageInfo } from "./packages";
 import { workChanged } from "./work";
 
-export type InboxState = "arrived" | "opened" | "answering" | "answered" | "returned" | "closed";
+export type InboxState = "arrived" | "opened" | "answering" | "answered" | "closed";
 
 export interface InboxEntry {
   id: string;
@@ -45,7 +48,8 @@ export interface InboxEntry {
   workflow_id: string | null;
   work_id: string | null;
   state: InboxState;
-  closed_why: "done" | "dismissed" | "superseded" | null;
+  closed_why: "signed_off" | "dismissed" | "superseded" | null;
+  signed_off_at: number | null;
   arrived_at: number;
   closed_at: number | null;
 }
@@ -142,13 +146,14 @@ export async function answerInbox(id: string, decision: string, option: string,
   }
 }
 
-/** Send his answers back: what was done (a capture to read back and send),
- *  or why not. */
-export async function returnInbox(id: string): Promise<Said> {
+/** His Done: the package, by its own id, signed off. Null once done (the
+ *  view closes and a capture to read back appears in Conversation), else
+ *  why not. */
+export async function signOff(packageId: string): Promise<Said | null> {
   try {
-    const got = await post<{ said: string }>(`${base(id)}/return`);
+    await post(`/api/packages/${encodeURIComponent(packageId)}/signoff`);
     changed();
-    return { original: got.said };
+    return null;
   } catch (e) {
     return original(e);
   }
@@ -168,18 +173,10 @@ export async function closeInbox(id: string): Promise<Said | null> {
 /** Where it stands, in words: "2 of 3 answered" while it asks, else its state. */
 export function inboxProgress(entry: InboxEntry): string {
   if (entry.state === "closed") return t(`right.packages.closed.${entry.closed_why ?? "dismissed"}`);
-  if (entry.state === "returned") return t("right.packages.state.returned");
   if (entry.decisions_total > 0) {
     return t("right.packages.answered", { answered: entry.decisions_answered, total: entry.decisions_total });
   }
   return t(`right.packages.state.${entry.state}`);
-}
-
-/** Whether Send answers is offered: opened, with every decision answered
- *  (or none asked). */
-export function canReturn(entry: InboxEntry): boolean {
-  if (entry.decisions_total > 0) return entry.state === "answered";
-  return entry.state === "opened" || entry.state === "answering" || entry.state === "answered";
 }
 
 /** The answer a decision card gives, as decide.py takes it: an option's id

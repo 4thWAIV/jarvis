@@ -32,7 +32,8 @@ moves the item to History for good (nothing is deleted, and nothing more
 can be reported to it); a done item moves there by itself after a few
 minutes. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
-he has not.
+he has not; it exits 4 when the decision was closed without an answer
+because the user signed off the package it names without answering it.
 """
 
 from __future__ import annotations
@@ -47,6 +48,10 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.workflow_report import NOT_ANSWERED, _Client, _post, base_url  # noqa: E402
+
+# `answer`'s exit when the decision was closed by his signing off its package
+# without answering it (work_store.DECISION_SIGNED_OFF).
+SIGNED_OFF = 4
 
 
 def _client(cert: Path | None) -> _Client:
@@ -131,10 +136,15 @@ def main(argv: list[str]) -> int:
             print(_post(client, "/api/work", body)["id"])
             return 0
         if args.command == "answer":
-            r = client.get(f"/api/work/{args.id}/events", params={"kinds": "decision_made"})
+            r = client.get(f"/api/work/{args.id}/events",
+                           params={"kinds": "decision_made,decision_signed_off"})
             r.raise_for_status()
             for e in reversed(r.json()["events"]):
                 if e["detail"].get("key") == args.key:
+                    if e["kind"] == "decision_signed_off":
+                        print(f"Decision {args.key} was closed without an answer: the user "
+                              f"signed off its package without answering it.", file=sys.stderr)
+                        return SIGNED_OFF
                     print(e["detail"]["answer"])
                     return 0
             print(f"Decision {args.key} has not been answered yet.", file=sys.stderr)

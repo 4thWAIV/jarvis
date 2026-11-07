@@ -364,14 +364,6 @@ EXEMPT = {
     # purpose and questions are another agent's words; what reaches the
     # brain of them is driven above (_drive_package_inbox). These read a
     # row's `state` or `title` but say none of a package's words:
-    "package_inbox._not_now": (
-        "it names the row by its inbox id (JARVIS's own `pkg-<hex>`) and its "
-        "closed_why, one of the fixed CLOSED_WHY words; no title or sender"),
-    "package_inbox.check_return": (
-        "its refusals are the inbox id, a count and fixed words (via _not_now); "
-        "it compares `state` against the fixed STATES"),
-    "package_inbox.close": (
-        "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.opened": (
         "its one refusal is the inbox id and the fixed closed_why word"),
     "package_inbox.arrive": (
@@ -412,11 +404,11 @@ EXEMPT = {
         "the summary with the package's title goes into the workflow record, "
         "whose readers wall every summary as the reporters' words "
         "(workflow_status, driven); nothing is returned"),
-    "server._return_package_answers": (
-        "its sentences are JARVIS's own with the inbox id and the agent's "
-        "name through _plain_name; the capture it opens holds only the "
-        "package's folder name, slug ids and his own words "
-        "(_inbox_answers_text), never a title, question or option name"),
+    "server._sign_off_package": (
+        "its sentences are JARVIS's own with a capture number, the agent's name "
+        "through _plain_name and fixed words; the capture it opens holds only the "
+        "package's folder name, slug ids and his own words (_sign_off_text), "
+        "never a title, question or option name"),
     "knowledge_api.call": (
         "it turns an engine refusal into knowledge_api.Refused; the engine's "
         "`detail` is the engine's own wording about a request, and every route "
