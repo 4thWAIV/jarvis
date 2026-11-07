@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
+import difflib
 import importlib.util
 import io
 import json
@@ -38,6 +40,7 @@ import re
 import ssl
 import sys
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -48,7 +51,7 @@ from jarvis import data_paths
 LIVE = "https://127.0.0.1:8340"
 LOCAL_ROUTE = "/api/packages/local"
 BUILDER = data_paths.SOURCE_ROOT / "examples" / "packages" / "decision-deck" / "new_deck.py"
-SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 RESERVED = ("later", "none", "recommended")
 LANGUAGES = ("en", "es")
 
@@ -135,7 +138,7 @@ def _is_image(path: Path) -> bool:
 
 def problems_of(deck: dict, folder: Path) -> list[str]:
     """Everything wrong with the content, each in a line; [] when it is right."""
-    problems: list[str] = []
+    problems: list[str] = unknown_keys(deck)
     for field in ("name", "version", "purpose", "title"):
         if not _text(deck.get(field)).strip():
             problems.append(f"The deck has no {field}.")
@@ -155,7 +158,7 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
             continue
         ident = d.get("id")
         where = f"Decision {ident or n}"
-        if not isinstance(ident, str) or not SLUG.match(ident):
+        if not isinstance(ident, str) or not SLUG.fullmatch(ident):
             problems.append(f"{where}: its id must be a slug (a-z, 0-9 and -).")
         elif ids.count(ident) > 1:
             problems.append(f"{where}: two decisions have this id.")
@@ -182,7 +185,7 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
                 continue
             oid = o.get("id")
             owhere = f"{where}, option {oid}"
-            if not isinstance(oid, str) or not SLUG.match(oid) or oid in RESERVED:
+            if not isinstance(oid, str) or not SLUG.fullmatch(oid) or oid in RESERVED:
                 problems.append(f"{owhere}: its id must be a slug and not "
                                 f"{', '.join(RESERVED)}.")
             elif oids.count(oid) > 1:
@@ -235,12 +238,142 @@ def problems_of(deck: dict, folder: Path) -> list[str]:
 
 
 def validate(content: Path) -> dict:
-    """The deck, or Refused with every problem."""
-    deck = read(content)
+    """The deck in full form, or Refused with every problem."""
+    deck = expand(read(content))
     problems = problems_of(deck, content.parent)
     if problems:
         raise Refused(problems)
     return deck
+
+
+# -- 1b. the short form ----------------------------------------------------------------
+# An agent supplies the decisions, options, reasons and visuals; everything
+# the system can work out it works out here, and the result is the full form
+# the builder and every older deck already use. A field given is never
+# replaced, so a full-form deck passes through unchanged.
+
+KEYS = {
+    "deck": ("name", "version", "purpose", "title", "language", "slides", "decisions"),
+    "slide": ("id", "kicker", "title", "short", "say", "beats", "blocks", "decision"),
+    "decision": ("id", "short", "question", "options", "recommended", "reason", "context",
+                 "picture", "say"),
+    "option": ("id", "name", "says", "picture", "opens", "recommended"),
+}
+
+
+def slug(text, fallback: str) -> str:
+    """Lower-case a-z, 0-9 and -, accents folded, at most 40 characters."""
+    folded = unicodedata.normalize("NFKD", _text(text)).encode("ascii", "ignore").decode()
+    words = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")[:40].strip("-")
+    return words or fallback
+
+
+def _unique(base: str, taken: set[str]) -> str:
+    ident, n = base, 2
+    while ident in taken:
+        ident, n = f"{base}-{n}", n + 1
+    taken.add(ident)
+    return ident
+
+
+def unknown_keys(deck: dict) -> list[str]:
+    """A misspelt field is silently ignored by the deck; name it, with the
+    field it was probably meant to be."""
+    out: list[str] = []
+
+    def look(where: str, item, kind: str):
+        if not isinstance(item, dict):
+            return
+        for key in item:
+            if key not in KEYS[kind]:
+                near = difflib.get_close_matches(key, KEYS[kind], n=1)
+                out.append(f"{where}: {key!r} is not a field of a {kind}"
+                           + (f"; did you mean {near[0]!r}?" if near else
+                              f"; the fields are {', '.join(KEYS[kind])}."))
+
+    look("The deck", deck, "deck")
+    for n, s in enumerate(deck.get("slides") or [], 1):
+        look(f"Slide {n}", s, "slide")
+    for n, d in enumerate(deck.get("decisions") or [], 1):
+        if not isinstance(d, dict):
+            continue
+        look(f"Decision {d.get('id') or n}", d, "decision")
+        for o in d.get("options") or []:
+            look(f"Decision {d.get('id') or n}, option {_text(o.get('id') if isinstance(o, dict) else '')}", o, "option")
+    return out
+
+
+def expand(deck: dict) -> dict:
+    """The deck with what can be worked out filled in; the argument is not changed.
+
+    - `name` from the title, `version` 1.0.0, `purpose` from the title.
+    - A decision's `id` from its `short` or question; `short` from the question.
+    - An option's `id` from its name.
+    - `recommended`: the option's id, or its name, or `"recommended": true` on
+      exactly one option.
+    - `opens` and a slide's `decision`: a decision's id, short name or question.
+    """
+    deck = copy.deepcopy(deck)
+    if not isinstance(deck, dict):
+        return deck
+    title = _text(deck.get("title")).strip()
+    if title:
+        deck.setdefault("name", slug(title, "decisions"))
+        deck.setdefault("purpose", f"Decisions: {title}")
+    deck.setdefault("version", "1.0.0")
+    decisions = [d for d in deck.get("decisions") or [] if isinstance(d, dict)]
+    taken: set[str] = {d["id"] for d in decisions if isinstance(d.get("id"), str)}
+    for n, d in enumerate(decisions, 1):
+        question = _text(d.get("question")).strip()
+        if not d.get("short") and question:
+            d["short"] = question[:CAPS["short"]].rstrip(" ,.;:?¿")
+        if not d.get("id"):
+            d["id"] = _unique(slug(d.get("short") or question, f"decision-{n}"), taken)
+    refs: dict[str, str] = {}
+    for d in decisions:
+        for key in (d["id"], _text(d.get("short")), _text(d.get("question"))):
+            if key.strip():
+                refs.setdefault(key.strip().casefold(), d["id"])
+
+    def resolve(ref):
+        return refs.get(_text(ref).strip().casefold(), ref)
+
+    for s in deck.get("slides") or []:
+        if isinstance(s, dict) and "decision" in s:
+            s["decision"] = resolve(s["decision"])
+    for d in decisions:
+        options = [o for o in d.get("options") or [] if isinstance(o, dict)]
+        used: set[str] = {o["id"] for o in options if isinstance(o.get("id"), str)}
+        flagged = [o for o in options if o.get("recommended") is True]
+        for n, o in enumerate(options, 1):
+            if not o.get("id"):
+                base = slug(o.get("name"), f"option-{n}")
+                o["id"] = _unique(base + "-option" if base in RESERVED else base, used)
+        rec = d.get("recommended")
+        if rec not in {o["id"] for o in options}:
+            named = [o for o in options if _text(o.get("name")).strip().casefold()
+                     == _text(rec).strip().casefold() and rec]
+            pick = named or (flagged if len(flagged) == 1 and not rec else [])
+            if pick:
+                d["recommended"] = pick[0]["id"]
+        for o in options:
+            if isinstance(o.get("recommended"), bool):
+                del o["recommended"]
+            if isinstance(o.get("opens"), list):
+                o["opens"] = [resolve(c) for c in o["opens"]]
+    return deck
+
+
+EXAMPLE = {
+    "title": "Team lunch",
+    "decisions": [
+        {"question": "Where do we eat on Friday?",
+         "options": [{"name": "In the office", "says": "Food is brought in.",
+                      "recommended": True},
+                     {"name": "A restaurant", "says": "A short walk away."}],
+         "reason": "Nobody has to book a table."},
+    ],
+}
 
 
 # -- 2. building -----------------------------------------------------------------------
@@ -249,9 +382,14 @@ def build(content: Path, out: Path, deck: dict) -> Path:
     """The package's folder and zip, made by new_deck.py: the zip's path."""
     folder = out / deck["name"]
     archive = out / f"{deck['name']}-{deck['version']}.zip"
+    module = builder()
     said = io.StringIO()
-    with contextlib.redirect_stdout(said):
-        code = builder().main([str(content), str(folder), str(archive)])
+    try:
+        with contextlib.redirect_stdout(said):
+            module.build_deck(deck, content.parent, folder)
+            code = module.zip_package.main([str(folder), str(archive)])
+    except (module.Bad, KeyError, ValueError, OSError) as e:
+        raise Refused([f"The builder refused it: {e}"])
     if code != 0 or not archive.is_file():
         raise Refused([f"The builder refused it: {said.getvalue().strip()}"])
     return archive
@@ -311,7 +449,12 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m jarvis.decision_package",
         description="Validate, build, check in an isolated JARVIS, and deliver a decision "
                     "package. docs/work-packages.md, \"Decision packages\", has the format.")
-    parser.add_argument("content", type=Path, help="the deck's data, one JSON file")
+    parser.add_argument("content", type=Path, nargs="?",
+                        help="the deck's data, one JSON file")
+    parser.add_argument("--example", action="store_true",
+                        help="print a minimal content file to start from, and stop")
+    parser.add_argument("--check-only", action="store_true",
+                        help="validate the content and stop: nothing is built or delivered")
     parser.add_argument("--project", default="", help="the project asking")
     parser.add_argument("--session", default="", help="the session asking")
     parser.add_argument("--out", type=Path, default=None,
@@ -320,7 +463,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deliver-to", default=LIVE, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
+    if args.example:
+        print(json.dumps(EXAMPLE, indent=2))
+        return 0
+    if args.content is None:
+        parser.error("give the content file (or --example to see one)")
     content = args.content.resolve()
+    if args.check_only:
+        try:
+            deck = validate(content)
+        except Refused as e:
+            print("The content needs these changes:")
+            for line in e.problems:
+                print(f"  - {line}")
+            return 1
+        print(f"The content is right: {len(deck['decisions'])} decision(s), "
+              f"package {deck['name']}-{deck['version']}.")
+        return 0
     out = (args.out or Path(tempfile.mkdtemp(prefix="decision-package-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)
     try:

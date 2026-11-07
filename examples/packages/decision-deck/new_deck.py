@@ -221,8 +221,13 @@ def write(path: Path, text: str) -> None:
 
 
 def build(source: Path, out: Path) -> Path:
-    deck = read_source(source)
-    check(deck, source.parent)
+    return build_deck(read_source(source), source.parent, out)
+
+
+def build_deck(deck: dict, source_dir: Path, out: Path) -> Path:
+    """Build `deck` (already read, pictures beside `source_dir`) into `out`."""
+    source = source_dir / "deck.json"
+    check(deck, source_dir)
     out.mkdir(parents=True, exist_ok=True)
     for name in FIXED:
         if (TEMPLATE / name).resolve() != (out / name).resolve():

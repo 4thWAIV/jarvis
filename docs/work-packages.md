@@ -294,6 +294,28 @@ No slide is a wall of text: the builder refuses a slide with more than 60
 words of body text (split it in two), and a decision whose question is
 over 30 words or whose reason, context or any option's words are over 40.
 
+### The short form
+
+An agent need only supply the substance: the `title`, and for each decision
+its `question`, `options` (each a `name` and what it `says`), the
+`recommended` option and the `reason`. The command works out the rest
+(`decision_package.expand`), and a field given is never replaced, so a
+full-form deck passes through unchanged:
+
+- `name` from the title, `version` `1.0.0`, `purpose` from the title;
+- a decision's `id` from its `short` or question, its `short` from the
+  question; an option's `id` from its name;
+- the recommendation: write the option's id or name in `recommended`, or put
+  `"recommended": true` on exactly one option;
+- `opens` and a slide's `decision` may name a decision by its id, `short` or
+  question.
+
+A field the deck does not know (`recomended`, `sais`) is refused by name with
+the field it was probably meant to be, since the deck would silently ignore
+it. `python -m jarvis.decision_package --example` prints a minimal content
+file, and `--check-only` validates a file and stops, with nothing built,
+checked in a browser or delivered.
+
 ### Sending one
 
 From the JARVIS checkout, with its own Python:

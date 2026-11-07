@@ -21,7 +21,7 @@ Keep it to ten items at most. Rewrite the whole file whenever your list changes,
 
 ## Choices for the user: a decision package
 
-Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package. There is one way to send one: write the deck's data in one JSON file (each decision's question, at least two options, the recommended option and its one-line reason, and any pictures as paths beside the file) and run
+Any choice you put to the user, beyond a line on the needs board, goes to them as a decision slide in a decision package. There is one way to send one: write the deck's data in one JSON file (start from `{{decision_package}} --example`; give only the title and each decision's question, at least two options, the recommended option and its one-line reason, and any pictures as paths beside the file; names, ids and version are worked out for you, and `--check-only` validates it in a second) and run
 
 ```
 {{decision_package}} /full/path/to/content.json --project <project> --session <your session id>
