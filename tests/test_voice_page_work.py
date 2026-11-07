@@ -381,3 +381,57 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         assert work.posted == [("api/work/work-r/review", {"action": "approve", "words": ""})]
         assert errors == [], errors
         await browser.close()
+
+
+class _Needs(_Review):
+    """One item stalled, one that needs his decision."""
+
+    def __init__(self):
+        super().__init__()
+        stalled = _review_item("work-s", "activity_unknown", False, None)
+        needing = _review_item("work-n", "waiting_on_tim", False, None)
+        stalled.update(stalled=True, needs_you=[], title="Stalled one")
+        needing.update(stalled=False, title="Needs him", decisions=[DECISION], headline=DECISION["question"],
+                       needs_you=[{"kind": "decision", "key": "engine",
+                                   "text": DECISION["question"]}])
+        self.items = {"work-s": stalled, "work-n": needing}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_stalled_row_says_so_and_a_needed_one_names_the_act_and_its_place(
+        page_playwright, page_url):
+    work = _Needs()
+    async with page_playwright as p:
+        try:
+            browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
+        except Exception as e:                              # pragma: no cover
+            pytest.skip(f"no headless Chromium: {e}")
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        await page.add_init_script(FAKE_TRANSCRIPTION)
+        await page.route_web_socket("**/ws/voice", _Voice())
+        await page.route_web_socket("**/ws/sessions", _Sessions())
+        await page.route("**/api/work", work)
+        await page.route("**/api/work/**", work)
+        await page.route("**/api/workflows**", _Workflows())
+        await page.goto(page_url)
+        await page.click(".right-tabs [role=tab][title=Work]")
+        stalled = page.locator(".work-row[data-work-id=work-s]")
+        await stalled.wait_for(timeout=10000)
+        await async_api.expect(stalled.locator(".work-state")).to_have_text("Stalled")
+        await async_api.expect(stalled.locator(".work-update")).to_have_text(
+            "Stalled: nobody is working on this")
+        needed = page.locator(".work-row[data-work-id=work-n]")
+        await async_api.expect(needed.locator(".work-update")).to_contain_text(
+            "Which engine is the default?")
+        await page.locator(".work-panel").screenshot(path=str(SHOTS / "work-list-needs.png"))
+        await needed.click()
+        need = page.locator("#work-detail .work-needs li[data-need=decision]")
+        await async_api.expect(need).to_contain_text("on the Decisions tab", timeout=10000)
+        await need.locator("button").click()
+        await async_api.expect(page.locator("#work-detail .work-tabs [aria-selected=true]")).to_contain_text(
+            "Decisions")
+        await page.locator("#work-detail").screenshot(path=str(SHOTS / "work-detail-needs.png"))
+        assert errors == [], errors
+        await browser.close()

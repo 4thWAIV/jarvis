@@ -9644,7 +9644,9 @@ async def _watch_workflow_silence() -> None:
                 _attend("workflow", w.id, "gone_quiet",
                         untrusted={"workflow": str(w.name or "")})
         # And a Work answer of his nobody has acted on (work_store.FollowUp).
-        _attend_unfollowed(await asyncio.to_thread(work_store.listing))
+        listed = await asyncio.to_thread(work_store.listing)
+        _attend_unfollowed(listed)
+        _attend_stalled(listed, await asyncio.to_thread(_stalled, listed))
 
     await _every(WORKFLOW_SILENCE_POLL_SEC, subsystem_diagnostics.WORKFLOW_LOOP, look_for_quiet)
 
@@ -10980,6 +10982,32 @@ _FOLLOW_UP_KIND = "work_follow_up"
 _work_said_unfollowed: set[tuple[str, float]] = set()
 
 
+# The items said to be stalled, so each is an attention item once and is
+# resolved once someone moves it again.
+_STALLED_KIND = "work_stalled"
+_work_said_stalled: set[str] = set()
+
+
+def _stalled(items) -> set:
+    """The ids of the items that are stalled. Reads packages: off the loop."""
+    waiting = package_inbox.waiting_by_work()
+    return {i.id for i in items if work_api.is_stalled(i, work_api.needs_of(i, waiting))}
+
+
+def _attend_stalled(items, stalled_ids: set) -> None:
+    """An item that needs nothing of him and that nobody is moving: a
+    silent attention item, once; resolved once it moves again."""
+    for item in items:
+        stalled = item.id in stalled_ids
+        if stalled and item.id not in _work_said_stalled:
+            _work_said_stalled.add(item.id)
+            _attend(_STALLED_KIND, item.id, "stalled", untrusted={"work": item.title},
+                    audible=False)
+        elif not stalled and item.id in _work_said_stalled:
+            _work_said_stalled.discard(item.id)
+            _attention_resolved(_STALLED_KIND, item.id)
+
+
 def _attend_unfollowed(items) -> None:
     """A decision he answered that nobody has acted on for
     work_store.FOLLOW_UP_AFTER_SEC: a silent attention item naming its
@@ -11120,9 +11148,23 @@ def _work_line(item) -> str:
             + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
             + (f" {named}" if (named := _work_projects(item)) else "")
             + _work_follow_up(item)
+            + _work_needs(item)
             + (f" {item.activity_reason}" if item.activity_reason else "")
             + (f" Held up by: {_work_blocker(others[0])}"
                + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
+
+
+def _work_needs(item) -> str:
+    """What he is needed for on the item, every act and where, the first
+    first, in the page's words (work_api.need_words); or that it is stalled,
+    nobody working on it; else ""."""
+    needs = work_api.needs_of(item)
+    if needs:
+        return " Needs him: " + "; ".join(f"{n}) {work_api.need_words(need)}"
+                                          for n, need in enumerate(needs, 1)) + "."
+    if work_api.is_stalled(item, needs):
+        return " Stalled: nobody is working on this."
+    return ""
 
 
 def _work_detail(item) -> str:
@@ -11138,7 +11180,7 @@ def _work_detail(item) -> str:
              + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
-             f"Latest update: {item.latest_update}" + _work_follow_up(item)]
+             f"Latest update: {item.latest_update}" + _work_follow_up(item) + _work_needs(item)]
     if item.activity_reason:
         lines.append(item.activity_reason)
     if named := _work_projects(item):

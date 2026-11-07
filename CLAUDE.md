@@ -319,7 +319,18 @@ claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
 ready or planned while a piece can be picked up, else waiting on him while
 a decision or piece waits on him, else activity_unknown (a claim gone
 silent: the stalled flag builds on exactly this), blocked, or ready for
-review (only once he can approve it), in that order; open decisions still show
+review (only once he can approve it), in that order. Every item that
+needs him names each act and its place, the first first (`needs_you`,
+`work_api.needs_of`: his decisions on the Decisions tab, a package sent for
+it opened from the item, his review in its header, a piece waiting on
+something else); the page shows them at the top of the item with a way to
+each and the first in its row ("You: …"), and `work_status` says the same
+words (`work_api.need_words`). One that needs nothing of him and that
+nobody moves (no claim heard from and no report within `QUIET_AFTER_SEC`;
+never done, ready for review or blocked) is `stalled` ("Stalled: nobody is
+working on this", its own colour, a silent `work_stalled` attention item
+from the quiet watch, resolved once it moves); a piece claimed working with
+no report for `STALLED_PIECE_AFTER_SEC` (a day) shows Stalled too. Open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of

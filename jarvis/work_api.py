@@ -140,7 +140,80 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
         # Ready for review only when he can approve it: what keeps Approve
         # back here is a package's question, which waits on him.
         out["state"] = work_store.WAITING
+    out["needs_you"] = needs_of(item, waiting, out["approvable"])
+    out["stalled"] = is_stalled(item, out["needs_you"])
     return out
+
+
+# ── what he is needed for, and work nobody moves ────────────────────────
+#
+# Every item that needs him names each act and where to do it, the first
+# first: the page shows them at the top of the item and the first in its
+# row, and the brain's work_status says the same words (`need_words`). An
+# item that needs nothing of him and that nobody is moving is Stalled.
+
+DECISION_NEED, PACKAGE_NEED, REVIEW_PACKAGE_NEED, REVIEW_NEED, PIECE_NEED = (
+    "decision", "package", "review_package", "review", "piece")
+
+
+def needs_of(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None,
+             approvable: Optional[bool] = None) -> list[dict]:
+    """Each act he is needed for on this item, in the order to do them:
+    its open decisions (on the Decisions tab), the packages sent for it that
+    still ask him something (opened from the item), its review (in its
+    header) and a piece waiting on him for something else (what it names)."""
+    if item.closed_at is not None or item.state == work_store.DONE:
+        return []
+    needs = [{"kind": DECISION_NEED, "key": d.key, "text": d.question} for d in item.decisions]
+    waiting = package_inbox.waiting_by_work() if waiting is None else waiting
+    packaged = set()
+    if waiting.get(item.id):
+        for entry in package_inbox.for_work(item.id):
+            try:
+                asked = [q for q in package_inbox.questions(work_packages.find(entry.package_id))
+                         if q.applies and not q.answer]
+            except work_packages.PackageError:
+                continue
+            if asked:
+                review = all(q.id == REVIEW_QUESTION for q in asked)
+                needs.append({"kind": REVIEW_PACKAGE_NEED if review else PACKAGE_NEED,
+                              "inbox": entry.id, "text": entry.title})
+                packaged |= {entry.id, entry.package_id, entry.name}
+    if (can_approve(item, waiting) if approvable is None else approvable) and \
+            item.state == work_store.VERIFYING:
+        needs.append({"kind": REVIEW_NEED})
+    for p in item.pieces:
+        if p.state != work_store.WAITING:
+            continue
+        others = [h for h in p.until if not h.startswith("decision:")
+                  and not any(h == f"package:{ref}" or h.startswith(f"package:{ref}:")
+                              for ref in packaged)]
+        if others:
+            needs.append({"kind": PIECE_NEED, "key": p.key, "text": p.title, "links": others})
+    return needs
+
+
+def need_words(need: dict) -> str:
+    """A need in English, as the brain says it (the page words the same
+    need in its language, main.work.need.*)."""
+    kind = need["kind"]
+    if kind == DECISION_NEED:
+        return f'Answer "{need["text"]}" on the Decisions tab'
+    if kind == PACKAGE_NEED:
+        return f"Open the {need['text']} package and answer its questions"
+    if kind == REVIEW_PACKAGE_NEED:
+        return f"Open the {need['text']} review package"
+    if kind == REVIEW_NEED:
+        return "Approve, Not done yet or Add work in this item's header"
+    return f"Answer what {need['text']} waits for ({', '.join(need['links'])})"
+
+
+def is_stalled(item: work_store.WorkItem, needs: list[dict]) -> bool:
+    """Needs nothing of him and nobody is moving it: no piece's claim heard
+    from and no report within the quiet window. Never done, closed or ready
+    for his review."""
+    return (not needs and item.unmoved and item.closed_at is None and not item.history
+            and item.state not in (work_store.DONE, work_store.VERIFYING, work_store.BLOCKED))
 
 
 # ── his review in a package ─────────────────────────────────────────────

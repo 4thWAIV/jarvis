@@ -823,6 +823,10 @@ EXEMPT = {
         "the Work routes: they return the record as JSON to the page and the reporting "
         "agents and print nothing for the brain, which reads the same record through "
         "work_status's wall"),
+    "work_api.needs_of": (
+        "it gathers what he is needed for on an item as data (an open decision's "
+        "question, a package's title, a piece's title and links); every reader shows it "
+        "inside the item's untrusted block (`work_status` through `_work_needs`) or on the page"),
     "work_api._write_for_asker": (
         "it writes his answer or review, with the item's title and question, to a file for "
         "the item's own agents in the answers folder; nothing in it reaches the brain"),

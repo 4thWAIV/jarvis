@@ -147,6 +147,8 @@ _COMMIT = re.compile(r"[0-9a-fA-F]{7,40}")
 _URL = re.compile(r"https?://[^\s]{1,1000}", re.IGNORECASE)
 
 QUIET_AFTER_SEC = 10 * 60
+# A piece claimed working with no report for this long is shown stalled.
+STALLED_PIECE_AFTER_SEC = 24 * 3600
 # A done item stays on the main list this long, then moves to History.
 DONE_LINGER_SEC = 5 * 60
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -357,6 +359,8 @@ class Piece:
     # Read time only: held with nothing named, for UNLINKED_AFTER_SEC.
     unlinked: bool = False
     activity_reason: str = ""
+    # Read time only: claimed working with no report for STALLED_PIECE_AFTER_SEC.
+    stalled: bool = False
 
 
 @dataclass(frozen=True)
@@ -469,6 +473,10 @@ class WorkItem:
     review_note: str = ""                  # his words when he said it is not done yet
     review_note_at: Optional[float] = None
     activity_reason: str = ""
+    # Read time only: nobody is moving it: no piece's claim heard from, and
+    # no report from its agents, within QUIET_AFTER_SEC (work_api decides
+    # whether that is "Stalled", once nothing waits on him).
+    unmoved: bool = False
 
 
 @dataclass(frozen=True)
@@ -1143,7 +1151,9 @@ def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
             quiet_at=quiet_at(public_state(r["state"]), r["note_at"]), until=holds_of(r["until"]),
             then=r["then_state"], waiting_since=r["waiting_since"],
             unlinked=_unlinked(r, now),
-            activity_reason=ACTIVITY_REASON if r["state"] == WORKING else ""))
+            activity_reason=ACTIVITY_REASON if r["state"] == WORKING else "",
+            stalled=(r["state"] == WORKING and r["note_at"] is not None
+                     and now - r["note_at"] > STALLED_PIECE_AFTER_SEC)))
     return _in_order(pieces)
 
 
@@ -1211,7 +1221,9 @@ def _item(conn, row, now: float) -> WorkItem:
         approved_at=row["approved_at"], review_note=row["review_note"],
         approvable=approvable(row, pieces, decisions),
         review_note_at=row["review_note_at"],
-        activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "")
+        activity_reason=ACTIVITY_REASON if state == ACTIVITY_UNKNOWN else "",
+        unmoved=(not any(_moving(p, now) for p in pieces)
+                 and now - (row["reported_at"] or row["created_at"]) > QUIET_AFTER_SEC))
 
 
 def _quiet(state: str, row, pieces: list[Piece], now: float) -> bool:
