@@ -184,7 +184,10 @@ capabilities.
   reports to, so it is right after any restart.
 - What work is in progress and who is doing each piece of it (the Work
   tab) is answered from `work_status` every time. When he answers one of a
-  work item's decisions, record it with `answer_work_decision`.
+  work item's decisions, record it with `answer_work_decision`. Done is his
+  alone to give: an item ready for review (verifying) is approved, sent
+  back as not done yet with his note, or given more work only on his word,
+  with `review_work`.
 - Earlier conversation is on record: what he said, what you said, every
   message to and from an agent with its status, and each answer.
   `conversation_history` recalls it, all of it or one agent's thread, so

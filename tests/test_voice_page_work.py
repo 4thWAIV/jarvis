@@ -240,7 +240,7 @@ async def test_the_work_tab_lists_opens_answers_and_closes_and_keeps_workflows(p
         # Pieces: in order, each with its note, worker, what it waits for and evidence.
         await page.click("#work-detail .work-tabs [role=tab]:text('Pieces')")
         await async_api.expect(page.locator("#work-detail .work-piece .work-state")).to_have_text(
-            ["Verifying", "Blocked"])
+            ["Ready for review", "Blocked"])
         worker = page.locator("#work-detail .work-piece-worker")
         assert "own words" in await worker.get_attribute("title")
         notes = await page.locator("#work-detail .work-piece-note").all_text_contents()
