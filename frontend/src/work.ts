@@ -14,6 +14,7 @@
  */
 
 import { getJson, postAnswer } from "./fetchJson";
+import type { InboxDetail } from "./packageInbox";
 import { liveRead } from "./liveRead";
 import { t, wordsOf } from "./locale";
 import { createStore } from "./store";
@@ -117,6 +118,8 @@ export interface WorkItem {
   closed_at: number | null;
   /** Closed, or done a while: listed under History. */
   history: boolean;
+  /** How many questions the packages sent for it still wait on him for. */
+  package_questions: number;
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */
@@ -171,8 +174,11 @@ export const STATE_WORDS = wordsOf<WorkState>(
  *  the groups the Work tab heads them with. */
 export const workList = liveRead(() => getJson<WorkList>("/api/work"), [workChanged]);
 
+/** One item in full: with its latest events and the open packages sent for
+ *  it (`make_package --work`), each with its questions. */
 export const getWorkItem = (id: string) =>
-  getJson<{ item: WorkItem; events: WorkEvent[] }>(`/api/work/${encodeURIComponent(id)}`);
+  getJson<{ item: WorkItem; events: WorkEvent[]; packages: InboxDetail[] }>(
+    `/api/work/${encodeURIComponent(id)}`);
 
 /** One blocker in a line: what holds it, and the piece's or item's note. */
 export function blockerWords(item: WorkItem, b: WorkBlocker): string {

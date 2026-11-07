@@ -1,6 +1,7 @@
 """The one way an agent makes a package and sends it to Tim.
 
     python -m jarvis.make_package CONTENT.json | FOLDER [--project P] [--session ID]
+                                  [--workflow ID] [--work ID]
                                   [--check-only] [--example [decisions|presentation]]
 
 docs/making-a-package.md is the whole of how to use it. In short:
@@ -16,8 +17,10 @@ docs/making-a-package.md is the whole of how to use it. In short:
 Either way the command checks it, builds and zips it, checks it again (a deck
 end to end in an isolated JARVIS, decision_check.py; a folder through the
 receiver's own reading of the zip, work_packages.recognise), and only then
-unpacks it unshown into the live JARVIS and writes Tim a message naming it
-and the words that open it. Anything it cannot decide it refuses, saying
+sends it to the live JARVIS's package inbox (package_inbox.py): unpacked
+there, listed in his backlog and counted in his updates, never shown and
+never spoken until he asks for it. `--session` is who his answers go back
+to; `--workflow` and `--work` name the workflow or work item it is for. Anything it cannot decide it refuses, saying
 what to change. Nothing is delivered after any failure.
 """
 from __future__ import annotations
@@ -206,30 +209,7 @@ def make_folder(folder: Path, out: Path) -> Made:
     return Made(archive, title, f"{manifest['runs']} package", None)
 
 
-# -- delivering and telling Tim --------------------------------------------------------
-
-def words_to_open(made: Made) -> str:
-    verb = "Open" if made.deck is not None or made.kind == "page package" else "Run"
-    return f"{verb} the {made.title} package."
-
-
-def tell_tim(made: Made, package_id: str, project: str, answers: Path | None) -> Path:
-    """The message to Tim (data_paths.session_messages_dir()), written once,
-    under a name that is not .md until it is whole."""
-    folder = data_paths.session_messages_dir() / dp.slug(project, "packages")
-    folder.mkdir(parents=True, exist_ok=True)
-    lines = [f"# A {made.kind} is ready for you: {made.title}", "",
-             f"Say \"{words_to_open(made)}\" to open it (package {package_id})."]
-    if made.deck is not None and made.deck.get("decisions"):
-        n = len(made.deck["decisions"])
-        lines.append(f"It asks {n} decision{'s' if n != 1 else ''}; answer on the slides or "
-                     f"out loud. The answers are recorded in {answers}.")
-    target = folder / f"package-{package_id}.md"
-    temp = folder / f".package-{package_id}.partial"
-    temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temp.replace(target)
-    return target
-
+# -- checking ------------------------------------------------------------------------
 
 def _check(made: Made, out: Path) -> bool:
     """A deck end to end in an isolated JARVIS; True when every check passed."""
@@ -270,7 +250,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
                         help="check the content and stop: nothing is built or delivered")
     parser.add_argument("--project", default=Path.cwd().name,
                         help="the project asking (default: this folder's name)")
-    parser.add_argument("--session", default="", help="the session asking")
+    parser.add_argument("--session", default="",
+                        help="the session asking: his answers come back to it as a message")
+    parser.add_argument("--workflow", default="",
+                        help="the workflow it is for: it waits on his answers, which come "
+                             "back as its decisions")
+    parser.add_argument("--work", default="",
+                        help="the work item it is for: its questions show on that item's "
+                             "Decisions tab")
     parser.add_argument("--out", type=Path, default=None,
                         help="where the package, its zip and the screenshots go "
                              "(default: a new temporary folder)")
@@ -312,28 +299,35 @@ def main(argv: list[str] | None = None, prog: str = "python -m jarvis.make_packa
         return 1
 
     try:
+        # The tool token, which the stamp needs anyway: the inbox route also
+        # takes a `packages` access key, for a sender that has no stamp to make.
         token = data_paths.ensure_tool_token()
         if made.deck is not None and made.deck.get("decisions"):
             # The files checked, stamped for the live JARVIS, which unpacks a
             # decision package only with its own stamp (decision_stamp.py).
             decision_stamp.stamp(made.archive, made.archive, token)
-        delivered = dp.deliver(made.archive, args.deliver_to, token)
+        delivered = dp.deliver(made.archive, args.deliver_to, token, project=args.project,
+                               session=args.session, workflow=args.workflow, work=args.work)
     except OSError as e:
         print(f"Not delivered: {e}")
         return 1
-    package_id = delivered.package["id"]
+    package_id, inbox_id = delivered.package["id"], delivered.inbox["id"]
     answers = (data_paths.packages_dir() / package_id / "results" / "decisions.json"
                if made.deck is not None and made.deck.get("decisions") else None)
-    message = tell_tim(made, package_id, args.project, answers)
-    record = {"package": package_id, "title": made.title, "kind": made.kind,
-              "project": args.project, "session": args.session, "zip": str(made.archive),
-              "answers": str(answers) if answers else None, "message": str(message)}
+    record = {"package": package_id, "inbox": inbox_id, "title": made.title, "kind": made.kind,
+              "project": args.project, "session": args.session, "workflow": args.workflow,
+              "work": args.work, "zip": str(made.archive),
+              "answers": str(answers) if answers else None}
     (out / "delivery.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(f"Delivered: package {package_id}"
-          + ("" if delivered.unpacked else " (it was already there)")
-          + f", asked by {args.project}"
-          + (f" session {args.session}" if args.session else "") + ".")
-    print(f"Tim has a message saying so ({message}). He can say: \"{words_to_open(made)}\"")
+    print(f"Arrived in Tim's package inbox as {inbox_id} (package {package_id})"
+          + ("" if delivered.unpacked else ", already there from the same bytes") + ".")
+    print("Nothing is shown until he asks for it. "
+          + ("His answers come back to your session as a message"
+             + (" and to the workflow as its decisions" if args.workflow else "") + "."
+             if args.session or args.workflow else
+             "Give --session next time so his answers come back to you."))
+    if answers:
+        print(f"The answers are recorded in {answers}.")
     return 0
 
 

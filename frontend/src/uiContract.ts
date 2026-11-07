@@ -148,6 +148,7 @@ export const UI_CONTRACT = {
     "teamMember": "^-?[0-9]{1,20}$",
     "version": "^[0-9a-f]{7,40}$",
     "package": "^[A-Za-z0-9._-]{1,128}$",
+    "inboxPackage": "^pkg-[0-9a-f]{1,32}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
@@ -2756,11 +2757,39 @@ export const UI_CONTRACT = {
       "entity": null,
       "label": "Queue",
       "parts": [
+        "packages",
+        "closedPackages",
         "waiting",
         "active",
         "history",
         "more",
         "new"
+      ],
+      "presentations": [
+        {
+          "view": "right.queue",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "queue"
+            }
+          }
+        }
+      ],
+      "family": "queue"
+    },
+    {
+      "kind": "inboxPackage",
+      "entity": "inboxPackage",
+      "label": "Package in the inbox: who sent it, its title and how many decisions wait",
+      "parts": [
+        "row",
+        "sender",
+        "title",
+        "progress",
+        "open",
+        "return",
+        "close"
       ],
       "presentations": [
         {
@@ -3218,6 +3247,7 @@ export const UI_CONTRACT = {
         "who",
         "pieces",
         "decisions",
+        "packages",
         "answered",
         "blocking",
         "reports",
@@ -3257,6 +3287,7 @@ export const UI_CONTRACT = {
             "who",
             "pieces",
             "decisions",
+            "packages",
             "answered",
             "blocking",
             "reports",
@@ -3314,6 +3345,26 @@ export const UI_CONTRACT = {
         "options",
         "answer",
         "package"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workPackageQuestion",
+      "entity": null,
+      "keyOf": [
+        "inboxPackage",
+        "workPart"
+      ],
+      "label": "A question a package sent for a work item asks",
+      "parts": [
+        "row",
+        "options",
+        "answer"
       ],
       "presentations": [
         {

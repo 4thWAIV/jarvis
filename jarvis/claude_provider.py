@@ -180,6 +180,13 @@ ALLOWED_TOOLS = [
     # to a decision as an ACTING_TOOL.
     "mcp__jarvis__work_status",
     "mcp__jarvis__answer_work_decision",
+    # The package inbox (package_inbox.py): the backlog read, walled; opening,
+    # answering, sending back and closing as ACTING_TOOLS.
+    "mcp__jarvis__package_inbox",
+    "mcp__jarvis__open_inbox_package",
+    "mcp__jarvis__answer_package_decision",
+    "mcp__jarvis__return_package_answers",
+    "mcp__jarvis__close_inbox_package",
     "mcp__jarvis__retry_run",
     # Self-update (self_update.py): the Updates section's check, and its
     # Update and restart as an ACTING_TOOL.

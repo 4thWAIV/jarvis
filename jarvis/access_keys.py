@@ -70,6 +70,9 @@ CATEGORIES: dict[str, Category] = {
     "work": Category(
         "Track work items and report who is on each piece to the Work tab.",
         (("POST", r"/api/work"), ("POST", r"/api/work/[^/]+/events"))),
+    "packages": Category(
+        "Send Tim packages for his package inbox; nothing is shown until he asks for it.",
+        (("POST", r"/api/packages/inbox"),)),
     "watch": Category(
         "Watch the sessions and specs feeds.",
         ((WEBSOCKET, r"/ws/sessions"), (WEBSOCKET, r"/ws/specs"))),

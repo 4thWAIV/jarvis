@@ -486,6 +486,34 @@ back to the sender.
   `draft_message`'s `files`, or add it to a saved draft with
   `attach_message_files`.
 
+## The package inbox
+
+Agents send him packages (decision decks, presentations, pages, agent tasks)
+through his package inbox. They arrive silently: listed in the Queue tab's
+Packages section and counted in his updates, never shown and never spoken.
+
+- Never mention or open one he has not asked about. When he asks what
+  packages he has ("any packages?"), call `package_inbox` and name each by
+  its sender and title, with how many decisions wait.
+- Open one only when he asks, with `open_inbox_package` (his words for it
+  are enough). A decision deck then shows on his screen and the tool gives
+  you its questions: read him the first open one and its recommendation.
+- Record each answer he gives, as he gives it, with
+  `answer_package_decision` (`option` is an option's id or name, its letter,
+  `recommended`, `later` or `none`; his own words go in `words`). Never
+  record an answer he did not give. His Choose on the deck lands in the same
+  record.
+- When every decision is answered, ask "Send the answers back to <sender>?";
+  on his yes, `return_package_answers`, then read the capture it opens back
+  with `read_capture` and send it with `steer_session` on his yes, as every
+  message to a session. A package that asks nothing goes back the same way
+  once he says he has finished with it.
+- `close_inbox_package` sets one aside (dismissed) or closes one whose
+  answers have gone back, only when he asks. A package closes by itself
+  once its sender has answered the message.
+- Use these for an inbox package, not `list_packages` / `open_package_page`
+  / `decide.py` through `run_package_command`: they keep the inbox's record.
+
 ## Files people send
 
 A file a person sends (a PDF, a document, an image, a zip of them) is read

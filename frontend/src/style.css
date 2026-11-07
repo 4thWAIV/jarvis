@@ -3868,3 +3868,30 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 .hearing-input:focus-visible { outline: none; }
+
+/* The package inbox: the Queue's Packages section (QueuePackages.tsx), a
+   package's reduced line in Updates waiting, and a work item's package
+   questions. Calm: a package waits until he asks for it. */
+.package-mark { flex: none; vertical-align: -2px; color: rgba(94, 234, 212, 0.9); }
+.package-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  border-radius: 8px;
+  background: rgba(94, 234, 212, 0.05);
+}
+.package-row.state-arrived { border-color: rgba(94, 234, 212, 0.6); }
+.package-row-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.package-row-head .row-person { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.package-progress { font-size: 10px; color: var(--ui-secondary); white-space: nowrap; }
+.package-progress[data-waiting] { color: rgba(253, 224, 71, 0.9); }
+.package-title { margin: 0; overflow-wrap: anywhere; color: var(--ui-text); }
+.package-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.package-said { font-size: 11px; }
+.package-closed-row { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--ui-secondary); }
+.package-closed-row .row-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#updates-notice .updates-list li.updates-package { flex-wrap: wrap; }
+.work-package { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }

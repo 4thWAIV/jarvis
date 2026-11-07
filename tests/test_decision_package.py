@@ -128,7 +128,8 @@ class _Delivery:
 
     def __call__(self, url, token, body, timeout=60):
         self.calls.append((url, token, body))
-        return {"package": {"id": "lunch-decisions-1.0.0-local1"}, "unpacked": True}
+        return {"package": {"id": "lunch-decisions-1.0.0-local1"}, "arrived": True,
+                "inbox": {"id": "pkg-0123456789ab", "title": "Team lunch"}}
 
 
 def test_refused_content_is_not_built_checked_or_delivered(tmp_path, monkeypatch, capsys):
@@ -165,12 +166,12 @@ def test_a_passed_check_delivers_once_with_the_token(tmp_path, monkeypatch, caps
                     "--project", "lunch", "--session", "abc",
                     "--deliver-to", "http://127.0.0.1:19999"]) == 0
     [(url, token, body)] = delivery.calls
-    assert url == "http://127.0.0.1:19999/api/packages/local"
+    assert url == "http://127.0.0.1:19999/api/packages/inbox?project=lunch&session=abc"
     assert token == data_paths.ensure_tool_token()
-    assert body == {"path": str(tmp_path / "out" / "lunch-decisions-1.0.0.zip")}
+    assert body == (tmp_path / "out" / "lunch-decisions-1.0.0.zip").read_bytes()
     said = capsys.readouterr().out
     assert token not in said
-    assert "lunch-decisions-1.0.0-local1" in said and '"Open the Team lunch package."' in said
+    assert "lunch-decisions-1.0.0-local1" in said and "pkg-0123456789ab" in said
     record = json.loads((tmp_path / "out" / "delivery.json").read_text())
     assert record["project"] == "lunch" and record["session"] == "abc"
 

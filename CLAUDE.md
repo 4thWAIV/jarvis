@@ -541,6 +541,65 @@ decision package stamped for the live JARVIS first, with a message to Tim.
 own tool token (`decision_stamp.py`), so no other way delivers one.
 `python -m jarvis.decision_package` is the command's old name.
 
+## The package inbox
+Every package an agent sends Tim arrives one way: `python -m
+jarvis.make_package` checks and builds it, then posts the zip's bytes to
+`POST /api/packages/inbox?project=&session=&workflow=&work=`
+(`decision_package.deliver`, the tool token, which the decision stamp needs
+anyway; the `packages` access-key category opens that one route and
+nothing else). `package_inbox_api.py` hands it to `server._receive_inbox_package`:
+the workflow or work item it names must exist and be open, the bytes are
+unpacked by `work_packages.unpack_held` exactly as a local zip (a decision
+package only with its stamp), and `package_inbox.arrive` records it. Nothing
+calls `_open_package_page` on arrival. `package_inbox.py` is the only
+writer of `package_inbox` (one row per arrival) and
+`package_inbox_events` (each change, no words of the package), schema
+`package_inbox_schema` (`run_store.migrate`), each change one transaction
+with its revision, before any hint (`packages`, and `work` when it names a
+work item). States `arrived -> opened -> answering -> answered -> returned
+-> closed` (`done`, `dismissed`, `superseded`). The same bytes while open
+are the same row; an open package of the same name from the same sender
+(its session, else its project) is closed `superseded` in the same
+transaction. A decision package's questions are read from `deck-data.js`
+as JSON after `window.DECK = ` (never executed) and its answers from its
+own `results/decisions.json` (`package_inbox.questions`; a follow-up
+applies only once its parent's answer opens it); the row mirrors only the
+counts, read again after the frame saves a result (`packages_api.mount`'s
+`saved`) and after each answer. Arrival is an attention item of kind
+`package` (`untrusted`: the agent, the title; `facts`: decisions waiting)
+that is counted and listed but never spoken: `attention_store.SILENT_KINDS`
+keeps it out of every digest whatever a caller asks. Opening resolves it.
+The page shows the backlog as the Packages section at the top of the Queue
+tab (`QueuePackages.tsx`, signed in or not, closed ones behind Closed) and
+each arrival as one reduced line in Updates waiting (`UpdatesNotice.tsx`
+`PackageLine`: who, title, decisions waiting, Open and Seen; never expands
+or plays). Open is `_open_inbox_package`, on his click only
+(`packages_api.his_click`) or the acting `open_inbox_package`; a page package
+is shown in the centre, any other is in the brain's hands. His answers go
+through the package's own `scripts/decide.py`, run with a fixed argument
+list and no shell (`_answer_inbox_decision`: the acting
+`answer_package_decision` and `POST .../answer`, which the Work tab uses).
+`_return_package_answers` (the acting `return_package_answers`, `POST
+.../return`, the row's Send answers) needs every decision that applies
+answered (`package_inbox.check_return`); it records each answer as the
+workflow's own `decision_needed` then `decision_made` under the decision's
+id and ends the workflow's wait (`wait_started` at arrival, key the inbox
+id), then opens a capture addressed to the sending session (`_new_capture`
+and `_set_capture`, shared with `capture`) holding each answer and the
+record's path, which is read back and sent only on his yes or Send, as
+every message to a session. A sender no longer running gets no message and
+the row is returned at once. `package_inbox.follow_messages`, run on every
+message event (`_attend_message`) and every direct send, moves a row to
+`returned` once a message from its capture has gone to its session since
+he asked, and to `closed` `done` once that message is answered.
+`_close_inbox_package` (the acting `close_inbox_package`, `POST
+.../close`) dismisses one, or closes one already returned. `package_inbox`
+reads the backlog for the brain, walled. A package sent with `--work <id>`
+shows its questions on that work item's Decisions tab (`work_api.packages_json`
+on `GET /api/work/{id}`, `package_questions` on every item; the
+`workPackageQuestion` target), answered there into the same record, and
+`work_status` lists them.
+
 ## Collaboration bundles
 Any file a teammate sends, a ZIP with no manifest included, can be inspected and read
 without running anything. The shared contract is `bundle_contract.py`: the
@@ -1572,6 +1631,10 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
 - `make_package.py` — The one command an agent makes and sends a package
   with (see `docs/making-a-package.md`); `decision_package.py` reads,
   expands, checks, builds and delivers a deck's content
+- `package_inbox.py` / `package_inbox_api.py` — The package inbox: its
+  record, a deck's questions and answers read as data, and its routes (see
+  "The package inbox"); `frontend/src/packageInbox.ts` /
+  `QueuePackages.tsx` are the page's side
 - `packages_api.py` — The page's `/api/packages*` routes: the packages here,
   a page package's files, what its frame saves, opening it, telling its
   story, and the story helper
