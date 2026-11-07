@@ -74,11 +74,13 @@ await import("../frontend/src/captions.ts");
 const packages = await import("../frontend/src/packages.ts");
 const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
+await import("../frontend/src/knowledge.ts");
+const projects = await import("../frontend/src/projects.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
   for (let i = 0; i < 50; i++) {
-    if (workflows.workflows.get().value && subsystems.subsystems.get().value && work.workItems.get().value) return;
+    if (workflows.workflows.get().value && subsystems.subsystems.get().value && work.workList.get().value) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("fixtures never read");
@@ -510,6 +512,19 @@ function registerFolderRow(el: unknown) {
   assert.equal((await dispatch("bundle.member.close", {}, { actor: "brain" })).status, "completed");
   assert.equal(nav.mainView.get(), "conversation");
   passed.push("package and received file: opened by their commands, closed back to Conversation");
+}
+
+{
+  const P1 = "11111111-2222-4333-8444-555555555555";
+  answers.set(`/api/project-records/${P1}`, { status: 200, body: { project: { id: P1 } } });
+  assert.equal((await dispatch("project.open", { projectId: P1 }, { actor: "brain" })).status, "completed");
+  assert.equal(nav.mainView.get(), "project");
+  assert.equal(projects.openProject.get(), P1);
+  assert.equal((await dispatch("project.open", { projectId: "00000000-0000-4000-8000-00000000dead" }, { actor: "human" })).status, "unavailable");
+  assert.equal(projects.openProject.get(), P1);
+  assert.equal((await dispatch("project.close", {}, { actor: "human" })).status, "completed");
+  assert.equal(nav.mainView.get(), "conversation");
+  passed.push("project: opened by its command, a missing one refused, closed back to Conversation");
 }
 
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so

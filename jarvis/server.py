@@ -9328,13 +9328,13 @@ async def tool_spawn_run(args: dict) -> str:
     # skip permissions.
     context = ""
     if context_service.run_context_enabled() and args.get("context", True) is not False:
-        def made() -> str:
+        def pack_for_run() -> str:
             scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
                 if binding and projects is not None else None
             return context_service.pack(purpose=prompt, project=name, scope=scope, trust="own",
                                         search=knowledge_api.context_search(knowledge_calls)).text
         try:
-            context = await asyncio.to_thread(made)
+            context = await asyncio.to_thread(pack_for_run)
         except Exception:
             log.warning("the run's context pack could not be made", exc_info=True)
             context = ""

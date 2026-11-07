@@ -38,6 +38,7 @@ EXPECTED = {
     "reveal: a person's navigation cancels it", "reveal: nothing declared, nothing guessed",
     "no declared command without a handler",
     "package and received file: opened by their commands, closed back to Conversation",
+    "project: opened by its command, a missing one refused, closed back to Conversation",
 }
 
 

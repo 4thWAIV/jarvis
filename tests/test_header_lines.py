@@ -376,6 +376,29 @@ EXEMPT = {
         "the events go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
     "server.tool_works": (
         "the pieces of work go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "context_service._project_lines": (
+        "it lines up one project for the pack from his own project records "
+        "(name, summary, folder names, confirmed accomplishments) and his "
+        "notes; pack's own trust rule applies to everything it returns. "
+        "Driven by tests/test_context_service.py"),
+    "package_inbox.waiting_by_work": (
+        "it returns counts keyed by work item ID, read from the rows' own "
+        "counters; it prints nothing. Driven by tests/test_header_lines.py's "
+        "work status driver"),
+    "server._record_work_target": (
+        "the name it returns is the project's or folder's behind the "
+        "voice-name wall (_said_name); its refusals are the project store's "
+        "fixed words, which name no record, or _folder_refusal's. Driven by "
+        "tests/test_spawn_run_tool.py"),
+    "server._work_projects": (
+        "it names his project records and their IDs inside the work tool's "
+        "lines, which go to the brain only inside the work untrusted block "
+        "(_work_line, _work_detail). Driven by tests/test_project_records.py"),
+    "server.pack_for_run": (
+        "the run's context pack, built by context_service.pack with trust "
+        "`own` only, from his project records and notes; it goes into the "
+        "run's prompt inside the context markers, never a header line. Driven "
+        "by tests/test_context_service.py"),
     "context_service.pack": (
         "with trust `own` (the default, and all a run ever gets) it builds the "
         "pack from his project notes, his topic files and passages the engine "
