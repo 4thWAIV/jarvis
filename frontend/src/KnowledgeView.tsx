@@ -12,14 +12,15 @@
  *
  * Registered for pointing at: the view (header, close, status, search,
  * results, proposals, topics, indexes), each proposal (row, accept,
- * reject) and each extra index (row, pin, forbid, clear). His pins and
+ * reject), each suggested set of topics (row, accept, decline) and each
+ * extra index (row, pin, forbid, clear). His pins and
  * forbids are kept in his settings note (knowledge.md).
  */
 
 import { useState, useSyncExternalStore } from "react";
 import { CENTRE_SOCKET } from "./ConversationView";
 import {
-  answerError, extraIndexes, knowledgeStatus, proposals, search, topics, type ExtraIndex, type Hit, type Proposal,
+  answerError, extraIndexes, knowledgeStatus, seeds, type Seed, proposals, search, topics, type ExtraIndex, type Hit, type Proposal,
 } from "./knowledge";
 import { useT } from "./locale";
 import { bind, bindingProps, runBinding } from "./uiNavigation";
@@ -48,6 +49,7 @@ export function KnowledgeView() {
                 ref={ui.part("close")} {...bindingProps(bind("knowledge.close", {}))}>×</button>
       </section>
       <SearchBox partRef={ui.part("search")} resultsRef={ui.part("results")} />
+      <Seeds partRef={ui.part("seeds")} />
       <Proposals partRef={ui.part("proposals")} />
       <Topics partRef={ui.part("topics")} />
       <Indexes partRef={ui.part("indexes")} />
@@ -224,6 +226,55 @@ function IndexRow({ x }: { x: ExtraIndex }) {
       <button type="button" ref={ui.part("clear")} disabled={!x.pinned && !x.forbidden}
               {...bindingProps(bind("knowledge.index.choose", { indexKey: x.key, choice: "clear" }))}>
         {t("main.knowledge.index.clear")}
+      </button>
+    </li>
+  );
+}
+
+function Seeds({ partRef }: { partRef: PartRef }) {
+  const t = useT();
+  const live = useSyncExternalStore(seeds.subscribe, seeds.get);
+  const open = (live.value ?? []).filter((x) => x.status === "open");
+  if (!open.length) return <div ref={partRef} hidden />;
+  return (
+    <section aria-label={t("main.knowledge.seedsTitle")} ref={partRef}>
+      <h3>{t("main.knowledge.seedsTitle")}</h3>
+      <p className="knowledge-note">{t("main.knowledge.seedsNote")}</p>
+      <ul className="knowledge-proposals">
+        {open.map((x) => <SeedRow key={x.id} seed={x} />)}
+      </ul>
+    </section>
+  );
+}
+
+function SeedRow({ seed }: { seed: Seed }) {
+  const t = useT();
+  const ui = useUiTarget({ ref: { region: "main", view: "main.knowledge", kind: "knowledgeSeed", key: seed.id },
+                           label: seed.title, socket: CENTRE_SOCKET });
+  return (
+    <li className="knowledge-proposal knowledge-seed" data-seed={seed.id} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <div className="knowledge-proposal-words">
+        <span className="knowledge-label">{seed.title}</span>
+        <ul className="knowledge-seed-topics">
+          {seed.topics.map((topic) => (
+            <li key={topic.slug}>
+              <span className="knowledge-label">{topic.name}</span>{" "}
+              <span className="knowledge-status">
+                {t(STATUS_WORDS[topic.status as keyof typeof STATUS_WORDS] ?? STATUS_WORDS.unknown)}
+              </span>
+              {seed.exists.includes(topic.slug) && <span className="knowledge-pinned"> {t("main.knowledge.seedKept")}</span>}
+              <p className="knowledge-text">{topic.body.replace(/^# .*\n+/, "")}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <button type="button" ref={ui.part("accept")}
+              {...bindingProps(bind("knowledge.seed.answer", { seedId: seed.id, answer: "accept" }))}>
+        {t("main.knowledge.seedAccept")}
+      </button>
+      <button type="button" ref={ui.part("decline")}
+              {...bindingProps(bind("knowledge.seed.answer", { seedId: seed.id, answer: "decline" }))}>
+        {t("main.knowledge.seedDecline")}
       </button>
     </li>
   );

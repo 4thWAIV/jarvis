@@ -424,3 +424,22 @@ def choose_index(key: str, choice: str) -> dict:
         front["forbidden_indexes"] = sorted(forbidden)
         _write(path, render(front, body or SETTINGS_BODY), text)
     return index_choices()
+
+
+def declined_seeds() -> list[str]:
+    front, _ = parse(_read_text(settings_path()) or "")
+    found = front.get("declined_seeds") or []
+    return sorted({str(x) for x in found}) if isinstance(found, list) else []
+
+
+def decline_seed(seed_id: str) -> list[str]:
+    """A seed he said no to, written down so it is never offered again."""
+    check_slug(seed_id)
+    with _LOCK:
+        path = settings_path()
+        text = _read_text(path)
+        front, body = parse(text or "")
+        declined = sorted({str(x) for x in front.get("declined_seeds") or []} | {seed_id})
+        front["declined_seeds"] = declined
+        _write(path, render(front, body or SETTINGS_BODY), text)
+    return declined_seeds()

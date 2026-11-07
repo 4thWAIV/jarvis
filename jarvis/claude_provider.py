@@ -182,6 +182,8 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__reindex_knowledge",
     "mcp__jarvis__knowledge_indexes",
     "mcp__jarvis__change_knowledge_index",
+    "mcp__jarvis__knowledge_seeds",
+    "mcp__jarvis__change_knowledge_seed",
     "mcp__jarvis__attention_updates",
     "mcp__jarvis__mark_updates_seen",
     "mcp__jarvis__set_attention_settings",

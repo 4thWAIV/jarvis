@@ -86,6 +86,7 @@
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$",
     "knowledgeProposal": "^[0-9a-f]{24}$",
+    "knowledgeSeed": "^[a-z0-9-]{1,40}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": ["enum", "string", "integer", "boolean", "key"],

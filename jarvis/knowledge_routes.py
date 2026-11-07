@@ -15,6 +15,8 @@ is followed by a `knowledge` hint on /ws/sessions (`on_change`).
   POST /api/knowledge/maintenance    {action: refresh|forget, source}
   GET  /api/knowledge/indexes        the extra indexes, with his pins and forbids
   POST /api/knowledge/indexes        {key, choice: pin|forbid|clear}
+  GET  /api/knowledge/seeds          topics JARVIS offers to create, and what each holds
+  POST /api/knowledge/seeds/{id}     {action: accept|decline}
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ _LINKS = {"action", "topic", "kind", "target", "proposal"}
 _TOPICS = {"action", "topic", "name", "status", "exact", "ambiguous", "remove_aliases"}
 _MAINTAIN = {"action", "source"}
 _INDEX = {"key", "choice"}
+_SEED = {"action"}
 
 
 def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda: None) -> None:
@@ -108,6 +111,18 @@ def mount(app: FastAPI, ctx: ka.Context, on_change: Callable[[], None] = lambda:
         return await run(lambda: ka.choose_index(ctx, key=str(b.get("key") or ""),
                                                  choice=str(b.get("choice") or "")), changes=True)
 
+    async def seeds():
+        return await run(lambda: ka.seeds(ctx))
+
+    async def answer_seed(seed_id: str, request: Request):
+        b = await fields(request, _SEED)
+        if b is None:
+            return bad()
+        return await run(lambda: ka.answer_seed(ctx, seed=seed_id, action=str(b.get("action") or "")),
+                         changes=True)
+
+    app.add_api_route(f"{PREFIX}/seeds", seeds, methods=["GET"])
+    app.add_api_route(f"{PREFIX}/seeds/{{seed_id}}", answer_seed, methods=["POST"])
     app.add_api_route(f"{PREFIX}/indexes", indexes, methods=["GET"])
     app.add_api_route(f"{PREFIX}/indexes", choose_index, methods=["POST"])
     app.add_api_route(f"{PREFIX}/health", health, methods=["GET"])
