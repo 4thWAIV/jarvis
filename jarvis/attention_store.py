@@ -1,7 +1,7 @@
 """attention_store.py — the durable record of background events.
 
 Every routine event JARVIS used to announce on its own (an agent's message
-delivered or answered, a session's message, a needs board, a session that
+not picked up or answered, a session's message, a needs board, a session that
 wants him, a run or a package run ending, a person's message arriving, not
 being signed in) is first an attention item here, linked to its source
 record by kind and id. Nothing is said by recording one: whether anything is

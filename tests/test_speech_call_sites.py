@@ -241,6 +241,9 @@ async def test_no_routine_producer_reaches_the_voice(wired, monkeypatch):
     assert kinds == {"agent_message", "needs_you", "session_finished", "run", "package_run",
                      "needs_board", "session_message", "workflow", "sign_in"}
     assert ("run", "r3", "cancelled") not in recorded(attention)
+    message = attention.get("agent_message", "9")
+    assert {h["event"] for h in attention.history(message.id)}.isdisjoint(
+        {"sent", "delivered"}), "sent and delivered are never an update"
 
 
 @pytest.mark.asyncio

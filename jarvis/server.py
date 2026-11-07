@@ -1867,14 +1867,21 @@ async def _say_notice(line: str, note: str, what: str, **links):
 
 async def _attend_message(event: dict) -> None:
     """A message JARVIS sent has moved on (gone from the queue, failed,
-    delivered, not picked up, answered): one attention item per message,
-    each step a revision of it. An answer itself goes on record in his
-    conversation, under the agent and the message it answers, first."""
+    delivered, not picked up, answered): one attention item per message.
+    Sent and delivered are only progress (`_MESSAGE_PROGRESS`): on record in
+    the `messages` table and shown in the agent's thread, never an update;
+    each resolves whatever the item last said (queued, not picked up), which
+    is no longer so. Every other step is a revision of it. An answer itself
+    goes on record in his conversation, under the agent and the message it
+    answers, first."""
     kind = event.get("kind")
     session = event.get("session") or {}
     message = event.get("message") or {}
     if kind == "sent":
         await _message_went(session.get("session_id", ""))
+    if kind in _MESSAGE_PROGRESS:
+        _attention_resolved("agent_message", _message_number(message))
+        return
     if kind == "answered" and message.get("reply"):
         _record(conversation_log.ItemKind.ANSWER, message["reply"], **_agent_links(event))
     happened = "answered_empty" if kind == "answered" and not message.get("reply") else kind
@@ -1887,6 +1894,8 @@ async def _attend_message(event: dict) -> None:
 
 # The message events the session watcher reports (`SessionWatcher.track`).
 _MESSAGE_EVENTS = ("sent", "send_failed", "delivered", "undelivered", "answered")
+# The steps that are only progress, never an update (`_attend_message`).
+_MESSAGE_PROGRESS = ("sent", "delivered")
 
 
 # How often the needs board is looked at. A file is rewritten by hand-paced

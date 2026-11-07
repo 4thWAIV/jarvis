@@ -2143,8 +2143,8 @@ TOOL_SPECS = [
         "name": "attention_updates",
         "description": (
             "What is waiting for him: the background updates (Review updates on the page) "
-            "that JARVIS recorded instead of announcing them, such as messages delivered or "
-            "answered, sessions' messages and needs, runs that ended, people's messages "
+            "that JARVIS recorded instead of announcing them, such as messages queued, not "
+            "picked up or answered, sessions' messages and needs, runs that ended, people's messages "
             "arriving. Gives the pending count, each update's kind, event and facts, whether "
             "he is engaged, away or unknown, and the settings for when updates may be "
             "spoken. Use it when he asks what he missed or what is new."),

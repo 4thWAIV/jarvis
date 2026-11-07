@@ -174,8 +174,12 @@ looked for: arriving late (behind a permission prompt he then approves) it is
 delivered and answered as usual. Anything unresolved
 `session_watch.MESSAGE_WATCH_SEC` (a day) after it was sent is failed, so the
 watcher only ever looks for a bounded set; settled messages are never read
-again. Each step (queued, sent, delivered, undelivered, answered) moves the
-message's one attention item to its next revision; nothing is spoken of it.
+again. Each step that wants him (queued, undelivered, answered, and a send
+that failed) moves the message's one attention item to its next revision;
+sent and delivered are only progress, kept in the record and the agent's
+thread, and resolve the item instead (`server._MESSAGE_PROGRESS`), since
+what it last said (queued, not picked up) is no longer so. Nothing is
+spoken of any step.
 The record is written before each
 event, and the open messages are read from the store each poll, so a restart
 follows on from where it stopped. The brain reads the record with
@@ -892,7 +896,7 @@ restarts once that has been heard (`_update_by_voice`). Tests point
 
 ## Attention
 Routine events are never spoken by the server. Each (an agent's message
-queued, sent, delivered, not picked up or answered; a session's message,
+queued, not picked up, answered or not sent; a session's message,
 needs board or needs-you; a session finishing; a run or package run ending;
 a person's message arriving; a workflow's news; communications down; not
 signed in; a person's message that did not go; the brain down, needing its

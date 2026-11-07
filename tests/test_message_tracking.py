@@ -658,12 +658,11 @@ async def _drain(server, monkeypatch, event):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind, message, event", [
-    ("delivered", {"id": 12, "body": "go on"}, "delivered"),
     ("undelivered", {"id": 12, "body": "go on"}, "undelivered"),
     ("answered", {"id": 5, "body": "go on", "reply": None}, "answered_empty"),
-    ("sent", {"id": 7, "body": "go on"}, "sent"),
+    ("send_failed", {"id": 7, "body": "go on"}, "send_failed"),
 ])
-async def test_each_step_of_a_message_is_an_update_and_nothing_is_said(
+async def test_each_step_that_wants_him_is_an_update_and_nothing_is_said(
         server, monkeypatch, attention, kind, message, event):
     sp = _Speech()
     monkeypatch.setattr(server, "speech", sp)
@@ -676,16 +675,39 @@ async def test_each_step_of_a_message_is_an_update_and_nothing_is_said(
 
 
 @pytest.mark.asyncio
-async def test_delivered_then_answered_is_one_update_with_its_history(server, monkeypatch,
-                                                                       attention):
+@pytest.mark.parametrize("kind", ["sent", "delivered"])
+async def test_sent_and_delivered_are_never_an_update(server, monkeypatch, attention, kind):
+    """Only progress: the messages table and the agent's thread keep it."""
+    sp = _Speech()
+    monkeypatch.setattr(server, "speech", sp)
+    monkeypatch.setattr(server, "attention_record", attention)
+    monkeypatch.setattr(server, "_message_went", lambda *a: asyncio.sleep(0))
+    await _drain(server, monkeypatch, _event(kind, {"id": 12, "body": "go on"}))
+    assert sp.said == []
+    assert recorded(attention) == [] and attention.pending_count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before, progress", [("queued", "sent"),
+                                               ("undelivered", "delivered")])
+async def test_progress_resolves_what_the_update_last_said(server, monkeypatch, attention,
+                                                           before, progress):
+    """Queued, then sent; not picked up, then delivered after all: what the
+    update said is no longer so, so it leaves the queue, and the answer is
+    the same item's next revision, pending again."""
     monkeypatch.setattr(server, "speech", _Speech())
     monkeypatch.setattr(server, "attention_record", attention)
-    await _drain(server, monkeypatch, _event("delivered", {"id": 12, "body": "go on"}))
+    monkeypatch.setattr(server, "_message_went", lambda *a: asyncio.sleep(0))
+    attention.record("agent_message", "12", before, facts={"message_id": 12},
+                     untrusted={"agent": "guard"})
+    await _drain(server, monkeypatch, _event(progress, {"id": 12, "body": "go on"}))
+    assert attention.pending_count() == 0
+    assert attention.get("agent_message", "12").state == "resolved"
     await _drain(server, monkeypatch, _event("answered", {"id": 12, "body": "go on",
                                                           "reply": "Done."}))
     (item,) = attention.items()
-    assert item.event == "answered" and item.revision == 2
-    assert [h["event"] for h in attention.history(item.id)] == ["delivered", "answered"]
+    assert item.event == "answered" and item.revision == 2 and item.state == "pending"
+    assert [h["event"] for h in attention.history(item.id)] == [before, "answered"]
 
 
 # --- brain-access ---------------------------------------------------------------
