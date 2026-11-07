@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
-                    web_auth, workflow_store, work_store)
+                    web_auth, work_packages, workflow_store, work_store)
 
 log = logging.getLogger(__name__)
 
@@ -134,8 +134,64 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None,
         raw["who"]["name"] = names(piece.who)
     waiting = package_inbox.waiting_by_work() if package_questions is None else package_questions
     out["package_questions"] = waiting.get(item.id, 0)
+    out["approvable"] = can_approve(item, waiting)
     out["projects"] = projects_for_path(item.source_path)
     return out
+
+
+# ── his review in a package ─────────────────────────────────────────────
+#
+# A review package (`make_package --work <item>`) asks one well-known
+# question, `approve-item`, whose options are his review: his answer to it,
+# by decide.py or the item's Decisions tab, IS his review of the item it was
+# sent for, through the same `review` as the page and `review_work`. It is
+# the approval, so it never stands in the way of Approve; any other question
+# a package sent for the item still asks does, here and on the page alike.
+
+REVIEW_QUESTION = "approve-item"
+
+
+def other_package_questions(item_id: str) -> int:
+    """How many questions the open packages sent for this item still ask
+    him, its review question excepted."""
+    count = 0
+    for entry in package_inbox.for_work(item_id):
+        try:
+            package = work_packages.find(entry.package_id)
+        except work_packages.PackageError:
+            continue
+        count += sum(1 for q in package_inbox.questions(package)
+                     if q.applies and not q.answer and q.id != REVIEW_QUESTION)
+    return count
+
+
+def can_approve(item: work_store.WorkItem, waiting: Optional[dict[str, int]] = None) -> bool:
+    """Whether he can approve the item now: its record allows it
+    (`work_store.approvable`) and no package sent for it asks anything but
+    its review question. `waiting` (package_inbox.waiting_by_work) spares
+    reading a package when none waits."""
+    if not item.approvable:
+        return False
+    if waiting is not None and not waiting.get(item.id):
+        return True
+    return other_package_questions(item.id) == 0
+
+
+def review_from_package(entry, package, where: str) -> Optional[work_store.WorkItem]:
+    """His answer to a review package's `approve-item`, as his review of
+    the item it was sent for, recorded once per answer. None when it has
+    none to give, or it is already on the record. Raises WorkRefused."""
+    if not entry.work_id:
+        return None
+    asked = next((q for q in package_inbox.questions(package)
+                  if q.id == REVIEW_QUESTION and q.applies and q.answer), None)
+    action = REVIEW_OPTIONS.get(asked.answer.get("answer")) if asked else None
+    if action is None:
+        return None
+    source = {"package": entry.id, "answered_at": str(asked.answer.get("at") or "")}
+    if work_store.reviewed(entry.work_id, source):
+        return None
+    return review(entry.work_id, action, asked.answer.get("note") or "", where, source)
 
 
 def packages_json(item_id: str) -> list[dict]:
@@ -219,9 +275,12 @@ def write_answer(item: work_store.WorkItem, key: str) -> None:
 APPROVE, NOT_DONE, ADD_WORK = "approve", "not_done", "add_work"
 REVIEW_ACTIONS = {APPROVE: work_store.APPROVED, NOT_DONE: work_store.REVIEW_RETURNED,
                   ADD_WORK: work_store.WORK_ADDED}
+# A review package's options, as his review.
+REVIEW_OPTIONS = {"approve": APPROVE, "not-done": NOT_DONE, "add-work": ADD_WORK}
 
 
-def review(item_id: str, action: str, words: str, where: str) -> work_store.WorkItem:
+def review(item_id: str, action: str, words: str, where: str,
+           source: Optional[dict] = None) -> work_store.WorkItem:
     """His review of an item, from the page and the brain's acting
     `review_work` alike: approve it (done, his alone to give), say it is not
     done yet (back to working, with his note), or add work (a new piece in
@@ -231,10 +290,16 @@ def review(item_id: str, action: str, words: str, where: str) -> work_store.Work
     if kind is None:
         raise work_store.WorkRefused("A review is approve, not_done or add_work.")
     words = " ".join(str(words or "").split())
+    if action == APPROVE and (waiting := other_package_questions(item_id)):
+        raise work_store.WorkRefused(
+            f"A package sent for it still asks him {waiting} question(s): answer them before "
+            f"approving it.")
     summary = {APPROVE: "He approved it: done.", NOT_DONE: f"Not done yet, he says: {words}",
                ADD_WORK: f"He added work: {words}"}[action]
-    item = work_store.record(work_store.WorkEvent(item_id, kind, summary,
-                                                  {"words": words, "where": where}))
+    detail = {"words": words, "where": where}
+    if source:
+        detail["source"] = source
+    item = work_store.record(work_store.WorkEvent(item_id, kind, summary, detail))
     head, lines = {
         APPROVE: (f"Tim approved {item.id}: it is done", []),
         NOT_DONE: (f"Tim says {item.id} is not done yet",

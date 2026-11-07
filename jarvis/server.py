@@ -8250,7 +8250,29 @@ def _inbox_recount(package, how: str) -> list:
     for q in asked:
         if q.applies and q.answer:
             wait_links.settle_now(wait_links.answer(wait_links.PACKAGE, refs, q.id, how))
+    for entry in package_inbox.for_package(package.id):
+        _review_from_package(entry, package, how)
     return moved
+
+
+def _review_from_package(entry, package, how: str) -> Optional[str]:
+    """His answer to a review package's question, as his review of the item
+    it was sent for (work_api.review_from_package, the same review as the
+    page's and review_work's). From any thread. Why it was not recorded, or
+    None. Never raises."""
+    where = "voice" if how == package_inbox.BY_VOICE else "page"
+    try:
+        item = work_api.review_from_package(entry, package, where)
+    except work_store.WorkRefused as e:
+        log.info("package inbox: %s's review of %s was not recorded: %s", entry.id,
+                 entry.work_id, e)
+        return str(e)
+    except Exception:
+        log.warning("package inbox: %s's review was not read", entry.id, exc_info=True)
+        return None
+    if item is not None:
+        _hint_from_any_thread({"type": "work"})
+    return None
 
 
 # --- What waits on his answer (wait_links.py) --------------------------------
@@ -8406,8 +8428,15 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
         return None, "The package's decide.py refused that answer. Nothing was recorded."
     moved = await asyncio.to_thread(_inbox_recount, package, how)
     entry = next((e for e in moved if e.id == entry.id), None) or package_inbox.get(entry.id)
-    return entry, (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
-                   if entry.decisions_total else "Recorded.")
+    said = (f"Recorded. {entry.decisions_answered} of {entry.decisions_total} answered."
+            if entry.decisions_total else "Recorded.")
+    if (question.id == work_api.REVIEW_QUESTION and entry.work_id
+            and chosen in work_api.REVIEW_OPTIONS):
+        # Recorded already in the recount, or refused: asked again, it says why.
+        refused = await asyncio.to_thread(_review_from_package, entry, package, how)
+        said += (f" It was not taken as his review of {entry.work_id}: {refused}" if refused
+                 else f" It is his review of {entry.work_id}.")
+    return entry, said
 
 
 def _sign_off_text(entry, package) -> str:
