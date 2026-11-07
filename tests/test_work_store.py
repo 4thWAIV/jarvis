@@ -91,7 +91,7 @@ def test_an_open_decision_leads_the_update_and_waits_on_tim(ws, folder):
         _ev(ws, item, "decision_made", "Again.", key="engine", answer="Apple")
     answered = ws.events(item.id, kinds={"decision_made"})
     assert answered[-1].detail == {"key": "engine", "answer": "Kroko", "where": "voice"}
-    with pytest.raises(ws.WorkRefused, match="already answered; ask with a new key"):
+    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn; ask with a new key"):
         _ev(ws, item, "decision_needed", "Which voice?", key="engine", options=["Fish"])
     assert ws.get(item.id).decisions == [], "an answered key is never re-opened"
 
@@ -243,3 +243,59 @@ def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, t
     piece = ws.get("w1").pieces[0]
     assert (piece.note, piece.note_at, piece.worker, piece.after, piece.evidence) == (
         "second", 6.0, "", [], [])
+
+
+def test_blockers_list_decisions_then_the_item_then_pieces(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    tim = {"kind": "tim"}
+    _ev(ws, item, "piece", "Design.", key="design", who=tim, state="working")
+    _ev(ws, item, "piece", "Asks him.", key="copy", who=tim, state="waiting_on_tim")
+    _ev(ws, item, "piece", "Stuck on fonts.", key="fonts", who=tim, state="blocked")
+    _ev(ws, item, "piece", "After design.", key="build", who=tim, after=["design"])
+    _ev(ws, item, "decision_needed", "Which logo?", key="logo", options=["A", "B"], package="logo-deck")
+    item = _ev(ws, item, "update", "CI is red.", state="blocked")
+    assert [(b.kind, b.key) for b in item.blockers] == [
+        ("decision", "logo"), ("blocked", ""), ("piece_blocked", "fonts"),
+        ("piece_waiting", "copy"), ("piece_after", "build")]
+    assert item.blockers[2].text == "Stuck on fonts." and item.blockers[4].waits_for == ["design"]
+    assert item.decisions[0].package == "logo-deck"
+    with pytest.raises(ws.WorkRefused, match="package is named"):
+        _ev(ws, item, "decision_needed", "Bad?", key="bad", package="no spaces allowed")
+    item = _ev(ws, item, "update", "Done.", state="done")
+    assert item.blockers == []
+
+
+def test_answered_and_withdrawn_decisions_are_kept_newest_first(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    _ev(ws, item, "decision_needed", "Tone?", key="tone", asked_by="key:coordinator")
+    _ev(ws, item, "decision_needed", "Colour?", key="colour", asked_by="key:coordinator")
+    _ev(ws, item, "decision_made", "He chose.", key="tone", answer="dry", where="page")
+    with pytest.raises(ws.WorkRefused, match="Only the agent that asked"):
+        _ev(ws, item, "decision_withdrawn", "Not mine.", key="colour", by="key:someone-else")
+    item = _ev(ws, item, "decision_withdrawn", "Asked before he saw the designs.", key="colour",
+               by="key:coordinator")
+    assert item.decisions == [] and item.state == "planned"
+    assert [(a.key, a.where, a.answer) for a in item.answered] == [
+        ("colour", "withdrawn", "Asked before he saw the designs."), ("tone", "page", "dry")]
+    with pytest.raises(ws.WorkRefused, match="No decision colour is open"):
+        _ev(ws, item, "decision_made", "Late.", key="colour", answer="blue")
+    with pytest.raises(ws.WorkRefused, match="already answered or withdrawn"):
+        _ev(ws, item, "decision_needed", "Colour again?", key="colour")
+
+
+def test_done_items_linger_then_move_to_history_and_closed_ones_at_once(ws, folder, monkeypatch):
+    a = ws.create("Shipped", "folder", folder)
+    b = ws.create("Dropped", "folder", folder)
+    c = ws.create("Going", "folder", folder)
+    _ev(ws, a, "update", "Shipped.", state="done")
+    b = _ev(ws, b, "closed", "No longer wanted.")
+    assert b.history and b.closed_at and b.blockers == []
+    assert [i.id for i in ws.listing()] == [c.id, a.id]
+    assert [i.id for i in ws.listing(history=True)] == [b.id]
+    with pytest.raises(ws.WorkRefused, match="closed; it is kept in History"):
+        _ev(ws, b, "update", "Back?")
+    real = time.time
+    monkeypatch.setattr(ws.time, "time", lambda: real() + ws.DONE_LINGER_SEC + 1)
+    assert [i.id for i in ws.listing()] == [c.id]
+    assert {i.id for i in ws.listing(history=True)} == {a.id, b.id}
+    assert [i.id for i in ws.find("dropped")] == [b.id], "History is still found by name"

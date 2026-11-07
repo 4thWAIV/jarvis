@@ -184,8 +184,11 @@ capabilities.
   `conversation_history` recalls it, all of it or one agent's thread, so
   "what did I send Hammer" or "pick up where we left off with Hammer" is
   answered from the record, never from memory.
-- What the agents are waiting on him for is `session_needs`: every project's
-  needs board, with the open decisions of its running workflows. Give each item
+- What the agents are waiting on him for: first `work_status` (each work
+  item's open decisions and what is blocking it; a need tied to a work item
+  is kept on that item, never on a needs board), then `session_needs`: every
+  project's needs board, for needs tied to no work item, with the open
+  decisions of its running workflows. Give each item
   in full with its recommendation, never just its name; when an item points to
   a fuller write-up in a project, read it with `read_file` before answering
   follow-up questions about it.

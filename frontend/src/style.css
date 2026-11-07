@@ -1467,15 +1467,28 @@ html, body {
 .work-row:hover { background: rgba(var(--wk), 0.12); }
 .work-row.selected { border-color: rgba(var(--wk), 0.9); box-shadow: 0 0 0 1px rgba(var(--wk), 0.4); }
 .work-row-title { grid-area: title; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.work-row .work-state { grid-area: state; }
+.work-row-pills { grid-area: state; display: flex; gap: 4px; align-items: center; }
+/* How many of its decisions wait on him: a count on the amber. */
+.work-decision-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--ui-on-signal);
+  background: #fbbf24;
+}
 .work-update { grid-area: update; color: var(--ui-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-update.deciding { color: #fbbf24; }
 /* Blocked (red) or waiting on him (amber), the item or any of its pieces:
    a coloured edge and dot, and a line counting the pieces. */
 .work-row[data-mark="blocked"] { border-left: 3px solid #ef4444; }
 .work-row[data-mark="waiting"] { border-left: 3px solid #fbbf24; }
-.work-marks { grid-column: 1 / -1; color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.work-row[data-mark="waiting"] .work-marks { color: #fbbf24; }
+.work-blocker-line { grid-column: 1 / -1; color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-blocker-line[data-kind="piece_waiting"], .work-blocker-line[data-kind="piece_after"] { color: #fbbf24; }
+.work-history { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.work-list.history .work-row { opacity: 0.8; }
 .work-mark {
   display: inline-block;
   width: 8px;
@@ -1519,6 +1532,33 @@ html, body {
   text-align: left;
 }
 .work-detail-head { flex: none; display: flex; align-items: center; gap: 12px; }
+.work-history-pill { padding: 1px 8px; border-radius: 99px; font-size: 10px; background: var(--ui-raised); color: var(--ui-secondary); }
+/* A decision waits on him: unmissable above every tab, and it opens Decisions. */
+.work-decision-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--ui-on-signal);
+  background: #fbbf24;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.work-decision-banner-question { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-decision-banner-go { flex: none; font-weight: 600; text-decoration: underline; }
+.work-tabs { flex: none; }
+.work-who, .work-answered, .work-blockers { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 6px 0 0; }
+.work-answered-question, .work-answered-answer { margin: 0; overflow-wrap: anywhere; }
+.work-answered-answer { color: var(--ui-secondary); }
+.work-answered-item { padding-left: 8px; border-left: 2px solid rgba(52, 211, 153, 0.5); }
+.work-blocker { padding-left: 8px; border-left: 2px solid #ef4444; overflow-wrap: anywhere; }
+.work-blocker[data-kind="decision"], .work-blocker[data-kind="piece_waiting"] { border-left-color: #fbbf24; }
+.work-blocker[data-kind="piece_after"] { border-left-color: var(--ui-edge); }
+.work-decision-package { margin: 4px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .work-detail-name { font-size: 20px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .work-detail-body {
   flex: 1;

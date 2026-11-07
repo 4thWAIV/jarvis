@@ -82,8 +82,9 @@ export const rightEs: CatalogOf<typeof rightEn> = {
   "right.work.state.blocked": "Bloqueado",
   "right.work.state.done": "Hecho",
   "right.work.area": "Área",
-  "right.work.piecesBlocked": "Partes bloqueadas: {count}",
-  "right.work.piecesWaiting": "Partes que esperan su respuesta: {count}",
+  "right.work.history": "Historial ({count})",
+  "right.work.decisionCount": "Decisiones pendientes: {count}",
+  "right.work.more": "+{count} más",
   "right.work.mark.blocked": "Bloqueado",
   "right.work.mark.waiting": "Espera su respuesta",
 

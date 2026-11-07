@@ -38,6 +38,11 @@ The kinds, each recorded where the fact is first known (one writer each):
                     `outcome` (played, interrupted, skipped, failed) once it is
                     done; `label` says what it is (reply, announcement,
                     readback ...).
+    listening       his speech being gathered into a turn
+                    (`turn_controller.TurnController`, the one writer of its
+                    state): `started` when a page's turn starts gathering,
+                    `ended` once it stops (committed, discarded, or the
+                    capture stopped); with the turn's id, never its words.
 
 Memory only: at most `KEEP_EVENTS`, oldest dropped first, gone on a restart
 (`generation` says which process the sequence numbers belong to). There is
@@ -64,7 +69,9 @@ PERSON_MESSAGE = "person_message"
 SESSION_MESSAGE = "session_message"
 DIGEST = "digest"
 SPEECH = "speech"
-KINDS = (TURN, TOOL, AGENT_MESSAGE, PERSON_MESSAGE, SESSION_MESSAGE, DIGEST, SPEECH)
+LISTENING = "listening"
+KINDS = (TURN, TOOL, AGENT_MESSAGE, PERSON_MESSAGE, SESSION_MESSAGE, DIGEST, SPEECH,
+         LISTENING)
 
 # Turn stages.
 STARTED = "started"
@@ -213,6 +220,14 @@ class ActivityFeed:
         """A started utterance is done, `seconds` after it began to sound."""
         self.record(SPEECH, ENDED, id=str(utterance_id), label=label,
                     outcome=outcome, duration_ms=_ms(seconds))
+
+    # ── listening ─────────────────────────────────────────────────────
+    def listening(self, stage: str, turn_id: int) -> None:
+        """His speech started (`STARTED`) or stopped (`ENDED`) being
+        gathered into turn `turn_id`."""
+        if stage not in (STARTED, ENDED):
+            raise ValueError(f"not a listening stage: {stage}")
+        self.record(LISTENING, stage, id=str(turn_id))
 
 
 def _ms(seconds: float) -> float:

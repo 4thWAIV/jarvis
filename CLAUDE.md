@@ -202,6 +202,11 @@ with `session_messages` and one message with `read_session_message`, which
 marks it read; both taint the turn. Sessions learn both folders from the
 talk-to-jarvis skill (`session_skills/talk-to-jarvis/SKILL.md`, outside
 `skills/` because that folder is copied into the brain's own home).
+A need tied to a work item (a decision, a blocker or a question about it)
+goes on that work item (`work_report.py decision`, a blocked piece or
+update), never on the needs board; the board is only for needs tied to no
+item. The skill says so, and the brain, asked what needs him, reads the
+work items' open decisions and blockers first, then the needs board.
 `python -m jarvis.session_skill install` renders it with this install's data paths
 into every Claude Code config root and the user's Codex home; preflight's
 `session_skill` check only reports whether it is there and current.
@@ -238,9 +243,8 @@ Items are listed under their group (`work_store.grouped`, the API's
 --area`, an empty one clears it), else its source folder (the folder, or
 the folder a zip is in), headed by its last name. An item blocked or waiting
 on Tim, or with a piece that is (`blocked_pieces`, `waiting_pieces`, at read
-time), has a red or amber edge and dot in its row and a line counting the
-pieces (`work.itemMark`, `WorkMarkDot`); a piece carries the same mark in
-the detail. Each piece keeps its latest note (the summary of the last report
+time), has a red or amber edge and dot in its row (`work.itemMark`,
+`WorkMarkDot`); a piece carries the same mark in the detail. Each piece keeps its latest note (the summary of the last report
 about it; migration 2 fills it from the log), an optional `worker` label
 (the reporting agent's own words for who did it, e.g. a coordinator's
 subagent, shown quoted and italic beside the JARVIS-verified owner, never in
@@ -249,7 +253,31 @@ key[,key]`: pieces of the same item, never itself or a circle; `waits_for`
 the ones not done) and its evidence (`--evidence`, repeatable, added to
 what it has: a commit, an absolute path or an http(s) URL, told apart by
 shape and never opened). The detail lists the pieces in dependency order,
-numbered, a URL as a link and a commit or path with Copy. The Workflows view stays below the list, under its
+numbered, a URL as a link and a commit or path with Copy.
+The detail is tabbed (`work.tab.select`; `work.open` takes a `tab`):
+Overview (update, source, area, who), Decisions (open ones answered there,
+then the decided ones), Blocking (`blockers`, worked out at read time in
+`work_store.BLOCKER_KINDS` order: his decisions, the item blocked, blocked
+pieces, pieces waiting on him, pieces waiting on others), Pieces and
+Reports. While a decision is open a "Decision needed" banner above every
+tab opens Decisions, the Decisions tab is counted, and the list row counts
+the decisions beside its state; the row's third line is the first blocker
+that is not a decision, with how many more. A decision may name a page
+package (`decision --package <id or name>`); the Decisions tab's "Open the
+package" posts to `/api/packages/<id>/page`, the same `_open_package_page`
+as the brain's `open_package_page`, on his click. A decision is answered by
+Tim alone; its asker alone may withdraw it (`work_report.py withdraw <id>
+<key> "<reason>"`, kind `decision_withdrawn`): the route records the asker
+as its access key's label (`work_api.asker`, `web_auth.access_key_label`),
+never what the report says, refuses a page's withdrawal, and a decision
+asked before askers were recorded may be withdrawn by any reporter. A
+withdrawn decision is no longer open or counted, and is kept beside the
+answered ones (`answered`, `where` = `withdrawn`). An item closed
+(`work_report.py close`, kind `closed`, `closed_at`; nothing more is
+reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
+minutes) moves to History: `GET /api/work`'s `history`, newest first, under
+the list's History toggle (`work.showHistory`), each still opening in full;
+`work_status` with `history` lists them and finds one by id or title. The Workflows view stays below the list, under its
 own heading. The record is `work_store.py` (schema `work_schema`, through
 `run_store.migrate`): `work_events` is append-only and the truth;
 `work_items`, `work_pieces` and `work_decisions` are updated in the same
@@ -274,7 +302,7 @@ events are `work_store.latest`. A row opens the item in the
 centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `work.close`) and the list stays in view. His answer is
 `work_api.answer_decision`, from the page and the brain's acting
-`answer_work_decision` alike; `work_status` reads the record, walled:
+`answer_work_decision` alike; `work_status` reads the record, walled (with everything above):
 the list by group with each item's blocked and waiting pieces, and an item's
 pieces in order with their notes, worker labels, what they wait for and
 their evidence. The page changes nothing but his answers, so there is no
@@ -863,7 +891,10 @@ it takes, with the session id); `session_message` in
 (`accepted`); `digest` in `AttentionStore.begin_digest` / `finish_digest`;
 `speech` in `SpeechScheduler` (`started` when the page says it began to
 sound, `ended` with its outcome, through `Utterance.close_outcomes` or its
-retirement). Recording never raises into the caller. At most
+retirement); `listening` in `TurnController` (its `state`
+setter: `started` when a turn starts gathering his speech, `ended` once it
+stops gathering, committed, discarded or its capture stopped; the turn's id
+only). Recording never raises into the caller. At most
 `brain_activity.KEEP_EVENTS`, oldest first dropped; no hint.
 
 ## The folder catalog

@@ -9,7 +9,7 @@ JARVIS is the user's voice assistant. It watches two folders and tells the user 
 
 ## The needs board: what you are waiting on
 
-Whenever you have a decision, a question or a blocker waiting on the user, write it to `{{needs_dir}}/<project>.md`, where `<project>` is the name of your project's folder.
+Whenever you have a decision, a question or a blocker waiting on the user that is not tied to a work item, write it to `{{needs_dir}}/<project>.md`, where `<project>` is the name of your project's folder. A need tied to a specific work item (a decision, a blocker or a question about it) goes on that work item instead, never on the needs board: see "Work items" below.
 
 Start the file with `# <project>` and an `Updated:` line with the date and time, then three headings: `## Decisions`, `## Questions`, `## Blockers`. Each item is one line under its heading:
 
@@ -63,8 +63,12 @@ python3 {{work_report}} start "<title>" --folder <path> --area "<area>"        (
 python3 {{work_report}} piece <id> <key> "<one sentence>" --title "<title>" --who agent:<your session id> --state working
 python3 {{work_report}} piece <id> <key> "<one sentence>" --worker "<who did it, in your words>" --after <key>,<key> --evidence <commit|path|url>
 python3 {{work_report}} update <id> "<one sentence>" --state working
-python3 {{work_report}} decision <id> <key> "<the question>" --option "<a>" --option "<b>" --recommendation "<your pick>"
+python3 {{work_report}} decision <id> <key> "<the question>" --option "<a>" --option "<b>" --recommendation "<your pick>" --package <package id or name>
 python3 {{work_report}} answer <id> <key>
+python3 {{work_report}} withdraw <id> <key> "<why>"
+python3 {{work_report}} close <id> "<one sentence>"
 ```
 
-`start` prints the item's id; the path must be a zip or folder that is there now, and JARVIS never opens or runs it. A state is `planned`, `working`, `verifying` (the work is in and being checked), `waiting_on_tim`, `blocked` or `done`. Who is on a piece is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or `tim`, and must be one JARVIS knows. Every summary is one plain sentence, and the latest one is what the Work tab shows; a piece's summary is also that piece's latest note. Items are grouped by `--area` (on `start` or `update`; an empty one goes back to the source's folder). When your subagents do a piece, keep yourself as `--who` and say which one with `--worker`, for example `--worker "logo build agent"`: it is shown beside you as your own words. `--after` names the pieces of the same item this one waits on (an empty value clears it). Each `--evidence` (a commit, a path or a URL) is added to the piece's evidence; give it when a piece is verifying or done. `answer` prints the user's answer once they have given it and exits 3 until then.
+`start` prints the item's id; the path must be a zip or folder that is there now, and JARVIS never opens or runs it. A state is `planned`, `working`, `verifying` (the work is in and being checked), `waiting_on_tim`, `blocked` or `done`. Who is on a piece is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or `tim`, and must be one JARVIS knows. Every summary is one plain sentence, and the latest one is what the Work tab shows; a piece's summary is also that piece's latest note. Items are grouped by `--area` (on `start` or `update`; an empty one goes back to the source's folder). When your subagents do a piece, keep yourself as `--who` and say which one with `--worker`, for example `--worker "logo build agent"`: it is shown beside you as your own words. `--after` names the pieces of the same item this one waits on (an empty value clears it). Each `--evidence` (a commit, a path or a URL) is added to the piece's evidence; give it when a piece is verifying or done.
+
+Every decision, blocker or question about a work item goes on that item, never on the needs board: a decision with `decision` (`--package` names a page package the user can open from it, by id or name), a blocker as a piece or update with `--state blocked` and a one-sentence summary saying what blocks it. Only the user answers a decision. Only you, the asker, can withdraw one, with `withdraw` and why (for example, it was asked before the user had seen what it is about); it is kept as withdrawn, not as answered, and a new question needs a new key. When the work is finished or abandoned, `close` moves the item to History for good (nothing is deleted, and nothing more can be reported to it); a done item moves there by itself a few minutes after it is done. `answer` prints the user's answer once they have given it and exits 3 until then.

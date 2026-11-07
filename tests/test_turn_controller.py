@@ -644,3 +644,35 @@ def test_no_resume_is_told_when_he_speaks_again_before_any_pause_cue():
     h.clock.advance(0.9)
     h.c.interim("at")
     assert len(h.heard) == 1
+
+
+# ── listening, in the brain activity feed ────────────────────────────────
+
+def _listening(since):
+    from jarvis import brain_activity
+    return [(e["stage"], e["id"]) for e in brain_activity.feed.since(since, kinds=[brain_activity.LISTENING])["events"]]
+
+
+def test_listening_starts_when_a_turn_gathers_and_ends_when_it_commits():
+    from jarvis import brain_activity
+    since = brain_activity.feed.since()["seq"]
+    h = Harness()
+    h.c.final("what is the time", 1)
+    h.c.final("in Lisbon", 2)
+    turn = h.c.turn_id
+    assert _listening(since) == [("started", str(turn))], "one start, however many words"
+    h.clock.advance(2)
+    assert h.committed
+    assert _listening(since) == [("started", str(turn)), ("ended", str(turn))]
+
+
+def test_listening_ends_when_the_turn_is_discarded():
+    from jarvis import brain_activity
+    since = brain_activity.feed.since()["seq"]
+    h = Harness()
+    h.c.final("never mind", 1)
+    turn = h.c.turn_id
+    h.c.discard()
+    assert _listening(since) == [("started", str(turn)), ("ended", str(turn))]
+    assert all(set(e) <= brain_activity.FIELDS
+               for e in brain_activity.feed.since(since, kinds=[brain_activity.LISTENING])["events"])

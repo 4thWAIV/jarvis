@@ -1,10 +1,12 @@
 """The Work tracker's routes and the calls the brain's tools share with them.
 
-  GET  /api/work                          every item, and the groups the Work tab lists them in
+  GET  /api/work                          the open items, the groups the Work tab lists them
+                                          in, and History (closed, or done a while)
   GET  /api/work/{id}                     one item, with its latest events
   GET  /api/work/{id}/events              its log (?after=<seq>&kinds=a,b)
   POST /api/work                          begin tracking one (a reporter)
-  POST /api/work/{id}/events              one report: update, piece, decision_needed
+  POST /api/work/{id}/events              one report: update, piece, decision_needed,
+                                          decision_withdrawn (its asker only), closed
   POST /api/work/{id}/decisions/{key}     his answer, from the page
 
 Reporters reach the two POSTs with an access key in the `work` category
@@ -24,11 +26,11 @@ import dataclasses
 import os
 from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jarvis import agent_directory, run_store, workflow_store, work_store
+from jarvis import agent_directory, run_store, web_auth, workflow_store, work_store
 
 # (the item as it is now, the kind of change, what the report said)
 Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
@@ -90,6 +92,13 @@ def _check_who(detail: dict) -> None:
         raise work_store.WorkRefused(f"JARVIS has no {person.kind} {person.ref}.")
 
 
+def asker(scope: dict) -> str:
+    """Who is reporting, as a decision's asker is kept: an access key by its
+    label, else how the request was admitted (the tool token, or a page)."""
+    label = web_auth.access_key_label(scope)
+    return f"key:{label}" if label is not None else str(scope.get(web_auth.ADMITTED) or "")
+
+
 def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None) -> dict:
     names = names or WhoNames()
     out = dataclasses.asdict(item)
@@ -134,7 +143,8 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
             names = WhoNames()
             items = work_store.listing()
             return {"items": [item_json(i, names) for i in items],
-                    "groups": [group_json(g) for g in work_store.grouped(items)]}
+                    "groups": [group_json(g) for g in work_store.grouped(items)],
+                    "history": [item_json(i, names) for i in work_store.listing(history=True)]}
         return await asyncio.to_thread(read)
 
     @app.get("/api/work/{item_id}")
@@ -167,22 +177,32 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
         return {"id": item.id, "item": item_json(item)}
 
     @app.post("/api/work/{item_id}/events")
-    async def report(item_id: str, req: EventRequest):
+    async def report(item_id: str, req: EventRequest, request: Request):
         """One report from the agent doing the work. Answering a decision
-        is his alone (the page, his voice), never a reporter's."""
+        is his alone (the page, his voice), never a reporter's; withdrawing
+        one is its asker's alone, never his."""
         if req.kind == work_store.DECISION_MADE:
             return refused(ValueError("Only he answers a decision."))
+        by = asker(request.scope)
+        if req.kind == work_store.DECISION_WITHDRAWN and by == web_auth.BY_ORIGIN:
+            return refused(ValueError("Only the agent that asked a decision withdraws it; "
+                                      "he answers it."))
+        # Who asked or withdraws is the route's to say, never the report's.
+        detail = {k: v for k, v in req.detail.items() if k not in ("asked_by", "by")}
+        if req.kind == work_store.DECISION_NEEDED:
+            detail["asked_by"] = by
+        elif req.kind == work_store.DECISION_WITHDRAWN:
+            detail["by"] = by
 
         def write():
             if req.kind == work_store.PIECE:
-                _check_who(req.detail)
-            return work_store.record(work_store.WorkEvent(item_id, req.kind, req.summary,
-                                                          req.detail))
+                _check_who(detail)
+            return work_store.record(work_store.WorkEvent(item_id, req.kind, req.summary, detail))
         try:
             item = await asyncio.to_thread(write)
         except work_store.WorkRefused as e:
             return refused(e)
-        recorded(item, req.kind, req.detail)
+        recorded(item, req.kind, detail)
         return {"item": item_json(item)}
 
     @app.post("/api/work/{item_id}/decisions/{key}")
