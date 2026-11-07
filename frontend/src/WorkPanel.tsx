@@ -127,7 +127,7 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
                 title={item.state === "activity_unknown" ? t("right.work.activityUnknownReason") : undefined}>
             {STATE_WORDS[item.state]}</span>
         </span>
-        {item.projects.length > 0 && (
+        {(item.projects ?? []).length > 0 && (
           <span className="work-row-project" ref={ui.part("project")}>
             {t("right.work.project", { names: item.projects.map((p) => p.name).join(", ") })}</span>
         )}

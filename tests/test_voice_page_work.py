@@ -357,8 +357,9 @@ async def test_a_paused_row_keeps_its_title_and_approve_is_offered_only_when_it_
         for item_id in ("work-r", "work-w"):
             row = page.locator(f".work-row[data-work-id={item_id}]")
             await row.wait_for(timeout=10000)
-            # Paused, and "Ready for review" for one: the title still has its room.
-            await async_api.expect(row.locator(".activity-paused")).to_have_text("Paused")
+            # A long state beside it ("Ready for review", "Activity unconfirmed"):
+            # the title still has its room, and a claim draws no activity.
+            await async_api.expect(row.locator(".activity-mark")).to_have_count(0)
             sizes = await row.evaluate("""(r) => ({
               title: r.querySelector('.work-row-title').getBoundingClientRect().width,
               row: r.getBoundingClientRect().width,

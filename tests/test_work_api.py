@@ -228,7 +228,7 @@ def test_the_reporter_starts_reports_and_reads_his_answer(wired, monkeypatch, ca
     wid = capsys.readouterr().out.strip()
     assert work_report.main(["work_report.py", "piece", wid, "copy", "Copy pass.",
                              "--who", "tim", "--state", "working"]) == 0
-    assert capsys.readouterr().out.strip() == f"{wid} working (copy: tim)"
+    assert capsys.readouterr().out.strip() == f"{wid} activity_unknown (copy: tim)"
     assert work_report.main(["work_report.py", "decision", wid, "tone", "Which tone?",
                              "--option", "dry", "--option", "warm"]) == 0
     capsys.readouterr()

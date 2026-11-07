@@ -65,10 +65,10 @@ def test_work_going_on_reads_working_while_decisions_also_wait(wired, item):
     _report(wired, item.id, "update", "Over to Tim.", auth=key, ok=False, state="waiting_on_tim")
     _piece(wired, item.id, "phase-2", auth=key, state="working")
     got = work_store.get(item.id)
-    assert (got.state, got.also_waiting) == ("working", 2)
+    assert (got.state, got.also_waiting) == ("activity_unknown", 2)
     assert [d.key for d in got.decisions] == ["vectors-onnx", "switch-on"], "still asked"
     row = wired.client.get("/api/work").json()["items"][0]
-    assert (row["state"], row["also_waiting"]) == ("working", 2)
+    assert (row["state"], row["also_waiting"]) == ("activity_unknown", 2)
     assert "two decisions also waiting on him" in _call(wired, "work_status")["text"]
 
 
@@ -79,7 +79,7 @@ def test_work_going_on_reads_working_while_decisions_also_wait(wired, item):
     ({"a": "waiting_on_tim", "b": "ready"}, "ready"),
     ({"a": "waiting_on_tim", "b": "planned"}, "planned"),
     ({"a": "verifying", "b": "waiting_on_tim"}, "waiting_on_tim"),
-    ({"a": "working", "b": "waiting_on_tim"}, "working"),
+    ({"a": "working", "b": "waiting_on_tim"}, "activity_unknown"),
     ({"a": "verifying", "b": "verifying"}, "verifying"),
 ])
 def test_the_item_is_waiting_only_when_nothing_can_go_on(wired, item, states, expected):
@@ -101,7 +101,7 @@ def test_paused_pieces_are_not_progress(wired, item, monkeypatch):
     _report(wired, item.id, "decision_needed", "Switch it on?", auth=key, key="switch-on")
     _piece(wired, item.id, "build", auth=key, state="working")
     _piece(wired, item.id, "plan", auth=key, state="verifying")
-    assert work_store.get(item.id).state == "working"
+    assert work_store.get(item.id).state == "activity_unknown"
     later = time.time() + work_store.QUIET_AFTER_SEC + 60
     monkeypatch.setattr(work_store.time, "time", lambda: later)
     got = work_store.get(item.id)
@@ -110,7 +110,7 @@ def test_paused_pieces_are_not_progress(wired, item, monkeypatch):
     _report(wired, item.id, "decision_withdrawn", "Not now.", auth=key, key="vectors-onnx")
     _report(wired, item.id, "decision_withdrawn", "Not now.", auth=key, key="switch-on")
     got = work_store.get(item.id)
-    assert (got.state, got.quiet) == ("working", True), "paused, not yet ready for his review"
+    assert got.state == "activity_unknown", "a claim gone silent, not yet ready for his review"
 
 
 def test_paused_with_nothing_else_reads_working_but_quiet(wired, item, monkeypatch):
@@ -119,7 +119,7 @@ def test_paused_with_nothing_else_reads_working_but_quiet(wired, item, monkeypat
     later = time.time() + work_store.QUIET_AFTER_SEC + 60
     monkeypatch.setattr(work_store.time, "time", lambda: later)
     got = work_store.get(item.id)
-    assert (got.state, got.quiet) == ("working", True)
+    assert (got.state, got.quiet) == ("activity_unknown", False)
 
 
 @pytest.mark.parametrize("states,decision,approvable", [
@@ -151,7 +151,7 @@ def test_a_paused_working_piece_never_reads_ready_for_review(wired, item, monkey
     later = time.time() + work_store.QUIET_AFTER_SEC + 60
     monkeypatch.setattr(work_store.time, "time", lambda: later)
     got = wired.client.get(f"/api/work/{item.id}").json()["item"]
-    assert (got["state"], got["quiet"], got["approvable"]) == ("working", True, False)
+    assert (got["state"], got["approvable"]) == ("activity_unknown", False)
 
 
 ALL_STATES = ("planned", "ready", "working", "verifying", "waiting_on_tim", "blocked")
@@ -239,7 +239,7 @@ def test_a_piece_waiting_on_two_answers_moves_on_after_both(wired, item):
     assert (_pieces(item.id)["p"].state, _pieces(item.id)["p"].until) == (
         "waiting_on_tim", ["decision:b"])
     _answer(wired, item.id, "b")
-    assert _pieces(item.id)["p"].state == "working"
+    assert _pieces(item.id)["p"].state == "activity_unknown", "moved on to working, a claim"
 
 
 def test_a_withdrawn_decision_releases_what_waited_on_it(wired, item):
@@ -305,8 +305,8 @@ def test_not_done_yet_sends_it_back_with_his_note_for_its_agents(wired, item):
     _review(wired, item.id, "approve")
     got = _review(wired, item.id, "not_done", "The logo is still blurry.")["item"]
     assert (got["state"], got["review_note"], got["approved_at"]) == (
-        "working", "The logo is still blurry.", None)
-    assert got["pieces"][0]["state"] == "working"
+        "activity_unknown", "The logo is still blurry.", None)
+    assert got["pieces"][0]["state"] == "activity_unknown"
     folder = data_paths.answers_dir() / "speech"
     [written] = list(folder.glob(f"{item.id}-review-*.md"))
     assert "The logo is still blurry." in written.read_text()

@@ -334,8 +334,7 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     assert engine.state == "activity_unknown"
     assert docs.quiet_at is None
     item = ws.get(item.id)
-    assert item.state == "working", "a piece works, so the item does, whatever was reported"
-    assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
+    assert item.state == "activity_unknown", "a piece claims work: a claim, never telemetry"
     item = _ev(ws, item, "update", "Going.", state="working")
     assert item.quiet_at is None
     assert item.state == "activity_unknown"

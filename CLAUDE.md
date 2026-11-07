@@ -311,11 +311,15 @@ it up), recorded as `wait_ended` with by, how and when; a blocker in words
 is cleared by its reporter's `--cleared`. The sweep releases holds already
 answered. An item with pieces is never reported held (it is the piece that
 waits), and its state is worked out from them (`work_store._computed`):
-working only while a piece is working and has reported within
-`QUIET_AFTER_SEC` (`_moving`: a paused piece is not progress, so it never
-hides what waits on him), else ready or planned while a piece can be picked
-up, else waiting on him while a decision or piece waits on him, else ready
-for review, blocked, or working but paused (`quiet`), in that order; open decisions still show
+a working report is a claim, never telemetry, so it is never shown as
+Working: it reads `activity_unknown` ("Activity unconfirmed",
+`work_store.public_state`, with `ACTIVITY_REASON`; no activity drawn), on a
+piece and on an item alike. An item reads activity_unknown while a piece
+claims work and has reported within `QUIET_AFTER_SEC` (`_moving`), else
+ready or planned while a piece can be picked up, else waiting on him while
+a decision or piece waits on him, else activity_unknown (a claim gone
+silent: the stalled flag builds on exactly this), blocked, or ready for
+review (only once he can approve it), in that order; open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of

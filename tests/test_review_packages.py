@@ -97,7 +97,7 @@ def test_not_done_in_the_package_is_not_done_yet_with_his_note(wired, marks, tmp
     inbox_id = _sent(wired, tmp_path, item)
     _answer_by_page(wired, inbox_id, "not-done", "The empty state is missing.")
     got = work_store.get(item.id)
-    assert (got.state, got.review_note) == ("working", "The empty state is missing.")
+    assert (got.state, got.review_note) == ("activity_unknown", "The empty state is missing.")
     folder = data_paths.answers_dir() / "inbox"
     assert any("The empty state is missing." in p.read_text() for p in folder.glob("*.md"))
 
@@ -134,7 +134,7 @@ def test_approve_while_a_piece_still_works_is_noted_not_lost(wired, marks, tmp_p
     inbox_id = _sent(wired, tmp_path, item)
     _answer_by_page(wired, inbox_id, "approve")
     got = work_store.get(item.id)
-    assert got.state == "working" and got.package_review.outcome == "not_applied"
+    assert got.state == "activity_unknown" and got.package_review.outcome == "not_applied"
     assert "still working" in got.package_review.why
 
 
