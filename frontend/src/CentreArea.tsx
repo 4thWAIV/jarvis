@@ -85,6 +85,8 @@ import { openBundleMember } from "./bundles";
 import { BundleMemberView } from "./BundleMemberView";
 import { settingsOpen, SettingsView } from "./Settings";
 import { MicCorner, MicPortal } from "./MicControl";
+import { openKnowledge } from "./knowledge";
+import { KnowledgeView } from "./KnowledgeView";
 
 function MainView() {
   return (
@@ -131,6 +133,12 @@ const VIEWS: MainTabView[] = [
     hidden: true,
   },
 ];
+
+const KNOWLEDGE_VIEW: MainTabView = {
+  id: "knowledge",
+  icon: null,
+  view: () => <KnowledgeView />,
+};
 
 const THREAD_VIEW: MainTabView = {
   id: "thread",
@@ -215,6 +223,7 @@ export function CentreArea() {
   const packageOpen = useSyncExternalStore(openPackage.subscribe, openPackage.get);
   const fileOpen = useSyncExternalStore(openBundleMember.subscribe, openBundleMember.get);
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
+  const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
   const t = useT();
   const titled = (v: MainTabView): Tab => ({ ...v, title: t(`tabs.main.${v.id}`) });
   const views: Tab[] = [
@@ -236,6 +245,7 @@ export function CentreArea() {
                       view: () => <BundleMemberView key={`${fileOpen.attachmentId}:${fileOpen.memberId}`}
                                                     member={fileOpen} /> }] : []),
     ...(settings ? [titled(SETTINGS_VIEW)] : []),
+    ...(knowledgeOpen ? [titled(KNOWLEDGE_VIEW)] : []),
     ...(work ? [{ ...WORK_VIEW, title: workTitle ?? t("tabs.main.work"),
                   view: () => <WorkDetail key={work} id={work} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),

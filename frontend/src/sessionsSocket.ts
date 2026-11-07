@@ -34,6 +34,7 @@
 import { agentMessage, agentsChanged } from "./agents";
 import { attentionChanged } from "./attention";
 import { foldersChanged } from "./folders";
+import { knowledgeChanged } from "./knowledge";
 import { MESSAGES_HINT, TRANSFER_FRAME, type TransferEvent } from "./messagingContract";
 import { reported as languageReported } from "./locale";
 import { networkChanged } from "./network";
@@ -70,6 +71,7 @@ export function startSessionsSocket(): void {
     if (msg.type === "work" || snapshot) bump(workChanged);
     if (msg.type === "network" || snapshot) bump(networkChanged);
     if (msg.type === "folders" || snapshot) bump(foldersChanged);
+    if (msg.type === "knowledge" || snapshot) bump(knowledgeChanged);
     if (msg.type === MESSAGES_HINT || snapshot) bump(messagesChanged);
     if (msg.type === "packages" || snapshot) bump(packagesChanged);
     if (msg.type === "attention" || snapshot) bump(attentionChanged);

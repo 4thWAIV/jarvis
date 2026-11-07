@@ -17,6 +17,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "tabs.main.thread": "Hilo",
   "tabs.main.diagnostics": "Diagnóstico",
   "tabs.main.subsystem": "Subsistema",
+  "tabs.main.knowledge": "Conocimiento",
   "tabs.main.network": "Instancia",
   "tabs.main.teamServer": "Servidor del equipo",
   "tabs.main.queue": "Mensaje",

@@ -153,7 +153,8 @@ export const UI_CONTRACT = {
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
     "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
-    "member": "^[A-Za-z0-9]{1,64}$"
+    "member": "^[A-Za-z0-9]{1,64}$",
+    "knowledgeProposal": "^[0-9a-f]{24}$"
   },
   "argumentTypes": [
     "enum",
@@ -434,6 +435,13 @@ export const UI_CONTRACT = {
       "entity": "member"
     },
     {
+      "id": "main.knowledge",
+      "region": "main",
+      "kind": "detail",
+      "label": "Knowledge",
+      "tab": "knowledge"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -514,7 +522,8 @@ export const UI_CONTRACT = {
             "queue",
             "package",
             "file",
-            "settings"
+            "settings",
+            "knowledge"
           ]
         }
       },
@@ -2207,6 +2216,90 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "packages"
+    },
+    {
+      "id": "knowledge.open",
+      "label": "Open Knowledge in the centre: search what JARVIS has read, the link proposals waiting for his yes, and his topics",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.view-shown"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.close",
+      "label": "Close Knowledge",
+      "view": "main.knowledge",
+      "args": {},
+      "required": [],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "centre.detail-closed"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.search",
+      "label": "Search what JARVIS has read for some words, in the Knowledge view",
+      "view": "main.knowledge",
+      "args": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "id": "knowledge.proposal.answer",
+      "label": "Accept or reject one link proposal; only his own hand answers it here",
+      "view": "main.knowledge",
+      "args": {
+        "proposalId": {
+          "type": "key",
+          "entity": "knowledgeProposal"
+        },
+        "answer": {
+          "type": "enum",
+          "values": [
+            "accept",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "proposalId",
+        "answer"
+      ],
+      "actors": [
+        "human"
+      ],
+      "effects": [],
+      "family": "knowledge"
     }
   ],
   "kinds": [
@@ -3925,6 +4018,50 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "packages"
+    },
+    {
+      "kind": "knowledge",
+      "entity": null,
+      "label": "Knowledge",
+      "parts": [
+        "header",
+        "close",
+        "status",
+        "search",
+        "results",
+        "proposals",
+        "topics"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
+    },
+    {
+      "kind": "knowledgeProposal",
+      "entity": "knowledgeProposal",
+      "label": "Link proposal",
+      "parts": [
+        "row",
+        "accept",
+        "reject"
+      ],
+      "presentations": [
+        {
+          "view": "main.knowledge",
+          "reveal": {
+            "command": "knowledge.open",
+            "args": {}
+          }
+        }
+      ],
+      "family": "knowledge"
     }
   ],
   "families": [
@@ -3979,6 +4116,10 @@ export const UI_CONTRACT = {
     {
       "family": "packages",
       "owner": "integrator"
+    },
+    {
+      "family": "knowledge",
+      "owner": "coverage-main"
     }
   ]
 } as const;
@@ -4109,7 +4250,11 @@ export interface CommandArgs {
   "folders.open": { folderId: string; };
   "folders.panel.search": { text?: string; };
   "folders.search": { text?: string; };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings"; };
+  "knowledge.close": { };
+  "knowledge.open": { };
+  "knowledge.proposal.answer": { proposalId: string; answer: "accept" | "reject"; };
+  "knowledge.search": { query: string; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };

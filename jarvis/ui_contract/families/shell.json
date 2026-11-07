@@ -171,6 +171,13 @@
       "entity": "member"
     },
     {
+      "id": "main.knowledge",
+      "region": "main",
+      "kind": "detail",
+      "label": "Knowledge",
+      "tab": "knowledge"
+    },
+    {
       "id": "main.settings",
       "region": "main",
       "kind": "detail",
@@ -250,7 +257,8 @@
             "queue",
             "package",
             "file",
-            "settings"
+            "settings",
+            "knowledge"
           ]
         }
       },

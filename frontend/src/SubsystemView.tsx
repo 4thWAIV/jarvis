@@ -65,6 +65,12 @@ export function SubsystemView({ id }: { id: string }) {
         </section>
       )}
       {s?.messages && <Messages messages={s.messages} partRef={ui.part("messages")} />}
+      {id === "knowledge" && (
+        <p>
+          <button type="button" className="knowledge-open"
+                  {...bindingProps(bind("knowledge.open", {}))}>{t("main.knowledge.open")}</button>
+        </p>
+      )}
     </div>
   );
 }
