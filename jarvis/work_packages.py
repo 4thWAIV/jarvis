@@ -503,18 +503,26 @@ def version_key(version: str) -> tuple:
 
 
 def matching(words: str) -> list[Package]:
-    """The packages here, newest first, whose id, name and purpose share the
-    most of `words`, folded as they are said ("the globe numbers package"),
-    so a word no package has ("package") counts against none; every package
-    when `words` has none, and none when no package shares any."""
+    """The packages here, newest first, whose id, name and purpose fit
+    `words` best, folded as they are said ("the globe numbers package"):
+    each word shared counts for less the more packages have it, so "the"
+    or "package" barely counts and a word no package has counts against
+    none, and twice as much in its id or name as only in its purpose. Every package when `words` has none, and none when no package
+    shares any."""
     packages = every()
     wanted = set(spoken_words.folded_words(words))
     if not wanted:
         return packages
-    shared = {p.id: len(wanted & set(spoken_words.folded_words(
-        f"{p.id} {p.manifest.name} {p.manifest.purpose}"))) for p in packages}
-    best = max(shared.values(), default=0)
-    return [p for p in packages if best and shared[p.id] == best]
+    named = {p.id: set(spoken_words.folded_words(f"{p.id} {p.manifest.name}"))
+             for p in packages}
+    vocab = {p.id: named[p.id] | set(spoken_words.folded_words(p.manifest.purpose))
+             for p in packages}
+    having = {w: sum(w in v for v in vocab.values()) for w in wanted}
+    # A word in its name counts twice what a word only in its purpose does.
+    fit = {p.id: sum((2 if w in named[p.id] else 1) / having[w] for w in wanted & vocab[p.id])
+           for p in packages}
+    best = max(fit.values(), default=0)
+    return [p for p in packages if best and fit[p.id] == best]
 
 
 # -- running a step -------------------------------------------------------------------
