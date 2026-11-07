@@ -863,7 +863,10 @@ it takes, with the session id); `session_message` in
 (`accepted`); `digest` in `AttentionStore.begin_digest` / `finish_digest`;
 `speech` in `SpeechScheduler` (`started` when the page says it began to
 sound, `ended` with its outcome, through `Utterance.close_outcomes` or its
-retirement). Recording never raises into the caller. At most
+retirement); `listening` in `TurnController` (its `state`
+setter: `started` when a turn starts gathering his speech, `ended` once it
+stops gathering, committed, discarded or its capture stopped; the turn's id
+only). Recording never raises into the caller. At most
 `brain_activity.KEEP_EVENTS`, oldest first dropped; no hint.
 
 ## The folder catalog
