@@ -53,6 +53,7 @@ export const shellEs: CatalogOf<typeof shellEn> = {
   "targets.microphone": "Micrófono",
   "targets.orb": "El orbe",
   "targets.status": "Estado",
+  "targets.takeoverBar": "Barra de vista ampliada",
   "targets.teamServer": "Servidor del equipo",
   "targets.signInReminder": "Recordatorio para iniciar sesión",
   "targets.updatesNotice": "Novedades pendientes",

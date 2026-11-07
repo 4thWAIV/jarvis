@@ -55,6 +55,9 @@ export interface PackageInfo {
   sources: string[];
   /** Its story's outline, when it tells one. */
   story: StoryOutline | null;
+  /** The room its page is made for: "wide" offers to take over the page.
+   *  Missing from an older JARVIS's frame: the centre. */
+  layout?: "centre" | "wide";
 }
 
 export interface StoryOutline {
@@ -102,7 +105,7 @@ export const storyState = createStore<StoryState | null>(null);
 /** Moves on every "packages" hint on /ws/sessions: one was unpacked. */
 export const packagesChanged = createStore(0);
 
-const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id);
+const packageSlot = detailSlot<PackageInfo>("package", (a, b) => a.id === b.id, (info) => info.id);
 /** The page package shown in the centre area, or none. Read-only: the
  *  controls run `package.open` and `package.close`. */
 export const openPackage = packageSlot.value;

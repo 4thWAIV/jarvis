@@ -1,0 +1,25 @@
+{
+  "family": "layout",
+  "owner": "integrator",
+  "views": [
+    {"id": "main.takeover", "region": "main", "kind": "fixed",
+     "label": "Takeover bar (the item's name, the conversation's state, the notices, the microphone and Restore layout, in place of the centre tabs while a workflow or a page package has taken over)"},
+    {"id": "right.rail", "region": "right", "kind": "fixed",
+     "label": "Right rail (the right panel folded to its six tab icons while taken over)"}
+  ],
+  "commands": [
+    {"id": "layout.takeover", "label": "Let the workflow or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
+     "view": "main.takeover", "args": {}, "required": [], "actors": ["human", "brain"],
+     "effects": [{"effect": "layout.taken-over"}]},
+    {"id": "layout.restore", "label": "Restore the normal layout after a takeover",
+     "view": "main.takeover", "args": {}, "required": [], "actors": ["human", "brain"],
+     "effects": [{"effect": "layout.restored"}]},
+    {"id": "layout.flyout.close", "label": "Close the right panel's tab opened over the takeover from the rail",
+     "view": "right.rail", "args": {}, "required": [], "actors": ["human", "brain"],
+     "effects": []}
+  ],
+  "kinds": [
+    {"kind": "takeoverBar", "entity": null, "label": "Takeover bar", "parts": ["name", "state", "restore"],
+     "presentations": [{"view": "main.takeover"}]}
+  ]
+}

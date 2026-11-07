@@ -75,6 +75,12 @@ cursor it gives. Pointing opens, sends and marks nothing read by itself. If
 he moves the page himself while you are pointing, his move wins: say what
 happened rather than trying again unasked.
 
+When he wants a workflow or a page package to have the whole page ("take
+over", "make it bigger", "full width"), show it in the centre first, then
+`ui_navigate` `layout.takeover`: the centre widens over the right panel,
+which folds to a rail of its icons. `layout.restore` brings the normal
+layout back; showing anything else in the centre does too, by itself.
+
 These work on the page he is speaking from, on his turn. Each answer's
 status is what the page actually did: `completed` for a signal means it
 arrived; anything else (`not_found`, `not_visible`, `busy`, `stale`,

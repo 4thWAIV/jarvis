@@ -137,17 +137,28 @@ type PartRef = (part: string) => (el: Element | null) => void;
 // unsent turn, and the reply's playback.
 const GROUP_PART = { turn: "turn", playback: "speaking" } as const;
 
-export function ConversationView() {
+/** The conversation control's state now, from the one table
+ *  (controlState.ts): what the message input's heading shows, and the
+ *  takeover bar in one line. */
+export function useControlView() {
   const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const hearing = [...turns].reverse().find(turn => turn.speaker === "user" && turn.open);
   const turn = useSyncExternalStore(voiceTurn.subscribe, voiceTurn.get);
   const state = useSyncExternalStore(voiceState.subscribe, voiceState.get);
   const error = useSyncExternalStore(controlError.subscribe, controlError.get);
+  return controlView({ state, turn, hearing: hearing ? hearing.sentences.join(" ") : null, error }, useT());
+}
+
+/** Read the history again: the history's own read follows this. */
+export const readHistoryAgain = () => conversationChanged.set(conversationChanged.get() + 1);
+
+export function ConversationView() {
+  const { turns } = useSyncExternalStore(conversation.subscribe, conversation.get);
   const live = useLiveRead(() => getConversation(), [conversationChanged]);
   useEffect(() => { historyUnavailable.set(Boolean(live.error)); }, [live.error]);
   useEffect(() => () => historyUnavailable.set(false), []);
   const t = useT();
-  const view = controlView({ state, turn, hearing: hearing ? hearing.sentences.join(" ") : null, error }, t);
+  const view = useControlView();
   const ui = useUiTarget({ ref: conversationRef("conversation"), label: t("tabs.main.conversation"), socket: CENTRE_SOCKET });
   return <section id="conversation" ref={ui.whole} aria-label={t("tabs.main.conversation")}>
     <History turns={turns.filter(turn => !turn.open)} live={live} partRef={ui.part} />

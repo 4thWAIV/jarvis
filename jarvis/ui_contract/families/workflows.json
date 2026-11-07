@@ -28,12 +28,12 @@
     {"kind": "workflowsList", "entity": null, "label": "Workflows list", "parts": ["showDone"],
      "presentations": [{"view": "right.workflows", "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}}]},
     {"kind": "workflow", "entity": "workflow", "label": "Workflow",
-     "parts": ["row", "state", "tasks", "header", "close", "dismiss",
+     "parts": ["row", "state", "tasks", "header", "takeover", "close", "dismiss",
                "tab.overview", "tab.phases", "tab.tasks", "tab.transcript", "tab.progress",
                "tab.waits", "tab.decisions", "tab.blockers", "tab.events"],
      "presentations": [{"view": "right.workflows", "parts": ["row", "state", "tasks", "dismiss"],
                         "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}},
-                       {"view": "main.workflow", "parts": ["header", "state", "close", "dismiss",
+                       {"view": "main.workflow", "parts": ["header", "state", "takeover", "close", "dismiss",
                         "tab.overview", "tab.phases", "tab.tasks", "tab.transcript", "tab.progress",
                         "tab.waits", "tab.decisions", "tab.blockers", "tab.events"],
                         "reveal": {"command": "workflow.open", "args": {"workflowId": "$key"}}}]},
@@ -54,8 +54,8 @@
     {"kind": "workflowEvents", "entity": "workflow", "label": "Workflow events", "parts": ["list", "filter"],
      "presentations": [{"view": "main.workflow"}]},
     {"kind": "subagent", "entity": null, "keyOf": ["session", "subagent"], "label": "Subagent",
-     "parts": ["row", "state", "header", "close", "transcript", "earlier"],
+     "parts": ["row", "state", "header", "takeover", "close", "transcript", "earlier"],
      "presentations": [{"view": "right.workflows", "parts": ["row", "state"], "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}},
-                       {"view": "main.workflow", "parts": ["row", "state", "header", "close", "transcript", "earlier"]}]}
+                       {"view": "main.workflow", "parts": ["row", "state", "header", "takeover", "close", "transcript", "earlier"]}]}
   ]
 }

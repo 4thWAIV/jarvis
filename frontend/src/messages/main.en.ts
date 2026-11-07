@@ -879,6 +879,16 @@ export const mainEn = {
   "main.queue.location.changed": "Changed since it was checked",
   "main.queue.location.moved": "No longer in the downloads folder",
   "main.queue.location.failed": "Download failed",
+  // The takeover bar (TakeoverBar.tsx), in place of the centre tabs while a
+  // workflow or a page package has taken over the page, and the right rail
+  // (RightPanel.tsx) the right panel folds to.
+  "main.takeover.label": "Taken over",
+  "main.takeover.enter": "Take over",
+  "main.takeover.enterTitle": "Give this the centre and the right side (Option+Shift+T)",
+  "main.takeover.restore": "Restore layout",
+  "main.takeover.restoreTitle": "Bring back the centre tabs and the right panel",
+  "main.takeover.rail": "Right panel tabs",
+  "main.package.wide": "Made for the wider layout: Take over gives it the centre and the right side.",
   "main.package.listening": "Listening through JARVIS's microphone.",
   "main.package.saved": "Saved {name}.",
   "main.package.notSaved": "Not saved.",

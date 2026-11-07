@@ -76,6 +76,7 @@ const bundles = await import("../frontend/src/bundles.ts");
 const work = await import("../frontend/src/work.ts");
 await import("../frontend/src/knowledge.ts");
 const projects = await import("../frontend/src/projects.ts");
+const takeoverKey = await import("../frontend/src/takeoverKey.ts");
 const { dispatch, navigationRevision, lastNavigationActor } = registry;
 
 const settle = async () => {
@@ -100,10 +101,12 @@ const state = () => ({
   diagnostics: voice.openDiagnostics.get(),
   subsystem: subsystems.openSubsystem.get(),
   folder: folders.selectedFolder.get(),
+  layout: nav.layout.get(),
 });
 
 /** Back to the page as it opens: every detail closed, Conversation and Agents. */
 async function reset() {
+  await dispatch("layout.restore", {}, { actor: "human" });
   for (const close of ["work.close", "workflow.close", "thread.close", "voice.diagnostics.close", "subsystem.close",
                        "folders.close"] as const) {
     await dispatch(close, {}, { actor: "human" });
@@ -525,6 +528,116 @@ function registerFolderRow(el: unknown) {
   assert.equal((await dispatch("project.close", {}, { actor: "human" })).status, "completed");
   assert.equal(nav.mainView.get(), "conversation");
   passed.push("project: opened by its command, a missing one refused, closed back to Conversation");
+}
+
+// ── takeover ────────────────────────────────────────────────────────────
+
+const TAKEN = (key: string, view = "workflow") => ({ mode: "takeover", view, key, flyout: false });
+
+await parity("takeover: nothing to take over on Conversation", [["layout.takeover", {}]], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "unavailable", effects: [], reason: "no-entity" });
+  assert.deepEqual(state.layout, { mode: "normal" });
+});
+
+await parity("takeover: the workflow shown takes over, and again changes nothing", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["layout.taken-over"] });
+  assert.deepEqual(state.layout, TAKEN("wf-1"));
+});
+
+await parity("takeover: taking over twice", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["layout.takeover", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: [] });
+  assert.deepEqual(state.layout, TAKEN("wf-1"));
+});
+
+await parity("takeover: restore", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["layout.restore", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["layout.restored"] });
+  assert.deepEqual(state.layout, { mode: "normal" });
+  assert.equal(state.main, "workflow");
+});
+
+await parity("takeover: another centre view restores it", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["main.tab.select", { tab: "folders" }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.view-shown", "layout.restored"] });
+  assert.deepEqual(state.layout, { mode: "normal" });
+});
+
+await parity("takeover: another item in its slot restores it", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["workflow.open", { workflowId: "wf-3" }],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.detail-replaced", "layout.restored"] });
+  assert.deepEqual(state.layout, { mode: "normal" });
+});
+
+await parity("takeover: closing the item restores it", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["workflow.close", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["centre.detail-closed", "layout.restored"] });
+  assert.deepEqual(state.layout, { mode: "normal" });
+});
+
+await parity("takeover: a right tab opens over it, and closes", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["right.tab.select", { tab: "queue" }],
+], ({ state }) => {
+  assert.deepEqual(state.layout, { ...TAKEN("wf-1"), flyout: true });
+  assert.equal(state.right, "queue");
+});
+
+await parity("takeover: the flyout closes, the takeover stays", [
+  ["workflow.open", { workflowId: "wf-1" }], ["layout.takeover", {}], ["right.tab.select", { tab: "queue" }],
+  ["layout.flyout.close", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: [] });
+  assert.deepEqual(state.layout, TAKEN("wf-1"));
+});
+
+{
+  // A page package takes over by its id; another package opening restores.
+  await reset();
+  const pkg = (id: string) => ({ id, name: id, version: "1.0.0", purpose: "", runs: "page" as const,
+                                  entry: "index.html", source: "0f1e2d3c", sources: ["0f1e2d3c"], story: null });
+  packages.showPackage(pkg("deck-a"));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual((await dispatch("layout.takeover", {}, { actor: "brain" })).effects, ["layout.taken-over"]);
+  assert.deepEqual(nav.layout.get(), TAKEN("deck-a", "package"));
+  packages.showPackage(pkg("deck-a"));       // the same package again: nothing moves
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(nav.layout.get(), TAKEN("deck-a", "package"));
+  packages.showPackage(pkg("deck-b"));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(packages.openPackage.get()?.id, "deck-b");
+  assert.deepEqual(nav.layout.get(), { mode: "normal" });
+  await dispatch("package.close", {}, { actor: "human" });
+  passed.push("takeover: a package, and another package restores it");
+}
+
+{
+  // Option+Shift+T, by the physical key: takes over what the centre shows,
+  // restores while taken over, and does nothing in a text field or with
+  // nothing to take over.
+  await reset();
+  const press = (over: Record<string, unknown> = {}) => takeoverKey.takeoverKeyCommand({
+    altKey: true, shiftKey: true, ctrlKey: false, metaKey: false, code: "KeyT",
+    target: { tagName: "DIV" } as unknown as EventTarget, ...over });
+  assert.equal(press(), null, "nothing to take over on Conversation");
+  await dispatch("workflow.open", { workflowId: "wf-1" }, { actor: "human" });
+  assert.equal(press(), "layout.takeover");
+  assert.equal(press({ target: { tagName: "TEXTAREA" } }), null);
+  assert.equal(press({ target: { tagName: "INPUT" } }), null);
+  assert.equal(press({ target: { tagName: "DIV", isContentEditable: true } }), null);
+  assert.equal(press({ shiftKey: false }), null);
+  assert.equal(press({ metaKey: true }), null);
+  assert.equal(press({ code: "KeyR" }), null);
+  await dispatch("layout.takeover", {}, { actor: "human" });
+  assert.equal(press(), "layout.restore");
+  assert.equal(press({ target: { tagName: "SELECT" } }), null);
+  passed.push("takeover key: toggles, never while typing");
 }
 
 // network.ts reads WeeklyUsage.tsx, and queue.ts reads network.ts, so

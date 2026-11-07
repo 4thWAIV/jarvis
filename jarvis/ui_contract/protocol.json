@@ -104,7 +104,9 @@
     "settings.opened": "The Settings view opened.",
     "menu.opened": "The menu opened.",
     "list.paged": "A list loaded or showed another page.",
-    "list.filtered": "A list's filter changed."
+    "list.filtered": "A list's filter changed.",
+    "layout.taken-over": "The centre widened over the right panel, which folded to a rail; the takeover bar replaced the centre tabs.",
+    "layout.restored": "The normal layout came back: the centre tabs, the notices and the right panel."
   },
   "pipeline": {
     "source": "orb.source",
@@ -143,6 +145,7 @@
     "families/diagnostics.json",
     "families/folders.json",
     "families/conversation.json",
-    "families/packages.json", "families/knowledge.json", "families/projects.json"
+    "families/packages.json", "families/knowledge.json", "families/projects.json",
+    "families/layout.json"
   ]
 }

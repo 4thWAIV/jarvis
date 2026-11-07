@@ -62,6 +62,7 @@ export const shellEn = {
   "targets.microphone": "Microphone",
   "targets.orb": "The orb",
   "targets.status": "Status",
+  "targets.takeoverBar": "Takeover bar",
   "targets.teamServer": "Team server",
   "targets.signInReminder": "Sign-in reminder",
   "targets.updatesNotice": "Updates waiting",

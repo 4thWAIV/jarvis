@@ -29,11 +29,24 @@
  * JARVIS also posts `story.state` {state, slide, question?} whenever the
  * story's state changes (telling, waiting for his answer, paused, finished,
  * stopped), so a deck can show which question is waiting for him.
+ *
+ * And the room it has (takeover mode, uiNavigation.ts `layout`): JARVIS
+ * posts `layout` {mode, width, height} once the frame has loaded and
+ * whenever the layout or the frame's size changes (the frame's own page
+ * has had its ordinary resize event by then); `mode` is "takeover" while
+ * this package has taken over the page, else "normal". The frame may ask
+ * for the room with `layout.request` {}: JARVIS offers Take over, as it
+ * does for a package marked "wide", and changes nothing itself; he
+ * chooses. `layout.restore` {} (the story helper passing on Option+Shift+T
+ * pressed inside the frame) restores the normal layout while this package
+ * has taken over, and does nothing else.
  */
 
 import { t, type Said } from "./locale";
 import { inputStatus } from "./mic";
 import { saveResult, storyCue, storyState } from "./packages";
+import { layout } from "./uiNavigation";
+import { byHand } from "./uiRegistry";
 import { listenToMicrophone, MICROPHONE_FORMAT } from "./voiceInput";
 
 export const BRIDGE = "package";
@@ -44,7 +57,15 @@ export interface BridgeEvents {
   onListening(on: boolean): void;
   /** The story's frame could not find some of a beat's targets. */
   onStoryMissing(said: Said): void;
+  /** The frame asked for more room: offer Take over. */
+  onLayoutRequest(): void;
 }
+
+/** Whether this package is what has taken over the page. */
+const tookOver = (packageId: string) => {
+  const now = layout.get();
+  return now.mode === "takeover" && now.view === "package" && now.key === packageId;
+};
 
 function asBlob(data: unknown): Blob | null {
   if (typeof data === "string" || data instanceof ArrayBuffer) return new Blob([data]);
@@ -115,6 +136,24 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
   };
   const unsubscribeState = storyState.subscribe(showState);
 
+  // The room the frame has: told once it has loaded, and on every change.
+  let told = "";
+  const showLayout = () => {
+    const { width, height } = frame.getBoundingClientRect();
+    if (width === 0 && height === 0) return;           // kept, hidden: nothing to tell
+    const fields = { mode: tookOver(packageId) ? "takeover" : "normal",
+                     width: Math.round(width), height: Math.round(height) };
+    const now = JSON.stringify(fields);
+    if (now === told) return;
+    told = now;
+    post({ type: "layout", ...fields });
+  };
+  const resized = new ResizeObserver(showLayout);
+  resized.observe(frame);
+  const unsubscribeLayout = layout.subscribe(showLayout);
+  const loaded = () => { told = ""; showLayout(); };
+  frame.addEventListener("load", loaded);
+
   const onMessage = (event: MessageEvent) => {
     if (event.source !== frame.contentWindow) return;
     const message = event.data;
@@ -122,6 +161,8 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     if (message.type === "save") void save(message);
     else if (message.type === "listen") listen(Boolean(message.on));
     else if (message.type === "story.ready") { showCue(true); showState(); }
+    else if (message.type === "layout.request") events.onLayoutRequest();
+    else if (message.type === "layout.restore" && tookOver(packageId)) byHand("layout.restore", {});
     else if (message.type === "story.missing" && Array.isArray(message.targets)) {
       events.onStoryMissing({ words: () => t("main.package.story.notFound"),
                               detail: message.targets.map(String).join(", ") });
@@ -133,6 +174,9 @@ export function connectBridge(frame: HTMLIFrameElement, packageId: string,
     window.removeEventListener("message", onMessage);
     unsubscribe();
     unsubscribeState();
+    unsubscribeLayout();
+    resized.disconnect();
+    frame.removeEventListener("load", loaded);
     stopListening?.();
   };
 }
