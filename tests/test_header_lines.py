@@ -354,6 +354,21 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "knowledge_client._schedule_restart": (
+        "the `reason` it logs and keeps is the supervisor's own wording around "
+        "the engine child's exit code or footprint, numbers from its own "
+        "subprocess.Popen and proc_pid_rusage; no session's or person's words "
+        "reach it. Driven by tests/test_knowledge_process.py"),
+    "knowledge_client.tick": (
+        "it reads only the engine child's own `pid` and `returncode` from the "
+        "Popen it started, and the engine's health body, which is the engine's "
+        "own counts; the text it builds is the supervisor's own. Driven by "
+        "tests/test_knowledge_process.py"),
+    "subsystem_diagnostics.knowledge": (
+        "it reads knowledge_runtime.health(): the supervisor's own state and "
+        "reason, the pace's own words, the engine's own counts and the store's "
+        "own problem lines about its own files; nothing a session or a person "
+        "wrote reaches the row. Driven by tests/test_knowledge_runtime.py"),
     "brain._turn_locked": (
         "the `provider` it reads is the brain provider's own name (`claude` or "
         "`codex`, `brain_provider.py`), passed to `brain_activity.feed."

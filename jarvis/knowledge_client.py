@@ -1,0 +1,350 @@
+"""JARVIS's side of the knowledge engine: the client, its transports and the
+supervisor (design sections 7.2, 7.3 and 18).
+
+Only the JARVIS server holds the engine token. Before sending it, the
+client checks that the address record's pid is the child the supervisor
+started, so a stale or planted record never receives it. Every call has a
+deadline (I3); a call past it raises `EngineUnavailable`, and the caller
+answers from SQLite and Markdown instead.
+
+Python tests reach the engine only through this module, with
+`InProcessTransport` in place of HTTP, so a bare `pytest` starts no engine.
+
+The supervisor starts `python -m jarvis.knowledge serve` with a pipe on its
+stdin (closing it ends the engine, even across the server's `os.execv`),
+pings its health every `PING_EVERY_SEC`, restarts it after
+`RESTART_BACKOFF_SEC`, leaves it down after `RESTARTS_MAX` restarts within
+`RESTART_WINDOW_SEC`, and restarts it when its physical footprint passes
+`FOOTPRINT_LIMIT` times its budget. It never adopts an engine it did not
+start: an earlier engine still holding the lock is given time to exit, then
+ended by its pid.
+"""
+from __future__ import annotations
+
+import ctypes
+import http.client
+import json
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+from typing import Any, Callable, Optional, Protocol
+
+from jarvis import data_paths
+from jarvis.knowledge import address as engine_address
+
+log = logging.getLogger("jarvis.knowledge_client")
+
+PING_EVERY_SEC = 5.0
+PING_FAILURES_MAX = 2
+RESTART_BACKOFF_SEC = (1.0, 5.0, 30.0)
+RESTARTS_MAX = 3
+RESTART_WINDOW_SEC = 600.0
+FOOTPRINT_LIMIT = 1.5
+PREVIOUS_EXIT_WAIT_SEC = 10.0
+TERM_GRACE_SEC = 5.0
+DEFAULT_DEADLINE_SEC = 0.5
+
+
+def enabled() -> bool:
+    """`JARVIS_KNOWLEDGE`: off by default until ingest exists (build plan)."""
+    return os.getenv("JARVIS_KNOWLEDGE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def memory_budget_mb() -> int:
+    """`JARVIS_KNOWLEDGE_MEMORY_MB`, else 384, or 256 on a Mac with less than
+    16 GB."""
+    raw = os.getenv("JARVIS_KNOWLEDGE_MEMORY_MB", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    try:
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError):
+        total = 0
+    return 256 if 0 < total < 16 * (1 << 30) else 384
+
+
+class EngineUnavailable(RuntimeError):
+    """The engine is down, late, or not the one we started."""
+
+
+class Transport(Protocol):
+    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]: ...
+
+
+class HTTPTransport:
+    """Loopback HTTP to the engine this supervisor started, and no other."""
+
+    def __init__(self, expected_pid: Callable[[], Optional[int]],
+                 token: Callable[[], str] = data_paths.ensure_knowledge_token) -> None:
+        self._expected_pid = expected_pid
+        self._token = token
+
+    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
+        found = engine_address.read()
+        child = self._expected_pid()
+        if found is None or child is None or found.pid != child:
+            raise EngineUnavailable("no engine of ours is recorded")
+        if found.host not in ("127.0.0.1", "localhost"):
+            raise EngineUnavailable("the engine record is not loopback")
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        conn = http.client.HTTPConnection(found.host, found.port, timeout=deadline)
+        try:
+            headers = {"Authorization": f"Bearer {self._token()}",
+                       "Host": f"{found.host}:{found.port}"}
+            if data is not None:
+                headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=data, headers=headers)
+            response = conn.getresponse()
+            raw = response.read()
+            return response.status, (json.loads(raw) if raw else None)
+        except (OSError, http.client.HTTPException, ValueError) as e:
+            raise EngineUnavailable(str(e)) from e
+        finally:
+            conn.close()
+
+
+class InProcessTransport:
+    """The routes called directly on an engine object, for tests."""
+
+    def __init__(self, engine) -> None:
+        self.engine = engine
+
+    def request(self, method: str, path: str, body: Any, deadline: float) -> tuple[int, Any]:
+        from jarvis.knowledge.serve import dispatch
+        # The same JSON round trip HTTP would make, so nothing passes that
+        # the wire could not carry.
+        sent = None if body is None else json.loads(json.dumps(body))
+        answer = dispatch(self.engine, method, path, sent)
+        return answer.status, json.loads(json.dumps(answer.payload))
+
+
+class KnowledgeClient:
+    def __init__(self, transport: Transport) -> None:
+        self.transport = transport
+
+    def call(self, method: str, path: str, body: Any = None,
+             deadline: float = DEFAULT_DEADLINE_SEC) -> Any:
+        status, payload = self.transport.request(method, path, body, deadline)
+        if status >= 500:
+            raise EngineUnavailable(f"engine answered {status}")
+        if status >= 400:
+            raise KnowledgeRefused(status, payload)
+        return payload
+
+    def health(self, deadline: float = 1.0) -> dict:
+        return self.call("GET", "/v1/health", deadline=deadline)
+
+    def pace(self, mode: str) -> dict:
+        return self.call("POST", "/v1/pace", {"mode": mode})
+
+
+class KnowledgeRefused(RuntimeError):
+    def __init__(self, status: int, payload: Any) -> None:
+        super().__init__(f"{status}: {payload}")
+        self.status = status
+        self.payload = payload
+
+
+# --- physical footprint ---------------------------------------------------
+
+RUSAGE_INFO_V2 = 2
+
+
+class _RusageInfoV2(ctypes.Structure):
+    _fields_ = [("ri_uuid", ctypes.c_uint8 * 16)] + [
+        (name, ctypes.c_uint64) for name in (
+            "ri_user_time", "ri_system_time", "ri_pkg_idle_wkups", "ri_interrupt_wkups",
+            "ri_pageins", "ri_wired_size", "ri_resident_size", "ri_phys_footprint",
+            "ri_proc_start_abstime", "ri_proc_exit_abstime", "ri_child_user_time",
+            "ri_child_system_time", "ri_child_pkg_idle_wkups", "ri_child_interrupt_wkups",
+            "ri_child_pageins", "ri_child_elapsed_abstime", "ri_diskio_bytesread",
+            "ri_diskio_byteswritten")]
+
+
+_libproc = None
+
+
+def footprint_bytes(pid: int) -> Optional[int]:
+    """Another process's physical footprint (`ri_phys_footprint`), which,
+    unlike resident size, leaves out the clean memory-mapped vector pages a
+    scan has just read. None off macOS or when the call fails."""
+    global _libproc
+    if sys.platform != "darwin":
+        return None
+    try:
+        if _libproc is None:
+            _libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            _libproc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            _libproc.proc_pid_rusage.restype = ctypes.c_int
+        info = _RusageInfoV2()
+        if _libproc.proc_pid_rusage(pid, RUSAGE_INFO_V2, ctypes.byref(info)) != 0:
+            return None
+        return int(info.ri_phys_footprint)
+    except OSError:
+        return None
+
+
+# --- supervision ----------------------------------------------------------
+
+class Supervisor:
+    """Starts, watches and ends the one engine this server owns.
+
+    `tick()` is called every `PING_EVERY_SEC` by the server's loop; it does
+    one step at a time and never blocks long, so it can run beside the
+    voice path. Every collaborator (spawn, clock, health, footprint) is a
+    parameter, so the policy is tested without a process.
+    """
+
+    def __init__(self, *, spawn: Optional[Callable[[], subprocess.Popen]] = None,
+                 clock: Callable[[], float] = time.monotonic,
+                 health: Optional[Callable[[], dict]] = None,
+                 footprint: Callable[[int], Optional[int]] = footprint_bytes,
+                 budget_mb: Optional[int] = None) -> None:
+        self._spawn = spawn or _spawn_engine
+        self._clock = clock
+        self._health = health
+        self._footprint = footprint
+        self.budget_bytes = (budget_mb or memory_budget_mb()) << 20
+        self.proc: Optional[subprocess.Popen] = None
+        self.state = "idle"          # idle, running, restarting, down
+        self.restarts: list[float] = []
+        self.ping_failures = 0
+        self._restart_at: Optional[float] = None
+        self.last_reason: Optional[str] = None
+        self.last_health: Optional[dict] = None
+        self.client = KnowledgeClient(HTTPTransport(self.pid))
+
+    def pid(self) -> Optional[int]:
+        if self.proc is None or self.proc.poll() is not None:
+            return None
+        return self.proc.pid
+
+    def start(self) -> None:
+        end_previous_engine()
+        self.proc = self._spawn()
+        self.state = "running"
+        self.ping_failures = 0
+        log.info("knowledge engine started, pid %s", self.proc.pid)
+
+    def tick(self) -> str:
+        now = self._clock()
+        if self.state == "down":
+            return self.state
+        if self.state == "restarting":
+            if self._restart_at is not None and now >= self._restart_at:
+                self._restart_at = None
+                self.start()
+            return self.state
+        if self.proc is None:
+            return self.state
+        if self.proc.poll() is not None:
+            return self._schedule_restart(now, f"exited with {self.proc.returncode}")
+        if not self._healthy():
+            self.ping_failures += 1
+            if self.ping_failures >= PING_FAILURES_MAX:
+                self._end_child()
+                return self._schedule_restart(now, "stopped answering its health check")
+            return self.state
+        self.ping_failures = 0
+        used = self._footprint(self.proc.pid)
+        if used is not None and used > FOOTPRINT_LIMIT * self.budget_bytes:
+            self._end_child()
+            return self._schedule_restart(now, f"physical footprint {used >> 20} MB over the limit")
+        return self.state
+
+    def _healthy(self) -> bool:
+        try:
+            body = self._health() if self._health else self.client.health()
+        except (EngineUnavailable, KnowledgeRefused):
+            return False
+        self.last_health = body if isinstance(body, dict) else None
+        return isinstance(body, dict) and body.get("state") in ("ok", "degraded")
+
+    def _schedule_restart(self, now: float, reason: str) -> str:
+        self.last_reason = reason
+        self.restarts = [t for t in self.restarts if now - t < RESTART_WINDOW_SEC]
+        if len(self.restarts) >= RESTARTS_MAX:
+            self.state = "down"
+            self.proc = None
+            log.error("knowledge engine left down after %d restarts in %d minutes: %s",
+                      RESTARTS_MAX, int(RESTART_WINDOW_SEC // 60), reason)
+            return self.state
+        delay = RESTART_BACKOFF_SEC[min(len(self.restarts), len(RESTART_BACKOFF_SEC) - 1)]
+        self.restarts.append(now)
+        self.state = "restarting"
+        self.proc = None
+        self._restart_at = now + delay
+        log.warning("knowledge engine %s; restarting in %.0f s", reason, delay)
+        return self.state
+
+    def _end_child(self) -> None:
+        if self.proc is None:
+            return
+        _end_process(self.proc)
+
+    def stop(self) -> None:
+        """Close the pipe (the engine flushes and exits), then make sure."""
+        self.state = "idle"
+        if self.proc is not None:
+            _end_process(self.proc)
+            self.proc = None
+
+
+def _spawn_engine() -> subprocess.Popen:
+    env = dict(os.environ)
+    return subprocess.Popen([sys.executable, "-m", "jarvis.knowledge", "serve"],
+                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                            stderr=None, env=env, close_fds=True)
+
+
+def _end_process(proc: subprocess.Popen) -> None:
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=TERM_GRACE_SEC)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=TERM_GRACE_SEC)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def end_previous_engine(*, wait_sec: float = PREVIOUS_EXIT_WAIT_SEC,
+                        grace_sec: float = TERM_GRACE_SEC,
+                        sleep: Callable[[float], None] = time.sleep) -> None:
+    """An engine from before a restart sees its pipe close and exits; give it
+    `wait_sec` to free the lock, then end the recorded pid. The lock decides
+    whether it is still there, so no token is ever sent to it."""
+    from jarvis.knowledge.engine import lock_is_free
+    directory = data_paths.knowledge_dir()
+    waited = 0.0
+    while not lock_is_free(directory) and waited < wait_sec:
+        sleep(0.1)
+        waited += 0.1
+    if lock_is_free(directory):
+        return
+    found = engine_address.running()
+    if found is None:
+        return
+    log.warning("ending an earlier knowledge engine, pid %s, that kept the lock", found.pid)
+    for sig, wait in ((signal.SIGTERM, grace_sec), (signal.SIGKILL, grace_sec)):
+        try:
+            os.kill(found.pid, sig)
+        except ProcessLookupError:
+            return
+        spent = 0.0
+        while spent < wait:
+            if lock_is_free(directory):
+                return
+            sleep(0.1)
+            spent += 0.1
