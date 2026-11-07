@@ -19,7 +19,7 @@ settings or anyone else's appearance.
 
 The centre opens on Conversation. It combines earlier conversation with live speech, typed input, captures and expandable sources. Agent messages have delivery and reply states, so their progress can be followed in the conversation. Selecting an agent's name opens that agent's thread.
 
-The left column holds the orb, the team server's health and brain account usage. The microphone controls (Start listening, Mute, Mic off) sit at the lower right of the Conversation's message box, right of Send, with Stop and the voice health dot to Send's left; what JARVIS is doing (thinking, speaking) is the row above the message box. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
+The left column holds the orb, the team server's health and brain account usage. The microphone controls (Start listening, Mute, Mic off) sit at the lower right of the Conversation's message box, right of Send, with Stop and the voice health dot to Send's left (on any other centre view the microphone controls stay in the same lower-right corner); what JARVIS is doing (thinking, speaking) is the row above the message box. The right panel has six labelled tabs in two rows: Folders, Agents and Queue, then Workflows, Network and Diagnostics. Detailed views open in the centre while the surrounding controls remain available.
 
 ## Nothing is sent until you say yes
 
