@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
-from jarvis import project_seed, run_store, workspace_ref
+from jarvis import project_seed, run_store
 from jarvis.agent_directory import spoken_key
 from jarvis.project_store import ProjectError, ProjectStore
 
@@ -218,28 +218,10 @@ class ProjectService:
         return {"works": [w.json() for w in self.store.works(self.owners(), state=state, project_id=pid)]}
 
     def work_detail(self, work_id: str) -> dict:
-        """A piece of work in full: its projects (one primary), its own
-        folders, the folders an agent may start in for it (`run_location`'s
-        rule: its projects' folders and its own), its runs and what is bound
-        to it (workflows, packages), each by reference."""
         w = self.store.work(work_id)
-        allowed = list(dict.fromkeys([f.folder_id for x in w.projects
-                                      for f in self.store.folders_of(x["project_id"])] + list(w.folders)))
-        bound = []
-        for b in self.store.bound_to(work_id=w.id):
-            try:
-                r = workspace_ref.parse(b["subject"])
-            except workspace_ref.RefError:
-                continue
-            bound.append({"kind": r.kind.value, "id": r.id, "how": b["how"], "bound_at": b["bound_at"]})
         return {"work": w.json(),
                 "projects": [{**self.store.require(x["project_id"]).json(), "role": x["role"]} for x in w.projects],
-                "folders": [self._folder_facts(f) for f in w.folders],
-                "run_folders": [self._folder_facts(f) for f in allowed],
-                "runs": [{"id": r["id"], "status": r["status"], "created_at": r["created_at"],
-                          "folder_id": r.get("folder_id")}
-                         for r in run_store.list_runs(work_id=w.id, limit=RUNS_SHOWN)],
-                "bound": bound}
+                "folders": [self._folder_facts(f) for f in w.folders]}
 
     # -- changing ------------------------------------------------------------------
     def change_project(self, action: str, *, project: Optional[str] = None, name: Optional[str] = None,

@@ -93,9 +93,8 @@ import { settingsOpen, SettingsView } from "./Settings";
 import { MicCorner, MicPortal } from "./MicControl";
 import { openKnowledge } from "./knowledge";
 import { KnowledgeView } from "./KnowledgeView";
-import { openProject, openWorkRecord, projectList } from "./projects";
+import { openProject, projectList } from "./projects";
 import { ProjectView } from "./ProjectView";
-import { WorkView } from "./WorkView";
 
 function MainView() {
   return (
@@ -151,12 +150,6 @@ const KNOWLEDGE_VIEW: MainTabView = {
 
 const PROJECT_VIEW: MainTabView = {
   id: "project",
-  icon: null,
-  view: () => null,
-};
-
-const WORK_RECORD_VIEW: MainTabView = {
-  id: "workRecord",
   icon: null,
   view: () => null,
 };
@@ -246,7 +239,6 @@ export function CentreArea() {
   const settings = useSyncExternalStore(settingsOpen.subscribe, settingsOpen.get);
   const knowledgeOpen = useSyncExternalStore(openKnowledge.subscribe, openKnowledge.get);
   const projectOpen = useSyncExternalStore(openProject.subscribe, openProject.get);
-  const workRecordOpen = useSyncExternalStore(openWorkRecord.subscribe, openWorkRecord.get);
   const projectName = useSyncExternalStore(projectList.subscribe, projectList.get).value
     ?.projects.find((p) => p.id === projectOpen)?.display_name;
   const takenOver = useSyncExternalStore(layout.subscribe, layout.get).mode === "takeover";
@@ -275,8 +267,6 @@ export function CentreArea() {
     ...(knowledgeOpen ? [titled(KNOWLEDGE_VIEW)] : []),
     ...(projectOpen ? [{ ...PROJECT_VIEW, title: projectName ?? t("tabs.main.project"),
                          view: () => <ProjectView key={projectOpen} id={projectOpen} /> }] : []),
-    ...(workRecordOpen ? [{ ...WORK_RECORD_VIEW, title: t("tabs.main.workRecord"),
-                            view: () => <WorkView key={workRecordOpen} id={workRecordOpen} /> }] : []),
     ...(work ? [{ ...WORK_VIEW, title: workTitle ?? t("tabs.main.work"),
                   view: () => <WorkDetail key={work} id={work} /> }] : []),
     ...(workflow ? [{ ...WORKFLOW_VIEW, title: t(subagentOf(workflow) ? "tabs.main.subagent" : "tabs.main.workflow"),

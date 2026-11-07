@@ -70,9 +70,7 @@ export function ProjectView({ id }: { id: string }) {
             {!d.works.length && <p className="voice-empty">{t("main.project.noWorks")}</p>}
             <ul className="knowledge-topics">
               {d.works.map((w) => (
-                <li key={w.id}>
-                  <button type="button" className="knowledge-open"
-                          {...bindingProps(bind("workRecord.open", { workRecordId: w.id }))}>{w.title}</button>
+                <li key={w.id}><span className="knowledge-label">{w.title}</span>
                   {w.outcome && <span className="knowledge-note">{w.outcome}</span>}</li>
               ))}
             </ul>

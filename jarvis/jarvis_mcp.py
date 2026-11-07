@@ -2302,7 +2302,6 @@ TOOL_SPECS = [
         "inputSchema": {"type": "object", "properties": {
             "purpose": {"type": "string"}, "project": {"type": "string"},
             "project_id": {"type": "string"}, "work_id": {"type": "string"},
-            "as_run": {"type": "boolean", "description": "Exactly the pack a run started for this work is given (his own words only), as the Work view previews it."},
             "include_received": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}},
             "required": ["purpose"]},
     },

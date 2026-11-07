@@ -22,13 +22,11 @@ tool token (web_auth) and is followed by a `projects` hint on /ws/sessions
   POST   /api/works                            start {title, outcome, projects, folder_id}
   GET    /api/works/{id}                       one piece of work
   PATCH  /api/works/{id}                       {action: rename|outcome|add_project|..., ...}
-  GET    /api/works/{id}/context               the pack a run for it is given, exactly
-  POST   /api/works/{id}/runs                  start an agent {prompt, folder_id}: only in its folders
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -38,9 +36,7 @@ from jarvis.project_store import ProjectError
 
 
 def mount(app: FastAPI, service: Callable[[], Optional[ProjectService]],
-          on_change: Callable[[], None] = lambda: None,
-          context: Callable[[ProjectService, str], dict] = lambda svc, work_id: {},
-          start_run: Optional[Callable[[str, str, Optional[str]], Awaitable[dict]]] = None) -> None:
+          on_change: Callable[[], None] = lambda: None) -> None:
 
     async def run(work, changes: bool = False):
         svc = service()
@@ -143,21 +139,6 @@ def mount(app: FastAPI, service: Callable[[], Optional[ProjectService]],
                                                  outcome=b.get("outcome"), project=b.get("project"),
                                                  folder_id=b.get("folder_id")), changes=True)
 
-    async def work_context(work_id: str):
-        return await run(lambda s: context(s, work_id))
-
-    async def work_run(work_id: str, request: Request):
-        b = await body(request, {"prompt", "folder_id"})
-        if b is None or start_run is None:
-            return bad()
-        if service() is None:
-            return await run(lambda s: None)
-        try:
-            started = await start_run(work_id, str(b.get("prompt") or ""), b.get("folder_id"))
-        except ProjectError as e:
-            return JSONResponse(e.to_json(), status_code=e.status)
-        return JSONResponse(started)
-
     routes = [
         ("/api/project-records", list_projects, "GET"), ("/api/project-records", add, "POST"),
         ("/api/project-records/candidates", candidates, "GET"),
@@ -169,7 +150,6 @@ def mount(app: FastAPI, service: Callable[[], Optional[ProjectService]],
         ("/api/project-records/{project_id}/accomplishments", accomplishments, "POST"),
         ("/api/works", works, "GET"), ("/api/works", start_work, "POST"),
         ("/api/works/{work_id}", work_detail, "GET"), ("/api/works/{work_id}", change_work, "PATCH"),
-        ("/api/works/{work_id}/context", work_context, "GET"), ("/api/works/{work_id}/runs", work_run, "POST"),
     ]
     for path, fn, method in routes:
         app.add_api_route(path, fn, methods=[method])

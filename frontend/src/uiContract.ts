@@ -159,7 +159,6 @@ export const UI_CONTRACT = {
     "project": "^[0-9a-f-]{36}$",
     "projectCandidate": "^[0-9a-f-]{36}$",
     "accomplishment": "^[0-9a-f-]{36}$",
-    "workRecord": "^[0-9a-f-]{36}$",
     "knowledgeIndex": "^[a-z_]+(,[a-z_]+)*\\|[A-Za-z0-9_.\\[\\]]+(,[A-Za-z0-9_.\\[\\]]+)*$"
   },
   "argumentTypes": [
@@ -443,14 +442,6 @@ export const UI_CONTRACT = {
       "entity": "member"
     },
     {
-      "id": "main.workRecord",
-      "region": "main",
-      "kind": "detail",
-      "label": "A piece of work (one intent across projects)",
-      "tab": "workRecord",
-      "entity": "workRecord"
-    },
-    {
       "id": "main.project",
       "region": "main",
       "kind": "detail",
@@ -560,8 +551,7 @@ export const UI_CONTRACT = {
             "file",
             "settings",
             "knowledge",
-            "project",
-            "workRecord"
+            "project"
           ]
         }
       },
@@ -2610,50 +2600,6 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
-      "id": "workRecord.open",
-      "label": "Open one piece of work in the centre: its outcome, projects, folders, runs and the context a run for it is given",
-      "view": "main.workRecord",
-      "args": {
-        "workRecordId": {
-          "type": "key",
-          "entity": "workRecord"
-        }
-      },
-      "required": [
-        "workRecordId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        }
-      ],
-      "family": "projects"
-    },
-    {
-      "id": "workRecord.close",
-      "label": "Close the piece of work's detail",
-      "view": "main.workRecord",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ],
-      "family": "projects"
-    },
-    {
       "id": "layout.takeover",
       "label": "Let the workflow or page package shown in the centre take over the page: the centre widens over the right panel, which folds to a rail of its tab icons",
       "view": "main.takeover",
@@ -4663,34 +4609,6 @@ export const UI_CONTRACT = {
       "family": "projects"
     },
     {
-      "kind": "workRecord",
-      "entity": "workRecord",
-      "label": "Piece of work",
-      "parts": [
-        "header",
-        "close",
-        "outcome",
-        "projects",
-        "folders",
-        "start",
-        "runs",
-        "bound",
-        "context"
-      ],
-      "presentations": [
-        {
-          "view": "main.workRecord",
-          "reveal": {
-            "command": "workRecord.open",
-            "args": {
-              "workRecordId": "$key"
-            }
-          }
-        }
-      ],
-      "family": "projects"
-    },
-    {
       "kind": "takeoverBar",
       "entity": null,
       "label": "Takeover bar",
@@ -4913,7 +4831,7 @@ export interface CommandArgs {
   "layout.restore": { };
   "layout.sheet": { shown: boolean; };
   "layout.takeover": { };
-  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project" | "workRecord"; };
+  "main.tab.select": { tab: "conversation" | "folders" | "main" | "workflow" | "work" | "thread" | "diagnostics" | "subsystem" | "network" | "queue" | "package" | "file" | "settings" | "knowledge" | "project"; };
   "menu.toggle": { open: boolean; };
   "network.close": { };
   "network.open": { kind: "node" | "server"; nodeId?: string; };
@@ -4957,8 +4875,6 @@ export interface CommandArgs {
   "work.open": { itemId: string; tab?: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
   "work.showHistory": { shown: boolean; };
   "work.tab.select": { itemId: string; tab: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
-  "workRecord.close": { };
-  "workRecord.open": { workRecordId: string; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };

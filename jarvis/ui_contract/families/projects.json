@@ -122,48 +122,6 @@
         "human"
       ],
       "effects": []
-    },
-    {
-      "id": "workRecord.open",
-      "label": "Open one piece of work in the centre: its outcome, projects, folders, runs and the context a run for it is given",
-      "view": "main.workRecord",
-      "args": {
-        "workRecordId": {
-          "type": "key",
-          "entity": "workRecord"
-        }
-      },
-      "required": [
-        "workRecordId"
-      ],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.view-shown"
-        },
-        {
-          "effect": "centre.detail-replaced"
-        }
-      ]
-    },
-    {
-      "id": "workRecord.close",
-      "label": "Close the piece of work's detail",
-      "view": "main.workRecord",
-      "args": {},
-      "required": [],
-      "actors": [
-        "human",
-        "brain"
-      ],
-      "effects": [
-        {
-          "effect": "centre.detail-closed"
-        }
-      ]
     }
   ],
   "kinds": [
@@ -270,33 +228,6 @@
       "presentations": [
         {
           "view": "main.project"
-        }
-      ]
-    },
-    {
-      "kind": "workRecord",
-      "entity": "workRecord",
-      "label": "Piece of work",
-      "parts": [
-        "header",
-        "close",
-        "outcome",
-        "projects",
-        "folders",
-        "start",
-        "runs",
-        "bound",
-        "context"
-      ],
-      "presentations": [
-        {
-          "view": "main.workRecord",
-          "reveal": {
-            "command": "workRecord.open",
-            "args": {
-              "workRecordId": "$key"
-            }
-          }
         }
       ]
     }

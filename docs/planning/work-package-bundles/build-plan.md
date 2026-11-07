@@ -416,8 +416,9 @@ Work tab item's projects, the run columns `project_id` and `work_id`, and
 `spawn_run` and Retry placed by `run_location`. The context pack and
 `work_context` are made from the records (`ProjectService.brief`). The
 rest of phase 1 followed: `workspace_ref.py` and the node ID backup, the
-Work view, the Projects and folders switch, and `projects_view.py` over the
-service. Routine choices made for it:
+Projects and folders switch, and `projects_view.py` over the service. The
+Work view is not built: `/api/work` (`work_store`) is the one record of
+work, and Planning folds `/api/works` into it. Routine choices made for it:
 
 - References also name `conversation`, `conversation_day`,
   `workflow_event` and `candidate`, which the engine and the project events
@@ -436,8 +437,6 @@ service. Routine choices made for it:
   silent.
 - The tab opens on Projects; the folder search and Open Folders are on the
   Folders side of the switch.
-- The Work view's Start an agent here runs from his click with origin
-  `api`, refused outside the work's folders, and its preview purpose is the
-  work's title and outcome.
-- A refusal from placing a work's run reaches the page in the words the
-  brain is given.
+- spawn_run's start (context pack, compose, spawn, keep the pack) is one
+  function, `server._spawn_placed`, and a run's pack is
+  `knowledge_api.run_pack`.

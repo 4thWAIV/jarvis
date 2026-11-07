@@ -872,14 +872,6 @@ class ProjectStore:
                 rev = self._bump(conn, project_id)
                 self._event(conn, "project", project_id, "bound", rev, actor, {"subject": subject_ref, "how": how})
 
-    def bound_to(self, *, work_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
-        """What is bound to a work or a project now, newest first."""
-        column, value = ("work_id", work_id) if work_id else ("project_id", project_id)
-        with self._tx() as conn:
-            rows = conn.execute(f"SELECT * FROM project_bindings WHERE {column} = ? AND unbound_at IS NULL "
-                                "ORDER BY bound_at DESC", (value,)).fetchall()
-        return [dict(r) for r in rows]
-
     def binding(self, subject_ref: str) -> Optional[dict]:
         with self._tx() as conn:
             row = conn.execute("SELECT * FROM project_bindings WHERE subject = ? AND unbound_at IS NULL "

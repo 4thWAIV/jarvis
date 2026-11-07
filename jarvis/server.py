@@ -3285,9 +3285,7 @@ messaging_runtime.mount(app, lambda: messaging, lambda frame: _show_bundle_frame
 human_activity.mount(app)
 attention_api.mount(app, lambda: (attention_record, attention_admission), _hint_attention)
 folders_api.mount(app, lambda: folder_catalog, on_change=_hint_folders)
-projects_api.mount(app, lambda: projects, on_change=_hint_projects,
-                   context=lambda svc, work_id: _work_context(svc, work_id),
-                   start_run=lambda work_id, prompt, folder_id: _start_work_run(work_id, prompt, folder_id))
+projects_api.mount(app, lambda: projects, on_change=_hint_projects)
 
 
 # -- REST Endpoints --------------------------------------------------------
@@ -10263,11 +10261,6 @@ def _records_scope(args: dict) -> Optional[dict]:
 
 
 def _work_context_answer(args: dict) -> dict:
-    """work_context: the brain's pack, or with `as_run` exactly what a run
-    is given (the Work view's preview)."""
-    if args.get("as_run") is True:
-        return knowledge_api.run_pack(knowledge_calls, purpose=str(args.get("purpose") or ""),
-                                      project=args.get("project"), scope=_records_scope(args))
     return knowledge_api.work_context(
         knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
         include_received=args.get("include_received") is True, scope=_records_scope(args))
@@ -14083,34 +14076,6 @@ def _run_pack(prompt: str, name: str, binding: Optional[dict]) -> str:
     scope = projects.brief(project=binding["project_id"], work=binding["work_id"]) \
         if binding and projects is not None else None
     return knowledge_api.run_pack(knowledge_calls, purpose=prompt, project=name, scope=scope)["text"]
-
-
-async def _start_work_run(work_id: str, prompt: str, folder_id: Optional[str]) -> dict:
-    """The Work view's Start an agent here: placed by the project service
-    exactly as spawn_run's work_id is (only in the work's folders), then
-    started through `_spawn_placed`. His click is the gate."""
-    from jarvis.project_store import ProjectError
-    words = " ".join(str(prompt or "").split())
-    if not words:
-        raise ProjectError("invalid_request", "say what the agent should do")
-    if run_executor_instance is None:
-        raise ProjectError("not_allowed", "runs cannot start just now")
-    name, path, placed, binding, problem = await _record_work_target(
-        {"work_id": work_id, "folder_id": folder_id or ""})
-    if problem:
-        raise ProjectError("not_allowed", problem)
-    run_id = await _spawn_placed(str(prompt).strip(), name, path, placed, binding, "api")
-    return {"run_id": run_id}
-
-
-def _work_context(service, work_id: str) -> dict:
-    """The Work view's preview: the pack a run started for this work gets,
-    exactly (`knowledge_api.run_pack`), for its title and outcome."""
-    brief = service.brief(work=work_id)
-    work = brief["work"] or {}
-    purpose = " ".join(x for x in (work.get("title"), work.get("outcome")) if x)
-    return {**knowledge_api.run_pack(knowledge_calls, purpose=purpose, scope=brief),
-            "enabled": context_service.run_context_enabled()}
 
 
 def _bound(binding: Optional[dict]) -> dict:

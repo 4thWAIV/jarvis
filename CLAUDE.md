@@ -1163,13 +1163,10 @@ The Folders tab is "Projects and folders": its switch
 (`folders.panel.show`) shows projects first (lifecycle, open work, a dot
 while an agent works in one of its folders, accomplishments to confirm),
 then the independent folders (in no project), then the proposals waiting
-for him, or the plain folder list. A piece of work opens in the centre's
-Work view (`WorkView.tsx`, `workRecord.open`): outcome, projects, folders,
-runs, what is bound to it, Start an agent here (`POST
-/api/works/{id}/runs`, placed by `run_location` exactly as spawn_run's
-`work_id`, through the shared `server._spawn_placed`) and the context pack
-previewed exactly as a run gets it (`GET /api/works/{id}/context`,
-`knowledge_api.run_pack`; the brain's `work_context` with `as_run`).
+for him, or the plain folder list. A run's pack is
+`knowledge_api.run_pack`, and spawn_run starts every run through
+`server._spawn_placed`. `/api/work` (`work_store`) is the one record of
+work; `/api/works` is being folded into it, so nothing new is built on it.
 `projects_view.py` (the dashboard's /api/projects/view) joins sessions and
 runs by the one project holding their folder, else by name.
 

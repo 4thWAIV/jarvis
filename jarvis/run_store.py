@@ -292,15 +292,12 @@ def all_run_ids() -> set[str]:
 
 def list_runs(status: list[str] | None = None, project: str | None = None,
               limit: int = 50, before: float | None = None,
-              package_id: str | None = None, work_id: str | None = None) -> list[dict]:
+              package_id: str | None = None) -> list[dict]:
     sql = "SELECT * FROM runs WHERE 1=1"
     params: list = []
     if package_id:
         sql += " AND package_id = ?"
         params.append(package_id)
-    if work_id:
-        sql += " AND work_id = ?"
-        params.append(work_id)
     if status:
         sql += f" AND status IN ({','.join('?' * len(status))})"
         params.extend(status)
