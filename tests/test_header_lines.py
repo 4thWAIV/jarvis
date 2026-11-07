@@ -354,6 +354,28 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "project_store.answer_accomplishment": (
+        "it changes an accomplishment's state on his word; its refusals are fixed words that name no record. Driven by tests/test_project_records.py"),
+    "project_store.change_work": (
+        "it changes a piece of work on his word; its refusals are fixed words, and the title it writes goes to the record, never into a line. Driven by tests/test_project_records.py"),
+    "project_store.change": (
+        "it changes a project on his word; its refusals are fixed words that name no project, and the event detail it writes is the record's own. Driven by tests/test_project_records.py"),
+    "server.tool_change_accomplishment": (
+        "what it gives the brain passes through _project_change_said: IDs, revisions and fixed state words, never a title. Driven by tests/test_project_records.py"),
+    "server.tool_change_project_folder": (
+        "what it gives the brain passes through _project_change_said: IDs and fixed words, never a folder's or project's name. Driven by tests/test_project_records.py"),
+    "server.tool_change_project": (
+        "what it gives the brain passes through _project_change_said: IDs, revisions and the lifecycle word, never a name or summary. Driven by tests/test_project_records.py"),
+    "server.tool_change_work": (
+        "what it gives the brain passes through _project_change_said: IDs, revisions and state words, never a title or outcome. Driven by tests/test_project_records.py"),
+    "server.tool_project_candidates": (
+        "every candidate goes to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "server.tool_project_detail": (
+        "the project in full goes to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "server.tool_project_history": (
+        "the events go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
+    "server.tool_works": (
+        "the pieces of work go to the brain inside one untrusted block (_project_tool, walled), the header JARVIS's own words. Driven by tests/test_project_records.py"),
     "context_service.pack": (
         "with trust `own` (the default, and all a run ever gets) it builds the "
         "pack from his project notes, his topic files and passages the engine "
