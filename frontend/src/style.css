@@ -4059,3 +4059,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 }
 #knowledge-view button:not(.workflow-close):hover { background: rgba(var(--ui-accent-rgb), 0.12); }
 #knowledge-view button:disabled { opacity: 0.5; cursor: default; }
+.knowledge-open {
+  background: transparent; border: 1px solid rgba(var(--ui-accent-rgb), 0.45); color: var(--ui-accent);
+  border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer;
+}
+.knowledge-open:hover { background: rgba(var(--ui-accent-rgb), 0.12); }
