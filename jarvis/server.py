@@ -9693,21 +9693,48 @@ work_api.mount(app, _work_recorded)
 
 def _work_who(piece, names: work_api.WhoNames) -> str:
     if piece.who.kind == work_store.TIM:
-        return "him"
-    name = names(piece.who)
-    return f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
+        owner = "him"
+    else:
+        name = names(piece.who)
+        owner = f"{piece.who.kind} {name or 'not known to JARVIS'} ({piece.who.ref})"
+    # The worker label is the reporter's own words, never a record JARVIS checked.
+    return owner + (f", worker as the agent calls it: {piece.worker}" if piece.worker else "")
+
+
+def _work_piece(p, names: work_api.WhoNames) -> str:
+    """One piece, in dependency order: who is on it, its latest note, the
+    pieces it comes after (those not done yet named), and its evidence."""
+    line = f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}"
+    if p.note:
+        line += f"; latest note: {p.note}"
+    if p.after:
+        line += f"; after {', '.join(p.after)}"
+        line += f" (waits for {', '.join(p.waits_for)})" if p.waits_for else " (all done)"
+    if p.evidence:
+        line += "; evidence: " + ", ".join(f"{e.kind} {e.value}" for e in p.evidence)
+    return line
+
+
+def _work_line(item) -> str:
+    """One item on the list: its state, how many of its pieces are blocked
+    or waiting on him, and its one useful update."""
+    marks = [f"{n} piece{'s' if n != 1 else ''} {what}" for n, what in
+             ((item.blocked_pieces, "blocked"), (item.waiting_pieces, "waiting on him")) if n]
+    return (f"{item.id}: {item.title}. {item.state}{', no recent update' if item.quiet else ''}"
+            + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}")
 
 
 def _work_detail(item) -> str:
-    """What the agents reporting it wrote: its title, source, pieces and who
-    is on each, open decisions and the latest events. Untrusted."""
+    """What the agents reporting it wrote: its title, area, source, pieces in
+    order and who is on each, open decisions and the latest events. Untrusted."""
     lines = [f"{item.id}: {item.title}. State {item.state}"
              + (", no recent update" if item.quiet else "") + ".",
+             f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}"]
     names = work_api.WhoNames()
     for p in item.pieces:
-        lines.append(f"piece {p.key}: {p.title}, {p.state}, on it: {_work_who(p, names)}")
+        lines.append(_work_piece(p, names))
     for d in item.decisions:
         lines.append(f"open decision {d.key}: {d.question}"
                      + (f" Options: {d.options}." if d.options else "")
@@ -9742,11 +9769,15 @@ def tool_work_status(args: dict) -> str:
         return "Nothing is on the Work list, sir."
     n = len(items)
     waiting = sum(i.state == work_store.WAITING for i in items)
-    lines = [f"{i.id}: {i.title}. {i.state}{', no recent update' if i.quiet else ''}. "
-             f"{i.headline}" for i in items]
+    blocked = sum(i.state == work_store.BLOCKED or i.blocked_pieces > 0 for i in items)
+    lines = []
+    for group in work_store.grouped(items):
+        lines.append(f"{group.grouped_by} {group.name}:")
+        lines += [_work_line(i) for i in group.items]
     return (f"{_say_number(n).capitalize()} work item{'s' if n != 1 else ''}"
-            + (f", {_say_number(waiting)} waiting on his decision" if waiting else "") + ".\n"
-            + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
+            + (f", {_say_number(waiting)} waiting on his decision" if waiting else "")
+            + (f", {_say_number(blocked)} blocked or with a blocked piece" if blocked else "")
+            + ".\n" + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
 
 
 async def tool_answer_work_decision(args: dict) -> str:

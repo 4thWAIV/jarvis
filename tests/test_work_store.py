@@ -140,3 +140,106 @@ def test_the_schema_is_its_own_and_versioned(ws, folder):
     from jarvis import run_store
     with closing(run_store._connect()) as conn:
         assert conn.execute("SELECT version FROM work_schema").fetchone()[0] == max(ws._MIGRATIONS)
+
+
+def test_verifying_sits_between_working_and_done_and_can_go_quiet(ws, folder, monkeypatch):
+    assert ws.STATES.index("working") < ws.STATES.index("verifying") < ws.STATES.index("done")
+    item = ws.create("Speech", "folder", folder)
+    item = _ev(ws, item, "update", "Checking it.", state="verifying")
+    _ev(ws, item, "piece", "Tests run.", key="tests", who={"kind": "tim"}, state="verifying")
+    assert (ws.get(item.id).state, ws.get(item.id).pieces[0].state) == ("verifying", "verifying")
+    real = time.time
+    monkeypatch.setattr(ws.time, "time", lambda: real() + ws.QUIET_AFTER_SEC + 1)
+    assert ws.get(item.id).quiet
+
+
+def test_each_piece_keeps_its_latest_note_and_a_worker_label_beside_its_owner(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    _ev(ws, item, "piece", "Logo drafted.", key="logo", who={"kind": "agent", "ref": "s-1"},
+        worker="logo build agent")
+    item = _ev(ws, item, "piece", "Logo exported at three sizes.", key="logo")
+    piece = item.pieces[0]
+    assert (piece.note, piece.worker, piece.who) == (
+        "Logo exported at three sizes.", "logo build agent", ws.Who("agent", "s-1"))
+    assert piece.note_at is not None
+    assert item.latest_update == "Logo exported at three sizes."
+    item = _ev(ws, item, "piece", "Label taken off.", key="logo", worker="")
+    assert item.pieces[0].worker == ""
+
+
+def test_a_piece_waits_on_pieces_it_names_and_the_order_follows(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    tim = {"kind": "tim"}
+    _ev(ws, item, "piece", "Ship it.", key="ship", who=tim)
+    _ev(ws, item, "piece", "Design.", key="design", who=tim)
+    _ev(ws, item, "piece", "Build.", key="build", who=tim, after=["design"])
+    item = _ev(ws, item, "piece", "Ship after the build.", key="ship", after="build,design")
+    assert [p.key for p in item.pieces] == ["design", "build", "ship"]
+    assert {p.key: p.waits_for for p in item.pieces} == {
+        "design": [], "build": ["design"], "ship": ["build", "design"]}
+    item = _ev(ws, item, "piece", "Designed.", key="design", state="done")
+    assert {p.key: p.waits_for for p in item.pieces}["ship"] == ["build"]
+    for after, why in ((["design", "ship"], "come after itself"),
+                       (["nothing"], "no piece nothing"), (["Bad Key"], "lowercase")):
+        with pytest.raises(ws.WorkRefused, match=why):
+            _ev(ws, item, "piece", "Loop.", key="design", after=after)
+    with pytest.raises(ws.WorkRefused, match="through the pieces it names"):
+        _ev(ws, item, "piece", "Loop.", key="design", after=["ship"])
+    assert ws.get(item.id).pieces[0].after == [], "a refused report changes nothing"
+    item = _ev(ws, item, "piece", "No longer waits.", key="ship", after=[])
+    assert [p.after for p in item.pieces if p.key == "ship"] == [[]]
+
+
+def test_evidence_is_a_commit_a_path_or_a_url_kept_once_and_never_opened(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    item = _ev(ws, item, "piece", "Built.", key="build", who={"kind": "tim"},
+               evidence=["ABC1234", "/tmp/out/logo.svg", "https://github.com/x/y/pull/7"])
+    item = _ev(ws, item, "piece", "Again.", key="build", evidence=["abc1234", "/tmp/out/../out/logo.svg"])
+    assert [(e.kind, e.value) for e in item.pieces[0].evidence] == [
+        ("commit", "abc1234"), ("path", "/tmp/out/logo.svg"), ("url", "https://github.com/x/y/pull/7")]
+    for bad in ("relative/file", "javascript:alert(1)", "https://a b", "line\nbreak"):
+        with pytest.raises(ws.WorkRefused, match="commit, an absolute path or an http"):
+            _ev(ws, item, "piece", "Bad.", key="build", evidence=[bad])
+
+
+def test_items_group_by_area_else_by_source_folder(ws, folder, tmp_path):
+    zipped = tmp_path / "bundles" / "logo.zip"
+    zipped.parent.mkdir()
+    zipped.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    a = ws.create("Speech", "folder", folder, area="Voice")
+    b = ws.create("Logo", "zip", str(zipped))
+    c = ws.create("Captions", "folder", folder)
+    assert (b.grouped_by, b.group) == ("folder", str(zipped.parent))
+    groups = ws.grouped(ws.listing())
+    assert [(g.grouped_by, g.name, [i.id for i in g.items]) for g in groups] == [
+        ("folder", folder, [c.id]), ("folder", str(zipped.parent), [b.id]), ("area", "Voice", [a.id])]
+    c = _ev(ws, c, "update", "Moved to voice.", area="Voice")
+    assert (c.grouped_by, c.group) == ("area", "Voice")
+    c = _ev(ws, c, "update", "Back to its folder.", area="")
+    assert (c.grouped_by, c.group) == ("folder", folder)
+
+
+def test_blocked_and_waiting_pieces_are_counted_on_the_item(ws, folder):
+    item = ws.create("Rebrand", "folder", folder)
+    tim = {"kind": "tim"}
+    _ev(ws, item, "piece", "Stuck.", key="a", who=tim, state="blocked")
+    _ev(ws, item, "piece", "Asks him.", key="b", who=tim, state="waiting_on_tim")
+    item = _ev(ws, item, "piece", "Fine.", key="c", who=tim, state="working")
+    assert (item.blocked_pieces, item.waiting_pieces) == (1, 1)
+
+
+def test_a_first_version_record_gains_its_pieces_latest_notes(ws, monkeypatch, tmp_path):
+    from contextlib import closing
+
+    from jarvis import run_store
+    with closing(run_store._connect()) as conn:
+        run_store.migrate(conn, "work_schema", {1: ws._SCHEMA}, "work tracker")
+        conn.execute("INSERT INTO work_items VALUES ('w1', 'T', 'folder', '/tmp', 'working', '', 1, 0, 0)")
+        conn.execute("INSERT INTO work_pieces VALUES ('w1', 'a', 'A', 'tim', NULL, 'working', 0)")
+        for at, said in ((5, "first"), (6, "second")):
+            conn.execute("INSERT INTO work_events (item_id, kind, summary, detail, at) "
+                         "VALUES ('w1', 'piece', ?, '{\"key\": \"a\"}', ?)", (said, at))
+        conn.commit()
+    piece = ws.get("w1").pieces[0]
+    assert (piece.note, piece.note_at, piece.worker, piece.after, piece.evidence) == (
+        "second", 6.0, "", [], [])

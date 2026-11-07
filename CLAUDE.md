@@ -230,9 +230,26 @@ which record each as done "on the page" or "by voice".
 ## The Work tracker
 The right panel's Work tab (the tab that was Workflows, id still
 `workflows`) lists each piece of work in progress: its title, its state
-(`planned`, `working`, `waiting_on_tim`, `blocked`, `done`) and one useful
-update, an open decision's question first (Planning's Work view at
-52a1837, bare minimum). The Workflows view stays below the list, under its
+(`planned`, `working`, `verifying`, `waiting_on_tim`, `blocked`, `done`;
+`verifying` is between working and done) and one useful update, an open
+decision's question first (Planning's Work view at 52a1837, bare minimum).
+Items are listed under their group (`work_store.grouped`, the API's
+`groups`): the optional `area` an item is given (`start --area`, `update
+--area`, an empty one clears it), else its source folder (the folder, or
+the folder a zip is in), headed by its last name. An item blocked or waiting
+on Tim, or with a piece that is (`blocked_pieces`, `waiting_pieces`, at read
+time), has a red or amber edge and dot in its row and a line counting the
+pieces (`work.itemMark`, `WorkMarkDot`); a piece carries the same mark in
+the detail. Each piece keeps its latest note (the summary of the last report
+about it; migration 2 fills it from the log), an optional `worker` label
+(the reporting agent's own words for who did it, e.g. a coordinator's
+subagent, shown quoted and italic beside the JARVIS-verified owner, never in
+its place, and walled for the brain), the pieces it comes after (`--after
+key[,key]`: pieces of the same item, never itself or a circle; `waits_for`
+the ones not done) and its evidence (`--evidence`, repeatable, added to
+what it has: a commit, an absolute path or an http(s) URL, told apart by
+shape and never opened). The detail lists the pieces in dependency order,
+numbered, a URL as a link and a commit or path with Copy. The Workflows view stays below the list, under its
 own heading. The record is `work_store.py` (schema `work_schema`, through
 `run_store.migrate`): `work_events` is append-only and the truth;
 `work_items`, `work_pieces` and `work_decisions` are updated in the same
@@ -241,8 +258,8 @@ ZIP work package or a folder on this Mac, checked by a stat and never
 opened or run; each piece names exactly who is on it (`agent:<session id>`
 shown by its one name from the agent directory, `run:<id>`,
 `workflow:<id>` or `tim`), and a reported who must be a record JARVIS has.
-An open decision reads as waiting on Tim and a working item silent for
-`QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
+An open decision reads as waiting on Tim and a working or verifying item
+silent for `QUIET_AFTER_SEC` as "no recent update", both at read time. Agents report
 with `work_report.py` and an access key in the `work` category (the
 talk-to-jarvis skill teaches it); `work_api.py` holds `/api/work*`, and
 every change is a `work` hint on `/ws/sessions`, after the write; a
@@ -257,7 +274,11 @@ events are `work_store.latest`. A row opens the item in the
 centre (`WorkDetail.tsx`, the `work` detail slot, `work.open` /
 `work.close`) and the list stays in view. His answer is
 `work_api.answer_decision`, from the page and the brain's acting
-`answer_work_decision` alike; `work_status` reads the record, walled.
+`answer_work_decision` alike; `work_status` reads the record, walled:
+the list by group with each item's blocked and waiting pieces, and an item's
+pieces in order with their notes, worker labels, what they wait for and
+their evidence. The page changes nothing but his answers, so there is no
+other acting tool.
 
 ## The team server
 `team_server/` is a separate service, not part of the JARVIS package: its own

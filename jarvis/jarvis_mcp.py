@@ -2257,9 +2257,12 @@ TOOL_SPECS = [
         "name": "work_status",
         "description": (
             "The Work list, from its one durable record: with no item, every work item "
-            "(its state and one useful update, an open decision first); with one, its "
-            "source (a zip or folder on this Mac), its pieces and exactly who is on each "
-            "(an agent, a run, a workflow, or him), its open decisions and latest events. "
+            "under its area (or its source folder), with its state, how many of its pieces "
+            "are blocked or waiting on him, and one useful update (an open decision first); "
+            "with one, its source (a zip or folder on this Mac), its pieces in dependency "
+            "order with exactly who is on each (an agent, a run, a workflow, or him, and the "
+            "agent's own worker label beside it), each piece's latest note, the pieces it "
+            "waits for, its evidence, its open decisions and latest events. "
             "The ONLY correct way to answer what work is in progress and who is doing it."),
         "inputSchema": {
             "type": "object",

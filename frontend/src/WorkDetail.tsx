@@ -10,22 +10,29 @@
  *   - the latest update ("No recent update" once a working item has gone
  *     quiet);
  *   - its open decisions, each answered here (DecisionCard.tsx);
- *   - its pieces, each with exactly who is on it: an agent by its one name,
- *     a JARVIS run, a workflow, or him;
+ *   - its pieces, in the order their dependencies give, each with exactly
+ *     who is on it (an agent by its one name, a JARVIS run, a workflow, or
+ *     him), the reporting agent's own worker label beside that, quoted and
+ *     marked as its words, a mark while it is blocked or waiting on him,
+ *     its latest note, the pieces it waits for, and its evidence (a URL as
+ *     a link, a commit or path as text to copy);
  *   - its latest reports, newest last.
  *
  * Everything here was written by the agents reporting the item, and is
  * drawn as plain text.
  */
 
+import { useState } from "react";
+import { copyPath } from "./attachmentLocation";
 import { CENTRE_SOCKET } from "./ConversationView";
 import { DecisionCard } from "./DecisionCard";
 import { useLiveRead } from "./liveRead";
 import { formatDateTime, useT } from "./locale";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { answerWorkDecision, getWorkItem, STATE_WORDS, whoWords, workChanged,
-         type WorkDecision, type WorkItem } from "./work";
+import { answerWorkDecision, getWorkItem, pieceMark, STATE_WORDS, whoWords, workChanged,
+         type WorkDecision, type WorkEvidence, type WorkItem } from "./work";
+import { WorkMarkDot } from "./WorkPanel";
 
 function useWorkTarget(kind: "workItem" | "workPiece" | "workDecision", key: string, label: string) {
   return useUiTarget({ ref: { region: "main", view: "main.work", kind, key }, label, socket: CENTRE_SOCKET });
@@ -71,9 +78,9 @@ export function WorkDetail({ id }: { id: string }) {
             <h3 className="work-section-head">{t("main.work.pieces")}</h3>
             {item.pieces.length === 0
               ? <p className="workflow-empty">{t("main.work.noPieces")}</p>
-              : <ul className="work-pieces">
-                  {item.pieces.map((p) => <Piece key={p.key} item={item} pieceKey={p.key} />)}
-                </ul>}
+              : <ol className="work-pieces">
+                  {item.pieces.map((p, step) => <Piece key={p.key} item={item} pieceKey={p.key} step={step + 1} />)}
+                </ol>}
           </section>
           <section>
             <h3 className="work-section-head">{t("main.work.reports")}</h3>
@@ -93,14 +100,66 @@ export function WorkDetail({ id }: { id: string }) {
   );
 }
 
-function Piece({ item, pieceKey }: { item: WorkItem; pieceKey: string }) {
+function Piece({ item, pieceKey, step }: { item: WorkItem; pieceKey: string; step: number }) {
+  const t = useT();
   const piece = item.pieces.find((p) => p.key === pieceKey)!;
   const ui = useWorkTarget("workPiece", `${item.id}/${piece.key}`, piece.title);
+  const mark = pieceMark(piece);
+  const titleOf = (key: string) => item.pieces.find((p) => p.key === key)?.title ?? key;
   return (
-    <li className="work-piece" data-key={piece.key} ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
-      <span className="work-piece-title">{piece.title}</span>
-      <span className="work-piece-who" data-who={piece.who.kind} ref={ui.part("who")}>{whoWords(piece.who)}</span>
-      <span className={`work-state state-${piece.state}`} ref={ui.part("state")}>{STATE_WORDS[piece.state]}</span>
+    <li className="work-piece" data-key={piece.key} data-mark={mark ?? undefined}
+        ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
+      <div className="work-piece-head">
+        <span className="work-piece-step">{step}.</span>
+        <span className="work-piece-title">
+          {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
+          {piece.title}</span>
+        <span className="work-piece-who" data-who={piece.who.kind} ref={ui.part("who")}>
+          {whoWords(piece.who)}
+          {piece.worker && " "}
+          {piece.worker && <span className="work-piece-worker" title={t("main.work.workerTitle")}
+                                 ref={ui.part("worker")}>{t("main.work.worker", { label: piece.worker })}</span>}
+        </span>
+        <span className={`work-state state-${piece.state}`} ref={ui.part("state")}>{STATE_WORDS[piece.state]}</span>
+      </div>
+      {piece.note && (
+        <p className="work-piece-note" ref={ui.part("note")}>
+          {piece.note_at !== null && <span className="work-event-at">
+            {formatDateTime(piece.note_at * 1000, { hour: "2-digit", minute: "2-digit" })}</span>}{" "}
+          {piece.note}
+        </p>
+      )}
+      {piece.after.length > 0 && (
+        <p className={`work-piece-after${piece.waits_for.length ? " waiting" : ""}`} ref={ui.part("after")}>
+          {piece.waits_for.length
+            ? t("main.work.waitsFor", { pieces: piece.waits_for.map(titleOf).join(", ") })
+            : t("main.work.afterDone", { pieces: piece.after.map(titleOf).join(", ") })}
+        </p>
+      )}
+      {piece.evidence.length > 0 && (
+        <ul className="work-evidence" ref={ui.part("evidence")}>
+          {piece.evidence.map((e) => <Evidence key={`${e.kind}:${e.value}`} evidence={e} />)}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+/** One piece of evidence: a URL as a link, a commit or a path as text with Copy. */
+function Evidence({ evidence: e }: { evidence: WorkEvidence }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const label = copied ? t("main.work.copied") : t("main.work.copy");
+  return (
+    <li className="work-evidence-item" data-kind={e.kind}>
+      <span className="work-evidence-kind">{t(`main.work.evidence.${e.kind}`)}</span>
+      {e.kind === "url" && /^https?:\/\//i.test(e.value)
+        ? <a className="work-evidence-value" href={e.value} target="_blank" rel="noopener noreferrer">{e.value}</a>
+        : <>
+            <code className="work-evidence-value">{e.value}</code>
+            <button data-ui-action="file" type="button" className="work-evidence-copy" title={label}
+                    aria-label={label} onClick={() => void copyPath(e.value).then(setCopied)}>{label}</button>
+          </>}
     </li>
   );
 }

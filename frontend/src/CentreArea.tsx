@@ -64,7 +64,7 @@ import { ConversationView } from "./ConversationView";
 import { useT } from "./locale";
 import { TabRow, type Tab } from "./Tabs";
 import { WorkDetail } from "./WorkDetail";
-import { openWork, workItems } from "./work";
+import { openWork, workList } from "./work";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { openWorkflow, subagentOf } from "./workflows";
 import { openDiagnostics } from "./voiceHealth";
@@ -200,7 +200,7 @@ export function CentreArea() {
   const selected = useSyncExternalStore(mainView.subscribe, mainView.get);
   const workflow = useSyncExternalStore(openWorkflow.subscribe, openWorkflow.get);
   const work = useSyncExternalStore(openWork.subscribe, openWork.get);
-  const workTitle = useSyncExternalStore(workItems.subscribe, workItems.get).value?.find((i) => i.id === work)?.title;
+  const workTitle = useSyncExternalStore(workList.subscribe, workList.get).value?.items.find((i) => i.id === work)?.title;
   const thread = useSyncExternalStore(openThread.subscribe, openThread.get);
   const diagnostics = useSyncExternalStore(openDiagnostics.subscribe, openDiagnostics.get);
   const subsystem = useSyncExternalStore(openSubsystem.subscribe, openSubsystem.get);

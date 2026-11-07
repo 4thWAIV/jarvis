@@ -150,6 +150,7 @@ export const UI_CONTRACT = {
     "package": "^[A-Za-z0-9._-]{1,128}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
+    "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
   "argumentTypes": [
@@ -3113,6 +3114,26 @@ export const UI_CONTRACT = {
       "family": "work"
     },
     {
+      "kind": "workGroup",
+      "entity": "workGroup",
+      "label": "Work group",
+      "parts": [
+        "head"
+      ],
+      "presentations": [
+        {
+          "view": "right.workflows",
+          "reveal": {
+            "command": "right.tab.select",
+            "args": {
+              "tab": "workflows"
+            }
+          }
+        }
+      ],
+      "family": "work"
+    },
+    {
       "kind": "workItem",
       "entity": "workItem",
       "label": "Work item",
@@ -3120,6 +3141,8 @@ export const UI_CONTRACT = {
         "row",
         "state",
         "update",
+        "mark",
+        "marks",
         "header",
         "close",
         "source",
@@ -3132,7 +3155,9 @@ export const UI_CONTRACT = {
           "parts": [
             "row",
             "state",
-            "update"
+            "update",
+            "mark",
+            "marks"
           ],
           "reveal": {
             "command": "right.tab.select",
@@ -3173,7 +3198,12 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "who",
-        "state"
+        "worker",
+        "state",
+        "mark",
+        "note",
+        "after",
+        "evidence"
       ],
       "presentations": [
         {

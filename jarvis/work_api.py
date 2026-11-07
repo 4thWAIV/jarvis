@@ -1,6 +1,6 @@
 """The Work tracker's routes and the calls the brain's tools share with them.
 
-  GET  /api/work                          every item, as the Work tab lists them
+  GET  /api/work                          every item, and the groups the Work tab lists them in
   GET  /api/work/{id}                     one item, with its latest events
   GET  /api/work/{id}/events              its log (?after=<seq>&kinds=a,b)
   POST /api/work                          begin tracking one (a reporter)
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -41,6 +42,7 @@ class StartRequest(BaseModel):
     title: str
     source: dict
     state: str = work_store.PLANNED
+    area: str = ""
 
 
 class EventRequest(BaseModel):
@@ -96,6 +98,16 @@ def item_json(item: work_store.WorkItem, names: Optional[WhoNames] = None) -> di
     return out
 
 
+def group_json(group: work_store.WorkGroup) -> dict:
+    """A group as the Work tab heads it: an area by its words, a folder by
+    its last name (its whole path beside it), and its items' ids in order."""
+    label = group.name
+    if group.grouped_by == work_store.BY_FOLDER:
+        label = os.path.basename(group.name.rstrip("/")) or group.name
+    return {"grouped_by": group.grouped_by, "name": group.name, "label": label,
+            "ids": [i.id for i in group.items]}
+
+
 def event_json(event: work_store.WorkEvent) -> dict:
     return dataclasses.asdict(event)
 
@@ -120,9 +132,10 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
     async def list_work():
         def read():
             names = WhoNames()
-            return [item_json(i, names) for i in work_store.listing()]
-        items = await asyncio.to_thread(read)
-        return {"items": items}
+            items = work_store.listing()
+            return {"items": [item_json(i, names) for i in items],
+                    "groups": [group_json(g) for g in work_store.grouped(items)]}
+        return await asyncio.to_thread(read)
 
     @app.get("/api/work/{item_id}")
     async def one_item(item_id: str):
@@ -147,7 +160,7 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
     async def start_work(req: StartRequest):
         try:
             item = await asyncio.to_thread(work_store.create, req.title, req.source.get("kind"),
-                                           req.source.get("path"), req.state)
+                                           req.source.get("path"), req.state, req.area)
         except work_store.WorkRefused as e:
             return refused(e)
         recorded(item, work_store.CREATED, None)

@@ -8,15 +8,20 @@ in JARVIS_ACCESS_KEY (`python -m jarvis.access_keys create <label> work`),
 and finds JARVIS and trusts its certificate the same way as
 workflow_report.py, whose standard-library client it uses.
 
-    python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>]
-    python work_report.py update <id> <summary> [--state <state>]
+    python work_report.py [--cert <cert.pem>] start <title> (--zip <path> | --folder <path>) [--state <state>] [--area <area>]
+    python work_report.py update <id> <summary> [--state <state>] [--area <area>]
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
+                          [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
     python work_report.py decision <id> <key> <question> [--option <option> ...] [--recommendation <text>]
     python work_report.py answer <id> <key>
 
-A state is planned, working, waiting_on_tim, blocked or done. Who is
-`agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or `tim`; a
-new piece needs one. `start` prints the item's id. `answer` prints the
+A state is planned, working, verifying, waiting_on_tim, blocked or done.
+Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
+`tim`; a new piece needs one. A piece's summary is its latest note. An area
+groups items on the Work tab (an empty one goes back to the source's
+folder); `--worker` is your own words for who did a piece, shown beside its
+owner; `--after` names the pieces it waits on (an empty value clears them);
+each `--evidence` is added to the piece's. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
 he has not.
 """
@@ -47,6 +52,15 @@ def _who(text: str) -> dict:
     return {"kind": kind.lower(), "ref": ref or None}
 
 
+def _evidence(text: str) -> str:
+    """A relative path is made absolute where the agent runs, as --folder
+    is; a commit or a URL goes as it is."""
+    text = text.strip()
+    if "://" in text or not (os.sep in text or text.startswith(".") or os.path.exists(text)):
+        return text
+    return os.path.abspath(os.path.expanduser(text))
+
+
 def _line(item: dict) -> str:
     on = ", ".join(f"{p['key']}: {p['who']['name'] or p['who']['kind']}" for p in item["pieces"])
     return f"{item['id']} {item['state']}" + (f" ({on})" if on else "")
@@ -62,10 +76,12 @@ def main(argv: list[str]) -> int:
     where.add_argument("--zip")
     where.add_argument("--folder")
     start.add_argument("--state")
+    start.add_argument("--area")
     update = sub.add_parser("update")
     update.add_argument("id")
     update.add_argument("summary")
     update.add_argument("--state")
+    update.add_argument("--area")
     piece = sub.add_parser("piece")
     piece.add_argument("id")
     piece.add_argument("key")
@@ -73,6 +89,9 @@ def main(argv: list[str]) -> int:
     piece.add_argument("--title")
     piece.add_argument("--who")
     piece.add_argument("--state")
+    piece.add_argument("--worker")
+    piece.add_argument("--after")
+    piece.add_argument("--evidence", action="append", default=[])
     decision = sub.add_parser("decision")
     decision.add_argument("id")
     decision.add_argument("key")
@@ -89,8 +108,9 @@ def main(argv: list[str]) -> int:
             source = ({"kind": "zip", "path": os.path.abspath(args.zip)} if args.zip
                       else {"kind": "folder", "path": os.path.abspath(args.folder)})
             body = {"title": args.title, "source": source}
-            if args.state:
-                body["state"] = args.state
+            for name in ("state", "area"):
+                if getattr(args, name):
+                    body[name] = getattr(args, name)
             print(_post(client, "/api/work", body)["id"])
             return 0
         if args.command == "answer":
@@ -103,7 +123,11 @@ def main(argv: list[str]) -> int:
             print(f"Decision {args.key} has not been answered yet.", file=sys.stderr)
             return NOT_ANSWERED
         if args.command == "update":
-            kind, detail = "update", ({"state": args.state} if args.state else {})
+            kind, detail = "update", {}
+            if args.state:
+                detail["state"] = args.state
+            if args.area is not None:
+                detail["area"] = args.area
         elif args.command == "piece":
             kind, detail = "piece", {"key": args.key}
             for name in ("title", "state"):
@@ -111,6 +135,12 @@ def main(argv: list[str]) -> int:
                     detail[name] = getattr(args, name)
             if args.who:
                 detail["who"] = _who(args.who)
+            if args.worker is not None:
+                detail["worker"] = args.worker
+            if args.after is not None:
+                detail["after"] = [k.strip() for k in args.after.split(",") if k.strip()]
+            if args.evidence:
+                detail["evidence"] = [_evidence(e) for e in args.evidence]
         else:
             kind, detail = "decision_needed", {"key": args.key, "options": args.option}
             if args.recommendation:

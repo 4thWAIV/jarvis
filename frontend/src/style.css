@@ -1433,7 +1433,18 @@ html, body {
   text-transform: uppercase;
   color: var(--ui-secondary);
 }
-.work-list { list-style: none; display: flex; flex-direction: column; gap: var(--agent-gap, 6px); }
+.work-groups { display: flex; flex-direction: column; gap: 10px; }
+.work-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.work-group-head {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-list { list-style: none; display: flex; flex-direction: column; gap: var(--agent-gap, 6px); padding: 0; margin: 0; }
 .work-row {
   --wk: 125, 211, 252;       /* light blue: the colour of a work item */
   width: 100%;
@@ -1459,6 +1470,22 @@ html, body {
 .work-row .work-state { grid-area: state; }
 .work-update { grid-area: update; color: var(--ui-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-update.deciding { color: #fbbf24; }
+/* Blocked (red) or waiting on him (amber), the item or any of its pieces:
+   a coloured edge and dot, and a line counting the pieces. */
+.work-row[data-mark="blocked"] { border-left: 3px solid #ef4444; }
+.work-row[data-mark="waiting"] { border-left: 3px solid #fbbf24; }
+.work-marks { grid-column: 1 / -1; color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-row[data-mark="waiting"] .work-marks { color: #fbbf24; }
+.work-mark {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.work-mark.mark-blocked { background: #ef4444; }
+.work-mark.mark-waiting { background: #fbbf24; }
 .work-state {
   align-self: center;
   padding: 1px 8px;
@@ -1469,6 +1496,7 @@ html, body {
   background: var(--ui-raised);
 }
 .work-state.state-working { background: rgba(125, 211, 252, 0.25); }
+.work-state.state-verifying { background: rgba(167, 139, 250, 0.35); }
 .work-state.state-waiting_on_tim { background: #fbbf24; color: var(--ui-on-signal); }
 .work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
 .work-state.state-done { background: rgba(52, 211, 153, 0.3); }
@@ -1509,9 +1537,34 @@ html, body {
 .work-source-present { color: var(--ui-secondary); }
 .work-quiet { color: #a78bfa; }
 .work-pieces, .work-events { list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 6px 0 0; }
-.work-piece { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.work-pieces { gap: 10px; }
+.work-piece { display: flex; flex-direction: column; gap: 3px; padding-left: 8px; border-left: 2px solid transparent; }
+.work-piece[data-mark="blocked"] { border-left-color: #ef4444; }
+.work-piece[data-mark="waiting"] { border-left-color: #fbbf24; }
+.work-piece-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.work-piece-step { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
 .work-piece-title { overflow-wrap: anywhere; }
 .work-piece-who { color: var(--ui-secondary); }
+/* The agent's own words, never JARVIS's: quoted, italic, apart from the owner. */
+.work-piece-worker { font-style: italic; color: var(--ui-muted); overflow-wrap: anywhere; }
+.work-piece-note, .work-piece-after { margin: 0 0 0 22px; color: var(--ui-secondary); overflow-wrap: anywhere; }
+.work-piece-after.waiting { color: #fbbf24; }
+.work-evidence { list-style: none; display: flex; flex-direction: column; gap: 3px; padding: 0; margin: 0 0 0 22px; }
+.work-evidence-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.work-evidence-kind { color: var(--ui-muted); font-size: 11px; flex: none; }
+.work-evidence-value { min-width: 0; overflow-wrap: anywhere; }
+a.work-evidence-value { color: #7dd3fc; }
+.work-evidence-copy {
+  flex: none;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ui-text);
+  background: var(--ui-raised);
+  border: 1px solid var(--ui-edge);
+  border-radius: 6px;
+  cursor: pointer;
+}
 .work-event-at { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
 
 /* The Workflows view of the right panel (WorkflowsView.tsx): one compact row

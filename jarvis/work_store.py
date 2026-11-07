@@ -15,8 +15,17 @@ only writers. The tables live in JARVIS's one database under their own
 schema version (`work_schema`, `run_store.migrate`).
 
 Read-time only, never stored: an open decision shows the item as waiting on
-Tim, and a working item with no event for QUIET_AFTER_SEC reads as `quiet`
-("no recent update").
+Tim; a working or verifying item with no event for QUIET_AFTER_SEC reads as
+`quiet` ("no recent update"); the group an item is listed under (its area,
+else its source folder); how many of its pieces are blocked or waiting on
+Tim; and, for each piece, which of the pieces it comes after are not done
+yet, with the pieces in the order their dependencies give.
+
+A piece keeps its latest note (the summary of the last report about it),
+an optional worker label (the reporting agent's own words for who did it,
+for example a coordinator's subagent, shown beside the owner and never in
+place of it), the keys of the pieces it comes after, and its evidence (a
+commit, an absolute path or an http(s) URL, recorded and never opened).
 
 Everything an item holds (its title, updates, piece titles, questions) was
 written by the agent reporting it: another session's words, shown and
@@ -25,6 +34,7 @@ spoken only through the same walls as any other.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -41,8 +51,12 @@ from typing import Optional
 from jarvis import run_store
 
 # An item's and a piece's state. WAITING is also what an open decision shows.
-PLANNED, WORKING, WAITING, BLOCKED, DONE = "planned", "working", "waiting_on_tim", "blocked", "done"
-STATES = (PLANNED, WORKING, WAITING, BLOCKED, DONE)
+# VERIFYING sits between working and done: the work is in, being checked.
+PLANNED, WORKING, VERIFYING, WAITING, BLOCKED, DONE = (
+    "planned", "working", "verifying", "waiting_on_tim", "blocked", "done")
+STATES = (PLANNED, WORKING, VERIFYING, WAITING, BLOCKED, DONE)
+# The states that should be reporting: silent for QUIET_AFTER_SEC is quiet.
+ACTIVE = (WORKING, VERIFYING)
 
 # Where an item's work is: a ZIP work package or a folder, on this Mac.
 ZIP, FOLDER = "zip", "folder"
@@ -59,6 +73,14 @@ UPDATE, PIECE, DECISION_NEEDED, DECISION_MADE = "update", "piece", "decision_nee
 REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED)
 CREATED = "created"
 
+# What an item is listed under: the area it was given, else its source folder.
+BY_AREA, BY_FOLDER = "area", "folder"
+
+# A piece's evidence, told apart by its shape alone; nothing is opened.
+COMMIT, PATH, URL = "commit", "path", "url"
+_COMMIT = re.compile(r"[0-9a-fA-F]{7,40}")
+_URL = re.compile(r"https?://[^\s]{1,1000}", re.IGNORECASE)
+
 QUIET_AFTER_SEC = 10 * 60
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 TITLE_MAX = 120
@@ -67,6 +89,9 @@ REF_MAX = 128
 PATH_MAX = 1024
 OPTIONS_MAX = 8
 PIECES_MAX = 50
+AREA_MAX = 60
+WORKER_MAX = 80
+EVIDENCE_MAX = 20
 LIST_MAX = 100
 
 _SCHEMA = """
@@ -114,8 +139,26 @@ _SCHEMA = """
     CREATE INDEX IF NOT EXISTS work_events_by_item ON work_events (item_id, seq);
 """
 
+# 2: an item's area; a piece's latest note (filled from its last report),
+# worker label, the pieces it comes after and its evidence.
+_PIECE_DETAIL = """
+    ALTER TABLE work_items  ADD COLUMN area       TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN note       TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN note_at    REAL;
+    ALTER TABLE work_pieces ADD COLUMN worker     TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN after_keys TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE work_pieces ADD COLUMN evidence   TEXT NOT NULL DEFAULT '[]';
+    UPDATE work_pieces SET
+        note = COALESCE((SELECT e.summary FROM work_events e WHERE e.item_id = work_pieces.item_id
+                         AND e.kind = 'piece' AND json_extract(e.detail, '$.key') = work_pieces.key
+                         ORDER BY e.seq DESC LIMIT 1), ''),
+        note_at = (SELECT e.at FROM work_events e WHERE e.item_id = work_pieces.item_id
+                   AND e.kind = 'piece' AND json_extract(e.detail, '$.key') = work_pieces.key
+                   ORDER BY e.seq DESC LIMIT 1);
+"""
+
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA}
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -132,11 +175,23 @@ class Who:
 
 
 @dataclass(frozen=True)
+class Evidence:
+    kind: str                 # commit, path or url
+    value: str
+
+
+@dataclass(frozen=True)
 class Piece:
     key: str
     title: str
     who: Who
     state: str
+    note: str = ""            # the summary of the latest report about it
+    note_at: Optional[float] = None
+    worker: str = ""          # the reporter's own words for who did it; untrusted
+    after: list[str] = field(default_factory=list)       # keys of the pieces it comes after
+    waits_for: list[str] = field(default_factory=list)   # of those, the ones not done yet
+    evidence: list[Evidence] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -167,14 +222,26 @@ class WorkItem:
     source: str               # present, missing or wrong_kind: the stat, now
     state: str                # waiting_on_tim while a decision is open, else as reported
     reported_state: str
-    quiet: bool               # working, and nothing reported for QUIET_AFTER_SEC
+    quiet: bool               # working or verifying, and nothing reported for QUIET_AFTER_SEC
     latest_update: str
     headline: str             # the one useful update: an open decision's question first
     revision: int
     created_at: float
     updated_at: float
-    pieces: list[Piece] = field(default_factory=list)
+    area: str = ""            # as reported; untrusted
+    grouped_by: str = BY_FOLDER   # area, or folder when it has none
+    group: str = ""           # the area, or the source's folder path
+    blocked_pieces: int = 0
+    waiting_pieces: int = 0
+    pieces: list[Piece] = field(default_factory=list)   # in dependency order
     decisions: list[Decision] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WorkGroup:
+    grouped_by: str           # area or folder
+    name: str                 # the area, or the folder's path
+    items: list[WorkItem]
 
 
 def _connect() -> sqlite3.Connection:
@@ -235,6 +302,25 @@ def check_source(kind: str, path: str) -> str:
     return PRESENT if is_zip else WRONG_KIND
 
 
+# ── evidence ────────────────────────────────────────────────────────────
+
+def evidence(value) -> Evidence:
+    """One piece of evidence, told apart by its shape: a commit (7 to 40 hex
+    digits), an http(s) URL, or an absolute path. Recorded as given (a path
+    normalised); nothing is opened, fetched or checked out."""
+    text = str(value or "").strip()
+    if not text or len(text) > PATH_MAX or any(c in text for c in "\x00\n\r"):
+        raise WorkRefused("Evidence is a commit, an absolute path or an http(s) URL.")
+    if _COMMIT.fullmatch(text):
+        return Evidence(COMMIT, text.lower())
+    if _URL.fullmatch(text):
+        return Evidence(URL, text)
+    expanded = os.path.expanduser(text)
+    if os.path.isabs(expanded):
+        return Evidence(PATH, os.path.normpath(expanded))
+    raise WorkRefused("Evidence is a commit, an absolute path or an http(s) URL.")
+
+
 # ── who ─────────────────────────────────────────────────────────────────
 
 def who(kind, ref=None) -> Who:
@@ -263,9 +349,10 @@ def _insert_event(conn, item_id: str, kind: str, summary: str, detail: dict, now
                  (item_id, kind, summary, json.dumps(detail), now))
 
 
-def create(title: str, source_kind: str, path: str, state: str = PLANNED) -> WorkItem:
+def create(title: str, source_kind: str, path: str, state: str = PLANNED,
+           area: str = "") -> WorkItem:
     """Begin tracking a piece of work on a zip or folder that is on this Mac
-    now. Returns it."""
+    now, under an area if it is given one. Returns it."""
     title = _one_line(title, TITLE_MAX)
     if not title:
         raise WorkRefused("A work item needs a title.")
@@ -275,15 +362,17 @@ def create(title: str, source_kind: str, path: str, state: str = PLANNED) -> Wor
         raise WorkRefused(f"There is no {source_kind} at {kept}." if found == MISSING
                           else f"{kept} is not a {source_kind}.")
     state = _state(state)
+    area = _one_line(area, AREA_MAX)
     item_id = "work-" + secrets.token_hex(6)
     now = time.time()
     with closing(_connect()) as conn:
         conn.execute(
             "INSERT INTO work_items (id, title, source_kind, source_path, state, latest_update, "
-            "revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            (item_id, title, source_kind, kept, state, f"{title} is tracked.", now, now))
+            "revision, created_at, updated_at, area) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            (item_id, title, source_kind, kept, state, f"{title} is tracked.", now, now, area))
         _insert_event(conn, item_id, CREATED, f"{title} is tracked.",
-                      {"source_kind": source_kind, "source_path": kept, "state": state}, now)
+                      {"source_kind": source_kind, "source_path": kept, "state": state,
+                       "area": area}, now)
         conn.commit()
     return get(item_id)
 
@@ -314,13 +403,17 @@ def record(event: WorkEvent) -> WorkItem:
 def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float) -> dict:
     """Bring the snapshot up to date with one event; what of its detail is kept."""
     if kind == UPDATE:
-        if detail.get("state") is None:
-            return {}
-        state = _state(detail["state"])
-        conn.execute("UPDATE work_items SET state=? WHERE id=?", (state, item_id))
-        return {"state": state}
+        kept: dict = {}
+        if detail.get("state") is not None:
+            kept["state"] = _state(detail["state"])
+            conn.execute("UPDATE work_items SET state=? WHERE id=?", (kept["state"], item_id))
+        if detail.get("area") is not None:
+            # An empty area takes it back to its source folder's group.
+            kept["area"] = _one_line(detail["area"], AREA_MAX)
+            conn.execute("UPDATE work_items SET area=? WHERE id=?", (kept["area"], item_id))
+        return kept
     if kind == PIECE:
-        return _apply_piece(conn, item_id, summary, detail)
+        return _apply_piece(conn, item_id, summary, detail, now)
     if kind == DECISION_NEEDED:
         key = _slug(detail.get("key"), "The decision's key")
         options = detail.get("options") or []
@@ -352,8 +445,54 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
     return {"key": key, "answer": answer, "where": where}
 
 
-def _apply_piece(conn, item_id: str, summary: str, detail: dict) -> dict:
-    """Add a piece, or change its title, who is on it or its state."""
+def _after(conn, item_id: str, key: str, value) -> list[str]:
+    """The keys a piece comes after: pieces this item has, never itself, and
+    never one that already comes after it (no circle)."""
+    keys = value.split(",") if isinstance(value, str) else value
+    if not isinstance(keys, list) or len(keys) > PIECES_MAX:
+        raise WorkRefused("Give the pieces it comes after as a list of their keys.")
+    wanted: list[str] = []
+    for one in keys:
+        if str(one or "").strip():
+            k = _slug(str(one).strip(), "Each piece it comes after")
+            if k not in wanted:
+                wanted.append(k)
+    graph = {r["key"]: json.loads(r["after_keys"]) for r in
+             conn.execute("SELECT key, after_keys FROM work_pieces WHERE item_id=?", (item_id,))}
+    for k in wanted:
+        if k == key:
+            raise WorkRefused("A piece cannot come after itself.")
+        if k not in graph:
+            raise WorkRefused(f"This item has no piece {k}.")
+    graph[key] = wanted
+    seen, todo = set(), list(wanted)
+    while todo:
+        k = todo.pop()
+        if k == key:
+            raise WorkRefused(f"Piece {key} would come after itself, through the pieces it names.")
+        if k not in seen:
+            seen.add(k)
+            todo.extend(graph.get(k, []))
+    return wanted
+
+
+def _add_evidence(have: str, value) -> list[dict]:
+    """The piece's evidence with the new added, each once, oldest first."""
+    given = value if isinstance(value, list) else [value]
+    kept = json.loads(have or "[]")
+    for one in given:
+        found = dataclasses.asdict(evidence(one))
+        if found not in kept:
+            kept.append(found)
+    if len(kept) > EVIDENCE_MAX:
+        raise WorkRefused(f"A piece keeps at most {EVIDENCE_MAX} pieces of evidence.")
+    return kept
+
+
+def _apply_piece(conn, item_id: str, summary: str, detail: dict, now: float) -> dict:
+    """Add a piece, or change its title, who is on it, its state, its worker
+    label, the pieces it comes after or its evidence. The report's summary is
+    the piece's latest note."""
     key = _slug(detail.get("key"), "The piece's key")
     have = conn.execute("SELECT * FROM work_pieces WHERE item_id=? AND key=?",
                         (item_id, key)).fetchone()
@@ -370,10 +509,36 @@ def _apply_piece(conn, item_id: str, summary: str, detail: dict) -> dict:
         title = _one_line(detail.get("title"), TITLE_MAX) or summary[:TITLE_MAX]
         state = _state(detail.get("state") or PLANNED, "The piece's state")
         conn.execute("INSERT INTO work_pieces (item_id, key, title, who_kind, who_ref, state, "
-                     "position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                     (item_id, key, title, person.kind, person.ref, state, count))
-        return {**kept, "title": title, "who": {"kind": person.kind, "ref": person.ref},
-                "state": state}
+                     "position, note, note_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (item_id, key, title, person.kind, person.ref, state, count, summary, now))
+        kept.update({"title": title, "who": {"kind": person.kind, "ref": person.ref},
+                     "state": state})
+    else:
+        conn.execute("UPDATE work_pieces SET note=?, note_at=? WHERE item_id=? AND key=?",
+                     (summary, now, item_id, key))
+        kept.update(_change_piece(conn, item_id, key, detail, on))
+    if detail.get("worker") is not None:
+        # The reporter's own words; an empty label takes it off.
+        kept["worker"] = _one_line(detail["worker"], WORKER_MAX)
+        conn.execute("UPDATE work_pieces SET worker=? WHERE item_id=? AND key=?",
+                     (kept["worker"], item_id, key))
+    if detail.get("after") is not None:
+        kept["after"] = _after(conn, item_id, key, detail["after"])
+        conn.execute("UPDATE work_pieces SET after_keys=? WHERE item_id=? AND key=?",
+                     (json.dumps(kept["after"]), item_id, key))
+    if detail.get("evidence"):
+        have = conn.execute("SELECT evidence FROM work_pieces WHERE item_id=? AND key=?",
+                            (item_id, key)).fetchone()["evidence"]
+        every = _add_evidence(have, detail["evidence"])
+        conn.execute("UPDATE work_pieces SET evidence=? WHERE item_id=? AND key=?",
+                     (json.dumps(every), item_id, key))
+        kept["evidence"] = every
+    return kept
+
+
+def _change_piece(conn, item_id: str, key: str, detail: dict, on) -> dict:
+    """Change a piece's who, title or state, as a report about it says."""
+    kept: dict = {}
     if isinstance(on, dict):
         person = who(on.get("kind"), on.get("ref"))
         conn.execute("UPDATE work_pieces SET who_kind=?, who_ref=? WHERE item_id=? AND key=?",
@@ -392,25 +557,65 @@ def _apply_piece(conn, item_id: str, summary: str, detail: dict) -> dict:
 
 # ── reading ─────────────────────────────────────────────────────────────
 
+def _in_order(pieces: list[Piece]) -> list[Piece]:
+    """The pieces in the order their dependencies give: each after every
+    piece it names, otherwise in the order they were reported."""
+    left = list(pieces)
+    placed: list[Piece] = []
+    keys: set[str] = set()
+    while left:
+        # The first piece whose every dependency is placed; the record keeps
+        # no circle, so one always is (and one is taken anyway if not).
+        ready = next((p for p in left if all(k in keys for k in p.after)), left[0])
+        left.remove(ready)
+        placed.append(ready)
+        keys.add(ready.key)
+    return placed
+
+
+def _pieces(conn, item_id: str) -> list[Piece]:
+    rows = conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
+                        (item_id,)).fetchall()
+    states = {r["key"]: r["state"] for r in rows}
+    pieces = []
+    for r in rows:
+        after = json.loads(r["after_keys"])
+        pieces.append(Piece(
+            r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), r["state"],
+            note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
+            waits_for=[k for k in after if states.get(k) != DONE],
+            evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])]))
+    return _in_order(pieces)
+
+
+def _source_folder(kind: str, path: str) -> str:
+    """The folder an item is grouped under when it has no area: the folder
+    itself, or the folder a zip is in."""
+    return path if kind == FOLDER else os.path.dirname(path)
+
+
 def _item(conn, row, now: float) -> WorkItem:
     item_id = row["id"]
-    pieces = [Piece(r["key"], r["title"], Who(r["who_kind"], r["who_ref"]), r["state"])
-              for r in conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
-                                    (item_id,))]
+    pieces = _pieces(conn, item_id)
     decisions = [Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
                           r["opened_at"])
                  for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
                                        "IS NULL ORDER BY opened_at", (item_id,))]
     reported = row["state"]
     state = WAITING if decisions and reported != DONE else reported
+    area = row["area"]
     return WorkItem(
         id=item_id, title=row["title"], source_kind=row["source_kind"],
         source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
         state=state, reported_state=reported,
-        quiet=state == WORKING and now - row["updated_at"] > QUIET_AFTER_SEC,
+        quiet=state in ACTIVE and now - row["updated_at"] > QUIET_AFTER_SEC,
         latest_update=row["latest_update"],
         headline=decisions[0].question if decisions and reported != DONE else row["latest_update"],
         revision=row["revision"], created_at=row["created_at"], updated_at=row["updated_at"],
+        area=area, grouped_by=BY_AREA if area else BY_FOLDER,
+        group=area or _source_folder(row["source_kind"], row["source_path"]),
+        blocked_pieces=sum(p.state == BLOCKED for p in pieces),
+        waiting_pieces=sum(p.state == WAITING for p in pieces),
         pieces=pieces, decisions=decisions)
 
 
@@ -428,6 +633,15 @@ def listing(limit: int = LIST_MAX) -> list[WorkItem]:
             (DONE, limit)).fetchall()
         now = time.time()
         return [_item(conn, r, now) for r in rows]
+
+
+def grouped(items: list[WorkItem]) -> list[WorkGroup]:
+    """The items under their groups, each group where its first item comes
+    and its items in the order given."""
+    groups: dict[tuple[str, str], list[WorkItem]] = {}
+    for item in items:
+        groups.setdefault((item.grouped_by, item.group), []).append(item)
+    return [WorkGroup(by, name, members) for (by, name), members in groups.items()]
 
 
 def _event(row) -> WorkEvent:

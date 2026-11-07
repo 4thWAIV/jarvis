@@ -20,7 +20,7 @@ import { createStore } from "./store";
 import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNavigation";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "working" | "waiting_on_tim" | "blocked" | "done";
+export type WorkState = "planned" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -30,11 +30,26 @@ export interface WorkWho {
   name: string | null;
 }
 
+/** A commit, an absolute path or an http(s) URL; recorded, never opened. */
+export interface WorkEvidence {
+  kind: "commit" | "path" | "url";
+  value: string;
+}
+
 export interface WorkPiece {
   key: string;
   title: string;
   who: WorkWho;
   state: WorkState;
+  /** The summary of the latest report about it. */
+  note: string;
+  note_at: number | null;
+  /** The reporting agent's own words for who did it: untrusted, shown beside the owner. */
+  worker: string;
+  /** The keys of the pieces it comes after, and those of them not done yet. */
+  after: string[];
+  waits_for: string[];
+  evidence: WorkEvidence[];
 }
 
 export interface WorkDecision {
@@ -61,8 +76,42 @@ export interface WorkItem {
   revision: number;
   created_at: number;
   updated_at: number;
+  /** The area it was reported under (untrusted), or "". */
+  area: string;
+  blocked_pieces: number;
+  waiting_pieces: number;
+  /** In dependency order: each piece after every piece it names. */
   pieces: WorkPiece[];
   decisions: WorkDecision[];
+}
+
+/** The items under one heading: an area, or the source folder of items with none. */
+export interface WorkGroup {
+  grouped_by: "area" | "folder";
+  /** The area, or the folder's whole path. */
+  name: string;
+  /** The area, or the folder's last name. */
+  label: string;
+  ids: string[];
+}
+
+export interface WorkList {
+  items: WorkItem[];
+  groups: WorkGroup[];
+}
+
+/** Which mark an item or a piece carries, if any: blocked before waiting on him. */
+export type WorkMark = "blocked" | "waiting" | null;
+
+export function pieceMark(piece: WorkPiece): WorkMark {
+  return piece.state === "blocked" ? "blocked" : piece.state === "waiting_on_tim" ? "waiting" : null;
+}
+
+/** An item's mark: itself or any of its pieces blocked, else waiting on him. */
+export function itemMark(item: WorkItem): WorkMark {
+  if (item.state === "blocked" || item.blocked_pieces > 0) return "blocked";
+  if (item.state === "waiting_on_tim" || item.waiting_pieces > 0) return "waiting";
+  return null;
 }
 
 export interface WorkEvent {
@@ -78,11 +127,12 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "working", "waiting_on_tim", "blocked", "done"], (s) => t(`right.work.state.${s}`));
+  ["planned", "working", "verifying", "waiting_on_tim", "blocked", "done"],
+  (s) => t(`right.work.state.${s}`));
 
-/** Every item, as the server orders them (not done first, newest first). */
-export const workItems = liveRead(
-  () => getJson<{ items: WorkItem[] }>("/api/work").then((r) => r.items), [workChanged]);
+/** Every item, as the server orders them (not done first, newest first), and
+ *  the groups the Work tab heads them with. */
+export const workList = liveRead(() => getJson<WorkList>("/api/work"), [workChanged]);
 
 export const getWorkItem = (id: string) =>
   getJson<{ item: WorkItem; events: WorkEvent[] }>(`/api/work/${encodeURIComponent(id)}`);
@@ -106,7 +156,7 @@ export const openWork = routeStore(slot.value, (id: string | null) =>
 registerCommand("work.open", {
   availability: () => ({ available: true }),
   async execute({ itemId }, { signal }) {
-    if (!(workItems.get().value ?? []).some((i) => i.id === itemId)) {
+    if (!(workList.get().value?.items ?? []).some((i) => i.id === itemId)) {
       const read = await readForOpen(`/api/work/${encodeURIComponent(itemId)}`, signal);
       if ("refused" in read) return read.refused;
     }

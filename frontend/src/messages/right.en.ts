@@ -85,9 +85,15 @@ export const rightEn = {
   "right.work.decision": "Decision: {question}",
   "right.work.state.planned": "Planned",
   "right.work.state.working": "Working",
+  "right.work.state.verifying": "Verifying",
   "right.work.state.waiting_on_tim": "Waiting on you",
   "right.work.state.blocked": "Blocked",
   "right.work.state.done": "Done",
+  "right.work.area": "Area",
+  "right.work.piecesBlocked": "Pieces blocked: {count}",
+  "right.work.piecesWaiting": "Pieces waiting on you: {count}",
+  "right.work.mark.blocked": "Blocked",
+  "right.work.mark.waiting": "Waiting on you",
 
   // The Workflows tab (WorkflowsView.tsx) and the words workflows.ts gives it.
   "right.workflows.readFailed": "Couldn't read the workflows ({error}); trying again.",
