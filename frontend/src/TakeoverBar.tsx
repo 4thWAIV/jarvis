@@ -10,8 +10,10 @@
  * brain's request does.
  *
  * While a message is being read back for his yes, a chip names who it is
- * for (`layout.sheet`); it opens the message boxes as a sheet over the
- * takeover's right side (TakeoverSheet), with their Accept and Send. His
+ * for (`layout.sheet`); it opens the message boxes as a sheet under the bar
+ * (TakeoverSheet), with their Accept and Send, and the view moves down by
+ * its height, as it does for the sign-in notice on Conversation, so the
+ * item's head, tabs and frame stay uncovered. His
  * spoken yes approves it as it always does; the layout stays.
  *
  * Registered for pointing at as `takeoverBar` (its name, its state and
@@ -26,7 +28,7 @@ import { ControlSummary } from "./conversation/ConversationControl";
 import { useT } from "./locale";
 import { MicHost } from "./MicControl";
 import { bind, bindingProps, layout } from "./uiNavigation";
-import { useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useUiTarget } from "./uiRegistry";
 import "./conversation/conversation.css";
 
@@ -92,17 +94,36 @@ function ReadbackChip({ partRef }: { partRef: (el: Element | null) => void }) {
   );
 }
 
-/** The read-back's message boxes over the takeover's right side, while the
- *  chip has opened them and any is open. Each box is registered here as a
- *  `capture` target in main.takeover. */
+/** The read-back's message boxes under the bar, while the chip has opened
+ *  them and any is open. It sets --centre-notice-height to its own height,
+ *  so every centre view starts below it and it covers nothing. Each box is
+ *  registered here as a `capture` target in main.takeover. */
 export function TakeoverSheet() {
   const t = useT();
   const open = useSyncExternalStore(captures.subscribe, captures.get);
   const arranged = useSyncExternalStore(layout.subscribe, layout.get);
-  if (arranged.mode !== "takeover" || !arranged.sheet || !open.length) return null;
+  const shown = arranged.mode === "takeover" && arranged.sheet && open.length > 0;
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!shown || !el) return undefined;
+    const root = document.documentElement.style;
+    const fit = () => root.setProperty("--centre-notice-height", `${el.offsetHeight + SHEET_GAP_PX}px`);
+    fit();
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    return () => {
+      watch.disconnect();
+      root.removeProperty("--centre-notice-height");
+    };
+  }, [shown]);
+  if (!shown) return null;
   return (
-    <div id="takeover-sheet" role="region" aria-label={t("main.takeover.sheet")}>
+    <div id="takeover-sheet" role="region" aria-label={t("main.takeover.sheet")} ref={box}>
       <CaptureList view="main.takeover" />
     </div>
   );
 }
+
+// The space kept between the sheet and the view below it.
+const SHEET_GAP_PX = 8;

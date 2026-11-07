@@ -591,6 +591,13 @@ await parity("takeover: the read-back sheet opens in the flyout's place", [
   assert.deepEqual(state.layout, { ...TAKEN("wf-1"), sheet: true });
 });
 
+await parity("takeover: a work item takes over by its id", [
+  ["work.open", { itemId: "work-1" }], ["layout.takeover", {}],
+], ({ outcome, state }) => {
+  assert.deepEqual(outcome, { status: "completed", effects: ["layout.taken-over"] });
+  assert.deepEqual(state.layout, TAKEN("work-1", "work"));
+});
+
 await parity("takeover: no sheet without a takeover", [["layout.sheet", { shown: true }]], ({ outcome }) => {
   assert.deepEqual(outcome, { status: "unavailable", effects: [], reason: "no-entity" });
 });
