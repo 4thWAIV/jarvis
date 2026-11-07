@@ -116,9 +116,11 @@ function WorkRow({ item, selected }: { item: WorkItem; selected: boolean }) {
               {...bindingProps(bind("work.open", { itemId: item.id }))}>
         <span className="work-row-title">
           {mark && <WorkMarkDot mark={mark} target={ui.part("mark")} />}
-          <ActivityMark activity={activity} target={ui.part("activity")} />
           {item.title}</span>
         <span className="work-row-pills">
+          {/* Beside the state, never in the title's room: a Paused mark there
+              once squeezed a long title down to its ellipsis. */}
+          <ActivityMark activity={activity} target={ui.part("activity")} />
           {deciding && <span className="work-decision-count" title={decisionCount} aria-label={decisionCount}
                              ref={ui.part("decisionCount")}>{item.decisions.length}</span>}
           <span className={`work-state state-${item.state}`} ref={ui.part("state")}>

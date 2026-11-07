@@ -157,6 +157,9 @@ export interface WorkItem {
   until: string[];
   /** When he approved it done (done is his alone to give). */
   approved_at: number | null;
+  /** Whether he can approve it now: no decision open, no piece waiting,
+   *  blocked or still working (work_store.approvable). */
+  approvable: boolean;
   /** His words when he said it is not done yet. */
   review_note: string;
   review_note_at: number | null;

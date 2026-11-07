@@ -336,5 +336,6 @@ def test_a_working_piece_says_when_it_goes_quiet_from_its_latest_report(ws, fold
     assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
     item = _ev(ws, item, "update", "Going.", state="working")
     assert item.quiet_at == item.updated_at + ws.QUIET_AFTER_SEC
+    _ev(ws, item, "piece", "In.", key="engine", state="verifying")
     item = _approve(ws, item)
     assert next(p for p in item.pieces if p.key == "engine").quiet_at is None

@@ -1456,8 +1456,10 @@ html, body {
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "title state" "update update";
+  /* The title has the whole first line: a Paused mark and a long state
+     beside it once squeezed it down to its ellipsis. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "title" "state" "update";
   column-gap: 8px;
   row-gap: 3px;
   padding: 6px 8px;
@@ -1473,7 +1475,8 @@ html, body {
 .work-row:hover { background: rgba(var(--wk), 0.12); }
 .work-row.selected { border-color: rgba(var(--wk), 0.9); box-shadow: 0 0 0 1px rgba(var(--wk), 0.4); }
 .work-row-title { grid-area: title; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.work-row-pills { grid-area: state; display: flex; gap: 4px; align-items: center; }
+.work-row-pills { grid-area: state; display: flex; gap: 4px; align-items: center; min-width: 0; }
+.work-row-pills .work-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* How many of its decisions wait on him: a count on the amber. */
 .work-decision-count {
   min-width: 16px;
@@ -3954,6 +3957,7 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .phase-step[data-activity="paused"] .phase-step-dot { border-style: dashed; box-shadow: none; }
 .work-piece[data-activity="paused"] { border-left: 2px dashed rgba(148, 163, 184, 0.7); }
 .activity-mark { display: inline-block; margin-right: 6px; vertical-align: baseline; }
+.work-row-pills .activity-mark { margin-right: 0; flex: none; }
 .activity-paused {
   padding: 0 6px;
   font-size: 10px;

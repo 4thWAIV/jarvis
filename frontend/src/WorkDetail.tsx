@@ -167,8 +167,8 @@ function Review({ item, target }: { item: WorkItem; target: (el: Element | null)
   return (
     <div className="work-review" ref={target}>
       {asking === null ? <>
-        {item.state !== "done" && <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
-                onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
+        {item.approvable && <button type="button" className="settings-btn work-approve" data-ui-action="domain"
+                disabled={busy} onClick={() => act("approve")}>{t("main.work.review.approve")}</button>}
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}
                 onClick={() => setAsking("not_done")}>{t("main.work.review.notDone")}</button>
         <button type="button" className="settings-btn" data-ui-action="domain" disabled={busy}

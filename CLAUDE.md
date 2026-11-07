@@ -311,9 +311,11 @@ it up), recorded as `wait_ended` with by, how and when; a blocker in words
 is cleared by its reporter's `--cleared`. The sweep releases holds already
 answered. An item with pieces is never reported held (it is the piece that
 waits), and its state is worked out from them (`work_store._computed`):
-working (or ready for review, ready, planned) while any piece can go on,
-waiting on him only when none can and a piece or decision waits on him,
-blocked when only blocked pieces are left; open decisions still show
+working only while a piece is working and has reported within
+`QUIET_AFTER_SEC` (`_moving`: a paused piece is not progress, so it never
+hides what waits on him), else ready or planned while a piece can be picked
+up, else waiting on him while a decision or piece waits on him, else ready
+for review, blocked, or working but paused (`quiet`), in that order; open decisions still show
 (banner, Decisions) and count as `also_waiting` ("2 decision(s) also wait
 on you"). An item with no pieces follows the piece rules itself. Done is
 his alone to give: no reporter key can report done (`_NOT_YOURS`) or any of
@@ -321,8 +323,9 @@ his kinds (`work_store.HIS_KINDS`); `verifying` reads "Ready for review".
 His review is `work_api.review`, from the item's header on the page (`POST
 /api/work/{id}/review`, `Review` in `WorkDetail.tsx`: Approve, Not done
 yet, Add work) and the brain's acting `review_work` alike: `approved`
-(refused while a decision is open or a piece is held; the item and every
-piece done, `approved_at`; nothing a reporter sends moves it after),
+(refused while a decision is open or a piece is held or still working,
+and offered on the page only while `approvable` says the same; the item and
+every piece done, `approved_at`; nothing a reporter sends moves it after),
 `review_returned` (his note kept as `review_note` and shown, the item and
 every verifying or done piece back to working) and `work_added` (a new
 `ready` piece in his words, on whoever last worked the item); the note and
