@@ -101,7 +101,7 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .points { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .facts { list-style: none; padding: 0; display: flex; gap: 14px; }
 .facts li { flex: 1; background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; }
-.facts b { display: block; font-size: 30px; color: var(--accent); }
+.facts b { display: block; font-size: 26px; color: var(--accent); }
 .table { border-collapse: collapse; width: 100%; }
 .table th, .table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
 .table thead th { color: var(--muted); font-weight: 600; }
@@ -135,7 +135,7 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .says, .opens { margin: 0; }
 .opens { color: var(--muted); }
 .badge {
-  font-size: 14px; font-weight: 650; letter-spacing: .02em; color: var(--accent-ink);
+  font-size: 18px; font-weight: 650; color: var(--accent-ink);
   background: var(--accent); border-radius: 999px; padding: 1px 9px;
 }
 .option-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; }
@@ -151,7 +151,7 @@ code { font: 1em ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent)
 .option.chosen { border-color: var(--chosen); box-shadow: 0 0 0 3px var(--chosen); background: var(--raised); }
 .option.chosen .yours {
   display: block; position: absolute; top: -13px; left: 12px; z-index: 1;
-  font-size: 15px; font-weight: 700; color: var(--chosen-ink); background: var(--chosen);
+  font-size: 18px; font-weight: 700; color: var(--chosen-ink); background: var(--chosen);
   border-radius: 999px; padding: 1px 10px;
 }
 .choose[aria-pressed="true"] { background: var(--chosen); border-color: var(--chosen); color: var(--chosen-ink); }
