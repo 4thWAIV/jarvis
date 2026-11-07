@@ -360,6 +360,63 @@ EXEMPT = {
         "the topic's slug, checked against [a-z0-9-], and its fixed status word "
         "and pin flag, never a name or alias. Driven by "
         "tests/test_knowledge_api.py"),
+    # The package inbox (package_inbox.py). A package's title, sender,
+    # purpose and questions are another agent's words; what reaches the
+    # brain of them is driven above (_drive_package_inbox). These read a
+    # row's `state` or `title` but say none of a package's words:
+    "package_inbox._not_now": (
+        "it names the row by its inbox id (JARVIS's own `pkg-<hex>`) and its "
+        "closed_why, one of the fixed CLOSED_WHY words; no title or sender"),
+    "package_inbox.check_return": (
+        "its refusals are the inbox id, a count and fixed words (via _not_now); "
+        "it compares `state` against the fixed STATES"),
+    "package_inbox.close": (
+        "its one refusal is the inbox id and the fixed closed_why word"),
+    "package_inbox.opened": (
+        "its one refusal is the inbox id and the fixed closed_why word"),
+    "package_inbox.arrive": (
+        "the only text it builds is _ref's refusal naming which of its own "
+        "fields is too long (project, session, agent's name), never the value; "
+        "the title it stores is returned as data, walled by every reader"),
+    "package_inbox.find": (
+        "it joins a row's title, name and sender only to fold them into words "
+        "to match his reference against; the joined text is never returned, "
+        "only the rows"),
+    "package_inbox.follow_messages": (
+        "it reads a message's status (one of run_store.MessageStatus) and "
+        "builds only SQL from fixed words; nothing is returned but rows"),
+    "package_inbox.option_name": (
+        "it returns an option's name to its callers, which wall it: the "
+        "brain's question list (_inbox_questions, driven) and the workflow "
+        "record's decision, whose readers wall it (workflow_status, driven)"),
+    "package_inbox.title_of": (
+        "it returns a deck's title as data for the row; the brain reads it "
+        "only through package_inbox and work_status (driven), the page as "
+        "text, the attention item in its untrusted part"),
+    "server._answer_inbox_decision": (
+        "its sentences carry only counts, the inbox id and decision and option "
+        "ids, which package_inbox.questions accepts only as slugs "
+        "(package_inbox.ID: [a-z0-9-], no space, no < > or quote), so no id "
+        "can close a wall or speak as JARVIS"),
+    "server.tool_answer_package_decision": (
+        "it returns _answer_inbox_decision's sentence (slug ids and counts) "
+        "and a fixed one of its own"),
+    "server._inbox_option": (
+        "it returns an option id or None and builds no sentence; joining is "
+        "only to fold his spoken answer"),
+    "server._check_inbox_links": (
+        "its refusal goes back only to the sender's own POST as the HTTP "
+        "error, naming the workflow or work id that sender gave; it never "
+        "reaches the brain or the page"),
+    "server._inbox_wait": (
+        "the summary with the package's title goes into the workflow record, "
+        "whose readers wall every summary as the reporters' words "
+        "(workflow_status, driven); nothing is returned"),
+    "server._return_package_answers": (
+        "its sentences are JARVIS's own with the inbox id and the agent's "
+        "name through _plain_name; the capture it opens holds only the "
+        "package's folder name, slug ids and his own words "
+        "(_inbox_answers_text), never a title, question or option name"),
     "knowledge_api.call": (
         "it turns an engine refusal into knowledge_api.Refused; the engine's "
         "`detail` is the engine's own wording about a request, and every route "
@@ -724,13 +781,6 @@ EXEMPT = {
     "make_package.main": (
         "the command line: it prints the checks, the package id and the --project, "
         "--session and working folder its runner gave, to that runner's terminal"),
-    "make_package.words_to_open": (
-        "it builds the sentence the command prints from the deck's own title, which the "
-        "author wrote, for the command's runner and its message to Tim"),
-    "make_package.tell_tim": (
-        "it writes the session's message to Tim into data/messages, which JARVIS takes "
-        "as a session's message: the brain reads it only through session_messages and "
-        "read_session_message, in an untrusted block"),
     # The page package's story (story_teller.py): the `state` they read is the
     # teller's own fixed state (telling, waiting, paused, finished, stopped);
     # the package id is JARVIS's own folder name (work_packages._label: the
@@ -1676,6 +1726,46 @@ def _drive_work_status(server, session, monkeypatch, tmp_path_factory=None):
 for _name in ("server.tool_work_status", "server._work_detail", "server._work_piece",
               "server._work_line", "server._work_blocker"):
     DRIVERS[_name] = _drive_work_status
+
+
+def _drive_package_inbox(server, session, monkeypatch):
+    """Packages whose title, sender, purpose and questions are the payload,
+    read by the brain through package_inbox (the list and one in full) and
+    through work_status's item detail, which lists a work item's packages."""
+    import sqlite3
+    import tempfile
+    import time
+    from jarvis import data_paths, package_inbox as pi, work_store as ws
+    item = ws.create("Tea", "folder", tempfile.mkdtemp(prefix="work-"))
+    import secrets
+    pi.listing()                        # the inbox's tables, made by its own migration
+    ids = [f"pkg-{secrets.token_hex(6)}" for _ in range(2)]
+    with sqlite3.connect(data_paths.db_path()) as conn:
+        conn.execute("DELETE FROM package_inbox")
+        for n, title in enumerate((session.title, f"Second {HOSTILE}")):
+            conn.execute(
+                "INSERT INTO package_inbox (id, package_id, sha256, name, version, title, "
+                "purpose, runs, decisions_total, decisions_answered, from_project, "
+                "from_session, from_agent, work_id, state, revision, arrived_at) "
+                "VALUES (?, ?, 'x', ?, ?, ?, ?, 'page', 2, 1, ?, 's1', ?, ?, 'answering', 1, ?)",
+                (ids[n], f"pkg{n}", session.project, session.state, title,
+                 session.last_text, session.project, session.voice_name, item.id, time.time()))
+    asked = [pi.Question("kettle", session.last_prompt, session.needs,
+                         [{"id": "electric", "name": HOSTILE, "says": session.title}],
+                         "electric", HOSTILE, True,
+                         {"answer": "electric", "choice": HOSTILE, "note": HOSTILE, "at": "",
+                          "recommended": True}),
+             pi.Question("blend", HOSTILE, "", [], "", "", False, None)]
+    monkeypatch.setattr(server, "_inbox_package", lambda entry: (object(), None))
+    monkeypatch.setattr(pi, "questions", lambda package: asked)
+    return [server.tool_package_inbox({}), server.tool_package_inbox({"closed": True}),
+            server.tool_package_inbox({"package": ids[0]}),
+            server.tool_package_inbox({"package": "nothing like it"}),
+            server.tool_work_status({"item": item.id})]
+
+
+for _name in ("server.tool_package_inbox", "server._inbox_line", "server._inbox_questions"):
+    DRIVERS[_name] = _drive_package_inbox
 DRIVERS["server._watch_workflow_silence"] = _drive_workflow_silence
 DRIVERS["server.look_for_quiet"] = _drive_workflow_silence
 

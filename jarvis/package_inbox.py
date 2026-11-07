@@ -37,6 +37,7 @@ shown and spoken only through the same walls as any other.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -69,6 +70,11 @@ SUMMARY = "decisions.md"
 # The answers a decision takes besides its options, as decide.py names them.
 LATER, NONE = "later", "none"
 SPECIAL = {LATER: "Decide later", NONE: "None of these"}
+
+# A decision's and an option's id, as the deck's own checks make them
+# (decision_package.SLUG): the only words of a deck JARVIS ever says
+# outside a wall. A decision or option with any other id is not read.
+ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 TITLE_MAX = 120
 REF_MAX = 128
@@ -217,6 +223,14 @@ class Question:
             return SPECIAL[option_id]
         return next((o["name"] for o in self.options if o["id"] == option_id), option_id)
 
+    def answered_id(self) -> str:
+        """His answer by its id (an option's, later or none), with his own
+        words after it; "" while unanswered. Ids only: no word of the deck."""
+        if not self.answer:
+            return ""
+        return self.answer["answer"] + (f" (his words: {self.answer['note']})"
+                                        if self.answer.get("note") else "")
+
     def answered_words(self) -> str:
         """His answer in words: the option's name, Decide later or None of
         these, with his own words after it; "" while unanswered."""
@@ -273,13 +287,14 @@ def questions(package: Package) -> list[Question]:
     and the answer recorded; [] for a package that asks none."""
     data = deck(package)
     raw = [d for d in (data or {}).get("decisions") or [] if isinstance(d, dict)
-           and _text(d.get("id"))]
+           and ID.fullmatch(_text(d.get("id")))]
     if not raw:
         return []
     record = _record(package)
     options = {d["id"]: [{"id": _text(o.get("id")), "name": _text(o.get("name")),
                           "says": _text(o.get("says"))}
-                         for o in d.get("options") or [] if isinstance(o, dict) and _text(o.get("id"))]
+                         for o in d.get("options") or []
+                         if isinstance(o, dict) and ID.fullmatch(_text(o.get("id")))]
                for d in raw}
     parents: dict[str, tuple[str, list[str]]] = {}
     for d in raw:
