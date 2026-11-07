@@ -336,6 +336,13 @@ def _write_record(folder_name: str, sha256: str, attachment: str) -> None:
     os.replace(temp, path)
 
 
+def sha256_of(package: "Package") -> str:
+    """The SHA-256 of the zip a package was unpacked from, as its record
+    keeps it; "" for a folder from before records were kept."""
+    recorded = (_record(package.folder.name) or {}).get("sha256")
+    return recorded if isinstance(recorded, str) else ""
+
+
 def _unpacked_from(sha256: str) -> Optional[Path]:
     """The package folder already unpacked from an archive with these bytes."""
     records = data_paths.packages_dir() / RECORDS

@@ -572,8 +572,8 @@ writer of `package_inbox` (one row per arrival) and
 `package_inbox_events` (each change, no words of the package), schema
 `package_inbox_schema` (`run_store.migrate`), each change one transaction
 with its revision, before any hint (`packages`, and `work` when it names a
-work item). States `arrived -> opened -> answering -> answered -> returned
--> closed` (`done`, `dismissed`, `superseded`). The same bytes while open
+work item). States `arrived -> opened -> answering -> answered ->
+closed` (`signed_off`, `dismissed`, `superseded`). The same bytes while open
 are the same row; an open package of the same name from the same sender
 (its session, else its project) is closed `superseded` in the same
 transaction. A decision package's questions are read from `deck-data.js`
@@ -595,21 +595,32 @@ is shown in the centre, any other is in the brain's hands. His answers go
 through the package's own `scripts/decide.py`, run with a fixed argument
 list and no shell (`_answer_inbox_decision`: the acting
 `answer_package_decision` and `POST .../answer`, which the Work tab uses).
-`_return_package_answers` (the acting `return_package_answers`, `POST
-.../return`, the row's Send answers) needs every decision that applies
-answered (`package_inbox.check_return`); it records each answer as the
-workflow's own `decision_needed` then `decision_made` under the decision's
-id and ends the workflow's wait (`wait_started` at arrival, key the inbox
-id), then opens a capture addressed to the sending session (`_new_capture`
-and `_set_capture`, shared with `capture`) holding each answer and the
-record's path, which is read back and sent only on his yes or Send, as
-every message to a session. A sender no longer running gets no message and
-the row is returned at once. `package_inbox.follow_messages`, run on every
-message event (`_attend_message`) and every direct send, moves a row to
-`returned` once a message from its capture has gone to its session since
-he asked, and to `closed` `done` once that message is answered.
+Signing a package off is one function, `_sign_off_package`, for every kind
+of package: the Done in the head of its view (`PackageView.tsx`, outside
+the frame), Done on its Queue row (`POST /api/packages/{package_id}/signoff`)
+and the acting `sign_off_package`. A package with no inbox row (unpacked
+some other way, an older local one) is given one there and then
+(`package_inbox.adopt`). Whatever he answered goes back: each answered
+question as the workflow's own `decision_needed` then `decision_made`
+under its id, and the workflow's wait ended (`wait_started` at arrival, key
+the inbox id); then a capture addressed to the sending session
+(`_new_capture` and `_set_capture`, shared with `capture`) holding, by slug
+id (`package_inbox.ID`), each answer or "not answered" and the record's
+path, or for a package that asks nothing that he has reviewed it
+(`_sign_off_text`: no title, question or option name), read back and sent
+only on his yes or Send. A Work-item decision that names the package
+(`work_store` `package`) gets the answer he gave in the package to the
+question of its key (or its only question) as his own answer; with none it
+is closed by `decision_signed_off` (`work_store.SIGNED_OFF`: his act,
+never a reporter's, never an answer; `work_report.py answer` exits 4), and
+the item it was sent for (`--work`) gets an update. The row is closed
+`signed_off` with `signed_off_at`, its update line resolved, and every
+page showing it closes it (`package_closed` on the voice socket).
+`package_inbox.follow_messages`, run on every message event
+(`_attend_message`) and every direct send, gives a signed-off row the id
+of the message that carried it back once that has gone.
 `_close_inbox_package` (the acting `close_inbox_package`, `POST
-.../close`) dismisses one, or closes one already returned. `package_inbox`
+.../close`, the row's Dismiss) sets one aside with nothing sent back. `package_inbox`
 reads the backlog for the brain, walled. A package sent with `--work <id>`
 shows its questions on that work item's Decisions tab (`work_api.packages_json`
 on `GET /api/work/{id}`, `package_questions` on every item; the

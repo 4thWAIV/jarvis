@@ -75,6 +75,11 @@ UPDATE, PIECE, DECISION_NEEDED, DECISION_MADE = "update", "piece", "decision_nee
 # The asker taking its own open decision back, with why: never his answer.
 DECISION_WITHDRAWN = "decision_withdrawn"
 WITHDRAWN = "withdrawn"
+# A decision that names a package, closed because he signed that package off
+# without answering its matching question: his act, never his answer, and
+# never a reporter's to send (package sign-off, server._sign_off_package).
+DECISION_SIGNED_OFF = "decision_signed_off"
+SIGNED_OFF = "signed_off"
 # `closed` moves an item to History for good; nothing more is reported to it.
 CLOSED = "closed"
 REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
@@ -188,7 +193,13 @@ _DECISION_PACKAGE = """
     ALTER TABLE work_decisions ADD COLUMN withdrawn_reason TEXT;
 """
 
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE}
+# 4: when a decision was closed by his signing off its package without an
+# answer to it (DECISION_SIGNED_OFF).
+_SIGNED_OFF = """
+    ALTER TABLE work_decisions ADD COLUMN signed_off_at REAL;
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _SIGNED_OFF}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -239,12 +250,13 @@ class Decision:
 
 @dataclass(frozen=True)
 class Answered:
-    """A decision that is no longer open: answered by him, or withdrawn by
-    the agent that asked it."""
+    """A decision that is no longer open: answered by him, withdrawn by the
+    agent that asked it, or closed by his signing off its package without
+    an answer."""
     key: str
     question: str
-    answer: str               # his answer, or the asker's reason for withdrawing it
-    where: str                # page or voice; `withdrawn` when the asker took it back
+    answer: str               # his answer, the asker's reason for withdrawing it, or ""
+    where: str                # page or voice; `withdrawn`; `signed_off` (no answer)
     answered_at: float
     package: str = ""
 
@@ -446,7 +458,7 @@ def record(event: WorkEvent) -> WorkItem:
     summary = _one_line(event.summary, SUMMARY_MAX)
     if not summary:
         raise WorkRefused("Every report needs a one-sentence summary.")
-    if event.kind not in REPORTED_KINDS + (DECISION_MADE,):
+    if event.kind not in REPORTED_KINDS + (DECISION_MADE, DECISION_SIGNED_OFF):
         raise WorkRefused("Kinds are: " + ", ".join(REPORTED_KINDS) + ".")
     detail = event.detail if isinstance(event.detail, dict) else {}
     now = time.time()
@@ -454,7 +466,8 @@ def record(event: WorkEvent) -> WorkItem:
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (event.item_id,)).fetchone()
         if row is None:
             raise WorkRefused("There is no work item with that id.")
-        if row["closed_at"] is not None and event.kind != DECISION_MADE:
+        if row["closed_at"] is not None and event.kind not in (DECISION_MADE,
+                                                                DECISION_SIGNED_OFF):
             raise WorkRefused("That work item is closed; it is kept in History. Start a new one.")
         kept = _apply(conn, event.item_id, event.kind, summary, detail, now)
         conn.execute("UPDATE work_items SET latest_update=?, revision=revision+1, updated_at=? "
@@ -495,8 +508,9 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         # An answered key is never asked again: its reporter reads the answer
         # by key (`work_report.py answer`), so a new question needs a new key.
         if conn.execute("SELECT 1 FROM work_decisions WHERE item_id=? AND key=? AND (answer "
-                        "IS NOT NULL OR withdrawn_at IS NOT NULL)", (item_id, key)).fetchone():
-            raise WorkRefused(f"Decision {key} was already answered or withdrawn; ask with a new key.")
+                        "IS NOT NULL OR withdrawn_at IS NOT NULL OR signed_off_at IS NOT NULL)",
+                        (item_id, key)).fetchone():
+            raise WorkRefused(f"Decision {key} was already answered or closed; ask with a new key.")
         conn.execute(
             "INSERT OR REPLACE INTO work_decisions (item_id, key, question, options, "
             "recommendation, opened_at, package, asked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -506,6 +520,14 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
                 "package": package}
     if kind == DECISION_WITHDRAWN:
         return _withdraw(conn, item_id, summary, detail, now)
+    if kind == DECISION_SIGNED_OFF:
+        key = _slug(detail.get("key"), "The decision's key")
+        done = conn.execute("UPDATE work_decisions SET signed_off_at=? WHERE item_id=? AND key=? "
+                            "AND answer IS NULL AND withdrawn_at IS NULL AND signed_off_at IS NULL",
+                            (now, item_id, key)).rowcount
+        if not done:
+            raise WorkRefused(f"No decision {key} is open.")
+        return {"key": key}
     # DECISION_MADE: his answer, from the page or his voice.
     key = _slug(detail.get("key"), "The decision's key")
     answer = _one_line(detail.get("answer"), SUMMARY_MAX)
@@ -513,7 +535,8 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         raise WorkRefused("An answer needs words.")
     where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
     done = conn.execute("UPDATE work_decisions SET answer=?, answered_where=?, answered_at=? "
-                        "WHERE item_id=? AND key=? AND answer IS NULL AND withdrawn_at IS NULL",
+                        "WHERE item_id=? AND key=? AND answer IS NULL AND withdrawn_at IS NULL "
+                        "AND signed_off_at IS NULL",
                         (answer, where, now, item_id, key)).rowcount
     if not done:
         raise WorkRefused(f"No decision {key} is open.")
@@ -527,7 +550,8 @@ def _withdraw(conn, item_id: str, reason: str, detail: dict, now: float) -> dict
     askers were recorded."""
     key = _slug(detail.get("key"), "The decision's key")
     row = conn.execute("SELECT asked_by FROM work_decisions WHERE item_id=? AND key=? AND answer "
-                       "IS NULL AND withdrawn_at IS NULL", (item_id, key)).fetchone()
+                       "IS NULL AND withdrawn_at IS NULL AND signed_off_at IS NULL",
+                       (item_id, key)).fetchone()
     if row is None:
         raise WorkRefused(f"No decision {key} is open.")
     if row["asked_by"] and row["asked_by"] != str(detail.get("by") or ""):
@@ -689,6 +713,17 @@ def _pieces(conn, item_id: str) -> list[Piece]:
     return _in_order(pieces)
 
 
+def _closed_how(r) -> tuple[str, str, float]:
+    """(its answer or why it closed, how, when): his answer on the page or
+    by voice, withdrawn by its asker with why, or closed by his signing off
+    its package without an answer (no words: it is not an answer)."""
+    if r["answer"] is not None:
+        return r["answer"], r["answered_where"], r["answered_at"]
+    if r["withdrawn_at"] is not None:
+        return r["withdrawn_reason"], WITHDRAWN, r["withdrawn_at"]
+    return "", SIGNED_OFF, r["signed_off_at"]
+
+
 def _source_folder(kind: str, path: str) -> str:
     """The folder an item is grouped under when it has no area: the folder
     itself, or the folder a zip is in."""
@@ -701,17 +736,14 @@ def _item(conn, row, now: float) -> WorkItem:
     decisions = [Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
                           r["opened_at"], r["package"])
                  for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
-                                       "IS NULL AND withdrawn_at IS NULL ORDER BY opened_at",
+                                       "IS NULL AND withdrawn_at IS NULL AND signed_off_at IS NULL "
+                                       "ORDER BY opened_at",
                                        (item_id,))]
-    answered = [Answered(r["key"], r["question"],
-                         r["answer"] if r["answer"] is not None else r["withdrawn_reason"],
-                         r["answered_where"] if r["answer"] is not None else WITHDRAWN,
-                         r["answered_at"] if r["answer"] is not None else r["withdrawn_at"],
-                         r["package"])
+    answered = [Answered(r["key"], r["question"], *_closed_how(r), r["package"])
                 for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND (answer "
-                                      "IS NOT NULL OR withdrawn_at IS NOT NULL) ORDER BY "
-                                      "COALESCE(answered_at, withdrawn_at) DESC LIMIT ?",
-                                      (item_id, ANSWERED_SHOWN))]
+                                      "IS NOT NULL OR withdrawn_at IS NOT NULL OR signed_off_at IS "
+                                      "NOT NULL) ORDER BY COALESCE(answered_at, withdrawn_at, "
+                                      "signed_off_at) DESC LIMIT ?", (item_id, ANSWERED_SHOWN))]
     reported = row["state"]
     state = WAITING if decisions and reported != DONE else reported
     area = row["area"]

@@ -68,12 +68,14 @@ export interface WorkDecision {
   package: string;
 }
 
-/** A decision he has answered: on the page or by voice. */
+/** A decision no longer open: answered by him on the page or by voice,
+ *  withdrawn by its asker (`answer` is why), or closed by his signing off
+ *  its package without an answer (`answer` is ""). */
 export interface WorkAnswered {
   key: string;
   question: string;
   answer: string;
-  where: "page" | "voice";
+  where: "page" | "voice" | "withdrawn" | "signed_off";
   answered_at: number;
   package: string;
 }

@@ -8321,21 +8321,23 @@ async def _answer_inbox_decision(reference: str, decision: str, option: str, wor
                    if entry.decisions_total else "Recorded.")
 
 
-def _inbox_answers_text(entry, package) -> str:
-    """The message that carries his answers back to the sending session,
-    read back to him before it goes: JARVIS's own words, the package's
-    folder name, each decision's and answer's id (package_inbox.ID) and his
-    own words, and where the package's full record is. No title, question
-    or option name: those are the sender's words."""
-    head = f"Tim's answers to your package {package.id} ({entry.id}):"
-    if entry.is_decisions:
-        lines = [head] + [f"- {q.id}: {q.answered_id() or 'not answered'}"
-                          for q in package_inbox.questions(package) if q.applies]
+def _sign_off_text(entry, package) -> str:
+    """The message that tells the sending session he has signed its package
+    off, read back to him before it goes: for a decision package each
+    decision that applies with his answer or "not answered", and where the
+    package's full record is; for any other, that he has reviewed it.
+    JARVIS's own words, the package's folder name, slug ids
+    (package_inbox.ID) and his own words only: no title, question or option
+    name, which are the sender's words."""
+    asked = [q for q in package_inbox.questions(package) if q.applies]
+    if asked:
+        lines = [f"Tim has signed off your package {package.id} ({entry.id}). His answers:"]
+        lines += [f"- {q.id}: {q.answered_id() or 'not answered'}" for q in asked]
         lines.append(f"The full record is {package.folder / work_packages.RESULTS / package_inbox.RECORD}"
                      f" (and {package_inbox.SUMMARY} beside it).")
     else:
-        lines = [f"Tim has finished with your package {package.id} ({entry.id}). Anything it "
-                 f"saved is in {package.folder / work_packages.RESULTS}."]
+        lines = [f"Tim has reviewed your package {package.id} ({entry.id}) and signed it off. "
+                 f"Anything it saved is in {package.folder / work_packages.RESULTS}."]
     return "\n".join(lines)[:CAPTURE_MAX_CHARS]
 
 
@@ -8369,51 +8371,124 @@ def _inbox_workflow_answers(entry, package) -> None:
     _inbox_wait(entry, "wait_ended")
 
 
-async def _return_package_answers(reference: str, how: str):
-    """Send his answers back: the page's Send answers and the brain's acting
-    `return_package_answers` alike. First, when it belongs to a workflow,
-    as that workflow's decisions; then as a capture addressed to the session
-    that sent it, which is read back naming it and goes only on his yes or
-    Send, as every message to a session does. The row is returned once that
-    message has gone (`package_inbox.follow_messages`). (the row, what to
+def _sign_off_entry(reference: str, how: str):
+    """(the open inbox row for the package `reference` names, its package,
+    None) or (None, None, why not). An inbox id or his words for one first;
+    else any package unpacked here by its id or name, whose open row it is,
+    or a row made for it now (`package_inbox.adopt`), so a package that came
+    some other way is signed off the same way."""
+    reference = " ".join(str(reference or "").split())
+    # A package's own id is exact: never taken for words that fit another.
+    by_id = any(p.id == reference for p in work_packages.every())
+    found = [] if by_id else package_inbox.find(reference)
+    if len(found) > 1:
+        return None, None, (f"That could be any of {_say_number(len(found))} packages: "
+                            f"{', '.join(e.id for e in found)}. Ask him which. Nothing was "
+                            f"signed off.")
+    if found:
+        package, problem = _inbox_package(found[0])
+        return (found[0], package, None) if package else (None, None, problem)
+    if not reference:
+        return None, None, "Which package, sir? Nothing was signed off."
+    try:
+        package = work_packages.find(reference)
+    except work_packages.PackageError as e:
+        return None, None, f"{e} Nothing was signed off."
+    rows = package_inbox.for_package(package.id)
+    entry = rows[0] if rows else package_inbox.adopt(
+        package, work_packages.sha256_of(package) or f"unrecorded-{package.id}", how)
+    return entry, package, None
+
+
+def _work_decisions_for(package) -> list:
+    """(work item, open decision) for every open decision on the Work list
+    that names this package, by its id, its name and version, or its name."""
+    names = {package.id, package.manifest.name,
+             f"{package.manifest.name}-{package.manifest.version}"}
+    return [(item, d) for item in work_store.listing() for d in item.decisions
+            if d.package in names]
+
+
+def _inbox_sign_off_work(entry, package, how: str) -> None:
+    """Its Work item learns he signed it off. A decision there that names
+    the package is given the answer he gave in the package to the question
+    of the same key (or to its only question), as his own answer; with no
+    such answer it is closed as signed off without one, never answered
+    "signed off" for him. The item the package was sent for (--work) is
+    told so in an update. On the loop: it tells the pages as it goes."""
+    asked = package_inbox.questions(package)
+    where = "voice" if how == package_inbox.BY_VOICE else "page"
+    for item, d in _work_decisions_for(package):
+        match = next((q for q in asked if q.id == d.key), None) or (
+            asked[0] if len(asked) == 1 else None)
+        try:
+            if match is not None and match.answer and match.applies:
+                done = work_api.answer_decision(item.id, d.key, match.answered_words(), where)
+            else:
+                done = work_api.signed_off_without_answer(item.id, d.key)
+        except work_store.WorkRefused:
+            continue
+        _work_recorded(done, work_store.DECISION_MADE)
+    if entry.work_id:
+        try:
+            done = work_store.record(work_store.WorkEvent(
+                entry.work_id, work_store.UPDATE, f"He signed off the package {package.id}.", {}))
+        except work_store.WorkRefused:
+            return
+        _work_recorded(done, work_store.UPDATE)
+
+
+async def _close_package_view(package_id: str) -> None:
+    """Every page showing it closes it, and none that connects later shows it."""
+    await _close_package_page(package_id)
+    if voice_clients:
+        await _voice_emit({"type": "package_closed", "package": package_id})
+
+
+async def _sign_off_package(reference: str, how: str):
+    """He is done with a package: the page's Done (on the package's view and
+    its Queue row) and the brain's acting `sign_off_package` alike, for
+    every kind of package. Whatever he answered goes back the one way: as
+    its workflow's decisions, and as a capture to the session that sent it
+    (each answer, unanswered ones said so; for a package that asks nothing,
+    that he has reviewed it), which is read back and goes only on his yes
+    or Send. Its Work item learns it; it is closed, signed off with its
+    time, its update line resolved, and its view closed. (the row, what to
     do next) or (None, why not)."""
-    entry, problem = await asyncio.to_thread(_inbox_one, reference)
+    entry, package, problem = await asyncio.to_thread(_sign_off_entry, reference, how)
     if entry is None:
         return None, problem
-    package, problem = await asyncio.to_thread(_inbox_package, entry)
-    if package is None:
-        return None, problem
-    try:
-        package_inbox.check_return(entry)
-    except package_inbox.InboxRefused as e:
-        return None, f"{e} Nothing was sent."
-    text = await asyncio.to_thread(_inbox_answers_text, entry, package)
-    # On the loop: it tells the pages and the attention record as it goes.
+    text = await asyncio.to_thread(_sign_off_text, entry, package)
+    # On the loop: they tell the pages and the attention record as they go.
     _inbox_workflow_answers(entry, package)
+    _inbox_sign_off_work(entry, package, how)
     to = agent_directory.names_by_session().get(entry.from_session) if entry.from_session else None
     capture = None
     if to:
         capture = _new_capture()
         _set_capture(capture, text, to, entry.from_session)
     try:
-        entry = await asyncio.to_thread(package_inbox.return_asked, entry.id,
+        entry = await asyncio.to_thread(package_inbox.signed_off, entry.id,
                                         capture["id"] if capture else None, how)
     except package_inbox.InboxRefused as e:
-        return None, f"{e} Nothing was sent."
+        return None, f"{e} Nothing was signed off."
+    _inbox_closed([entry])
     _hint_inbox([entry])
-    if capture is None:
-        return entry, ("Its answers are recorded" + (" and its workflow has them" if entry.workflow_id
-                       else "") + ", but the session that sent it is not running, so no message "
-                       "went back. It is returned.")
-    return entry, (f"Capture {capture['id']} holds the answers for "
-                   f"{_plain_name(to, 'its session')}. Read it back now with read_capture; it "
-                   f"goes only on his yes or Send.")
+    await _close_package_view(package.id)
+    if capture is not None:
+        return entry, (f"Signed off. Capture {capture['id']} tells "
+                       f"{_plain_name(to, 'its session')} so, with his answers. Read it back now "
+                       f"with read_capture; it goes only on his yes or Send.")
+    who = ("the session that sent it is not running" if entry.from_session
+           else "no sender is on record for it")
+    return entry, (f"Signed off" + (", and its workflow has his answers" if entry.workflow_id
+                                    else "") + f". No message went back: {who}.")
 
 
 async def _close_inbox_package(reference: str, how: str):
-    """Dismiss a package, or close one whose answers have gone back: the
-    page's Dismiss and Close and the brain's acting `close_inbox_package`
-    alike. (the row, "") or (None, why not)."""
+    """Set a package aside without signing it off: the page's Dismiss and
+    the brain's acting `close_inbox_package` alike. Nothing goes back.
+    (the row, "") or (None, why not)."""
     entry, problem = await asyncio.to_thread(_inbox_one, reference)
     if entry is None:
         return None, problem
@@ -8427,22 +8502,20 @@ async def _close_inbox_package(reference: str, how: str):
 
 
 def _follow_inbox_messages() -> None:
-    """A message JARVIS sent has moved on: an inbox row whose answers it
-    carries is returned, or closed once its session has answered. Never
-    raises."""
+    """A message JARVIS sent has moved on: a signed-off package whose
+    answers it carries is given its id. Never raises."""
     try:
         moved = package_inbox.follow_messages()
     except Exception:
         log.warning("package inbox: messages were not followed", exc_info=True)
         return
     if moved:
-        _inbox_closed([e for e in moved if e.state == package_inbox.CLOSED])
         _hint_inbox(moved)
 
 
 package_inbox_api.mount(app, package_inbox_api.Calls(
     receive=_receive_inbox_package, open=_open_inbox_package, answer=_answer_inbox_decision,
-    give_back=_return_package_answers, close=_close_inbox_package))
+    sign_off=_sign_off_package, close=_close_inbox_package))
 
 
 # The states as the brain reads them.
@@ -8451,7 +8524,6 @@ _INBOX_STATE_SAID = {
     package_inbox.OPENED: "opened",
     package_inbox.ANSWERING: "partly answered",
     package_inbox.ANSWERED: "answered, not sent back yet",
-    package_inbox.RETURNED: "answers sent back, waiting for the sender",
     package_inbox.CLOSED: "closed",
 }
 
@@ -8523,14 +8595,14 @@ async def tool_open_inbox_package(args: dict) -> str:
             what_next += ("Read him the first open decision and its recommendation from the "
                           "list below. Record each answer he gives with answer_package_decision "
                           "(the deck shows it within seconds); once every one is answered, ask "
-                          "whether to send the answers back, then return_package_answers.")
+                          "whether he is done with it, then sign_off_package.")
         else:
-            what_next += ("When he says he has finished with it, return_package_answers tells "
+            what_next += ("When he says he is done with it, sign_off_package tells "
                           "the sender.")
         body = package.manifest.as_json() + ("\n" + _inbox_questions(asked) if asked else "")
         return what_next + "\n" + _wrap_untrusted(_INBOX_WRAP_NAME, body)
     return _package_opened(package, True, _PACKAGE_HOW[package.manifest.runs]
-                           + " When he has finished with it, return_package_answers tells the "
+                           + " When he is done with it, sign_off_package tells the "
                              "sender.")
 
 
@@ -8542,15 +8614,14 @@ async def tool_answer_package_decision(args: dict) -> str:
     if entry is None:
         return said
     if entry.decisions_total and entry.state == package_inbox.ANSWERED:
-        said += (" Every decision is answered: ask him whether to send the answers back "
-                 "(return_package_answers).")
+        said += (" Every decision is answered: ask him whether he is done with it, and on his "
+                 "yes sign it off (sign_off_package).")
     return said
 
 
-async def tool_return_package_answers(args: dict) -> str:
-    """Send his answers back to the package's sender, on his word."""
-    entry, said = await _return_package_answers(str(args.get("package") or ""),
-                                                package_inbox.BY_VOICE)
+async def tool_sign_off_package(args: dict) -> str:
+    """He is done with a package: sign it off, on his word."""
+    entry, said = await _sign_off_package(str(args.get("package") or ""), package_inbox.BY_VOICE)
     return said
 
 
@@ -8560,19 +8631,18 @@ async def tool_close_inbox_package(args: dict) -> str:
                                                 package_inbox.BY_VOICE)
     if entry is None:
         return problem
-    return ("Closed, sir." if entry.closed_why == package_inbox.DONE
-            else "Dismissed, sir; what was answered is kept in its record.")
+    return "Dismissed, sir; what was answered is kept in its record, and nothing went back."
 
 
 TOOL_HANDLERS.update({
     "package_inbox": tool_package_inbox,
     "open_inbox_package": tool_open_inbox_package,
     "answer_package_decision": tool_answer_package_decision,
-    "return_package_answers": tool_return_package_answers,
+    "sign_off_package": tool_sign_off_package,
     "close_inbox_package": tool_close_inbox_package,
 })
 ACTING_TOOLS.update({"open_inbox_package", "answer_package_decision",
-                     "return_package_answers", "close_inbox_package"})
+                     "sign_off_package", "close_inbox_package"})
 TAINTING_TOOLS.update({
     "package_inbox": "the titles and questions of packages agents sent",
     "open_inbox_package": "a package's own package.json, skill and questions, which an agent wrote",
@@ -8580,7 +8650,8 @@ TAINTING_TOOLS.update({
 TAINT_EXEMPT_TOOLS.update({
     "answer_package_decision": "it records his answer and says how many are answered, in "
                                "JARVIS's words",
-    "return_package_answers": "it opens a capture of his answers for its read-back and says so",
+    "sign_off_package": "it signs a package off, opens a capture of his answers for its "
+                        "read-back and says so, in JARVIS's words",
     "close_inbox_package": "it closes a package and says so",
 })
 
@@ -10801,11 +10872,15 @@ def _work_detail(item) -> str:
                      + (f" Package to look at first: {d.package} (open_package_page shows it)."
                         if d.package else ""))
     for a in item.answered:
-        lines.append((f"withdrawn decision {a.key}: {a.question} Withdrawn by the agent that "
-                      f"asked it, not answered by him: {a.answer}" if a.where == work_store.WITHDRAWN
-                      else f"answered decision {a.key}: {a.question} His answer ({a.where}): "
-                           f"{a.answer}")
-                     + (f" Package: {a.package}." if a.package else ""))
+        if a.where == work_store.WITHDRAWN:
+            said = (f"withdrawn decision {a.key}: {a.question} Withdrawn by the agent that "
+                    f"asked it, not answered by him: {a.answer}")
+        elif a.where == work_store.SIGNED_OFF:
+            said = (f"closed decision {a.key}: {a.question} Closed when he signed off its "
+                    f"package without answering it; it has no answer of his.")
+        else:
+            said = f"answered decision {a.key}: {a.question} His answer ({a.where}): {a.answer}"
+        lines.append(said + (f" Package: {a.package}." if a.package else ""))
     for entry in package_inbox.for_work(item.id):
         lines.append(f"package {_inbox_line(entry)} Its questions are answered with "
                      f"answer_package_decision, package {entry.id}:")

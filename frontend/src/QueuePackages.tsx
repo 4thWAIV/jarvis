@@ -2,8 +2,9 @@
  * The Queue's Packages section, at the top of the Queue tab: the package
  * inbox (packageInbox.ts), one row per open package, newest first. A row is
  * a small package mark, who sent it, its title, where it stands ("2 of 3
- * answered") and its buttons: Open, Send answers once every decision is
- * answered, and Dismiss (Close once its answers have gone back). The closed
+ * answered") and its buttons: Open, Done (sign it off: packageInbox.ts
+ * `signOff`, the same as the view's Done and the brain's sign_off_package)
+ * and Dismiss (set it aside, nothing sent back). The closed
  * ones are behind a collapsed Closed, read when it is opened.
  *
  * It is shown whether or not this JARVIS is signed in to a team server:
@@ -18,7 +19,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { SaidText, useT, type Said } from "./locale";
 import {
-  canReturn, closedInbox, closeInbox, inbox, inboxProgress, openInbox, returnInbox, type InboxEntry,
+  closedInbox, closeInbox, inbox, inboxProgress, openInbox, signOff, type InboxEntry,
 } from "./packageInbox";
 import { createStore } from "./store";
 import { RIGHT_SOCKET } from "./uiRight";
@@ -72,7 +73,6 @@ function PackageRow({ entry }: { entry: InboxEntry }) {
     setSaid(null);
     void work().then((why) => { setSaid(why); setBusy(false); });
   };
-  const returned = entry.state === "returned";
   return (
     <li className={`queue-item package-row state-${entry.state}`} data-inbox-id={entry.id}
         ref={(el) => { ui.whole(el); ui.part("row")(el); }}>
@@ -87,14 +87,13 @@ function PackageRow({ entry }: { entry: InboxEntry }) {
         <button type="button" className="file-action" data-ui-action="domain" disabled={busy}
                 ref={ui.part("open")} onClick={() => act(() => openInbox(entry.id))}>
           {t("right.packages.open")}</button>
-        {canReturn(entry) && (
-          <button type="button" className="file-action primary" data-ui-action="domain" disabled={busy}
-                  ref={ui.part("return")} onClick={() => act(() => returnInbox(entry.id))}>
-            {t("right.packages.return")}</button>
-        )}
+        <button type="button" className="file-action primary" data-ui-action="domain" disabled={busy}
+                ref={ui.part("done")} title={t("right.packages.doneTitle")}
+                onClick={() => act(() => signOff(entry.package_id))}>
+          {t("right.packages.done")}</button>
         <button type="button" className="file-action" data-ui-action="domain" disabled={busy}
                 ref={ui.part("close")} onClick={() => act(() => closeInbox(entry.id))}>
-          {returned ? t("right.packages.close") : t("right.packages.dismiss")}</button>
+          {t("right.packages.dismiss")}</button>
       </div>
       {said && <SaidText said={said} className="file-state package-said" />}
     </li>

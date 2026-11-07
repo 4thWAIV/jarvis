@@ -503,14 +503,16 @@ Packages section and counted in his updates, never shown and never spoken.
   `recommended`, `later` or `none`; his own words go in `words`). Never
   record an answer he did not give. His Choose on the deck lands in the same
   record.
-- When every decision is answered, ask "Send the answers back to <sender>?";
-  on his yes, `return_package_answers`, then read the capture it opens back
-  with `read_capture` and send it with `steer_session` on his yes, as every
-  message to a session. A package that asks nothing goes back the same way
-  once he says he has finished with it.
-- `close_inbox_package` sets one aside (dismissed) or closes one whose
-  answers have gone back, only when he asks. A package closes by itself
-  once its sender has answered the message.
+- When he says he is done with a package ("I'm done with it", "sign it
+  off"), `sign_off_package`: it works for every package, in the inbox or
+  not. Whatever he answered goes back (unanswered ones said to be
+  unanswered; for a package that asks nothing, that he has reviewed it) in
+  a capture to the session that sent it: read it back with `read_capture`
+  and send it with `steer_session` only on his yes. Once every decision is
+  answered, ask whether he is done with it. His Done on the page does the
+  same.
+- `close_inbox_package` sets one aside (dismissed: nothing goes back), only
+  when he asks.
 - Use these for an inbox package, not `list_packages` / `open_package_page`
   / `decide.py` through `run_package_command`: they keep the inbox's record.
 
