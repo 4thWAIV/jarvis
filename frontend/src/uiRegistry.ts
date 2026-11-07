@@ -180,7 +180,7 @@ export function mountedTargets(): VisualTarget[] {
  *  and every registered target that holds the one it points at (a tile, a
  *  centre view, a workflow's detail). */
 export const BOX_IDS = ["right.panel", "right.tabs", "main.tabs", "main.workflow.tabs", "main.workflow.view",
-                        "main.workflow.phases", "main.folders.tabs"] as const;
+                        "main.workflow.phases", "main.folders.tabs", "main.work.tabs"] as const;
 export type BoxId = typeof BOX_IDS[number];
 
 const boxes = new Map<Element, BoxId>();

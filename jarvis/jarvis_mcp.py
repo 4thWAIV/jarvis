@@ -2262,12 +2262,17 @@ TOOL_SPECS = [
             "with one, its source (a zip or folder on this Mac), its pieces in dependency "
             "order with exactly who is on each (an agent, a run, a workflow, or him, and the "
             "agent's own worker label beside it), each piece's latest note, the pieces it "
-            "waits for, its evidence, its open decisions and latest events. "
+            "waits for, its evidence, everything holding it up, its open decisions (with "
+            "any package to look at first, which open_package_page shows) and answered "
+            "ones, and its latest events. The main list is the open items; with history, "
+            "the items closed or finished a while, which an item's id or title still reads. "
             "The ONLY correct way to answer what work is in progress and who is doing it."),
         "inputSchema": {
             "type": "object",
             "properties": {"item": {"type": "string",
-                                    "description": "Its title as he said it, or its id."}},
+                                    "description": "Its title as he said it, or its id."},
+                           "history": {"type": "boolean",
+                                       "description": "List the History instead of the open items."}},
         },
     },
     {

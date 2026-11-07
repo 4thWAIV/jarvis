@@ -571,6 +571,14 @@ def _header(scope: dict, name: bytes) -> Optional[str]:
     return None
 
 
+def access_key_label(scope: dict) -> Optional[str]:
+    """The label of the access key the request came in on, or None when it
+    came in another way."""
+    if not admitted_by_access_key(scope):
+        return None
+    return access_keys.label_of(bearer(_header(scope, b"authorization")))
+
+
 def scope_authorized(scope: dict) -> bool:
     """Whether the request may pass; how it was admitted is written into
     the scope (ADMITTED) for the routes that care."""

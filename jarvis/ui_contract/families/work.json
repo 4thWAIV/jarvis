@@ -2,22 +2,36 @@
   "family": "work",
   "owner": "coverage-main",
   "views": [],
-  "commands": [],
+  "commands": [
+    {"id": "work.tab.select", "label": "Show one of the open work item's tabs",
+     "view": "main.work",
+     "args": {"itemId": {"type": "key", "entity": "workItem"},
+              "tab": {"type": "enum", "values": ["overview", "decisions", "blocking", "pieces", "reports"]}},
+     "required": ["itemId", "tab"], "actors": ["human", "brain"], "effects": []},
+    {"id": "work.showHistory", "label": "Show or hide the Work tab's History: items closed, or done a while",
+     "view": "right.workflows",
+     "args": {"shown": {"type": "boolean"}},
+     "required": ["shown"], "actors": ["human", "brain"], "effects": [{"effect": "list.filtered"}]}
+  ],
   "kinds": [
-    {"kind": "workList", "entity": null, "label": "Work list", "parts": ["list"],
+    {"kind": "workList", "entity": null, "label": "Work list", "parts": ["list", "showHistory", "history"],
      "presentations": [{"view": "right.workflows", "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}}]},
     {"kind": "workGroup", "entity": "workGroup", "label": "Work group", "parts": ["head"],
      "presentations": [{"view": "right.workflows", "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}}]},
     {"kind": "workItem", "entity": "workItem", "label": "Work item",
-     "parts": ["row", "state", "update", "mark", "marks", "header", "close", "source", "pieces", "decisions"],
-     "presentations": [{"view": "right.workflows", "parts": ["row", "state", "update", "mark", "marks"],
+     "parts": ["row", "state", "update", "mark", "decisionCount", "blocker", "header", "close", "banner", "source",
+               "who", "pieces", "decisions", "answered", "blocking", "reports", "tab.overview", "tab.decisions", "tab.blocking", "tab.pieces", "tab.reports"],
+     "presentations": [{"view": "right.workflows", "parts": ["row", "state", "update", "mark", "decisionCount", "blocker"],
                         "reveal": {"command": "right.tab.select", "args": {"tab": "workflows"}}},
-                       {"view": "main.work", "parts": ["header", "state", "update", "close", "source", "pieces", "decisions"],
+                       {"view": "main.work", "parts": ["header", "state", "update", "close", "banner", "source", "who", "pieces",
+                                                  "decisions", "answered", "blocking", "reports", "tab.overview", "tab.decisions", "tab.blocking", "tab.pieces", "tab.reports"],
                         "reveal": {"command": "work.open", "args": {"itemId": "$key"}}}]},
     {"kind": "workPiece", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work piece",
      "parts": ["row", "who", "worker", "state", "mark", "note", "after", "evidence"],
      "presentations": [{"view": "main.work"}]},
     {"kind": "workDecision", "entity": null, "keyOf": ["workItem", "workPart"], "label": "Work decision",
-     "parts": ["row", "options", "answer"], "presentations": [{"view": "main.work"}]}
+     "parts": ["row", "options", "answer", "package"], "presentations": [{"view": "main.work"}]},
+    {"kind": "workBlocker", "entity": null, "keyOf": ["workItem", "workBlocker"], "label": "What holds a work item up",
+     "parts": ["row"], "presentations": [{"view": "main.work"}]}
   ]
 }
