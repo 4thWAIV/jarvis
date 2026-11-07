@@ -93,8 +93,9 @@ export const rightEn = {
   "right.work.state.blocked": "Blocked",
   "right.work.state.done": "Done",
   "right.work.area": "Area",
-  "right.work.piecesBlocked": "Pieces blocked: {count}",
-  "right.work.piecesWaiting": "Pieces waiting on you: {count}",
+  "right.work.history": "History ({count})",
+  "right.work.decisionCount": "Decisions needed: {count}",
+  "right.work.more": "+{count} more",
   "right.work.mark.blocked": "Blocked",
   "right.work.mark.waiting": "Waiting on you",
 

@@ -9666,7 +9666,10 @@ def _work_recorded(item, kind: str, detail: Optional[dict] = None) -> None:
     answered with none left open, the item no longer blocked or done)."""
     _send_to_session_clients({"type": "work"})
     said_state = (detail or {}).get("state") if kind == work_store.UPDATE else None
-    if kind == work_store.DECISION_NEEDED:
+    if kind == work_store.CLOSED:
+        # Closed for good: nothing it said is news any longer.
+        _attention_resolved("work", item.id)
+    elif kind == work_store.DECISION_NEEDED:
         _attend("work", item.id, "decision_needed", untrusted={"work": item.title})
     elif said_state in _WORK_NEWS_STATES:
         _attend("work", item.id, _WORK_NEWS_STATES[said_state], untrusted={"work": item.title})
@@ -9715,30 +9718,65 @@ def _work_piece(p, names: work_api.WhoNames) -> str:
     return line
 
 
+# How each kind of blocker reads to the brain (work_store.BLOCKER_KINDS).
+_WORK_BLOCKER_SAID = {
+    work_store.DECISION_BLOCKER: "his decision {key}: {title}",
+    work_store.ITEM_BLOCKED: "the item is blocked: {text}",
+    work_store.PIECE_BLOCKED: "piece {key} ({title}) is blocked: {text}",
+    work_store.PIECE_WAITING: "piece {key} ({title}) waits on him: {text}",
+    work_store.PIECE_AFTER: "piece {key} ({title}) waits for {after}",
+}
+
+
+def _work_blocker(b) -> str:
+    return _WORK_BLOCKER_SAID[b.kind].format(key=b.key, title=b.title, text=b.text or "no note",
+                                             after=", ".join(b.waits_for))
+
+
 def _work_line(item) -> str:
-    """One item on the list: its state, how many of its pieces are blocked
-    or waiting on him, and its one useful update."""
-    marks = [f"{n} piece{'s' if n != 1 else ''} {what}" for n, what in
-             ((item.blocked_pieces, "blocked"), (item.waiting_pieces, "waiting on him")) if n]
+    """One item on the list: its state, how many decisions wait on him, how
+    many of its pieces are blocked or waiting on him, its one useful update,
+    and the first thing holding it up."""
+    marks = [f"{n} {one if n == 1 else many}" for n, one, many in (
+        (len(item.decisions), "decision needed", "decisions needed"),
+        (item.blocked_pieces, "piece blocked", "pieces blocked"),
+        (item.waiting_pieces, "piece waiting on him", "pieces waiting on him")) if n]
+    others = [b for b in item.blockers if b.kind != work_store.DECISION_BLOCKER]
     return (f"{item.id}: {item.title}. {item.state}{', no recent update' if item.quiet else ''}"
-            + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}")
+            + (", closed" if item.closed_at else "")
+            + (f" ({', '.join(marks)})" if marks else "") + f". {item.headline}"
+            + (f" Held up by: {_work_blocker(others[0])}"
+               + (f" (and {len(others) - 1} more)" if len(others) > 1 else "") if others else ""))
 
 
 def _work_detail(item) -> str:
-    """What the agents reporting it wrote: its title, area, source, pieces in
-    order and who is on each, open decisions and the latest events. Untrusted."""
+    """What the agents reporting it wrote: its title, area, source, what is
+    holding it up, pieces in order and who is on each, open decisions (with
+    the package each asks him to look at) and answered ones, and the latest
+    events. Untrusted."""
     lines = [f"{item.id}: {item.title}. State {item.state}"
-             + (", no recent update" if item.quiet else "") + ".",
+             + (", no recent update" if item.quiet else "")
+             + (", closed" if item.closed_at else "")
+             + (", in History" if item.history else "") + ".",
              f"Area: {item.area}." if item.area else "Area: none, grouped by its source folder.",
              f"Source: {item.source_kind} {item.source_path} ({item.source}).",
              f"Latest update: {item.latest_update}"]
+    lines += [f"held up by {_work_blocker(b)}" for b in item.blockers]
     names = work_api.WhoNames()
     for p in item.pieces:
         lines.append(_work_piece(p, names))
     for d in item.decisions:
         lines.append(f"open decision {d.key}: {d.question}"
                      + (f" Options: {d.options}." if d.options else "")
-                     + (f" Recommended: {d.recommendation}." if d.recommendation else ""))
+                     + (f" Recommended: {d.recommendation}." if d.recommendation else "")
+                     + (f" Package to look at first: {d.package} (open_package_page shows it)."
+                        if d.package else ""))
+    for a in item.answered:
+        lines.append((f"withdrawn decision {a.key}: {a.question} Withdrawn by the agent that "
+                      f"asked it, not answered by him: {a.answer}" if a.where == work_store.WITHDRAWN
+                      else f"answered decision {a.key}: {a.question} His answer ({a.where}): "
+                           f"{a.answer}")
+                     + (f" Package: {a.package}." if a.package else ""))
     for e in work_store.latest(item.id, WORK_EVENTS_SHOWN):
         lines.append(f"event {e.seq} {e.kind}: {e.summary}")
     return "\n".join(lines)
@@ -9762,11 +9800,21 @@ def tool_work_status(args: dict) -> str:
         item, problem = _work_or_explain(reference)
         if problem:
             return problem
-        return (f"One work item, {item.state}.\n"
+        return (f"One work item, {item.state}{', in History' if item.history else ''}.\n"
                 + _wrap_untrusted(_WORK_WRAP_NAME, _work_detail(item)))
+    if args.get("history"):
+        past = work_store.listing(history=True)
+        if not past:
+            return "Nothing is in the Work History, sir."
+        return (f"{_say_number(len(past)).capitalize()} work item{'s' if len(past) != 1 else ''} "
+                "in History, the most recently closed or finished first.\n"
+                + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(_work_line(i) for i in past)))
     items = work_store.listing()
+    in_history = len(work_store.listing(history=True))
+    later = (f" {_say_number(in_history).capitalize()} more in History; work_status with "
+             "history lists them." if in_history else "")
     if not items:
-        return "Nothing is on the Work list, sir."
+        return "Nothing is on the Work list, sir." + later
     n = len(items)
     waiting = sum(i.state == work_store.WAITING for i in items)
     blocked = sum(i.state == work_store.BLOCKED or i.blocked_pieces > 0 for i in items)
@@ -9777,7 +9825,7 @@ def tool_work_status(args: dict) -> str:
     return (f"{_say_number(n).capitalize()} work item{'s' if n != 1 else ''}"
             + (f", {_say_number(waiting)} waiting on his decision" if waiting else "")
             + (f", {_say_number(blocked)} blocked or with a blocked piece" if blocked else "")
-            + ".\n" + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
+            + "." + later + "\n" + _wrap_untrusted(_WORK_WRAP_NAME, "\n".join(lines)))
 
 
 async def tool_answer_work_decision(args: dict) -> str:

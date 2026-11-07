@@ -322,3 +322,79 @@ def test_the_reporter_sends_area_worker_order_and_evidence(wired, monkeypatch, c
         "Design", "verifying", "logo build agent", ["design"])
     assert [(e.kind, e.value) for e in logo.evidence] == [
         ("commit", "abc1234"), ("path", str(tmp_path / "logo.svg")), ("url", "https://x.example/pr/1")]
+
+
+def test_only_the_asking_key_withdraws_and_only_he_answers(wired):
+    server, _, store, folder = wired
+    client = TestClient(server.app)
+    from jarvis import access_keys
+    asker = _key()
+    other = {"Authorization": f"Bearer {access_keys.create('other-reporter', ['work'])}"}
+    wid = _start(client, asker, folder)
+    r = client.post(f"/api/work/{wid}/events", headers=asker, json={
+        "kind": "decision_needed", "summary": "Which colour?",
+        "detail": {"key": "colour", "asked_by": "key:other-reporter", "package": "colour-deck"}})
+    assert r.status_code == 200 and r.json()["item"]["decisions"][0]["package"] == "colour-deck"
+    assert _events(store) == [("work", "decision_needed")]
+
+    def withdraw(headers):
+        return client.post(f"/api/work/{wid}/events", headers=headers, json={
+            "kind": "decision_withdrawn", "summary": "Asked too early.", "detail": {"key": "colour"}})
+    r = withdraw(other)
+    assert r.status_code == 409 and "Only the agent that asked" in r.json()["error"], \
+        "a reporter's own asked_by is never believed"
+    r = withdraw(ORIGIN)
+    assert r.status_code == 409 and "he answers it" in r.json()["error"]
+    r = withdraw(asker)
+    assert r.status_code == 200, r.text
+    item = r.json()["item"]
+    assert item["decisions"] == [] and item["answered"][0]["where"] == "withdrawn"
+    assert store.get("work", wid).state == "resolved", "no decision is needed any more"
+    r = client.post(f"/api/work/{wid}/decisions/colour", json={"answer": "blue"}, headers=ORIGIN)
+    assert r.status_code == 409
+
+
+def test_the_list_keeps_history_apart_and_the_brain_reads_it_all(wired, monkeypatch):
+    server, _, _, folder = wired
+    client = TestClient(server.app)
+    key = _key()
+    from jarvis import work_store as ws
+    open_id, closed_id = _start(client, key, folder), _start(client, key, folder)
+    for kind, summary, detail in (
+            ("piece", "Stuck.", {"key": "fonts", "who": {"kind": "tim"}, "state": "blocked"}),
+            ("decision_needed", HOSTILE, {"key": "logo", "package": "logo-deck"}),
+            ("decision_needed", "Tone?", {"key": "tone"})):
+        assert client.post(f"/api/work/{open_id}/events", headers=key, json={
+            "kind": kind, "summary": summary, "detail": detail}).status_code == 200
+    client.post(f"/api/work/{open_id}/decisions/tone", json={"answer": "dry"}, headers=ORIGIN)
+    assert client.post(f"/api/work/{closed_id}/events", headers=key, json={
+        "kind": "closed", "summary": "Not needed.", "detail": {}}).status_code == 200
+    body = client.get("/api/work").json()
+    assert [i["id"] for i in body["items"]] == [open_id]
+    assert [i["id"] for i in body["history"]] == [closed_id]
+    listing = server.tool_work_status({})
+    head, _, block = listing.partition("\n")
+    assert "One more in History; work_status with history lists them." in head
+    assert "1 decision needed" in block and "Held up by: piece fonts" in block
+    detail = server.tool_work_status({"item": open_id})
+    assert "Package to look at first: logo-deck" in detail
+    assert "held up by his decision logo" in detail and "answered decision tone" in detail
+    past = server.tool_work_status({"history": True})
+    assert past.startswith("One work item in History") and closed_id in past
+    assert "in History" in server.tool_work_status({"item": closed_id}).split("\n")[0]
+
+
+def test_the_reporter_withdraws_closes_and_links_a_package(wired, monkeypatch, capsys):
+    server, _, _, folder = wired
+    key = _key()
+    from jarvis import work_report, work_store
+    monkeypatch.setattr(work_report, "_client", lambda cert: TestClient(server.app, headers=key))
+    assert work_report.main(["work_report.py", "start", "Rebrand", "--folder", folder]) == 0
+    wid = capsys.readouterr().out.strip()
+    assert work_report.main(["work_report.py", "decision", wid, "logo", "Which logo?",
+                             "--package", "logo-deck"]) == 0
+    assert work_store.get(wid).decisions[0].package == "logo-deck"
+    assert work_report.main(["work_report.py", "withdraw", wid, "logo", "Asked too early."]) == 0
+    assert work_store.get(wid).answered[0].answer == "Asked too early."
+    assert work_report.main(["work_report.py", "close", wid]) == 0
+    assert work_store.get(wid).history

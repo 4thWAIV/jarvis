@@ -58,7 +58,8 @@ def _item(id_, title, state, quiet_at=None, updated_at=None, pieces=(), **more):
             "quiet": quiet_at is not None and quiet_at < time.time(), "latest_update": f"{title}: going.",
             "headline": f"{title}: going.", "revision": 2, "created_at": 1_000_000.0,
             "updated_at": updated_at or 1_000_100.0, "area": "Voice", "blocked_pieces": 0,
-            "waiting_pieces": 0, "pieces": list(pieces), "decisions": [], "quiet_at": quiet_at, **more}
+            "waiting_pieces": 0, "pieces": list(pieces), "decisions": [], "answered": [], "blockers": [],
+            "closed_at": None, "history": False, "quiet_at": quiet_at, **more}
 
 
 class _Work:
@@ -94,7 +95,8 @@ class _Work:
         items = self.items()
         if path == "api/work":
             await route.fulfill(json={"items": items, "groups": [
-                {"grouped_by": "area", "name": "Voice", "label": "Voice", "ids": [i["id"] for i in items]}]})
+                {"grouped_by": "area", "name": "Voice", "label": "Voice", "ids": [i["id"] for i in items]}],
+                "history": []})
         else:
             item = next(i for i in items if path.endswith(i["id"]))
             await route.fulfill(json={"item": item, "events": []})
@@ -146,15 +148,19 @@ async def _animation(page, selector, pseudo):
         [selector, pseudo])
 
 
-async def _frames(page, selector, name, count=12, every=0.12):
-    """Frames of one part of the page in motion, for the presentation."""
+async def _frames(page, selector, name, seconds=4.2):
+    """Frames of one part of the page in motion for `seconds`, each with the
+    moment it was taken (times.txt), for the presentation."""
     if not FRAMES:
         return
     folder = Path(FRAMES) / name
     folder.mkdir(parents=True, exist_ok=True)
-    for n in range(count):
+    times, start, n = [], time.monotonic(), 0
+    while time.monotonic() - start < seconds:
+        times.append(time.monotonic() - start)
         await page.locator(selector).screenshot(path=str(folder / f"{n:03}.png"), animations="allow")
-        await asyncio.sleep(every)
+        n += 1
+    (folder / "times.txt").write_text("\n".join(f"{t:.3f}" for t in times))
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -192,6 +198,7 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
 
         # ── the detail's pieces ────────────────────────────────────────
         await page.click(row)
+        await page.click("#work-detail .work-tabs [role=tab][title=Pieces]")
         piece = "#work-detail .work-piece[data-key={}]"
         await page.locator(piece.format("engine")).wait_for(timeout=10000)
         looks = await page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#work-detail .work-piece')]
@@ -208,25 +215,25 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         assert await page.evaluate("window.__flashes") == []
         await _frames(page, "#work-detail .work-pieces", "pieces")
 
-        # ── a report arrives: one flash, on its piece, row and update ──
+        # ── a report arrives: one flash, on its piece and its row ──────
         work.engine_heard = time.time()
         work.engine_quiet = time.time() + 2.5
         sessions.ws.send(json.dumps({"type": "work"}))
         try:
-            await page.wait_for_function("() => window.__flashes.length >= 3", timeout=10000)
+            await page.wait_for_function("() => window.__flashes.length >= 2", timeout=10000)
         except Exception:
             raise AssertionError(await page.evaluate("""() => ({f: window.__flashes,
               rows: [...document.querySelectorAll('.work-row')].map(r => r.dataset.activity),
               mo: matchMedia('(prefers-reduced-motion: reduce)').matches})"""))
         await asyncio.sleep(0.3)
         flashed = await page.evaluate("window.__flashes")
-        assert sorted(flashed) == sorted(["engine", "work-1", "work-latest"]), flashed
+        assert sorted(flashed) == ["engine", "work-1"], flashed
         if FRAMES:
-            await page.evaluate("window.__flashes = []")
+            capture = asyncio.create_task(_frames(page, "#work-detail .work-pieces", "flash", seconds=1.6))
+            await asyncio.sleep(0.3)
             work.engine_heard = time.time()
             sessions.ws.send(json.dumps({"type": "work"}))
-            await page.wait_for_function("() => window.__flashes.length >= 1", timeout=10000)
-            await _frames(page, piece.format("engine"), "flash", count=10, every=0.06)
+            await capture
 
         # ── nothing more reported: it goes paused by itself, no hint ───
         await page.wait_for_function(
@@ -256,6 +263,14 @@ async def test_work_nodes_show_where_work_moves_and_where_it_has_paused(page_pla
         assert await _animation(page, piece.format("engine"), "::before") == "none"
         await page.emulate_media(reduced_motion="no-preference")
         assert await _animation(page, row, "::after") == "activity-travel"
+
+        # ── the Overview's latest update flashes for a report too ──────
+        await page.click("#work-detail .work-tabs [role=tab][title=Overview]")
+        await page.locator("#work-detail .work-latest").wait_for(timeout=10000)
+        await page.evaluate("window.__flashes = []")
+        work.engine_heard = time.time()
+        sessions.ws.send(json.dumps({"type": "work"}))
+        await page.wait_for_function("() => window.__flashes.includes('work-latest')", timeout=10000)
 
         # ── a workflow's phases and tasks ──────────────────────────────
         await page.click(".work-panel .workflow-row[data-workflow-id=wf-1]")

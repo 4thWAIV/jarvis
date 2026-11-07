@@ -16,7 +16,7 @@ import { SaidText, useT, type Said } from "./locale";
 
 type ElementRef = (el: Element | null) => void;
 
-export function DecisionCard({ question, options, recommendation, answer, ui, dataKey, icon }: {
+export function DecisionCard({ question, options, recommendation, answer, ui, dataKey, icon, more }: {
   question: string;
   options: string[];
   recommendation: string | null;
@@ -25,6 +25,9 @@ export function DecisionCard({ question, options, recommendation, answer, ui, da
   ui: { whole: ElementRef; part: (name: string) => ElementRef };
   dataKey: string;
   icon?: ReactNode;
+  /** Anything the decision brings with it, under the recommendation (a work
+   *  item's package to open). */
+  more?: ReactNode;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -49,6 +52,7 @@ export function DecisionCard({ question, options, recommendation, answer, ui, da
       {icon}
       <p className="workflow-decision-question">{question}</p>
       {recommendation && <p className="workflow-recommended">★ {recommendation}</p>}
+      {more}
       {options.length > 0 && (
         <div className="workflow-options" ref={ui.part("options")}>
           {options.map((option) => (

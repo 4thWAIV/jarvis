@@ -150,6 +150,7 @@ export const UI_CONTRACT = {
     "package": "^[A-Za-z0-9._-]{1,128}$",
     "workItem": "^[A-Za-z0-9._-]{1,128}$",
     "workPart": "^[a-z0-9][a-z0-9-]{0,63}$",
+    "workBlocker": "^(decision|blocked|piece_blocked|piece_waiting|piece_after):[a-z0-9-]{0,64}$",
     "workGroup": "^(area|folder):[^\\u0000]{1,1100}$",
     "member": "^[A-Za-z0-9]{1,64}$"
   },
@@ -583,12 +584,22 @@ export const UI_CONTRACT = {
     },
     {
       "id": "work.open",
-      "label": "Open one work item's detail in the centre; the Work list stays in view",
+      "label": "Open one work item's detail in the centre, on its first tab or the one named; the Work list stays in view",
       "view": "main.work",
       "args": {
         "itemId": {
           "type": "key",
           "entity": "workItem"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "decisions",
+            "blocking",
+            "pieces",
+            "reports"
+          ]
         }
       },
       "required": [
@@ -1528,6 +1539,60 @@ export const UI_CONTRACT = {
         }
       ],
       "family": "workflows"
+    },
+    {
+      "id": "work.tab.select",
+      "label": "Show one of the open work item's tabs",
+      "view": "main.work",
+      "args": {
+        "itemId": {
+          "type": "key",
+          "entity": "workItem"
+        },
+        "tab": {
+          "type": "enum",
+          "values": [
+            "overview",
+            "decisions",
+            "blocking",
+            "pieces",
+            "reports"
+          ]
+        }
+      },
+      "required": [
+        "itemId",
+        "tab"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [],
+      "family": "work"
+    },
+    {
+      "id": "work.showHistory",
+      "label": "Show or hide the Work tab's History: items closed, or done a while",
+      "view": "right.workflows",
+      "args": {
+        "shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "actors": [
+        "human",
+        "brain"
+      ],
+      "effects": [
+        {
+          "effect": "list.filtered"
+        }
+      ],
+      "family": "work"
     },
     {
       "id": "voice.range",
@@ -3100,7 +3165,9 @@ export const UI_CONTRACT = {
       "entity": null,
       "label": "Work list",
       "parts": [
-        "list"
+        "list",
+        "showHistory",
+        "history"
       ],
       "presentations": [
         {
@@ -3144,13 +3211,24 @@ export const UI_CONTRACT = {
         "state",
         "update",
         "mark",
-        "marks",
+        "decisionCount",
+        "blocker",
         "activity",
         "header",
         "close",
+        "banner",
         "source",
+        "who",
         "pieces",
-        "decisions"
+        "decisions",
+        "answered",
+        "blocking",
+        "reports",
+        "tab.overview",
+        "tab.decisions",
+        "tab.blocking",
+        "tab.pieces",
+        "tab.reports"
       ],
       "presentations": [
         {
@@ -3160,7 +3238,8 @@ export const UI_CONTRACT = {
             "state",
             "update",
             "mark",
-            "marks",
+            "decisionCount",
+            "blocker",
             "activity"
           ],
           "reveal": {
@@ -3177,9 +3256,19 @@ export const UI_CONTRACT = {
             "state",
             "update",
             "close",
+            "banner",
             "source",
+            "who",
             "pieces",
-            "decisions"
+            "decisions",
+            "answered",
+            "blocking",
+            "reports",
+            "tab.overview",
+            "tab.decisions",
+            "tab.blocking",
+            "tab.pieces",
+            "tab.reports"
           ],
           "reveal": {
             "command": "work.open",
@@ -3228,7 +3317,26 @@ export const UI_CONTRACT = {
       "parts": [
         "row",
         "options",
-        "answer"
+        "answer",
+        "package"
+      ],
+      "presentations": [
+        {
+          "view": "main.work"
+        }
+      ],
+      "family": "work"
+    },
+    {
+      "kind": "workBlocker",
+      "entity": null,
+      "keyOf": [
+        "workItem",
+        "workBlocker"
+      ],
+      "label": "What holds a work item up",
+      "parts": [
+        "row"
       ],
       "presentations": [
         {
@@ -3987,7 +4095,9 @@ export interface CommandArgs {
   "voice.range": { range: "15m" | "1h" | "1d"; };
   "voice.zoom": { at?: number; };
   "work.close": { };
-  "work.open": { itemId: string; };
+  "work.open": { itemId: string; tab?: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
+  "work.showHistory": { shown: boolean; };
+  "work.tab.select": { itemId: string; tab: "overview" | "decisions" | "blocking" | "pieces" | "reports"; };
   "workflow.close": { };
   "workflow.events.filter": { workflowId: string; kind?: string; };
   "workflow.open": { workflowId: string; tab?: "overview" | "phases" | "tasks" | "transcript" | "progress" | "waits" | "decisions" | "blockers" | "events"; };

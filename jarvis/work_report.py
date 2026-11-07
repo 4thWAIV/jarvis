@@ -13,7 +13,10 @@ workflow_report.py, whose standard-library client it uses.
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
     python work_report.py decision <id> <key> <question> [--option <option> ...] [--recommendation <text>]
+                          [--package <package id or name>]
     python work_report.py answer <id> <key>
+    python work_report.py withdraw <id> <key> <reason>
+    python work_report.py close <id> [<summary>]
 
 A state is planned, working, verifying, waiting_on_tim, blocked or done.
 Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
@@ -21,7 +24,13 @@ Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
 groups items on the Work tab (an empty one goes back to the source's
 folder); `--worker` is your own words for who did a piece, shown beside its
 owner; `--after` names the pieces it waits on (an empty value clears them);
-each `--evidence` is added to the piece's. `start` prints the item's id. `answer` prints the
+each `--evidence` is added to the piece's. A decision's `--package` names
+a page package (by id or name) the user can open from the decision. `withdraw`
+takes back a decision you asked, with why (only its asker can; the user's
+answer is never yours to give). `close`
+moves the item to History for good (nothing is deleted, and nothing more
+can be reported to it); a done item moves there by itself after a few
+minutes. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
 he has not.
 """
@@ -98,6 +107,14 @@ def main(argv: list[str]) -> int:
     decision.add_argument("question")
     decision.add_argument("--option", action="append", default=[])
     decision.add_argument("--recommendation")
+    decision.add_argument("--package")
+    withdraw = sub.add_parser("withdraw")
+    withdraw.add_argument("id")
+    withdraw.add_argument("key")
+    withdraw.add_argument("reason")
+    close = sub.add_parser("close")
+    close.add_argument("id")
+    close.add_argument("summary", nargs="?", default="Closed.")
     answer = sub.add_parser("answer")
     answer.add_argument("id")
     answer.add_argument("key")
@@ -128,6 +145,10 @@ def main(argv: list[str]) -> int:
                 detail["state"] = args.state
             if args.area is not None:
                 detail["area"] = args.area
+        elif args.command == "close":
+            kind, detail = "closed", {}
+        elif args.command == "withdraw":
+            kind, detail = "decision_withdrawn", {"key": args.key}
         elif args.command == "piece":
             kind, detail = "piece", {"key": args.key}
             for name in ("title", "state"):
@@ -145,7 +166,10 @@ def main(argv: list[str]) -> int:
             kind, detail = "decision_needed", {"key": args.key, "options": args.option}
             if args.recommendation:
                 detail["recommendation"] = args.recommendation
-        summary = args.question if args.command == "decision" else args.summary
+            if args.package:
+                detail["package"] = args.package
+        summary = (args.question if args.command == "decision"
+                   else args.reason if args.command == "withdraw" else args.summary)
         item = _post(client, f"/api/work/{args.id}/events",
                      {"kind": kind, "summary": summary, "detail": detail})["item"]
         print(_line(item))

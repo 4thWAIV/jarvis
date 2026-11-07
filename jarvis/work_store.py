@@ -16,7 +16,9 @@ schema version (`work_schema`, `run_store.migrate`).
 
 Read-time only, never stored: an open decision shows the item as waiting on
 Tim; a working or verifying item with no event for QUIET_AFTER_SEC reads as
-`quiet` ("no recent update"); the group an item is listed under (its area,
+`quiet` ("no recent update"); whether it is in History (closed, or done for
+DONE_LINGER_SEC; nothing is ever deleted); what is holding it up
+(`blockers`); the group an item is listed under (its area,
 else its source folder); how many of its pieces are blocked or waiting on
 Tim; and, for each piece, which of the pieces it comes after are not done
 yet, with the pieces in the order their dependencies give.
@@ -70,7 +72,12 @@ WHO_KINDS = (AGENT, RUN, WORKFLOW, TIM)
 
 # What a reporter may send; `decision_made` is his alone (the page, his voice).
 UPDATE, PIECE, DECISION_NEEDED, DECISION_MADE = "update", "piece", "decision_needed", "decision_made"
-REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED)
+# The asker taking its own open decision back, with why: never his answer.
+DECISION_WITHDRAWN = "decision_withdrawn"
+WITHDRAWN = "withdrawn"
+# `closed` moves an item to History for good; nothing more is reported to it.
+CLOSED = "closed"
+REPORTED_KINDS = (UPDATE, PIECE, DECISION_NEEDED, DECISION_WITHDRAWN, CLOSED)
 CREATED = "created"
 
 # What an item is listed under: the area it was given, else its source folder.
@@ -82,12 +89,24 @@ _COMMIT = re.compile(r"[0-9a-fA-F]{7,40}")
 _URL = re.compile(r"https?://[^\s]{1,1000}", re.IGNORECASE)
 
 QUIET_AFTER_SEC = 10 * 60
+# A done item stays on the main list this long, then moves to History.
+DONE_LINGER_SEC = 5 * 60
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 TITLE_MAX = 120
 SUMMARY_MAX = 300
 REF_MAX = 128
 PATH_MAX = 1024
 OPTIONS_MAX = 8
+ANSWERED_SHOWN = 20
+# A package is named as the packages are (its id, or its own name).
+PACKAGE_REF = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+# What can hold an item up, in the order they are listed: his decisions
+# first, the item itself said to be blocked, its blocked pieces, its pieces
+# waiting on him, then pieces waiting on other pieces not yet done.
+DECISION_BLOCKER, ITEM_BLOCKED, PIECE_BLOCKED, PIECE_WAITING, PIECE_AFTER = (
+    "decision", "blocked", "piece_blocked", "piece_waiting", "piece_after")
+BLOCKER_KINDS = (DECISION_BLOCKER, ITEM_BLOCKED, PIECE_BLOCKED, PIECE_WAITING, PIECE_AFTER)
 PIECES_MAX = 50
 AREA_MAX = 60
 WORKER_MAX = 80
@@ -158,7 +177,18 @@ _PIECE_DETAIL = """
 """
 
 # Each step is appended, never changed (run_store.migrate).
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL}
+# 3: the package a decision asks him to look at, by its id or name; who
+# asked it (the access key's label) and whether that asker withdrew it.
+# And when an item was closed (it moves to History; nothing is deleted).
+_DECISION_PACKAGE = """
+    ALTER TABLE work_decisions ADD COLUMN package TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_items ADD COLUMN closed_at REAL;
+    ALTER TABLE work_decisions ADD COLUMN asked_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_decisions ADD COLUMN withdrawn_at REAL;
+    ALTER TABLE work_decisions ADD COLUMN withdrawn_reason TEXT;
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -204,6 +234,29 @@ class Decision:
     options: list[str]
     recommendation: str
     opened_at: float
+    package: str = ""         # a package to look at before answering: its id or name
+
+
+@dataclass(frozen=True)
+class Answered:
+    """A decision that is no longer open: answered by him, or withdrawn by
+    the agent that asked it."""
+    key: str
+    question: str
+    answer: str               # his answer, or the asker's reason for withdrawing it
+    where: str                # page or voice; `withdrawn` when the asker took it back
+    answered_at: float
+    package: str = ""
+
+
+@dataclass(frozen=True)
+class Blocker:
+    """One thing holding the item up, worked out at read time."""
+    kind: str                 # one of BLOCKER_KINDS
+    key: str                  # the decision's or piece's key; "" for the item itself
+    title: str                # the question, the piece's title, or the item's title
+    text: str = ""            # the piece's latest note, or the item's latest update
+    waits_for: list[str] = field(default_factory=list)   # piece_after: the keys not done
 
 
 @dataclass(frozen=True)
@@ -238,6 +291,10 @@ class WorkItem:
     waiting_pieces: int = 0
     pieces: list[Piece] = field(default_factory=list)   # in dependency order
     decisions: list[Decision] = field(default_factory=list)
+    closed_at: Optional[float] = None
+    history: bool = False     # closed, or done for DONE_LINGER_SEC: listed under History
+    answered: list[Answered] = field(default_factory=list)  # newest first
+    blockers: list[Blocker] = field(default_factory=list)   # in BLOCKER_KINDS order
     # Read time only: as a piece's, from its latest report.
     quiet_at: Optional[float] = None
 
@@ -397,6 +454,8 @@ def record(event: WorkEvent) -> WorkItem:
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (event.item_id,)).fetchone()
         if row is None:
             raise WorkRefused("There is no work item with that id.")
+        if row["closed_at"] is not None and event.kind != DECISION_MADE:
+            raise WorkRefused("That work item is closed; it is kept in History. Start a new one.")
         kept = _apply(conn, event.item_id, event.kind, summary, detail, now)
         conn.execute("UPDATE work_items SET latest_update=?, revision=revision+1, updated_at=? "
                      "WHERE id=?", (summary, now, event.item_id))
@@ -419,6 +478,9 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         return kept
     if kind == PIECE:
         return _apply_piece(conn, item_id, summary, detail, now)
+    if kind == CLOSED:
+        conn.execute("UPDATE work_items SET closed_at=? WHERE id=?", (now, item_id))
+        return {}
     if kind == DECISION_NEEDED:
         key = _slug(detail.get("key"), "The decision's key")
         options = detail.get("options") or []
@@ -426,16 +488,24 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
             raise WorkRefused(f"Give at most {OPTIONS_MAX} options, as a list.")
         options = [o for o in (_one_line(o, TITLE_MAX) for o in options) if o]
         recommendation = _one_line(detail.get("recommendation"), SUMMARY_MAX)
+        package = str(detail.get("package") or "").strip()
+        if package and not PACKAGE_REF.fullmatch(package):
+            raise WorkRefused("A package is named by its id or its name: letters, digits, "
+                              "dots, dashes and underscores.")
         # An answered key is never asked again: its reporter reads the answer
         # by key (`work_report.py answer`), so a new question needs a new key.
-        if conn.execute("SELECT 1 FROM work_decisions WHERE item_id=? AND key=? AND answer "
-                        "IS NOT NULL", (item_id, key)).fetchone():
-            raise WorkRefused(f"Decision {key} was already answered; ask with a new key.")
+        if conn.execute("SELECT 1 FROM work_decisions WHERE item_id=? AND key=? AND (answer "
+                        "IS NOT NULL OR withdrawn_at IS NOT NULL)", (item_id, key)).fetchone():
+            raise WorkRefused(f"Decision {key} was already answered or withdrawn; ask with a new key.")
         conn.execute(
             "INSERT OR REPLACE INTO work_decisions (item_id, key, question, options, "
-            "recommendation, opened_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (item_id, key, summary, json.dumps(options), recommendation, now))
-        return {"key": key, "options": options, "recommendation": recommendation}
+            "recommendation, opened_at, package, asked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (item_id, key, summary, json.dumps(options), recommendation, now, package,
+             str(detail.get("asked_by") or "")))
+        return {"key": key, "options": options, "recommendation": recommendation,
+                "package": package}
+    if kind == DECISION_WITHDRAWN:
+        return _withdraw(conn, item_id, summary, detail, now)
     # DECISION_MADE: his answer, from the page or his voice.
     key = _slug(detail.get("key"), "The decision's key")
     answer = _one_line(detail.get("answer"), SUMMARY_MAX)
@@ -443,11 +513,28 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         raise WorkRefused("An answer needs words.")
     where = detail.get("where") if detail.get("where") in ("page", "voice") else "page"
     done = conn.execute("UPDATE work_decisions SET answer=?, answered_where=?, answered_at=? "
-                        "WHERE item_id=? AND key=? AND answer IS NULL",
+                        "WHERE item_id=? AND key=? AND answer IS NULL AND withdrawn_at IS NULL",
                         (answer, where, now, item_id, key)).rowcount
     if not done:
         raise WorkRefused(f"No decision {key} is open.")
     return {"key": key, "answer": answer, "where": where}
+
+
+def _withdraw(conn, item_id: str, reason: str, detail: dict, now: float) -> dict:
+    """The asker takes its own open decision back; the summary is why. Only
+    the asker may: the access key that asked it (`by`, set by the route,
+    never by the report), or any reporter for a decision asked before
+    askers were recorded."""
+    key = _slug(detail.get("key"), "The decision's key")
+    row = conn.execute("SELECT asked_by FROM work_decisions WHERE item_id=? AND key=? AND answer "
+                       "IS NULL AND withdrawn_at IS NULL", (item_id, key)).fetchone()
+    if row is None:
+        raise WorkRefused(f"No decision {key} is open.")
+    if row["asked_by"] and row["asked_by"] != str(detail.get("by") or ""):
+        raise WorkRefused(f"Only the agent that asked decision {key} can withdraw it.")
+    conn.execute("UPDATE work_decisions SET withdrawn_at=?, withdrawn_reason=? WHERE item_id=? "
+                 "AND key=?", (now, reason, item_id, key))
+    return {"key": key}
 
 
 def _after(conn, item_id: str, key: str, value) -> list[str]:
@@ -612,9 +699,19 @@ def _item(conn, row, now: float) -> WorkItem:
     item_id = row["id"]
     pieces = _pieces(conn, item_id)
     decisions = [Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
-                          r["opened_at"])
+                          r["opened_at"], r["package"])
                  for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
-                                       "IS NULL ORDER BY opened_at", (item_id,))]
+                                       "IS NULL AND withdrawn_at IS NULL ORDER BY opened_at",
+                                       (item_id,))]
+    answered = [Answered(r["key"], r["question"],
+                         r["answer"] if r["answer"] is not None else r["withdrawn_reason"],
+                         r["answered_where"] if r["answer"] is not None else WITHDRAWN,
+                         r["answered_at"] if r["answer"] is not None else r["withdrawn_at"],
+                         r["package"])
+                for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND (answer "
+                                      "IS NOT NULL OR withdrawn_at IS NOT NULL) ORDER BY "
+                                      "COALESCE(answered_at, withdrawn_at) DESC LIMIT ?",
+                                      (item_id, ANSWERED_SHOWN))]
     reported = row["state"]
     state = WAITING if decisions and reported != DONE else reported
     area = row["area"]
@@ -630,7 +727,30 @@ def _item(conn, row, now: float) -> WorkItem:
         group=area or _source_folder(row["source_kind"], row["source_path"]),
         blocked_pieces=sum(p.state == BLOCKED for p in pieces),
         waiting_pieces=sum(p.state == WAITING for p in pieces),
-        pieces=pieces, decisions=decisions, quiet_at=quiet_at(state, row["updated_at"]))
+        closed_at=row["closed_at"], history=_in_history(row, now),
+        pieces=pieces, decisions=decisions, answered=answered,
+        blockers=_blockers(row, pieces, decisions),
+        quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]))
+
+
+def _in_history(row, now: float) -> bool:
+    return (row["closed_at"] is not None
+            or (row["state"] == DONE and now - row["updated_at"] > DONE_LINGER_SEC))
+
+
+def _blockers(row, pieces: list[Piece], decisions: list[Decision]) -> list[Blocker]:
+    """Everything holding the item up, in BLOCKER_KINDS order. A done item
+    has none."""
+    if row["state"] == DONE or row["closed_at"] is not None:
+        return []
+    found = [Blocker(DECISION_BLOCKER, d.key, d.question) for d in decisions]
+    if row["state"] == BLOCKED:
+        found.append(Blocker(ITEM_BLOCKED, "", row["title"], row["latest_update"]))
+    for state, kind in ((BLOCKED, PIECE_BLOCKED), (WAITING, PIECE_WAITING)):
+        found += [Blocker(kind, p.key, p.title, p.note) for p in pieces if p.state == state]
+    found += [Blocker(PIECE_AFTER, p.key, p.title, p.note, p.waits_for) for p in pieces
+              if p.waits_for and p.state != DONE]
+    return found
 
 
 def get(item_id: str) -> Optional[WorkItem]:
@@ -639,14 +759,25 @@ def get(item_id: str) -> Optional[WorkItem]:
         return _item(conn, row, time.time()) if row else None
 
 
-def listing(limit: int = LIST_MAX) -> list[WorkItem]:
-    """Every item: those not done first, then done ones; most recent first."""
+# Which items are in History, in SQL: `_in_history`'s rule, with its `now`.
+_HISTORY_SQL = "(closed_at IS NOT NULL OR (state = ? AND updated_at < ?))"
+
+
+def listing(limit: int = LIST_MAX, history: bool = False) -> list[WorkItem]:
+    """The open items (not closed, and not done for DONE_LINGER_SEC): those
+    not done first, then done ones, most recent first. With `history`, the
+    items in History instead, the most recently closed or finished first."""
+    now = time.time()
+    if history:
+        sql = (f"SELECT * FROM work_items WHERE {_HISTORY_SQL} "
+               "ORDER BY COALESCE(closed_at, updated_at) DESC LIMIT ?")
+        args: tuple = (DONE, now - DONE_LINGER_SEC, limit)
+    else:
+        sql = (f"SELECT * FROM work_items WHERE NOT {_HISTORY_SQL} "
+               "ORDER BY state = ?, updated_at DESC LIMIT ?")
+        args = (DONE, now - DONE_LINGER_SEC, DONE, limit)
     with closing(_connect()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM work_items ORDER BY state = ?, updated_at DESC LIMIT ?",
-            (DONE, limit)).fetchall()
-        now = time.time()
-        return [_item(conn, r, now) for r in rows]
+        return [_item(conn, r, now) for r in conn.execute(sql, args).fetchall()]
 
 
 def grouped(items: list[WorkItem]) -> list[WorkGroup]:
@@ -693,7 +824,7 @@ def find(reference: str) -> list[WorkItem]:
     said = agent_directory.spoken_key(text)
     if not said:
         return []
-    items = listing()
+    items = listing() + listing(history=True)
     by_id = [i for i in items if i.id == text]
     if by_id:
         return by_id
