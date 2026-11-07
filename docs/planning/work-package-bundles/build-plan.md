@@ -307,6 +307,15 @@ and its deadline work the same whatever produces the rows.
   libraries and a library's own anonymous temporary files beside the
   engine's directory. Reason: those are what loading Python and Accelerate
   opens; none of them is the user's data.
+- The runtime holds the engine while the conversation floor is anything but
+  idle, JARVIS's own speech included, and when the floor cannot be read.
+  Reason: hearing comes first, and a doubtful reading is treated as busy.
+- The server-side runtime lives in `knowledge_runtime.py`; `server.py` only
+  starts and stops it and passes its health to Diagnostics. Reason: the
+  rule is tested without the server.
+- The Knowledge row is shown while the engine is switched off, as idle and
+  "Switched off". Reason: Diagnostics lists every part of JARVIS, and the
+  design names this row's idle state.
 - `ensure_tool_token` and `ensure_knowledge_token` share one function,
   `data_paths._ensure_token`. Reason: one safe way to make a secret file.
 
@@ -316,6 +325,10 @@ Each step is committed once its tests pass, in the order above. Only the
 targeted tests are run locally; CI runs the suite.
 
 ## Progress
+
+Phase 4's first step is built too: the server starts the engine after
+startup settles (only with `JARVIS_KNOWLEDGE` on), paces it by the floor and
+the CPU, and Diagnostics has its Knowledge row.
 
 Steps 1 to 7 are built on this branch, each in its own commit, with the
 tests named in each step (`tests/test_knowledge_*.py`; the process, crash,

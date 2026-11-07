@@ -214,6 +214,7 @@ class Supervisor:
         self.ping_failures = 0
         self._restart_at: Optional[float] = None
         self.last_reason: Optional[str] = None
+        self.last_health: Optional[dict] = None
         self.client = KnowledgeClient(HTTPTransport(self.pid))
 
     def pid(self) -> Optional[int]:
@@ -259,6 +260,7 @@ class Supervisor:
             body = self._health() if self._health else self.client.health()
         except (EngineUnavailable, KnowledgeRefused):
             return False
+        self.last_health = body if isinstance(body, dict) else None
         return isinstance(body, dict) and body.get("state") in ("ok", "degraded")
 
     def _schedule_restart(self, now: float, reason: str) -> str:

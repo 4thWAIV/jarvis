@@ -76,6 +76,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from jarvis import actions
+from jarvis import host_resources
 from jarvis import builds
 from jarvis.work_mode import is_casual_question
 from jarvis import preflight
@@ -2443,6 +2444,43 @@ async def stop_folders() -> None:
     folder_catalog = None
 
 
+# --- The knowledge engine ----------------------------------------------------
+#
+# Off unless JARVIS_KNOWLEDGE is on (knowledge_client.enabled). Started after
+# startup settles and paced by the conversation floor and the machine's CPU
+# (knowledge_runtime.py); nothing on the voice path waits on it.
+
+knowledge: Optional["knowledge_runtime.KnowledgeRuntime"] = None
+_knowledge_task: Optional[asyncio.Task] = None
+
+
+def _knowledge_floor_busy() -> bool:
+    return conversation_floor.state() != attention.FLOOR_IDLE
+
+
+def start_knowledge() -> None:
+    global knowledge, _knowledge_task
+    from jarvis import knowledge_client, knowledge_runtime
+    if not knowledge_client.enabled():
+        return
+    knowledge = knowledge_runtime.KnowledgeRuntime(
+        floor_busy=_knowledge_floor_busy,
+        cpu_percent=lambda: host_resources.sampler.current().get("cpu_percent"))
+    _knowledge_task = _spawn(knowledge.run())
+    log.info("knowledge engine: starting after startup settles")
+
+
+async def stop_knowledge() -> None:
+    global knowledge, _knowledge_task
+    if _knowledge_task is not None:
+        _knowledge_task.cancel()
+        await asyncio.gather(_knowledge_task, return_exceptions=True)
+    _knowledge_task = None
+    if knowledge is not None:
+        await knowledge.stop()
+    knowledge = None
+
+
 async def start_session_watcher() -> None:
     global session_watcher
     session_watcher = session_watch.SessionWatcher(
@@ -3027,6 +3065,7 @@ async def lifespan(application: FastAPI):
     await start_brain_and_speech()
     await start_session_watcher()
     start_folders()
+    start_knowledge()
     transcription_api.start(model=speech_model)
     # The team server connection (team_client.py): its own tasks, off every
     # audio path; a team server that is down changes only its status. The
@@ -3061,6 +3100,7 @@ async def lifespan(application: FastAPI):
     await team_api.stop()
     await _stop_attention()
     await transcription_api.stop()
+    await stop_knowledge()
     await stop_folders()
     await stop_session_watcher()
     await stop_brain_and_speech()
@@ -9264,7 +9304,8 @@ def _subsystems() -> list:
         local_voice=(_voice_output_status() if os.environ.get("JARVIS_TTS_PROVIDER") == "local" else None),
         team=team_client.connection.snapshot(),
         folders=(folder_catalog.health(_folders_task is not None)
-                 if folder_catalog is not None else None))
+                 if folder_catalog is not None else None),
+        knowledge_health=knowledge.health() if knowledge is not None else None)
 
 
 @app.get("/api/diagnostics/subsystems")
