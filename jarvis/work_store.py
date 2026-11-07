@@ -14,8 +14,22 @@ SAME transaction as each event is inserted. `create` and `record` are the
 only writers. The tables live in JARVIS's one database under their own
 schema version (`work_schema`, `run_store.migrate`).
 
+A piece waiting on Tim may name the answer it waits for (`until`, a
+wait_links link: `decision:<key>`, `work:<item>:<key>`,
+`workflow:<id>:<key>`, `package:<id>[:<decision>]`) and the state it moves
+to then (`then`, working by default). His answer, by any route, moves it in
+the same transaction (`end_waits`); one already given moves it when the
+record is next read (`sweep_waits`). His answer to an item's last open
+decision moves an item reported as waiting on him to working, in the same
+transaction.
+
 Read-time only, never stored: an open decision shows the item as waiting on
-Tim; a working or verifying item with no event for QUIET_AFTER_SEC reads as
+Tim; every piece done and no decision open shows it as `ready_to_close`; a
+decision he answered with no report since and no piece working shows the
+item as waiting for its asker to start (`follow_up`), flagged on Blocking as
+"answered, no follow-up" after FOLLOW_UP_AFTER_SEC; a wait on him with no
+link, open for wait_links.UNLINKED_AFTER_SEC, is flagged as "waiting, no link
+to an answer"; a working or verifying item with no event for QUIET_AFTER_SEC reads as
 `quiet` ("no recent update"); whether it is in History (closed, or done for
 DONE_LINGER_SEC; nothing is ever deleted); what is holding it up
 (`blockers`); the group an item is listed under (its area,
@@ -50,13 +64,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from jarvis import run_store
+from jarvis import run_store, wait_links
 
 # An item's and a piece's state. WAITING is also what an open decision shows.
 # VERIFYING sits between working and done: the work is in, being checked.
 PLANNED, WORKING, VERIFYING, WAITING, BLOCKED, DONE = (
     "planned", "working", "verifying", "waiting_on_tim", "blocked", "done")
 STATES = (PLANNED, WORKING, VERIFYING, WAITING, BLOCKED, DONE)
+# Read time only, never reported: every piece done and no decision open.
+READY = "ready_to_close"
 # The states that should be reporting: silent for QUIET_AFTER_SEC is quiet.
 ACTIVE = (WORKING, VERIFYING)
 
@@ -104,9 +120,15 @@ PACKAGE_REF = re.compile(r"[A-Za-z0-9._-]{1,128}")
 # What can hold an item up, in the order they are listed: his decisions
 # first, the item itself said to be blocked, its blocked pieces, its pieces
 # waiting on him, then pieces waiting on other pieces not yet done.
-DECISION_BLOCKER, ITEM_BLOCKED, PIECE_BLOCKED, PIECE_WAITING, PIECE_AFTER = (
-    "decision", "blocked", "piece_blocked", "piece_waiting", "piece_after")
-BLOCKER_KINDS = (DECISION_BLOCKER, ITEM_BLOCKED, PIECE_BLOCKED, PIECE_WAITING, PIECE_AFTER)
+# A decision he answered that nobody has acted on for FOLLOW_UP_AFTER_SEC
+# comes straight after his open decisions; the item itself reported as
+# waiting on him (with no decision open) after it being blocked.
+DECISION_BLOCKER, NO_FOLLOW_UP, ITEM_BLOCKED, ITEM_WAITING = (
+    "decision", "no_follow_up", "blocked", "item_waiting")
+PIECE_BLOCKED, PIECE_WAITING, PIECE_AFTER = "piece_blocked", "piece_waiting", "piece_after"
+BLOCKER_KINDS = (DECISION_BLOCKER, NO_FOLLOW_UP, ITEM_BLOCKED, ITEM_WAITING, PIECE_BLOCKED,
+                 PIECE_WAITING, PIECE_AFTER)
+FOLLOW_UP_AFTER_SEC = 30 * 60
 PIECES_MAX = 50
 AREA_MAX = 60
 WORKER_MAX = 80
@@ -188,7 +210,22 @@ _DECISION_PACKAGE = """
     ALTER TABLE work_decisions ADD COLUMN withdrawn_reason TEXT;
 """
 
-_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE}
+# 4: what a piece waiting on him waits for (a wait_links link) and the state
+# it moves to then, and since when it and an item have waited on him; when
+# an item last had a report from its agents (not his answers).
+_WAIT_LINKS = """
+    ALTER TABLE work_pieces ADD COLUMN until         TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN then_state    TEXT NOT NULL DEFAULT '';
+    ALTER TABLE work_pieces ADD COLUMN waiting_since REAL;
+    ALTER TABLE work_items  ADD COLUMN waiting_since REAL;
+    ALTER TABLE work_items  ADD COLUMN reported_at   REAL;
+    UPDATE work_pieces SET waiting_since = note_at WHERE state = 'waiting_on_tim';
+    UPDATE work_items SET waiting_since = updated_at WHERE state = 'waiting_on_tim';
+    UPDATE work_items SET reported_at = COALESCE((SELECT MAX(e.at) FROM work_events e
+        WHERE e.item_id = work_items.id AND e.kind <> 'decision_made'), created_at);
+"""
+
+_MIGRATIONS = {1: _SCHEMA, 2: _PIECE_DETAIL, 3: _DECISION_PACKAGE, 4: _WAIT_LINKS}
 
 _migrated: set[str] = set()
 _migrating = threading.Lock()
@@ -225,6 +262,11 @@ class Piece:
     # Read time only: while working or verifying, when it goes quiet with no
     # report after its latest note. None in any other state.
     quiet_at: Optional[float] = None
+    until: str = ""           # waiting on him: the answer it waits for (a link), or ""
+    then: str = ""            # the state it moves to on that answer; "" is working
+    waiting_since: Optional[float] = None
+    # Read time only: waiting on him with no link, for UNLINKED_AFTER_SEC.
+    unlinked: bool = False
 
 
 @dataclass(frozen=True)
@@ -255,8 +297,21 @@ class Blocker:
     kind: str                 # one of BLOCKER_KINDS
     key: str                  # the decision's or piece's key; "" for the item itself
     title: str                # the question, the piece's title, or the item's title
-    text: str = ""            # the piece's latest note, or the item's latest update
+    text: str = ""            # the piece's latest note, the item's latest update, the asker
     waits_for: list[str] = field(default_factory=list)   # piece_after: the keys not done
+    # A wait on him with no link to an answer, open for UNLINKED_AFTER_SEC.
+    unlinked: bool = False
+
+
+@dataclass(frozen=True)
+class FollowUp:
+    """He answered a decision and nothing has been reported since, with no
+    piece working: waiting for the decision's asker to start."""
+    key: str
+    question: str
+    asker: str                # the asker's access-key label, or "" when unknown
+    answered_at: float
+    overdue: bool             # FOLLOW_UP_AFTER_SEC gone with no report
 
 
 @dataclass(frozen=True)
@@ -297,6 +352,7 @@ class WorkItem:
     blockers: list[Blocker] = field(default_factory=list)   # in BLOCKER_KINDS order
     # Read time only: as a piece's, from its latest report.
     quiet_at: Optional[float] = None
+    follow_up: Optional[FollowUp] = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +372,13 @@ def _connect() -> sqlite3.Connection:
                 conn.commit()
                 _migrated.add(path)
     return conn
+
+
+def ready() -> None:
+    """This module's tables exist and are migrated (another store's
+    transaction may write them)."""
+    with closing(_connect()):
+        pass
 
 
 def _one_line(value, limit: int) -> str:
@@ -459,9 +522,38 @@ def record(event: WorkEvent) -> WorkItem:
         kept = _apply(conn, event.item_id, event.kind, summary, detail, now)
         conn.execute("UPDATE work_items SET latest_update=?, revision=revision+1, updated_at=? "
                      "WHERE id=?", (summary, now, event.item_id))
+        if event.kind in REPORTED_KINDS:
+            conn.execute("UPDATE work_items SET reported_at=? WHERE id=?", (now, event.item_id))
+        moved = wait_links.Settled()
+        if event.kind == DECISION_MADE:
+            kept, moved = _answered(conn, event.item_id, kept, now)
         _insert_event(conn, event.item_id, event.kind, summary, kept, now)
         conn.commit()
+    wait_links.tell(moved)
     return get(event.item_id)
+
+
+def _answered(conn, item_id: str, kept: dict, now: float):
+    """His answer moves on what waited for it, in this transaction: the item
+    itself, reported as waiting on him, to working once no decision is left
+    open (`state` in what is kept), and every piece or workflow wait linked
+    to it. (what is kept, the records moved)."""
+    still = conn.execute("SELECT 1 FROM work_decisions WHERE item_id=? AND answer IS NULL AND "
+                         "withdrawn_at IS NULL", (item_id,)).fetchone()
+    if still is None and conn.execute("SELECT 1 FROM work_items WHERE id=? AND state=?",
+                                      (item_id, WAITING)).fetchone():
+        _set_item_state(conn, item_id, WORKING)
+        kept = {**kept, "state": WORKING}
+    found = wait_links.answer(wait_links.WORK, {item_id}, kept["key"], kept.get("where", "page"),
+                              now)
+    return kept, wait_links.settle(conn, found, now)
+
+
+def _set_item_state(conn, item_id: str, state: str) -> None:
+    """An item's reported state, and since when it has waited on him."""
+    conn.execute("UPDATE work_items SET state=?, waiting_since=CASE WHEN ?=? THEN "
+                 "COALESCE(CASE WHEN state=? THEN waiting_since END, ?) END WHERE id=?",
+                 (state, state, WAITING, WAITING, time.time(), item_id))
 
 
 def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float) -> dict:
@@ -470,7 +562,7 @@ def _apply(conn, item_id: str, kind: str, summary: str, detail: dict, now: float
         kept: dict = {}
         if detail.get("state") is not None:
             kept["state"] = _state(detail["state"])
-            conn.execute("UPDATE work_items SET state=? WHERE id=?", (kept["state"], item_id))
+            _set_item_state(conn, item_id, kept["state"])
         if detail.get("area") is not None:
             # An empty area takes it back to its source folder's group.
             kept["area"] = _one_line(detail["area"], AREA_MAX)
@@ -601,8 +693,9 @@ def _apply_piece(conn, item_id: str, summary: str, detail: dict, now: float) -> 
         title = _one_line(detail.get("title"), TITLE_MAX) or summary[:TITLE_MAX]
         state = _state(detail.get("state") or PLANNED, "The piece's state")
         conn.execute("INSERT INTO work_pieces (item_id, key, title, who_kind, who_ref, state, "
-                     "position, note, note_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     (item_id, key, title, person.kind, person.ref, state, count, summary, now))
+                     "position, note, note_at, waiting_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (item_id, key, title, person.kind, person.ref, state, count, summary, now,
+                      now if state == WAITING else None))
         kept.update({"title": title, "who": {"kind": person.kind, "ref": person.ref},
                      "state": state})
     else:
@@ -625,6 +718,47 @@ def _apply_piece(conn, item_id: str, summary: str, detail: dict, now: float) -> 
         conn.execute("UPDATE work_pieces SET evidence=? WHERE item_id=? AND key=?",
                      (json.dumps(every), item_id, key))
         kept["evidence"] = every
+    kept.update(_piece_link(conn, item_id, key, detail))
+    return kept
+
+
+def _piece_link(conn, item_id: str, key: str, detail: dict) -> dict:
+    """What a piece waiting on him waits for (`until`, a link) and the state
+    it moves to then (`then`). A piece not waiting on him waits for nothing.
+    A decision of its own item it names must be one the item has asked."""
+    state = conn.execute("SELECT state FROM work_pieces WHERE item_id=? AND key=?",
+                         (item_id, key)).fetchone()["state"]
+    if state != WAITING:
+        conn.execute("UPDATE work_pieces SET until='', then_state='' WHERE item_id=? AND key=?",
+                     (item_id, key))
+        if detail.get("until") or detail.get("then"):
+            raise WorkRefused("Only a piece waiting on him (--state waiting_on_tim) waits for "
+                              "an answer.")
+        return {}
+    kept: dict = {}
+    if detail.get("until") is not None:
+        try:
+            link = wait_links.parse(detail["until"])
+        except wait_links.LinkRefused as e:
+            raise WorkRefused(str(e)) from None
+        if str(detail["until"]).strip() and link is None:
+            raise WorkRefused("--until names the answer it waits for: decision:<key>, "
+                              "work:<item>:<key>, workflow:<id>:<key> or package:<id>.")
+        if link is not None and link.kind == wait_links.DECISION and not conn.execute(
+                "SELECT 1 FROM work_decisions WHERE item_id=? AND key=?",
+                (item_id, link.key)).fetchone():
+            raise WorkRefused(f"This item has asked no decision {link.key}; ask it with "
+                              f"decision first, then wait on it.")
+        kept["until"] = str(link) if link else ""
+        conn.execute("UPDATE work_pieces SET until=? WHERE item_id=? AND key=?",
+                     (kept["until"], item_id, key))
+    if detail.get("then") is not None:
+        then = _state(detail["then"], "The state it moves to then") if detail["then"] else ""
+        if then == WAITING:
+            raise WorkRefused("A piece waiting on him moves on to another state.")
+        kept["then"] = then
+        conn.execute("UPDATE work_pieces SET then_state=? WHERE item_id=? AND key=?",
+                     (then, item_id, key))
     return kept
 
 
@@ -642,7 +776,10 @@ def _change_piece(conn, item_id: str, key: str, detail: dict, on) -> dict:
         kept["title"] = title
     if detail.get("state") is not None:
         state = _state(detail["state"], "The piece's state")
-        conn.execute("UPDATE work_pieces SET state=? WHERE item_id=? AND key=?", (state, item_id, key))
+        conn.execute("UPDATE work_pieces SET waiting_since=CASE WHEN ?=? THEN "
+                     "COALESCE(CASE WHEN state=? THEN waiting_since END, ?) END, state=? "
+                     "WHERE item_id=? AND key=?",
+                     (state, WAITING, WAITING, time.time(), state, item_id, key))
         kept["state"] = state
     return kept
 
@@ -673,7 +810,13 @@ def quiet_at(state: str, heard_at: Optional[float]) -> Optional[float]:
     return (heard_at or 0.0) + QUIET_AFTER_SEC
 
 
-def _pieces(conn, item_id: str) -> list[Piece]:
+def _unlinked_for(link: str, since: Optional[float], now: float) -> bool:
+    """A wait on him with no link to an answer, open UNLINKED_AFTER_SEC."""
+    return not link and since is not None and now - since > wait_links.UNLINKED_AFTER_SEC
+
+
+def _pieces(conn, item_id: str, now: Optional[float] = None) -> list[Piece]:
+    now = time.time() if now is None else now
     rows = conn.execute("SELECT * FROM work_pieces WHERE item_id=? ORDER BY position",
                         (item_id,)).fetchall()
     states = {r["key"]: r["state"] for r in rows}
@@ -685,7 +828,9 @@ def _pieces(conn, item_id: str) -> list[Piece]:
             note=r["note"], note_at=r["note_at"], worker=r["worker"], after=after,
             waits_for=[k for k in after if states.get(k) != DONE],
             evidence=[Evidence(e["kind"], e["value"]) for e in json.loads(r["evidence"])],
-            quiet_at=quiet_at(r["state"], r["note_at"])))
+            quiet_at=quiet_at(r["state"], r["note_at"]), until=r["until"],
+            then=r["then_state"], waiting_since=r["waiting_since"],
+            unlinked=r["state"] == WAITING and _unlinked_for(r["until"], r["waiting_since"], now)))
     return _in_order(pieces)
 
 
@@ -695,9 +840,16 @@ def _source_folder(kind: str, path: str) -> str:
     return path if kind == FOLDER else os.path.dirname(path)
 
 
+def project_of(item: WorkItem) -> str:
+    """The project an item's agents work in, as the talk-to-jarvis folders
+    name it: the last name of its source folder (or of the folder its zip
+    is in)."""
+    return os.path.basename(_source_folder(item.source_kind, item.source_path).rstrip("/"))
+
+
 def _item(conn, row, now: float) -> WorkItem:
     item_id = row["id"]
-    pieces = _pieces(conn, item_id)
+    pieces = _pieces(conn, item_id, now)
     decisions = [Decision(r["key"], r["question"], json.loads(r["options"]), r["recommendation"],
                           r["opened_at"], r["package"])
                  for r in conn.execute("SELECT * FROM work_decisions WHERE item_id=? AND answer "
@@ -713,8 +865,10 @@ def _item(conn, row, now: float) -> WorkItem:
                                       "COALESCE(answered_at, withdrawn_at) DESC LIMIT ?",
                                       (item_id, ANSWERED_SHOWN))]
     reported = row["state"]
-    state = WAITING if decisions and reported != DONE else reported
+    state = (WAITING if decisions and reported != DONE
+             else READY if _all_done(row, pieces, decisions) else reported)
     area = row["area"]
+    follow_up = _follow_up(conn, row, pieces, decisions, now)
     return WorkItem(
         id=item_id, title=row["title"], source_kind=row["source_kind"],
         source_path=row["source_path"], source=check_source(row["source_kind"], row["source_path"]),
@@ -729,8 +883,37 @@ def _item(conn, row, now: float) -> WorkItem:
         waiting_pieces=sum(p.state == WAITING for p in pieces),
         closed_at=row["closed_at"], history=_in_history(row, now),
         pieces=pieces, decisions=decisions, answered=answered,
-        blockers=_blockers(row, pieces, decisions),
-        quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]))
+        blockers=_blockers(row, pieces, decisions, follow_up, now),
+        quiet_at=None if row["closed_at"] is not None else quiet_at(state, row["updated_at"]),
+        follow_up=follow_up)
+
+
+def _all_done(row, pieces: list[Piece], decisions: list[Decision]) -> bool:
+    """Ready to close: it has pieces, every one done, no decision open, and
+    it is neither reported done nor closed."""
+    return (bool(pieces) and all(p.state == DONE for p in pieces) and not decisions
+            and row["state"] != DONE and row["closed_at"] is None)
+
+
+def asker_label(asked_by: str) -> str:
+    """Who asked a decision, as shown: its access key's label, else ""."""
+    return asked_by[4:] if str(asked_by or "").startswith("key:") else ""
+
+
+def _follow_up(conn, row, pieces: list[Piece], decisions: list[Decision],
+               now: float) -> Optional[FollowUp]:
+    """His latest answer, when nothing has been reported since and no piece
+    is working: the item waits for the decision's asker to start."""
+    if (decisions or row["closed_at"] is not None or row["state"] == DONE
+            or any(p.state == WORKING for p in pieces)):
+        return None
+    last = conn.execute("SELECT key, question, asked_by, answered_at FROM work_decisions WHERE "
+                        "item_id=? AND answer IS NOT NULL ORDER BY answered_at DESC LIMIT 1",
+                        (row["id"],)).fetchone()
+    if last is None or (row["reported_at"] or 0) >= last["answered_at"]:
+        return None
+    return FollowUp(last["key"], last["question"], asker_label(last["asked_by"]),
+                    last["answered_at"], now - last["answered_at"] > FOLLOW_UP_AFTER_SEC)
 
 
 def _in_history(row, now: float) -> bool:
@@ -738,22 +921,31 @@ def _in_history(row, now: float) -> bool:
             or (row["state"] == DONE and now - row["updated_at"] > DONE_LINGER_SEC))
 
 
-def _blockers(row, pieces: list[Piece], decisions: list[Decision]) -> list[Blocker]:
+def _blockers(row, pieces: list[Piece], decisions: list[Decision],
+              follow_up: Optional[FollowUp], now: float) -> list[Blocker]:
     """Everything holding the item up, in BLOCKER_KINDS order. A done item
     has none."""
     if row["state"] == DONE or row["closed_at"] is not None:
         return []
     found = [Blocker(DECISION_BLOCKER, d.key, d.question) for d in decisions]
+    if follow_up is not None and follow_up.overdue:
+        found.append(Blocker(NO_FOLLOW_UP, follow_up.key, follow_up.question, follow_up.asker))
     if row["state"] == BLOCKED:
         found.append(Blocker(ITEM_BLOCKED, "", row["title"], row["latest_update"]))
-    for state, kind in ((BLOCKED, PIECE_BLOCKED), (WAITING, PIECE_WAITING)):
-        found += [Blocker(kind, p.key, p.title, p.note) for p in pieces if p.state == state]
+    if row["state"] == WAITING and not decisions:
+        # Waiting on him with no decision open: a wait with no link to an answer.
+        found.append(Blocker(ITEM_WAITING, "", row["title"], row["latest_update"],
+                             unlinked=_unlinked_for("", row["waiting_since"], now)))
+    found += [Blocker(PIECE_BLOCKED, p.key, p.title, p.note) for p in pieces if p.state == BLOCKED]
+    found += [Blocker(PIECE_WAITING, p.key, p.title, p.note, unlinked=p.unlinked)
+              for p in pieces if p.state == WAITING]
     found += [Blocker(PIECE_AFTER, p.key, p.title, p.note, p.waits_for) for p in pieces
               if p.waits_for and p.state != DONE]
     return found
 
 
 def get(item_id: str) -> Optional[WorkItem]:
+    wait_links.sweep()
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         return _item(conn, row, time.time()) if row else None
@@ -776,6 +968,7 @@ def listing(limit: int = LIST_MAX, history: bool = False) -> list[WorkItem]:
         sql = (f"SELECT * FROM work_items WHERE NOT {_HISTORY_SQL} "
                "ORDER BY state = ?, updated_at DESC LIMIT ?")
         args = (DONE, now - DONE_LINGER_SEC, DONE, limit)
+    wait_links.sweep()
     with closing(_connect()) as conn:
         return [_item(conn, r, now) for r in conn.execute(sql, args).fetchall()]
 
@@ -830,3 +1023,130 @@ def find(reference: str) -> list[WorkItem]:
         return by_id
     exact = [i for i in items if agent_directory.spoken_key(i.title) == said]
     return exact or [i for i in items if said in agent_directory.spoken_key(i.title)]
+
+
+# ── his answers, and what waits for them ────────────────────────────────
+
+def decision_answer(conn, item_id: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
+    """His answer to this item's decision `key`, as what it ends, or None
+    while he has not given one."""
+    if key is None:
+        return None
+    try:
+        row = conn.execute("SELECT answered_where, answered_at FROM work_decisions WHERE "
+                           "item_id=? AND key=? AND answer IS NOT NULL", (item_id, key)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return (wait_links.answer(wait_links.WORK, {item_id}, key, row["answered_where"],
+                              row["answered_at"]) if row else None)
+
+
+def _linked_pieces(conn):
+    """(item id, piece key, link, then) for every piece waiting on him with
+    a link, on an item not closed."""
+    rows = conn.execute("SELECT p.item_id, p.key, p.until, p.then_state FROM work_pieces p "
+                        "JOIN work_items i ON i.id = p.item_id WHERE p.state=? AND p.until<>'' "
+                        "AND i.closed_at IS NULL", (WAITING,)).fetchall()
+    for r in rows:
+        try:
+            link = wait_links.parse(r["until"])
+        except wait_links.LinkRefused:
+            continue
+        if link is not None:
+            yield r["item_id"], r["key"], link, r["then_state"] or WORKING
+
+
+def _note(conn, item_id: str, kind: str, summary: str, detail: dict, now: float) -> None:
+    """JARVIS's own entry in an item's log, as a change it made on his
+    answer: the item's update and revision move, its agents' last report
+    (reported_at) does not."""
+    conn.execute("UPDATE work_items SET latest_update=?, revision=revision+1, updated_at=? "
+                 "WHERE id=?", (summary, now, item_id))
+    _insert_event(conn, item_id, kind, summary, detail, now)
+
+
+def _end_piece_wait(conn, item_id: str, key: str, link, then: str,
+                    found: "wait_links.Answer", now: float) -> None:
+    """A piece waiting on him moves to its next state on his answer, which
+    the report records as his, with when and how."""
+    summary = _one_line(f"{found.said()} ({link}); back to {then}.", SUMMARY_MAX)
+    conn.execute("UPDATE work_pieces SET state=?, until='', then_state='', waiting_since=NULL, "
+                 "note=?, note_at=? WHERE item_id=? AND key=?",
+                 (then, summary, now, item_id, key))
+    _note(conn, item_id, PIECE, summary,
+          {"key": key, "state": then,
+           "wait_ended": {"link": str(link), "by": "tim", "how": found.how,
+                          "answered_at": found.at}}, now)
+
+
+def end_waits(conn, found: "wait_links.Answer", now: float) -> set:
+    """Move every piece waiting on him that `found` answers, in the caller's
+    transaction. The items it moved."""
+    moved = set()
+    for item_id, key, link, then in list(_linked_pieces(conn)):
+        if found.ends(link, wait_links.WORK, item_id):
+            _end_piece_wait(conn, item_id, key, link, then, found, now)
+            moved.add(item_id)
+    return moved
+
+
+def _answered_waiting_items(conn):
+    """(item id, his latest answer) for every item reported as waiting on
+    him with no decision open, answered since it began to wait."""
+    return conn.execute(
+        "SELECT i.id, d.key, d.answered_where, MAX(d.answered_at) AS answered_at FROM work_items i "
+        "JOIN work_decisions d ON d.item_id = i.id WHERE i.state=? AND i.closed_at IS NULL "
+        "AND d.answer IS NOT NULL AND d.answered_at >= COALESCE(i.waiting_since, 0) "
+        "AND NOT EXISTS (SELECT 1 FROM work_decisions o WHERE o.item_id = i.id AND "
+        "o.answer IS NULL AND o.withdrawn_at IS NULL) "
+        "GROUP BY i.id", (WAITING,)).fetchall()
+
+
+def sweep_waits() -> "wait_links.Settled":
+    """Move on everything still waiting on an answer he has already given
+    (at start, and on every read: wait_links.sweep): each linked piece, and
+    each item reported as waiting on him whose decisions are all answered
+    since."""
+    moved = set()
+    with closing(_connect()) as conn:
+        now = time.time()
+        for item_id, key, link, then in list(_linked_pieces(conn)):
+            found = wait_links.already(conn, link, wait_links.WORK, item_id)
+            if found is not None:
+                _end_piece_wait(conn, item_id, key, link, then, found, now)
+                moved.add(item_id)
+        for r in _answered_waiting_items(conn):
+            _set_item_state(conn, r["id"], WORKING)
+            _note(conn, r["id"], UPDATE,
+                  f"Tim answered {r['key']}; nothing else waits on him, so back to working.",
+                  {"state": WORKING, "wait_ended": {"link": f"decision:{r['key']}", "by": "tim",
+                                                    "how": r["answered_where"],
+                                                    "answered_at": r["answered_at"]}}, now)
+            moved.add(r["id"])
+        if moved:
+            conn.commit()
+    return wait_links.Settled(work=moved)
+
+
+@dataclass(frozen=True)
+class GivenAnswer:
+    """His answer to a decision an asker asked, for that asker."""
+    item_id: str
+    title: str
+    key: str
+    question: str
+    answer: str
+    where: str
+    answered_at: float
+
+
+def answers_for(asked_by: str, since: float = 0.0, limit: int = LIST_MAX) -> list[GivenAnswer]:
+    """Every answer he gave since `since` to a decision `asked_by` asked
+    (its access key, as `work_api.asker` keeps it), oldest first."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT d.*, i.title FROM work_decisions d JOIN work_items i ON i.id = d.item_id "
+            "WHERE d.asked_by=? AND d.answer IS NOT NULL AND d.answered_at>=? "
+            "ORDER BY d.answered_at LIMIT ?", (asked_by, since, limit)).fetchall()
+    return [GivenAnswer(r["item_id"], r["title"], r["key"], r["question"], r["answer"],
+                        r["answered_where"], r["answered_at"]) for r in rows]

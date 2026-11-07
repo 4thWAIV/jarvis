@@ -18,10 +18,14 @@ library and the package's own `server_address`.
     python workflow_report.py event <id> <kind> <summary> [--item <slug>] [--key <slug>]
         [--done N] [--total N] [--outcome succeeded|failed|cancelled|skipped]
         [--phase <slug>] [--title <title>] [--option <option> ...]
-        [--recommendation <text>] [--until <when>] [--session <id>] [--provider <name>]
+        [--recommendation <text>] [--until <link or when>] [--session <id>] [--provider <name>]
     python workflow_report.py answer <id> <key>
 
-`start` prints the workflow's id. `answer` prints the user's answer to an
+A `wait_started` names what it waits for with `--until`: a link to his
+answer (`decision:<key>` of this workflow, `work:<item id>:<key>`,
+`workflow:<workflow id>:<key>`, or `package:<id or name>[:<decision id>]`),
+and JARVIS ends the wait itself the moment he gives it; anything else is
+kept as words (until when). `start` prints the workflow's id. `answer` prints the user's answer to an
 open decision once he has given it, and exits 3 while he has not.
 """
 

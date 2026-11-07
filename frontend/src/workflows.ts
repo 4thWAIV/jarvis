@@ -38,6 +38,8 @@ export interface OpenItem {
   summary: string;
   detail: { options?: string[]; recommendation?: string; until?: string; [k: string]: unknown };
   opened_at: number;
+  /** A wait with no link to an answer, open for over a day. */
+  unlinked: boolean;
 }
 
 export interface Workflow {

@@ -17,6 +17,14 @@ Whether a workflow has gone quiet is worked out when it is read, never
 stored: a running workflow with no event for SILENT_AFTER_SEC reads as
 `silent`, so a stale "running" cannot stick.
 
+A wait may name the answer it waits for (`detail.until`, a wait_links link:
+`decision:<key>`, `work:<item>:<key>`, `workflow:<id>:<key>`,
+`package:<id>[:<decision>]`), kept as `detail.link`. His answer to it, by
+any route, ends the wait in the same transaction (`end_waits`, a
+`wait_ended` recorded as his, with when and how); one already answered is
+ended when the record is next read (`sweep_waits`). A wait with no link open
+for wait_links.UNLINKED_AFTER_SEC reads as `unlinked`.
+
 Everything in a workflow's record (its name, summaries, titles, questions)
 was written by the session running it: it is another session's words, and
 is shown and spoken only through the same walls as any other.
@@ -32,9 +40,9 @@ import time
 from contextlib import closing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, get_args
+from typing import Literal, Optional, get_args
 
-from jarvis import run_store
+from jarvis import run_store, wait_links
 
 
 class WorkflowState(str, Enum):
@@ -117,6 +125,9 @@ class OpenItem:
     summary: str
     detail: dict
     opened_at: float
+    # Read time only: a wait with no link to an answer, open for
+    # wait_links.UNLINKED_AFTER_SEC ("waiting, no link to an answer").
+    unlinked: bool = False
 
 
 @dataclass(frozen=True)
@@ -234,6 +245,12 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def ready() -> None:
+    """This module's tables exist (another store's transaction may write them)."""
+    with closing(_connect()):
+        pass
+
+
 def _one_line(value, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit]
 
@@ -334,11 +351,36 @@ def record(event: WorkflowEvent) -> WorkflowSnapshot:
             return snapshot(event.workflow_id)
         if finished:
             raise WorkflowRefused("That workflow has finished; start a new one.")
-        _apply(conn, row, event, now)
+        event = _apply(conn, row, event, now) or event
         _insert_event(conn, event, now)
         _settle_state(conn, event.workflow_id, event, now)
+        moved = _answered_by(conn, event, now)
         conn.commit()
+    wait_links.tell(moved)
     return snapshot(event.workflow_id)
+
+
+def _answered_by(conn, event: WorkflowEvent, now: float) -> "wait_links.Settled":
+    """His answer ends every wait linked to it, here and in the Work
+    tracker, in this transaction; a wait opened on an answer already given
+    ends at once."""
+    if event.kind == "decision_made" and _his(event.detail):
+        found = wait_links.answer(wait_links.WORKFLOW, {event.workflow_id},
+                                  _open_key(event), str(event.detail.get("how") or "page"), now)
+        return wait_links.settle(conn, found, now)
+    if event.kind == "wait_started" and event.detail.get("link"):
+        link = wait_links.parse(event.detail["link"])
+        found = wait_links.already(conn, link, wait_links.WORKFLOW, event.workflow_id)
+        if found is not None:
+            _end_wait(conn, event.workflow_id, _open_key(event), link, found, now)
+            return wait_links.Settled(workflows={event.workflow_id})
+    return wait_links.Settled()
+
+
+def _his(detail: dict) -> bool:
+    """A decision_made that is his answer: given by him (the server's
+    answer routes say `by: user`; a reporter's never can), with words."""
+    return detail.get("by") == "user" and "answer" in detail
 
 
 def _item(conn, workflow_id: str, slug: str):
@@ -352,7 +394,9 @@ def _set_item(conn, workflow_id: str, slug: str, state: ItemState, **counts) -> 
                  (state.value, *counts.values(), workflow_id, slug))
 
 
-def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
+def _apply(conn, row, event: WorkflowEvent, now: float) -> Optional[WorkflowEvent]:
+    """Bring the snapshot up to date with one event; the event as it is
+    kept when that differs (a wait with its link), else None."""
     wid, kind, slug, detail = event.workflow_id, event.kind, event.item, event.detail
     if kind == "phase_added":
         if _item(conn, wid, slug) is not None:
@@ -408,6 +452,9 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
             _set_item(conn, wid, slug, outcome)
     elif kind in _OPENS:
         key = _open_key(event)
+        if kind == "wait_started":
+            event = _linked(conn, event, key)
+            detail = event.detail
         # An answered key is never asked again: its reporter reads the answer
         # by key (`workflow_report.py answer`), so a new question needs a new key.
         if kind == "decision_needed" and _answered(conn, wid, key):
@@ -416,6 +463,7 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
             "INSERT OR REPLACE INTO workflow_open (workflow_id, kind, key, summary, detail, "
             "opened_at) VALUES (?, ?, ?, ?, ?, ?)",
             (wid, _OPENS[kind], key, event.summary, json.dumps(detail), now))
+        return event
     elif kind in _CLOSES:
         key = _open_key(event)
         gone = conn.execute("DELETE FROM workflow_open WHERE workflow_id=? AND kind=? AND key=?",
@@ -435,6 +483,98 @@ def _apply(conn, row, event: WorkflowEvent, now: float) -> None:
         if outcome not in {s.value for s in FINISHED}:
             raise WorkflowRefused("A finished workflow succeeded, failed or was cancelled.")
         conn.execute("UPDATE workflows SET finished_at=? WHERE id=?", (now, wid))
+
+
+def _linked(conn, event: WorkflowEvent, key: str) -> WorkflowEvent:
+    """A wait whose `until` names an answer keeps it as `link`; a decision
+    of its own it names must be one this workflow has asked."""
+    try:
+        link = wait_links.parse(event.detail.get("until"))
+    except wait_links.LinkRefused as e:
+        raise WorkflowRefused(str(e)) from None
+    if link is None:
+        return event
+    if link.kind == wait_links.DECISION and not (
+            _answered(conn, event.workflow_id, link.key) or conn.execute(
+                "SELECT 1 FROM workflow_open WHERE workflow_id=? AND kind='decision' AND key=?",
+                (event.workflow_id, link.key)).fetchone()):
+        raise WorkflowRefused(f"This workflow has asked no decision {link.key}; ask it with "
+                              f"decision_needed first, then wait on it.")
+    return WorkflowEvent(event.workflow_id, event.kind, event.item, event.summary,
+                         {**event.detail, "link": str(link)})
+
+
+def decision_answer(conn, wid: str, key: Optional[str]) -> "Optional[wait_links.Answer]":
+    """His answer to this workflow's decision `key`, as what it ends, or
+    None while he has not given one."""
+    if key is None:
+        return None
+    try:
+        rows = conn.execute("SELECT * FROM workflow_events WHERE workflow_id=? "
+                            "AND kind='decision_made' ORDER BY seq", (wid,)).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    for e in map(_event, rows):
+        if _his(e.detail) and _open_key(e) == key:
+            return wait_links.answer(wait_links.WORKFLOW, {wid}, key,
+                                     str(e.detail.get("how") or "page"), e.at)
+    return None
+
+
+def _end_wait(conn, wid: str, key: str, link, found: "wait_links.Answer", now: float) -> None:
+    """End one wait as his answer: `wait_ended` with when and how, and the
+    workflow's state settled again (waiting no longer, unless it has more)."""
+    conn.execute("DELETE FROM workflow_open WHERE workflow_id=? AND kind='wait' AND key=?",
+                 (wid, key))
+    event = WorkflowEvent(wid, "wait_ended", None,
+                          f"{found.said()} ({link}); the wait is over.",
+                          {"key": key, "link": str(link), "by": "user", "how": found.how,
+                           "answered_at": found.at})
+    _insert_event(conn, event, now)
+    _settle_state(conn, wid, event, now)
+
+
+def _linked_waits(conn):
+    """(workflow id, key, link) for every open linked wait of a workflow
+    not finished."""
+    done = tuple(s.value for s in FINISHED)
+    rows = conn.execute(
+        "SELECT o.workflow_id, o.key, o.detail FROM workflow_open o JOIN workflows w "
+        "ON w.id = o.workflow_id WHERE o.kind='wait' AND json_extract(o.detail, '$.link') "
+        f"IS NOT NULL AND w.state NOT IN ({','.join('?' * len(done))})", done).fetchall()
+    for r in rows:
+        try:
+            link = wait_links.parse(json.loads(r["detail"])["link"])
+        except (wait_links.LinkRefused, ValueError, KeyError):
+            continue
+        if link is not None:
+            yield r["workflow_id"], r["key"], link
+
+
+def end_waits(conn, found: "wait_links.Answer", now: float) -> set:
+    """End every open wait `found` answers, in the caller's transaction.
+    The workflows it moved."""
+    moved = set()
+    for wid, key, link in list(_linked_waits(conn)):
+        if found.ends(link, wait_links.WORKFLOW, wid):
+            _end_wait(conn, wid, key, link, found, now)
+            moved.add(wid)
+    return moved
+
+
+def sweep_waits() -> "wait_links.Settled":
+    """End every open wait whose answer was already given (at start, and on
+    every read: wait_links.sweep)."""
+    moved = set()
+    with closing(_connect()) as conn:
+        for wid, key, link in list(_linked_waits(conn)):
+            found = wait_links.already(conn, link, wait_links.WORKFLOW, wid)
+            if found is not None:
+                _end_wait(conn, wid, key, link, found, time.time())
+                moved.add(wid)
+        if moved:
+            conn.commit()
+    return wait_links.Settled(workflows=moved)
 
 
 def _answered(conn, wid: str, key: str) -> bool:
@@ -502,6 +642,12 @@ def _quiet_at(state: str, heard_at: float | None) -> float | None:
     return (heard_at or 0.0) + SILENT_AFTER_SEC
 
 
+def _unlinked(row, now: float) -> bool:
+    """A wait with no link to an answer, open too long to be left unsaid."""
+    return (row["kind"] == "wait" and "link" not in json.loads(row["detail"])
+            and now - row["opened_at"] > wait_links.UNLINKED_AFTER_SEC)
+
+
 def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
     wid = row["id"]
     rows = conn.execute("SELECT * FROM workflow_items WHERE workflow_id=? ORDER BY position",
@@ -512,7 +658,7 @@ def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
                   quiet_at=_quiet_at(r["state"], heard.get(r["slug"])))
              for r in rows]
     open_items = [OpenItem(r["kind"], r["key"], r["summary"], json.loads(r["detail"]),
-                           r["opened_at"])
+                           r["opened_at"], unlinked=_unlinked(r, now))
                   for r in conn.execute("SELECT * FROM workflow_open WHERE workflow_id=? "
                                         "ORDER BY opened_at", (wid,))]
     phases = [i for i in items if i.kind == "phase"]
@@ -535,6 +681,7 @@ def _snapshot(conn, row, now: float) -> WorkflowSnapshot:
 
 
 def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
+    wait_links.sweep()
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM workflows WHERE id=?", (workflow_id,)).fetchone()
         return _snapshot(conn, row, time.time()) if row else None
@@ -542,6 +689,7 @@ def snapshot(workflow_id: str) -> WorkflowSnapshot | None:
 
 def active() -> list[WorkflowSnapshot]:
     """Every workflow not yet finished, most recently heard from first."""
+    wait_links.sweep()
     finished = tuple(s.value for s in FINISHED)
     with closing(_connect()) as conn:
         rows = conn.execute(
@@ -553,6 +701,7 @@ def active() -> list[WorkflowSnapshot]:
 
 def recent(limit: int = 20) -> list[WorkflowSnapshot]:
     """Every workflow, finished ones included, most recently heard from first."""
+    wait_links.sweep()
     with closing(_connect()) as conn:
         rows = conn.execute("SELECT * FROM workflows ORDER BY last_event_at DESC LIMIT ?",
                             (limit,)).fetchall()

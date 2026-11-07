@@ -1486,7 +1486,8 @@ html, body {
 .work-row[data-mark="blocked"] { border-left: 3px solid #ef4444; }
 .work-row[data-mark="waiting"] { border-left: 3px solid #fbbf24; }
 .work-blocker-line { grid-column: 1 / -1; color: #fca5a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.work-blocker-line[data-kind="piece_waiting"], .work-blocker-line[data-kind="piece_after"] { color: #fbbf24; }
+.work-blocker-line[data-kind="piece_waiting"], .work-blocker-line[data-kind="piece_after"],
+.work-blocker-line[data-kind="item_waiting"], .work-blocker-line[data-kind="no_follow_up"] { color: #fbbf24; }
 .work-history { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .work-list.history .work-row { opacity: 0.8; }
 .work-mark {
@@ -1513,6 +1514,7 @@ html, body {
 .work-state.state-waiting_on_tim { background: #fbbf24; color: var(--ui-on-signal); }
 .work-state.state-blocked { background: #ef4444; color: var(--ui-on-signal); }
 .work-state.state-done { background: rgba(52, 211, 153, 0.3); }
+.work-state.state-ready_to_close { background: rgba(52, 211, 153, 0.55); }
 
 /* One work item in the centre (WorkDetail.tsx), where the Conversation view
    sits: its head, then its source, update, decisions, pieces and reports,
@@ -1556,7 +1558,9 @@ html, body {
 .work-answered-answer { color: var(--ui-secondary); }
 .work-answered-item { padding-left: 8px; border-left: 2px solid rgba(52, 211, 153, 0.5); }
 .work-blocker { padding-left: 8px; border-left: 2px solid #ef4444; overflow-wrap: anywhere; }
-.work-blocker[data-kind="decision"], .work-blocker[data-kind="piece_waiting"] { border-left-color: #fbbf24; }
+.work-blocker[data-kind="decision"], .work-blocker[data-kind="piece_waiting"],
+.work-blocker[data-kind="item_waiting"], .work-blocker[data-kind="no_follow_up"] { border-left-color: #fbbf24; }
+.work-follow-up, .open-card-unlinked, .work-piece-until { color: #fbbf24; }
 .work-blocker[data-kind="piece_after"] { border-left-color: var(--ui-edge); }
 .work-decision-package { margin: 4px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .work-detail-name { font-size: 20px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }

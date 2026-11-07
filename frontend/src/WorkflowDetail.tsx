@@ -535,7 +535,8 @@ function OpenCard({ workflowId, kind, o }: { workflowId: string; kind: "wait" | 
       <OpenIcon kind={kind} />
       <span className="open-card-text">{o.summary}</span>
       <AgeBar since={o.opened_at} />
-      <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? <> · {t("main.workflow.until", { until: String(o.detail.until) })}</> : null}</span>
+      <span className="open-card-age">{ago(o.opened_at)}{o.detail.until ? <> · {t("main.workflow.until", { until: String(o.detail.until) })}</> : null}
+        {o.unlinked ? <> · <span className="open-card-unlinked">{t("main.workflow.unlinked")}</span></> : null}</span>
     </div>
   );
 }

@@ -231,6 +231,24 @@ and he answers them on the Workflows view or by voice: the page's answer and
 Dismiss routes and the brain's acting `answer_workflow_decision` and
 `dismiss_workflow` share `_answer_workflow_decision` and `_dismiss_workflow`,
 which record each as done "on the page" or "by voice".
+Nothing waits on him once he has answered (`wait_links.py`). A
+`wait_started` names what will answer it with `--until` (`detail.until`,
+kept as `detail.link`): `decision:<key>` (one of the workflow's own, asked
+first), `work:<item>:<key>`, `workflow:<id>:<key>`, `package:<id>` (until he
+signs it off) or `package:<id>:<decision>`; anything else stays words. His
+answer by any route (the workflow's or a Work item's decision, page or
+voice; a package decision through its decide.py, `_inbox_recount`; his
+finishing with a package) ends every wait linked to it in the same
+transaction as the answer (`wait_links.settle`, called by the store's own
+writer; a package's, recorded by its own script, in a transaction of its
+own, `settle_now`): a `wait_ended` recorded as his (`by: user`, `how`,
+`answered_at`), the workflow's state settled again. Only the server's answer
+routes record `by: user`; a reporter's `by` is dropped. A wait linked to an
+answer already given ends at once, and `wait_links.sweep` ends any left open
+at server start and on every read of either record. A wait with no link
+open over `wait_links.UNLINKED_AFTER_SEC` (a day) reads as `unlinked`, shown
+"waiting, no link to an answer" on its card. The package inbox's own wait is
+linked to its package.
 
 ## The Work tracker
 The right panel's Work tab (the tab that was Workflows, id still
@@ -277,7 +295,31 @@ answered ones (`answered`, `where` = `withdrawn`). An item closed
 reported to it and it is never deleted) or done for `DONE_LINGER_SEC` (five
 minutes) moves to History: `GET /api/work`'s `history`, newest first, under
 the list's History toggle (`work.showHistory`), each still opening in full;
-`work_status` with `history` lists them and finds one by id or title. The Workflows view stays below the list, under its
+`work_status` with `history` lists them and finds one by id or title.
+A piece waiting on him names what will answer it (`piece --state
+waiting_on_tim --until <link> [--then <state>]`, the same links as a
+workflow wait, its own `decision:<key>` one the item has asked), and his
+answer by any route moves it to `then` (working by default) in the same
+transaction (`work_store.end_waits`), with `wait_ended` (his, with how and
+when) in the piece's report; the sweep does the same for one already
+answered. His answer to an item's last open decision moves an item reported
+`waiting_on_tim` to working in that transaction too (and the sweep moves one
+left waiting since). Read time only: an item whose pieces are all done with
+no decision open reads `ready_to_close` ("Ready to close"); after his latest
+answer with no report since (`reported_at`, set by reporter kinds only) and
+no piece working, `follow_up` says "Answered — waiting for <asker> to
+start" (the asker's access-key label), and after `FOLLOW_UP_AFTER_SEC`
+(30 minutes) Blocking lists `no_follow_up` ("answered, no follow-up") and
+the server's quiet watch records a silent `no_follow_up` attention item
+naming the asker (`_attend_unfollowed`), resolved by the next report.
+Blocking also lists `item_waiting` (an item reported waiting with no
+decision open), and a waiting piece or item with no link over a day is
+`unlinked`, "waiting, no link to an answer". Every answer of his is written
+for its asker to `data_paths.answers_dir()/<project>/<item>-<key>.md`
+(`work_api.write_answer`; the project is the source folder's last name;
+outbound only, nothing watches it), and `work_report.py answers --since
+<time>` (`GET /api/work/answers`, in the `work` key category) lists every
+answer to the calling key's own decisions. The Workflows view stays below the list, under its
 own heading. The record is `work_store.py` (schema `work_schema`, through
 `run_store.migrate`): `work_events` is append-only and the truth;
 `work_items`, `work_pieces` and `work_decisions` are updated in the same
@@ -1547,6 +1589,9 @@ No new npm or Python dependencies. When rendering arbitrary LLM and file content
   `data/messages/<project>/` (see "Messages from sessions")
 - `workflow_store.py` — The workflow monitor's one durable record (see "The
   workflow monitor"); `workflow_report.py` is the command sessions report with
+- `wait_links.py` — What a wait on him waits for (its link), which answer
+  ends it, settling in the answer's transaction, and the sweep (see "The
+  workflow monitor" and "The Work tracker")
 - `work_store.py` / `work_api.py` / `work_report.py` — The Work tracker's
   record, its routes and shared calls, and the command agents report with
   (see "The Work tracker"); `frontend/src/work.ts`, `WorkPanel.tsx` and

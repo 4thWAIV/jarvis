@@ -427,6 +427,16 @@ def session_messages_dir() -> Path:
     return path
 
 
+def answers_dir() -> Path:
+    """Where JARVIS writes his answers for the agents that asked, one folder
+    per project and one file per answered decision (work_api.write_answer).
+    Outbound only: nothing JARVIS watches reads it. Created so an agent can
+    always look."""
+    path = data_dir() / "answers"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 _SKILLS_SOURCE = PACKAGE_DIR / "skills"
 
 

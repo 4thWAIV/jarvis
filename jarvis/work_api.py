@@ -9,8 +9,14 @@
   POST /api/work/{id}/events              one report: update, piece, decision_needed,
                                           decision_withdrawn (its asker only), closed
   POST /api/work/{id}/decisions/{key}     his answer, from the page
+  GET  /api/work/answers                  his answers to the calling access key's
+                                          decisions (?since=<epoch seconds>)
 
-Reporters reach the two POSTs with an access key in the `work` category
+Every answer of his is also written for the agent that asked it, as one
+Markdown file in `data_paths.answers_dir()/<project>/<item>-<key>.md`
+(`write_answer`), so it is told without asking again.
+
+Reporters reach the two POSTs (and the answers read) with an access key in the `work` category
 (access_keys.py) through `work_report.py`; his answer needs the page's own
 origin or the tool token, as every other change does (web_auth.py). Every
 committed change is told to `recorded`, which the server turns into the
@@ -24,15 +30,20 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import os
+import re
+import time
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from jarvis import (agent_directory, package_inbox, package_inbox_api, run_store, web_auth,
-                    workflow_store, work_store)
+from jarvis import (agent_directory, data_paths, package_inbox, package_inbox_api, run_store,
+                    web_auth, workflow_store, work_store)
+
+log = logging.getLogger(__name__)
 
 # (the item as it is now, the kind of change, what the report said)
 Recorded = Callable[[work_store.WorkItem, str, Optional[dict]], None]
@@ -142,9 +153,51 @@ def answer_decision(item_id: str, key: str, answer: str, where: str) -> work_sto
     decision_made, so its reporter reads it (`work_report.py answer`).
     The page's route and the brain's tool both call this."""
     words = " ".join(str(answer or "").split())
-    return work_store.record(work_store.WorkEvent(
+    item = work_store.record(work_store.WorkEvent(
         item_id, work_store.DECISION_MADE, f"He answered {key}: {words}",
         {"key": key, "answer": words, "where": where}))
+    write_answer(item, key)
+    return item
+
+
+# A project folder's name as an answers folder may be named.
+_PROJECT = re.compile(r"[^/\x00]{1,255}")
+
+
+def answer_path(item: work_store.WorkItem, key: str):
+    """Where his answer to `key` is written for its asker, or None when the
+    item's project has no name a folder can take."""
+    project = work_store.project_of(item)
+    if not _PROJECT.fullmatch(project) or project in (".", ".."):
+        return None
+    return data_paths.answers_dir() / project / f"{item.id}-{key}.md"
+
+
+def write_answer(item: work_store.WorkItem, key: str) -> None:
+    """His answer to `key`, written for the agent that asked it (one file,
+    replaced whole through a rename). Never raises: the record already has
+    the answer, which `work_report.py answer` reads."""
+    done = next((a for a in item.answered if a.key == key and a.where in ("page", "voice")), None)
+    path = answer_path(item, key)
+    if done is None or path is None:
+        return
+    when = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(done.answered_at))
+    text = (f"# Tim answered {key} on {item.id}\n\n"
+            f"- Item: {item.id} ({item.title})\n- Decision: {key}\n- Question: {done.question}\n"
+            f"- His answer: {done.answer}\n- Answered: {when} ({done.where})\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(f".{path.name}.part")
+        part.write_text(text, encoding="utf-8")
+        os.replace(part, path)
+    except OSError:
+        log.warning("work: the answer to %s/%s was not written for its asker", item.id, key,
+                    exc_info=True)
+
+
+def answers_json(asked_by: str, since: float) -> list[dict]:
+    """His answers to the decisions `asked_by` asked, since `since`."""
+    return [dataclasses.asdict(a) for a in work_store.answers_for(asked_by, since)]
 
 
 def mount(app: FastAPI, recorded: Recorded) -> None:
@@ -161,6 +214,18 @@ def mount(app: FastAPI, recorded: Recorded) -> None:
                     "history": [item_json(i, names, waiting)
                                 for i in work_store.listing(history=True)]}
         return await asyncio.to_thread(read)
+
+    @app.get("/api/work/answers")
+    async def given_answers(request: Request, since: float = 0.0):
+        """His answers to the decisions the calling access key asked, oldest
+        first: what `work_report.py answers --since` lists."""
+        web_auth.scope_authorized(request.scope)
+        label = web_auth.access_key_label(request.scope)
+        if label is None:
+            return JSONResponse({"error": "Answers are listed for the access key that asked "
+                                          "the decisions."}, status_code=403)
+        found = await asyncio.to_thread(answers_json, f"key:{label}", since)
+        return {"answers": found}
 
     @app.get("/api/work/{item_id}")
     async def one_item(item_id: str):

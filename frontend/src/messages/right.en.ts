@@ -110,6 +110,8 @@ export const rightEn = {
   "right.work.state.waiting_on_tim": "Waiting on you",
   "right.work.state.blocked": "Blocked",
   "right.work.state.done": "Done",
+  "right.work.state.ready_to_close": "Ready to close",
+  "right.work.followUp": "Answered — waiting for {asker} to start",
   "right.work.area": "Area",
   "right.work.history": "History ({count})",
   "right.work.decisionCount": "Decisions needed: {count}",

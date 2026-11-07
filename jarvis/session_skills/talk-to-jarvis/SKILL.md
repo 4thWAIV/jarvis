@@ -49,10 +49,13 @@ python3 {{workflow_report}} event <id> phase_added "<one sentence>" --item <phas
 python3 {{workflow_report}} event <id> task_added "<one sentence>" --item <task> --title "<title>"
 python3 {{workflow_report}} event <id> task_progress "<one sentence>" --item <task> --done 3 --total 8
 python3 {{workflow_report}} event <id> decision_needed "<the question>" --key <slug> --option "<a>" --option "<b>" --recommendation "<your pick>"
+python3 {{workflow_report}} event <id> wait_started "<what you wait for>" --key <slug> --until decision:<slug>
 python3 {{workflow_report}} answer <id> <slug>
 ```
 
 `start` prints the workflow's id. The kinds are `phase_added` (a phase not given at `start`, added after the others), `phase_started`, `phase_finished`, `task_added`, `task_started`, `task_progress`, `task_finished`, `wait_started`, `wait_ended`, `decision_needed`, `decision_made`, `blocker_raised`, `blocker_cleared`, `agent_attached`, `note` and `workflow_finished` (with `--outcome succeeded`, `failed` or `cancelled`). Every event's summary is one plain sentence. Report at least every few minutes: a workflow that reports nothing for ten minutes shows as gone quiet. `answer` prints the user's answer to a decision once they have given it and exits 3 until then.
+
+Whenever you wait on the user, link the wait to what will answer it with `--until`: `decision:<slug>` (a decision of this workflow, asked first), `work:<item id>:<key>` (a work item's decision), `workflow:<workflow id>:<slug>`, `package:<package or inbox id>` (until they sign the package off) or `package:<id>:<decision id>` (one of its decisions). When the user answers it, by any route, JARVIS ends the wait itself, recorded as their answer; do not report `wait_ended` for it. Never wait on the user with no link: a wait with no link to an answer is flagged on their screen after a day. A wait on something other than the user (a test run, a build) needs no link.
 
 ## Work items: who is doing each piece
 
@@ -64,7 +67,9 @@ python3 {{work_report}} piece <id> <key> "<one sentence>" --title "<title>" --wh
 python3 {{work_report}} piece <id> <key> "<one sentence>" --worker "<who did it, in your words>" --after <key>,<key> --evidence <commit|path|url>
 python3 {{work_report}} update <id> "<one sentence>" --state working
 python3 {{work_report}} decision <id> <key> "<the question>" --option "<a>" --option "<b>" --recommendation "<your pick>" --package <package id or name>
+python3 {{work_report}} piece <id> <key> "<what you wait for>" --who tim --state waiting_on_tim --until decision:<key> --then working
 python3 {{work_report}} answer <id> <key>
+python3 {{work_report}} answers --since <ISO time or epoch seconds>
 python3 {{work_report}} withdraw <id> <key> "<why>"
 python3 {{work_report}} close <id> "<one sentence>"
 ```
@@ -72,3 +77,7 @@ python3 {{work_report}} close <id> "<one sentence>"
 `start` prints the item's id; the path must be a zip or folder that is there now, and JARVIS never opens or runs it. A state is `planned`, `working`, `verifying` (the work is in and being checked), `waiting_on_tim`, `blocked` or `done`. Who is on a piece is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or `tim`, and must be one JARVIS knows. Every summary is one plain sentence, and the latest one is what the Work tab shows; a piece's summary is also that piece's latest note. Items are grouped by `--area` (on `start` or `update`; an empty one goes back to the source's folder). When your subagents do a piece, keep yourself as `--who` and say which one with `--worker`, for example `--worker "logo build agent"`: it is shown beside you as your own words. `--after` names the pieces of the same item this one waits on (an empty value clears it). Each `--evidence` (a commit, a path or a URL) is added to the piece's evidence; give it when a piece is verifying or done.
 
 Every decision, blocker or question about a work item goes on that item, never on the needs board: a decision with `decision` (`--package` names a page package the user can open from it, by id or name), a blocker as a piece or update with `--state blocked` and a one-sentence summary saying what blocks it. Only the user answers a decision. Only you, the asker, can withdraw one, with `withdraw` and why (for example, it was asked before the user had seen what it is about); it is kept as withdrawn, not as answered, and a new question needs a new key. When the work is finished or abandoned, `close` moves the item to History for good (nothing is deleted, and nothing more can be reported to it); a done item moves there by itself a few minutes after it is done. `answer` prints the user's answer once they have given it and exits 3 until then.
+
+A piece waiting on the user (`--state waiting_on_tim`) always says what will answer it with `--until`: `decision:<key>` (a decision of this item, asked first), `work:<item id>:<key>`, `workflow:<workflow id>:<slug>`, `package:<package or inbox id>` (until they sign the package off) or `package:<id>:<decision id>`. When they answer it, by any route, JARVIS moves the piece on to `--then` (working by default) itself. A waiting piece with no link is flagged on the item's Blocking tab after a day as "waiting, no link to an answer". An item whose decisions are all answered no longer waits on them, and one whose pieces are all done shows as ready to close: close it.
+
+When the user answers one of your decisions, JARVIS writes it to `{{answers_dir}}/<project>/<item id>-<key>.md` (`<project>` is the last name of the item's source folder, or of the folder its zip is in), and `answers --since <time>` lists every answer to your own questions in one call. Look there instead of asking again, and act on an answer at once: report a piece or update straight away, since an answered decision with nothing reported after it shows the item as waiting for you to start and, after half an hour, as "answered, no follow-up".

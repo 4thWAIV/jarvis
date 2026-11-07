@@ -50,7 +50,7 @@ import { PackageMark } from "./QueuePackages";
 import { TabRow, type Tab } from "./Tabs";
 import { bind, bindingProps } from "./uiNavigation";
 import { useUiTarget } from "./uiRegistry";
-import { answerWorkDecision, blockerWords, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
+import { answerWorkDecision, blockerWords, followUpWords, getWorkItem, pieceMark, STATE_WORDS, whoWords, WORK_TABS,
          workChanged, workTab, type WorkAnswered, type WorkBlocker, type WorkDecision, type WorkEvent,
          type WorkEvidence, type WorkItem, type WorkPiece, type WorkTab } from "./work";
 import { activityOf, ActivityMark, ShownSince, useActivityClock, useArrivalFlash, useShownSince,
@@ -157,6 +157,7 @@ function Overview({ item, part }: { item: WorkItem; part: Part }) {
   return (
     <>
       <p className="work-latest" ref={(el) => { part("update")(el); arrived(el); }}>
+        {item.follow_up && <span className="work-follow-up">{followUpWords(item.follow_up)} · </span>}
         {item.quiet && <span className="work-quiet">{t("right.work.quiet")} · </span>}
         {item.latest_update}
       </p>
@@ -327,6 +328,11 @@ function Piece({ item, pieceKey, step, looks }: { item: WorkItem; pieceKey: stri
           {piece.waits_for.length
             ? t("main.work.waitsFor", { pieces: piece.waits_for.map(titleOf).join(", ") })
             : t("main.work.afterDone", { pieces: piece.after.map(titleOf).join(", ") })}
+        </p>
+      )}
+      {piece.state === "waiting_on_tim" && (piece.until || piece.unlinked) && (
+        <p className="work-piece-until">
+          {piece.until ? t("main.work.waitsForAnswer", { link: piece.until }) : t("main.work.unlinked")}
         </p>
       )}
       {piece.evidence.length > 0 && (

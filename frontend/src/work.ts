@@ -23,7 +23,9 @@ import { bind, detailSlot, readForOpen, registerClose, routeStore } from "./uiNa
 import { registerRevealer } from "./uiNavigationReveal";
 import { registerCommand } from "./uiRegistry";
 
-export type WorkState = "planned" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done";
+export type WorkState = "planned" | "working" | "verifying" | "waiting_on_tim" | "blocked" | "done"
+  /** Read time only: every piece done and no decision open. */
+  | "ready_to_close";
 export type WhoKind = "agent" | "run" | "workflow" | "tim";
 
 export interface WorkWho {
@@ -56,6 +58,13 @@ export interface WorkPiece {
   /** While working or verifying, when it goes quiet with no further report
    *  (epoch seconds); null in any other state. */
   quiet_at: number | null;
+  /** Waiting on him: the answer it waits for (a link such as decision:<key>), or "". */
+  until: string;
+  /** The state it moves to on that answer; "" is working. */
+  then: string;
+  waiting_since: number | null;
+  /** Waiting on him with no link to an answer for over a day. */
+  unlinked: boolean;
 }
 
 export interface WorkDecision {
@@ -78,7 +87,8 @@ export interface WorkAnswered {
   package: string;
 }
 
-export type BlockerKind = "decision" | "blocked" | "piece_blocked" | "piece_waiting" | "piece_after";
+export type BlockerKind = "decision" | "no_follow_up" | "blocked" | "item_waiting" | "piece_blocked"
+  | "piece_waiting" | "piece_after";
 
 /** One thing holding the item up, in the order the server lists them: his
  *  decisions, the item itself blocked, blocked pieces, pieces waiting on
@@ -90,6 +100,20 @@ export interface WorkBlocker {
   title: string;
   text: string;
   waits_for: string[];
+  /** A wait on him with no link to an answer, open for over a day. */
+  unlinked: boolean;
+}
+
+/** He answered a decision and nothing has been reported since, with no
+ *  piece working: waiting for its asker to start. */
+export interface WorkFollowUp {
+  key: string;
+  question: string;
+  /** The asker's access-key label, or "" when unknown. */
+  asker: string;
+  answered_at: number;
+  /** Half an hour gone with no report: "answered, no follow-up". */
+  overdue: boolean;
 }
 
 export interface WorkItem {
@@ -125,6 +149,7 @@ export interface WorkItem {
   package_questions: number;
   /** As a piece's, from the item's latest report. */
   quiet_at: number | null;
+  follow_up: WorkFollowUp | null;
 }
 
 /** The items under one heading: an area, or the source folder of items with none. */
@@ -172,7 +197,7 @@ export interface WorkEvent {
 export const workChanged = createStore(0);
 
 export const STATE_WORDS = wordsOf<WorkState>(
-  ["planned", "working", "verifying", "waiting_on_tim", "blocked", "done"],
+  ["planned", "working", "verifying", "waiting_on_tim", "blocked", "done", "ready_to_close"],
   (s) => t(`right.work.state.${s}`));
 
 /** Every item, as the server orders them (not done first, newest first), and
@@ -191,8 +216,22 @@ export function blockerWords(item: WorkItem, b: WorkBlocker): string {
   if (b.kind === "piece_after") {
     return t("main.work.blocker.piece_after", { title: b.title, pieces: b.waits_for.map(titleOf).join(", ") });
   }
+  if (b.kind === "no_follow_up") {
+    return t("main.work.blocker.no_follow_up", { title: b.title, asker: askerWords(b.text) });
+  }
   const said = t(`main.work.blocker.${b.kind}`, { title: b.title });
-  return b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said;
+  const line = b.text && b.kind !== "decision" ? `${said}: ${b.text}` : said;
+  return b.unlinked ? `${line} · ${t("main.work.unlinked")}` : line;
+}
+
+/** Who asked a decision: its access key's label, or "the agent that asked". */
+export function askerWords(label: string): string {
+  return label || t("main.work.askerUnknown");
+}
+
+/** An answered decision nobody has started on: "Answered — waiting for … to start". */
+export function followUpWords(f: WorkFollowUp): string {
+  return t("right.work.followUp", { asker: askerWords(f.asker) });
 }
 
 /** Who is on a piece, in words: an agent's, run's or workflow's one name,

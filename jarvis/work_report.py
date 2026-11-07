@@ -12,9 +12,11 @@ workflow_report.py, whose standard-library client it uses.
     python work_report.py update <id> <summary> [--state <state>] [--area <area>]
     python work_report.py piece <id> <key> <summary> [--title <title>] [--who <who>] [--state <state>]
                           [--worker <label>] [--after <key>[,<key>...]] [--evidence <commit|path|url> ...]
+                          [--until <link>] [--then <state>]
     python work_report.py decision <id> <key> <question> [--option <option> ...] [--recommendation <text>]
                           [--package <package id or name>]
     python work_report.py answer <id> <key>
+    python work_report.py answers [--since <epoch seconds or ISO time>]
     python work_report.py withdraw <id> <key> <reason>
     python work_report.py close <id> [<summary>]
 
@@ -24,7 +26,12 @@ Who is `agent:<session id>`, `run:<run id>`, `workflow:<workflow id>` or
 groups items on the Work tab (an empty one goes back to the source's
 folder); `--worker` is your own words for who did a piece, shown beside its
 owner; `--after` names the pieces it waits on (an empty value clears them);
-each `--evidence` is added to the piece's. A decision's `--package` names
+each `--evidence` is added to the piece's. A piece waiting on the user
+(`--state waiting_on_tim`) names what it waits for with `--until`:
+`decision:<key>` (a decision of this item), `work:<item id>:<key>`,
+`workflow:<workflow id>:<key>` or `package:<id or name>[:<decision id>]`;
+when he answers it, or signs the package off, JARVIS moves the piece on to
+`--then` (working by default) itself. A decision's `--package` names
 a page package (by id or name) the user can open from the decision. `withdraw`
 takes back a decision you asked, with why (only its asker can; the user's
 answer is never yours to give). `close`
@@ -32,12 +39,16 @@ moves the item to History for good (nothing is deleted, and nothing more
 can be reported to it); a done item moves there by itself after a few
 minutes. `start` prints the item's id. `answer` prints the
 user's answer to an open decision once he has given it, and exits 3 while
-he has not.
+he has not. `answers` prints every answer he has given to the decisions your
+access key asked, since the time given (all of them without one), one per
+line: item, key, when and his answer. JARVIS also writes each answer to
+`<data>/answers/<project>/<item>-<key>.md` the moment he gives it.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import sys
 from pathlib import Path
@@ -68,6 +79,20 @@ def _evidence(text: str) -> str:
     if "://" in text or not (os.sep in text or text.startswith(".") or os.path.exists(text)):
         return text
     return os.path.abspath(os.path.expanduser(text))
+
+
+def _since(text: str | None) -> float:
+    """Epoch seconds, or an ISO 8601 time (local when it gives no zone)."""
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        raise SystemExit("--since is epoch seconds or an ISO time, e.g. 2026-11-07T15:05.")
 
 
 def _line(item: dict) -> str:
@@ -101,6 +126,8 @@ def main(argv: list[str]) -> int:
     piece.add_argument("--worker")
     piece.add_argument("--after")
     piece.add_argument("--evidence", action="append", default=[])
+    piece.add_argument("--until")
+    piece.add_argument("--then")
     decision = sub.add_parser("decision")
     decision.add_argument("id")
     decision.add_argument("key")
@@ -118,6 +145,8 @@ def main(argv: list[str]) -> int:
     answer = sub.add_parser("answer")
     answer.add_argument("id")
     answer.add_argument("key")
+    answers = sub.add_parser("answers")
+    answers.add_argument("--since")
     args = parser.parse_args(argv[1:])
 
     with _client(args.cert) as client:
@@ -139,6 +168,13 @@ def main(argv: list[str]) -> int:
                     return 0
             print(f"Decision {args.key} has not been answered yet.", file=sys.stderr)
             return NOT_ANSWERED
+        if args.command == "answers":
+            r = client.get("/api/work/answers", params={"since": _since(args.since)})
+            r.raise_for_status()
+            for a in r.json()["answers"]:
+                when = datetime.datetime.fromtimestamp(a["answered_at"]).isoformat(timespec="seconds")
+                print(f"{a['item_id']} {a['key']} {when}: {a['answer']}")
+            return 0
         if args.command == "update":
             kind, detail = "update", {}
             if args.state:
@@ -151,7 +187,7 @@ def main(argv: list[str]) -> int:
             kind, detail = "decision_withdrawn", {"key": args.key}
         elif args.command == "piece":
             kind, detail = "piece", {"key": args.key}
-            for name in ("title", "state"):
+            for name in ("title", "state", "until", "then"):
                 if getattr(args, name):
                     detail[name] = getattr(args, name)
             if args.who:
