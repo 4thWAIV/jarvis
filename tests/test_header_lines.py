@@ -354,6 +354,21 @@ PRINTERS = _functions_that_print_a_foreign_field()
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
 EXEMPT = {
+    "context_service.pack": (
+        "with trust `own` (the default, and all a run ever gets) it builds the "
+        "pack from his project notes, his topic files and passages the engine "
+        "marks own, leaving out every untrusted one; only `all`, which the "
+        "brain's work_context asks for, adds other people's words and open "
+        "decisions, and that tool walls the whole pack. Driven by "
+        "tests/test_context_service.py"),
+    "knowledge_routes.mount": (
+        "its routes pass the page's own request fields to knowledge_api and "
+        "answer the page with JSON, which the page shows as text; nothing is "
+        "spoken or put in a header line. Driven by tests/test_knowledge_api.py"),
+    "server.tool_work_context": (
+        "it gives the brain the pack as JSON inside one untrusted block "
+        "(`_knowledge_tool` with walled=True), a page at a time; the header "
+        "line is JARVIS's own fixed words. Driven by tests/test_knowledge_api.py"),
     "knowledge_seeds.answer": (
         "the seed's names, statuses, aliases and bodies are quotations from "
         "JARVIS's own README and roadmap (knowledge_seeds.denice), written to "
@@ -1948,6 +1963,7 @@ ALT_RUN = {
     "requested_model": "opus",
     "folder_id": "33333333-3333-4333-8333-333333333333",
     "package_id": "text-stats-agent-1.0.0-ab12cd34",
+    "context_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 }
 
 

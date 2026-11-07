@@ -2263,6 +2263,19 @@ TOOL_SPECS = [
             "source": {"type": "string"}}, "required": ["action"]},
     },
     {
+        "name": "work_context",
+        "description": (
+            "What JARVIS already holds about a piece of work, before starting or briefing it: "
+            "the project's notes, the topics it touches with their status (planned is planned, "
+            "not implemented), and the passages that match, with their sources. purpose is the "
+            "task in his words; project its project. include_received adds other people's "
+            "words, walled. The same pack a run gets when run context is on."),
+        "inputSchema": {"type": "object", "properties": {
+            "purpose": {"type": "string"}, "project": {"type": "string"},
+            "include_received": {"type": "boolean"}, "page": {"type": "integer", "minimum": 1}},
+            "required": ["purpose"]},
+    },
+    {
         "name": "knowledge_seeds",
         "description": (
             "Topics JARVIS offers to create and has not: for Denice, the topic and one per "
