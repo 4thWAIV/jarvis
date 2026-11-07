@@ -225,6 +225,9 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "46dc64cf8fa4935662462dbc78a2743ba4355b2c6e3767eb2945cd4999a6fa26",  # work_context before starting work
     "360ce430dd09dd4502b68c87674dceb1e705b7ea1d173e63c8639ef65980a5a9",  # as shipped in f637d6b (package sign-off)
     "5a696e511ab8a0d915b569a22ec764e5ffe6ff6653d92d69c29957a799708f88",  # project records, merged with it
+    "b93d49ee134b87051313ca380dd9c1a56cc01909be7beb87998f4c52d237eac8",  # as shipped in f9786a0 (takeover mode)
+    "eb1d240a52fed28de7f3fcaf01df1257102a059f8e8968db5177a8369d851b02",  # review_work: done is his alone
+    "e067cae50c5c96ea4d2ef322cd26f2621955153ab5340173f86b79c556508b2f",  # review_work, merged with takeover mode
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
