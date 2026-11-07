@@ -10260,16 +10260,11 @@ def _records_scope(args: dict) -> Optional[dict]:
     return None
 
 
-def _work_context_answer(args: dict) -> dict:
-    return knowledge_api.work_context(
-        knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
-        include_received=args.get("include_received") is True, scope=_records_scope(args))
-
-
 async def tool_work_context(args: dict) -> str:
-    said = await _knowledge_tool(args, lambda: _work_context_answer(args),
-                                 "What JARVIS already holds about this work, as JSON", "work_context",
-                                 walled=True)
+    said = await _knowledge_tool(args, lambda: knowledge_api.work_context(
+        knowledge_calls, purpose=str(args.get("purpose") or ""), project=args.get("project"),
+        include_received=args.get("include_received") is True, scope=_records_scope(args)),
+        "What JARVIS already holds about this work, as JSON", "work_context", walled=True)
     return said
 
 
